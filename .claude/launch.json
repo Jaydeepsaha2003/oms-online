@@ -5,7 +5,8 @@
       "name": "web",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "-w", "@oms/web"],
-      "port": 5173
+      "port": 6173,
+      "autoPort": false
     }
   ]
 }

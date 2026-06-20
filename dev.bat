@@ -16,14 +16,14 @@ if not exist "node_modules" (
 
 echo.
 echo   OMS dev servers starting...
-echo     API : http://localhost:3000/api
-echo     Web : http://localhost:5173
+echo     API : http://localhost:4000/api
+echo     Web : http://localhost:6173
 echo.
 echo   Keep this window open. Press Ctrl+C to stop.
 echo.
 
 rem Open the browser a few seconds after the web server boots
-start "" cmd /c "timeout /t 8 >nul & start http://localhost:5173"
+start "" cmd /c "timeout /t 8 >nul & start http://localhost:6173"
 
 call npm run dev
 pause
