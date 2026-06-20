@@ -1,0 +1,30 @@
+{
+  "name": "@oms/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared types, permissions, roles and the dynamic menu registry for OMS.",
+  "main": "dist/cjs/index.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/esm/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/esm/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js",
+      "default": "./dist/cjs/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rimraf dist && tsc -p tsconfig.json && tsc -p tsconfig.cjs.json",
+    "dev": "concurrently -n esm,cjs \"tsc -p tsconfig.json --watch --preserveWatchOutput\" \"tsc -p tsconfig.cjs.json --watch --preserveWatchOutput\"",
+    "clean": "rimraf dist"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.3"
+  }
+}

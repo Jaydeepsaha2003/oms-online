@@ -1,0 +1,63 @@
+/** Maps the string icon names used in the shared MENU registry to lucide components. */
+import {
+  BarChart3,
+  Box,
+  Boxes,
+  Building2,
+  Circle,
+  ClipboardList,
+  Contact,
+  Factory,
+  Hammer,
+  LayoutDashboard,
+  ListTree,
+  Package,
+  Percent,
+  Receipt,
+  ReceiptText,
+  ScrollText,
+  Send,
+  Settings,
+  ShieldCheck,
+  ShoppingBag,
+  ShoppingCart,
+  SlidersHorizontal,
+  Truck,
+  UserCog,
+  Users,
+  Warehouse,
+  type LucideIcon,
+} from 'lucide-react';
+
+const ICONS: Record<string, LucideIcon> = {
+  LayoutDashboard,
+  ShoppingCart,
+  ClipboardList,
+  Contact,
+  Percent,
+  Receipt,
+  Users,
+  ReceiptText,
+  Send,
+  Package,
+  Box,
+  ListTree,
+  Factory,
+  Hammer,
+  Truck,
+  ShoppingBag,
+  Building2,
+  Boxes,
+  Warehouse,
+  BarChart3,
+  Settings,
+  UserCog,
+  ShieldCheck,
+  ScrollText,
+  SlidersHorizontal,
+};
+
+/** Resolve a menu icon name to a component, falling back to a neutral dot. */
+export function getMenuIcon(name?: string): LucideIcon {
+  return (name && ICONS[name]) || Circle;
+}

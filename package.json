@@ -1,0 +1,43 @@
+{
+  "name": "oms",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Production & Order Management System (OMS) — monorepo",
+  "license": "UNLICENSED",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "postinstall": "npm run build -w @oms/shared",
+    "build": "npm run build -w @oms/shared && npm run build -w @oms/api && npm run build -w @oms/web",
+    "build:shared": "npm run build -w @oms/shared",
+    "build:api": "npm run build -w @oms/api",
+    "build:web": "npm run build -w @oms/web",
+    "dev": "concurrently -n shared,api,web -c blue,green,magenta \"npm:dev:shared\" \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:shared": "npm run dev -w @oms/shared",
+    "dev:api": "npm run dev -w @oms/api",
+    "dev:web": "npm run dev -w @oms/web",
+    "start": "concurrently -n api,web -c green,magenta \"npm:start:api\" \"npm:start:web\"",
+    "start:api": "npm run start:prod -w @oms/api",
+    "start:web": "npm run preview -w @oms/web",
+    "db:generate": "npm run db:generate -w @oms/api",
+    "db:migrate": "npm run db:migrate -w @oms/api",
+    "db:deploy": "npm run db:deploy -w @oms/api",
+    "db:seed": "npm run db:seed -w @oms/api",
+    "db:studio": "npm run db:studio -w @oms/api",
+    "lint": "npm run lint -w @oms/api && npm run lint -w @oms/web",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "clean": "rimraf \"packages/*/dist\" \"apps/*/dist\" \"apps/*/node_modules/.vite\""
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "concurrently": "^9.1.2",
+    "prettier": "^3.4.2",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.3"
+  }
+}

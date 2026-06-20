@@ -1,0 +1,254 @@
+// OMS data model — SQLite.
+// Run `npm run db:migrate` to create/update tables, `npm run db:seed` to load
+// the permission catalog, system roles and the bootstrap admin user.
+//
+// SQLite notes (vs MySQL/Postgres): no native enums, no Json type, no native
+// type attributes (@db.Text). So `status` is a validated String, `metadata` /
+// `Setting.value` hold JSON-serialized strings. To move to MySQL/Postgres later:
+// change the provider below, restore an enum for status and `Json` columns, and
+// re-migrate.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ── Identity & access control ───────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  // Optional 4–6 digit quick-login PIN (bcrypt-hashed). Null = PIN login disabled.
+  pinHash      String?
+  // One of: 'active' | 'disabled' | 'invited' (enforced by the API via class-validator).
+  status       String   @default("active")
+  // Bumping tokenVersion invalidates every outstanding access token for the user.
+  tokenVersion Int      @default(0)
+  lastLoginAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  roles         UserRole[]
+  refreshTokens RefreshToken[]
+  auditLogs     AuditLog[]
+
+  @@index([status])
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  // Stable machine name, e.g. 'super_admin'.
+  name        String   @unique
+  label       String
+  description String?
+  // System roles cannot be deleted from the UI.
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       UserRole[]
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id        String   @id @default(cuid())
+  // Permission key, e.g. 'order:create'.
+  key       String   @unique
+  resource  String
+  action    String
+  label     String
+  group     String
+  createdAt DateTime @default(now())
+
+  roles RolePermission[]
+
+  @@index([resource])
+  @@map("permissions")
+}
+
+// Explicit join: User <-> Role (kept explicit so we can add assignedAt/assignedBy later).
+model UserRole {
+  userId     String
+  roleId     String
+  assignedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+// Explicit join: Role <-> Permission.
+model RolePermission {
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+// Hashed refresh tokens enable rotation + server-side revocation (logout / "log out everywhere").
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  userAgent String?
+  ip        String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// ── Audit trail: who did what, when, from where ─────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  userEmail  String?
+  action     String
+  resource   String
+  resourceId String?
+  description String?
+  method     String?
+  path       String?
+  statusCode Int?
+  ip         String?
+  userAgent  String?
+  // JSON-serialized before/after snapshot (SQLite has no native Json type).
+  metadata   String?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([resource])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ── App settings (key/value, surfaced on the Settings screen) ───────────────
+
+model Setting {
+  key       String   @id
+  // JSON-serialized value (SQLite has no native Json type).
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}
+
+// ── Sales: Customers & Transporters ─────────────────────────────────────────
+
+model Transporter {
+  // Integer PK to match the legacy TID and ease data import.
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  packing   Float?
+  freight   Float?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customers  Customer[]
+  transRates TransRate[]
+
+  @@map("transporters")
+}
+
+model Customer {
+  // Integer PK to match the legacy CUSTOMER.ID and ease data import.
+  id            Int      @id @default(autoincrement())
+  partySource   String?
+  agentName     String?
+  category      String?
+  partyName     String?
+  billingRate   Float?
+  // FK to Transporter; transportName/packing/freight are kept as a snapshot too
+  // (the legacy form stored them on the customer row).
+  transporterId Int?
+  transportName String?
+  bagName       String?
+  packing       Float?
+  freight       Float?
+  boxRate       Int?
+  creditPeriod  Int?
+  city          String?
+  state         String?
+  region        String?
+  mobile        String?
+  email         String?
+  brand         String?
+  billRatePc    Float?
+  payBy         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  transporter Transporter? @relation(fields: [transporterId], references: [id], onDelete: SetNull)
+  gstRates    GstRate[]
+  transRates  TransRate[]
+
+  @@index([partyName])
+  @@index([agentName])
+  @@index([category])
+  @@index([transporterId])
+  @@map("customers")
+}
+
+// Per-customer, per-product-category GST rate.
+model GstRate {
+  id           Int      @id @default(autoincrement())
+  customerId   Int?
+  customerName String
+  // Product category (legacy PCATEGORY), stored uppercase.
+  category     String
+  rate         Int?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  @@unique([customerName, category])
+  @@index([customerId])
+  @@map("gst_rates")
+}
+
+// Per-customer transport rate, keyed by category + type + transporter.
+model TransRate {
+  id            Int      @id @default(autoincrement())
+  customerId    Int?
+  customerName  String
+  category      String
+  type          String
+  transporterId Int?
+  transportName String?
+  rate          Int?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  customer    Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  transporter Transporter? @relation(fields: [transporterId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([transporterId])
+  @@map("trans_rates")
+}
