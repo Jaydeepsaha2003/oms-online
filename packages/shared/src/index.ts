@@ -16,4 +16,7 @@ export * from './types/agent';
 export * from './types/transporter';
 export * from './types/gst-rate';
 export * from './types/trans-rate';
+export * from './types/rate-history';
 export * from './types/catalog';
+export * from './types/order';
+export * from './types/setting';

@@ -2,14 +2,20 @@ import 'reflect-metadata';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const config = app.get(ConfigService);
+
+  // Excel imports post every row as JSON — a filled template can be thousands of
+  // rows, so lift the default ~100 KB body limit well above that.
+  app.useBodyParser('json', { limit: '50mb' });
+  app.useBodyParser('urlencoded', { limit: '50mb', extended: true });
 
   const port = config.get<number>('port') ?? 3000;
   const apiPrefix = config.get<string>('apiPrefix') ?? 'api';

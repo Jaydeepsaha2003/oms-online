@@ -24,7 +24,7 @@ export class DesignNamesService {
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.designName.findMany({
         where,
-        orderBy: { designType: 'asc' },
+        orderBy: [{ designType: 'asc' }, { designName: 'asc' }],
         skip: query.skip,
         take: query.pageSize,
       }),
@@ -103,9 +103,10 @@ export class DesignNamesService {
           result.errors.push(`Row ${i + 2}: DESIGN TYPE L and DESIGN NAME required — skipped.`);
           continue;
         }
-        const existing = await this.prisma.designName.findUnique({ where: { designType } });
+        // A code can have many names, so the identity is the (code, name) pair.
+        // Existing pair -> already present (no-op); new pair -> create.
+        const existing = await this.prisma.designName.findFirst({ where: { designType, designName } });
         if (existing) {
-          await this.prisma.designName.update({ where: { id: existing.id }, data: { designName } });
           result.updated++;
         } else {
           await this.prisma.designName.create({ data: { designType, designName } });
@@ -125,7 +126,7 @@ export class DesignNamesService {
 
   private conflictOr(err: unknown): unknown {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-      return new ConflictException('A design name with this design type already exists.');
+      return new ConflictException('That design type + design name pair already exists.');
     }
     return err;
   }

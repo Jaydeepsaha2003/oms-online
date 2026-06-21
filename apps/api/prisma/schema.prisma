@@ -220,6 +220,9 @@ model Customer {
   brand         String?
   billRatePc    Float?
   payBy         String?
+  // TDS: whether tax is deducted at source for this customer, and at what %.
+  tdsApplicable Boolean  @default(false)
+  tdsPercent    Float?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -232,6 +235,25 @@ model Customer {
   @@index([category])
   @@index([transporterId])
   @@map("customers")
+}
+
+/// Audit trail of GST / transport rate changes so past rates stay visible.
+/// One row per change (old -> new). `kind` is 'GST' or 'TRANS'.
+model RateHistory {
+  id            Int      @id @default(autoincrement())
+  kind          String
+  customerName  String
+  category      String
+  type          String? // transport only
+  transportName String? // transport only
+  oldRate       Int?
+  newRate       Int?
+  changedByName String?
+  changedAt     DateTime @default(now())
+
+  @@index([kind, customerName, category])
+  @@index([changedAt])
+  @@map("rate_history")
 }
 
 // Per-customer, per-product-category GST rate.
@@ -321,14 +343,18 @@ model Design {
   @@map("designs")
 }
 
-// Lookup: maps a short design-type code to a human-readable name.
+// Lookup: maps a design-type code to one or more human-readable names.
+// A single code can have several names (one-to-many), so the natural key is the
+// (designType, designName) pair, not the code alone.
 model DesignName {
   id         Int      @id @default(autoincrement())
-  designType String   @unique
+  designType String
   designName String
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
+  @@unique([designType, designName])
+  @@index([designType])
   @@map("design_names")
 }
 
@@ -358,4 +384,79 @@ model CombinationDesign {
   @@id([combinationId, designId])
   @@index([designId])
   @@map("combination_designs")
+}
+
+// ── Orders ──────────────────────────────────────────────────────────────────
+
+/// A sales order header. One order has many line items.
+model Order {
+  id             Int       @id @default(autoincrement())
+  // Auto-generated human-readable order number (e.g. ORD-00001).
+  code           String?   @unique
+  customerId     Int?
+  customerName   String
+  agentName      String?
+  category       String? // e.g. SALES
+  orderDate      DateTime  @default(now())
+  completionDate DateTime?
+  completionDay  Int?
+  priority       String? // URGENT / NORMAL
+  status         String    @default("PENDING") // CONFIRMED / PENDING / CANCELLED
+  ordType        String    @default("SALES ORDER")
+  comment        String?
+  userName       String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  items OrderItem[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([orderDate])
+  @@map("orders")
+}
+
+/// A single line item on an order (a product × design + quantities + rates).
+model OrderItem {
+  id          Int      @id @default(autoincrement())
+  orderId     Int
+  pCategory   String? // product category (GLASS / CUP / …)
+  subCategory String?
+  product     String?
+  design      String?
+  productName String? // composite display name (e.g. "10 PLAIN")
+  designType  String?
+  psize       Float?
+  bags        Float?
+  pcs         Float?
+  gram        Float?
+  box         Float?
+  productRate Float?
+  designRate  Float?
+  rate        Float? // total = productRate + designRate
+  calField    String? // pricing unit: KGS / PCS
+  priority    String? // URGENT / NORMAL (per line item)
+  ordType     String? // order type (e.g. SALES ORDER)
+  comment     String?
+  createdAt   DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+/// User-editable option lists (e.g. completion-day choices, order types),
+/// grouped by `group`. Managed from the Settings page.
+model OrderOption {
+  id        Int      @id @default(autoincrement())
+  group     String // COMPLETION_DAYS / ORDER_TYPE / …
+  value     String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([group, value])
+  @@index([group])
+  @@map("order_options")
 }

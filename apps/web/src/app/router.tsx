@@ -14,6 +14,9 @@ import { TransRatesPage } from '@/features/trans-rates/trans-rates-page';
 import { ProductsPage } from '@/features/products/products-page';
 import { DesignsPage } from '@/features/designs/designs-page';
 import { DesignNamesPage } from '@/features/design-names/design-names-page';
+import { OrdersPage } from '@/features/orders/orders-page';
+import { OrderFormPage } from '@/features/orders/order-form-page';
+import { SettingsPage } from '@/features/settings/settings-page';
 import { ForbiddenPage } from '@/features/errors/forbidden-page';
 import { NotFoundPage } from '@/features/errors/not-found-page';
 
@@ -110,6 +113,38 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.DESIGN_NAME, ACTIONS.VIEW)}>
                 <DesignNamesPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/orders"
+            element={
+              <RequirePermission permission={perm(RESOURCES.ORDER, ACTIONS.VIEW)}>
+                <OrdersPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/orders/new"
+            element={
+              <RequirePermission permission={perm(RESOURCES.ORDER, ACTIONS.CREATE)}>
+                <OrderFormPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/orders/:id/edit"
+            element={
+              <RequirePermission permission={perm(RESOURCES.ORDER, ACTIONS.UPDATE)}>
+                <OrderFormPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/settings"
+            element={
+              <RequirePermission permission={perm(RESOURCES.SETTING, ACTIONS.VIEW)}>
+                <SettingsPage />
               </RequirePermission>
             }
           />

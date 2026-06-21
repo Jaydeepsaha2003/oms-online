@@ -187,7 +187,6 @@ export function DesignsPage() {
           </span>
         ),
       },
-      { id: 'code', label: 'Code', cell: (d) => <span className="text-muted-foreground font-mono text-xs">{d.code ?? '—'}</span> },
       { id: 'category', label: 'Category', cell: (d) => d.category },
       { id: 'subCategory', label: 'Sub category', cell: (d) => d.subCategory },
       { id: 'designType', label: 'Design type', cell: (d) => <span className="font-medium">{d.designType}</span> },
@@ -200,7 +199,6 @@ export function DesignsPage() {
 
   const comboColumns = useMemo<DataColumn<CombinationDto>[]>(
     () => [
-    { id: 'code', label: 'Code', fixed: true, cell: (c) => <span className="text-muted-foreground font-mono text-xs">{c.code ?? '—'}</span> },
     { id: 'category', label: 'Category', cell: (c) => c.category || '—' },
     { id: 'subCategory', label: 'Sub category', cell: (c) => c.subCategory || '—' },
     { id: 'name', label: 'Design type', cell: (c) => <span className="font-medium">{c.name}</span> },

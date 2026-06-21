@@ -53,6 +53,16 @@ export class TransRatesController {
     return this.transRates.byCustomer(name ?? '');
   }
 
+  @Get('history')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  history(
+    @Query('customerName') customerName?: string,
+    @Query('category') category?: string,
+    @Query('type') type?: string,
+  ) {
+    return this.transRates.history({ customerName, category, type });
+  }
+
   @Get('export')
   @Permissions(perm(R, ACTIONS.EXPORT))
   @Audit({ action: ACTIONS.EXPORT, resource: R, description: 'Exported transport rates' })
@@ -63,6 +73,20 @@ export class TransRatesController {
       this.excel.jsonToBuffer(rows, {
         sheetName: 'TRANS RATE',
         headers: this.transRates.exportHeaders(),
+      }),
+    );
+  }
+
+  @Get('template')
+  @Permissions(perm(R, ACTIONS.EXPORT))
+  @Audit({ action: ACTIONS.EXPORT, resource: R, description: 'Downloaded transport rate template' })
+  async template(@Res({ passthrough: true }) res: Response) {
+    const rows = await this.transRates.templateRows();
+    this.excel.setDownloadHeaders(res, 'customer-transport-rates-template');
+    return new StreamableFile(
+      this.excel.jsonToBuffer(rows, {
+        sheetName: 'TRANS RATE TEMPLATE',
+        headers: this.transRates.templateHeaders(),
       }),
     );
   }

@@ -6,6 +6,8 @@ import {
   IndianRupee,
   Loader2,
   MapPin,
+  Percent,
+  Receipt,
   Save,
   Tags,
   Truck,
@@ -20,6 +22,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Combo, NativeSelect } from '@/components/common/combo';
+import { Switch } from '@/components/ui/switch';
+import { CustomerGstRates } from '@/features/gst-rates/customer-gst-rates';
+import { CustomerTransRates } from '@/features/trans-rates/customer-trans-rates';
 import {
   useCreateCustomer,
   useCustomer,
@@ -47,6 +52,8 @@ const EMPTY = {
   brand: '',
   billRatePc: '',
   payBy: '',
+  tdsApplicable: false,
+  tdsPercent: '',
 };
 type FormState = typeof EMPTY;
 
@@ -72,12 +79,15 @@ export function CustomerFormPage() {
   const saving = create.isPending || update.isPending;
 
   const [form, setForm] = useState<FormState>(EMPTY);
+  // Snapshot of the form as it was loaded — Save stays disabled until `form` differs.
+  const [baseline, setBaseline] = useState<FormState>(EMPTY);
+  const [tab, setTab] = useState<'details' | 'gst' | 'trans'>('details');
   const set = <K extends keyof FormState>(key: K, value: string) =>
     setForm((f) => ({ ...f, [key]: value }));
 
   useEffect(() => {
     if (!existing) return;
-    setForm({
+    const loaded: FormState = {
       partySource: existing.partySource ?? '',
       agentName: existing.agentName ?? '',
       category: existing.category ?? '',
@@ -97,10 +107,16 @@ export function CustomerFormPage() {
       brand: existing.brand ?? '',
       billRatePc: existing.billRatePc?.toString() ?? '',
       payBy: existing.payBy ?? '',
-    });
+      tdsApplicable: existing.tdsApplicable ?? false,
+      tdsPercent: existing.tdsPercent?.toString() ?? '',
+    };
+    setForm(loaded);
+    setBaseline(loaded);
   }, [existing]);
 
   const isSelf = form.partySource === 'SELF';
+  // Only allow saving when the form actually differs from what was loaded.
+  const dirty = JSON.stringify(form) !== JSON.stringify(baseline);
 
   const onPartySource = (value: string) => {
     setForm((f) => ({
@@ -150,6 +166,10 @@ export function CustomerFormPage() {
       toast.error('Enter a valid email address');
       return;
     }
+    if (form.tdsApplicable && form.tdsPercent.trim() === '') {
+      toast.error('Enter the TDS % (or turn TDS Applicable off)');
+      return;
+    }
 
     const input: CustomerInput = {
       partySource: form.partySource || null,
@@ -171,6 +191,8 @@ export function CustomerFormPage() {
       brand: form.brand || null,
       billRatePc: numOrNull(form.billRatePc),
       payBy: form.payBy || null,
+      tdsApplicable: form.tdsApplicable,
+      tdsPercent: form.tdsApplicable ? numOrNull(form.tdsPercent) : null,
     };
 
     const opts = {
@@ -219,7 +241,59 @@ export function CustomerFormPage() {
         )}
       </div>
 
+      {/* Tabs — manage the customer's details, GST rates and transport rates in one place. */}
+      {isEdit && existing?.partyName && (
+        <div className="bg-muted/60 inline-flex flex-wrap rounded-lg p-0.5">
+          <Button variant={tab === 'details' ? 'default' : 'ghost'} size="sm" onClick={() => setTab('details')}>
+            <Contact className="size-4" /> Details
+          </Button>
+          <Button variant={tab === 'gst' ? 'default' : 'ghost'} size="sm" onClick={() => setTab('gst')}>
+            <Percent className="size-4" /> GST Rates
+          </Button>
+          <Button variant={tab === 'trans' ? 'default' : 'ghost'} size="sm" onClick={() => setTab('trans')}>
+            <Receipt className="size-4" /> Transport Rates
+          </Button>
+        </div>
+      )}
+
+      {isEdit && existing?.partyName && tab === 'gst' && (
+        <Card className="gap-0 overflow-hidden py-0">
+          <CardHeader className="flex-row items-center gap-3 border-b bg-muted/30 py-3">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <Percent className="size-4" />
+            </span>
+            <div className="space-y-0">
+              <CardTitle className="text-sm font-semibold">GST rates</CardTitle>
+              <p className="text-muted-foreground text-xs">GST % per product category for this customer</p>
+            </div>
+          </CardHeader>
+          <CardContent className="py-5">
+            <CustomerGstRates customerName={existing.partyName} />
+          </CardContent>
+        </Card>
+      )}
+
+      {isEdit && existing?.partyName && tab === 'trans' && (
+        <Card className="gap-0 overflow-hidden py-0">
+          <CardHeader className="flex-row items-center gap-3 border-b bg-muted/30 py-3">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <Receipt className="size-4" />
+            </span>
+            <div className="space-y-0">
+              <CardTitle className="text-sm font-semibold">Transport rates</CardTitle>
+              <p className="text-muted-foreground text-xs">
+                Rate per category × type (PACKING / FREIGHT) for this customer
+              </p>
+            </div>
+          </CardHeader>
+          <CardContent className="py-5">
+            <CustomerTransRates customerName={existing.partyName} />
+          </CardContent>
+        </Card>
+      )}
+
       <form
+        hidden={tab !== 'details'}
         onSubmit={(e) => {
           e.preventDefault();
           submit();
@@ -286,10 +360,10 @@ export function CustomerFormPage() {
         </Section>
 
         <Section icon={IndianRupee} title="Pricing & terms">
-          <Field label="Billing Rate">
+          <Field label="Billing Rate/KGS">
             <Input type="number" step="any" value={form.billingRate} onChange={(e) => set('billingRate', e.target.value)} />
           </Field>
-          <Field label="Bill Rate / Pc">
+          <Field label="Billing Rate/Pcs">
             <Input type="number" step="any" value={form.billRatePc} onChange={(e) => set('billRatePc', e.target.value)} />
           </Field>
           <Field label="Pay By">
@@ -302,6 +376,29 @@ export function CustomerFormPage() {
           <Field label="Credit Period" required>
             <Input type="number" value={form.creditPeriod} onChange={(e) => set('creditPeriod', e.target.value)} />
           </Field>
+          <Field label="TDS Applicable">
+            <div className="flex h-9 items-center gap-2">
+              <Switch
+                checked={form.tdsApplicable}
+                onCheckedChange={(v) =>
+                  setForm((f) => ({ ...f, tdsApplicable: v, tdsPercent: v ? f.tdsPercent : '' }))
+                }
+              />
+              <span className="text-muted-foreground text-sm">{form.tdsApplicable ? 'Yes' : 'No'}</span>
+            </div>
+          </Field>
+          {form.tdsApplicable && (
+            <Field label="TDS %" required>
+              <Input
+                type="number"
+                step="any"
+                inputMode="decimal"
+                autoFocus
+                value={form.tdsPercent}
+                onChange={(e) => set('tdsPercent', e.target.value)}
+              />
+            </Field>
+          )}
         </Section>
 
         <Section icon={MapPin} title="Location">
@@ -321,7 +418,7 @@ export function CustomerFormPage() {
           <Button type="button" variant="outline" onClick={() => navigate('/customers')}>
             Cancel
           </Button>
-          <Button type="submit" disabled={saving}>
+          <Button type="submit" disabled={saving || !dirty}>
             {saving ? <Loader2 className="animate-spin" /> : <Save />}
             {isEdit ? 'Save changes' : 'Create customer'}
           </Button>

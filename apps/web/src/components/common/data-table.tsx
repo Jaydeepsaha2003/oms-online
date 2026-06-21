@@ -28,15 +28,17 @@ export interface DataColumn<T> {
 const SHADOW_L = 'shadow-[6px_0_12px_-6px_rgba(2,6,23,0.18)]';
 const SHADOW_R = 'shadow-[-6px_0_12px_-6px_rgba(2,6,23,0.18)]';
 
+// Frozen-left columns only stick from `sm:` up — on phones they scroll like any
+// other column so every column is reachable.
 function pinHead(pin: 'left0' | 'left1' | undefined, stickyTop: boolean): string {
   const top = stickyTop ? 'top-0 ' : '';
-  if (pin === 'left0') return `${top}sticky left-0 z-30 w-28 min-w-28`;
-  if (pin === 'left1') return `${top}sticky left-28 z-30 ${SHADOW_L}`;
+  if (pin === 'left0') return `${top}z-30 sm:sticky sm:left-0 sm:w-28 sm:min-w-28`;
+  if (pin === 'left1') return `${top}z-30 sm:sticky sm:left-28 sm:${SHADOW_L}`;
   return '';
 }
 function pinCellPos(pin?: 'left0' | 'left1'): string {
-  if (pin === 'left0') return 'sticky left-0 z-10 w-28 min-w-28';
-  if (pin === 'left1') return `sticky left-28 z-10 ${SHADOW_L}`;
+  if (pin === 'left0') return 'z-10 sm:sticky sm:left-0 sm:w-28 sm:min-w-28';
+  if (pin === 'left1') return `z-10 sm:sticky sm:left-28 sm:${SHADOW_L}`;
   return '';
 }
 
@@ -97,6 +99,8 @@ export function DataTable<T>({
           // Compact rows everywhere: halve the vertical cell padding and shrink the
           // (icon-only) action buttons so no row is taller than it needs to be.
           '[&_td]:py-1.5 [&_tbody_button]:size-7',
+          // Smaller text + tighter horizontal padding on phones so more columns fit.
+          'text-xs sm:text-sm [&_td]:px-2 [&_th]:px-2 sm:[&_td]:px-3 sm:[&_th]:px-3',
           '[&_tbody_td]:bg-card [&_tbody_tr:nth-child(even)_td]:bg-slate-50 [&_tbody_tr:hover_td]:bg-muted',
         )}
       >

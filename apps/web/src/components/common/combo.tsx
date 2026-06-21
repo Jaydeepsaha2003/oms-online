@@ -37,6 +37,7 @@ export function NativeSelect({
   placeholder,
   disabled,
   className,
+  onInvalidEntry,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -44,6 +45,7 @@ export function NativeSelect({
   placeholder?: string;
   disabled?: boolean;
   className?: string;
+  onInvalidEntry?: (typed: string) => void;
 }) {
   return (
     <Combobox
@@ -53,6 +55,7 @@ export function NativeSelect({
       placeholder={placeholder}
       disabled={disabled}
       className={className}
+      onInvalidEntry={onInvalidEntry}
     />
   );
 }

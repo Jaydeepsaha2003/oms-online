@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { Download, Loader2, Upload } from 'lucide-react';
+import { ClipboardList, Download, Loader2, Upload } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -34,6 +34,39 @@ export function ExportButton({
           )}
         >
           <Download className="size-4" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** Download a blank fill-in template (distinct emerald styling vs. the data export). */
+export function TemplateButton({
+  onClick,
+  label = 'Download fill-in template',
+  disabled,
+}: {
+  onClick: () => void;
+  label?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          onClick={onClick}
+          disabled={disabled}
+          aria-label={label}
+          className={cn(
+            'size-9 border-emerald-200 bg-emerald-50 text-emerald-600',
+            'hover:border-emerald-300 hover:bg-emerald-100 hover:text-emerald-700',
+          )}
+        >
+          <ClipboardList className="size-4" />
         </Button>
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
