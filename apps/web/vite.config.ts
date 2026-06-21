@@ -12,6 +12,9 @@ export default defineConfig({
     },
   },
   server: {
+    // Bind to all interfaces (0.0.0.0) so the dev server is reachable from
+    // phones and other devices on the same network, not just localhost.
+    host: true,
     port: 6173,
     strictPort: true,
   },
