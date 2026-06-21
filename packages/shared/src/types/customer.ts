@@ -17,6 +17,8 @@ export interface TransporterLite {
 
 export interface CustomerDto {
   id: number;
+  /** Auto-generated code (e.g. CUST-00001). Server-assigned; shown on export, not on screen. */
+  code: string | null;
   partySource: string | null;
   agentName: string | null;
   category: string | null;

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { Download, Loader2, Plus, Save, Trash2, Upload } from 'lucide-react';
+import { Loader2, Plus, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getApiErrorMessage } from '@/lib/api';
 import { parseExcelFile } from '@/lib/excel';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/common/confirm';
+import { ExportButton, ImportButton } from '@/components/common/excel-actions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -43,7 +44,6 @@ export function GstRatesPage() {
   const bulk = useBulkGstRates();
   const del = useDeleteGstRate();
   const importMut = useImportGstRates();
-  const fileRef = useRef<HTMLInputElement>(null);
   const keyer = useRef(0);
 
   const [lines, setLines] = useState<Line[]>([]);
@@ -101,17 +101,14 @@ export function GstRatesPage() {
     );
   };
 
-  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleImport = async (file: File) => {
     try {
       const rows = await parseExcelFile(file);
       const res = await importMut.mutateAsync(rows);
-      toast.success(`Imported: ${res.created} created, ${res.updated} updated`);
+      const skipped = res.errors.length ? `, ${res.errors.length} skipped` : '';
+      toast.success(`Imported: ${res.created} created, ${res.updated} updated${skipped}`);
     } catch (err) {
       toast.error(getApiErrorMessage(err, 'Import failed'));
-    } finally {
-      if (fileRef.current) fileRef.current.value = '';
     }
   };
 
@@ -123,18 +120,9 @@ export function GstRatesPage() {
           <p className="text-muted-foreground text-sm">Set GST rate per product category for a customer.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {can('gstrate:export') && (
-            <Button variant="outline" size="sm" onClick={() => exportGstRates()}>
-              <Download /> Export
-            </Button>
-          )}
+          {can('gstrate:export') && <ExportButton onClick={() => exportGstRates()} />}
           {can('gstrate:import') && (
-            <>
-              <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleImport} />
-              <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()} disabled={importMut.isPending}>
-                {importMut.isPending ? <Loader2 className="animate-spin" /> : <Upload />} Import
-              </Button>
-            </>
+            <ImportButton onFile={handleImport} pending={importMut.isPending} />
           )}
         </div>
       </div>

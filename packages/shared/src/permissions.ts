@@ -33,7 +33,11 @@ export const RESOURCES = {
   DASHBOARD: 'dashboard',
   ORDER: 'order',
   PRODUCT: 'product',
+  DESIGN: 'design',
+  DESIGN_NAME: 'designname',
+  COMBINATION: 'combination',
   CUSTOMER: 'customer',
+  AGENT: 'agent',
   TRANSPORTER: 'transporter',
   TRANS_RATE: 'transrate',
   GST_RATE: 'gstrate',
@@ -91,6 +95,7 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
 
   { resource: RESOURCES.ORDER, label: 'Orders', group: 'Sales', actions: STANDARD_PRINTABLE },
   { resource: RESOURCES.CUSTOMER, label: 'Customers', group: 'Sales', actions: STANDARD },
+  { resource: RESOURCES.AGENT, label: 'Agents', group: 'Sales', actions: STANDARD },
   { resource: RESOURCES.TRANSPORTER, label: 'Transporters', group: 'Sales', actions: STANDARD },
   { resource: RESOURCES.GST_RATE, label: 'Customer GST Rates', group: 'Sales', actions: STANDARD },
   { resource: RESOURCES.TRANS_RATE, label: 'Customer Transport Rates', group: 'Sales', actions: STANDARD },
@@ -103,6 +108,9 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
   },
 
   { resource: RESOURCES.PRODUCT, label: 'Products', group: 'Catalog', actions: STANDARD },
+  { resource: RESOURCES.DESIGN, label: 'Designs', group: 'Catalog', actions: STANDARD },
+  { resource: RESOURCES.DESIGN_NAME, label: 'Design Names', group: 'Catalog', actions: STANDARD },
+  { resource: RESOURCES.COMBINATION, label: 'Combinations', group: 'Catalog', actions: STANDARD },
   { resource: RESOURCES.BOM, label: 'Bill of Materials', group: 'Catalog', actions: STANDARD },
 
   {

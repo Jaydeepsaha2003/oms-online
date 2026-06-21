@@ -99,10 +99,16 @@ export class GstRatesService {
     };
   }
 
+  /** Stable export/import column order — also used as the empty-export template. */
+  exportHeaders(): string[] {
+    return ['ID', 'CUSTOMER CODE', 'CUSTOMER NAME', 'PCATEGORY', 'RATE'];
+  }
+
   async exportRows(query: GstRateQueryDto): Promise<Record<string, unknown>[]> {
     const { items } = await this.findMany({ ...query, page: 1, pageSize: 100_000 } as GstRateQueryDto);
     return items.map((r) => ({
       ID: r.id,
+      'CUSTOMER CODE': r.customerCode ?? '',
       'CUSTOMER NAME': r.customerName,
       PCATEGORY: r.category,
       RATE: r.rate ?? '',
@@ -140,12 +146,13 @@ export class GstRatesService {
   private async upsert(name: string, category: string, rate: number | null): Promise<Row> {
     const customerName = uc(name)!;
     const cat = uc(category)!;
-    const customer = await this.prisma.customer.findFirst({ where: { partyName: toStr(name)! } });
+    const customer = await this.prisma.customer.findFirst({ where: { partyName: customerName } });
     const customerId = customer?.id ?? null;
+    const customerCode = customer?.code ?? null;
     return this.prisma.gstRate.upsert({
       where: { customerName_category: { customerName, category: cat } },
-      create: { customerName, category: cat, rate, customerId },
-      update: { rate, customerId },
+      create: { customerName, category: cat, rate, customerId, customerCode },
+      update: { rate, customerId, customerCode },
     });
   }
 
@@ -153,6 +160,7 @@ export class GstRatesService {
     return {
       id: r.id,
       customerId: r.customerId,
+      customerCode: r.customerCode,
       customerName: r.customerName,
       category: r.category,
       rate: r.rate,

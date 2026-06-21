@@ -48,7 +48,12 @@ export class TransportersController {
   async export(@Query() query: TransporterQueryDto, @Res({ passthrough: true }) res: Response) {
     const rows = await this.transporters.exportRows(query);
     this.excel.setDownloadHeaders(res, 'transporters');
-    return new StreamableFile(this.excel.jsonToBuffer(rows, { sheetName: 'Transporters' }));
+    return new StreamableFile(
+      this.excel.jsonToBuffer(rows, {
+        sheetName: 'Transporters',
+        headers: this.transporters.exportHeaders(),
+      }),
+    );
   }
 
   @Post('import')

@@ -96,11 +96,17 @@ export class TransRatesService {
     };
   }
 
+  /** Stable export/import column order — also used as the empty-export template. */
+  exportHeaders(): string[] {
+    return ['REC ID', 'CUS ID', 'CUSTOMER CODE', 'CUSTOMER', 'CATEGORY', 'TYPE', 'TID', 'TRANSPORT NAME', 'RATE'];
+  }
+
   async exportRows(query: TransRateQueryDto): Promise<Record<string, unknown>[]> {
     const { items } = await this.findMany({ ...query, page: 1, pageSize: 100_000 } as TransRateQueryDto);
     return items.map((r) => ({
       'REC ID': r.id,
       'CUS ID': r.customerId ?? '',
+      'CUSTOMER CODE': r.customerCode ?? '',
       CUSTOMER: r.customerName,
       CATEGORY: r.category,
       TYPE: r.type,
@@ -162,8 +168,9 @@ export class TransRatesService {
     const category = uc(input.category)!;
     const type = uc(input.type)!;
     const rate = toInt(input.rate);
-    const customer = await this.prisma.customer.findFirst({ where: { partyName: toStr(input.customerName)! } });
+    const customer = await this.prisma.customer.findFirst({ where: { partyName: customerName } });
     const customerId = customer?.id ?? null;
+    const customerCode = customer?.code ?? null;
     const transporter = await this.resolveTransporter(input.transportName);
     const transporterId = transporter?.id ?? null;
     const transportName = transporter?.name ?? null;
@@ -174,11 +181,11 @@ export class TransRatesService {
     if (existing) {
       return this.prisma.transRate.update({
         where: { id: existing.id },
-        data: { customerId, transportName, rate },
+        data: { customerId, customerCode, transportName, rate },
       });
     }
     return this.prisma.transRate.create({
-      data: { customerId, customerName, category, type, transporterId, transportName, rate },
+      data: { customerId, customerCode, customerName, category, type, transporterId, transportName, rate },
     });
   }
 
@@ -186,6 +193,7 @@ export class TransRatesService {
     return {
       id: r.id,
       customerId: r.customerId,
+      customerCode: r.customerCode,
       customerName: r.customerName,
       category: r.category,
       type: r.type,

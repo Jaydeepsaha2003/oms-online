@@ -1,10 +1,11 @@
-import { useRef, useState } from 'react';
-import { Download, Loader2, Plus, Trash2, Upload } from 'lucide-react';
+import { useState } from 'react';
+import { Loader2, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getApiErrorMessage } from '@/lib/api';
 import { parseExcelFile } from '@/lib/excel';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/common/confirm';
+import { ExportButton, ImportButton } from '@/components/common/excel-actions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -36,7 +37,6 @@ export function TransRatesPage() {
   const upsert = useUpsertTransRate();
   const del = useDeleteTransRate();
   const importMut = useImportTransRates();
-  const fileRef = useRef<HTMLInputElement>(null);
 
   // New-rate row
   const [transportName, setTransportName] = useState('');
@@ -79,17 +79,14 @@ export function TransRatesPage() {
     });
   };
 
-  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleImport = async (file: File) => {
     try {
       const rows = await parseExcelFile(file);
       const res = await importMut.mutateAsync(rows);
-      toast.success(`Imported: ${res.created} created, ${res.updated} updated`);
+      const skipped = res.errors.length ? `, ${res.errors.length} skipped` : '';
+      toast.success(`Imported: ${res.created} created, ${res.updated} updated${skipped}`);
     } catch (err) {
       toast.error(getApiErrorMessage(err, 'Import failed'));
-    } finally {
-      if (fileRef.current) fileRef.current.value = '';
     }
   };
 
@@ -106,18 +103,9 @@ export function TransRatesPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {can('transrate:export') && (
-            <Button variant="outline" size="sm" onClick={() => exportTransRates()}>
-              <Download /> Export
-            </Button>
-          )}
+          {can('transrate:export') && <ExportButton onClick={() => exportTransRates()} />}
           {can('transrate:import') && (
-            <>
-              <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleImport} />
-              <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()} disabled={importMut.isPending}>
-                {importMut.isPending ? <Loader2 className="animate-spin" /> : <Upload />} Import
-              </Button>
-            </>
+            <ImportButton onFile={handleImport} pending={importMut.isPending} />
           )}
         </div>
       </div>

@@ -89,19 +89,20 @@ export function LoginPage() {
   if (user) return <Navigate to={from} replace />;
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gradient-to-br from-slate-50 via-white to-slate-100 px-4 py-10">
-      {/* Animated neutral background */}
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gradient-to-br from-blue-50 via-white to-amber-50 px-4 py-10">
+      {/* Animated brand background (blue · amber · orange) */}
       <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="bg-dotted absolute inset-0 opacity-60" />
         <div
-          className="oms-blob absolute -left-24 -top-24 size-72 rounded-full bg-slate-300/40 blur-3xl"
+          className="oms-blob absolute -left-24 -top-24 size-72 rounded-full bg-blue-400/35 blur-3xl"
           style={{ animation: 'oms-float 22s ease-in-out infinite' }}
         />
         <div
-          className="oms-blob absolute -right-24 top-1/4 size-80 rounded-full bg-zinc-300/40 blur-3xl"
+          className="oms-blob absolute -right-24 top-1/4 size-80 rounded-full bg-amber-400/35 blur-3xl"
           style={{ animation: 'oms-float 26s ease-in-out infinite', animationDelay: '-6s' }}
         />
         <div
-          className="oms-blob absolute -bottom-32 left-1/3 size-96 rounded-full bg-slate-200/50 blur-3xl"
+          className="oms-blob absolute -bottom-32 left-1/3 size-96 rounded-full bg-orange-300/35 blur-3xl"
           style={{ animation: 'oms-float 30s ease-in-out infinite', animationDelay: '-12s' }}
         />
       </div>
@@ -115,10 +116,12 @@ export function LoginPage() {
           />
 
           <div className="relative flex flex-col items-center text-center">
-            <div className="mb-3 flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br from-slate-800 to-slate-950 text-white shadow-lg">
+            <div className="bg-gradient-brand mb-3 flex size-14 items-center justify-center rounded-2xl text-white shadow-lg shadow-blue-600/30 ring-1 ring-white/30">
               <Boxes className="size-7" />
             </div>
-            <h1 className="text-xl font-semibold tracking-tight">Welcome back</h1>
+            <h1 className="text-2xl font-bold tracking-tight">
+              Welcome to <span className="text-gradient-brand">{APP_NAME}</span>
+            </h1>
             <p className="mt-1 text-sm text-muted-foreground">Sign in to your {APP_NAME} workspace</p>
           </div>
 

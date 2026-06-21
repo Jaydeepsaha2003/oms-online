@@ -1,11 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
-import { Download, Loader2, Pencil, Plus, Search, Trash2, Upload } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Loader2, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { TransporterDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { parseExcelFile } from '@/lib/excel';
+import { cn, formatDateTime } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useColumnOrder } from '@/hooks/use-column-order';
 import { useConfirm } from '@/components/common/confirm';
+import { ColumnSettings } from '@/components/common/column-settings';
+import { DataTable, type DataColumn } from '@/components/common/data-table';
+import { ExportButton, ImportButton } from '@/components/common/excel-actions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -35,6 +40,23 @@ import {
 
 const num = (n: number | null) => (n == null ? '—' : n.toLocaleString());
 
+const COLUMNS: DataColumn<TransporterDto>[] = [
+  { id: 'code', label: 'Code', pin: 'left0', fixed: true, cell: (t) => <span className="text-muted-foreground font-mono text-xs">{t.code ?? '—'}</span> },
+  { id: 'name', label: 'Transport name', pin: 'left1', fixed: true, cell: (t) => <span className="font-medium">{t.name}</span> },
+  { id: 'packing', label: 'Packing', align: 'right', cell: (t) => num(t.packing) },
+  { id: 'freight', label: 'Freight', align: 'right', cell: (t) => num(t.freight) },
+  { id: 'customers', label: 'Customers', align: 'right', cell: (t) => t.customerCount ?? 0 },
+  {
+    id: 'updated',
+    label: 'Last updated',
+    cell: (t) => (
+      <span className="text-muted-foreground whitespace-nowrap text-sm" title={`Added ${formatDateTime(t.createdAt)}`}>
+        {formatDateTime(t.updatedAt)}
+      </span>
+    ),
+  },
+];
+
 export function TransportersPage() {
   const { can } = usePermissions();
   const confirm = useConfirm();
@@ -52,11 +74,11 @@ export function TransportersPage() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  const query = { page, pageSize: 20, search: search || undefined };
+  const query = { page, pageSize: 50, search: search || undefined };
   const { data, isLoading } = useTransporters(query);
   const del = useDeleteTransporter();
   const importMut = useImportTransporters();
-  const fileRef = useRef<HTMLInputElement>(null);
+  const cols = useColumnOrder('transporters', COLUMNS);
 
   const items = data?.items ?? [];
 
@@ -74,17 +96,14 @@ export function TransportersPage() {
     });
   };
 
-  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleImport = async (file: File) => {
     try {
       const rows = await parseExcelFile(file);
       const res = await importMut.mutateAsync(rows);
-      toast.success(`Imported: ${res.created} created, ${res.updated} updated`);
+      const skipped = res.errors.length ? `, ${res.errors.length} skipped` : '';
+      toast.success(`Imported: ${res.created} created, ${res.updated} updated${skipped}`);
     } catch (err) {
       toast.error(getApiErrorMessage(err, 'Import failed'));
-    } finally {
-      if (fileRef.current) fileRef.current.value = '';
     }
   };
 
@@ -96,18 +115,17 @@ export function TransportersPage() {
           <p className="text-muted-foreground text-sm">{data?.total ?? 0} records</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {can('transporter:export') && (
-            <Button variant="outline" size="sm" onClick={() => exportTransporters(query)}>
-              <Download /> Export
-            </Button>
-          )}
+          <ColumnSettings
+            columns={cols.orderedReorderable}
+            hidden={cols.hidden}
+            onReorder={cols.moveBefore}
+            onMove={cols.move}
+            onToggle={cols.toggle}
+            onReset={cols.reset}
+          />
+          {can('transporter:export') && <ExportButton onClick={() => exportTransporters(query)} />}
           {can('transporter:import') && (
-            <>
-              <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleImport} />
-              <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()} disabled={importMut.isPending}>
-                {importMut.isPending ? <Loader2 className="animate-spin" /> : <Upload />} Import
-              </Button>
-            </>
+            <ImportButton onFile={handleImport} pending={importMut.isPending} />
           )}
           {can('transporter:create') && (
             <Button size="sm" onClick={() => setCreating(true)}>
@@ -127,69 +145,34 @@ export function TransportersPage() {
         />
       </div>
 
-      <div className="rounded-lg border bg-card">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-14">TID</TableHead>
-              <TableHead>Transport name</TableHead>
-              <TableHead className="text-right">Packing</TableHead>
-              <TableHead className="text-right">Freight</TableHead>
-              <TableHead className="text-right">Customers</TableHead>
-              <TableHead className="w-20 text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <TableRow>
-                <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
-                  <Loader2 className="mx-auto size-5 animate-spin" />
-                </TableCell>
-              </TableRow>
-            ) : items.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
-                  No transporters yet.
-                </TableCell>
-              </TableRow>
-            ) : (
-              items.map((t) => (
-                <TableRow
-                  key={t.id}
-                  className="cursor-pointer"
-                  onClick={() => can('transporter:update') && setEditing(t)}
-                >
-                  <TableCell className="text-muted-foreground tabular-nums">{t.id}</TableCell>
-                  <TableCell className="font-medium">{t.name}</TableCell>
-                  <TableCell className="text-right tabular-nums">{num(t.packing)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{num(t.freight)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{t.customerCount ?? 0}</TableCell>
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <div className="flex justify-end gap-1">
-                      {can('transporter:update') && (
-                        <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(t)} aria-label="Edit">
-                          <Pencil className="size-4" />
-                        </Button>
-                      )}
-                      {can('transporter:delete') && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-8 text-destructive hover:text-destructive"
-                          onClick={() => handleDelete(t)}
-                          aria-label="Delete"
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))
+      <DataTable
+        columns={cols.visibleColumns}
+        rows={items}
+        rowKey={(t) => t.id}
+        isLoading={isLoading}
+        emptyText="No transporters yet."
+        onRowClick={(t) => can('transporter:update') && setEditing(t)}
+        actions={(t) => (
+          <div className="flex justify-end gap-1">
+            {can('transporter:update') && (
+              <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(t)} aria-label="Edit">
+                <Pencil className="size-4" />
+              </Button>
             )}
-          </TableBody>
-        </Table>
-      </div>
+            {can('transporter:delete') && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8 text-destructive hover:text-destructive"
+                onClick={() => handleDelete(t)}
+                aria-label="Delete"
+              >
+                <Trash2 className="size-4" />
+              </Button>
+            )}
+          </div>
+        )}
+      />
 
       {(creating || editing) && (
         <TransporterDialog
@@ -249,9 +232,27 @@ function TransporterDialog({
             submit();
           }}
         >
+          {isEdit && transporter!.code && (
+            <div className="space-y-2">
+              <Label>Code</Label>
+              <Input
+                value={transporter!.code}
+                readOnly
+                tabIndex={-1}
+                aria-readonly
+                className="bg-muted font-mono text-muted-foreground"
+              />
+              <p className="text-muted-foreground text-xs">Auto-generated · not editable</p>
+            </div>
+          )}
           <div className="space-y-2">
             <Label>Transport name *</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+            <Input
+              className="uppercase"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoFocus
+            />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">

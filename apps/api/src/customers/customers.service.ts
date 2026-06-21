@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   type CustomerDto,
@@ -8,6 +8,7 @@ import {
   PAY_BYS,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { isValidEmail, isValidMobile } from '../common/validation';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { CustomerQueryDto } from './dto/customer-query.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
@@ -30,6 +31,7 @@ const SORTABLE = new Set([
 /** Excel header (legacy Access column) → CustomerDto field. */
 const EXCEL_COLUMNS: { header: string; key: keyof CustomerDto }[] = [
   { header: 'ID', key: 'id' },
+  { header: 'CODE', key: 'code' },
   { header: 'PARTY SOURCE', key: 'partySource' },
   { header: 'AGENT NAME', key: 'agentName' },
   { header: 'CATEGORY', key: 'category' },
@@ -94,13 +96,17 @@ export class CustomersService {
   }
 
   async create(dto: CreateCustomerDto): Promise<CustomerDto> {
+    await this.assertNameOk(dto.partyName, dto.transportName);
+    await this.resolveAgent(dto.agentName);
     const transporter = await this.resolveTransporter(dto.transportName, dto.packing, dto.freight);
     const row = await this.prisma.customer.create({ data: this.toData(dto, transporter) });
-    return this.toDto(row);
+    return this.toDto(await this.ensureCode(row));
   }
 
   async update(id: number, dto: UpdateCustomerDto): Promise<CustomerDto> {
     await this.ensureExists(id);
+    await this.assertNameOk(dto.partyName, dto.transportName);
+    await this.resolveAgent(dto.agentName);
     const transporter = await this.resolveTransporter(dto.transportName, dto.packing, dto.freight);
     const row = await this.prisma.customer.update({ where: { id }, data: this.toData(dto, transporter) });
     return this.toDto(row);
@@ -126,7 +132,9 @@ export class CustomersService {
     };
 
     const [agents, categories, brands, cities, states, regions, transporters] = await Promise.all([
-      distinct('agentName'),
+      this.prisma.agent
+        .findMany({ orderBy: { name: 'asc' }, select: { name: true } })
+        .then((rows) => rows.map((r) => r.name)),
       distinct('category'),
       distinct('brand'),
       distinct('city'),
@@ -151,6 +159,11 @@ export class CustomersService {
         freight: t.freight,
       })),
     };
+  }
+
+  /** Stable export/import column order — also used as the empty-export template. */
+  exportHeaders(): string[] {
+    return EXCEL_COLUMNS.map((c) => c.header);
   }
 
   /** All matching rows mapped to legacy Excel headers, for export. */
@@ -181,45 +194,83 @@ export class CustomersService {
           continue;
         }
         const transportName = toStr(row['TRANSPORT NAME']);
+        // Customer and transporter names must be distinct.
+        if (transportName && uc(partyName) === uc(transportName)) {
+          result.errors.push(
+            `Row ${i + 2}: PARTY NAME and TRANSPORT NAME are the same ("${partyName}") — they must differ. Skipped.`,
+          );
+          continue;
+        }
+        const nameClash = await this.prisma.transporter.findUnique({
+          where: { name: uc(partyName)! },
+          select: { id: true },
+        });
+        if (nameClash) {
+          result.errors.push(
+            `Row ${i + 2}: "${partyName}" is already a transporter name — customer and transporter names must differ. Skipped.`,
+          );
+          continue;
+        }
         const packing = toNum(row['PACKING']);
         const freight = toNum(row['FREIGHT']);
         const transporter = await this.resolveTransporter(transportName, packing, freight);
 
+        // Validate mobile / email (same rules as the form). Uppercase no-op for mobile.
+        const mobile = uc(row['MOBILE']);
+        const email = uc(row['EMAIL']);
+        if (mobile && !isValidMobile(mobile)) {
+          result.errors.push(`Row ${i + 2}: invalid MOBILE "${mobile}" — skipped.`);
+          continue;
+        }
+        if (email && !isValidEmail(email)) {
+          result.errors.push(`Row ${i + 2}: invalid EMAIL "${email}" — skipped.`);
+          continue;
+        }
+
+        // All text fields are stored UPPERCASE.
         const data: Prisma.CustomerUncheckedCreateInput = {
-          partySource: toStr(row['PARTY SOURCE']),
+          partySource: uc(row['PARTY SOURCE']),
           agentName: uc(row['AGENT NAME']),
           category: uc(row['CATEGORY']),
-          partyName,
+          partyName: uc(partyName)!,
           billingRate: toNum(row['BILLING RATE']),
           transporterId: transporter?.id ?? null,
           transportName: uc(transportName),
-          bagName: toStr(row['BAG NAME']),
+          bagName: uc(row['BAG NAME']),
           packing: packing ?? transporter?.packing ?? null,
           freight: freight ?? transporter?.freight ?? null,
           boxRate: toInt(row['BOXRATE']),
           creditPeriod: toInt(row['CREDIT PERIOD']),
-          city: toStr(row['CITY']),
-          state: toStr(row['STATE']),
-          region: toStr(row['REGION']),
-          mobile: toStr(row['MOBILE']),
-          email: toStr(row['EMAIL']),
+          city: uc(row['CITY']),
+          state: uc(row['STATE']),
+          region: uc(row['REGION']),
+          mobile,
+          email,
           brand: uc(row['BRAND']),
           billRatePc: toNum(row['BILL RATE PC']),
-          payBy: toStr(row['PAY BY']),
+          payBy: uc(row['PAY BY']),
         };
 
+        // Add the agent to the master list if it's new.
+        await this.resolveAgent(data.agentName);
+
+        // CODE is auto-generated server-side and intentionally NOT read from the
+        // upload — uploads never need to supply it.
         const id = toInt(row['ID']);
         if (id) {
           const exists = await this.prisma.customer.findUnique({ where: { id }, select: { id: true } });
           if (exists) {
-            await this.prisma.customer.update({ where: { id }, data });
+            const updated = await this.prisma.customer.update({ where: { id }, data });
+            await this.ensureCode(updated);
             result.updated++;
           } else {
-            await this.prisma.customer.create({ data: { id, ...data } });
+            const createdRow = await this.prisma.customer.create({ data: { id, ...data } });
+            await this.ensureCode(createdRow);
             result.created++;
           }
         } else {
-          await this.prisma.customer.create({ data });
+          const createdRow = await this.prisma.customer.create({ data });
+          await this.ensureCode(createdRow);
           result.created++;
         }
       } catch (err) {
@@ -249,6 +300,17 @@ export class CustomersService {
           }
         : {}),
     };
+  }
+
+  /**
+   * Add an agent to the master list if it doesn't exist yet, so agents typed in
+   * the customer form are persisted (with timestamps). 'SELF' is a sentinel for
+   * partySource = SELF and is never stored as an agent.
+   */
+  private async resolveAgent(name?: string | null): Promise<void> {
+    const n = uc(name);
+    if (!n || n === 'SELF') return;
+    await this.prisma.agent.upsert({ where: { name: n }, update: {}, create: { name: n } });
   }
 
   /** Find or create the transporter by name; refresh its packing/freight if provided. */
@@ -285,27 +347,28 @@ export class CustomersService {
     dto: CreateCustomerDto | UpdateCustomerDto,
     transporter: { id: number; packing: number | null; freight: number | null } | null,
   ): Prisma.CustomerUncheckedCreateInput {
+    // All text fields are stored UPPERCASE for consistent search/matching.
     return {
-      partySource: toStr(dto.partySource),
+      partySource: uc(dto.partySource),
       agentName: uc(dto.agentName),
       category: uc(dto.category),
-      partyName: (toStr(dto.partyName) ?? '') as string,
+      partyName: (uc(dto.partyName) ?? '') as string,
       billingRate: dto.billingRate ?? null,
       transporterId: transporter?.id ?? null,
       transportName: uc(dto.transportName),
-      bagName: toStr(dto.bagName),
+      bagName: uc(dto.bagName),
       packing: dto.packing ?? transporter?.packing ?? null,
       freight: dto.freight ?? transporter?.freight ?? null,
       boxRate: dto.boxRate ?? null,
       creditPeriod: dto.creditPeriod ?? null,
-      city: toStr(dto.city),
-      state: toStr(dto.state),
-      region: toStr(dto.region),
-      mobile: toStr(dto.mobile),
-      email: toStr(dto.email),
+      city: uc(dto.city),
+      state: uc(dto.state),
+      region: uc(dto.region),
+      mobile: uc(dto.mobile),
+      email: uc(dto.email),
       brand: uc(dto.brand),
       billRatePc: dto.billRatePc ?? null,
-      payBy: toStr(dto.payBy),
+      payBy: uc(dto.payBy),
     };
   }
 
@@ -314,9 +377,43 @@ export class CustomersService {
     if (!count) throw new NotFoundException('Customer not found.');
   }
 
+  /**
+   * Enforce that a customer's name is distinct from transporter names — it may
+   * not equal its own transport name, nor any existing transporter's name.
+   */
+  private async assertNameOk(partyName?: string | null, transportName?: string | null): Promise<void> {
+    const p = uc(partyName);
+    if (!p) return;
+    const t = uc(transportName);
+    if (t && p === t) {
+      throw new ConflictException('Customer name and transport name cannot be the same.');
+    }
+    const clash = await this.prisma.transporter.findUnique({ where: { name: p }, select: { id: true } });
+    if (clash) {
+      throw new ConflictException(
+        'A transporter already exists with this name. Customer and transporter names must be different.',
+      );
+    }
+  }
+
+  /** Stable, human-readable code derived from the row id (e.g. CUST-00001). */
+  private codeFor(id: number): string {
+    return `CUST-${String(id).padStart(5, '0')}`;
+  }
+
+  /** Assign the auto-generated code if the row doesn't have one yet. */
+  private async ensureCode(row: CustomerRow): Promise<CustomerRow> {
+    if (row.code) return row;
+    return this.prisma.customer.update({
+      where: { id: row.id },
+      data: { code: this.codeFor(row.id) },
+    });
+  }
+
   private toDto(r: CustomerRow): CustomerDto {
     return {
       id: r.id,
+      code: r.code ?? this.codeFor(r.id),
       partySource: r.partySource,
       agentName: r.agentName,
       category: r.category,

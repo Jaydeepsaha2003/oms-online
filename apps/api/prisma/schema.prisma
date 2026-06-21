@@ -163,6 +163,9 @@ model Setting {
 model Transporter {
   // Integer PK to match the legacy TID and ease data import.
   id        Int      @id @default(autoincrement())
+  // Auto-generated human-readable code (e.g. TRN-00001). Set by the API on create;
+  // never required on import (it is derived server-side), shown on export.
+  code      String?  @unique
   name      String   @unique
   packing   Float?
   freight   Float?
@@ -175,9 +178,26 @@ model Transporter {
   @@map("transporters")
 }
 
+// Sales agents (used when partySource = AGENT). Maintained as its own master so
+// agents can be added on the fly from the customer form and tracked with timestamps.
+model Agent {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  contactNo String?
+  state     String?
+  city      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("agents")
+}
+
 model Customer {
   // Integer PK to match the legacy CUSTOMER.ID and ease data import.
   id            Int      @id @default(autoincrement())
+  // Auto-generated human-readable code (e.g. CUST-00001). Set by the API on create;
+  // never required on import (it is derived server-side), shown on export.
+  code          String?  @unique
   partySource   String?
   agentName     String?
   category      String?
@@ -218,6 +238,8 @@ model Customer {
 model GstRate {
   id           Int      @id @default(autoincrement())
   customerId   Int?
+  // Stable customer code (e.g. CUST-00001) — the fast link to the customer master.
+  customerCode String?
   customerName String
   // Product category (legacy PCATEGORY), stored uppercase.
   category     String
@@ -229,6 +251,7 @@ model GstRate {
 
   @@unique([customerName, category])
   @@index([customerId])
+  @@index([customerCode])
   @@map("gst_rates")
 }
 
@@ -236,6 +259,8 @@ model GstRate {
 model TransRate {
   id            Int      @id @default(autoincrement())
   customerId    Int?
+  // Stable customer code (e.g. CUST-00001) — the fast link to the customer master.
+  customerCode  String?
   customerName  String
   category      String
   type          String
@@ -249,6 +274,88 @@ model TransRate {
   transporter Transporter? @relation(fields: [transporterId], references: [id], onDelete: SetNull)
 
   @@index([customerId])
+  @@index([customerCode])
   @@index([transporterId])
   @@map("trans_rates")
+}
+
+// ── Catalog: Products, Designs & Combinations ───────────────────────────────
+
+model Product {
+  id          Int      @id @default(autoincrement())
+  // Auto-generated code (e.g. PRD-00001).
+  code        String?  @unique
+  category    String
+  subCategory String
+  product     String
+  size        Float?
+  weight      Float?
+  pcs         Float?
+  rate        Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // A product is uniquely identified by category + sub-category + product + size.
+  @@unique([category, subCategory, product, size])
+  @@index([category])
+  @@index([product])
+  @@map("products")
+}
+
+model Design {
+  id          Int      @id @default(autoincrement())
+  // Auto-generated code (e.g. DSG-00001).
+  code        String?  @unique
+  category    String
+  subCategory String
+  designType  String
+  cost        Float?
+  rate        Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  combinationLinks CombinationDesign[]
+
+  @@unique([category, subCategory, designType])
+  @@index([category])
+  @@map("designs")
+}
+
+// Lookup: maps a short design-type code to a human-readable name.
+model DesignName {
+  id         Int      @id @default(autoincrement())
+  designType String   @unique
+  designName String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("design_names")
+}
+
+model Combination {
+  id        Int      @id @default(autoincrement())
+  // Auto-generated code (e.g. CMB-00001).
+  code      String?  @unique
+  // Display name, auto-built by joining the component design types (editable).
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  designLinks CombinationDesign[]
+
+  @@map("combinations")
+}
+
+// A combination is built from one or more designs. The link lets us recompute
+// the combination's cost/rate whenever a constituent design's cost changes.
+model CombinationDesign {
+  combinationId Int
+  designId      Int
+
+  combination Combination @relation(fields: [combinationId], references: [id], onDelete: Cascade)
+  design      Design      @relation(fields: [designId], references: [id], onDelete: Cascade)
+
+  @@id([combinationId, designId])
+  @@index([designId])
+  @@map("combination_designs")
 }

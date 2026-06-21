@@ -20,9 +20,14 @@ import { RolesModule } from './roles/roles.module';
 import { PermissionsModule } from './permissions/permissions.module';
 import { MenuModule } from './menu/menu.module';
 import { CustomersModule } from './customers/customers.module';
+import { AgentsModule } from './agents/agents.module';
 import { TransportersModule } from './transporters/transporters.module';
 import { GstRatesModule } from './gst-rates/gst-rates.module';
 import { TransRatesModule } from './trans-rates/trans-rates.module';
+import { ProductsModule } from './products/products.module';
+import { DesignsModule } from './designs/designs.module';
+import { DesignNamesModule } from './design-names/design-names.module';
+import { CombinationsModule } from './combinations/combinations.module';
 
 @Module({
   imports: [
@@ -48,9 +53,14 @@ import { TransRatesModule } from './trans-rates/trans-rates.module';
     PermissionsModule,
     MenuModule,
     CustomersModule,
+    AgentsModule,
     TransportersModule,
     GstRatesModule,
     TransRatesModule,
+    ProductsModule,
+    DesignsModule,
+    DesignNamesModule,
+    CombinationsModule,
   ],
   controllers: [AppController],
   providers: [

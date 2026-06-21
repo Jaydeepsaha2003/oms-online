@@ -50,7 +50,7 @@ export function Topbar({
   };
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b bg-background/95 px-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+    <header className="sticky top-0 z-30 flex h-16 items-center gap-2 border-b bg-background/80 px-3 shadow-sm shadow-blue-950/[0.03] backdrop-blur supports-[backdrop-filter]:bg-background/70">
       <Button variant="ghost" size="icon" className="md:hidden" onClick={onToggleMobile} aria-label="Open menu">
         <Menu />
       </Button>
@@ -64,7 +64,7 @@ export function Topbar({
         <PanelLeft />
       </Button>
 
-      <h1 className="truncate text-sm font-semibold">{title}</h1>
+      <h1 className="truncate text-base font-bold tracking-tight">{title}</h1>
 
       <div className="ml-auto flex items-center gap-2">
         {user && (
@@ -72,7 +72,9 @@ export function Topbar({
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" className="h-9 gap-2 px-2">
                 <Avatar>
-                  <AvatarFallback>{initials(user.name)}</AvatarFallback>
+                  <AvatarFallback className="bg-gradient-brand text-xs font-semibold text-white">
+                    {initials(user.name)}
+                  </AvatarFallback>
                 </Avatar>
                 <span className="hidden text-sm font-medium sm:inline">{user.name}</span>
               </Button>

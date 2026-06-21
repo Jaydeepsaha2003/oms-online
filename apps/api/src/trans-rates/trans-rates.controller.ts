@@ -54,7 +54,12 @@ export class TransRatesController {
   async export(@Query() query: TransRateQueryDto, @Res({ passthrough: true }) res: Response) {
     const rows = await this.transRates.exportRows(query);
     this.excel.setDownloadHeaders(res, 'customer-transport-rates');
-    return new StreamableFile(this.excel.jsonToBuffer(rows, { sheetName: 'TRANS RATE' }));
+    return new StreamableFile(
+      this.excel.jsonToBuffer(rows, {
+        sheetName: 'TRANS RATE',
+        headers: this.transRates.exportHeaders(),
+      }),
+    );
   }
 
   @Post('import')

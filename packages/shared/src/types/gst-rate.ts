@@ -3,6 +3,7 @@ import type { Paginated, PaginationQuery } from './common';
 export interface GstRateDto {
   id: number;
   customerId: number | null;
+  customerCode: string | null;
   customerName: string;
   category: string;
   rate: number | null;

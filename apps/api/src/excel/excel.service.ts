@@ -31,9 +31,24 @@ export class ExcelService {
     return this.aoaToBuffer([header, ...body], opts.sheetName);
   }
 
-  /** Build an .xlsx from an array of plain objects (keys become headers). */
-  jsonToBuffer(rows: Record<string, unknown>[], opts: { sheetName?: string } = {}): Buffer {
-    const worksheet = XLSX.utils.json_to_sheet(rows);
+  /**
+   * Build an .xlsx from an array of plain objects.
+   *
+   * Pass `headers` to guarantee the header row is always written — including the
+   * exact column order and even when `rows` is empty. This keeps an export with
+   * no data usable as a fill-in import template. Without `headers`, the object
+   * keys become the headers (and an empty array yields an empty sheet).
+   */
+  jsonToBuffer(
+    rows: Record<string, unknown>[],
+    opts: { sheetName?: string; headers?: string[] } = {},
+  ): Buffer {
+    if (opts.headers && rows.length === 0) {
+      return this.aoaToBuffer([opts.headers], opts.sheetName);
+    }
+    const worksheet = opts.headers
+      ? XLSX.utils.json_to_sheet(rows, { header: opts.headers })
+      : XLSX.utils.json_to_sheet(rows);
     return this.workbookToBuffer(worksheet, opts.sheetName);
   }
 

@@ -1,6 +1,16 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Loader2, Save } from 'lucide-react';
+import {
+  ArrowLeft,
+  Contact,
+  IndianRupee,
+  Loader2,
+  MapPin,
+  Save,
+  Tags,
+  Truck,
+  type LucideIcon,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import type { CustomerInput } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -8,7 +18,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Combo, NativeSelect } from '@/components/common/combo';
 import {
   useCreateCustomer,
@@ -132,6 +142,15 @@ export function CustomerFormPage() {
       return;
     }
 
+    if (form.mobile.trim() && !/^\+?[0-9][0-9\s\-()]{6,18}$/.test(form.mobile.trim())) {
+      toast.error('Enter a valid mobile number');
+      return;
+    }
+    if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      toast.error('Enter a valid email address');
+      return;
+    }
+
     const input: CustomerInput = {
       partySource: form.partySource || null,
       agentName: form.agentName || null,
@@ -174,125 +193,172 @@ export function CustomerFormPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4">
+    <div className="mx-auto max-w-5xl space-y-5">
+      {/* Header */}
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" onClick={() => navigate('/customers')} aria-label="Back">
           <ArrowLeft />
         </Button>
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">
-            {isEdit ? `Edit customer #${id}` : 'New customer'}
+        <div className="bg-gradient-brand flex size-11 items-center justify-center rounded-xl text-white shadow-md shadow-blue-600/20 ring-1 ring-white/20">
+          <Contact className="size-5" />
+        </div>
+        <div className="min-w-0">
+          <h2 className="truncate text-2xl font-bold tracking-tight">
+            {isEdit ? 'Edit customer' : 'New customer'}
           </h2>
-          <p className="text-muted-foreground text-sm">
-            {isEdit ? (existing?.partyName ?? '') : 'Add a new party to the customer master'}
+          <p className="text-muted-foreground truncate text-sm">
+            {isEdit
+              ? (existing?.partyName ?? `#${id}`)
+              : 'Add a new party to the customer master'}
           </p>
         </div>
+        {isEdit && existing?.code && (
+          <span className="ml-auto shrink-0 rounded-lg border bg-muted px-3 py-1.5 font-mono text-xs text-muted-foreground">
+            {existing.code}
+          </span>
+        )}
       </div>
 
-      <Card>
-        <CardContent className="pt-6">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              submit();
-            }}
-          >
-            <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              <Field label="Party Source" required>
-                <NativeSelect
-                  value={form.partySource}
-                  onChange={onPartySource}
-                  options={lookups?.partySources ?? ['SELF', 'AGENT']}
-                />
-              </Field>
-              <Field label="Agent Name" required={!isSelf}>
-                <Combo
-                  value={form.agentName}
-                  onChange={(v) => set('agentName', v)}
-                  options={lookups?.agents ?? []}
-                  disabled={isSelf}
-                />
-              </Field>
-              <Field label="Category" required>
-                <Combo value={form.category} onChange={(v) => set('category', v)} options={lookups?.categories ?? []} />
-              </Field>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+        className="space-y-5 [&_input]:uppercase [&_input::placeholder]:normal-case"
+      >
+        <Section icon={Tags} title="Classification" desc="How this party is sourced and categorised">
+          <Field label="Party Source" required>
+            <NativeSelect
+              value={form.partySource}
+              onChange={onPartySource}
+              options={lookups?.partySources ?? ['SELF', 'AGENT']}
+            />
+          </Field>
+          <Field label="Agent Name" required={!isSelf}>
+            <Combo
+              value={form.agentName}
+              onChange={(v) => set('agentName', v)}
+              options={lookups?.agents ?? []}
+              disabled={isSelf}
+              placeholder="Type to add a new agent…"
+            />
+          </Field>
+          <Field label="Category" required>
+            <Combo value={form.category} onChange={(v) => set('category', v)} options={lookups?.categories ?? []} />
+          </Field>
+          <Field label="Brand">
+            <Combo value={form.brand} onChange={(v) => set('brand', v)} options={lookups?.brands ?? []} />
+          </Field>
+        </Section>
 
-              <Field label="Party Name" required className="lg:col-span-2">
-                <Input value={form.partyName} onChange={(e) => set('partyName', e.target.value)} />
-              </Field>
-              <Field label="Brand">
-                <Combo value={form.brand} onChange={(v) => set('brand', v)} options={lookups?.brands ?? []} />
-              </Field>
+        <Section icon={Contact} title="Party details" desc="Name and how to reach them">
+          <Field label="Party Name" required className="sm:col-span-2 lg:col-span-2">
+            <Input value={form.partyName} onChange={(e) => set('partyName', e.target.value)} />
+          </Field>
+          <Field label="Mobile">
+            <Input type="tel" value={form.mobile} onChange={(e) => set('mobile', e.target.value)} />
+          </Field>
+          <Field label="Email">
+            <Input value={form.email} onChange={(e) => set('email', e.target.value)} />
+          </Field>
+        </Section>
 
-              <Field label="Transport Name" required>
-                <Combo
-                  value={form.transportName}
-                  onChange={onTransportName}
-                  options={(lookups?.transporters ?? []).map((t) => t.name)}
-                />
-              </Field>
-              <Field label="Packing">
-                <Input type="number" step="any" value={form.packing} onChange={(e) => set('packing', e.target.value)} />
-              </Field>
-              <Field label="Freight">
-                <Input type="number" step="any" value={form.freight} onChange={(e) => set('freight', e.target.value)} />
-              </Field>
+        <Section icon={Truck} title="Transport & packing">
+          <Field label="Transport Name" required>
+            <Combo
+              value={form.transportName}
+              onChange={onTransportName}
+              options={(lookups?.transporters ?? []).map((t) => t.name)}
+            />
+          </Field>
+          <Field label="Packing">
+            <Input type="number" step="any" value={form.packing} onChange={(e) => set('packing', e.target.value)} />
+          </Field>
+          <Field label="Freight">
+            <Input type="number" step="any" value={form.freight} onChange={(e) => set('freight', e.target.value)} />
+          </Field>
+          <Field label="Bag Name">
+            <Input value={form.bagName} onChange={(e) => set('bagName', e.target.value)} />
+          </Field>
+          <Field label="Box Rate">
+            <Input type="number" value={form.boxRate} onChange={(e) => set('boxRate', e.target.value)} />
+          </Field>
+        </Section>
 
-              <Field label="Bag Name">
-                <Input value={form.bagName} onChange={(e) => set('bagName', e.target.value)} />
-              </Field>
-              <Field label="Box Rate">
-                <Input type="number" value={form.boxRate} onChange={(e) => set('boxRate', e.target.value)} />
-              </Field>
-              <Field label="Credit Period" required>
-                <Input type="number" value={form.creditPeriod} onChange={(e) => set('creditPeriod', e.target.value)} />
-              </Field>
+        <Section icon={IndianRupee} title="Pricing & terms">
+          <Field label="Billing Rate">
+            <Input type="number" step="any" value={form.billingRate} onChange={(e) => set('billingRate', e.target.value)} />
+          </Field>
+          <Field label="Bill Rate / Pc">
+            <Input type="number" step="any" value={form.billRatePc} onChange={(e) => set('billRatePc', e.target.value)} />
+          </Field>
+          <Field label="Pay By">
+            <NativeSelect
+              value={form.payBy}
+              onChange={(v) => set('payBy', v)}
+              options={lookups?.payBys ?? ['PARTY', 'AGENT']}
+            />
+          </Field>
+          <Field label="Credit Period" required>
+            <Input type="number" value={form.creditPeriod} onChange={(e) => set('creditPeriod', e.target.value)} />
+          </Field>
+        </Section>
 
-              <Field label="Billing Rate">
-                <Input type="number" step="any" value={form.billingRate} onChange={(e) => set('billingRate', e.target.value)} />
-              </Field>
-              <Field label="Bill Rate / Pc">
-                <Input type="number" step="any" value={form.billRatePc} onChange={(e) => set('billRatePc', e.target.value)} />
-              </Field>
-              <Field label="Pay By">
-                <NativeSelect
-                  value={form.payBy}
-                  onChange={(v) => set('payBy', v)}
-                  options={lookups?.payBys ?? ['PARTY', 'AGENT']}
-                />
-              </Field>
+        <Section icon={MapPin} title="Location">
+          <Field label="City" required>
+            <Combo value={form.city} onChange={(v) => set('city', v)} options={lookups?.cities ?? []} />
+          </Field>
+          <Field label="State" required>
+            <Combo value={form.state} onChange={(v) => set('state', v)} options={lookups?.states ?? []} />
+          </Field>
+          <Field label="Region" required>
+            <Combo value={form.region} onChange={(v) => set('region', v)} options={lookups?.regions ?? []} />
+          </Field>
+        </Section>
 
-              <Field label="City" required>
-                <Combo value={form.city} onChange={(v) => set('city', v)} options={lookups?.cities ?? []} />
-              </Field>
-              <Field label="State" required>
-                <Combo value={form.state} onChange={(v) => set('state', v)} options={lookups?.states ?? []} />
-              </Field>
-              <Field label="Region" required>
-                <Combo value={form.region} onChange={(v) => set('region', v)} options={lookups?.regions ?? []} />
-              </Field>
-
-              <Field label="Mobile">
-                <Input type="tel" value={form.mobile} onChange={(e) => set('mobile', e.target.value)} />
-              </Field>
-              <Field label="Email" className="lg:col-span-2">
-                <Input value={form.email} onChange={(e) => set('email', e.target.value)} />
-              </Field>
-            </div>
-
-            <div className="mt-6 flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={() => navigate('/customers')}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={saving}>
-                {saving ? <Loader2 className="animate-spin" /> : <Save />}
-                {isEdit ? 'Save changes' : 'Create customer'}
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
+        {/* Sticky action bar */}
+        <div className="sticky bottom-0 z-10 -mx-1 flex items-center justify-end gap-2 border-t bg-background/85 px-1 py-3 backdrop-blur">
+          <Button type="button" variant="outline" onClick={() => navigate('/customers')}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={saving}>
+            {saving ? <Loader2 className="animate-spin" /> : <Save />}
+            {isEdit ? 'Save changes' : 'Create customer'}
+          </Button>
+        </div>
+      </form>
     </div>
+  );
+}
+
+function Section({
+  icon: Icon,
+  title,
+  desc,
+  children,
+}: {
+  icon: LucideIcon;
+  title: string;
+  desc?: string;
+  children: ReactNode;
+}) {
+  return (
+    <Card className="gap-0 overflow-hidden py-0">
+      <CardHeader className="flex-row items-center gap-3 border-b bg-muted/30 py-3">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <Icon className="size-4" />
+        </span>
+        <div className="space-y-0">
+          <CardTitle className="text-sm font-semibold">{title}</CardTitle>
+          {desc && <p className="text-muted-foreground text-xs">{desc}</p>}
+        </div>
+      </CardHeader>
+      <CardContent className="py-5">
+        <div className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {children}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { ChevronRight, Boxes } from 'lucide-react';
 import { filterMenu, MENU, type MenuNode } from '@oms/shared';
@@ -24,15 +24,38 @@ interface SidebarProps {
  */
 export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
   const { permissions } = usePermissions();
+  const location = useLocation();
   const items = useMemo(() => filterMenu(permissions, MENU), [permissions]);
+
+  // Accordion: only one group is open at a time. Default to the active route's group.
+  const activeGroupId = useMemo(
+    () =>
+      items.find(
+        (n) => n.children?.length && n.children.some((c) => c.to && location.pathname.startsWith(c.to)),
+      )?.id ?? null,
+    [items, location.pathname],
+  );
+  const [openGroup, setOpenGroup] = useState<string | null>(activeGroupId);
+
+  // Opening a group via navigation keeps that group open (but manual collapses stick).
+  useEffect(() => {
+    if (activeGroupId) setOpenGroup(activeGroupId);
+  }, [activeGroupId]);
 
   return (
     <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
-      <div className={cn('flex h-14 items-center gap-2 px-4', collapsed && 'justify-center px-0')}>
-        <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
+      <div className={cn('flex h-16 items-center gap-3 px-4', collapsed && 'justify-center px-0')}>
+        <div className="bg-gradient-brand flex size-9 shrink-0 items-center justify-center rounded-xl text-white shadow-lg shadow-blue-950/40 ring-1 ring-white/20">
           <Boxes className="size-5" />
         </div>
-        {!collapsed && <span className="truncate text-base font-semibold">{APP_NAME}</span>}
+        {!collapsed && (
+          <div className="flex min-w-0 flex-col leading-tight">
+            <span className="truncate text-base font-bold tracking-tight">{APP_NAME}</span>
+            <span className="truncate text-[11px] font-medium text-sidebar-foreground/55">
+              Order Management
+            </span>
+          </div>
+        )}
       </div>
       <Separator className="bg-sidebar-border" />
 
@@ -40,7 +63,14 @@ export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
         <nav className="flex flex-col gap-0.5">
           {items.map((node) =>
             node.children?.length ? (
-              <MenuGroup key={node.id} node={node} collapsed={collapsed} onNavigate={onNavigate} />
+              <MenuGroup
+                key={node.id}
+                node={node}
+                collapsed={collapsed}
+                onNavigate={onNavigate}
+                open={openGroup === node.id}
+                onToggle={() => setOpenGroup((prev) => (prev === node.id ? null : node.id))}
+              />
             ) : (
               <MenuLeaf key={node.id} node={node} collapsed={collapsed} onNavigate={onNavigate} />
             ),
@@ -49,7 +79,7 @@ export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
       </ScrollArea>
 
       {!collapsed && (
-        <div className="px-4 py-3 text-xs text-muted-foreground">
+        <div className="px-4 py-3 text-xs text-sidebar-foreground/45">
           <Separator className="mb-3 bg-sidebar-border" />
           {APP_NAME} · v0.1.0
         </div>
@@ -75,17 +105,20 @@ function MenuLeaf({
       onClick={onNavigate}
       className={({ isActive }) =>
         cn(
-          'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-          'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-          isActive && 'bg-sidebar-accent text-sidebar-accent-foreground',
+          'group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-sidebar-foreground/80 transition-all',
+          'hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
+          isActive &&
+            'bg-sidebar-accent font-semibold text-sidebar-accent-foreground shadow-sm before:absolute before:inset-y-1.5 before:left-0 before:w-1 before:rounded-full before:bg-brand-amber',
           collapsed && 'justify-center px-0',
         )
       }
     >
-      <Icon className="size-4 shrink-0" />
+      <Icon className="size-4 shrink-0 transition-colors group-hover:text-brand-amber" />
       {!collapsed && <span className="truncate">{node.label}</span>}
       {!collapsed && node.badge && (
-        <span className="ml-auto rounded bg-muted px-1.5 py-0.5 text-xs">{node.badge}</span>
+        <span className="ml-auto rounded bg-brand-amber/20 px-1.5 py-0.5 text-xs font-semibold text-brand-amber">
+          {node.badge}
+        </span>
       )}
     </NavLink>
   );
@@ -103,16 +136,19 @@ function MenuGroup({
   node,
   collapsed,
   onNavigate,
+  open,
+  onToggle,
 }: {
   node: MenuNode;
   collapsed: boolean;
   onNavigate?: () => void;
+  open: boolean;
+  onToggle: () => void;
 }) {
   const location = useLocation();
   const childActive = (node.children ?? []).some(
     (c) => c.to && location.pathname.startsWith(c.to),
   );
-  const [open, setOpen] = useState(childActive);
   const Icon = getMenuIcon(node.icon);
 
   // Collapsed rail: render the group's children as icon links with tooltips.
@@ -130,14 +166,14 @@ function MenuGroup({
     <div>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={onToggle}
         className={cn(
-          'flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-          'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+          'group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-sidebar-foreground/80 transition-all',
+          'hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
           childActive && 'text-sidebar-accent-foreground',
         )}
       >
-        <Icon className="size-4 shrink-0" />
+        <Icon className="size-4 shrink-0 transition-colors group-hover:text-brand-amber" />
         <span className="truncate">{node.label}</span>
         <ChevronRight className={cn('ml-auto size-4 transition-transform', open && 'rotate-90')} />
       </button>

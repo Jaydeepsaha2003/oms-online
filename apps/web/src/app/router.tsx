@@ -8,8 +8,12 @@ import { DashboardPage } from '@/features/dashboard/dashboard-page';
 import { CustomersPage } from '@/features/customers/customers-page';
 import { CustomerFormPage } from '@/features/customers/customer-form-page';
 import { TransportersPage } from '@/features/transporters/transporters-page';
+import { AgentsPage } from '@/features/agents/agents-page';
 import { GstRatesPage } from '@/features/gst-rates/gst-rates-page';
 import { TransRatesPage } from '@/features/trans-rates/trans-rates-page';
+import { ProductsPage } from '@/features/products/products-page';
+import { DesignsPage } from '@/features/designs/designs-page';
+import { DesignNamesPage } from '@/features/design-names/design-names-page';
 import { ForbiddenPage } from '@/features/errors/forbidden-page';
 import { NotFoundPage } from '@/features/errors/not-found-page';
 
@@ -62,6 +66,14 @@ export function AppRoutes() {
             }
           />
           <Route
+            path="/agents"
+            element={
+              <RequirePermission permission={perm(RESOURCES.AGENT, ACTIONS.VIEW)}>
+                <AgentsPage />
+              </RequirePermission>
+            }
+          />
+          <Route
             path="/gst-rates"
             element={
               <RequirePermission permission={perm(RESOURCES.GST_RATE, ACTIONS.VIEW)}>
@@ -74,6 +86,30 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.TRANS_RATE, ACTIONS.VIEW)}>
                 <TransRatesPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/products"
+            element={
+              <RequirePermission permission={perm(RESOURCES.PRODUCT, ACTIONS.VIEW)}>
+                <ProductsPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/designs"
+            element={
+              <RequirePermission permission={perm(RESOURCES.DESIGN, ACTIONS.VIEW)}>
+                <DesignsPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/design-names"
+            element={
+              <RequirePermission permission={perm(RESOURCES.DESIGN_NAME, ACTIONS.VIEW)}>
+                <DesignNamesPage />
               </RequirePermission>
             }
           />

@@ -1,6 +1,7 @@
 import { Transform, Type } from 'class-transformer';
-import { IsIn, IsInt, IsNumber, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsIn, IsInt, IsNumber, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 import { PARTY_SOURCES, PAY_BYS } from '@oms/shared';
+import { EMAIL_REGEX, MOBILE_REGEX } from '../../common/validation';
 
 /** Treat empty strings as "not provided" for optional enum fields. */
 const emptyToUndefined = ({ value }: { value: unknown }) =>
@@ -78,14 +79,19 @@ export class CreateCustomerDto {
   region?: string;
 
   @IsOptional()
+  @Transform(emptyToUndefined)
   @IsString()
-  @MaxLength(255)
+  @MaxLength(20)
+  @Matches(MOBILE_REGEX, {
+    message: 'Mobile must be a valid number (7–19 digits, optional + - ( ) and spaces).',
+  })
   mobile?: string;
 
-  // Loose on purpose — legacy data may contain blanks/multiple addresses.
   @IsOptional()
+  @Transform(emptyToUndefined)
   @IsString()
   @MaxLength(255)
+  @Matches(EMAIL_REGEX, { message: 'Enter a valid email address.' })
   email?: string;
 
   @IsOptional()

@@ -52,7 +52,12 @@ export class CustomersController {
   async export(@Query() query: CustomerQueryDto, @Res({ passthrough: true }) res: Response) {
     const rows = await this.customers.exportRows(query);
     this.excel.setDownloadHeaders(res, 'customers');
-    return new StreamableFile(this.excel.jsonToBuffer(rows, { sheetName: 'Customers' }));
+    return new StreamableFile(
+      this.excel.jsonToBuffer(rows, {
+        sheetName: 'Customers',
+        headers: this.customers.exportHeaders(),
+      }),
+    );
   }
 
   @Post('import')

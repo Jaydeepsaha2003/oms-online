@@ -1,0 +1,71 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type {
+  ProductDto,
+  ProductInput,
+  ProductList,
+  ProductLookups,
+  ProductQuery,
+} from '@oms/shared';
+import { downloadFile, http } from '@/lib/api';
+
+export interface ImportResult {
+  total: number;
+  created: number;
+  updated: number;
+  errors: string[];
+}
+
+const KEY = ['products'] as const;
+
+export function useProducts(query: ProductQuery) {
+  return useQuery({
+    queryKey: [...KEY, query],
+    queryFn: () => http.get<ProductList>('/products', { params: query }),
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function useProductLookups() {
+  return useQuery({
+    queryKey: [...KEY, 'lookups'],
+    queryFn: () => http.get<ProductLookups>('/products/lookups'),
+    staleTime: 60_000,
+  });
+}
+
+export function useCreateProduct() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ProductInput) => http.post<ProductDto>('/products', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export function useUpdateProduct(id: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ProductInput) => http.patch<ProductDto>(`/products/${id}`, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export function useDeleteProduct() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => http.delete(`/products/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export function useImportProducts() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (rows: Record<string, unknown>[]) => http.post<ImportResult>('/products/import', { rows }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export function exportProducts(query: ProductQuery) {
+  const qs = query.search ? `?search=${encodeURIComponent(query.search)}` : '';
+  return downloadFile(`/products/export${qs}`, 'products.xlsx');
+}

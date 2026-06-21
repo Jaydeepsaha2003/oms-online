@@ -4,6 +4,7 @@ import type { TransporterLite } from './customer';
 export interface TransRateDto {
   id: number;
   customerId: number | null;
+  customerCode: string | null;
   customerName: string;
   category: string;
   type: string;

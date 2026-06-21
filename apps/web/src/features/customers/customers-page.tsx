@@ -1,33 +1,19 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  ChevronLeft,
-  ChevronRight,
-  Download,
-  Loader2,
-  Pencil,
-  Plus,
-  Search,
-  Trash2,
-  Upload,
-} from 'lucide-react';
+import { ChevronLeft, ChevronRight, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { CustomerDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { parseExcelFile } from '@/lib/excel';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useColumnOrder } from '@/hooks/use-column-order';
 import { useConfirm } from '@/components/common/confirm';
+import { ColumnSettings } from '@/components/common/column-settings';
+import { DataTable, type DataColumn } from '@/components/common/data-table';
+import { ExportButton, ImportButton } from '@/components/common/excel-actions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import {
   exportCustomers,
   useCustomers,
@@ -35,9 +21,34 @@ import {
   useImportCustomers,
 } from './use-customers';
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 50;
 const num = (n: number | null) => (n == null ? '—' : n.toLocaleString());
 const txt = (s: string | null) => (s && s.trim() !== '' ? s : '—');
+
+/** Every customer column. The most-used ones come first; Code + Customer name
+ * are frozen to the left so identity stays visible while scrolling the wide row. */
+const COLUMNS: DataColumn<CustomerDto>[] = [
+  { id: 'code', label: 'Code', pin: 'left0', fixed: true, cell: (c) => <span className="text-muted-foreground font-mono text-xs">{c.code ?? '—'}</span> },
+  { id: 'name', label: 'Customer name', pin: 'left1', fixed: true, cell: (c) => <span className="font-semibold">{txt(c.partyName)}</span> },
+  { id: 'agent', label: 'Agent', cell: (c) => txt(c.agentName) },
+  { id: 'category', label: 'Category', cell: (c) => txt(c.category) },
+  { id: 'city', label: 'City', cell: (c) => txt(c.city) },
+  { id: 'transport', label: 'Transport', cell: (c) => txt(c.transportName) },
+  { id: 'billingRate', label: 'Billing rate', align: 'right', cell: (c) => num(c.billingRate) },
+  { id: 'creditPeriod', label: 'Credit period', align: 'right', cell: (c) => num(c.creditPeriod) },
+  { id: 'state', label: 'State', cell: (c) => txt(c.state) },
+  { id: 'region', label: 'Region', cell: (c) => txt(c.region) },
+  { id: 'mobile', label: 'Mobile', cell: (c) => txt(c.mobile) },
+  { id: 'email', label: 'Email', cell: (c) => txt(c.email) },
+  { id: 'brand', label: 'Brand', cell: (c) => txt(c.brand) },
+  { id: 'bag', label: 'Bag', cell: (c) => txt(c.bagName) },
+  { id: 'packing', label: 'Packing', align: 'right', cell: (c) => num(c.packing) },
+  { id: 'freight', label: 'Freight', align: 'right', cell: (c) => num(c.freight) },
+  { id: 'boxRate', label: 'Box rate', align: 'right', cell: (c) => num(c.boxRate) },
+  { id: 'billRatePc', label: 'Bill / pc', align: 'right', cell: (c) => num(c.billRatePc) },
+  { id: 'payBy', label: 'Pay by', cell: (c) => txt(c.payBy) },
+  { id: 'partySource', label: 'Party source', cell: (c) => txt(c.partySource) },
+];
 
 export function CustomersPage() {
   const navigate = useNavigate();
@@ -61,7 +72,7 @@ export function CustomersPage() {
   const { data, isLoading, isFetching } = useCustomers(query);
   const del = useDeleteCustomer();
   const importMut = useImportCustomers();
-  const fileRef = useRef<HTMLInputElement>(null);
+  const cols = useColumnOrder('customers', COLUMNS);
 
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
@@ -81,9 +92,7 @@ export function CustomersPage() {
     });
   };
 
-  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleImport = async (file: File) => {
     try {
       const rows = await parseExcelFile(file);
       const res = await importMut.mutateAsync(rows);
@@ -91,8 +100,6 @@ export function CustomersPage() {
       toast.success(`Imported: ${res.created} created, ${res.updated} updated${skipped}`);
     } catch (err) {
       toast.error(getApiErrorMessage(err, 'Import failed'));
-    } finally {
-      if (fileRef.current) fileRef.current.value = '';
     }
   };
 
@@ -108,29 +115,17 @@ export function CustomersPage() {
           <p className="text-muted-foreground text-sm">{total} record{total === 1 ? '' : 's'}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {can('customer:export') && (
-            <Button variant="outline" size="sm" onClick={handleExport}>
-              <Download /> Export
-            </Button>
-          )}
+          <ColumnSettings
+            columns={cols.orderedReorderable}
+            hidden={cols.hidden}
+            onReorder={cols.moveBefore}
+            onMove={cols.move}
+            onToggle={cols.toggle}
+            onReset={cols.reset}
+          />
+          {can('customer:export') && <ExportButton onClick={handleExport} />}
           {can('customer:import') && (
-            <>
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".xlsx,.xls,.csv"
-                className="hidden"
-                onChange={handleImport}
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => fileRef.current?.click()}
-                disabled={importMut.isPending}
-              >
-                {importMut.isPending ? <Loader2 className="animate-spin" /> : <Upload />} Import
-              </Button>
-            </>
+            <ImportButton onFile={handleImport} pending={importMut.isPending} />
           )}
           {can('customer:create') && (
             <Button size="sm" onClick={() => navigate('/customers/new')}>
@@ -150,83 +145,40 @@ export function CustomersPage() {
         />
       </div>
 
-      <div className="rounded-lg border bg-card">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-14">ID</TableHead>
-              <TableHead>Party name</TableHead>
-              <TableHead>Agent</TableHead>
-              <TableHead>Category</TableHead>
-              <TableHead>City</TableHead>
-              <TableHead>State</TableHead>
-              <TableHead>Mobile</TableHead>
-              <TableHead className="text-right">Billing rate</TableHead>
-              <TableHead className="text-right">Credit</TableHead>
-              <TableHead className="w-20 text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <TableRow>
-                <TableCell colSpan={10} className="h-24 text-center text-muted-foreground">
-                  <Loader2 className="mx-auto size-5 animate-spin" />
-                </TableCell>
-              </TableRow>
-            ) : items.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={10} className="h-24 text-center text-muted-foreground">
-                  No customers found.
-                </TableCell>
-              </TableRow>
-            ) : (
-              items.map((c) => (
-                <TableRow
-                  key={c.id}
-                  className="cursor-pointer"
-                  onClick={() => can('customer:update') && navigate(`/customers/${c.id}/edit`)}
-                >
-                  <TableCell className="text-muted-foreground tabular-nums">{c.id}</TableCell>
-                  <TableCell className="font-medium">{txt(c.partyName)}</TableCell>
-                  <TableCell>{txt(c.agentName)}</TableCell>
-                  <TableCell>{txt(c.category)}</TableCell>
-                  <TableCell>{txt(c.city)}</TableCell>
-                  <TableCell>{txt(c.state)}</TableCell>
-                  <TableCell>{txt(c.mobile)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{num(c.billingRate)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{num(c.creditPeriod)}</TableCell>
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <div className="flex justify-end gap-1">
-                      {can('customer:update') && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-8"
-                          onClick={() => navigate(`/customers/${c.id}/edit`)}
-                          aria-label="Edit"
-                        >
-                          <Pencil className="size-4" />
-                        </Button>
-                      )}
-                      {can('customer:delete') && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-8 text-destructive hover:text-destructive"
-                          onClick={() => handleDelete(c)}
-                          aria-label="Delete"
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))
+      <DataTable
+        columns={cols.visibleColumns}
+        rows={items}
+        rowKey={(c) => c.id}
+        isLoading={isLoading}
+        emptyText="No customers found."
+        onRowClick={(c) => can('customer:update') && navigate(`/customers/${c.id}/edit`)}
+        actions={(c) => (
+          <div className="flex justify-end gap-1">
+            {can('customer:update') && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8"
+                onClick={() => navigate(`/customers/${c.id}/edit`)}
+                aria-label="Edit"
+              >
+                <Pencil className="size-4" />
+              </Button>
             )}
-          </TableBody>
-        </Table>
-      </div>
+            {can('customer:delete') && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8 text-destructive hover:text-destructive"
+                onClick={() => handleDelete(c)}
+                aria-label="Delete"
+              >
+                <Trash2 className="size-4" />
+              </Button>
+            )}
+          </div>
+        )}
+      />
 
       <div className="flex items-center justify-between">
         <p className={cn('text-muted-foreground text-sm', isFetching && 'opacity-100')}>

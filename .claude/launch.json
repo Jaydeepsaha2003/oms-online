@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "web",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "-w", "@oms/web"],
+      "runtimeExecutable": "cmd.exe",
+      "runtimeArgs": ["/c", "C:\\Users\\saham\\Documents\\oms-online\\scripts\\preview-web.cmd"],
       "port": 6173,
       "autoPort": false
     }

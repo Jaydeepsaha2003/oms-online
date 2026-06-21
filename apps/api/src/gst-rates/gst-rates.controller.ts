@@ -59,7 +59,12 @@ export class GstRatesController {
   async export(@Query() query: GstRateQueryDto, @Res({ passthrough: true }) res: Response) {
     const rows = await this.gstRates.exportRows(query);
     this.excel.setDownloadHeaders(res, 'customer-gst-rates');
-    return new StreamableFile(this.excel.jsonToBuffer(rows, { sheetName: 'CUSTOMER GST RATE' }));
+    return new StreamableFile(
+      this.excel.jsonToBuffer(rows, {
+        sheetName: 'CUSTOMER GST RATE',
+        headers: this.gstRates.exportHeaders(),
+      }),
+    );
   }
 
   @Post('import')

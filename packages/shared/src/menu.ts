@@ -63,6 +63,13 @@ export const MENU: MenuNode[] = [
         permission: perm(RESOURCES.TRANSPORTER, ACTIONS.VIEW),
       },
       {
+        id: 'agents',
+        label: 'Agents',
+        to: '/agents',
+        icon: 'UserCog',
+        permission: perm(RESOURCES.AGENT, ACTIONS.VIEW),
+      },
+      {
         id: 'gst-rates',
         label: 'GST Rates',
         to: '/gst-rates',
@@ -75,6 +82,34 @@ export const MENU: MenuNode[] = [
         to: '/transport-rates',
         icon: 'Receipt',
         permission: perm(RESOURCES.TRANS_RATE, ACTIONS.VIEW),
+      },
+    ],
+  },
+  {
+    id: 'products-group',
+    label: 'Products',
+    icon: 'Package',
+    children: [
+      {
+        id: 'products',
+        label: 'Products',
+        to: '/products',
+        icon: 'Box',
+        permission: perm(RESOURCES.PRODUCT, ACTIONS.VIEW),
+      },
+      {
+        id: 'designs',
+        label: 'Designs',
+        to: '/designs',
+        icon: 'ShoppingBag',
+        permission: perm(RESOURCES.DESIGN, ACTIONS.VIEW),
+      },
+      {
+        id: 'design-names',
+        label: 'Design Names',
+        to: '/design-names',
+        icon: 'ListTree',
+        permission: perm(RESOURCES.DESIGN_NAME, ACTIONS.VIEW),
       },
     ],
   },
