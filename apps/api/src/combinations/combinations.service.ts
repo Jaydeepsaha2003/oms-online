@@ -3,7 +3,12 @@ import { Prisma } from '@prisma/client';
 import { type CombinationDto, type Paginated } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { uc } from '../common/coerce';
-import { CombinationQueryDto, CreateCombinationDto, UpdateCombinationDto } from './dto/combination.dto';
+import {
+  CombinationQueryDto,
+  CreateCombinationDto,
+  ImportCombinationsDto,
+  UpdateCombinationDto,
+} from './dto/combination.dto';
 
 const INCLUDE = { designLinks: { include: { design: true } } } as const;
 type Row = Prisma.CombinationGetPayload<{ include: typeof INCLUDE }>;
@@ -82,9 +87,10 @@ export class CombinationsService {
     await this.prisma.combination.delete({ where: { id } });
   }
 
-  /** Stable export column order. Cost/Rate are the live sums. */
+  /** Stable export column order. DESIGN CODES is the machine-readable link key
+   * used on re-import; DESIGNS is the human-readable list. Cost/Rate are live sums. */
   exportHeaders(): string[] {
-    return ['CODE', 'NAME', 'DESIGNS', 'COST', 'RATE'];
+    return ['CODE', 'NAME', 'CATEGORY', 'SUB CATEGORY', 'DESIGNS', 'DESIGN CODES', 'COST', 'RATE'];
   }
 
   async exportRows(query: CombinationQueryDto): Promise<Record<string, unknown>[]> {
@@ -92,13 +98,134 @@ export class CombinationsService {
     return items.map((c) => ({
       CODE: c.code ?? '',
       NAME: c.name,
+      CATEGORY: c.category,
+      'SUB CATEGORY': c.subCategory,
       DESIGNS: c.designs.map((d) => d.designType).join(' + '),
+      'DESIGN CODES': c.designs.map((d) => d.code ?? '').join(' + '),
       COST: c.cost,
       RATE: c.rate,
     }));
   }
 
+  /**
+   * Import combinations from spreadsheet rows. A row identifies its component
+   * designs one of two ways:
+   *   1. a `DESIGN CODES` column — design codes separated by + , or ; , or
+   *   2. `CATEGORY` + `SUB CATEGORY` + a `DESIGN TYPE` expression (component
+   *      types joined by + , e.g. "FULL LASER+DL"), resolved within that
+   *      category/sub-category.
+   * Every referenced design must already exist — a row naming a missing design
+   * is rejected (skipped with an error), never silently created. Cost/Rate are
+   * always the live sum of the linked designs (any COST/RATE column is ignored).
+   * A `CODE` (CMB-…) updates that combination in place; otherwise one is created.
+   */
+  async importRows(
+    dto: ImportCombinationsDto,
+  ): Promise<{ total: number; created: number; updated: number; errors: string[] }> {
+    const result = { total: dto.rows.length, created: 0, updated: 0, errors: [] as string[] };
+    for (let i = 0; i < dto.rows.length; i++) {
+      const row = dto.rows[i];
+      const rowNo = i + 2;
+      try {
+        const resolved = await this.resolveRowDesigns(row);
+        if (resolved.error) {
+          result.errors.push(`Row ${rowNo}: ${resolved.error}`);
+          continue;
+        }
+        const { designIds } = resolved;
+        const nameSeed = uc(row['NAME']) ?? uc(row['DESIGN TYPE']) ?? uc(row['DESIGNS']);
+        const name = await this.resolveName(nameSeed, designIds);
+        const code = uc(row['CODE']);
+        const existing = code ? await this.prisma.combination.findUnique({ where: { code } }) : null;
+        if (existing) {
+          await this.prisma.combination.update({
+            where: { id: existing.id },
+            data: { name, designLinks: { deleteMany: {}, create: designIds.map((designId) => ({ designId })) } },
+          });
+          result.updated++;
+        } else {
+          const created = await this.prisma.combination.create({
+            data: { name, designLinks: { create: designIds.map((designId) => ({ designId })) } },
+            include: INCLUDE,
+          });
+          await this.ensureCode(created);
+          result.created++;
+        }
+      } catch (err) {
+        result.errors.push(`Row ${rowNo}: ${(err as Error).message}`);
+      }
+    }
+    return result;
+  }
+
   // ── helpers ────────────────────────────────────────────────────────────────
+
+  /**
+   * Resolve all the component designs for one import row, by codes when a
+   * `DESIGN CODES` column is given, otherwise by category + sub-category + a
+   * `+`-joined design-type expression. Returns an `error` string if any
+   * referenced design is missing (the row must then be skipped).
+   */
+  private async resolveRowDesigns(
+    row: Record<string, unknown>,
+  ): Promise<{ designIds: number[]; error?: string }> {
+    const ids: number[] = [];
+    const bad: string[] = [];
+    const codesRaw = String(row['DESIGN CODES'] ?? row['DESIGN_CODES'] ?? '').trim();
+
+    if (codesRaw) {
+      // Mode 1: explicit design codes (or unique design types).
+      const tokens = codesRaw.split(/[\s,;+/]+/).filter(Boolean);
+      for (const tok of tokens) {
+        const ref = await this.resolveDesignRef(tok);
+        if (ref.id != null) ids.push(ref.id);
+        else bad.push(ref.error as string);
+      }
+    } else {
+      // Mode 2: category + sub-category + "TYPE+TYPE" expression.
+      const category = uc(row['CATEGORY']);
+      const subCategory = uc(row['SUB CATEGORY']);
+      const expr = uc(row['DESIGN TYPE']) ?? uc(row['DESIGNS']) ?? uc(row['NAME']);
+      if (!category || !subCategory || !expr) {
+        return {
+          designIds: [],
+          error: 'needs a DESIGN CODES column, or CATEGORY + SUB CATEGORY + DESIGN TYPE. Skipped.',
+        };
+      }
+      const components = expr
+        .split(/[+,;]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      for (const comp of components) {
+        const d = await this.prisma.design.findFirst({
+          where: { category, subCategory, designType: comp },
+          select: { id: true },
+        });
+        if (d) ids.push(d.id);
+        else bad.push(`"${comp}" (no such design in ${category} / ${subCategory})`);
+      }
+    }
+
+    if (ids.length === 0 && bad.length === 0) return { designIds: [], error: 'no designs listed. Skipped.' };
+    if (bad.length) return { designIds: [], error: `design(s) not found: ${bad.join('; ')}. Skipped.` };
+    return { designIds: [...new Set(ids)] };
+  }
+
+  /** Resolve one design reference (a DSG code, or a unique design type) to its id. */
+  private async resolveDesignRef(token: string): Promise<{ id?: number; error?: string }> {
+    const up = token.toUpperCase();
+    const byCode = await this.prisma.design.findUnique({ where: { code: up }, select: { id: true } });
+    if (byCode) return { id: byCode.id };
+    if (/^DSG-\d+$/.test(up)) return { error: `${up} (no such design code)` };
+    const byType = await this.prisma.design.findMany({
+      where: { designType: up },
+      select: { id: true },
+      take: 2,
+    });
+    if (byType.length === 1) return { id: byType[0].id };
+    if (byType.length === 0) return { error: `${token} (not found)` };
+    return { error: `${token} (matches several designs — use the DSG code)` };
+  }
 
   private async resolveDesignIds(ids: number[]): Promise<number[]> {
     const unique = [...new Set(ids)];
@@ -152,10 +279,13 @@ export class CombinationsService {
     const designs = row.designLinks.map((l) => l.design);
     const cost = designs.reduce((sum, d) => sum + (d.cost ?? 0), 0);
     const rate = designs.reduce((sum, d) => sum + (d.rate ?? 0), 0);
+    const distinct = (vals: string[]) => [...new Set(vals.filter(Boolean))].join(', ');
     return {
       id: row.id,
       code: row.code ?? this.codeFor(row.id),
       name: row.name,
+      category: distinct(designs.map((d) => d.category)),
+      subCategory: distinct(designs.map((d) => d.subCategory)),
       designs: designs.map((d) => ({
         id: d.id,
         code: d.code,

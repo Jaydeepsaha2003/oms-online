@@ -24,6 +24,13 @@ export interface TransRateInput {
   rate?: number | null;
 }
 
+/** Save many category×type rates for one customer in a single call (the grid editor).
+ *  Upsert key here = customer + category + type (transporter/rate are updated). */
+export interface TransRateBulkInput {
+  customerName: string;
+  rates: { category: string; type: string; transportName?: string | null; rate: number | null }[];
+}
+
 export interface TransRateQuery extends PaginationQuery {
   customerName?: string;
 }

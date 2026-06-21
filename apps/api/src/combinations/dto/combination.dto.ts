@@ -17,3 +17,8 @@ export class CreateCombinationDto {
 export class UpdateCombinationDto extends PartialType(CreateCombinationDto) {}
 
 export class CombinationQueryDto extends PaginationDto {}
+
+export class ImportCombinationsDto {
+  @IsArray()
+  rows!: Record<string, unknown>[];
+}

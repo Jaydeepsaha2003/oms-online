@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import type { DesignNameDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { parseExcelFile } from '@/lib/excel';
-import { formatDateTime } from '@/lib/utils';
+import { formatDateShort, formatDateTime } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/common/confirm';
 import { ExportButton, ImportButton } from '@/components/common/excel-actions';
@@ -136,8 +136,8 @@ export function DesignNamesPage() {
                 >
                   <TableCell className="font-medium">{d.designType}</TableCell>
                   <TableCell>{d.designName}</TableCell>
-                  <TableCell className="text-muted-foreground whitespace-nowrap text-sm">
-                    {formatDateTime(d.updatedAt)}
+                  <TableCell className="text-muted-foreground whitespace-nowrap font-mono text-xs" title={formatDateTime(d.updatedAt)}>
+                    {formatDateShort(d.updatedAt)}
                   </TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <div className="flex justify-end gap-1">

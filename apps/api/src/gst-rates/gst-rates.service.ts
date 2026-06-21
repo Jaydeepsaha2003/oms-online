@@ -75,23 +75,24 @@ export class GstRatesService {
   }
 
   async lookups(): Promise<GstRateLookups> {
-    const [customers, gstCats, custCats] = await Promise.all([
+    const [customers, prodCats, gstCats] = await Promise.all([
       this.prisma.customer.findMany({
         where: { partyName: { not: null } },
         select: { partyName: true },
         distinct: ['partyName'],
         orderBy: { partyName: 'asc' },
       }),
-      this.prisma.gstRate.findMany({ select: { category: true }, distinct: ['category'], orderBy: { category: 'asc' } }),
-      this.prisma.customer.findMany({
-        where: { category: { not: null } },
+      // Category here = PRODUCT category (rates can change per product category).
+      this.prisma.product.findMany({
+        where: { category: { not: '' } },
         select: { category: true },
         distinct: ['category'],
         orderBy: { category: 'asc' },
       }),
+      this.prisma.gstRate.findMany({ select: { category: true }, distinct: ['category'], orderBy: { category: 'asc' } }),
     ]);
     const categories = Array.from(
-      new Set([...gstCats.map((c) => c.category), ...custCats.map((c) => c.category!)].filter(Boolean)),
+      new Set([...prodCats.map((c) => c.category), ...gstCats.map((c) => c.category)].filter(Boolean)),
     ).sort();
     return {
       customers: customers.map((c) => c.partyName!).filter(Boolean),

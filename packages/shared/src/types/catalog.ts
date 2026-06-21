@@ -75,6 +75,9 @@ export interface CombinationDto {
   code: string | null;
   /** Auto-built from the component design types (e.g. "DL + LOGO"); editable. */
   name: string;
+  /** Distinct category / sub-category of the component designs (comma-joined when mixed). */
+  category: string;
+  subCategory: string;
   designs: CombinationDesignLite[];
   /** Live sum of the component designs' cost / rate. */
   cost: number;
@@ -91,6 +94,12 @@ export interface CombinationInput {
 
 /** Existing distinct values to populate the product form's category dropdowns. */
 export interface ProductLookups {
+  categories: string[];
+  subCategories: string[];
+}
+
+/** Existing distinct values to populate the design form's category dropdowns. */
+export interface DesignLookups {
   categories: string[];
   subCategories: string[];
 }

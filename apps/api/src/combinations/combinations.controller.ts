@@ -18,7 +18,12 @@ import { Audit } from '../common/decorators/audit.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { ExcelService } from '../excel/excel.service';
 import { CombinationsService } from './combinations.service';
-import { CombinationQueryDto, CreateCombinationDto, UpdateCombinationDto } from './dto/combination.dto';
+import {
+  CombinationQueryDto,
+  CreateCombinationDto,
+  ImportCombinationsDto,
+  UpdateCombinationDto,
+} from './dto/combination.dto';
 
 const R = RESOURCES.COMBINATION;
 
@@ -49,6 +54,13 @@ export class CombinationsController {
         headers: this.combinations.exportHeaders(),
       }),
     );
+  }
+
+  @Post('import')
+  @Permissions(perm(R, ACTIONS.IMPORT))
+  @Audit({ action: ACTIONS.IMPORT, resource: R, description: 'Imported combinations' })
+  import(@Body() dto: ImportCombinationsDto) {
+    return this.combinations.importRows(dto);
   }
 
   @Get(':id')

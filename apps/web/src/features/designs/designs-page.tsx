@@ -1,12 +1,33 @@
-import { useMemo, useState } from 'react';
-import { Check, ChevronLeft, ChevronRight, Layers, Loader2, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { useMemo, useState, type ReactNode } from 'react';
+import {
+  ArrowDown,
+  ArrowUp,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsUpDown,
+  IndianRupee,
+  Layers,
+  Loader2,
+  Minus,
+  Pencil,
+  Plus,
+  Search,
+  Shapes,
+  Trash2,
+  TrendingUp,
+  X,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import type { CombinationDto, DesignDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { parseExcelFile } from '@/lib/excel';
-import { cn, formatDateTime } from '@/lib/utils';
+import { cn, formatDateShort, formatDateTime } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useColumnOrder } from '@/hooks/use-column-order';
 import { useConfirm } from '@/components/common/confirm';
+import { Combo } from '@/components/common/combo';
+import { ColumnSettings } from '@/components/common/column-settings';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { ExportButton, ImportButton } from '@/components/common/excel-actions';
 import { Button } from '@/components/ui/button';
@@ -17,6 +38,7 @@ import {
   exportDesigns,
   useCreateDesign,
   useDeleteDesign,
+  useDesignLookups,
   useDesigns,
   useImportDesigns,
   useUpdateDesign,
@@ -26,10 +48,33 @@ import {
   useCombinations,
   useCreateCombination,
   useDeleteCombination,
+  useImportCombinations,
 } from '../combinations/use-combinations';
 
 const PAGE_SIZE = 50;
 const num = (n: number | null) => (n == null ? '—' : n.toLocaleString());
+/** Amount prefixed with the rupee symbol; dash when unknown. */
+const money = (n: number | null) => (n == null ? '—' : `₹${n.toLocaleString()}`);
+/** Right-aligned header label with a static ▲▼ glyph after it. */
+const costHeader = (
+  <span className="inline-flex items-center gap-1">
+    Cost <ChevronsUpDown className="size-3 opacity-60" />
+  </span>
+);
+
+/** Margin = rate − cost; up/green for profit, down/red for loss, dash when unknown. */
+const marginCell = (cost: number | null, rate: number | null) => {
+  if (cost == null || rate == null) return <span className="text-muted-foreground">—</span>;
+  const m = rate - cost;
+  const Icon = m > 0 ? ArrowUp : m < 0 ? ArrowDown : Minus;
+  const tone = m > 0 ? 'text-emerald-600' : m < 0 ? 'text-destructive' : 'text-muted-foreground';
+  return (
+    <span className={cn('inline-flex items-center justify-end gap-1 font-medium tabular-nums', tone)}>
+      ₹{m.toLocaleString()}
+      <Icon className="size-3.5 shrink-0" />
+    </span>
+  );
+};
 
 export function DesignsPage() {
   const { can } = usePermissions();
@@ -63,6 +108,7 @@ export function DesignsPage() {
   // ── Combinations (bottom) ──────────────────────────────────────────────────
   const { data: comboData, isLoading: combosLoading } = useCombinations({ page: 1, pageSize: 200 });
   const delCombo = useDeleteCombination();
+  const importComboMut = useImportCombinations();
   const combos = comboData?.items ?? [];
 
   const handleDelete = async (d: DesignDto) => {
@@ -111,11 +157,25 @@ export function DesignsPage() {
     }
   };
 
+  const handleImportCombo = async (file: File) => {
+    try {
+      const rows = await parseExcelFile(file);
+      const res = await importComboMut.mutateAsync(rows);
+      const skipped = res.errors.length ? `, ${res.errors.length} skipped` : '';
+      toast.success(`Imported: ${res.created} created, ${res.updated} updated${skipped}`);
+      // Surface why rows were rejected (e.g. a design code that doesn't exist).
+      if (res.errors.length) toast.warning(res.errors[0], { description: res.errors.length > 1 ? `+${res.errors.length - 1} more` : undefined });
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, 'Import failed'));
+    }
+  };
+
   const designColumns = useMemo<DataColumn<DesignDto>[]>(
     () => [
       {
         id: 'sel',
         label: '',
+        fixed: true,
         cell: (d) => (
           <span
             className={cn(
@@ -131,36 +191,35 @@ export function DesignsPage() {
       { id: 'category', label: 'Category', cell: (d) => d.category },
       { id: 'subCategory', label: 'Sub category', cell: (d) => d.subCategory },
       { id: 'designType', label: 'Design type', cell: (d) => <span className="font-medium">{d.designType}</span> },
-      { id: 'cost', label: 'Cost', align: 'right', cell: (d) => num(d.cost) },
-      { id: 'rate', label: 'Rate', align: 'right', cell: (d) => num(d.rate) },
+      { id: 'cost', label: 'Cost', header: costHeader, align: 'right', cell: (d) => money(d.cost) },
+      { id: 'rate', label: 'Rate', align: 'right', cell: (d) => money(d.rate) },
+      { id: 'margin', label: 'Margin', align: 'right', cell: (d) => marginCell(d.cost, d.rate) },
     ],
     [selected],
   );
 
-  const comboColumns: DataColumn<CombinationDto>[] = [
-    { id: 'code', label: 'Code', cell: (c) => <span className="text-muted-foreground font-mono text-xs">{c.code ?? '—'}</span> },
-    { id: 'name', label: 'Combination', cell: (c) => <span className="font-medium">{c.name}</span> },
-    {
-      id: 'designs',
-      label: 'Designs',
-      cell: (c) => (
-        <div className="flex flex-wrap gap-1">
-          {c.designs.map((d) => (
-            <span key={d.id} className="bg-muted rounded px-1.5 py-0.5 text-xs">
-              {d.designType}
-            </span>
-          ))}
-        </div>
-      ),
-    },
-    { id: 'cost', label: 'Cost', align: 'right', cell: (c) => <span className="font-semibold tabular-nums">{num(c.cost)}</span> },
-    { id: 'rate', label: 'Rate', align: 'right', cell: (c) => num(c.rate) },
+  const comboColumns = useMemo<DataColumn<CombinationDto>[]>(
+    () => [
+    { id: 'code', label: 'Code', fixed: true, cell: (c) => <span className="text-muted-foreground font-mono text-xs">{c.code ?? '—'}</span> },
+    { id: 'category', label: 'Category', cell: (c) => c.category || '—' },
+    { id: 'subCategory', label: 'Sub category', cell: (c) => c.subCategory || '—' },
+    { id: 'name', label: 'Design type', cell: (c) => <span className="font-medium">{c.name}</span> },
+    { id: 'cost', label: 'Cost', header: costHeader, align: 'right', cell: (c) => <span className="font-semibold tabular-nums">{money(c.cost)}</span> },
+    { id: 'rate', label: 'Rate', align: 'right', cell: (c) => money(c.rate) },
+    { id: 'margin', label: 'Margin', align: 'right', cell: (c) => marginCell(c.cost, c.rate) },
     {
       id: 'updated',
       label: 'Last updated',
-      cell: (c) => <span className="text-muted-foreground whitespace-nowrap text-sm">{formatDateTime(c.updatedAt)}</span>,
+      cell: (c) => <span className="text-muted-foreground whitespace-nowrap font-mono text-xs" title={formatDateTime(c.updatedAt)}>{formatDateShort(c.updatedAt)}</span>,
     },
-  ];
+    ],
+    [],
+  );
+
+  // Fresh keys (the merged page has a different column set than the old standalone
+  // Designs/Combinations pages, whose saved order would otherwise scramble these).
+  const designCols = useColumnOrder('designs-merged', designColumns);
+  const comboCols = useColumnOrder('combinations-merged-v2', comboColumns);
 
   return (
     <div className="space-y-4">
@@ -174,6 +233,14 @@ export function DesignsPage() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <ColumnSettings
+              columns={designCols.orderedReorderable}
+              hidden={designCols.hidden}
+              onReorder={designCols.moveBefore}
+              onMove={designCols.move}
+              onToggle={designCols.toggle}
+              onReset={designCols.reset}
+            />
             {can('design:export') && <ExportButton onClick={() => exportDesigns(query)} />}
             {can('design:import') && <ImportButton onFile={handleImport} pending={importMut.isPending} />}
             {can('design:create') && (
@@ -215,7 +282,7 @@ export function DesignsPage() {
 
         <DataTable
           maxBodyHeight="max-h-[40vh]"
-          columns={designColumns}
+          columns={designCols.visibleColumns}
           rows={items}
           rowKey={(d) => d.id}
           isLoading={isLoading}
@@ -274,14 +341,27 @@ export function DesignsPage() {
               {comboData?.total ?? 0} combinations · cost = live sum of the linked designs
             </p>
           </div>
-          {can('combination:export') && combos.length > 0 && (
-            <ExportButton onClick={() => exportCombinations({ page: 1, pageSize: 200 })} />
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <ColumnSettings
+              columns={comboCols.orderedReorderable}
+              hidden={comboCols.hidden}
+              onReorder={comboCols.moveBefore}
+              onMove={comboCols.move}
+              onToggle={comboCols.toggle}
+              onReset={comboCols.reset}
+            />
+            {can('combination:export') && combos.length > 0 && (
+              <ExportButton onClick={() => exportCombinations({ page: 1, pageSize: 200 })} />
+            )}
+            {can('combination:import') && (
+              <ImportButton onFile={handleImportCombo} pending={importComboMut.isPending} />
+            )}
+          </div>
         </div>
 
         <DataTable
           maxBodyHeight="max-h-[26vh]"
-          columns={comboColumns}
+          columns={comboCols.visibleColumns}
           rows={combos}
           rowKey={(c) => c.id}
           isLoading={combosLoading}
@@ -327,10 +407,53 @@ export function DesignsPage() {
   );
 }
 
+/** A compact labelled field: small uppercase label tight above its control. */
+function Field({
+  label,
+  required,
+  hint,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  hint?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-muted-foreground flex items-center gap-1 text-[11px] font-medium tracking-wide uppercase">
+        {label}
+        {required && <span className="text-primary">*</span>}
+        {hint && <span className="text-muted-foreground/70 normal-case">· {hint}</span>}
+      </Label>
+      {children}
+    </div>
+  );
+}
+
+/** Number input with a leading ₹ adornment. */
+function MoneyInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="relative">
+      <IndianRupee className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2" />
+      <Input
+        type="number"
+        step="any"
+        inputMode="decimal"
+        className="pl-8 tabular-nums"
+        placeholder="0"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </div>
+  );
+}
+
 function DesignDialog({ design, onClose }: { design: DesignDto | null; onClose: () => void }) {
   const isEdit = !!design;
   const create = useCreateDesign();
   const update = useUpdateDesign(design?.id ?? 0);
+  const { data: lookups } = useDesignLookups();
   const saving = create.isPending || update.isPending;
 
   const [form, setForm] = useState({
@@ -342,6 +465,12 @@ function DesignDialog({ design, onClose }: { design: DesignDto | null; onClose: 
   });
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const numOrNull = (v: string) => (v.trim() === '' || Number.isNaN(Number(v)) ? null : Number(v));
+
+  // Live margin readout — only meaningful once both cost and rate are entered.
+  const costN = numOrNull(form.cost);
+  const rateN = numOrNull(form.rate);
+  const margin = costN != null && rateN != null ? rateN - costN : null;
+  const marginPct = margin != null && rateN ? (margin / rateN) * 100 : null;
 
   const submit = () => {
     if (!form.category.trim() || !form.subCategory.trim() || !form.designType.trim()) {
@@ -367,48 +496,95 @@ function DesignDialog({ design, onClose }: { design: DesignDto | null; onClose: 
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{isEdit ? `Edit design ${design!.code ?? `#${design!.id}`}` : 'New design'}</DialogTitle>
+      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-md">
+        {/* Header band */}
+        <DialogHeader className="border-b bg-muted/40 px-5 py-3.5 text-left">
+          <div className="flex items-center gap-3">
+            <div className="bg-primary/10 text-primary ring-primary/15 flex size-9 items-center justify-center rounded-lg ring-1">
+              <Shapes className="size-5" />
+            </div>
+            <div className="min-w-0">
+              <DialogTitle className="text-base leading-tight">{isEdit ? 'Edit design' : 'New design'}</DialogTitle>
+              <p className="text-muted-foreground truncate text-xs">
+                {isEdit ? (
+                  <>
+                    Code <span className="text-foreground font-medium">{design!.code ?? `#${design!.id}`}</span> · update
+                    its details
+                  </>
+                ) : (
+                  'Classify the design and set its pricing'
+                )}
+              </p>
+            </div>
+          </div>
         </DialogHeader>
+
         <form
-          className="grid gap-4 [&_input]:uppercase [&_input::placeholder]:normal-case"
+          className="grid gap-3.5 px-5 py-4 [&_input]:uppercase [&_input::placeholder]:normal-case"
           onSubmit={(e) => {
             e.preventDefault();
             submit();
           }}
         >
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label>Category *</Label>
-              <Input value={form.category} onChange={(e) => set('category', e.target.value)} autoFocus />
-            </div>
-            <div className="space-y-2">
-              <Label>Sub category *</Label>
-              <Input value={form.subCategory} onChange={(e) => set('subCategory', e.target.value)} />
-            </div>
+            <Field label="Category" required>
+              <Combo
+                value={form.category}
+                onChange={(v) => set('category', v)}
+                options={lookups?.categories ?? []}
+                placeholder="Select or add…"
+              />
+            </Field>
+            <Field label="Sub category" required>
+              <Combo
+                value={form.subCategory}
+                onChange={(v) => set('subCategory', v)}
+                options={lookups?.subCategories ?? []}
+                placeholder="Select or add…"
+              />
+            </Field>
           </div>
-          <div className="space-y-2">
-            <Label>Design type *</Label>
-            <Input value={form.designType} onChange={(e) => set('designType', e.target.value)} />
-          </div>
+
+          <Field label="Design type" required>
+            <Input value={form.designType} onChange={(e) => set('designType', e.target.value)} autoFocus />
+          </Field>
+
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label>Cost</Label>
-              <Input type="number" step="any" value={form.cost} onChange={(e) => set('cost', e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label>Rate</Label>
-              <Input type="number" step="any" value={form.rate} onChange={(e) => set('rate', e.target.value)} />
-            </div>
+            <Field label="Cost">
+              <MoneyInput value={form.cost} onChange={(v) => set('cost', v)} />
+            </Field>
+            <Field label="Rate">
+              <MoneyInput value={form.rate} onChange={(v) => set('rate', v)} />
+            </Field>
           </div>
-          <DialogFooter>
+
+          {/* Live margin strip — appears only once both cost and rate are set. */}
+          {margin != null && (
+            <div className="flex items-center justify-between rounded-lg border bg-card px-3 py-2">
+              <span className="text-muted-foreground flex items-center gap-1.5 text-xs font-medium">
+                <TrendingUp className="size-3.5" /> Margin (rate − cost)
+              </span>
+              <span
+                className={cn(
+                  'text-sm font-semibold tabular-nums',
+                  margin < 0 ? 'text-destructive' : 'text-emerald-600',
+                )}
+              >
+                ₹{margin.toLocaleString()}
+                {marginPct != null && (
+                  <span className="text-muted-foreground ml-1 text-xs font-normal">({marginPct.toFixed(1)}%)</span>
+                )}
+              </span>
+            </div>
+          )}
+
+          <DialogFooter className="mt-1 gap-2">
             <Button type="button" variant="outline" onClick={onClose}>
               Cancel
             </Button>
             <Button type="submit" disabled={saving}>
-              {saving ? <Loader2 className="animate-spin" /> : null}
-              {isEdit ? 'Save' : 'Create'}
+              {saving ? <Loader2 className="animate-spin" /> : <Check className="size-4" />}
+              {isEdit ? 'Save changes' : 'Create design'}
             </Button>
           </DialogFooter>
         </form>

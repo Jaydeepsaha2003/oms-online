@@ -29,6 +29,16 @@ export class UpsertTransRateDto {
   rate?: number;
 }
 
+export class BulkTransRateDto {
+  @IsString()
+  @MinLength(1)
+  customerName!: string;
+
+  /** [{ category, type, transportName?, rate }] — coerced in the service. */
+  @IsArray()
+  rates!: { category: string; type: string; transportName?: string | null; rate: number | null }[];
+}
+
 export class TransRateQueryDto extends PaginationDto {
   @IsOptional()
   @IsString()

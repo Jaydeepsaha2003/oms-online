@@ -1,6 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { type DesignDto, type Paginated } from '@oms/shared';
+import { type DesignDto, type DesignLookups, type Paginated } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { toNum, uc } from '../common/coerce';
 import { CreateDesignDto, DesignQueryDto, ImportDesignsDto, UpdateDesignDto } from './dto/design.dto';
@@ -44,6 +44,28 @@ export class DesignsService {
     const row = await this.prisma.design.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('Design not found.');
     return this.toDto(row);
+  }
+
+  /** Distinct existing categories & sub-categories for the form's dropdowns. */
+  async lookups(): Promise<DesignLookups> {
+    const [cats, subs] = await Promise.all([
+      this.prisma.design.findMany({
+        where: { category: { not: '' } },
+        select: { category: true },
+        distinct: ['category'],
+        orderBy: { category: 'asc' },
+      }),
+      this.prisma.design.findMany({
+        where: { subCategory: { not: '' } },
+        select: { subCategory: true },
+        distinct: ['subCategory'],
+        orderBy: { subCategory: 'asc' },
+      }),
+    ]);
+    return {
+      categories: cats.map((c) => c.category).filter(Boolean),
+      subCategories: subs.map((s) => s.subCategory).filter(Boolean),
+    };
   }
 
   async create(dto: CreateDesignDto): Promise<DesignDto> {
@@ -103,7 +125,16 @@ export class DesignsService {
           continue;
         }
         const data = { category, subCategory, designType, cost: toNum(row['COST']), rate: toNum(row['RATE']) };
-        const existing = await this.prisma.design.findFirst({ where: { category, subCategory, designType } });
+        // Match an existing design so the update keeps its id — and therefore every
+        // combination link (and its code) — intact. Prefer the stable ID/CODE from an
+        // exported sheet, then fall back to the category + sub + type identity.
+        const id = toNum(row['ID']);
+        const code = uc(row['CODE']);
+        let existing = id != null ? await this.prisma.design.findUnique({ where: { id } }) : null;
+        if (!existing && code) existing = await this.prisma.design.findUnique({ where: { code } });
+        if (!existing) {
+          existing = await this.prisma.design.findFirst({ where: { category, subCategory, designType } });
+        }
         if (existing) {
           await this.prisma.design.update({ where: { id: existing.id }, data });
           result.updated++;

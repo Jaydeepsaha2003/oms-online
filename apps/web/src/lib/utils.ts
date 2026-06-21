@@ -24,3 +24,17 @@ export function formatDateTime(value: string | Date | null | undefined): string 
     minute: '2-digit',
   });
 }
+
+/** Compact date + time without the year, e.g. "20 Jun, 09:10 PM". For table cells;
+ *  pair with {@link formatDateTime} in a tooltip/form to show the full date. */
+export function formatDateShort(value: string | Date | null | undefined): string {
+  if (!value) return '—';
+  const d = typeof value === 'string' ? new Date(value) : value;
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString(undefined, {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}

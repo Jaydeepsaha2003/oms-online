@@ -14,6 +14,8 @@ import {
 export interface DataColumn<T> {
   id: string;
   label: string;
+  /** Optional custom header content (e.g. label + an icon); falls back to `label`. */
+  header?: ReactNode;
   align?: 'right';
   /** Freeze this column to the left: 'left0' is the first frozen column, 'left1'
    *  the next (offset by the first column's 7rem min-width). */
@@ -110,7 +112,7 @@ export function DataTable<T>({
                   pinHead(col.pin, stickyTop),
                 )}
               >
-                {col.label}
+                {col.header ?? col.label}
               </TableHead>
             ))}
             {actions && (

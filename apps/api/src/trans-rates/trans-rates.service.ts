@@ -3,7 +3,12 @@ import { Prisma } from '@prisma/client';
 import { type Paginated, type TransRateDto, type TransRateLookups } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { toInt, toStr, uc } from '../common/coerce';
-import { ImportTransRatesDto, TransRateQueryDto, UpsertTransRateDto } from './dto/trans-rate.dto';
+import {
+  BulkTransRateDto,
+  ImportTransRatesDto,
+  TransRateQueryDto,
+  UpsertTransRateDto,
+} from './dto/trans-rate.dto';
 
 type Row = Prisma.TransRateGetPayload<object>;
 
@@ -57,6 +62,43 @@ export class TransRatesService {
     return this.toDto(await this.upsert(dto));
   }
 
+  /**
+   * Save a whole category×type grid for one customer. Each row is upserted by
+   * (customerName, category, type) — so editing a row's transporter/rate updates
+   * the same record instead of leaving an orphan. Rows with a blank category/type
+   * are skipped.
+   */
+  async bulkUpsert(dto: BulkTransRateDto): Promise<{ saved: number }> {
+    const customerName = uc(dto.customerName)!;
+    if (!customerName) return { saved: 0 };
+    const customer = await this.prisma.customer.findFirst({ where: { partyName: customerName } });
+    const customerId = customer?.id ?? null;
+    const customerCode = customer?.code ?? null;
+    let saved = 0;
+    for (const r of dto.rates ?? []) {
+      const category = uc(r.category);
+      const type = uc(r.type);
+      if (!category || !type) continue;
+      const rate = toInt(r.rate);
+      const transporter = await this.resolveTransporter(r.transportName ?? null);
+      const transporterId = transporter?.id ?? null;
+      const transportName = transporter?.name ?? null;
+      const existing = await this.prisma.transRate.findFirst({ where: { customerName, category, type } });
+      if (existing) {
+        await this.prisma.transRate.update({
+          where: { id: existing.id },
+          data: { customerId, customerCode, transporterId, transportName, rate },
+        });
+      } else {
+        await this.prisma.transRate.create({
+          data: { customerId, customerCode, customerName, category, type, transporterId, transportName, rate },
+        });
+      }
+      saved++;
+    }
+    return { saved };
+  }
+
   async remove(id: number): Promise<void> {
     const c = await this.prisma.transRate.count({ where: { id } });
     if (!c) throw new NotFoundException('Transport rate not found.');
@@ -64,19 +106,21 @@ export class TransRatesService {
   }
 
   async lookups(): Promise<TransRateLookups> {
-    const [customers, trCats, custCats, types, transporters] = await Promise.all([
+    const [customers, prodCats, trCats, types, transporters] = await Promise.all([
       this.prisma.customer.findMany({
         where: { partyName: { not: null } },
         select: { partyName: true },
         distinct: ['partyName'],
         orderBy: { partyName: 'asc' },
       }),
-      this.prisma.transRate.findMany({ select: { category: true }, distinct: ['category'] }),
-      this.prisma.customer.findMany({
-        where: { category: { not: null } },
+      // Category here = PRODUCT category (transport rate can change per product category).
+      this.prisma.product.findMany({
+        where: { category: { not: '' } },
         select: { category: true },
         distinct: ['category'],
+        orderBy: { category: 'asc' },
       }),
+      this.prisma.transRate.findMany({ select: { category: true }, distinct: ['category'] }),
       this.prisma.transRate.findMany({
         where: { type: { not: '' } },
         select: { type: true },
@@ -86,7 +130,7 @@ export class TransRatesService {
       this.prisma.transporter.findMany({ orderBy: { name: 'asc' } }),
     ]);
     const categories = Array.from(
-      new Set([...trCats.map((c) => c.category), ...custCats.map((c) => c.category!)].filter(Boolean)),
+      new Set([...prodCats.map((c) => c.category), ...trCats.map((c) => c.category)].filter(Boolean)),
     ).sort();
     return {
       customers: customers.map((c) => c.partyName!).filter(Boolean),

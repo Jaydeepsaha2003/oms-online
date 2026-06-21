@@ -17,7 +17,12 @@ import { Audit } from '../common/decorators/audit.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { ExcelService } from '../excel/excel.service';
 import { TransRatesService } from './trans-rates.service';
-import { ImportTransRatesDto, TransRateQueryDto, UpsertTransRateDto } from './dto/trans-rate.dto';
+import {
+  BulkTransRateDto,
+  ImportTransRatesDto,
+  TransRateQueryDto,
+  UpsertTransRateDto,
+} from './dto/trans-rate.dto';
 
 const R = RESOURCES.TRANS_RATE;
 
@@ -74,6 +79,13 @@ export class TransRatesController {
   @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Upserted a transport rate' })
   upsert(@Body() dto: UpsertTransRateDto) {
     return this.transRates.upsertOne(dto);
+  }
+
+  @Post('bulk')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Bulk-saved transport rates' })
+  bulk(@Body() dto: BulkTransRateDto) {
+    return this.transRates.bulkUpsert(dto);
   }
 
   @Delete(':id')

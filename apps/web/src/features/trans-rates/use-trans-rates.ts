@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { TransRateDto, TransRateInput, TransRateLookups } from '@oms/shared';
+import type { TransRateBulkInput, TransRateDto, TransRateInput, TransRateLookups } from '@oms/shared';
 import { downloadFile, http } from '@/lib/api';
 
 export interface ImportResult {
@@ -31,6 +31,14 @@ export function useUpsertTransRate() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: TransRateInput) => http.post<TransRateDto>('/transport-rates', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export function useBulkTransRates() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: TransRateBulkInput) => http.post<{ saved: number }>('/transport-rates/bulk', input),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }

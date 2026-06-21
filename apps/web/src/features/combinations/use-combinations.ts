@@ -2,6 +2,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CombinationDto, CombinationInput, CombinationList, CombinationQuery } from '@oms/shared';
 import { downloadFile, http } from '@/lib/api';
 
+export interface ImportResult {
+  total: number;
+  created: number;
+  updated: number;
+  errors: string[];
+}
+
 const KEY = ['combinations'] as const;
 
 export function useCombinations(query: CombinationQuery) {
@@ -32,6 +39,14 @@ export function useDeleteCombination() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => http.delete(`/combinations/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export function useImportCombinations() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (rows: Record<string, unknown>[]) => http.post<ImportResult>('/combinations/import', { rows }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }

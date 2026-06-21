@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { DesignDto, DesignInput, DesignList, DesignQuery } from '@oms/shared';
+import type { DesignDto, DesignInput, DesignList, DesignLookups, DesignQuery } from '@oms/shared';
 import { downloadFile, http } from '@/lib/api';
 
 export interface ImportResult {
@@ -23,6 +23,14 @@ export function useDesigns(query: DesignQuery) {
     queryKey: [...KEY, query],
     queryFn: () => http.get<DesignList>('/designs', { params: query }),
     placeholderData: (prev) => prev,
+  });
+}
+
+export function useDesignLookups() {
+  return useQuery({
+    queryKey: [...KEY, 'lookups'],
+    queryFn: () => http.get<DesignLookups>('/designs/lookups'),
+    staleTime: 60_000,
   });
 }
 
@@ -54,7 +62,7 @@ export function useImportDesigns() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (rows: Record<string, unknown>[]) => http.post<ImportResult>('/designs/import', { rows }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateDesignsAndCombos(qc),
   });
 }
 

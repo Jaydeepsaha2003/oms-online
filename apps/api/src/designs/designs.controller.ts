@@ -55,6 +55,12 @@ export class DesignsController {
     return this.designs.importRows(dto);
   }
 
+  @Get('lookups')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  lookups() {
+    return this.designs.lookups();
+  }
+
   @Get(':id')
   @Permissions(perm(R, ACTIONS.VIEW))
   get(@Param('id', ParseIntPipe) id: number) {

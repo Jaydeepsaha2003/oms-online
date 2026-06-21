@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import type { TransporterDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { parseExcelFile } from '@/lib/excel';
-import { cn, formatDateTime } from '@/lib/utils';
+import { cn, formatDateShort, formatDateTime } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useColumnOrder } from '@/hooks/use-column-order';
 import { useConfirm } from '@/components/common/confirm';
@@ -38,20 +38,24 @@ import {
   useUpdateTransporter,
 } from './use-transporters';
 
-const num = (n: number | null) => (n == null ? '—' : n.toLocaleString());
+/** Amount prefixed with the rupee symbol; dash when unknown. */
+const money = (n: number | null) => (n == null ? '—' : `₹${n.toLocaleString()}`);
 
 const COLUMNS: DataColumn<TransporterDto>[] = [
   { id: 'code', label: 'Code', pin: 'left0', fixed: true, cell: (t) => <span className="text-muted-foreground font-mono text-xs">{t.code ?? '—'}</span> },
   { id: 'name', label: 'Transport name', pin: 'left1', fixed: true, cell: (t) => <span className="font-medium">{t.name}</span> },
-  { id: 'packing', label: 'Packing', align: 'right', cell: (t) => num(t.packing) },
-  { id: 'freight', label: 'Freight', align: 'right', cell: (t) => num(t.freight) },
+  { id: 'packing', label: 'Packing', align: 'right', cell: (t) => money(t.packing) },
+  { id: 'freight', label: 'Freight', align: 'right', cell: (t) => money(t.freight) },
   { id: 'customers', label: 'Customers', align: 'right', cell: (t) => t.customerCount ?? 0 },
   {
     id: 'updated',
     label: 'Last updated',
     cell: (t) => (
-      <span className="text-muted-foreground whitespace-nowrap text-sm" title={`Added ${formatDateTime(t.createdAt)}`}>
-        {formatDateTime(t.updatedAt)}
+      <span
+        className="text-muted-foreground whitespace-nowrap font-mono text-xs"
+        title={`Updated ${formatDateTime(t.updatedAt)} · Added ${formatDateTime(t.createdAt)}`}
+      >
+        {formatDateShort(t.updatedAt)}
       </span>
     ),
   },

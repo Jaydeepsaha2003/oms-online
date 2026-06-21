@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import type { AgentDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { parseExcelFile } from '@/lib/excel';
-import { cn, formatDateTime } from '@/lib/utils';
+import { cn, formatDateShort, formatDateTime } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useColumnOrder } from '@/hooks/use-column-order';
 import { useConfirm } from '@/components/common/confirm';
@@ -41,7 +41,9 @@ import {
 const PAGE_SIZE = 50;
 
 const dt = (s: string) => (
-  <span className="text-muted-foreground whitespace-nowrap text-sm">{formatDateTime(s)}</span>
+  <span className="text-muted-foreground whitespace-nowrap font-mono text-xs" title={formatDateTime(s)}>
+    {formatDateShort(s)}
+  </span>
 );
 const COLUMNS: DataColumn<AgentDto>[] = [
   { id: 'name', label: 'Agent name', pin: 'left0', fixed: true, cell: (a) => <span className="font-medium">{a.name}</span> },

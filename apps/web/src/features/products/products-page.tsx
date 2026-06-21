@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import type { ProductDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { parseExcelFile } from '@/lib/excel';
-import { cn, formatDateTime } from '@/lib/utils';
+import { cn, formatDateShort, formatDateTime } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useColumnOrder } from '@/hooks/use-column-order';
 import { useConfirm } from '@/components/common/confirm';
@@ -29,6 +29,8 @@ import {
 
 const PAGE_SIZE = 50;
 const num = (n: number | null) => (n == null ? '—' : n.toLocaleString());
+/** Amount prefixed with the rupee symbol; dash when unknown. */
+const money = (n: number | null) => (n == null ? '—' : `₹${n.toLocaleString()}`);
 
 const COLUMNS: DataColumn<ProductDto>[] = [
   { id: 'code', label: 'Code', pin: 'left0', fixed: true, cell: (p) => <span className="text-muted-foreground font-mono text-xs">{p.code ?? '—'}</span> },
@@ -38,12 +40,12 @@ const COLUMNS: DataColumn<ProductDto>[] = [
   { id: 'size', label: 'Size', align: 'right', cell: (p) => num(p.size) },
   { id: 'weight', label: 'Weight', align: 'right', cell: (p) => num(p.weight) },
   { id: 'pcs', label: 'PCS', align: 'right', cell: (p) => num(p.pcs) },
-  { id: 'rate', label: 'Rate', align: 'right', cell: (p) => num(p.rate) },
+  { id: 'rate', label: 'Rate', align: 'right', cell: (p) => money(p.rate) },
   {
     id: 'updated',
     label: 'Last updated',
     cell: (p) => (
-      <span className="text-muted-foreground whitespace-nowrap text-sm">{formatDateTime(p.updatedAt)}</span>
+      <span className="text-muted-foreground whitespace-nowrap font-mono text-xs" title={formatDateTime(p.updatedAt)}>{formatDateShort(p.updatedAt)}</span>
     ),
   },
 ];
