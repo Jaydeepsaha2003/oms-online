@@ -33,8 +33,7 @@ const num = (n: number | null) => (n == null ? '—' : n.toLocaleString());
 const money = (n: number | null) => (n == null ? '—' : `₹${n.toLocaleString()}`);
 
 const COLUMNS: DataColumn<ProductDto>[] = [
-  { id: 'code', label: 'Code', pin: 'left0', fixed: true, cell: (p) => <span className="text-muted-foreground font-mono text-xs">{p.code ?? '—'}</span> },
-  { id: 'category', label: 'Category', cell: (p) => p.category },
+  { id: 'category', label: 'Category', pin: 'left0', fixed: true, cell: (p) => <span className="font-medium">{p.category}</span> },
   { id: 'subCategory', label: 'Sub category', cell: (p) => p.subCategory },
   { id: 'product', label: 'Product', cell: (p) => <span className="font-medium">{p.product}</span> },
   { id: 'size', label: 'Size', align: 'right', cell: (p) => num(p.size) },

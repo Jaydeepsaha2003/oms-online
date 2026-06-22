@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { type Paginated, type TransRateDto, type TransRateLookups } from '@oms/shared';
+import { type Paginated, type RateHistoryEntry, type TransRateDto, type TransRateLookups } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { toInt, toStr, uc } from '../common/coerce';
 import {
@@ -11,6 +11,9 @@ import {
 } from './dto/trans-rate.dto';
 
 type Row = Prisma.TransRateGetPayload<object>;
+
+/** A transport rate always has these two components; they are the fixed "types". */
+const BASE_TYPES = ['PACKING', 'FREIGHT'];
 
 @Injectable()
 export class TransRatesService {
@@ -94,6 +97,7 @@ export class TransRatesService {
           data: { customerId, customerCode, customerName, category, type, transporterId, transportName, rate },
         });
       }
+      await this.recordHistory(customerName, category, type, transportName, existing?.rate ?? null, rate);
       saved++;
     }
     return { saved };
@@ -132,10 +136,12 @@ export class TransRatesService {
     const categories = Array.from(
       new Set([...prodCats.map((c) => c.category), ...trCats.map((c) => c.category)].filter(Boolean)),
     ).sort();
+    // PACKING / FREIGHT are the canonical types; keep any extra ones already saved.
+    const allTypes = Array.from(new Set([...BASE_TYPES, ...types.map((t) => t.type).filter(Boolean)]));
     return {
       customers: customers.map((c) => c.partyName!).filter(Boolean),
       categories,
-      types: types.map((t) => t.type).filter(Boolean),
+      types: allTypes,
       transporters: transporters.map((t) => ({ id: t.id, name: t.name, packing: t.packing, freight: t.freight })),
     };
   }
@@ -160,6 +166,63 @@ export class TransRatesService {
     }));
   }
 
+  /** Columns for the fill-in template (also the columns the importer reads). */
+  templateHeaders(): string[] {
+    return ['CUSTOMER', 'CATEGORY', 'TYPE', 'TRANSPORT NAME', 'RATE'];
+  }
+
+  /**
+   * A fill-in sheet: one row per customer × product category × type
+   * (type = PACKING / FREIGHT), with the transporter + rate pre-filled where a
+   * rate already exists, blank otherwise.
+   */
+  async templateRows(): Promise<Record<string, unknown>[]> {
+    const [customers, prodCats, typeRows, existing] = await Promise.all([
+      this.prisma.customer.findMany({
+        where: { partyName: { not: null } },
+        select: { partyName: true },
+        distinct: ['partyName'],
+        orderBy: { partyName: 'asc' },
+      }),
+      this.prisma.product.findMany({
+        where: { category: { not: '' } },
+        select: { category: true },
+        distinct: ['category'],
+        orderBy: { category: 'asc' },
+      }),
+      this.prisma.transRate.findMany({
+        where: { type: { not: '' } },
+        select: { type: true },
+        distinct: ['type'],
+        orderBy: { type: 'asc' },
+      }),
+      this.prisma.transRate.findMany({
+        select: { customerName: true, category: true, type: true, transportName: true, rate: true },
+      }),
+    ]);
+    const types = Array.from(new Set([...BASE_TYPES, ...typeRows.map((t) => t.type).filter(Boolean)]));
+    const byKey = new Map(
+      existing.map((r) => [`${r.customerName.toUpperCase()}|${r.category.toUpperCase()}|${r.type.toUpperCase()}`, r]),
+    );
+    const rows: Record<string, unknown>[] = [];
+    for (const c of customers) {
+      const name = c.partyName!;
+      for (const pc of prodCats) {
+        for (const tp of types) {
+          const ex = byKey.get(`${name.toUpperCase()}|${pc.category.toUpperCase()}|${tp.toUpperCase()}`);
+          rows.push({
+            CUSTOMER: name,
+            CATEGORY: pc.category,
+            TYPE: tp,
+            'TRANSPORT NAME': ex?.transportName ?? '',
+            RATE: ex?.rate ?? '',
+          });
+        }
+      }
+    }
+    return rows;
+  }
+
   async importRows(dto: ImportTransRatesDto): Promise<{ total: number; created: number; updated: number; errors: string[] }> {
     const result = { total: dto.rows.length, created: 0, updated: 0, errors: [] as string[] };
     for (let i = 0; i < dto.rows.length; i++) {
@@ -172,6 +235,9 @@ export class TransRatesService {
           result.errors.push(`Row ${i + 2}: CUSTOMER, CATEGORY and TYPE required — skipped.`);
           continue;
         }
+        // Blank rate = a template row left unfilled — skip (don't create a null rate).
+        const rateRaw = row['RATE'];
+        if (rateRaw === undefined || rateRaw === null || String(rateRaw).trim() === '') continue;
         const before = await this.prisma.transRate.findFirst({
           where: {
             customerName: uc(customerName)!,
@@ -222,6 +288,7 @@ export class TransRatesService {
     const existing = await this.prisma.transRate.findFirst({
       where: { customerName, category, type, transporterId },
     });
+    await this.recordHistory(customerName, category, type, transportName, existing?.rate ?? null, rate);
     if (existing) {
       return this.prisma.transRate.update({
         where: { id: existing.id },
@@ -231,6 +298,49 @@ export class TransRatesService {
     return this.prisma.transRate.create({
       data: { customerId, customerCode, customerName, category, type, transporterId, transportName, rate },
     });
+  }
+
+  /** Record a history row when a transport rate actually changes. */
+  private async recordHistory(
+    customerName: string,
+    category: string,
+    type: string,
+    transportName: string | null,
+    oldRate: number | null,
+    newRate: number | null,
+  ): Promise<void> {
+    if ((oldRate ?? null) === (newRate ?? null)) return;
+    await this.prisma.rateHistory.create({
+      data: { kind: 'TRANS', customerName, category, type, transportName, oldRate, newRate: newRate ?? null },
+    });
+  }
+
+  /** Most recent transport-rate changes (newest first), filtered by customer/category/type. */
+  async history(query: {
+    customerName?: string;
+    category?: string;
+    type?: string;
+  }): Promise<RateHistoryEntry[]> {
+    const where: Prisma.RateHistoryWhereInput = { kind: 'TRANS' };
+    const c = uc(query.customerName);
+    const cat = uc(query.category);
+    const tp = uc(query.type);
+    if (c) where.customerName = c;
+    if (cat) where.category = cat;
+    if (tp) where.type = tp;
+    const rows = await this.prisma.rateHistory.findMany({ where, orderBy: { changedAt: 'desc' }, take: 500 });
+    return rows.map((h) => ({
+      id: h.id,
+      kind: 'TRANS',
+      customerName: h.customerName,
+      category: h.category,
+      type: h.type,
+      transportName: h.transportName,
+      oldRate: h.oldRate,
+      newRate: h.newRate,
+      changedByName: h.changedByName,
+      changedAt: h.changedAt.toISOString(),
+    }));
   }
 
   private toDto(r: Row): TransRateDto {

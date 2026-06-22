@@ -39,6 +39,9 @@ export interface CustomerDto {
   brand: string | null;
   billRatePc: number | null;
   payBy: string | null;
+  /** Whether TDS is deducted at source for this customer, and at what %. */
+  tdsApplicable: boolean;
+  tdsPercent: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -64,6 +67,8 @@ export interface CustomerInput {
   brand?: string | null;
   billRatePc?: number | null;
   payBy?: string | null;
+  tdsApplicable?: boolean;
+  tdsPercent?: number | null;
 }
 
 export interface CustomerQuery extends PaginationQuery {

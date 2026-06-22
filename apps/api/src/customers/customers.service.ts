@@ -369,6 +369,8 @@ export class CustomersService {
       brand: uc(dto.brand),
       billRatePc: dto.billRatePc ?? null,
       payBy: uc(dto.payBy),
+      tdsApplicable: dto.tdsApplicable ?? false,
+      tdsPercent: dto.tdsApplicable ? (dto.tdsPercent ?? null) : null,
     };
   }
 
@@ -434,6 +436,8 @@ export class CustomersService {
       brand: r.brand,
       billRatePc: r.billRatePc,
       payBy: r.payBy,
+      tdsApplicable: r.tdsApplicable,
+      tdsPercent: r.tdsPercent,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     };

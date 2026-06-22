@@ -3,7 +3,10 @@ import type {
   GstRateBulkInput,
   GstRateDto,
   GstRateInput,
+  GstRateList,
   GstRateLookups,
+  GstRateQuery,
+  RateHistoryEntry,
 } from '@oms/shared';
 import { downloadFile, http } from '@/lib/api';
 
@@ -16,11 +19,28 @@ export interface ImportResult {
 
 const KEY = ['gst-rates'] as const;
 
+export function useGstRates(query: GstRateQuery) {
+  return useQuery({
+    queryKey: [...KEY, 'list', query],
+    queryFn: () => http.get<GstRateList>('/gst-rates', { params: query }),
+    placeholderData: (prev) => prev,
+  });
+}
+
 export function useGstLookups() {
   return useQuery({
     queryKey: [...KEY, 'lookups'],
     queryFn: () => http.get<GstRateLookups>('/gst-rates/lookups'),
     staleTime: 60_000,
+  });
+}
+
+export function useGstRateHistory(customerName: string, category: string, enabled = true) {
+  return useQuery({
+    queryKey: [...KEY, 'history', customerName, category],
+    queryFn: () =>
+      http.get<RateHistoryEntry[]>('/gst-rates/history', { params: { customerName, category } }),
+    enabled: enabled && customerName.trim().length > 0,
   });
 }
 
@@ -67,4 +87,9 @@ export function useImportGstRates() {
 
 export function exportGstRates() {
   return downloadFile('/gst-rates/export', 'customer-gst-rates.xlsx');
+}
+
+/** Blank fill-in sheet: every customer × category, rates pre-filled where set. */
+export function downloadGstTemplate() {
+  return downloadFile('/gst-rates/template', 'customer-gst-rates-template.xlsx');
 }

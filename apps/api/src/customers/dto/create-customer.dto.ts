@@ -1,5 +1,15 @@
 import { Transform, Type } from 'class-transformer';
-import { IsIn, IsInt, IsNumber, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 import { PARTY_SOURCES, PAY_BYS } from '@oms/shared';
 import { EMAIL_REGEX, MOBILE_REGEX } from '../../common/validation';
 
@@ -108,4 +118,14 @@ export class CreateCustomerDto {
   @Transform(emptyToUndefined)
   @IsIn([...PAY_BYS])
   payBy?: string;
+
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  tdsApplicable?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  tdsPercent?: number;
 }

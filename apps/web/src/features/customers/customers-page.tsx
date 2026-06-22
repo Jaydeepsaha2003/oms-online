@@ -30,14 +30,14 @@ const txt = (s: string | null) => (s && s.trim() !== '' ? s : '—');
 /** Every customer column. The most-used ones come first; Code + Customer name
  * are frozen to the left so identity stays visible while scrolling the wide row. */
 const COLUMNS: DataColumn<CustomerDto>[] = [
-  { id: 'code', label: 'Code', pin: 'left0', fixed: true, cell: (c) => <span className="text-muted-foreground font-mono text-xs">{c.code ?? '—'}</span> },
-  { id: 'name', label: 'Customer name', pin: 'left1', fixed: true, cell: (c) => <span className="font-semibold">{txt(c.partyName)}</span> },
+  { id: 'name', label: 'Customer name', pin: 'left0', fixed: true, cell: (c) => <span className="font-semibold">{txt(c.partyName)}</span> },
   { id: 'agent', label: 'Agent', cell: (c) => txt(c.agentName) },
   { id: 'category', label: 'Category', cell: (c) => txt(c.category) },
   { id: 'city', label: 'City', cell: (c) => txt(c.city) },
   { id: 'transport', label: 'Transport', cell: (c) => txt(c.transportName) },
-  { id: 'billingRate', label: 'Billing rate', align: 'right', cell: (c) => money(c.billingRate) },
+  { id: 'billingRate', label: 'Billing Rate/KGS', align: 'right', cell: (c) => money(c.billingRate) },
   { id: 'creditPeriod', label: 'Credit period', align: 'right', cell: (c) => num(c.creditPeriod) },
+  { id: 'tds', label: 'TDS %', align: 'right', cell: (c) => (c.tdsApplicable && c.tdsPercent != null ? <span className="tabular-nums">{c.tdsPercent}%</span> : '—') },
   { id: 'state', label: 'State', cell: (c) => txt(c.state) },
   { id: 'region', label: 'Region', cell: (c) => txt(c.region) },
   { id: 'mobile', label: 'Mobile', cell: (c) => txt(c.mobile) },
@@ -47,7 +47,7 @@ const COLUMNS: DataColumn<CustomerDto>[] = [
   { id: 'packing', label: 'Packing', align: 'right', cell: (c) => money(c.packing) },
   { id: 'freight', label: 'Freight', align: 'right', cell: (c) => money(c.freight) },
   { id: 'boxRate', label: 'Box rate', align: 'right', cell: (c) => money(c.boxRate) },
-  { id: 'billRatePc', label: 'Bill / pc', align: 'right', cell: (c) => money(c.billRatePc) },
+  { id: 'billRatePc', label: 'Billing Rate/Pcs', align: 'right', cell: (c) => money(c.billRatePc) },
   { id: 'payBy', label: 'Pay by', cell: (c) => txt(c.payBy) },
   { id: 'partySource', label: 'Party source', cell: (c) => txt(c.partySource) },
 ];

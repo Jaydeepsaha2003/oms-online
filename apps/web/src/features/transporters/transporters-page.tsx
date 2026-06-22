@@ -42,8 +42,7 @@ import {
 const money = (n: number | null) => (n == null ? '—' : `₹${n.toLocaleString()}`);
 
 const COLUMNS: DataColumn<TransporterDto>[] = [
-  { id: 'code', label: 'Code', pin: 'left0', fixed: true, cell: (t) => <span className="text-muted-foreground font-mono text-xs">{t.code ?? '—'}</span> },
-  { id: 'name', label: 'Transport name', pin: 'left1', fixed: true, cell: (t) => <span className="font-medium">{t.name}</span> },
+  { id: 'name', label: 'Transport name', pin: 'left0', fixed: true, cell: (t) => <span className="font-medium">{t.name}</span> },
   { id: 'packing', label: 'Packing', align: 'right', cell: (t) => money(t.packing) },
   { id: 'freight', label: 'Freight', align: 'right', cell: (t) => money(t.freight) },
   { id: 'customers', label: 'Customers', align: 'right', cell: (t) => t.customerCount ?? 0 },

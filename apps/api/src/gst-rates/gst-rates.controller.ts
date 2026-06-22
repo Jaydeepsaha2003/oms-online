@@ -53,6 +53,12 @@ export class GstRatesController {
     return this.gstRates.byCustomer(name ?? '');
   }
 
+  @Get('history')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  history(@Query('customerName') customerName?: string, @Query('category') category?: string) {
+    return this.gstRates.history({ customerName, category });
+  }
+
   @Get('export')
   @Permissions(perm(R, ACTIONS.EXPORT))
   @Audit({ action: ACTIONS.EXPORT, resource: R, description: 'Exported GST rates' })
@@ -63,6 +69,20 @@ export class GstRatesController {
       this.excel.jsonToBuffer(rows, {
         sheetName: 'CUSTOMER GST RATE',
         headers: this.gstRates.exportHeaders(),
+      }),
+    );
+  }
+
+  @Get('template')
+  @Permissions(perm(R, ACTIONS.EXPORT))
+  @Audit({ action: ACTIONS.EXPORT, resource: R, description: 'Downloaded GST rate template' })
+  async template(@Res({ passthrough: true }) res: Response) {
+    const rows = await this.gstRates.templateRows();
+    this.excel.setDownloadHeaders(res, 'customer-gst-rates-template');
+    return new StreamableFile(
+      this.excel.jsonToBuffer(rows, {
+        sheetName: 'GST RATE TEMPLATE',
+        headers: this.gstRates.templateHeaders(),
       }),
     );
   }

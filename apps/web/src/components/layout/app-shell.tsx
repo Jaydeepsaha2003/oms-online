@@ -1,25 +1,56 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { Sidebar } from './sidebar';
 import { Topbar } from './topbar';
 
-/** Authenticated layout: collapsible desktop sidebar, mobile drawer, topbar, content. */
+const PIN_KEY = 'oms:sidebar-pinned';
+
+/**
+ * Authenticated layout. The desktop sidebar is a collapsed icon rail by default
+ * and **expands on hover** as an overlay (so page content never shifts). The
+ * topbar button "pins" it open — then it stays expanded and reserves its width.
+ */
 export function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  const [pinned, setPinned] = useState(() => {
+    try {
+      return localStorage.getItem(PIN_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [hovered, setHovered] = useState(false);
+  const expanded = pinned || hovered;
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PIN_KEY, pinned ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  }, [pinned]);
 
   return (
     <div className="flex min-h-screen bg-background">
-      {/* Desktop sidebar */}
+      {/* Desktop sidebar: the <aside> only reserves the rail/pinned width; the panel
+          itself is a fixed overlay that grows on hover without pushing content. */}
       <aside
         className={cn(
-          'hidden shrink-0 border-r transition-[width] duration-200 md:block',
-          collapsed ? 'w-16' : 'w-64',
+          'hidden shrink-0 transition-[width] duration-200 md:block',
+          pinned ? 'w-64' : 'w-16',
         )}
       >
-        <div className="sticky top-0 h-screen">
-          <Sidebar collapsed={collapsed} />
+        <div
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+          className={cn(
+            'fixed top-0 left-0 z-40 h-screen border-r bg-sidebar transition-[width] duration-200',
+            expanded ? 'w-64' : 'w-16',
+            hovered && !pinned && 'shadow-2xl shadow-blue-950/25',
+          )}
+        >
+          <Sidebar collapsed={!expanded} />
         </div>
       </aside>
 
@@ -40,7 +71,7 @@ export function AppShell() {
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar
           onToggleMobile={() => setMobileOpen(true)}
-          onToggleCollapse={() => setCollapsed((v) => !v)}
+          onToggleCollapse={() => setPinned((v) => !v)}
         />
         <main className="flex-1 p-4 md:p-6">
           <Outlet />

@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { type GstRateDto, type GstRateLookups, type Paginated } from '@oms/shared';
+import { type GstRateDto, type GstRateLookups, type Paginated, type RateHistoryEntry } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { toInt, toStr, uc } from '../common/coerce';
 import { BulkGstRateDto, GstRateQueryDto, ImportGstRatesDto, UpsertGstRateDto } from './dto/gst-rate.dto';
@@ -116,6 +116,46 @@ export class GstRatesService {
     }));
   }
 
+  /** Columns for the fill-in template (also the columns the importer reads). */
+  templateHeaders(): string[] {
+    return ['CUSTOMER NAME', 'PCATEGORY', 'RATE'];
+  }
+
+  /**
+   * A fill-in sheet: one row per customer × product category, with the RATE
+   * pre-filled where it already exists and left blank otherwise. Re-importable
+   * as-is — blank rates are skipped on import.
+   */
+  async templateRows(): Promise<Record<string, unknown>[]> {
+    const [customers, prodCats, existing] = await Promise.all([
+      this.prisma.customer.findMany({
+        where: { partyName: { not: null } },
+        select: { partyName: true },
+        distinct: ['partyName'],
+        orderBy: { partyName: 'asc' },
+      }),
+      this.prisma.product.findMany({
+        where: { category: { not: '' } },
+        select: { category: true },
+        distinct: ['category'],
+        orderBy: { category: 'asc' },
+      }),
+      this.prisma.gstRate.findMany({ select: { customerName: true, category: true, rate: true } }),
+    ]);
+    const byKey = new Map(
+      existing.map((r) => [`${r.customerName.toUpperCase()}|${r.category.toUpperCase()}`, r.rate]),
+    );
+    const rows: Record<string, unknown>[] = [];
+    for (const c of customers) {
+      const name = c.partyName!;
+      for (const pc of prodCats) {
+        const rate = byKey.get(`${name.toUpperCase()}|${pc.category.toUpperCase()}`);
+        rows.push({ 'CUSTOMER NAME': name, PCATEGORY: pc.category, RATE: rate ?? '' });
+      }
+    }
+    return rows;
+  }
+
   async importRows(dto: ImportGstRatesDto): Promise<{ total: number; created: number; updated: number; errors: string[] }> {
     const result = { total: dto.rows.length, created: 0, updated: 0, errors: [] as string[] };
     for (let i = 0; i < dto.rows.length; i++) {
@@ -127,6 +167,9 @@ export class GstRatesService {
           result.errors.push(`Row ${i + 2}: CUSTOMER NAME and PCATEGORY required — skipped.`);
           continue;
         }
+        // Blank rate = a template row left unfilled — leave it alone (don't create a null rate).
+        const rateRaw = row['RATE'];
+        if (rateRaw === undefined || rateRaw === null || String(rateRaw).trim() === '') continue;
         const customerName = uc(name)!;
         const existing = await this.prisma.gstRate.findUnique({
           where: { customerName_category: { customerName, category } },
@@ -143,18 +186,56 @@ export class GstRatesService {
 
   // ── helpers ────────────────────────────────────────────────────────────────
 
-  /** Upsert by (customerName, category), both stored uppercase; links customerId best-effort. */
+  /** Most recent rate changes (newest first), filtered by customer/category. */
+  async history(query: { customerName?: string; category?: string }): Promise<RateHistoryEntry[]> {
+    const where: Prisma.RateHistoryWhereInput = { kind: 'GST' };
+    const c = uc(query.customerName);
+    const cat = uc(query.category);
+    if (c) where.customerName = c;
+    if (cat) where.category = cat;
+    const rows = await this.prisma.rateHistory.findMany({
+      where,
+      orderBy: { changedAt: 'desc' },
+      take: 500,
+    });
+    return rows.map((h) => ({
+      id: h.id,
+      kind: 'GST',
+      customerName: h.customerName,
+      category: h.category,
+      type: h.type,
+      transportName: h.transportName,
+      oldRate: h.oldRate,
+      newRate: h.newRate,
+      changedByName: h.changedByName,
+      changedAt: h.changedAt.toISOString(),
+    }));
+  }
+
+  /** Upsert by (customerName, category), both stored uppercase; links customerId best-effort.
+   *  Records a history row whenever the rate actually changes. */
   private async upsert(name: string, category: string, rate: number | null): Promise<Row> {
     const customerName = uc(name)!;
     const cat = uc(category)!;
     const customer = await this.prisma.customer.findFirst({ where: { partyName: customerName } });
     const customerId = customer?.id ?? null;
     const customerCode = customer?.code ?? null;
-    return this.prisma.gstRate.upsert({
+    const before = await this.prisma.gstRate.findUnique({
+      where: { customerName_category: { customerName, category: cat } },
+      select: { rate: true },
+    });
+    const row = await this.prisma.gstRate.upsert({
       where: { customerName_category: { customerName, category: cat } },
       create: { customerName, category: cat, rate, customerId, customerCode },
       update: { rate, customerId, customerCode },
     });
+    const oldRate = before?.rate ?? null;
+    if (oldRate !== (rate ?? null)) {
+      await this.prisma.rateHistory.create({
+        data: { kind: 'GST', customerName, category: cat, oldRate, newRate: rate ?? null },
+      });
+    }
+    return row;
   }
 
   private toDto(r: Row): GstRateDto {

@@ -113,6 +113,42 @@ export const MENU: MenuNode[] = [
       },
     ],
   },
+  {
+    id: 'orders-group',
+    label: 'Orders',
+    icon: 'ShoppingCart',
+    anyPermission: [perm(RESOURCES.ORDER, ACTIONS.VIEW), perm(RESOURCES.ORDER, ACTIONS.CREATE)],
+    children: [
+      {
+        id: 'new-order',
+        label: 'New Order',
+        to: '/orders/new',
+        icon: 'ReceiptText',
+        permission: perm(RESOURCES.ORDER, ACTIONS.CREATE),
+      },
+      {
+        id: 'view-orders',
+        label: 'View Orders',
+        to: '/orders',
+        icon: 'ListChecks',
+        permission: perm(RESOURCES.ORDER, ACTIONS.VIEW),
+      },
+      {
+        id: 'order-modify',
+        label: 'Order Modify',
+        to: '/orders/modify',
+        icon: 'ClipboardList',
+        permission: perm(RESOURCES.ORDER, ACTIONS.UPDATE),
+      },
+    ],
+  },
+  {
+    id: 'settings',
+    label: 'Settings',
+    to: '/settings',
+    icon: 'Settings',
+    permission: perm(RESOURCES.SETTING, ACTIONS.VIEW),
+  },
 ];
 
 /** Returns the permission(s) a node requires, as an array (possibly empty). */

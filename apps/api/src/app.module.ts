@@ -28,6 +28,8 @@ import { ProductsModule } from './products/products.module';
 import { DesignsModule } from './designs/designs.module';
 import { DesignNamesModule } from './design-names/design-names.module';
 import { CombinationsModule } from './combinations/combinations.module';
+import { OrdersModule } from './orders/orders.module';
+import { SettingsModule } from './settings/settings.module';
 
 @Module({
   imports: [
@@ -61,6 +63,8 @@ import { CombinationsModule } from './combinations/combinations.module';
     DesignsModule,
     DesignNamesModule,
     CombinationsModule,
+    OrdersModule,
+    SettingsModule,
   ],
   controllers: [AppController],
   providers: [

@@ -1,5 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { TransRateBulkInput, TransRateDto, TransRateInput, TransRateLookups } from '@oms/shared';
+import type {
+  RateHistoryEntry,
+  TransRateBulkInput,
+  TransRateDto,
+  TransRateInput,
+  TransRateList,
+  TransRateLookups,
+  TransRateQuery,
+} from '@oms/shared';
 import { downloadFile, http } from '@/lib/api';
 
 export interface ImportResult {
@@ -11,11 +19,28 @@ export interface ImportResult {
 
 const KEY = ['trans-rates'] as const;
 
+export function useTransRates(query: TransRateQuery) {
+  return useQuery({
+    queryKey: [...KEY, 'list', query],
+    queryFn: () => http.get<TransRateList>('/transport-rates', { params: query }),
+    placeholderData: (prev) => prev,
+  });
+}
+
 export function useTransLookups() {
   return useQuery({
     queryKey: [...KEY, 'lookups'],
     queryFn: () => http.get<TransRateLookups>('/transport-rates/lookups'),
     staleTime: 60_000,
+  });
+}
+
+export function useTransRateHistory(customerName: string, category: string, type: string, enabled = true) {
+  return useQuery({
+    queryKey: [...KEY, 'history', customerName, category, type],
+    queryFn: () =>
+      http.get<RateHistoryEntry[]>('/transport-rates/history', { params: { customerName, category, type } }),
+    enabled: enabled && customerName.trim().length > 0,
   });
 }
 
@@ -62,4 +87,9 @@ export function useImportTransRates() {
 
 export function exportTransRates() {
   return downloadFile('/transport-rates/export', 'customer-transport-rates.xlsx');
+}
+
+/** Blank fill-in sheet: every customer × category × type, pre-filled where set. */
+export function downloadTransTemplate() {
+  return downloadFile('/transport-rates/template', 'customer-transport-rates-template.xlsx');
 }
