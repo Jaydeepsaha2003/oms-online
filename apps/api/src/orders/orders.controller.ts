@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
@@ -30,6 +31,14 @@ export class OrdersController {
   @Permissions(perm(R, ACTIONS.VIEW))
   get(@Param('id', ParseIntPipe) id: number) {
     return this.orders.findOne(id);
+  }
+
+  @Get(':id/bill.pdf')
+  @Permissions(perm(R, ACTIONS.PRINT))
+  async bill(@Param('id', ParseIntPipe) id: number, @Res() res: Response) {
+    const { buffer, filename } = await this.orders.salesOrderPdf(id);
+    res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${filename}"` });
+    res.send(buffer);
   }
 
   @Post()

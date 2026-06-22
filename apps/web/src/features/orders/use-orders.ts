@@ -44,6 +44,15 @@ export function useUpdateOrder(id: number) {
   });
 }
 
+/** Save any order by id (used by Order Modify, which edits lines across many orders). */
+export function useSaveOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, input }: { id: number; input: OrderInput }) => http.patch<OrderDto>(`/orders/${id}`, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
 export function useDeleteOrder() {
   const qc = useQueryClient();
   return useMutation({

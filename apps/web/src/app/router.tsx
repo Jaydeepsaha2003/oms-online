@@ -16,6 +16,8 @@ import { DesignsPage } from '@/features/designs/designs-page';
 import { DesignNamesPage } from '@/features/design-names/design-names-page';
 import { OrdersPage } from '@/features/orders/orders-page';
 import { OrderFormPage } from '@/features/orders/order-form-page';
+import { OrderModifyPage } from '@/features/orders/order-modify-page';
+import { OrderBillPage } from '@/features/orders/order-bill-page';
 import { SettingsPage } from '@/features/settings/settings-page';
 import { ForbiddenPage } from '@/features/errors/forbidden-page';
 import { NotFoundPage } from '@/features/errors/not-found-page';
@@ -133,10 +135,26 @@ export function AppRoutes() {
             }
           />
           <Route
+            path="/orders/modify"
+            element={
+              <RequirePermission permission={perm(RESOURCES.ORDER, ACTIONS.UPDATE)}>
+                <OrderModifyPage />
+              </RequirePermission>
+            }
+          />
+          <Route
             path="/orders/:id/edit"
             element={
               <RequirePermission permission={perm(RESOURCES.ORDER, ACTIONS.UPDATE)}>
                 <OrderFormPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/orders/:id/bill"
+            element={
+              <RequirePermission permission={perm(RESOURCES.ORDER, ACTIONS.PRINT)}>
+                <OrderBillPage />
               </RequirePermission>
             }
           />

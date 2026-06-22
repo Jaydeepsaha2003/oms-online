@@ -538,7 +538,7 @@ export function OrderFormPage() {
       {/* Card 1 — order header in one row */}
       <Card className="border-l-4 border-l-primary py-0">
         <CardContent className="grid grid-cols-2 gap-2 px-4 py-3 sm:grid-cols-3 lg:grid-cols-12">
-          <div className="col-span-2 space-y-1.5 sm:col-span-1 lg:col-span-5" data-tabfield="customer">
+          <div className="col-span-2 space-y-1.5 sm:col-span-1 lg:col-span-4" data-tabfield="customer">
             <Label className="text-sm">Customer <span className="text-rose-500">*</span></Label>
             <NativeSelect
               value={customer}
@@ -552,8 +552,8 @@ export function OrderFormPage() {
             <Label className="text-sm">Agent (auto)</Label>
             <Input value={agentName} readOnly tabIndex={-1} className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700" />
           </div>
-          <div className="space-y-1.5 lg:col-span-1">
-            <Label className="text-sm">Category (auto)</Label>
+          <div className="space-y-1.5 lg:col-span-2">
+            <Label className="text-sm whitespace-nowrap">Category (auto)</Label>
             <Input value={category} readOnly tabIndex={-1} className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700" />
           </div>
           <div className="space-y-1.5 lg:col-span-2" data-tabfield="orderDate">
@@ -570,7 +570,7 @@ export function OrderFormPage() {
             />
           </div>
           <div className="space-y-1.5 lg:col-span-2">
-            <Label className="text-sm">Completion date (auto)</Label>
+            <Label className="text-sm whitespace-nowrap">Completion date (auto)</Label>
             <Input value={completionDate} readOnly tabIndex={-1} className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700" />
           </div>
         </CardContent>

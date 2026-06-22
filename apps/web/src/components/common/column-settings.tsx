@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronUp, Eye, EyeOff, GripVertical, SlidersHorizontal } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, Eye, EyeOff, GripVertical, SlidersHorizontal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -18,6 +18,7 @@ export function ColumnSettings({
   onMove,
   onToggle,
   onReset,
+  dateFormat,
 }: {
   columns: OrderableColumn[];
   hidden: string[];
@@ -25,6 +26,8 @@ export function ColumnSettings({
   onMove: (id: string, dir: -1 | 1) => void;
   onToggle: (id: string) => void;
   onReset: () => void;
+  /** Optional date-format picker shown below the columns. */
+  dateFormat?: { value: string; options: { id: string; label: string }[]; onChange: (id: string) => void };
 }) {
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
@@ -42,7 +45,7 @@ export function ColumnSettings({
         <TooltipContent>Arrange columns</TooltipContent>
       </Tooltip>
 
-      <PopoverContent align="end" className="w-72 p-2">
+      <PopoverContent align="end" className="max-h-[var(--radix-popover-content-available-height)] w-72 overflow-y-auto p-2">
         <div className="flex items-center justify-between px-1.5 pb-1">
           <span className="text-sm font-semibold">Columns</span>
           <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onReset}>
@@ -50,7 +53,7 @@ export function ColumnSettings({
           </Button>
         </div>
         <Separator />
-        <div className="mt-1 max-h-[60vh] space-y-0.5 overflow-auto">
+        <div className="mt-1 space-y-0.5">
           {columns.map((col, i) => {
             const isHidden = hidden.includes(col.id);
             return (
@@ -119,6 +122,29 @@ export function ColumnSettings({
             );
           })}
         </div>
+
+        {dateFormat && (
+          <>
+            <Separator className="my-2" />
+            <div className="px-1.5 pb-1 text-sm font-semibold">Date format</div>
+            <div className="space-y-0.5">
+              {dateFormat.options.map((o) => (
+                <button
+                  key={o.id}
+                  type="button"
+                  onClick={() => dateFormat.onChange(o.id)}
+                  className={cn(
+                    'hover:bg-accent flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm transition-colors',
+                    dateFormat.value === o.id && 'bg-accent font-medium',
+                  )}
+                >
+                  <span className="tabular-nums">{o.label}</span>
+                  {dateFormat.value === o.id && <Check className="size-3.5" />}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
       </PopoverContent>
     </Popover>
   );
