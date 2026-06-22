@@ -30,7 +30,8 @@ powershell -NoProfile -Command "$root=(Get-Location).Path; Get-CimInstance Win32
 echo.
 echo All OMS dev servers stopped.
 echo.
-pause
+REM Skip the prompt when called from restart.bat (passes "nopause").
+if /i not "%~1"=="nopause" pause
 exit /b
 
 REM ----------------------------------------------------------------
