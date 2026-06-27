@@ -1,5 +1,5 @@
 import { useCallback, type ComponentProps, type Key, type ReactNode } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Eye, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   Table,
@@ -76,6 +76,7 @@ export function DataTable<T>({
   emptyText = 'No records found.',
   maxBodyHeight,
   dense,
+  hideRowView,
 }: {
   columns: DataColumn<T>[];
   rows: T[];
@@ -89,11 +90,18 @@ export function DataTable<T>({
   maxBodyHeight?: string;
   /** Compact padding so columns auto-fit their content and more fit on screen. */
   dense?: boolean;
+  /** Suppress the automatic "view" icon shown when rows are clickable (e.g. when
+   *  the row click toggles selection rather than opening a form). */
+  hideRowView?: boolean;
 }) {
-  const span = columns.length + (actions ? 1 : 0);
+  // When a row opens a form/detail but has no other action buttons, show an
+  // explicit "view" (eye) icon so it's obvious the row is clickable.
+  const showView = !!onRowClick && !actions && !hideRowView;
+  const hasActionsCol = !!actions || showView;
+  const span = columns.length + (hasActionsCol ? 1 : 0);
   const stickyTop = !!maxBodyHeight;
   return (
-    <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
+    <div className="overflow-hidden rounded-[5px] border bg-card shadow-sm">
       <Table
         width="auto"
         containerClassName={cn(maxBodyHeight, maxBodyHeight && 'overflow-y-auto')}
@@ -124,11 +132,11 @@ export function DataTable<T>({
                 {col.header ?? col.label}
               </TableHead>
             ))}
-            {actions && (
+            {hasActionsCol && (
               <TableHead
                 className={cn('sticky right-0 z-30 w-24 border-r-0 text-right', stickyTop && 'top-0', SHADOW_R)}
               >
-                Actions
+                {actions ? 'Actions' : 'View'}
               </TableHead>
             )}
           </TableRow>
@@ -173,13 +181,25 @@ export function DataTable<T>({
                       </TableCell>
                     ),
                   )}
-                  {actions && (
+                  {hasActionsCol && (
                     <StickyCell
                       bg={pinBg}
                       onClick={(e) => e.stopPropagation()}
                       className={cn('sticky right-0 z-10 w-24 border-r-0 text-right', SHADOW_R)}
                     >
-                      {actions(row)}
+                      {actions ? (
+                        actions(row)
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => onRowClick?.(row)}
+                          title="View / open"
+                          aria-label="View"
+                          className="text-muted-foreground hover:text-primary hover:bg-muted inline-flex items-center justify-center rounded-md transition-colors"
+                        >
+                          <Eye className="size-4" />
+                        </button>
+                      )}
                     </StickyCell>
                   )}
                 </TableRow>

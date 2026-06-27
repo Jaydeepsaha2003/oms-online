@@ -12,9 +12,10 @@ function Table({
       data-slot="table-container"
       className={cn('relative w-full overflow-x-auto', containerClassName)}
     >
-      {/* width='auto' lets each column hug its content (autofit) and the table
-          scroll horizontally when the columns are wider than the viewport. */}
-      <table data-slot="table" className={cn(width === 'auto' ? 'w-auto' : 'w-full', 'caption-bottom text-sm', className)} {...props} />
+      {/* width='auto' autofits columns to their content AND stretches to fill the
+          screen when narrower (min-w-full = no blank area), while still scrolling
+          horizontally when the columns are wider than the viewport. */}
+      <table data-slot="table" className={cn(width === 'auto' ? 'w-auto min-w-full' : 'w-full', 'caption-bottom text-sm', className)} {...props} />
     </div>
   );
 }

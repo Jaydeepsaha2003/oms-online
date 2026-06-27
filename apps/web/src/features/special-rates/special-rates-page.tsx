@@ -33,15 +33,16 @@ import {
   useSpecialRateLookups,
 } from './use-special-rates';
 import { SpecialRatesMaster } from './special-rates-master';
+import { InfoTip } from '@/components/common/info-tip';
 
-const RATE_LEVELS: { value: RateScope; label: string }[] = [
-  { value: 'CATEGORY', label: 'Whole category' },
-  { value: 'SUBCATEGORY', label: 'Sub-category' },
-  { value: 'ITEM', label: 'Specific item' },
+const RATE_LEVELS: { value: RateScope; label: string; title: string }[] = [
+  { value: 'CATEGORY', label: 'Whole category', title: 'Apply this rate to every item in the chosen category.' },
+  { value: 'SUBCATEGORY', label: 'Sub-category', title: 'Apply this rate to every item in the chosen sub-category.' },
+  { value: 'ITEM', label: 'Specific item', title: 'Apply this rate to one specific product/design only.' },
 ];
-const LOGO_LEVELS: { value: LogoScope; label: string }[] = [
-  { value: 'CATEGORY', label: 'Whole category' },
-  { value: 'SUBCATEGORY', label: 'Sub-category' },
+const LOGO_LEVELS: { value: LogoScope; label: string; title: string }[] = [
+  { value: 'CATEGORY', label: 'Whole category', title: 'Block the logo for the whole category.' },
+  { value: 'SUBCATEGORY', label: 'Sub-category', title: 'Block the logo for a specific sub-category.' },
 ];
 const scopeLabel = (s: string) => RATE_LEVELS.find((l) => l.value === s)?.label ?? s;
 const signed = (n: number) => (n > 0 ? `+${n.toLocaleString()}` : n.toLocaleString());
@@ -197,7 +198,7 @@ export function SpecialRatesPage() {
       ) : (
         <div className="grid gap-5 lg:grid-cols-2 lg:items-stretch">
           <RatePanel
-            title="Product rate overrides"
+            title="Customize Product Rates"
             kind="PRODUCT"
             accent={ACCENTS.PRODUCT}
             icon={<Package className="size-4" />}
@@ -208,7 +209,7 @@ export function SpecialRatesPage() {
             canDelete={canDelete}
           />
           <RatePanel
-            title="Design rate overrides"
+            title="Customize Design Rates"
             kind="DESIGN"
             accent={ACCENTS.DESIGN}
             icon={<Palette className="size-4" />}
@@ -316,12 +317,13 @@ function AgentSelector({
 
 /* ── Shared panel shell ─────────────────────────────────────────────────────── */
 
-function Panel({ title, icon, accent, badge, className, children }: { title: string; icon: ReactNode; accent: Accent; badge: ReactNode; className?: string; children: ReactNode }) {
+function Panel({ title, icon, accent, badge, info, className, children }: { title: string; icon: ReactNode; accent: Accent; badge: ReactNode; info?: string; className?: string; children: ReactNode }) {
   return (
     <section className={cn('overflow-hidden rounded-xl border bg-card shadow-sm', accent.ring, className)}>
-      <div className={cn('flex items-center gap-2.5 border-b bg-gradient-to-r px-4 py-3', accent.ring, accent.head)}>
+      <div className={cn('flex items-center gap-2 border-b bg-gradient-to-r px-4 py-3', accent.ring, accent.head)}>
         <span className={cn('flex size-8 items-center justify-center rounded-lg', accent.chip)}>{icon}</span>
         <h3 className="font-semibold text-slate-800">{title}</h3>
+        {info && <InfoTip text={info} />}
         <span className={cn('ml-auto rounded-full px-2 py-0.5 text-xs font-semibold', accent.chip)}>{badge}</span>
       </div>
       <div className="space-y-3 p-4">{children}</div>
@@ -329,13 +331,14 @@ function Panel({ title, icon, accent, badge, className, children }: { title: str
   );
 }
 
-function LevelButtons<T extends string>({ levels, value, onChange, accent }: { levels: { value: T; label: string }[]; value: T; onChange: (v: T) => void; accent: Accent }) {
+function LevelButtons<T extends string>({ levels, value, onChange, accent }: { levels: { value: T; label: string; title?: string }[]; value: T; onChange: (v: T) => void; accent: Accent }) {
   return (
     <div className="flex flex-wrap gap-1.5">
       {levels.map((l) => (
         <button
           key={l.value}
           type="button"
+          title={l.title}
           onClick={() => onChange(l.value)}
           className={cn('rounded-md border px-3 py-1.5 text-sm font-medium transition-colors', value === l.value ? accent.active : accent.idle)}
         >
@@ -346,12 +349,13 @@ function LevelButtons<T extends string>({ levels, value, onChange, accent }: { l
   );
 }
 
-function AddButton({ accent, onClick, disabled, children }: { accent: Accent; onClick: () => void; disabled?: boolean; children: ReactNode }) {
+function AddButton({ accent, onClick, disabled, title, children }: { accent: Accent; onClick: () => void; disabled?: boolean; title?: string; children: ReactNode }) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
+      title={title}
       className={cn('inline-flex w-full items-center justify-center gap-1.5 rounded-md px-3 py-2 text-sm font-semibold text-white shadow-sm transition-colors disabled:opacity-60', accent.solid)}
     >
       {children}
@@ -470,7 +474,13 @@ function RatePanel({
   ];
 
   return (
-    <Panel title={title} icon={icon} accent={accent} badge={bulk ? `${targetCount(target)} customers` : `${rates.length} set`}>
+    <Panel
+      title={title}
+      icon={icon}
+      accent={accent}
+      info={`A rupee delta added to this customer's ${itemLabel.toLowerCase()} rate. Pick a level, then a category/sub-category/item and the delta (negative = discount). The most-specific level wins (item → sub-category → category).`}
+      badge={bulk ? `${targetCount(target)} customers` : `${rates.length} set`}
+    >
       {canCreate && (
         <div className="space-y-3 rounded-lg border bg-slate-50/70 p-3">
           <LevelButtons
@@ -505,7 +515,12 @@ function RatePanel({
               <Input type="number" step="any" className="text-right tabular-nums" placeholder="e.g. 5 or -5" value={rate} onChange={(e) => setRate(e.target.value)} />
             </div>
           </div>
-          <AddButton accent={accent} onClick={submit} disabled={save.isPending || bulkSave.isPending}>
+          <AddButton
+            accent={accent}
+            onClick={submit}
+            disabled={save.isPending || bulkSave.isPending}
+            title={bulk ? 'Apply this override to every selected customer' : 'Save this override for the customer (adds a new one, or updates the matching level)'}
+          >
             <Plus className="size-4" /> {bulk ? `Apply to ${targetCount(target)} customer(s)` : 'Add / update'}
           </AddButton>
         </div>
@@ -598,7 +613,14 @@ function LogoPanel({
   ];
 
   return (
-    <Panel title="Logo restrictions" icon={<Ban className="size-4" />} accent={accent} badge={bulk ? `${targetCount(target)} customers` : `${logos.length} set`} className={className}>
+    <Panel
+      title="Logo restrictions"
+      icon={<Ban className="size-4" />}
+      accent={accent}
+      info="Block the logo for this customer at a whole category or a sub-category. Logo items are then hidden when taking this customer's order."
+      badge={bulk ? `${targetCount(target)} customers` : `${logos.length} set`}
+      className={className}
+    >
       {canCreate && (
         <div className="space-y-3 rounded-lg border bg-slate-50/70 p-3">
           <LevelButtons levels={LOGO_LEVELS} value={scope} accent={accent} onChange={(v) => { setScope(v); if (v === 'CATEGORY') setSubCategory(''); }} />
@@ -612,7 +634,12 @@ function LogoPanel({
               <NativeSelect value={subCategory} onChange={setSubCategory} options={subOptions} placeholder={needSub ? 'Sub-category…' : '—'} disabled={!needSub || !category} />
             </div>
             <div className="flex items-end">
-              <AddButton accent={accent} onClick={submit} disabled={save.isPending || bulkSave.isPending}>
+              <AddButton
+                accent={accent}
+                onClick={submit}
+                disabled={save.isPending || bulkSave.isPending}
+                title={bulk ? 'Block the logo for every selected customer' : "Block the logo for this category/sub-category — logo items won't appear in this customer's order"}
+              >
                 <Ban className="size-4" /> {bulk ? `Block for ${targetCount(target)}` : 'Block logo'}
               </AddButton>
             </div>

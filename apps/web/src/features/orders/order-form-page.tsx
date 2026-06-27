@@ -84,6 +84,8 @@ const itemRate = (l: Pick<Item, 'productRate' | 'designRate'>) => (n(l.productRa
 const scopeWord = (s: string | null) =>
   s === 'ITEM' ? 'item' : s === 'SUBCATEGORY' ? 'sub-category' : s === 'CATEGORY' ? 'category' : '';
 const fmtDelta = (n: number) => (n > 0 ? `+${n}` : `${n}`);
+/** A design that carries a logo (standalone "LOGO" or a combo like "HAMMER+LOGO"). */
+const isLogoDesign = (designType?: string | null) => (designType ?? '').toUpperCase().includes('LOGO');
 /** Line amount = rate × quantity, where the quantity is Kgs or Pcs per the line's calc field. */
 const lineAmount = (l: Pick<Item, 'productRate' | 'designRate' | 'gram' | 'pcs' | 'calField'>) => {
   const qty = l.calField === 'PCS' ? (n(l.pcs) ?? 0) : (n(l.gram) ?? 0);
@@ -399,9 +401,19 @@ export function OrderFormPage() {
   // product's size in "Size" mode or its pcs in "Pcs" mode.
   const itemOptions = useMemo(() => {
     const list = lookups?.items ?? [];
+    // Hide logo items entirely when this customer's logo is blocked for that
+    // category (or category + sub-category) — a blocked logo can't be ordered.
+    const logos = special?.logos ?? [];
+    const logoBlocked = (category: string, subCategory: string) =>
+      logos.some(
+        (l) =>
+          (l.scope === 'CATEGORY' && l.category === category) ||
+          (l.scope === 'SUBCATEGORY' && l.category === category && l.subCategory === subCategory),
+      );
     const map = new Map<string, (typeof list)[number]>();
     const labels: string[] = [];
     for (const it of list) {
+      if (isLogoDesign(it.designType) && logoBlocked(it.category, it.subCategory)) continue;
       const prefix = showBy === 'PCS' ? fmtNum(it.pcs) : fmtNum(it.size);
       const label = [prefix, it.product, it.designType ?? ''].filter(Boolean).join(' ');
       if (!label || map.has(label)) continue; // first wins on duplicate labels
@@ -409,7 +421,7 @@ export function OrderFormPage() {
       labels.push(label);
     }
     return { labels, map };
-  }, [lookups, showBy]);
+  }, [lookups, showBy, special]);
 
   // Picking an item fills product, category/sub, design type, rates + weight/box info.
   const onItemPick = (label: string) => {
@@ -1045,13 +1057,14 @@ export function OrderFormPage() {
         </CardContent>
       </Card>
 
-      {/* Sticky action bar with total */}
-      <div className="sticky bottom-0 z-10 -mx-1 flex items-center justify-between gap-3 border-t bg-background/85 px-1 py-3 backdrop-blur">
+      {/* Sticky action bar with total. Wraps so the buttons are never cut off on
+          narrow widths or when the browser is zoomed in. */}
+      <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t bg-background/85 px-1 py-3 backdrop-blur">
         <p className="text-sm">
           {items.length} item(s) · total{' '}
           <span className="font-bold tabular-nums text-emerald-600">₹{total.toLocaleString()}</span>
         </p>
-        <div className="flex gap-2">
+        <div className="ml-auto flex flex-wrap justify-end gap-2">
           <Button type="button" variant="destructive" onClick={() => navigate(listPath)} title="Cancel (Esc)">
             Cancel
           </Button>

@@ -88,6 +88,8 @@ export function DesignsPage() {
   const [creating, setCreating] = useState(false);
   const [selected, setSelected] = useState<Map<number, DesignDto>>(new Map());
   const [combining, setCombining] = useState(false);
+  // After a new design is created, offer to combine it with same-category designs.
+  const [combineWith, setCombineWith] = useState<DesignDto | null>(null);
 
   const query = { page, pageSize: PAGE_SIZE, search: search || undefined };
   const { data, isLoading } = useDesigns(query);
@@ -385,6 +387,7 @@ export function DesignsPage() {
       {(creating || editing) && (
         <DesignDialog
           design={editing}
+          onCreated={can('combination:create') ? (d) => setCombineWith(d) : undefined}
           onClose={() => {
             setCreating(false);
             setEditing(null);
@@ -401,6 +404,7 @@ export function DesignsPage() {
           }}
         />
       )}
+      {combineWith && <CombineWithDesignDialog base={combineWith} onClose={() => setCombineWith(null)} />}
     </div>
   );
 }
@@ -447,7 +451,7 @@ function MoneyInput({ value, onChange }: { value: string; onChange: (v: string) 
   );
 }
 
-function DesignDialog({ design, onClose }: { design: DesignDto | null; onClose: () => void }) {
+function DesignDialog({ design, onClose, onCreated }: { design: DesignDto | null; onClose: () => void; onCreated?: (d: DesignDto) => void }) {
   const isEdit = !!design;
   const create = useCreateDesign();
   const update = useUpdateDesign(design?.id ?? 0);
@@ -481,15 +485,24 @@ function DesignDialog({ design, onClose }: { design: DesignDto | null; onClose: 
       cost: numOrNull(form.cost),
       rate: numOrNull(form.rate),
     };
-    const opts = {
-      onSuccess: () => {
-        toast.success(isEdit ? 'Design updated' : 'Design created');
-        onClose();
-      },
-      onError: (e: unknown) => toast.error(getApiErrorMessage(e, 'Save failed')),
-    };
-    if (isEdit) update.mutate(input, opts);
-    else create.mutate(input, opts);
+    if (isEdit) {
+      update.mutate(input, {
+        onSuccess: () => {
+          toast.success('Design updated');
+          onClose();
+        },
+        onError: (e: unknown) => toast.error(getApiErrorMessage(e, 'Save failed')),
+      });
+    } else {
+      create.mutate(input, {
+        onSuccess: (d) => {
+          toast.success('Design created');
+          onClose();
+          onCreated?.(d); // offer to build a combination with this new design
+        },
+        onError: (e: unknown) => toast.error(getApiErrorMessage(e, 'Save failed')),
+      });
+    }
   };
 
   return (
@@ -678,6 +691,124 @@ function CombinationDialog({
             </Button>
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Shown right after a NEW design is created: offers to build a combination with
+ * it by ticking other designs in the SAME category + sub-category.
+ */
+function CombineWithDesignDialog({ base, onClose }: { base: DesignDto; onClose: () => void }) {
+  const create = useCreateCombination();
+  // Pull all designs once and narrow to the same category + sub-category.
+  const { data, isLoading } = useDesigns({ page: 1, pageSize: 1000 });
+  const candidates = useMemo(
+    () =>
+      (data?.items ?? [])
+        .filter((d) => d.id !== base.id && d.category === base.category && d.subCategory === base.subCategory)
+        .sort((a, b) => a.designType.localeCompare(b.designType)),
+    [data, base],
+  );
+
+  const [search, setSearch] = useState('');
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const toggle = (id: number) =>
+    setPicked((s) => {
+      const n = new Set(s);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+
+  const filtered = candidates.filter((d) => !search.trim() || d.designType.toLowerCase().includes(search.toLowerCase()));
+  const chosen = candidates.filter((d) => picked.has(d.id));
+  const all = [base, ...chosen];
+  const autoName = all.map((d) => d.designType).join(' + ');
+  const cost = all.reduce((s, d) => s + (d.cost ?? 0), 0);
+  const rate = all.reduce((s, d) => s + (d.rate ?? 0), 0);
+
+  const submit = () => {
+    if (picked.size === 0) return toast.error('Tick at least one design to combine with');
+    create.mutate(
+      { name: autoName || null, designIds: all.map((d) => d.id) },
+      {
+        onSuccess: () => {
+          toast.success('Combination created');
+          onClose();
+        },
+        onError: (e) => toast.error(getApiErrorMessage(e, 'Create failed')),
+      },
+    );
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Layers className="text-primary size-5" /> Create a combination with “{base.designType}”?
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="grid gap-3">
+          <p className="text-muted-foreground text-sm">
+            Tick other designs in <span className="text-foreground font-medium">{base.category} / {base.subCategory}</span> to
+            combine with the new design — or skip for now.
+          </p>
+
+          {candidates.length > 8 && (
+            <div className="relative">
+              <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
+              <Input className="pl-9" placeholder="Filter design types…" value={search} onChange={(e) => setSearch(e.target.value)} />
+            </div>
+          )}
+
+          <div className="max-h-64 space-y-0.5 overflow-auto rounded-md border p-1.5">
+            {isLoading ? (
+              <div className="text-muted-foreground flex h-20 items-center justify-center text-sm">
+                <Loader2 className="size-4 animate-spin" />
+              </div>
+            ) : filtered.length === 0 ? (
+              <p className="text-muted-foreground px-2 py-6 text-center text-sm">
+                No other designs in this category / sub-category yet.
+              </p>
+            ) : (
+              filtered.map((d) => (
+                <label key={d.id} className="hover:bg-accent flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm">
+                  <input type="checkbox" className="size-4 accent-primary" checked={picked.has(d.id)} onChange={() => toggle(d.id)} />
+                  <span className="font-medium">{d.designType}</span>
+                  <span className="text-muted-foreground ml-auto text-xs tabular-nums">
+                    cost {num(d.cost)} · rate {num(d.rate)}
+                  </span>
+                </label>
+              ))
+            )}
+          </div>
+
+          {picked.size > 0 && (
+            <div className="bg-muted/40 space-y-1 rounded-md px-3 py-2 text-sm">
+              <div className="truncate">
+                <span className="text-muted-foreground">Name: </span>
+                <span className="font-medium uppercase">{autoName}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">{all.length} designs · combined cost / rate</span>
+                <span className="font-semibold tabular-nums">{cost.toLocaleString()} / {rate.toLocaleString()}</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>
+            Not now
+          </Button>
+          <Button type="button" onClick={submit} disabled={create.isPending || picked.size === 0}>
+            {create.isPending ? <Loader2 className="animate-spin" /> : <Layers className="size-4" />}
+            Create combination
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
