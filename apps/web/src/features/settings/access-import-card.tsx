@@ -3,10 +3,10 @@
  * Delete this file + its <AccessImportCard/> usage in settings-page.tsx to remove.
  */
 import { useEffect, useRef, useState } from 'react';
-import { DatabaseZap, FileUp, Loader2, TriangleAlert } from 'lucide-react';
+import { DatabaseZap, Eye, FileUp, Loader2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { getApiErrorMessage, http } from '@/lib/api';
-import { cn } from '@/lib/utils';
+import { useConfirm } from '@/components/common/confirm';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
@@ -27,11 +27,11 @@ const GROUPS = [
 
 export function AccessImportCard() {
   const fileRef = useRef<HTMLInputElement>(null);
+  const confirm = useConfirm();
   const [supported, setSupported] = useState<boolean | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [picked, setPicked] = useState<Record<string, boolean>>({ masters: true, special: true, txn: true });
-  const [dry, setDry] = useState(true);
-  const [running, setRunning] = useState(false);
+  const [busy, setBusy] = useState<null | 'preview' | 'import'>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
 
   useEffect(() => {
@@ -41,24 +41,33 @@ export function AccessImportCard() {
       .catch(() => setSupported(false));
   }, []);
 
-  const run = async () => {
+  const run = async (dry: boolean) => {
     if (!file) return toast.error('Choose a .accdb file first');
     const sections = GROUPS.filter((g) => picked[g.key]).flatMap((g) => g.sections);
     if (sections.length === 0) return toast.error('Select at least one data group');
+    if (!dry) {
+      const ok = await confirm({
+        title: 'Import data into the database?',
+        description:
+          'This writes to the live database. Masters are merged (matched by name/key); Orders & Dispatch REPLACE the existing order history.',
+        confirmText: 'Import now',
+      });
+      if (!ok) return;
+    }
     const fd = new FormData();
     fd.append('file', file);
     fd.append('sections', sections.join(','));
     fd.append('dry', String(dry));
-    setRunning(true);
+    setBusy(dry ? 'preview' : 'import');
     setResult(null);
     try {
       const res = await http.post<ImportResult>('/access-import/run', fd);
       setResult(res);
-      toast.success(dry ? 'Preview complete — nothing was written' : 'Import complete');
+      toast.success(dry ? 'Preview complete — nothing was written' : 'Import complete — data written to the database');
     } catch (e) {
       toast.error(getApiErrorMessage(e, 'Import failed'));
     } finally {
-      setRunning(false);
+      setBusy(null);
     }
   };
 
@@ -106,27 +115,21 @@ export function AccessImportCard() {
               ))}
             </div>
 
-            {/* Dry-run + run */}
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
-              <label className="flex items-center gap-2 text-sm">
-                <Switch checked={dry} onCheckedChange={setDry} />
-                <span>
-                  <span className="font-medium">Preview first (dry run)</span>
-                  <span className="text-muted-foreground"> — counts only, no changes</span>
-                </span>
-              </label>
-              <Button onClick={run} disabled={running || !file} className={cn(!dry && 'bg-amber-600 hover:bg-amber-700')}>
-                {running ? <Loader2 className="animate-spin" /> : <DatabaseZap />}
-                {dry ? 'Preview import' : 'Import now'}
+            {/* Actions: explicit Preview vs Import */}
+            <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+              <Button type="button" variant="outline" onClick={() => run(true)} disabled={!!busy || !file}>
+                {busy === 'preview' ? <Loader2 className="animate-spin" /> : <Eye />} Preview (no changes)
               </Button>
+              <Button type="button" onClick={() => run(false)} disabled={!!busy || !file}>
+                {busy === 'import' ? <Loader2 className="animate-spin" /> : <DatabaseZap />} Import now
+              </Button>
+              <span className="text-muted-foreground text-xs">Preview = counts only · Import now = writes to the database</span>
             </div>
 
-            {!dry && (
-              <p className="text-xs text-amber-700">
-                <TriangleAlert className="mr-1 inline size-3.5 align-[-2px]" />
-                Masters are merged (matched by name/key). <b>Orders &amp; Dispatch replace</b> the existing order history.
-              </p>
-            )}
+            <p className="text-xs text-amber-700">
+              <TriangleAlert className="mr-1 inline size-3.5 align-[-2px]" />
+              Masters are merged (matched by name/key). <b>Orders &amp; Dispatch replace</b> the existing order history.
+            </p>
 
             {/* Results */}
             {result && (

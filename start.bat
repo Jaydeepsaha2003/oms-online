@@ -5,8 +5,9 @@ REM  Double-click to start everything.
 REM
 REM  On launch it auto-syncs so new code "just works":
 REM    [1] npm install            (new / changed packages)
-REM    [2] prisma migrate deploy  (apply new DB migrations)
-REM    [3] prisma generate        (refresh the Prisma client)
+REM    [2] prisma migrate deploy  (apply tracked DB migrations)
+REM    [3] prisma db push         (sync schema / new tables made via db push)
+REM    [4] prisma generate        (refresh the Prisma client)
 REM ============================================================
 cd /d "%~dp0"
 
@@ -26,7 +27,7 @@ if not errorlevel 1 (
     exit /b
 )
 
-echo [1/3] Syncing dependencies (npm install)...
+echo [1/4] Syncing dependencies (npm install)...
 call npm install --no-audit --no-fund
 if errorlevel 1 (
     echo.
@@ -37,12 +38,19 @@ if errorlevel 1 (
 )
 
 echo.
-echo [2/3] Applying database migrations (prisma migrate deploy)...
+echo [2/4] Applying tracked migrations (prisma migrate deploy)...
 call npm run db:deploy
 if errorlevel 1 echo    [warning] Migration step reported an error - check the output above.
 
 echo.
-echo [3/3] Refreshing the Prisma client (prisma generate)...
+echo [3/4] Syncing the schema / new tables (prisma db push)...
+REM Pipe "n" so a (rare) data-loss prompt is auto-declined instead of hanging
+REM the script; additive changes (new tables/columns) apply without any prompt.
+echo n | call npm run db:push
+if errorlevel 1 echo    [warning] Schema sync reported an error - check the output above.
+
+echo.
+echo [4/4] Refreshing the Prisma client (prisma generate)...
 call npm run db:generate
 if errorlevel 1 echo    [warning] Prisma generate reported an error - check the output above.
 

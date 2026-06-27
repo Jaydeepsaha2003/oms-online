@@ -27,6 +27,7 @@
     "db:generate": "npm run db:generate -w @oms/api",
     "db:migrate": "npm run db:migrate -w @oms/api",
     "db:deploy": "npm run db:deploy -w @oms/api",
+    "db:push": "npm run db:push -w @oms/api",
     "db:seed": "npm run db:seed -w @oms/api",
     "db:studio": "npm run db:studio -w @oms/api",
     "lint": "npm run lint -w @oms/api && npm run lint -w @oms/web",
