@@ -95,6 +95,7 @@ export function DataTable<T>({
   return (
     <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
       <Table
+        width="auto"
         containerClassName={cn(maxBodyHeight, maxBodyHeight && 'overflow-y-auto')}
         className={cn(
           '[&_td]:border-r [&_td]:border-border/30 [&_th]:border-r [&_th]:border-border/30',
