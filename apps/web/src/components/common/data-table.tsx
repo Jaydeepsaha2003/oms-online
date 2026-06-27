@@ -75,6 +75,7 @@ export function DataTable<T>({
   isLoading,
   emptyText = 'No records found.',
   maxBodyHeight,
+  dense,
 }: {
   columns: DataColumn<T>[];
   rows: T[];
@@ -86,6 +87,8 @@ export function DataTable<T>({
   emptyText?: string;
   /** Cap the table height (e.g. 'max-h-[40vh]') so rows scroll inside, header sticks. */
   maxBodyHeight?: string;
+  /** Compact padding so columns auto-fit their content and more fit on screen. */
+  dense?: boolean;
 }) {
   const span = columns.length + (actions ? 1 : 0);
   const stickyTop = !!maxBodyHeight;
@@ -95,13 +98,14 @@ export function DataTable<T>({
         containerClassName={cn(maxBodyHeight, maxBodyHeight && 'overflow-y-auto')}
         className={cn(
           '[&_td]:border-r [&_td]:border-border/30 [&_th]:border-r [&_th]:border-border/30',
-          '[&_thead_th]:bg-muted [&_thead_th]:h-9 [&_thead_th]:text-[10px] [&_thead_th]:font-semibold [&_thead_th]:uppercase [&_thead_th]:tracking-wider',
-          // Compact rows everywhere: halve the vertical cell padding and shrink the
-          // (icon-only) action buttons so no row is taller than it needs to be.
-          '[&_td]:py-1.5 [&_tbody_button]:size-7',
-          // Smaller text + tighter horizontal padding on phones so more columns fit.
-          'text-xs sm:text-sm [&_td]:px-2 [&_th]:px-2 sm:[&_td]:px-3 sm:[&_th]:px-3',
+          '[&_thead_th]:bg-muted [&_thead_th]:font-semibold [&_thead_th]:uppercase [&_thead_th]:tracking-wider',
           '[&_tbody_td]:bg-card [&_tbody_tr:nth-child(even)_td]:bg-slate-50 [&_tbody_tr:hover_td]:bg-muted',
+          dense
+            ? // Compact: tight padding so columns shrink to their content and the
+              // most columns possible stay on screen.
+              '[&_thead_th]:h-9 [&_thead_th]:text-[11px] [&_td]:py-1.5 [&_tbody_button]:size-7 text-[13px] [&_td]:px-2.5 [&_th]:px-2.5'
+            : // Comfortable: roomy padding for readability.
+              '[&_thead_th]:h-11 [&_thead_th]:text-xs [&_td]:py-2.5 [&_tbody_button]:size-8 text-sm [&_td]:px-3 [&_th]:px-3 sm:[&_td]:px-5 sm:[&_th]:px-5',
         )}
       >
         <TableHeader>

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { ChevronLeft, ChevronRight, Loader2, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2, Pencil, Plus, Scale, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { ProductDto } from '@oms/shared';
+import type { CategoryFieldDto, ProductDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { parseExcelFile } from '@/lib/excel';
 import { cn, formatDateShort, formatDateTime } from '@/lib/utils';
@@ -11,7 +11,7 @@ import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { ExportButton, ImportButton } from '@/components/common/excel-actions';
-import { Combo } from '@/components/common/combo';
+import { Combo, NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -24,6 +24,7 @@ import {
   useImportProducts,
   useProductLookups,
   useProducts,
+  useSaveCategoryFields,
   useUpdateProduct,
 } from './use-products';
 
@@ -57,6 +58,7 @@ export function ProductsPage() {
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<ProductDto | null>(null);
   const [creating, setCreating] = useState(false);
+  const [showFields, setShowFields] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -118,6 +120,9 @@ export function ProductsPage() {
           />
           {can('product:export') && <ExportButton onClick={() => exportProducts(query)} />}
           {can('product:import') && <ImportButton onFile={handleImport} pending={importMut.isPending} />}
+          <Button variant="outline" size="sm" onClick={() => setShowFields(true)} title="Set the price field (KGS/PCS) per category">
+            <Scale /> Price fields
+          </Button>
           {can('product:create') && (
             <Button size="sm" onClick={() => setCreating(true)}>
               <Plus /> New product
@@ -193,7 +198,88 @@ export function ProductsPage() {
           }}
         />
       )}
+
+      {showFields && <CategoryFieldsDialog canEdit={can('product:update')} onClose={() => setShowFields(false)} />}
     </div>
+  );
+}
+
+/** Manage the per-category price-calc field (KGS / PCS). Used to set each order line's calc field. */
+function CategoryFieldsDialog({ canEdit, onClose }: { canEdit: boolean; onClose: () => void }) {
+  const { data: lookups } = useProductLookups();
+  const save = useSaveCategoryFields();
+  const [rows, setRows] = useState<CategoryFieldDto[]>([]);
+
+  useEffect(() => {
+    if (lookups) setRows(lookups.categoryFields);
+  }, [lookups]);
+
+  const setRow = (i: number, patch: Partial<CategoryFieldDto>) =>
+    setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  const addRow = () => setRows((rs) => [...rs, { category: '', field: 'KGS' }]);
+  const removeRow = (i: number) => setRows((rs) => rs.filter((_, idx) => idx !== i));
+
+  const submit = () => {
+    // Upper-case, drop blanks, de-dupe by category (last wins).
+    const map = new Map<string, CategoryFieldDto['field']>();
+    for (const r of rows) {
+      const c = r.category.trim().toUpperCase();
+      if (c) map.set(c, r.field === 'PCS' ? 'PCS' : 'KGS');
+    }
+    const list = [...map.entries()].map(([category, field]) => ({ category, field }));
+    save.mutate(list, {
+      onSuccess: () => {
+        toast.success('Price fields saved');
+        onClose();
+      },
+      onError: (e) => toast.error(getApiErrorMessage(e, 'Save failed')),
+    });
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Category price fields</DialogTitle>
+        </DialogHeader>
+        <p className="text-muted-foreground text-sm">
+          Choose how each category is priced — by <b>KGS</b> or <b>PCS</b>. New order lines pick this up automatically from the product's category.
+        </p>
+        <div className="max-h-[50vh] space-y-2 overflow-y-auto pr-1">
+          {rows.length === 0 && <p className="text-muted-foreground text-sm">No mappings yet — add one below.</p>}
+          {rows.map((r, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <div className="flex-1">
+                <Combo value={r.category} onChange={(v) => setRow(i, { category: v })} options={lookups?.categories ?? []} placeholder="Category" disabled={!canEdit} />
+              </div>
+              <div className="w-28">
+                <NativeSelect value={r.field} onChange={(v) => setRow(i, { field: v === 'PCS' ? 'PCS' : 'KGS' })} options={['KGS', 'PCS']} disabled={!canEdit} />
+              </div>
+              {canEdit && (
+                <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => removeRow(i)} aria-label="Remove">
+                  <Trash2 className="size-4" />
+                </Button>
+              )}
+            </div>
+          ))}
+        </div>
+        {canEdit && (
+          <Button variant="outline" size="sm" className="w-fit" onClick={addRow}>
+            <Plus /> Add category
+          </Button>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Close
+          </Button>
+          {canEdit && (
+            <Button onClick={submit} disabled={save.isPending}>
+              {save.isPending ? <Loader2 className="animate-spin" /> : null} Save
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

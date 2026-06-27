@@ -3,6 +3,12 @@ import { Type } from 'class-transformer';
 import { IsArray, IsNumber, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
+/** Replace the per-category price-calc field map (coerced in the service). */
+export class SetCategoryFieldsDto {
+  @IsArray()
+  fields!: { category: string; field: string }[];
+}
+
 export class CreateProductDto {
   @IsString()
   @MinLength(1)

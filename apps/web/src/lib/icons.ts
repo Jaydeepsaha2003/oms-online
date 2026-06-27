@@ -1,5 +1,6 @@
 /** Maps the string icon names used in the shared MENU registry to lucide components. */
 import {
+  BadgePercent,
   BarChart3,
   Box,
   Boxes,
@@ -8,11 +9,15 @@ import {
   ClipboardList,
   Contact,
   Factory,
+  FileText,
   Hammer,
+  KeyRound,
   LayoutDashboard,
   ListChecks,
   ListTree,
   Package,
+  PackageCheck,
+  PackagePlus,
   Percent,
   Receipt,
   ReceiptText,
@@ -42,6 +47,8 @@ const ICONS: Record<string, LucideIcon> = {
   ReceiptText,
   Send,
   Package,
+  PackageCheck,
+  PackagePlus,
   Box,
   ListTree,
   Factory,
@@ -55,8 +62,11 @@ const ICONS: Record<string, LucideIcon> = {
   Settings,
   UserCog,
   ShieldCheck,
+  KeyRound,
   ScrollText,
   SlidersHorizontal,
+  FileText,
+  BadgePercent,
 };
 
 /** Resolve a menu icon name to a component, falling back to a neutral dot. */

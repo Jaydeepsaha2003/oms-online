@@ -29,6 +29,10 @@ import { DesignsModule } from './designs/designs.module';
 import { DesignNamesModule } from './design-names/design-names.module';
 import { CombinationsModule } from './combinations/combinations.module';
 import { OrdersModule } from './orders/orders.module';
+import { QuotationsModule } from './quotations/quotations.module';
+import { DispatchModule } from './dispatch/dispatch.module';
+import { SpecialRatesModule } from './special-rates/special-rates.module';
+import { AccessImportModule } from './access-import/access-import.module'; // TEMP: MS Access connector
 import { SettingsModule } from './settings/settings.module';
 
 @Module({
@@ -64,6 +68,11 @@ import { SettingsModule } from './settings/settings.module';
     DesignNamesModule,
     CombinationsModule,
     OrdersModule,
+    QuotationsModule,
+    DispatchModule,
+    SpecialRatesModule,
+    AccessImportModule, // TEMP: MS Access connector — remove this line + the folder to delete
+
     SettingsModule,
   ],
   controllers: [AppController],

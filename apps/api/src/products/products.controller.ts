@@ -7,6 +7,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Put,
   Query,
   Res,
   StreamableFile,
@@ -18,7 +19,13 @@ import { Audit } from '../common/decorators/audit.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { ExcelService } from '../excel/excel.service';
 import { ProductsService } from './products.service';
-import { CreateProductDto, ImportProductsDto, ProductQueryDto, UpdateProductDto } from './dto/product.dto';
+import {
+  CreateProductDto,
+  ImportProductsDto,
+  ProductQueryDto,
+  SetCategoryFieldsDto,
+  UpdateProductDto,
+} from './dto/product.dto';
 
 const R = RESOURCES.PRODUCT;
 
@@ -41,6 +48,19 @@ export class ProductsController {
   @Permissions(perm(R, ACTIONS.VIEW))
   lookups() {
     return this.products.lookups();
+  }
+
+  @Get('category-fields')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  categoryFields() {
+    return this.products.getCategoryFields();
+  }
+
+  @Put('category-fields')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Updated category price fields' })
+  setCategoryFields(@Body() dto: SetCategoryFieldsDto) {
+    return this.products.setCategoryFields(dto.fields);
   }
 
   @Get('export')

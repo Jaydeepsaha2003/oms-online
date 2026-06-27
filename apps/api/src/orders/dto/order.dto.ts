@@ -8,6 +8,7 @@ export class CreateOrderDto {
   @MaxLength(255)
   customerName!: string;
 
+  @IsOptional() @IsString() poNumber?: string;
   @IsOptional() @IsString() agentName?: string;
   @IsOptional() @IsString() category?: string;
   @IsOptional() @IsString() orderDate?: string;

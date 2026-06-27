@@ -7,6 +7,13 @@
       "runtimeArgs": ["/c", "C:\\Users\\saham\\Documents\\oms-online\\scripts\\preview-web.cmd"],
       "port": 6173,
       "autoPort": false
+    },
+    {
+      "name": "api",
+      "runtimeExecutable": "cmd.exe",
+      "runtimeArgs": ["/c", "C:\\Users\\saham\\Documents\\oms-online\\scripts\\preview-api.cmd"],
+      "port": 4000,
+      "autoPort": false
     }
   ]
 }

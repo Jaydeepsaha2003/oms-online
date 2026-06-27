@@ -83,6 +83,13 @@ export const MENU: MenuNode[] = [
         icon: 'Receipt',
         permission: perm(RESOURCES.TRANS_RATE, ACTIONS.VIEW),
       },
+      {
+        id: 'special-rates',
+        label: 'Special Rates',
+        to: '/special-rates',
+        icon: 'BadgePercent',
+        permission: perm(RESOURCES.SPECIAL_RATE, ACTIONS.VIEW),
+      },
     ],
   },
   {
@@ -117,7 +124,11 @@ export const MENU: MenuNode[] = [
     id: 'orders-group',
     label: 'Orders',
     icon: 'ShoppingCart',
-    anyPermission: [perm(RESOURCES.ORDER, ACTIONS.VIEW), perm(RESOURCES.ORDER, ACTIONS.CREATE)],
+    anyPermission: [
+      perm(RESOURCES.ORDER, ACTIONS.VIEW),
+      perm(RESOURCES.ORDER, ACTIONS.CREATE),
+      perm(RESOURCES.QUOTATION, ACTIONS.VIEW),
+    ],
     children: [
       {
         id: 'new-order',
@@ -139,6 +150,57 @@ export const MENU: MenuNode[] = [
         to: '/orders/modify',
         icon: 'ClipboardList',
         permission: perm(RESOURCES.ORDER, ACTIONS.UPDATE),
+      },
+      {
+        id: 'view-quotations',
+        label: 'View Quotations',
+        to: '/quotations',
+        icon: 'FileText',
+        permission: perm(RESOURCES.QUOTATION, ACTIONS.VIEW),
+      },
+    ],
+  },
+  {
+    id: 'dispatch-group',
+    label: 'Dispatch',
+    icon: 'Truck',
+    anyPermission: [perm(RESOURCES.DISPATCH, ACTIONS.VIEW), perm(RESOURCES.DISPATCH, ACTIONS.CREATE)],
+    children: [
+      {
+        id: 'dispatch-order',
+        label: 'Dispatch Order',
+        to: '/dispatch/new',
+        icon: 'PackagePlus',
+        permission: perm(RESOURCES.DISPATCH, ACTIONS.CREATE),
+      },
+      {
+        id: 'modify-dispatch',
+        label: 'Modify Dispatch',
+        to: '/dispatch',
+        icon: 'PackageCheck',
+        permission: perm(RESOURCES.DISPATCH, ACTIONS.VIEW),
+      },
+    ],
+  },
+  {
+    id: 'administration',
+    label: 'Administration',
+    icon: 'ShieldCheck',
+    anyPermission: [perm(RESOURCES.USER, ACTIONS.VIEW), perm(RESOURCES.ROLE, ACTIONS.VIEW)],
+    children: [
+      {
+        id: 'users',
+        label: 'Users',
+        to: '/admin/users',
+        icon: 'Users',
+        permission: perm(RESOURCES.USER, ACTIONS.VIEW),
+      },
+      {
+        id: 'roles',
+        label: 'Roles & Permissions',
+        to: '/admin/roles',
+        icon: 'KeyRound',
+        permission: perm(RESOURCES.ROLE, ACTIONS.VIEW),
       },
     ],
   },

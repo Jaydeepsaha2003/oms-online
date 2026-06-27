@@ -21,6 +21,8 @@ export interface ComboboxProps {
   id?: string;
   /** Pick-only fields: fired on blur when the typed text matches no option. */
   onInvalidEntry?: (typed: string) => void;
+  /** Fired with the raw search text on every keystroke. */
+  onType?: (text: string) => void;
 }
 
 // Looks exactly like our <Input>; the field itself is the search box.
@@ -53,6 +55,7 @@ export function Combobox({
   className,
   id,
   onInvalidEntry,
+  onType,
 }: ComboboxProps) {
   const opts = React.useMemo<Row[]>(
     () =>
@@ -117,6 +120,7 @@ export function Combobox({
     setText(next);
     setDirty(true);
     setOpen(true);
+    onType?.(next);
     if (creatable) onChange(next); // free text is the value, live
   };
 

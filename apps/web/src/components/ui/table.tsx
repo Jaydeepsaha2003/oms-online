@@ -4,14 +4,17 @@ import { cn } from '@/lib/utils';
 function Table({
   className,
   containerClassName,
+  width = 'full',
   ...props
-}: React.ComponentProps<'table'> & { containerClassName?: string }) {
+}: React.ComponentProps<'table'> & { containerClassName?: string; width?: 'full' | 'auto' }) {
   return (
     <div
       data-slot="table-container"
       className={cn('relative w-full overflow-x-auto', containerClassName)}
     >
-      <table data-slot="table" className={cn('w-full caption-bottom text-sm', className)} {...props} />
+      {/* width='auto' lets each column hug its content (autofit) and the table
+          scroll horizontally when the columns are wider than the viewport. */}
+      <table data-slot="table" className={cn(width === 'auto' ? 'w-auto' : 'w-full', 'caption-bottom text-sm', className)} {...props} />
     </div>
   );
 }

@@ -9,12 +9,14 @@ import {
   type ReactNode,
   type SetStateAction,
 } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Check, ChevronDown, ChevronUp, Keyboard, Loader2, Plus, ReceiptText, RotateCcw, Save, Settings2, Trash2 } from 'lucide-react';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, ArrowRightLeft, BadgePercent, Ban, Check, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Plus, ReceiptText, RotateCcw, Save, Settings2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { ORDER_PRIORITIES, type OrderInput } from '@oms/shared';
+import { ORDER_PRIORITIES, resolveSpecialRates, type OrderInput, type SpecialRateResolution } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { useAutoSizePcs } from '@/lib/auto-size-pcs';
+import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/common/confirm';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,7 +27,10 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Switch } from '@/components/ui/switch';
 import { NativeSelect } from '@/components/common/combo';
 import { settingValues, useSettings } from '@/features/settings/use-settings';
+import { useCustomerSpecialRates } from '@/features/special-rates/use-special-rates';
 import { useCreateOrder, useOrder, useOrderLookups, useUpdateOrder } from './use-orders';
+import { useConvertQuotation, useCreateQuotation, useQuotation, useUpdateQuotation } from '../quotations/use-quotations';
+import { clearOrderDraft, loadOrderDraft, saveOrderDraft } from './order-draft';
 
 /** A line item once added to the order. */
 interface Item {
@@ -76,6 +81,14 @@ const fmtNum = (v: number | null) => (v == null ? '' : String(v));
 
 const n = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? null : Number(s));
 const itemRate = (l: Pick<Item, 'productRate' | 'designRate'>) => (n(l.productRate) ?? 0) + (n(l.designRate) ?? 0);
+const scopeWord = (s: string | null) =>
+  s === 'ITEM' ? 'item' : s === 'SUBCATEGORY' ? 'sub-category' : s === 'CATEGORY' ? 'category' : '';
+const fmtDelta = (n: number) => (n > 0 ? `+${n}` : `${n}`);
+/** Line amount = rate × quantity, where the quantity is Kgs or Pcs per the line's calc field. */
+const lineAmount = (l: Pick<Item, 'productRate' | 'designRate' | 'gram' | 'pcs' | 'calField'>) => {
+  const qty = l.calField === 'PCS' ? (n(l.pcs) ?? 0) : (n(l.gram) ?? 0);
+  return itemRate(l) * qty;
+};
 const today = () => new Date().toISOString().slice(0, 10);
 const addDays = (dateStr: string, days: number) => {
   if (!dateStr || Number.isNaN(days)) return '';
@@ -84,9 +97,18 @@ const addDays = (dateStr: string, days: number) => {
   return d.toISOString().slice(0, 10);
 };
 
+/** Render a 'YYYY-MM-DD' string the same way the DatePicker field shows it. */
+const niceDate = (iso: string) => {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y) return iso;
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+};
+
 // The form's focusable controls, in entry order — used by the Tab-access panel.
 const TAB_FIELDS = [
   { key: 'customer', label: 'Customer' },
+  { key: 'poNumber', label: 'PO Number' },
   { key: 'orderDate', label: 'Order date' },
   { key: 'completionDay', label: 'Completion days' },
   { key: 'showBy', label: 'Show item by' },
@@ -143,18 +165,32 @@ function Kbd({ children }: { children: ReactNode }) {
 
 export function OrderFormPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const confirm = useConfirm();
+  const { can } = usePermissions();
   const params = useParams<{ id?: string }>();
   const id = params.id ? Number(params.id) : undefined;
   const isEdit = id != null;
+  // The same form drives both orders and quotations. The route decides which
+  // document we're editing; on /orders/new the user picks via the two buttons.
+  const docKind: 'order' | 'quotation' = location.pathname.startsWith('/quotations') ? 'quotation' : 'order';
+  const listPath = docKind === 'quotation' ? '/quotations' : '/orders';
+  const docLabel = docKind === 'quotation' ? 'quotation' : 'order';
   const [saved, setSaved] = useState(false); // shows the success-tick overlay
 
   const { data: lookups } = useOrderLookups();
   const { data: settings } = useSettings();
-  const { data: existing, isLoading } = useOrder(id);
+  const orderQuery = useOrder(docKind === 'order' ? id : undefined);
+  const quotationQuery = useQuotation(docKind === 'quotation' ? id : undefined);
+  const existing = docKind === 'quotation' ? quotationQuery.data : orderQuery.data;
+  const isLoading = docKind === 'quotation' ? quotationQuery.isLoading : orderQuery.isLoading;
   const create = useCreateOrder();
   const update = useUpdateOrder(id ?? 0);
-  const saving = create.isPending || update.isPending;
+  const createQuotation = useCreateQuotation();
+  const updateQuotation = useUpdateQuotation(id ?? 0);
+  const convertQuotation = useConvertQuotation();
+  const saving =
+    create.isPending || update.isPending || createQuotation.isPending || updateQuotation.isPending || convertQuotation.isPending;
   const keyer = useRef(0);
   const formRef = useRef<HTMLDivElement>(null);
 
@@ -205,16 +241,23 @@ export function OrderFormPage() {
 
   // Header
   const [customer, setCustomer] = useState('');
+  const [customerId, setCustomerId] = useState<number | undefined>(undefined);
+  const [poNumber, setPoNumber] = useState('');
   const [agentName, setAgentName] = useState('');
   const [category, setCategory] = useState('SALES');
   const [orderDate, setOrderDate] = useState(today());
   const [completionDay, setCompletionDay] = useState('');
   const [status, setStatus] = useState('CONFIRMED'); // new orders default to confirmed
   const [showBy, setShowBy] = useState<'PCS' | 'SIZE'>('SIZE');
+  const { autoSizePcs } = useAutoSizePcs();
 
   // Item entry (the row being built) + the added items
   const [entry, setEntry] = useState(blankEntry());
   const [items, setItems] = useState<Item[]>([]);
+
+  // The selected customer's special rates (deltas) + a note shown when one applies.
+  const { data: special } = useCustomerSpecialRates(customerId);
+  const [specialNote, setSpecialNote] = useState<SpecialRateResolution | null>(null);
 
   const completionDate = useMemo(
     () => (completionDay.trim() === '' ? '' : addDays(orderDate, Number(completionDay))),
@@ -240,6 +283,7 @@ export function OrderFormPage() {
   useEffect(() => {
     if (!existing) return;
     setCustomer(existing.customerName);
+    setPoNumber(existing.poNumber ?? '');
     setAgentName(existing.agentName ?? '');
     setCategory(existing.category ?? 'SALES');
     setOrderDate(existing.orderDate.slice(0, 10));
@@ -270,10 +314,70 @@ export function OrderFormPage() {
     );
   }, [existing, nameByCode]);
 
-  // Auto-fill agent + category from the chosen customer.
+  // ── Work-in-progress local draft (auto-save / restore) ───────────────────
+  // Only for a brand-new order — restores a half-filled order from last time.
+  const draftEnabled = !isEdit && docKind === 'order';
+  const draftReady = useRef(false);
+  const [restoredDraft, setRestoredDraft] = useState(false);
+
+  // Restore once on mount.
+  useEffect(() => {
+    if (!draftEnabled) {
+      draftReady.current = true;
+      return;
+    }
+    const d = loadOrderDraft();
+    if (d && (d.customer || (Array.isArray(d.items) && d.items.length > 0))) {
+      setCustomer(d.customer || '');
+      setPoNumber(d.poNumber || '');
+      setAgentName(d.agentName || '');
+      setCategory(d.category || 'SALES');
+      if (d.orderDate) setOrderDate(d.orderDate);
+      setCompletionDay(d.completionDay || '');
+      if (d.status) setStatus(d.status);
+      if (d.showBy) setShowBy(d.showBy);
+      setItems((d.items as Item[]).map((it, idx) => ({ ...it, key: `d${idx}` })));
+      setRestoredDraft(true);
+    }
+    draftReady.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Auto-save the WIP order (debounced) whenever it has any content.
+  useEffect(() => {
+    if (!draftEnabled || !draftReady.current) return;
+    const t = window.setTimeout(() => {
+      if (customer.trim() || items.length > 0) {
+        saveOrderDraft({ customer, poNumber, agentName, category, orderDate, completionDay, status, showBy, items });
+      } else {
+        clearOrderDraft();
+      }
+    }, 600);
+    return () => window.clearTimeout(t);
+  }, [draftEnabled, customer, poNumber, agentName, category, orderDate, completionDay, status, showBy, items]);
+
+  // Throw away the restored draft and start blank.
+  const discardDraft = () => {
+    clearOrderDraft();
+    setRestoredDraft(false);
+    setCustomer('');
+    setPoNumber('');
+    setAgentName('');
+    setCategory('SALES');
+    setOrderDate(today());
+    setCompletionDay('');
+    setStatus('CONFIRMED');
+    setItems([]);
+    setEntry(blankEntry());
+  };
+
+  // Auto-fill agent + category from the chosen customer, and capture the id so we
+  // can apply that customer's special rates to each line.
   const onCustomer = (name: string) => {
     setCustomer(name);
     const c = lookups?.customers.find((x) => x.name === name);
+    setCustomerId(c?.id);
+    setSpecialNote(null);
     if (c) {
       setAgentName(c.agentName ?? '');
       if (c.category) setCategory(c.category);
@@ -317,6 +421,24 @@ export function OrderFormPage() {
     // The composite item carries a design-type code. Show its human name only —
     // never the raw code (it.designName falls back to the code when none exists).
     const realName = it.designName && it.designName !== it.designType ? it.designName : '';
+
+    // Apply the customer's special-rate cascade (most-specific level wins) on top
+    // of the base product/design rate. Falls through to base rates when none set.
+    const res = special
+      ? resolveSpecialRates(special, {
+          category: it.category,
+          subCategory: it.subCategory,
+          product: it.product,
+          designType: it.designType ?? null,
+        })
+      : null;
+    const hasProd = it.productRate != null || (res?.productDelta ?? 0) !== 0;
+    const hasDesign = !!it.designType && (it.designRate != null || (res?.designDelta ?? 0) !== 0);
+    const prodRate = (it.productRate ?? 0) + (res?.productDelta ?? 0);
+    const desRate = (it.designRate ?? 0) + (res?.designDelta ?? 0);
+
+    setSpecialNote(res && (res.productDelta !== 0 || res.designDelta !== 0 || res.logoBlocked) ? res : null);
+
     setEntry((e) => ({
       ...e,
       itemName: label,
@@ -325,11 +447,32 @@ export function OrderFormPage() {
       subCategory: it.subCategory,
       weight: it.weight != null ? String(it.weight) : '',
       pcsBox: it.pcs != null ? String(it.pcs) : '',
-      productRate: it.productRate != null ? String(it.productRate) : '',
+      productRate: hasProd ? String(prodRate) : '',
       designType: it.designType ?? '',
       designName: realName,
-      designRate: it.designType && it.designRate != null ? String(it.designRate) : '',
+      designRate: hasDesign ? String(desRate) : '',
     }));
+  };
+
+  // As the user types the item name, the leading number is either a size or a
+  // pcs value — auto-flip the Size/Pcs radio to whichever the catalogue matches.
+  // When a number is BOTH a size and a pcs we prefer Size. Only runs when the
+  // auto-detect preference is on (otherwise the user picks Size/Pcs manually).
+  const detectShowBy = (text: string) => {
+    if (!autoSizePcs) return;
+    const lead = text.trim().match(/^(\d+(?:\.\d+)?)/)?.[1];
+    if (!lead) return;
+    const list = lookups?.items ?? [];
+    const sizeExact = list.some((it) => it.size != null && String(it.size) === lead);
+    const pcsExact = list.some((it) => it.pcs != null && String(it.pcs) === lead);
+    if (sizeExact || pcsExact) {
+      setShowBy(sizeExact ? 'SIZE' : 'PCS'); // tie → Size
+      return;
+    }
+    // Still mid-number: fall back to a prefix match when only one side leads with it.
+    const sizePre = list.some((it) => it.size != null && String(it.size).startsWith(lead));
+    const pcsPre = list.some((it) => it.pcs != null && String(it.pcs).startsWith(lead));
+    if (sizePre || pcsPre) setShowBy(sizePre ? 'SIZE' : 'PCS'); // tie → Size
   };
 
   // Auto-calc Kgs (= Pcs × weight) and Box (= Pcs ÷ pcs-per-box) when a product is picked.
@@ -374,14 +517,24 @@ export function OrderFormPage() {
 
   const entryTotal = itemRate(entry);
 
+  // Per-category price-calc field (KGS/PCS), configured on the Products page.
+  const categoryFieldMap = useMemo(() => {
+    const m = new Map<string, 'KGS' | 'PCS'>();
+    for (const cf of lookups?.categoryFields ?? []) m.set(cf.category.toUpperCase(), cf.field === 'PCS' ? 'PCS' : 'KGS');
+    return m;
+  }, [lookups]);
+
   const addItem = () => {
     if (!entry.product.trim() && !entry.designType.trim()) {
       return toast.error('Pick a product or design type to add');
     }
     const designName = noDesignNames ? 'NA' : entry.designName;
+    // The line's price-calc field follows the product's category mapping; if the
+    // category isn't configured, fall back to the Size/Pcs selection.
+    const calField = categoryFieldMap.get(entry.category.trim().toUpperCase()) ?? (showBy === 'PCS' ? 'PCS' : 'KGS');
     setItems((its) => [
       ...its,
-      { ...entry, key: `i${keyer.current++}`, calField: showBy === 'PCS' ? 'PCS' : 'KGS', designName },
+      { ...entry, key: `i${keyer.current++}`, calField, designName },
     ]);
     // Reset the item fields but keep order type / priority for the next line.
     setEntry((e) => ({ ...blankEntry(), ordType: e.ordType, priority: e.priority }));
@@ -391,7 +544,8 @@ export function OrderFormPage() {
 
   const removeItem = (key: string) => setItems((its) => its.filter((i) => i.key !== key));
 
-  const total = useMemo(() => items.reduce((s, i) => s + itemRate(i), 0), [items]);
+  // The order's money total = sum of line amounts (rate × Kgs/Pcs).
+  const total = useMemo(() => items.reduce((s, i) => s + lineAmount(i), 0), [items]);
 
   // Column totals shown in the grid footer.
   const totals = useMemo(
@@ -403,67 +557,163 @@ export function OrderFormPage() {
           gram: a.gram + (n(i.gram) ?? 0),
           box: a.box + (n(i.box) ?? 0),
           rate: a.rate + itemRate(i),
+          amount: a.amount + lineAmount(i),
         }),
-        { bags: 0, pcs: 0, gram: 0, box: 0, rate: 0 },
+        { bags: 0, pcs: 0, gram: 0, box: 0, rate: 0, amount: 0 },
       ),
     [items],
   );
 
-  const submit = async () => {
-    if (!customer.trim()) return toast.error('Please select a correct customer');
-    if (!completionDay.trim()) return toast.error('Please Select the Completion Day');
-    if (items.length === 0) return toast.error('There are no items to save.');
+  // Quick success tick, then navigate. The order is saved now, so drop the WIP draft.
+  const finishTo = (dest: string) => {
+    clearOrderDraft();
+    setSaved(true);
+    window.setTimeout(() => navigate(dest), 950);
+  };
+
+  const validate = (forDraft = false): boolean => {
+    if (!customer.trim()) return !toast.error('Please select a correct customer');
+    if (!forDraft && !completionDay.trim()) return !toast.error('Please Select the Completion Day');
+    if (items.length === 0) return !toast.error('There are no items to save.');
+    return true;
+  };
+
+  // Build the create/update payload from the current form (orders & quotations
+  // share the same shape, so this is reused for save and save-&-convert).
+  const buildInput = (): OrderInput => ({
+    customerName: customer.trim(),
+    poNumber: poNumber.trim() || null,
+    agentName: agentName.trim() || null,
+    category: category.trim() || null,
+    orderDate,
+    completionDate: completionDate || null,
+    status,
+    items: items.map((i) => ({
+      pCategory: i.category.trim() || null,
+      subCategory: i.subCategory.trim() || null,
+      product: i.product.trim() || null,
+      designType: i.designType.trim() || null,
+      productName: i.itemName.trim() || [i.product.trim(), i.designType.trim()].filter(Boolean).join(' ') || null,
+      productRate: n(i.productRate),
+      designRate: n(i.designRate),
+      rate: itemRate(i),
+      ordType: i.ordType || null,
+      priority: i.priority || null,
+      bags: n(i.bags),
+      pcs: n(i.pcs),
+      gram: n(i.gram),
+      box: n(i.box),
+      comment: i.comment.trim() || null,
+      calField: i.calField || null,
+    })),
+  });
+
+  // Persist the form as either an order or a quotation. On /orders/new the two
+  // footer buttons pick the target; when editing, the target follows the route.
+  const persist = async (target: 'order' | 'quotation') => {
+    if (!validate()) return;
+    const noun = target === 'quotation' ? 'quotation' : 'order';
     const ok = await confirm({
-      title: isEdit ? 'Save changes to this order?' : 'Create this order?',
+      title: isEdit ? `Save changes to this ${noun}?` : `Create this ${noun}?`,
       description: `${items.length} item${items.length === 1 ? '' : 's'} · total ₹${total.toLocaleString()} for ${customer.trim()}.`,
-      confirmText: isEdit ? 'Save changes' : 'Create order',
+      confirmText: isEdit ? 'Save changes' : `Create ${noun}`,
     });
     if (!ok) return;
-    const input: OrderInput = {
-      customerName: customer.trim(),
-      agentName: agentName.trim() || null,
-      category: category.trim() || null,
-      orderDate,
-      completionDate: completionDate || null,
-      status,
-      items: items.map((i) => ({
-        pCategory: i.category.trim() || null,
-        subCategory: i.subCategory.trim() || null,
-        product: i.product.trim() || null,
-        designType: i.designType.trim() || null,
-        productName: i.itemName.trim() || [i.product.trim(), i.designType.trim()].filter(Boolean).join(' ') || null,
-        productRate: n(i.productRate),
-        designRate: n(i.designRate),
-        rate: itemRate(i),
-        ordType: i.ordType || null,
-        priority: i.priority || null,
-        bags: n(i.bags),
-        pcs: n(i.pcs),
-        gram: n(i.gram),
-        box: n(i.box),
-        comment: i.comment.trim() || null,
-        calField: i.calField || null,
-      })),
-    };
-    const opts = {
-      onSuccess: () => {
-        // Quick success tick, then close back to the list.
-        setSaved(true);
-        window.setTimeout(() => navigate('/orders'), 950);
-      },
-      onError: (e: unknown) => toast.error(getApiErrorMessage(e, 'Save failed')),
-    };
-    if (isEdit) update.mutate(input, opts);
-    else create.mutate(input, opts);
+    const input = buildInput();
+    const listDest = target === 'quotation' ? '/quotations' : '/orders';
+    const onError = (e: unknown) => toast.error(getApiErrorMessage(e, 'Save failed'));
+    if (isEdit) {
+      const opts = { onSuccess: () => finishTo(listDest), onError };
+      if (docKind === 'quotation') updateQuotation.mutate(input, opts);
+      else update.mutate(input, opts);
+    } else if (target === 'quotation') {
+      // After creating, jump to the printable page so it can be downloaded right
+      // away. Back from there returns to this New Order form (browser history).
+      createQuotation.mutate(input, {
+        onSuccess: (q) => finishTo(can('quotation:view') ? `/quotations/${q.id}/bill` : listDest),
+        onError,
+      });
+    } else {
+      create.mutate(input, {
+        onSuccess: (o) => finishTo(can('order:print') ? `/orders/${o.id}/bill` : listDest),
+        onError,
+      });
+    }
   };
+
+  // Edit-&-convert: save the quotation's edits, then convert it to an order and
+  // open the order's printable page. Only used when editing a quotation.
+  const saveAndConvert = async () => {
+    if (!validate()) return;
+    const ok = await confirm({
+      title: 'Save changes and convert to order?',
+      description: `${items.length} item${items.length === 1 ? '' : 's'} · total ₹${total.toLocaleString()} for ${customer.trim()}.`,
+      confirmText: 'Save & Convert',
+    });
+    if (!ok) return;
+    const onError = (e: unknown) => toast.error(getApiErrorMessage(e, 'Save failed'));
+    updateQuotation.mutate(buildInput(), {
+      onSuccess: () =>
+        convertQuotation.mutate(
+          { id: id!, mode: 'EDITED' },
+          {
+            onSuccess: (order) => finishTo(can('order:print') ? `/orders/${order.id}/bill` : '/orders'),
+            onError: (e) => toast.error(getApiErrorMessage(e, 'Convert failed')),
+          },
+        ),
+      onError,
+    });
+  };
+
+  // Save the order with an explicit status. DRAFT orders are hidden from Order
+  // Modify until confirmed; the WIP local draft is cleared via finishTo().
+  const saveOrder = async (statusValue: string, redirectToBill: boolean) => {
+    const isDraft = statusValue === 'DRAFT';
+    if (!validate(isDraft)) return;
+    const ok = await confirm({
+      title: isEdit
+        ? `Save changes to this ${isDraft ? 'draft' : 'order'}?`
+        : isDraft
+          ? 'Save this order as a draft?'
+          : 'Create this order?',
+      description: isDraft
+        ? `${items.length} item${items.length === 1 ? '' : 's'} · kept as Draft and hidden from Order Modify until confirmed.`
+        : `${items.length} item${items.length === 1 ? '' : 's'} · total ₹${total.toLocaleString()} for ${customer.trim()}.`,
+      confirmText: isEdit ? (isDraft ? 'Save draft' : 'Confirm & save') : isDraft ? 'Save draft' : 'Create order',
+    });
+    if (!ok) return;
+    const input = { ...buildInput(), status: statusValue };
+    const onError = (e: unknown) => toast.error(getApiErrorMessage(e, 'Save failed'));
+    const done = (orderId?: number) =>
+      finishTo(redirectToBill && orderId && can('order:print') ? `/orders/${orderId}/bill` : '/orders');
+    if (isEdit) update.mutate(input, { onSuccess: () => done(), onError });
+    else create.mutate(input, { onSuccess: (o) => done(o.id), onError });
+  };
+
+  // The primary action (Ctrl+S / main button). Quotations go through persist();
+  // a new order is CONFIRMED, and the primary button on a draft order finalises it.
+  const submit = () => {
+    if (docKind === 'quotation') return persist('quotation');
+    const statusValue = isEdit ? (status === 'DRAFT' ? 'CONFIRMED' : status) : 'CONFIRMED';
+    return saveOrder(statusValue, !isEdit);
+  };
+
+  const orderIsDraft = docKind === 'order' && status === 'DRAFT';
+  const primaryLabel = isEdit ? (orderIsDraft ? 'Confirm & Save' : 'Save changes') : `Create ${docLabel}`;
+  // Offer "Save as Draft" on a new order, or when editing one that's still a draft.
+  const showSaveDraft = docKind === 'order' && (!isEdit || orderIsDraft);
 
   // Keep the latest action handlers in a ref so the global shortcut listener
   // (bound once) always calls the current closures.
-  const actionsRef = useRef<{ add: () => void; save: () => void; cancel: () => void; focusItem: () => void } | null>(null);
+  const actionsRef = useRef<{ add: () => void; save: () => void; quote: () => void; cancel: () => void; focusItem: () => void } | null>(null);
   actionsRef.current = {
     add: addItem,
     save: submit,
-    cancel: () => navigate('/orders'),
+    // Create-as-quotation — only on a brand-new order form.
+    quote: () => {
+      if (!isEdit && docKind === 'order') persist('quotation');
+    },
+    cancel: () => navigate(listPath),
     focusItem: () => formRef.current?.querySelector<HTMLElement>('[data-tabfield="itemName"] input')?.focus(),
   };
   useEffect(() => {
@@ -477,6 +727,9 @@ export function OrderFormPage() {
       } else if (e.altKey && k === 'a') {
         e.preventDefault();
         a.add();
+      } else if (e.altKey && k === 'q') {
+        e.preventDefault();
+        a.quote();
       } else if (e.altKey && k === 'i') {
         e.preventDefault();
         a.focusItem();
@@ -506,23 +759,27 @@ export function OrderFormPage() {
             <div className="flex size-24 items-center justify-center rounded-full bg-emerald-500 shadow-xl shadow-emerald-500/30 ring-8 ring-emerald-500/15">
               <Check className="animate-in zoom-in-50 size-12 text-white duration-500" strokeWidth={3} />
             </div>
-            <p className="text-sm font-semibold text-emerald-700">{isEdit ? 'Order saved' : 'Order created'}</p>
+            <p className="text-sm font-semibold text-emerald-700">{isEdit ? 'Saved' : 'Created'}</p>
           </div>
         </div>
       )}
 
       {/* Header */}
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate('/orders')} aria-label="Back">
+        <Button variant="ghost" size="icon" onClick={() => navigate(listPath)} aria-label="Back">
           <ArrowLeft />
         </Button>
         <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
           <ReceiptText className="size-5" />
         </div>
         <div className="min-w-0">
-          <h2 className="truncate text-xl font-bold tracking-tight">{isEdit ? 'Modify order' : 'New order'}</h2>
+          <h2 className="truncate text-xl font-bold tracking-tight">{isEdit ? `Modify ${docLabel}` : `New ${docLabel}`}</h2>
           <p className="text-muted-foreground truncate text-xs">
-            {isEdit ? (existing?.code ?? `#${id}`) : 'Create a sales order — add items one by one'}
+            {isEdit
+              ? (existing?.code ?? `#${id}`)
+              : docKind === 'quotation'
+                ? 'Create a quotation — add items one by one'
+                : 'Create a sales order — or save it as a quotation'}
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -535,11 +792,23 @@ export function OrderFormPage() {
         </div>
       </div>
 
+      {/* Restored work-in-progress notice */}
+      {restoredDraft && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <span className="flex items-center gap-2">
+            <History className="size-4" /> Restored your unsaved order from last time — keep editing or discard it.
+          </span>
+          <Button type="button" variant="ghost" size="sm" className="h-7 text-amber-800 hover:bg-amber-100 hover:text-amber-900" onClick={discardDraft}>
+            Discard
+          </Button>
+        </div>
+      )}
+
       {/* Card 1 — order header in one row */}
       <Card className="border-l-4 border-l-primary py-0">
         <CardContent className="grid grid-cols-2 gap-2 px-4 py-3 sm:grid-cols-3 lg:grid-cols-12">
           <div className="col-span-2 space-y-1.5 sm:col-span-1 lg:col-span-4" data-tabfield="customer">
-            <Label className="text-sm">Customer <span className="text-rose-500">*</span></Label>
+            <Label className="text-base">Customer <span className="text-rose-500">*</span></Label>
             <NativeSelect
               value={customer}
               onChange={onCustomer}
@@ -548,20 +817,24 @@ export function OrderFormPage() {
               onInvalidEntry={() => toast.error('Please select a correct customer')}
             />
           </div>
-          <div className="space-y-1.5 lg:col-span-1">
-            <Label className="text-sm">Agent (auto)</Label>
+          <div className="space-y-1.5 lg:col-span-2" data-tabfield="poNumber">
+            <Label className="text-base whitespace-nowrap">PO Number</Label>
+            <Input value={poNumber} onChange={(e) => setPoNumber(e.target.value)} placeholder="PO number…" />
+          </div>
+          <div className="space-y-1.5 lg:col-span-2">
+            <Label className="text-base">Agent (auto)</Label>
             <Input value={agentName} readOnly tabIndex={-1} className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700" />
           </div>
           <div className="space-y-1.5 lg:col-span-2">
-            <Label className="text-sm whitespace-nowrap">Category (auto)</Label>
+            <Label className="text-base whitespace-nowrap">Category (auto)</Label>
             <Input value={category} readOnly tabIndex={-1} className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700" />
           </div>
           <div className="space-y-1.5 lg:col-span-2" data-tabfield="orderDate">
-            <Label className="text-sm">Order date <span className="text-rose-500">*</span></Label>
+            <Label className="text-base">Order date <span className="text-rose-500">*</span></Label>
             <DatePicker value={orderDate} onChange={setOrderDate} clearable={false} />
           </div>
-          <div className="space-y-1.5 lg:col-span-1" data-tabfield="completionDay">
-            <Label className="text-sm">Com. days</Label>
+          <div className="space-y-1.5 lg:col-span-2" data-tabfield="completionDay">
+            <Label className="text-base">Com. days</Label>
             <NativeSelect
               value={completionDay}
               onChange={setCompletionDay}
@@ -569,9 +842,9 @@ export function OrderFormPage() {
               placeholder="Days…"
             />
           </div>
-          <div className="space-y-1.5 lg:col-span-2">
-            <Label className="text-sm whitespace-nowrap">Completion date (auto)</Label>
-            <Input value={completionDate} readOnly tabIndex={-1} className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700" />
+          <div className="space-y-1.5 lg:col-span-3">
+            <Label className="text-base whitespace-nowrap">Completion date (auto)</Label>
+            <Input value={niceDate(completionDate)} readOnly tabIndex={-1} className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700" />
           </div>
         </CardContent>
       </Card>
@@ -581,22 +854,26 @@ export function OrderFormPage() {
         <CardContent className="space-y-2 px-4 py-3">
           {/* Row 1 */}
           <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-3 lg:grid-cols-12">
-            <div className="col-span-2 space-y-1 sm:col-span-1 lg:col-span-2" data-tabfield="showBy">
-              <Label className="text-sm">Show item by</Label>
-              <div className="flex h-9 items-center gap-4 text-sm">
-                <label className="flex cursor-pointer items-center gap-1.5">
-                  <input type="radio" className="accent-indigo-600" checked={showBy === 'SIZE'} onChange={() => setShowBy('SIZE')} /> Size
-                </label>
-                <label className="flex cursor-pointer items-center gap-1.5">
-                  <input type="radio" className="accent-indigo-600" checked={showBy === 'PCS'} onChange={() => setShowBy('PCS')} /> Pcs
-                </label>
+            {/* Manual Size/Pcs picker — shown only when auto-detect is turned off. */}
+            {!autoSizePcs && (
+              <div className="col-span-2 space-y-1 sm:col-span-1 lg:col-span-2" data-tabfield="showBy">
+                <Label className="text-base">Show item by</Label>
+                <div className="flex h-9 items-center gap-4 text-sm">
+                  <label className="flex cursor-pointer items-center gap-1.5">
+                    <input type="radio" className="accent-indigo-600" checked={showBy === 'SIZE'} onChange={() => setShowBy('SIZE')} /> Size
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-1.5">
+                    <input type="radio" className="accent-indigo-600" checked={showBy === 'PCS'} onChange={() => setShowBy('PCS')} /> Pcs
+                  </label>
+                </div>
               </div>
-            </div>
-            <div className="col-span-2 space-y-1 sm:col-span-2 lg:col-span-5" data-tabfield="itemName">
-              <Label className="text-sm">Item name</Label>
+            )}
+            <div className={cn('col-span-2 space-y-1 sm:col-span-2', autoSizePcs ? 'lg:col-span-7' : 'lg:col-span-5')} data-tabfield="itemName">
+              <Label className="text-base">Item name</Label>
               <NativeSelect
                 value={entry.itemName}
                 onChange={onItemPick}
+                onType={detectShowBy}
                 options={itemOptions.labels}
                 placeholder="Item name"
                 className="text-left"
@@ -607,7 +884,7 @@ export function OrderFormPage() {
               />
             </div>
             <div className="space-y-1 lg:col-span-2" data-tabfield="designName">
-              <Label className="text-sm">Design Name</Label>
+              <Label className="text-base">Design Name</Label>
               <NativeSelect
                 value={noDesignNames ? 'NA' : entry.designName}
                 onChange={onDesignName}
@@ -618,15 +895,15 @@ export function OrderFormPage() {
               />
             </div>
             <div className="space-y-1 lg:col-span-1" data-tabfield="productRate">
-              <Label className="text-sm">Prod ₹</Label>
+              <Label className="text-base">Prod ₹</Label>
               <Input type="number" step="any" className="text-right tabular-nums" value={entry.productRate} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ productRate: e.target.value })} />
             </div>
             <div className="space-y-1 lg:col-span-1" data-tabfield="designRate">
-              <Label className="text-sm">Dsgn ₹</Label>
+              <Label className="text-base">Dsgn ₹</Label>
               <Input type="number" step="any" className="text-right tabular-nums" value={entry.designRate} disabled={!designRateEditable} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ designRate: e.target.value })} />
             </div>
             <div className="space-y-1 lg:col-span-1">
-              <Label className="text-sm">Total ₹</Label>
+              <Label className="text-base">Total ₹</Label>
               <div className="flex h-9 items-center justify-end rounded-md border border-emerald-200 bg-emerald-50 px-2 text-sm font-bold tabular-nums text-emerald-700">
                 {entryTotal.toLocaleString()}
               </div>
@@ -636,31 +913,31 @@ export function OrderFormPage() {
           {/* Row 2 */}
           <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-4 lg:grid-cols-12">
             <div className="space-y-1 lg:col-span-2" data-tabfield="ordType">
-              <Label className="text-sm">Order type</Label>
+              <Label className="text-base">Order type</Label>
               <NativeSelect value={entry.ordType} onChange={(v) => setEntryField({ ordType: v })} options={orderTypeOptions} placeholder="Type…" />
             </div>
             <div className="space-y-1 lg:col-span-2" data-tabfield="priority">
-              <Label className="text-sm">Priority</Label>
+              <Label className="text-base">Priority</Label>
               <NativeSelect value={entry.priority} onChange={(v) => setEntryField({ priority: v })} options={[...ORDER_PRIORITIES]} />
             </div>
             <div className="space-y-1 lg:col-span-1" data-tabfield="bags">
-              <Label className="text-sm">Bags</Label>
+              <Label className="text-base">Bags</Label>
               <Input type="number" step="any" value={entry.bags} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ bags: e.target.value })} />
             </div>
             <div className="space-y-1 lg:col-span-1" data-tabfield="pcs">
-              <Label className={cn('text-sm', showBy === 'PCS' && 'text-primary font-semibold')}>Pcs</Label>
+              <Label className={cn('text-base', showBy === 'PCS' && 'text-primary font-semibold')}>Pcs</Label>
               <Input type="number" step="any" value={entry.pcs} onKeyDown={onlyNumericKey} onChange={(e) => onPcs(e.target.value)} />
             </div>
             <div className="space-y-1 lg:col-span-1" data-tabfield="gram">
-              <Label className={cn('text-sm', showBy === 'SIZE' && 'text-primary font-semibold')}>Kgs</Label>
+              <Label className={cn('text-base', showBy === 'SIZE' && 'text-primary font-semibold')}>Kgs</Label>
               <Input type="number" step="any" value={entry.gram} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ gram: e.target.value })} />
             </div>
             <div className="space-y-1 lg:col-span-1" data-tabfield="box">
-              <Label className="text-sm">Box</Label>
+              <Label className="text-base">Box</Label>
               <Input type="number" step="any" value={entry.box} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ box: e.target.value })} />
             </div>
             <div className="col-span-2 space-y-1 sm:col-span-3 lg:col-span-3" data-tabfield="comment">
-              <Label className="text-sm">Remarks</Label>
+              <Label className="text-base">Remarks</Label>
               <Input value={entry.comment} onChange={(e) => setEntryField({ comment: e.target.value })} placeholder="Item remark…" />
             </div>
             <div className="col-span-2 sm:col-span-1 lg:col-span-1">
@@ -670,11 +947,36 @@ export function OrderFormPage() {
             </div>
           </div>
 
+          {specialNote && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-sky-200 bg-sky-50/70 px-3 py-2 text-sm">
+              <span className="inline-flex items-center gap-1.5 font-semibold text-sky-800">
+                <BadgePercent className="size-4 text-sky-600" /> Special rate applied
+              </span>
+              {specialNote.productDelta !== 0 && (
+                <span className="text-sky-700">
+                  product <b className="tabular-nums">{fmtDelta(specialNote.productDelta)}</b>
+                  <span className="text-sky-500"> ({scopeWord(specialNote.productFrom)})</span>
+                </span>
+              )}
+              {specialNote.designDelta !== 0 && (
+                <span className="text-violet-700">
+                  design <b className="tabular-nums">{fmtDelta(specialNote.designDelta)}</b>
+                  <span className="text-violet-500"> ({scopeWord(specialNote.designFrom)})</span>
+                </span>
+              )}
+              {specialNote.logoBlocked && (
+                <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">
+                  <Ban className="size-3" /> Logo not allowed
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Added items — grid auto-fits to the desktop width */}
           <div className="max-h-[28vh] overflow-auto rounded-lg border">
             {/* Prod ₹ / Dsgn ₹ are saved with the order but hidden from this list. */}
             <table className="w-full text-sm">
-              <thead className="bg-indigo-50 [&_th]:sticky [&_th]:top-0 [&_th]:bg-indigo-50 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold [&_th]:text-indigo-900">
+              <thead className="[&_th]:sticky [&_th]:top-0 [&_th]:bg-gradient-to-b [&_th]:from-sky-50 [&_th]:to-indigo-100 [&_th]:px-3 [&_th]:py-2.5 [&_th]:text-left [&_th]:text-[15px] [&_th]:font-semibold [&_th]:text-slate-900">
                 <tr>
                   <th className="w-10 text-center">Sr</th>
                   <th>Item name</th>
@@ -686,6 +988,7 @@ export function OrderFormPage() {
                   <th className="text-right">Kgs</th>
                   <th className="text-right">Box</th>
                   <th className="text-right">Rate ₹</th>
+                  <th className="text-right">Amount ₹</th>
                   <th>Remarks</th>
                   <th className="w-8" />
                 </tr>
@@ -693,7 +996,7 @@ export function OrderFormPage() {
               <tbody className="[&_td]:border-t [&_td]:px-3 [&_td]:py-2">
                 {items.length === 0 ? (
                   <tr>
-                    <td colSpan={12} className="text-muted-foreground h-14 text-center">
+                    <td colSpan={13} className="text-muted-foreground h-14 text-center">
                       No items yet — fill the fields above and click “Add”.
                     </td>
                   </tr>
@@ -709,7 +1012,8 @@ export function OrderFormPage() {
                       <td className="text-right tabular-nums">{i.pcs || '—'}</td>
                       <td className="text-right tabular-nums">{i.gram || '—'}</td>
                       <td className="text-right tabular-nums">{i.box || '—'}</td>
-                      <td className="text-right font-semibold tabular-nums text-emerald-700">{itemRate(i).toLocaleString()}</td>
+                      <td className="text-right tabular-nums">{itemRate(i).toLocaleString()}</td>
+                      <td className="text-right font-semibold tabular-nums text-emerald-700">{lineAmount(i).toLocaleString()}</td>
                       <td className="max-w-[14rem] truncate" title={i.comment}>{i.comment || '—'}</td>
                       <td>
                         <Button variant="ghost" size="icon" className="size-7 text-destructive hover:text-destructive" onClick={() => removeItem(i.key)} aria-label="Remove">
@@ -730,7 +1034,8 @@ export function OrderFormPage() {
                     <td className="text-right tabular-nums">{totals.pcs.toLocaleString()}</td>
                     <td className="text-right tabular-nums">{totals.gram.toLocaleString()}</td>
                     <td className="text-right tabular-nums">{totals.box.toLocaleString()}</td>
-                    <td className="text-right tabular-nums text-emerald-700">{totals.rate.toLocaleString()}</td>
+                    <td className="text-right tabular-nums">{totals.rate.toLocaleString()}</td>
+                    <td className="text-right tabular-nums text-emerald-700">{totals.amount.toLocaleString()}</td>
                     <td colSpan={2} />
                   </tr>
                 </tfoot>
@@ -747,12 +1052,49 @@ export function OrderFormPage() {
           <span className="font-bold tabular-nums text-emerald-600">₹{total.toLocaleString()}</span>
         </p>
         <div className="flex gap-2">
-          <Button type="button" variant="destructive" onClick={() => navigate('/orders')} title="Cancel (Esc)">
+          <Button type="button" variant="destructive" onClick={() => navigate(listPath)} title="Cancel (Esc)">
             Cancel
           </Button>
-          <Button onClick={submit} disabled={saving} title={`${isEdit ? 'Save changes' : 'Create order'} (Ctrl+S)`}>
+          {/* Save the order with DRAFT status — hidden from Order Modify until confirmed. */}
+          {showSaveDraft && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => saveOrder('DRAFT', false)}
+              disabled={saving}
+              title="Save as a draft order (hidden from Order Modify)"
+            >
+              <FilePen /> Save as Draft
+            </Button>
+          )}
+          {/* On a new form, offer "Create Quotation" (light red) alongside the order action. */}
+          {!isEdit && docKind === 'order' && (
+            <Button
+              type="button"
+              onClick={() => persist('quotation')}
+              disabled={saving}
+              className="border border-red-200 bg-red-100 text-red-700 hover:bg-red-200"
+              title="Save as a quotation (Alt+Q)"
+            >
+              <FileText /> Create Quotation
+              <Kbd>Alt+Q</Kbd>
+            </Button>
+          )}
+          {/* Edit a quotation → also offer "Save & Convert" straight to an order. */}
+          {isEdit && docKind === 'quotation' && (
+            <Button
+              type="button"
+              onClick={saveAndConvert}
+              disabled={saving}
+              className="bg-emerald-600 text-white hover:bg-emerald-700"
+              title="Save changes and convert to an order"
+            >
+              <ArrowRightLeft /> Save &amp; Convert
+            </Button>
+          )}
+          <Button onClick={submit} disabled={saving} title={`${primaryLabel} (Ctrl+S)`}>
             {saving ? <Loader2 className="animate-spin" /> : <Save />}
-            {isEdit ? 'Save changes' : 'Create order'}
+            {primaryLabel}
             <Kbd>Ctrl+S</Kbd>
           </Button>
         </div>
@@ -772,6 +1114,7 @@ function SettingsPanel({
   const SHORTCUTS: { label: string; keys: string[] }[] = [
     { label: 'Add item', keys: ['Alt', 'A'] },
     { label: 'Save / Create order', keys: ['Ctrl', 'S'] },
+    { label: 'Create quotation', keys: ['Alt', 'Q'] },
     { label: 'Focus Item name', keys: ['Alt', 'I'] },
     { label: 'Cancel', keys: ['Esc'] },
   ];

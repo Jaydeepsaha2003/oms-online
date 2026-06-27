@@ -1,11 +1,15 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { type OrderOptionDto } from '@oms/shared';
+import { type CompanyProfileDto, type OrderOptionDto } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { uc } from '../common/coerce';
 import { CreateOrderOptionDto } from './dto/order-option.dto';
+import { UpdateCompanyDto } from './dto/company.dto';
 
 type Row = Prisma.OrderOptionGetPayload<object>;
+
+const COMPANY_NAME = 'COMPANY_NAME';
+const COMPANY_LOGO = 'COMPANY_LOGO';
 
 @Injectable()
 export class SettingsService {
@@ -43,5 +47,29 @@ export class SettingsService {
 
   private toDto(r: Row): OrderOptionDto {
     return { id: r.id, group: r.group, value: r.value, sortOrder: r.sortOrder };
+  }
+
+  /* ── Company branding (for printed documents) ───────────────────────────── */
+
+  async getCompany(): Promise<CompanyProfileDto> {
+    const rows = await this.prisma.appConfig.findMany({ where: { key: { in: [COMPANY_NAME, COMPANY_LOGO] } } });
+    const by = (k: string) => rows.find((r) => r.key === k)?.value || null;
+    return { name: by(COMPANY_NAME), logo: by(COMPANY_LOGO) };
+  }
+
+  /** Upsert the provided fields; pass an empty string / null to clear one. */
+  async updateCompany(dto: UpdateCompanyDto): Promise<CompanyProfileDto> {
+    const setKey = async (key: string, value: string | null | undefined) => {
+      if (value === undefined) return; // field not provided → leave as-is
+      const v = (value ?? '').trim();
+      if (!v) {
+        await this.prisma.appConfig.deleteMany({ where: { key } });
+      } else {
+        await this.prisma.appConfig.upsert({ where: { key }, update: { value: v }, create: { key, value: v } });
+      }
+    };
+    await setKey(COMPANY_NAME, dto.name);
+    await setKey(COMPANY_LOGO, dto.logo);
+    return this.getCompany();
   }
 }

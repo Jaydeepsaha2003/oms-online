@@ -5,6 +5,7 @@ import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import { PrismaService } from '../prisma/prisma.service';
 import { PdfService } from '../pdf/pdf.service';
 import { toNum, toStr, uc } from '../common/coerce';
+import { readCategoryFields } from '../common/category-fields';
 import { CreateOrderDto, OrderQueryDto, UpdateOrderDto } from './dto/order.dto';
 
 const INCLUDE = { items: true } as const;
@@ -91,7 +92,7 @@ export class OrdersService {
     const [customers, prodCats, subCats, products, designs, allProducts, designNames] = await Promise.all([
       this.prisma.customer.findMany({
         where: { partyName: { not: null } },
-        select: { partyName: true, agentName: true, category: true },
+        select: { id: true, partyName: true, agentName: true, category: true },
         orderBy: { partyName: 'asc' },
       }),
       this.prisma.product.findMany({ where: { category: { not: '' } }, select: { category: true }, distinct: ['category'], orderBy: { category: 'asc' } }),
@@ -122,7 +123,7 @@ export class OrdersService {
     const seen = new Set<string>();
     const custList = customers
       .filter((c) => c.partyName && !seen.has(c.partyName) && seen.add(c.partyName))
-      .map((c) => ({ name: c.partyName!, agentName: c.agentName, category: c.category }));
+      .map((c) => ({ id: c.id, name: c.partyName!, agentName: c.agentName, category: c.category }));
 
     // designType code -> its first design name (fall back to the code itself).
     const nameByCode = new Map<string, string>();
@@ -159,6 +160,7 @@ export class OrdersService {
       designs: designs.map((d) => ({ category: d.category, subCategory: d.subCategory, designType: d.designType, designName: nameOf(d.designType), rate: d.rate })),
       items,
       designNames: designNames.map((dn) => ({ designType: dn.designType, designName: dn.designName })),
+      categoryFields: await readCategoryFields(this.prisma),
     };
   }
 
@@ -287,6 +289,7 @@ export class OrdersService {
     return {
       customerId: customer?.id ?? null,
       customerName,
+      poNumber: uc(dto.poNumber) ?? null,
       agentName: uc(dto.agentName) ?? customer?.agentName ?? null,
       category: uc(dto.category) ?? 'SALES',
       orderDate,
@@ -368,6 +371,7 @@ export class OrdersService {
     return {
       id: r.id,
       code: r.code ?? this.codeFor(r.id),
+      poNumber: r.poNumber,
       customerId: r.customerId,
       customerName: r.customerName,
       agentName: r.agentName,
@@ -383,6 +387,7 @@ export class OrdersService {
       items,
       itemCount: items.length,
       totalRate: items.reduce((s, it) => s + (it.rate ?? 0), 0),
+      totalAmount: items.reduce((s, it) => s + (it.rate ?? 0) * (it.calField === 'PCS' ? (it.pcs ?? 0) : (it.gram ?? 0)), 0),
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     };

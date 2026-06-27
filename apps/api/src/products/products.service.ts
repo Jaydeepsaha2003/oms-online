@@ -1,8 +1,9 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { type Paginated, type ProductDto, type ProductLookups } from '@oms/shared';
+import { type CategoryFieldDto, type Paginated, type ProductDto, type ProductLookups } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { toNum, uc } from '../common/coerce';
+import { readCategoryFields, writeCategoryFields } from '../common/category-fields';
 import { CreateProductDto, ImportProductsDto, ProductQueryDto, UpdateProductDto } from './dto/product.dto';
 
 type Row = Prisma.ProductGetPayload<object>;
@@ -48,7 +49,7 @@ export class ProductsService {
 
   /** Distinct existing categories & sub-categories for the form's dropdowns. */
   async lookups(): Promise<ProductLookups> {
-    const [cats, subs] = await Promise.all([
+    const [cats, subs, categoryFields] = await Promise.all([
       this.prisma.product.findMany({
         where: { category: { not: '' } },
         select: { category: true },
@@ -61,11 +62,22 @@ export class ProductsService {
         distinct: ['subCategory'],
         orderBy: { subCategory: 'asc' },
       }),
+      readCategoryFields(this.prisma),
     ]);
     return {
       categories: cats.map((c) => c.category).filter(Boolean),
       subCategories: subs.map((s) => s.subCategory).filter(Boolean),
+      categoryFields,
     };
+  }
+
+  /** Read / replace the per-category price-calc field map. */
+  getCategoryFields(): Promise<CategoryFieldDto[]> {
+    return readCategoryFields(this.prisma);
+  }
+
+  setCategoryFields(fields: { category?: string; field?: string }[]): Promise<CategoryFieldDto[]> {
+    return writeCategoryFields(this.prisma, fields ?? []);
   }
 
   async create(dto: CreateProductDto): Promise<ProductDto> {

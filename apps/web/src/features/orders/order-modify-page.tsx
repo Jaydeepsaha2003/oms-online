@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, ExternalLink, Loader2, Save, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -18,7 +18,7 @@ import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/com
 import { settingValues, useSettings } from '@/features/settings/use-settings';
 import { useOrderLookups, useOrders, useSaveOrder } from './use-orders';
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 50;
 
 const STATUS_STYLE: Record<string, string> = {
   CONFIRMED: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
@@ -111,7 +111,8 @@ export function OrderModifyPage() {
 
   const [edit, setEdit] = useState<Row | null>(null);
 
-  const orders = data?.items ?? [];
+  // Draft orders are work-in-progress and stay hidden from Order Modify.
+  const orders = useMemo(() => (data?.items ?? []).filter((o) => o.status !== 'DRAFT'), [data]);
   const totalPages = data?.totalPages ?? 1;
 
   // Flatten every order's lines into a single list (order info repeats per line).
@@ -183,7 +184,7 @@ export function OrderModifyPage() {
 
       <div className="flex items-center justify-between">
         <p className="text-muted-foreground text-sm">
-          {rows.length} line(s) across {data?.total ?? 0} order(s) · page {data?.page ?? page} of {totalPages}
+          {rows.length} line(s) across {orders.length} order(s) · page {data?.page ?? page} of {totalPages}
         </p>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
@@ -251,6 +252,10 @@ function LineEditor({
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
   const rate = (num(form.productRate) ?? 0) + (num(form.designRate) ?? 0);
 
+  // Snapshot of the untouched form — Save stays disabled until something differs.
+  const baseline = useRef(form);
+  const dirty = JSON.stringify(form) !== JSON.stringify(baseline.current);
+
   // Composite "item name" choices — same dropdown as the New Order page:
   // each label is "{size} {product} {designType}".
   const itemOptions = useMemo(() => {
@@ -287,7 +292,10 @@ function LineEditor({
     if (!lookups || form.designName || !form.designType) return;
     const code = form.designType.toUpperCase();
     const dn = lookups.designNames.find((d) => d.designType.toUpperCase() === code);
-    if (dn) set({ designName: dn.designName });
+    if (dn) {
+      set({ designName: dn.designName });
+      baseline.current = { ...baseline.current, designName: dn.designName };
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lookups]);
 
@@ -336,7 +344,7 @@ function LineEditor({
   };
 
   return (
-    <SheetContent className="flex w-full max-w-md flex-col">
+    <SheetContent className="flex w-full max-w-md flex-col" onOpenAutoFocus={(e) => e.preventDefault()}>
       <SheetHeader>
         <SheetTitle>Edit item line</SheetTitle>
         <p className="text-muted-foreground truncate text-sm">
@@ -413,7 +421,7 @@ function LineEditor({
           <Button variant="outline" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={saving}>
+          <Button onClick={submit} disabled={saving || !dirty}>
             {saving ? <Loader2 className="animate-spin" /> : <Save />} Save
           </Button>
         </div>

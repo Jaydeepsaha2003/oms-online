@@ -1,6 +1,7 @@
 /** Catalog shapes: products, designs, design names and combinations. */
 
 import type { Paginated, PaginationQuery } from './common';
+import type { CategoryFieldDto } from './order';
 
 export interface ProductDto {
   id: number;
@@ -96,6 +97,8 @@ export interface CombinationInput {
 export interface ProductLookups {
   categories: string[];
   subCategories: string[];
+  /** Per-category price calculation field (KGS / PCS). */
+  categoryFields: CategoryFieldDto[];
 }
 
 /** Existing distinct values to populate the design form's category dropdowns. */

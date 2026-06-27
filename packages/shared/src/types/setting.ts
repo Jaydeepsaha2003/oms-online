@@ -1,6 +1,6 @@
 /** User-editable option lists surfaced on the Settings page and used by forms. */
 
-export const SETTING_GROUPS = ['COMPLETION_DAYS', 'ORDER_TYPE'] as const;
+export const SETTING_GROUPS = ['COMPLETION_DAYS', 'ORDER_TYPE', 'QUOTATION_CANCEL_REASON'] as const;
 export type SettingGroup = (typeof SETTING_GROUPS)[number];
 
 export interface OrderOptionDto {
@@ -8,6 +8,18 @@ export interface OrderOptionDto {
   group: string;
   value: string;
   sortOrder: number;
+}
+
+/** Company branding shown on printed documents (bill / invoice / quotation). */
+export interface CompanyProfileDto {
+  name: string | null;
+  /** Logo as a base64 data URL (e.g. "data:image/png;base64,…") or null. */
+  logo: string | null;
+}
+
+export interface CompanyProfileInput {
+  name?: string | null;
+  logo?: string | null;
 }
 
 export interface OrderOptionInput {
@@ -39,5 +51,12 @@ export const SETTING_GROUP_META: SettingGroupMeta[] = [
     description: 'Order type options available on order line items.',
     numeric: false,
     placeholder: 'e.g. SALES ORDER',
+  },
+  {
+    group: 'QUOTATION_CANCEL_REASON',
+    label: 'Quotation Cancellation Reasons',
+    description: 'Reasons selectable when cancelling a quotation — used for analysis.',
+    numeric: false,
+    placeholder: 'e.g. PRICE TOO HIGH',
   },
 ];

@@ -229,12 +229,63 @@ model Customer {
   transporter Transporter? @relation(fields: [transporterId], references: [id], onDelete: SetNull)
   gstRates    GstRate[]
   transRates  TransRate[]
+  rateOverrides    CustomerRate[]
+  logoRestrictions CustomerLogoRestriction[]
 
   @@index([partyName])
   @@index([agentName])
   @@index([category])
   @@index([transporterId])
   @@map("customers")
+}
+
+// ── Customer "Special Rates" (legacy Form10) ──────────────────────────────────
+// A per-customer rate DELTA added on top of the base product / design rate. The
+// effective rate is resolved most-specific-first (ITEM → SUBCATEGORY → CATEGORY);
+// only the first matching level applies. Replaces the 6 legacy tables
+// (SPRODUCT/SCSPRODUCT/SCPRODUCT for products, SDESIGN/SCSDESIGN/SCDESIGN for
+// designs) with one table keyed by (kind, scope). Unused levels are stored as ''
+// (not null) so the composite unique key works on SQLite.
+model CustomerRate {
+  id          Int      @id @default(autoincrement())
+  customerId  Int
+  // 'PRODUCT' (adjusts the product rate) or 'DESIGN' (adjusts the design rate).
+  kind        String
+  // 'CATEGORY' | 'SUBCATEGORY' | 'ITEM' (specificity level).
+  scope       String
+  category    String
+  subCategory String   @default("") // '' when scope = CATEGORY
+  // Product name (kind PRODUCT) or design type (kind DESIGN); '' unless scope = ITEM.
+  target      String   @default("")
+  // Rate delta — may be negative (a discount).
+  rate        Float
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, kind, scope, category, subCategory, target])
+  @@index([customerId])
+  @@map("customer_rates")
+}
+
+// A per-customer logo restriction: the logo is NOT ALLOWED for the given category
+// (or category + sub-category). Replaces SP_CATEGORY_LOGO / SP_SUBCATEGORY_LOGO.
+model CustomerLogoRestriction {
+  id          Int      @id @default(autoincrement())
+  customerId  Int
+  // 'CATEGORY' | 'SUBCATEGORY'.
+  scope       String
+  category    String
+  subCategory String   @default("") // '' when scope = CATEGORY
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, scope, category, subCategory])
+  @@index([customerId])
+  @@map("customer_logo_restrictions")
 }
 
 /// Audit trail of GST / transport rate changes so past rates stay visible.
@@ -393,6 +444,8 @@ model Order {
   id             Int       @id @default(autoincrement())
   // Auto-generated human-readable order number (e.g. ORD-00001).
   code           String?   @unique
+  // Customer's purchase-order number (free text, optional).
+  poNumber       String?
   customerId     Int?
   customerName   String
   agentName      String?
@@ -410,10 +463,92 @@ model Order {
 
   items OrderItem[]
 
+  // Set when this order was created by converting a quotation.
+  fromQuotation Quotation? @relation("OrderFromQuotation")
+  dispatches    Dispatch[]
+
   @@index([customerId])
   @@index([status])
   @@index([orderDate])
   @@map("orders")
+}
+
+/// A sales quotation — same shape as an order, with its own QUO-##### numbering
+/// and a lifecycle: DRAFT/SENT → CONVERTED (to an order) or CANCELLED (with a
+/// tracked reason for analysis).
+model Quotation {
+  id             Int       @id @default(autoincrement())
+  code           String?   @unique // QUO-#####
+  poNumber       String?
+  customerId     Int?
+  customerName   String
+  agentName      String?
+  category       String?
+  quotationDate  DateTime  @default(now())
+  completionDate DateTime?
+  completionDay  Int?
+  priority       String?
+  status         String    @default("DRAFT") // DRAFT / SENT / CONVERTED / CANCELLED
+  ordType        String    @default("QUOTATION")
+  comment        String?
+  userName       String?
+
+  // "Sent to customer" tracking.
+  sentAt     DateTime?
+  sentByName String?
+
+  // Conversion tracking — links to the order this quotation became.
+  convertedOrderId Int?      @unique
+  convertedOrder   Order?    @relation("OrderFromQuotation", fields: [convertedOrderId], references: [id])
+  convertedAt      DateTime?
+  // How it was converted: DIRECT (as-is) or EDITED (changed first).
+  convertMode      String?
+
+  // Cancellation tracking — why it was cancelled, for analysis.
+  cancelReason    String?
+  cancelNote      String?
+  cancelledAt     DateTime?
+  cancelledByName String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items QuotationItem[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([quotationDate])
+  @@map("quotations")
+}
+
+/// A single line item on a quotation (mirrors OrderItem).
+model QuotationItem {
+  id          Int      @id @default(autoincrement())
+  quotationId Int
+  pCategory   String?
+  subCategory String?
+  product     String?
+  design      String?
+  productName String?
+  designType  String?
+  psize       Float?
+  bags        Float?
+  pcs         Float?
+  gram        Float?
+  box         Float?
+  productRate Float?
+  designRate  Float?
+  rate        Float?
+  calField    String?
+  priority    String?
+  ordType     String?
+  comment     String?
+  createdAt   DateTime @default(now())
+
+  quotation Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+
+  @@index([quotationId])
+  @@map("quotation_items")
 }
 
 /// A single line item on an order (a product × design + quantities + rates).
@@ -440,10 +575,62 @@ model OrderItem {
   comment     String?
   createdAt   DateTime @default(now())
 
-  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order      Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  dispatches Dispatch[]
 
   @@index([orderId])
   @@map("order_items")
+}
+
+/// A single dispatch (shipment) of an order line — partial or full. The pending
+/// quantity of a line = ordered − Σ(dispatched). Mirrors the legacy DispatchTbl.
+model Dispatch {
+  id          Int     @id @default(autoincrement())
+  code        String? @unique // DSP-#####
+  orderItemId Int
+  orderId     Int
+  orderCode   String? // the parent order's human code (snapshot)
+
+  // Snapshot of the line at dispatch time.
+  customerId   Int?
+  customerName String
+  agentName    String?
+  category     String?
+  pCategory    String?
+  subCategory  String?
+  product      String?
+  productName  String?
+  designType   String?
+  psize        Float?
+  priority     String?
+  calField     String?
+  ordType      String?
+  productRate  Float?
+  designRate   Float?
+  rate         Float?
+
+  // Dispatched quantities.
+  bags Float?
+  pcs  Float?
+  gram Float?
+  box  Float?
+
+  dispatchStatus String   @default("PARTIAL") // PARTIAL / FULL
+  dispatchDate   DateTime @default(now())
+  comment        String?
+  supItem        String?
+  userName       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  order     Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderItemId])
+  @@index([orderId])
+  @@index([dispatchStatus])
+  @@map("dispatches")
 }
 
 /// User-editable option lists (e.g. completion-day choices, order types),
@@ -459,4 +646,13 @@ model OrderOption {
   @@unique([group, value])
   @@index([group])
   @@map("order_options")
+}
+
+/// Singleton key/value app configuration (e.g. company name, company logo data URL).
+model AppConfig {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("app_config")
 }

@@ -1,5 +1,7 @@
 /** User / role / permission shapes shared across the stack. */
 
+import type { Paginated, PaginationQuery } from './common';
+
 export interface PermissionDto {
   id: string;
   key: string;
@@ -33,6 +35,11 @@ export interface UserDto {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface UserQuery extends PaginationQuery {
+  status?: UserStatus;
+}
+export type UserList = Paginated<UserDto>;
 
 export interface CreateUserDto {
   email: string;

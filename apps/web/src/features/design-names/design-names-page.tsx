@@ -22,7 +22,7 @@ import {
   useUpdateDesignName,
 } from './use-design-names';
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 50;
 
 export function DesignNamesPage() {
   const { can } = usePermissions();

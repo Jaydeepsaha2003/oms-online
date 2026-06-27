@@ -22,6 +22,10 @@ export const ACTIONS = {
   IMPORT: 'import',
   APPROVE: 'approve',
   PRINT: 'print',
+  /** Convert a quotation into an order. */
+  CONVERT: 'convert',
+  /** Cancel a quotation (with a tracked reason). */
+  CANCEL: 'cancel',
   /** Full control of a resource — implies every other action on it. */
   MANAGE: 'manage',
 } as const;
@@ -32,6 +36,8 @@ export type Action = (typeof ACTIONS)[keyof typeof ACTIONS];
 export const RESOURCES = {
   DASHBOARD: 'dashboard',
   ORDER: 'order',
+  QUOTATION: 'quotation',
+  DISPATCH: 'dispatch',
   PRODUCT: 'product',
   DESIGN: 'design',
   DESIGN_NAME: 'designname',
@@ -41,6 +47,8 @@ export const RESOURCES = {
   TRANSPORTER: 'transporter',
   TRANS_RATE: 'transrate',
   GST_RATE: 'gstrate',
+  /** Per-customer special rate overrides + logo restrictions (legacy Form10). */
+  SPECIAL_RATE: 'specialrate',
   SUPPLIER: 'supplier',
   INVENTORY: 'inventory',
   PRODUCTION: 'production',
@@ -94,11 +102,29 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
   { resource: RESOURCES.DASHBOARD, label: 'Dashboard', group: 'General', actions: [ACTIONS.VIEW] },
 
   { resource: RESOURCES.ORDER, label: 'Orders', group: 'Sales', actions: STANDARD_PRINTABLE },
+  {
+    resource: RESOURCES.QUOTATION,
+    label: 'Quotations',
+    group: 'Sales',
+    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.EXPORT, ACTIONS.CONVERT, ACTIONS.CANCEL, ACTIONS.MANAGE],
+  },
+  {
+    resource: RESOURCES.DISPATCH,
+    label: 'Dispatch',
+    group: 'Sales',
+    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.EXPORT, ACTIONS.MANAGE],
+  },
   { resource: RESOURCES.CUSTOMER, label: 'Customers', group: 'Sales', actions: STANDARD },
   { resource: RESOURCES.AGENT, label: 'Agents', group: 'Sales', actions: STANDARD },
   { resource: RESOURCES.TRANSPORTER, label: 'Transporters', group: 'Sales', actions: STANDARD },
   { resource: RESOURCES.GST_RATE, label: 'Customer GST Rates', group: 'Sales', actions: STANDARD },
   { resource: RESOURCES.TRANS_RATE, label: 'Customer Transport Rates', group: 'Sales', actions: STANDARD },
+  {
+    resource: RESOURCES.SPECIAL_RATE,
+    label: 'Customer Special Rates',
+    group: 'Sales',
+    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.DELETE, ACTIONS.MANAGE],
+  },
   { resource: RESOURCES.INVOICE, label: 'Invoices', group: 'Sales', actions: STANDARD_PRINTABLE },
   {
     resource: RESOURCES.SHIPMENT,

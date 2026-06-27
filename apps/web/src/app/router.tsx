@@ -18,7 +18,13 @@ import { OrdersPage } from '@/features/orders/orders-page';
 import { OrderFormPage } from '@/features/orders/order-form-page';
 import { OrderModifyPage } from '@/features/orders/order-modify-page';
 import { OrderBillPage } from '@/features/orders/order-bill-page';
+import { QuotationsPage } from '@/features/quotations/quotations-page';
+import { DispatchOrderPage } from '@/features/dispatch/dispatch-order-page';
+import { ModifyDispatchPage } from '@/features/dispatch/modify-dispatch-page';
+import { SpecialRatesPage } from '@/features/special-rates/special-rates-page';
 import { SettingsPage } from '@/features/settings/settings-page';
+import { UsersPage } from '@/features/admin/users-page';
+import { RolesPage } from '@/features/admin/roles-page';
 import { ForbiddenPage } from '@/features/errors/forbidden-page';
 import { NotFoundPage } from '@/features/errors/not-found-page';
 
@@ -95,6 +101,14 @@ export function AppRoutes() {
             }
           />
           <Route
+            path="/special-rates"
+            element={
+              <RequirePermission permission={perm(RESOURCES.SPECIAL_RATE, ACTIONS.VIEW)}>
+                <SpecialRatesPage />
+              </RequirePermission>
+            }
+          />
+          <Route
             path="/products"
             element={
               <RequirePermission permission={perm(RESOURCES.PRODUCT, ACTIONS.VIEW)}>
@@ -159,10 +173,66 @@ export function AppRoutes() {
             }
           />
           <Route
+            path="/quotations"
+            element={
+              <RequirePermission permission={perm(RESOURCES.QUOTATION, ACTIONS.VIEW)}>
+                <QuotationsPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/quotations/:id/edit"
+            element={
+              <RequirePermission permission={perm(RESOURCES.QUOTATION, ACTIONS.UPDATE)}>
+                <OrderFormPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/quotations/:id/bill"
+            element={
+              <RequirePermission permission={perm(RESOURCES.QUOTATION, ACTIONS.VIEW)}>
+                <OrderBillPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/dispatch/new"
+            element={
+              <RequirePermission permission={perm(RESOURCES.DISPATCH, ACTIONS.CREATE)}>
+                <DispatchOrderPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/dispatch"
+            element={
+              <RequirePermission permission={perm(RESOURCES.DISPATCH, ACTIONS.VIEW)}>
+                <ModifyDispatchPage />
+              </RequirePermission>
+            }
+          />
+          <Route
             path="/settings"
             element={
               <RequirePermission permission={perm(RESOURCES.SETTING, ACTIONS.VIEW)}>
                 <SettingsPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/admin/users"
+            element={
+              <RequirePermission permission={perm(RESOURCES.USER, ACTIONS.VIEW)}>
+                <UsersPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/admin/roles"
+            element={
+              <RequirePermission permission={perm(RESOURCES.ROLE, ACTIONS.VIEW)}>
+                <RolesPage />
               </RequirePermission>
             }
           />

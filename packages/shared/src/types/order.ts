@@ -32,6 +32,7 @@ export interface OrderItemDto {
 export interface OrderDto {
   id: number;
   code: string | null;
+  poNumber: string | null;
   customerId: number | null;
   customerName: string;
   agentName: string | null;
@@ -47,7 +48,10 @@ export interface OrderDto {
   items: OrderItemDto[];
   /** Convenience aggregates for list views. */
   itemCount: number;
+  /** Sum of line rates (productRate + designRate). */
   totalRate: number;
+  /** Sum of line amounts: rate × quantity (Kgs or Pcs per the line's calc field). */
+  totalAmount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -75,6 +79,7 @@ export interface OrderItemInput {
 
 export interface OrderInput {
   customerName: string;
+  poNumber?: string | null;
   agentName?: string | null;
   category?: string | null;
   orderDate?: string | null;
@@ -131,7 +136,7 @@ export interface OrderItemOption {
 /** Dropdown sources for the order form. Products/designs carry their rates so the
  *  form can auto-fill product/design rate and filter design types by category. */
 export interface OrderLookups {
-  customers: { name: string; agentName: string | null; category: string | null }[];
+  customers: { id: number; name: string; agentName: string | null; category: string | null }[];
   categories: string[];
   subCategories: string[];
   products: OrderProductLite[];
@@ -140,4 +145,15 @@ export interface OrderLookups {
   items: OrderItemOption[];
   /** Every design-type → design-name pair from the Design Names master (a code may have several names). */
   designNames: { designType: string; designName: string }[];
+  /** Per-category price calculation field (KGS / PCS). */
+  categoryFields: CategoryFieldDto[];
+}
+
+/** The pricing/calculation unit for an order line. */
+export type CalcField = 'KGS' | 'PCS';
+
+/** Maps a product category to the price-calc field used for it. */
+export interface CategoryFieldDto {
+  category: string;
+  field: CalcField;
 }

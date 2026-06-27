@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
+  CategoryFieldDto,
   ProductDto,
   ProductInput,
   ProductList,
@@ -62,6 +63,19 @@ export function useImportProducts() {
   return useMutation({
     mutationFn: (rows: Record<string, unknown>[]) => http.post<ImportResult>('/products/import', { rows }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+/** Replace the per-category price-calc field map; refreshes product & order lookups. */
+export function useSaveCategoryFields() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (fields: CategoryFieldDto[]) =>
+      http.put<CategoryFieldDto[]>('/products/category-fields', { fields }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [...KEY, 'lookups'] });
+      qc.invalidateQueries({ queryKey: ['orders', 'lookups'] });
+    },
   });
 }
 

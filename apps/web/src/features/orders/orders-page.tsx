@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Plus, Printer, Search, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Printer, Search, Trash2, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 import type { OrderDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -21,6 +21,7 @@ const STATUS_STYLE: Record<string, string> = {
   CONFIRMED: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
   PENDING: 'bg-amber-50 text-amber-700 ring-amber-200',
   CANCELLED: 'bg-rose-50 text-rose-700 ring-rose-200',
+  DRAFT: 'bg-slate-100 text-slate-700 ring-slate-200',
 };
 
 const COLUMNS: DataColumn<OrderDto>[] = [
@@ -35,7 +36,7 @@ const COLUMNS: DataColumn<OrderDto>[] = [
     cell: (o) => (o.priority === 'URGENT' ? <span className="font-semibold text-rose-600">URGENT</span> : (o.priority ?? '—')),
   },
   { id: 'items', label: 'Items', align: 'right', cell: (o) => <span className="tabular-nums">{o.itemCount}</span> },
-  { id: 'total', label: 'Total', align: 'right', cell: (o) => <span className="font-semibold tabular-nums">₹{o.totalRate.toLocaleString()}</span> },
+  { id: 'total', label: 'Total Amount', align: 'right', cell: (o) => <span className="font-semibold tabular-nums">₹{(o.totalAmount ?? 0).toLocaleString()}</span> },
   {
     id: 'status',
     label: 'Status',
@@ -132,6 +133,11 @@ export function OrdersPage() {
         actions={(o) =>
           can('order:print') || can('order:delete') ? (
             <div className="flex justify-end gap-1">
+              {can('order:print') && (
+                <Button variant="ghost" size="icon" className="size-8" onClick={() => toast('Challan / Dispatch — coming soon')} aria-label="Challan / Dispatch" title="Challan / Dispatch (coming soon)">
+                  <Truck className="size-4" />
+                </Button>
+              )}
               {can('order:print') && (
                 <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(`/orders/${o.id}/bill`)} aria-label="Bill / Invoice" title="Bill / Invoice">
                   <Printer className="size-4" />

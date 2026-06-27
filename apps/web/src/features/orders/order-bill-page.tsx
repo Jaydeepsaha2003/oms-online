@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Download, Loader2, Printer } from 'lucide-react';
 import { toast } from 'sonner';
 import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
 import { Button } from '@/components/ui/button';
 import { useOrder } from './use-orders';
+import { useQuotation } from '../quotations/use-quotations';
+import { useCompany } from '@/features/settings/use-settings';
 
 // Exact brand colours for the Sales Order bill.
 const BLUE = '#156082';
@@ -26,9 +28,19 @@ const PRINT_CSS = `
 
 export function OrderBillPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { id } = useParams<{ id: string }>();
   const orderId = id ? Number(id) : undefined;
-  const { data: order, isLoading } = useOrder(orderId);
+  // The same bill renders both orders and quotations — the route decides which.
+  const isQuotation = location.pathname.startsWith('/quotations');
+  const orderQ = useOrder(isQuotation ? undefined : orderId);
+  const quotationQ = useQuotation(isQuotation ? orderId : undefined);
+  const order = isQuotation ? quotationQ.data : orderQ.data;
+  const isLoading = isQuotation ? quotationQ.isLoading : orderQ.isLoading;
+  const { data: company } = useCompany();
+  const docTitle = isQuotation ? 'QUOTATION' : 'SALES ORDER';
+  const pageTitle = isQuotation ? 'Quotation' : 'Sales Order';
+  const fileSuffix = isQuotation ? 'quotation' : 'sales-order';
   const [busy, setBusy] = useState(false);
   const [printImg, setPrintImg] = useState<string | null>(null);
 
@@ -81,7 +93,7 @@ export function OrderBillPage() {
           heightLeft -= pageH - margin * 2;
         }
       }
-      pdf.save(`${order.code ?? `order-${orderId}`}-sales-order.pdf`);
+      pdf.save(`${order.code ?? `${fileSuffix}-${orderId}`}-${fileSuffix}.pdf`);
     } catch {
       toast.error('Could not generate the PDF');
     } finally {
@@ -137,7 +149,7 @@ export function OrderBillPage() {
         <Button variant="ghost" size="icon" onClick={() => navigate(-1)} aria-label="Back">
           <ArrowLeft />
         </Button>
-        <h2 className="text-xl font-bold tracking-tight">Sales Order</h2>
+        <h2 className="text-xl font-bold tracking-tight">{pageTitle}</h2>
         <div className="ml-auto flex gap-2">
           <Button variant="outline" onClick={print} disabled={busy}>
             <Printer /> Print
@@ -160,9 +172,17 @@ export function OrderBillPage() {
           fontVariantNumeric: 'tabular-nums',
         }}
       >
+        {/* Company branding band — logo + name (shown when configured in Settings) */}
+        {(company?.logo || company?.name) && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px' }}>
+            {company?.logo && <img src={company.logo} alt="Company logo" style={{ maxHeight: 56, maxWidth: 220, objectFit: 'contain' }} />}
+            {company?.name && <span style={{ fontSize: 18, fontWeight: 800, color: BLACK }}>{company.name}</span>}
+          </div>
+        )}
+
         {/* Title bar — blue with amber accent */}
         <div style={{ background: BLUE, color: '#fff', borderBottom: `4px solid ${AMBER}`, padding: '10px 16px', display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, letterSpacing: 1 }}>SALES ORDER</h1>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, letterSpacing: 1 }}>{docTitle}</h1>
           <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 16 }}>{order.code ?? `#${order.id}`}</span>
         </div>
 
@@ -231,7 +251,7 @@ export function OrderBillPage() {
 
         <div style={{ borderTop: `1px solid ${AMBER}`, padding: '6px 16px', display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#666' }}>
           <span>{new Date().toLocaleString('en-GB')}</span>
-          <span>**This is a computer-generated sales order**</span>
+          <span>**This is a computer-generated {pageTitle.toLowerCase()}**</span>
         </div>
       </div>
     </div>
