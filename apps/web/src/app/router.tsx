@@ -22,6 +22,10 @@ import { QuotationsPage } from '@/features/quotations/quotations-page';
 import { DispatchOrderPage } from '@/features/dispatch/dispatch-order-page';
 import { ModifyDispatchPage } from '@/features/dispatch/modify-dispatch-page';
 import { SpecialRatesPage } from '@/features/special-rates/special-rates-page';
+import { PendingChallanPage } from '@/features/challans/pending-challan-page';
+import { ChallanFormPage } from '@/features/challans/challan-form-page';
+import { ChallansListPage } from '@/features/challans/challans-list-page';
+import { ChallanItemsPage } from '@/features/challans/challan-items-page';
 import { SettingsPage } from '@/features/settings/settings-page';
 import { UsersPage } from '@/features/admin/users-page';
 import { RolesPage } from '@/features/admin/roles-page';
@@ -209,6 +213,46 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.DISPATCH, ACTIONS.VIEW)}>
                 <ModifyDispatchPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/challans/pending"
+            element={
+              <RequirePermission permission={perm(RESOURCES.CHALLAN, ACTIONS.VIEW)}>
+                <PendingChallanPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/challans/items"
+            element={
+              <RequirePermission permission={perm(RESOURCES.CHALLAN, ACTIONS.VIEW)}>
+                <ChallanItemsPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/challans/:id/edit"
+            element={
+              <RequirePermission permission={perm(RESOURCES.CHALLAN, ACTIONS.UPDATE)}>
+                <ChallanFormPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/challans"
+            element={
+              <RequirePermission permission={perm(RESOURCES.CHALLAN, ACTIONS.VIEW)}>
+                <ChallansListPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/challans/new"
+            element={
+              <RequirePermission permission={perm(RESOURCES.CHALLAN, ACTIONS.CREATE)}>
+                <ChallanFormPage />
               </RequirePermission>
             }
           />

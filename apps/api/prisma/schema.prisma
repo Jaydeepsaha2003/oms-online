@@ -633,6 +633,85 @@ model Dispatch {
   @@map("dispatches")
 }
 
+// ── Challan / Tax-Invoice (legacy PendChallan + Form14) ───────────────────────
+// A challan is a tax invoice built from one customer's dispatched-but-not-yet-
+// challaned lines. Header (InvTbl) + items (ChallanTbl). Pricing engine (freight/
+// packing/pouch/GST/half-bill/TCS) + PDF print land in Phase 2.
+model Challan {
+  id              Int       @id @default(autoincrement())
+  // Human invoice number, e.g. "SSS/26-27/01" (legacy InvNo).
+  code            String    @unique
+  prefix          String?
+  invDate         DateTime  @default(now())
+  invTime         String?
+  customerId      Int?
+  customerName    String
+  billingAddress  String?
+  shippingAddress String?
+  category        String?
+  paymentTerm     Int?
+  dueDate         DateTime?
+  transName       String?
+  // Charges & totals (computed by the Phase-2 pricing engine).
+  packing         Float?
+  freight         Float?
+  pouch           Float?
+  tcs             Float?
+  // TDS deducted at source (when the party is TDS-applicable): amount + the % used.
+  tds             Float?
+  tdsPercent      Float?
+  tax             Float? // GST amount
+  total           Float?
+  b               Float? // billed portion
+  c               Float? // balance (total - b)
+  remarks         String?
+  gst             Float? // GST rate %
+  freightRate     Float?
+  packingRate     Float?
+  billingRate     Float?
+  bpcRate         Float?
+  noBill          Boolean   @default(false)
+  transaction     String    @default("SALES INVOICE")
+  // CONFIRMED / CANCELLED.
+  challanStatus   String    @default("CONFIRMED")
+  userName        String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  items ChallanItem[]
+
+  @@index([customerName])
+  @@index([invDate])
+  @@map("challans")
+}
+
+model ChallanItem {
+  id          Int      @id @default(autoincrement())
+  challanId   Int
+  // Source dispatch line (null/0 for SCRAP or manual rows). Plain int — used to
+  // decide which dispatches are still "pending challan".
+  dispatchId  Int?
+  productName String?
+  design      String?
+  bags        Float?
+  pcs         Float?
+  kgs         Float?
+  box         Float?
+  unit        String?
+  price       Float?
+  amount      Float?
+  pCategory   String?
+  comment     String?
+  userName    String?
+  createdAt   DateTime @default(now())
+
+  challan Challan @relation(fields: [challanId], references: [id], onDelete: Cascade)
+
+  @@index([challanId])
+  @@index([dispatchId])
+  @@map("challan_items")
+}
+
 /// User-editable option lists (e.g. completion-day choices, order types),
 /// grouped by `group`. Managed from the Settings page.
 model OrderOption {

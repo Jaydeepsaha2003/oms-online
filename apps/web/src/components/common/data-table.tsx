@@ -1,5 +1,5 @@
-import { useCallback, type ComponentProps, type Key, type ReactNode } from 'react';
-import { Eye, Loader2 } from 'lucide-react';
+import { useCallback, useMemo, useState, type ComponentProps, type Key, type ReactNode } from 'react';
+import { ArrowDown, ArrowUp, ChevronsUpDown, Eye, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   Table,
@@ -22,6 +22,8 @@ export interface DataColumn<T> {
   pin?: 'left0' | 'left1';
   /** When true the column is always shown and excluded from the arrange panel. */
   fixed?: boolean;
+  /** Provide a value to make this column sortable (click the header to sort). */
+  sortValue?: (row: T) => string | number | null | undefined;
   cell: (row: T) => ReactNode;
 }
 
@@ -100,6 +102,27 @@ export function DataTable<T>({
   const hasActionsCol = !!actions || showView;
   const span = columns.length + (hasActionsCol ? 1 : 0);
   const stickyTop = !!maxBodyHeight;
+
+  // Client-side sorting for any column that supplies `sortValue`. Cycles a column
+  // through asc → desc → unsorted.
+  const [sort, setSort] = useState<{ id: string; dir: 'asc' | 'desc' } | null>(null);
+  const toggleSort = (id: string) =>
+    setSort((s) => (s?.id !== id ? { id, dir: 'asc' } : s.dir === 'asc' ? { id, dir: 'desc' } : null));
+  const sortedRows = useMemo(() => {
+    const col = sort && columns.find((c) => c.id === sort.id);
+    if (!sort || !col?.sortValue) return rows;
+    const val = col.sortValue;
+    const out = [...rows].sort((a, b) => {
+      const av = val(a);
+      const bv = val(b);
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1; // nulls/blanks last
+      if (bv == null) return -1;
+      if (typeof av === 'number' && typeof bv === 'number') return av - bv;
+      return String(av).localeCompare(String(bv), undefined, { numeric: true });
+    });
+    return sort.dir === 'desc' ? out.reverse() : out;
+  }, [rows, sort, columns]);
   return (
     <div className="overflow-hidden rounded-[5px] border bg-card shadow-sm">
       <Table
@@ -129,7 +152,26 @@ export function DataTable<T>({
                   pinHead(col.pin, stickyTop),
                 )}
               >
-                {col.header ?? col.label}
+                {col.sortValue ? (
+                  <button
+                    type="button"
+                    onClick={() => toggleSort(col.id)}
+                    className={cn(
+                      'group/sort hover:text-foreground inline-flex items-center gap-1',
+                      col.align === 'right' && 'flex-row-reverse',
+                    )}
+                    title="Sort"
+                  >
+                    {col.header ?? col.label}
+                    {sort?.id === col.id ? (
+                      sort.dir === 'asc' ? <ArrowUp className="size-3.5" /> : <ArrowDown className="size-3.5" />
+                    ) : (
+                      <ChevronsUpDown className="size-3 opacity-40 group-hover/sort:opacity-70" />
+                    )}
+                  </button>
+                ) : (
+                  (col.header ?? col.label)
+                )}
               </TableHead>
             ))}
             {hasActionsCol && (
@@ -155,7 +197,7 @@ export function DataTable<T>({
               </TableCell>
             </TableRow>
           ) : (
-            rows.map((row, idx) => {
+            sortedRows.map((row, idx) => {
               const pinBg = idx % 2 === 1 ? 'oklch(0.984 0.003 247.858)' : 'oklch(1 0 0)';
               return (
                 <TableRow

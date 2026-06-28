@@ -23,6 +23,7 @@ const GROUPS = [
   { key: 'masters', label: 'Masters', detail: 'Customers, products, designs, transporters, GST & transport rates, price-calc, agents', sections: ['masters', 'pricecal', 'agents'] },
   { key: 'special', label: 'Special rates', detail: 'Customer rate overrides + logo restrictions', sections: ['special'] },
   { key: 'txn', label: 'Orders & Dispatch', detail: 'Order history + dispatch records (replaces existing orders)', sections: ['orders', 'dispatch'] },
+  { key: 'challans', label: 'Challans', detail: 'Saved tax invoices / challans (InvTbl + ChallanTbl); upserts by challan no', sections: ['challans'] },
 ] as const;
 
 export function AccessImportCard() {
@@ -30,7 +31,7 @@ export function AccessImportCard() {
   const confirm = useConfirm();
   const [supported, setSupported] = useState<boolean | null>(null);
   const [file, setFile] = useState<File | null>(null);
-  const [picked, setPicked] = useState<Record<string, boolean>>({ masters: true, special: true, txn: true });
+  const [picked, setPicked] = useState<Record<string, boolean>>({ masters: true, special: true, txn: true, challans: true });
   const [busy, setBusy] = useState<null | 'preview' | 'import'>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
 

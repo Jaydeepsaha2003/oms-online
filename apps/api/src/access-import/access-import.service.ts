@@ -20,7 +20,7 @@ import { PrismaService } from '../prisma/prisma.service';
 const TABLES = [
   'CUSTOMER', 'PRODUCT', 'DESIGN', 'DESIGNNAME', 'COMBINATION', 'TRANSPORTER', 'CUSTOMER GST RATE', 'TRANS RATE', 'PRICECAL',
   'SPRODUCT', 'SCSPRODUCT', 'SCPRODUCT', 'SDESIGN', 'SCSDESIGN', 'SCDESIGN', 'SP_CATEGORY_LOGO', 'SP_SUBCATEGORY_LOGO',
-  'ORDERTBL', 'DispatchTbl',
+  'ORDERTBL', 'DispatchTbl', 'InvTbl', 'ChallanTbl',
 ];
 
 /** PowerShell exporter: reads each table via ACE and writes <name>.json to OutDir. */
@@ -34,27 +34,32 @@ foreach($p in @('Microsoft.ACE.OLEDB.16.0','Microsoft.ACE.OLEDB.12.0')){
 }
 if(-not $conn){ throw 'Could not open the Access file. Is the Microsoft Access Database Engine (ACE) installed?' }
 foreach($t in $tables){
-  $cmd=$conn.CreateCommand(); $cmd.CommandText="SELECT * FROM [$t]"
-  $r=$cmd.ExecuteReader(); $rows=New-Object System.Collections.ArrayList
-  while($r.Read()){
-    $o=[ordered]@{}
-    for($i=0;$i -lt $r.FieldCount;$i++){
-      $n=$r.GetName($i)
-      if($r.IsDBNull($i)){ $o[$n]=$null; continue }
-      $v=$r.GetValue($i)
-      if($v -is [datetime]){ $o[$n]=$v.ToString('o') } elseif($v -is [string]){ $o[$n]=$v.Trim() } else { $o[$n]=$v }
-    }
-    [void]$rows.Add([pscustomobject]$o)
-  }
-  $r.Close()
   $safe=($t -replace '[^A-Za-z0-9]','_')
+  $rows=New-Object System.Collections.ArrayList
+  try {
+    $cmd=$conn.CreateCommand(); $cmd.CommandText="SELECT * FROM [$t]"
+    $r=$cmd.ExecuteReader()
+    while($r.Read()){
+      $o=[ordered]@{}
+      for($i=0;$i -lt $r.FieldCount;$i++){
+        $n=$r.GetName($i)
+        if($r.IsDBNull($i)){ $o[$n]=$null; continue }
+        $v=$r.GetValue($i)
+        if($v -is [datetime]){ $o[$n]=$v.ToString('o') } elseif($v -is [string]){ $o[$n]=$v.Trim() } else { $o[$n]=$v }
+      }
+      [void]$rows.Add([pscustomobject]$o)
+    }
+    $r.Close()
+  } catch {
+    # Table not present in this database — write an empty set and keep going.
+  }
   $json=if($rows.Count -eq 0){'[]'}else{ConvertTo-Json -InputObject $rows -Depth 6}
   [System.IO.File]::WriteAllText((Join-Path $OutDir ($safe+'.json')),$json,[System.Text.UTF8Encoding]::new($false))
 }
 $conn.Close()
 `;
 
-type Section = 'masters' | 'pricecal' | 'agents' | 'special' | 'orders' | 'dispatch';
+type Section = 'masters' | 'pricecal' | 'agents' | 'special' | 'orders' | 'dispatch' | 'challans';
 interface Counts { [label: string]: number }
 
 const s = (v: unknown): string | null => {
@@ -112,6 +117,7 @@ export class AccessImportService {
       if (run('special')) results.push({ section: 'Special rates', counts: await this.importSpecial(J, dry) });
       if (run('orders')) results.push({ section: 'Orders', counts: await this.importOrders(J, dry) });
       if (run('dispatch')) results.push({ section: 'Dispatch', counts: await this.importDispatch(J, dry) });
+      if (run('challans')) results.push({ section: 'Challans', counts: await this.importChallans(J, dry) });
 
       return { ok: true, dry, fileName: file.originalname, results };
     } finally {
@@ -397,5 +403,97 @@ export class AccessImportService {
     }
     if (!dry) for (let i = 0; i < batch.length; i += 500) await this.prisma.dispatch.createMany({ data: batch.slice(i, i + 500) });
     return { dispatches: batch.length, 'skipped (no matching order/item)': skipped };
+  }
+
+  /** InvTbl (header) + ChallanTbl (lines) → challans / challan_items. Upsert by
+   *  challan code so re-running updates rather than duplicates; legacy DispatchID is
+   *  preserved on each line (so those dispatches drop out of Pending Challan). */
+  private async importChallans(J: (n: string) => any[], dry: boolean): Promise<Counts> {
+    const cmap = await this.customerMap(J);
+    const omsByName = new Map(
+      (await this.prisma.customer.findMany({ select: { id: true, partyName: true } })).filter((x) => x.partyName).map((x) => [x.partyName!.toUpperCase(), x.id]),
+    );
+    const truthy = (v: unknown) => v === true || v === -1 || v === 1 || ['true', '1', '-1', 'yes'].includes(String(v ?? '').trim().toLowerCase());
+
+    // Group line items by challan/InvNo.
+    const itemsByInv = new Map<string, any[]>();
+    for (const r of J('ChallanTbl')) {
+      const inv = s(r.InvNo);
+      if (!inv) continue;
+      if (!itemsByInv.has(inv)) itemsByInv.set(inv, []);
+      itemsByInv.get(inv)!.push(r);
+    }
+
+    let headers = 0;
+    let items = 0;
+    let skipped = 0;
+    for (const h of J('InvTbl')) {
+      const code = s(h.InvNo);
+      if (!code) {
+        skipped++;
+        continue;
+      }
+      const customerName = s(h['Customer Name']) ?? '';
+      const itemData = (itemsByInv.get(code) ?? []).map((r) => ({
+        dispatchId: int(r.DispatchID),
+        productName: s(r['Product Name']),
+        design: s(r.Design),
+        bags: num(r.BAGS),
+        pcs: num(r.PCS),
+        kgs: num(r.KGS),
+        box: num(r.BOX),
+        unit: s(r.Unit),
+        price: num(r.Price),
+        amount: num(r.Amount),
+        pCategory: null as string | null,
+        comment: s(r.Comment),
+        userName: s(r['USER NAME']),
+      }));
+
+      const header = {
+        code,
+        prefix: s(h.Prefix),
+        invDate: dt(h.InvDate) ?? new Date(0),
+        invTime: s(h.InvTime),
+        customerId: cmap.get(int(h.CustID) ?? -1) ?? omsByName.get(customerName.toUpperCase()) ?? null,
+        customerName,
+        billingAddress: s(h['Billing Add']),
+        shippingAddress: s(h['Shipping Add']),
+        category: null as string | null,
+        paymentTerm: int(h['Payment Term']),
+        dueDate: dt(h['Due Date']),
+        transName: s(h['Trans Name']),
+        packing: num(h.Packing),
+        freight: num(h.Freight),
+        pouch: num(h.pouch),
+        tcs: num(h.TCS),
+        tds: null as number | null,
+        tdsPercent: null as number | null,
+        tax: num(h.Tax),
+        total: num(h.Total),
+        b: num(h.B),
+        c: num(h.C),
+        remarks: s(h.Remarks),
+        gst: num(h.GST),
+        billingRate: num(h.BillingRate),
+        noBill: truthy(h.NoBill),
+        transaction: s(h.Transaction) ?? 'SALES INVOICE',
+        challanStatus: up(h['CHALLAN STATUS']) === 'CANCELLED' ? 'CANCELLED' : 'CONFIRMED',
+        userName: s(h['USER NAME']),
+      };
+
+      if (!dry) {
+        const ex = await this.prisma.challan.findUnique({ where: { code }, select: { id: true } });
+        if (ex) {
+          await this.prisma.challanItem.deleteMany({ where: { challanId: ex.id } });
+          await this.prisma.challan.update({ where: { id: ex.id }, data: { ...header, items: { create: itemData } } });
+        } else {
+          await this.prisma.challan.create({ data: { ...header, items: { create: itemData } } });
+        }
+      }
+      headers++;
+      items += itemData.length;
+    }
+    return { challans: headers, 'challan items': items, 'skipped (no InvNo)': skipped };
   }
 }

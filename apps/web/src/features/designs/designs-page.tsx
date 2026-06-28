@@ -5,7 +5,6 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
-  ChevronsUpDown,
   IndianRupee,
   Layers,
   Loader2,
@@ -51,17 +50,12 @@ import {
   useImportCombinations,
 } from '../combinations/use-combinations';
 
-const PAGE_SIZE = 50;
+// Load the whole (filtered) design set so sorting & the scrollable grid cover
+// everything in one place, rather than one page at a time.
+const PAGE_SIZE = 1000;
 const num = (n: number | null) => (n == null ? '—' : n.toLocaleString());
 /** Amount prefixed with the rupee symbol; dash when unknown. */
 const money = (n: number | null) => (n == null ? '—' : `₹${n.toLocaleString()}`);
-/** Right-aligned header label with a static ▲▼ glyph after it. */
-const costHeader = (
-  <span className="inline-flex items-center gap-1">
-    Cost <ChevronsUpDown className="size-3 opacity-60" />
-  </span>
-);
-
 /** Margin = rate − cost; up/green for profit, down/red for loss, dash when unknown. */
 const marginCell = (cost: number | null, rate: number | null) => {
   if (cost == null || rate == null) return <span className="text-muted-foreground">—</span>;
@@ -189,27 +183,28 @@ export function DesignsPage() {
           </span>
         ),
       },
-      { id: 'category', label: 'Category', cell: (d) => d.category },
-      { id: 'subCategory', label: 'Sub category', cell: (d) => d.subCategory },
-      { id: 'designType', label: 'Design type', cell: (d) => <span className="font-medium">{d.designType}</span> },
-      { id: 'cost', label: 'Cost', header: costHeader, align: 'right', cell: (d) => money(d.cost) },
-      { id: 'rate', label: 'Rate', align: 'right', cell: (d) => money(d.rate) },
-      { id: 'margin', label: 'Margin', align: 'right', cell: (d) => marginCell(d.cost, d.rate) },
+      { id: 'category', label: 'Category', sortValue: (d) => d.category, cell: (d) => d.category },
+      { id: 'subCategory', label: 'Sub category', sortValue: (d) => d.subCategory, cell: (d) => d.subCategory },
+      { id: 'designType', label: 'Design type', sortValue: (d) => d.designType, cell: (d) => <span className="font-medium">{d.designType}</span> },
+      { id: 'cost', label: 'Cost', align: 'right', sortValue: (d) => d.cost, cell: (d) => money(d.cost) },
+      { id: 'rate', label: 'Rate', align: 'right', sortValue: (d) => d.rate, cell: (d) => money(d.rate) },
+      { id: 'margin', label: 'Margin', align: 'right', sortValue: (d) => (d.cost != null && d.rate != null ? d.rate - d.cost : null), cell: (d) => marginCell(d.cost, d.rate) },
     ],
     [selected],
   );
 
   const comboColumns = useMemo<DataColumn<CombinationDto>[]>(
     () => [
-    { id: 'category', label: 'Category', cell: (c) => c.category || '—' },
-    { id: 'subCategory', label: 'Sub category', cell: (c) => c.subCategory || '—' },
-    { id: 'name', label: 'Design type', cell: (c) => <span className="font-medium">{c.name}</span> },
-    { id: 'cost', label: 'Cost', header: costHeader, align: 'right', cell: (c) => <span className="font-semibold tabular-nums">{money(c.cost)}</span> },
-    { id: 'rate', label: 'Rate', align: 'right', cell: (c) => money(c.rate) },
-    { id: 'margin', label: 'Margin', align: 'right', cell: (c) => marginCell(c.cost, c.rate) },
+    { id: 'category', label: 'Category', sortValue: (c) => c.category, cell: (c) => c.category || '—' },
+    { id: 'subCategory', label: 'Sub category', sortValue: (c) => c.subCategory, cell: (c) => c.subCategory || '—' },
+    { id: 'name', label: 'Design type', sortValue: (c) => c.name, cell: (c) => <span className="font-medium">{c.name}</span> },
+    { id: 'cost', label: 'Cost', align: 'right', sortValue: (c) => c.cost, cell: (c) => <span className="font-semibold tabular-nums">{money(c.cost)}</span> },
+    { id: 'rate', label: 'Rate', align: 'right', sortValue: (c) => c.rate, cell: (c) => money(c.rate) },
+    { id: 'margin', label: 'Margin', align: 'right', sortValue: (c) => (c.cost != null && c.rate != null ? c.rate - c.cost : null), cell: (c) => marginCell(c.cost, c.rate) },
     {
       id: 'updated',
       label: 'Last updated',
+      sortValue: (c) => c.updatedAt,
       cell: (c) => <span className="text-muted-foreground whitespace-nowrap font-mono text-xs" title={formatDateTime(c.updatedAt)}>{formatDateShort(c.updatedAt)}</span>,
     },
     ],
@@ -281,7 +276,9 @@ export function DesignsPage() {
         </div>
 
         <DataTable
-          maxBodyHeight="max-h-[40vh]"
+          dense
+          hideRowView
+          maxBodyHeight="max-h-[65vh]"
           columns={designCols.visibleColumns}
           rows={items}
           rowKey={(d) => d.id}
@@ -310,24 +307,26 @@ export function DesignsPage() {
           )}
         />
 
-        <div className="flex items-center justify-between">
-          <p className="text-muted-foreground text-sm">
-            Page {data?.page ?? page} of {totalPages}
-          </p>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-              <ChevronLeft /> Prev
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page >= totalPages}
-            >
-              Next <ChevronRight />
-            </Button>
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between">
+            <p className="text-muted-foreground text-sm">
+              Page {data?.page ?? page} of {totalPages}
+            </p>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+                <ChevronLeft /> Prev
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+              >
+                Next <ChevronRight />
+              </Button>
+            </div>
           </div>
-        </div>
+        )}
       </section>
 
       {/* ── Combinations ────────────────────────────────────────────────────── */}

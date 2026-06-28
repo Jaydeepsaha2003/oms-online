@@ -1057,9 +1057,9 @@ export function OrderFormPage() {
         </CardContent>
       </Card>
 
-      {/* Sticky action bar with total. Wraps so the buttons are never cut off on
-          narrow widths or when the browser is zoomed in. */}
-      <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t bg-background/85 px-1 py-3 backdrop-blur">
+      {/* Action bar at the end of the form — shown when scrolled to the bottom
+          (not pinned). Wraps so the buttons are never cut off when zoomed in. */}
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t px-1 py-3">
         <p className="text-sm">
           {items.length} item(s) · total{' '}
           <span className="font-bold tabular-nums text-emerald-600">₹{total.toLocaleString()}</span>

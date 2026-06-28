@@ -9,6 +9,7 @@ import {
   ClipboardList,
   Contact,
   Factory,
+  FilePlus,
   FileText,
   Hammer,
   KeyRound,
@@ -66,6 +67,7 @@ const ICONS: Record<string, LucideIcon> = {
   ScrollText,
   SlidersHorizontal,
   FileText,
+  FilePlus,
   BadgePercent,
 };
 

@@ -41,7 +41,9 @@ export interface Paginated<T> {
 }
 
 export const DEFAULT_PAGE_SIZE = 20;
-export const MAX_PAGE_SIZE = 200;
+// Allow "load everything" list views (e.g. the sortable Designs grid, the
+// customer/agent pickers) to fetch a whole master table in one page.
+export const MAX_PAGE_SIZE = 2000;
 
 /** Supported export formats for the SheetJS-powered export endpoints. */
 export type ExportFormat = 'xlsx' | 'csv';

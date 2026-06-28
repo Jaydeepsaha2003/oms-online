@@ -22,4 +22,5 @@ export * from './types/catalog';
 export * from './types/order';
 export * from './types/quotation';
 export * from './types/dispatch';
+export * from './types/challan';
 export * from './types/setting';

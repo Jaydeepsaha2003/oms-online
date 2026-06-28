@@ -340,7 +340,7 @@ function LevelButtons<T extends string>({ levels, value, onChange, accent }: { l
           type="button"
           title={l.title}
           onClick={() => onChange(l.value)}
-          className={cn('rounded-md border px-3 py-1.5 text-sm font-medium transition-colors', value === l.value ? accent.active : accent.idle)}
+          className={cn('rounded-md border px-3.5 py-2 text-base font-medium transition-colors', value === l.value ? accent.active : accent.idle)}
         >
           {l.label}
         </button>
@@ -356,7 +356,7 @@ function AddButton({ accent, onClick, disabled, title, children }: { accent: Acc
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className={cn('inline-flex w-full items-center justify-center gap-1.5 rounded-md px-3 py-2 text-sm font-semibold text-white shadow-sm transition-colors disabled:opacity-60', accent.solid)}
+      className={cn('inline-flex w-full items-center justify-center gap-1.5 rounded-md px-3 py-2.5 text-base font-semibold text-white shadow-sm transition-colors disabled:opacity-60', accent.solid)}
     >
       {children}
     </button>

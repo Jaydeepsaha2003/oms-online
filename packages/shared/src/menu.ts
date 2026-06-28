@@ -183,6 +183,42 @@ export const MENU: MenuNode[] = [
     ],
   },
   {
+    id: 'challan-group',
+    label: 'Challan',
+    icon: 'ScrollText',
+    anyPermission: [perm(RESOURCES.CHALLAN, ACTIONS.VIEW), perm(RESOURCES.CHALLAN, ACTIONS.CREATE)],
+    children: [
+      {
+        id: 'pending-challan',
+        label: 'Pending Challan',
+        to: '/challans/pending',
+        icon: 'ClipboardList',
+        permission: perm(RESOURCES.CHALLAN, ACTIONS.CREATE),
+      },
+      {
+        id: 'create-challan',
+        label: 'Create Challan',
+        to: '/challans/new',
+        icon: 'FilePlus',
+        permission: perm(RESOURCES.CHALLAN, ACTIONS.CREATE),
+      },
+      {
+        id: 'challans',
+        label: 'Challans',
+        to: '/challans',
+        icon: 'ScrollText',
+        permission: perm(RESOURCES.CHALLAN, ACTIONS.VIEW),
+      },
+      {
+        id: 'challan-items',
+        label: 'Item-wise',
+        to: '/challans/items',
+        icon: 'Boxes',
+        permission: perm(RESOURCES.CHALLAN, ACTIONS.VIEW),
+      },
+    ],
+  },
+  {
     id: 'administration',
     label: 'Administration',
     icon: 'ShieldCheck',

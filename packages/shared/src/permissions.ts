@@ -38,6 +38,8 @@ export const RESOURCES = {
   ORDER: 'order',
   QUOTATION: 'quotation',
   DISPATCH: 'dispatch',
+  /** Challan / tax invoice (legacy PendChallan + Form14). */
+  CHALLAN: 'challan',
   PRODUCT: 'product',
   DESIGN: 'design',
   DESIGN_NAME: 'designname',
@@ -113,6 +115,12 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
     label: 'Dispatch',
     group: 'Sales',
     actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.EXPORT, ACTIONS.MANAGE],
+  },
+  {
+    resource: RESOURCES.CHALLAN,
+    label: 'Challan / Invoices',
+    group: 'Sales',
+    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.PRINT, ACTIONS.MANAGE],
   },
   { resource: RESOURCES.CUSTOMER, label: 'Customers', group: 'Sales', actions: STANDARD },
   { resource: RESOURCES.AGENT, label: 'Agents', group: 'Sales', actions: STANDARD },
