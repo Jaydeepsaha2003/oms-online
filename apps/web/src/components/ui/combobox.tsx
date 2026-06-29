@@ -23,6 +23,10 @@ export interface ComboboxProps {
   onInvalidEntry?: (typed: string) => void;
   /** Fired with the raw search text on every keystroke. */
   onType?: (text: string) => void;
+  /** Custom per-row renderer (e.g. tabular columns). Receives the option value; falls back to the label. */
+  renderOption?: (value: string) => React.ReactNode;
+  /** Optional sticky header shown above the option list (e.g. column titles). */
+  listHeader?: React.ReactNode;
 }
 
 // Looks exactly like our <Input>; the field itself is the search box.
@@ -56,6 +60,8 @@ export function Combobox({
   id,
   onInvalidEntry,
   onType,
+  renderOption,
+  listHeader,
 }: ComboboxProps) {
   const opts = React.useMemo<Row[]>(
     () =>
@@ -221,6 +227,12 @@ export function Combobox({
         onMouseDown={keepFocus}
       >
         <div ref={listRef} className="max-h-64 overflow-x-hidden overflow-y-auto overscroll-contain p-1">
+          {listHeader && rows.length > 0 && (
+            <div className="bg-popover text-muted-foreground sticky top-0 z-10 flex items-center gap-2 border-b px-2 py-1.5 text-[11px] font-semibold tracking-wide uppercase">
+              <span className="size-4 shrink-0" />
+              {listHeader}
+            </div>
+          )}
           {rows.length === 0 ? (
             <div className="text-muted-foreground py-6 text-center text-sm">{emptyText}</div>
           ) : (
@@ -243,15 +255,15 @@ export function Combobox({
                 ) : (
                   <Check className={cn('size-4 shrink-0', value === o.value ? 'opacity-100' : 'opacity-0')} />
                 )}
-                <span className="truncate">
-                  {o.create ? (
-                    <>
-                      Create <span className="font-medium">“{q}”</span>
-                    </>
-                  ) : (
-                    o.label
-                  )}
-                </span>
+                {o.create ? (
+                  <span className="truncate">
+                    Create <span className="font-medium">“{q}”</span>
+                  </span>
+                ) : renderOption ? (
+                  <div className="flex min-w-0 flex-1 items-center gap-2">{renderOption(o.value)}</div>
+                ) : (
+                  <span className="truncate">{o.label}</span>
+                )}
               </div>
             ))
           )}

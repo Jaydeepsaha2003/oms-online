@@ -339,7 +339,8 @@ export function computeChallanTotals(input: ChallanTotalsInput): ChallanTotals {
   }
   if (input.bOverride != null) b = num(input.bOverride); // Form14 Editbtn
 
-  const c = r0(total - b);
+  let c = r0(total - b);
+  if (input.cOverride != null) c = num(input.cOverride);
   const tdsAmount = input.tdsApplicable ? r0((tAmt * num(input.tdsPercent)) / 100) : 0;
   const netReceivable = r0(total - tdsAmount);
 

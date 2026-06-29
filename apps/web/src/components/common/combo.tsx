@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Combobox } from '@/components/ui/combobox';
 
 /** Creatable searchable dropdown — type to filter or add a new value. */
@@ -39,6 +40,8 @@ export function NativeSelect({
   className,
   onInvalidEntry,
   onType,
+  renderOption,
+  listHeader,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -48,6 +51,8 @@ export function NativeSelect({
   className?: string;
   onInvalidEntry?: (typed: string) => void;
   onType?: (text: string) => void;
+  renderOption?: (value: string) => ReactNode;
+  listHeader?: ReactNode;
 }) {
   return (
     <Combobox
@@ -59,6 +64,8 @@ export function NativeSelect({
       className={className}
       onInvalidEntry={onInvalidEntry}
       onType={onType}
+      renderOption={renderOption}
+      listHeader={listHeader}
     />
   );
 }

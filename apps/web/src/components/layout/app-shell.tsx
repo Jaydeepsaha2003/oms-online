@@ -32,7 +32,7 @@ export function AppShell() {
   }, [pinned]);
 
   return (
-    <div className="flex min-h-screen bg-background">
+    <div className="flex h-screen overflow-hidden bg-background">
       {/* Desktop sidebar: the <aside> only reserves the rail/pinned width; the panel
           itself is a fixed overlay that grows on hover without pushing content. */}
       <aside
@@ -68,12 +68,12 @@ export function AppShell() {
         </div>
       )}
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Topbar
           onToggleMobile={() => setMobileOpen(true)}
           onToggleCollapse={() => setPinned((v) => !v)}
         />
-        <main className="flex-1 p-4 md:p-6">
+        <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
           <Outlet />
         </main>
       </div>
