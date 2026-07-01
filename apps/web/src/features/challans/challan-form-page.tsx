@@ -16,7 +16,7 @@ import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useChallanDraft, useChallanEdit, useCreateChallan, usePendingChallanCustomers, useUpdateChallan } from './use-challans';
+import { useChallanDraft, useChallanEdit, useChallanNextCode, useCreateChallan, usePendingChallanCustomers, useUpdateChallan } from './use-challans';
 
 type NavState = { customerName?: string; lines?: PendingChallanLine[] };
 type Row = ChallanDraftItem & { key: string };
@@ -62,6 +62,7 @@ export function ChallanFormPage() {
   const [rows, setRows] = useState<Row[]>([]);
   const [addSel, setAddSel] = useState('');
   const [invDate, setInvDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [prefix, setPrefix] = useState('');
   const [status, setStatus] = useState<string>('CONFIRMED');
   const [freight, setFreight] = useState('0');
   const [packing, setPacking] = useState('0');
@@ -81,6 +82,10 @@ export function ChallanFormPage() {
   const [savedId, setSavedId] = useState<number | null>(null);
   const [savedCode, setSavedCode] = useState('');
 
+  // Live invoice-no preview for the chosen prefix + date (server assigns the final one on save).
+  const nextCodeQ = useChallanNextCode(!isEdit ? prefix || undefined : undefined, invDate, !isEdit);
+  const previewCode = isEdit ? savedChallan?.code ?? '—' : nextCodeQ.data?.code ?? draft?.code ?? '—';
+
   const recalc = (rs: Row[], d = draft) => {
     if (!d) return;
     setFreight(String(round5(rs.reduce((a, r) => a + n(r.bags) * n(r.freightRate), 0))));
@@ -96,6 +101,7 @@ export function ChallanFormPage() {
     const key = isEdit ? `edit:${editId}` : `create:${draft.customerName}`;
     if (initedRef.current === key) return;
     initedRef.current = key;
+    setPrefix(draft.prefix);
 
     if (isEdit && savedChallan && editQ.data) {
       const c = savedChallan;
@@ -260,7 +266,7 @@ export function ChallanFormPage() {
     const cust = isEdit ? savedChallan?.customerName ?? draft.customerName : draft.customerName;
     const payload: CreateChallanInput = {
       code: isEdit ? savedChallan?.code : draft.code,
-      prefix: draft.prefix,
+      prefix: prefix || draft.prefix,
       invDate: new Date(invDate).toISOString(),
       customerId: draft.customerId,
       customerName: cust,
@@ -341,13 +347,13 @@ export function ChallanFormPage() {
   const title = isEdit ? `Edit Challan${savedChallan ? ` — ${savedChallan.customerName}` : ''}` : `Create Challan${draft ? ` — ${draft.customerName}` : ''}`;
 
   return (
-    <div className="mx-auto flex h-full max-w-5xl flex-col gap-3">
-      {/* Action bar */}
-      <div className="flex shrink-0 items-center gap-2">
+    <div className="flex w-full flex-col gap-3">
+      {/* Action bar — sticky so Save stays reachable while scrolling */}
+      <div className="bg-background/85 sticky top-0 z-20 -mt-1 flex items-center gap-2 rounded-md py-1 backdrop-blur">
         <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(isEdit ? '/challans' : '/challans/pending')} title="Back">
           <ArrowLeft className="size-4" />
         </Button>
-        <div className="bg-gradient-brand flex size-8 items-center justify-center rounded-lg text-white shadow-sm ring-1 ring-white/20">
+        <div className="bg-gradient-brand flex size-8 items-center justify-center rounded-md text-white shadow-sm ring-1 ring-white/20">
           <ScrollText className="size-4" />
         </div>
         <div className="mr-auto min-w-0">
@@ -361,35 +367,66 @@ export function ChallanFormPage() {
       </div>
 
       {/* Invoice paper */}
-      <div className="bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border shadow-sm">
-        {/* Header: Bill-to + invoice meta */}
-        <div className="grid shrink-0 gap-x-6 gap-y-4 p-4 md:grid-cols-2">
-          <div className="min-w-0 space-y-1.5">
-            <div className="text-muted-foreground flex items-center gap-1 text-[11px] font-semibold tracking-wide uppercase">
-              <UserSearch className="size-3.5" /> Bill To
-            </div>
-            {isEdit ? (
-              <div className="text-base font-semibold">{savedChallan?.customerName ?? ''}</div>
-            ) : (
-              <NativeSelect value={customer} onChange={setCustomer} options={customers} placeholder={custLoading ? 'Loading…' : 'Select a customer…'} className="h-9" />
-            )}
-            {draft && (
-              <p className="text-muted-foreground text-xs leading-relaxed">{(isEdit ? savedChallan?.billingAddress : draft.billingAddress) || '—'}</p>
-            )}
-            {draft && (draft.tdsApplicable || draft.isScrap) && (
-              <div className="flex flex-wrap gap-1.5 pt-0.5">
-                {draft.tdsApplicable && <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-amber-200 ring-inset">TDS {draft.tdsPercent ?? 0}%</span>}
-                {draft.isScrap && <span className="rounded bg-purple-50 px-1.5 py-0.5 text-[11px] font-medium text-purple-700 ring-1 ring-purple-200 ring-inset">SCRAP · 1% TCS</span>}
+      <div className="bg-card flex flex-col overflow-hidden rounded-md border shadow-sm">
+        {/* Header: Bill-to + invoice meta (compact colourful banner) */}
+        <div className="from-primary/[0.08] shrink-0 border-b bg-gradient-to-r via-sky-50/50 to-transparent px-4 py-2.5">
+          <div className="grid items-start gap-x-6 gap-y-2.5 sm:grid-cols-2 lg:grid-cols-6">
+            {/* Bill To — spans two columns; the four meta fields align in the same row */}
+            <div className="min-w-[240px] space-y-1 sm:col-span-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-primary/70 flex items-center gap-1.5 text-sm font-semibold tracking-wide uppercase">
+                  <UserSearch className="size-4" /> Bill To
+                </span>
+                {draft?.category && <span className="rounded bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-700">{draft.category}</span>}
+                {draft?.tdsApplicable && <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">TDS {draft.tdsPercent ?? 0}%</span>}
+                {draft?.isScrap && <span className="rounded bg-purple-100 px-2 py-0.5 text-xs font-semibold text-purple-700">SCRAP · 1% TCS</span>}
               </div>
-            )}
-          </div>
-          <div className="space-y-1 md:w-72 md:justify-self-end">
-            <MetaRow label="Invoice No"><span className="font-mono font-medium">{isEdit ? savedChallan?.code : draft?.code ?? '—'}</span></MetaRow>
-            <MetaRow label="Date"><Input type="date" value={invDate} onChange={(e) => setInvDate(e.target.value)} className="h-8 w-36" /></MetaRow>
-            {draft && <MetaRow label="Due Date"><span className="tabular-nums">{dueDate ? dueDate.toLocaleDateString('en-GB') : '—'}</span></MetaRow>}
-            <MetaRow label="Status"><NativeSelect value={status} onChange={setStatus} options={[...CHALLAN_STATUSES]} className="h-8 w-36" /></MetaRow>
-            {draft && <MetaRow label="Transporter"><span className="truncate">{(isEdit ? savedChallan?.transName : draft.transName) || '—'}</span></MetaRow>}
-            {draft && <MetaRow label="Category"><span>{(isEdit ? savedChallan?.category : draft.category) || '—'}</span></MetaRow>}
+              {isEdit ? (
+                <div className="text-xl font-bold tracking-tight">{savedChallan?.customerName ?? ''}</div>
+              ) : (
+                <div className="w-full max-w-md">
+                  <NativeSelect
+                    value={customer}
+                    onChange={setCustomer}
+                    options={customers}
+                    placeholder={custLoading ? 'Loading…' : 'Select a customer…'}
+                    className="bg-background h-9 w-full rounded-md text-base font-medium"
+                  />
+                </div>
+              )}
+              {draft && <p className="text-muted-foreground max-w-md truncate text-sm">{(isEdit ? savedChallan?.billingAddress : draft.billingAddress) || '—'}</p>}
+            </div>
+
+            <MetaCell label="Invoice No">
+              <div className="flex items-center gap-1.5">
+                {!isEdit && (draft?.prefixes.length ?? 0) > 1 && (
+                  <select
+                    value={prefix}
+                    onChange={(e) => setPrefix(e.target.value)}
+                    className="border-input bg-background h-8 rounded border px-1.5 text-sm font-semibold"
+                    title="Challan prefix"
+                  >
+                    {draft?.prefixes.map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <span className="text-primary font-mono text-base font-bold">{previewCode}</span>
+              </div>
+            </MetaCell>
+            <MetaCell label="Invoice Date"><Input type="date" value={invDate} onChange={(e) => setInvDate(e.target.value)} className="bg-background h-8 w-full max-w-[9.75rem] text-sm" /></MetaCell>
+            <MetaCell label="Due Date"><span className="text-base tabular-nums">{dueDate ? dueDate.toLocaleDateString('en-GB') : '—'}</span></MetaCell>
+            <MetaCell label="Status">
+              {isEdit ? (
+                <NativeSelect value={status} onChange={setStatus} options={[...CHALLAN_STATUSES]} className="bg-background h-8 w-full max-w-[9rem]" />
+              ) : (
+                <span className="inline-flex items-center gap-1.5 rounded bg-emerald-100 px-2 py-0.5 text-sm font-semibold text-emerald-700">
+                  <span className="size-2 rounded-full bg-emerald-500" /> CONFIRMED
+                </span>
+              )}
+            </MetaCell>
           </div>
         </div>
 
@@ -440,27 +477,27 @@ export function ChallanFormPage() {
               </div>
               {showManual && (
                 <div className="grid items-end gap-2 sm:grid-cols-6">
-                  <div className="space-y-1 sm:col-span-2"><Label className="text-[11px]">Product</Label><Input value={m.product} onChange={(e) => setM({ ...m, product: e.target.value })} placeholder="e.g. S.S. SCRAP" className="h-8" /></div>
-                  <div className="space-y-1"><Label className="text-[11px]">Design</Label><Input value={m.design} onChange={(e) => setM({ ...m, design: e.target.value })} className="h-8" /></div>
-                  <div className="space-y-1"><Label className="text-[11px]">Unit</Label><NativeSelect value={m.unit} onChange={(v) => setM({ ...m, unit: v })} options={['KGS', 'PCS']} className="h-8" /></div>
-                  <div className="space-y-1"><Label className="text-[11px]">Qty</Label><Input value={m.qty} onChange={(e) => setM({ ...m, qty: e.target.value })} className="h-8 text-right tabular-nums" /></div>
-                  <div className="space-y-1"><Label className="text-[11px]">Price</Label><Input value={m.price} onChange={(e) => setM({ ...m, price: e.target.value })} className="h-8 text-right tabular-nums" /></div>
+                  <div className="space-y-1 sm:col-span-2"><Label className="text-base">Product</Label><Input value={m.product} onChange={(e) => setM({ ...m, product: e.target.value })} placeholder="e.g. S.S. SCRAP" className="h-9 text-base" /></div>
+                  <div className="space-y-1"><Label className="text-base">Design</Label><Input value={m.design} onChange={(e) => setM({ ...m, design: e.target.value })} className="h-9 text-base" /></div>
+                  <div className="space-y-1"><Label className="text-base">Unit</Label><NativeSelect value={m.unit} onChange={(v) => setM({ ...m, unit: v })} options={['KGS', 'PCS']} className="h-9 text-base" /></div>
+                  <div className="space-y-1"><Label className="text-base">Qty</Label><Input value={m.qty} onChange={(e) => setM({ ...m, qty: e.target.value })} className="h-9 text-right text-base tabular-nums" /></div>
+                  <div className="space-y-1"><Label className="text-base">Price</Label><Input value={m.price} onChange={(e) => setM({ ...m, price: e.target.value })} className="h-9 text-right text-base tabular-nums" /></div>
                   <div className="sm:col-span-6"><Button size="sm" variant="secondary" onClick={addManual}><Plus /> Add manual line</Button></div>
                 </div>
               )}
             </div>
 
-            {/* Line items — the only scrolling region */}
-            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-auto">
-              <table className="w-full text-[13px]">
-                <thead className="bg-card sticky top-0 z-10">
-                  <tr className="text-muted-foreground border-b text-left [&>th]:px-3 [&>th]:py-1.5 [&>th]:text-[11px] [&>th]:font-semibold [&>th]:tracking-wide [&>th]:uppercase">
+            {/* Line items — bounded, always-visible (scrolls internally when long) */}
+            <div className="max-h-[46vh] min-h-[140px] overflow-auto">
+              <table className="w-full text-[15px]">
+                <thead className="bg-muted sticky top-0 z-10">
+                  <tr className="text-muted-foreground border-b text-left [&>th]:px-3 [&>th]:py-2 [&>th]:text-sm [&>th]:font-semibold [&>th]:tracking-wide [&>th]:uppercase">
                     <th className="w-8 text-center">#</th><th>Product</th><th>Design</th><th className="text-right">Bags</th><th className="text-right">Pcs</th><th className="text-right">Kgs</th><th className="text-right">Box</th><th>Unit</th><th className="text-right">Price</th><th className="text-right">Amount</th><th className="text-right">GST%</th><th className="w-8"></th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((r, idx) => (
-                    <tr key={r.key} className="border-b last:border-0 [&>td]:px-3 [&>td]:py-1">
+                    <tr key={r.key} className="odd:bg-muted/20 hover:bg-primary/5 border-b transition-colors last:border-0 [&>td]:px-3 [&>td]:py-2">
                       <td className="text-muted-foreground text-center tabular-nums">{idx + 1}</td>
                       <td className="font-medium">{r.productName || '—'}{r.dispatchId == null && <span className="bg-muted text-muted-foreground ml-1 rounded px-1 text-[10px]">manual</span>}</td>
                       <td className="text-muted-foreground">{r.design || '—'}</td>
@@ -469,53 +506,87 @@ export function ChallanFormPage() {
                       <td className="text-right tabular-nums">{r.kgs ?? '—'}</td>
                       <td className="text-right tabular-nums">{r.box ?? '—'}</td>
                       <td className="text-muted-foreground">{r.unit || '—'}</td>
-                      <td className="text-right"><Input className="h-7 w-20 text-right tabular-nums" value={r.price ?? 0} onChange={(e) => setPrice(r.key, e.target.value)} /></td>
+                      <td className="text-right"><Input className="h-8 w-24 text-right text-[15px] tabular-nums" value={r.price ?? 0} onChange={(e) => setPrice(r.key, e.target.value)} /></td>
                       <td className="text-right font-semibold tabular-nums">{(r.amount ?? 0).toLocaleString('en-IN')}</td>
                       <td className="text-muted-foreground text-right tabular-nums">{r.gstRate || 0}</td>
                       <td className="text-right"><button onClick={() => removeRow(r.key)} className="text-muted-foreground hover:text-destructive" title="Remove line"><Trash2 className="size-3.5" /></button></td>
                     </tr>
                   ))}
                   {rows.length === 0 && (
-                    <tr><td colSpan={12} className="text-muted-foreground px-3 py-6 text-center text-sm">No items yet — add products from the dropdown above.</td></tr>
+                    <tr>
+                      <td colSpan={12} className="px-3 py-10 text-center">
+                        <div className="text-muted-foreground flex flex-col items-center gap-1.5 text-sm">
+                          <Plus className="size-5 opacity-40" />
+                          No items yet — pick a dispatched product above, or add a manual line.
+                        </div>
+                      </td>
+                    </tr>
                   )}
                 </tbody>
+                {rows.length > 0 && (
+                  <tfoot className="bg-muted/60 sticky bottom-0 z-10">
+                    <tr className="border-t-2 font-semibold [&>td]:px-3 [&>td]:py-1.5">
+                      <td></td>
+                      <td className="text-muted-foreground text-sm tracking-wide uppercase">Total · {rows.length} item(s)</td>
+                      <td></td>
+                      <td className="text-right tabular-nums">{totals.tBags || ''}</td>
+                      <td className="text-right tabular-nums">{totals.tPcs || ''}</td>
+                      <td className="text-right tabular-nums">{totals.tKgs || ''}</td>
+                      <td className="text-right tabular-nums">{totals.tBox || ''}</td>
+                      <td></td>
+                      <td></td>
+                      <td className="text-primary text-right tabular-nums">{totals.tAmt.toLocaleString('en-IN')}</td>
+                      <td></td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
 
             {/* Footer: charges + totals */}
             <div className="grid shrink-0 gap-4 border-t p-4 lg:grid-cols-[1fr_320px]">
               <div className="space-y-2.5">
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-6">
+                  <div className="space-y-1 xl:col-span-1"><Label className="text-base">Transporter</Label><Input value={(isEdit ? savedChallan?.transName : draft.transName) || '—'} readOnly className="bg-muted/40 h-9 text-base" /></div>
                   <LockField label="Freight" value={freight} locked={locked.freight} onUnlock={() => unlock('freight')} onChange={setFreight} onBlur={() => setLocked((l) => ({ ...l, freight: true }))} />
                   <LockField label="Packing" value={packing} locked={locked.packing} onUnlock={() => unlock('packing')} onChange={setPacking} onBlur={() => setLocked((l) => ({ ...l, packing: true }))} />
                   <LockField label="Box / Pouch" value={pouch} locked={locked.pouch} onUnlock={() => unlock('pouch')} onChange={setPouch} onBlur={() => setLocked((l) => ({ ...l, pouch: true }))} />
-                  <div className="space-y-1"><Label className="text-[11px]">GST %</Label><Input value={gstPct} onChange={(e) => { setGstPct(e.target.value); setManualTax(''); }} className="h-8 text-right tabular-nums" /></div>
-                  <div className="space-y-1"><Label className="text-[11px]">{`Billing Rate${halfBill ? ' · half' : ''}`}</Label><Input value={billingRate} onChange={(e) => setBillingRate(e.target.value)} className="h-8 text-right tabular-nums" /></div>
+                  <div className="space-y-1"><Label className="text-base">GST %</Label><Input value={gstPct} onChange={(e) => { setGstPct(e.target.value); setManualTax(''); }} className="h-9 text-right text-base tabular-nums" /></div>
+                  <div className="space-y-1"><Label className="text-base">{`Billing Rate${halfBill ? ' · half' : ''}`}</Label><Input value={billingRate} onChange={(e) => setBillingRate(e.target.value)} className="h-9 text-right text-base tabular-nums" /></div>
                 </div>
                 <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={noBill} onChange={(e) => onNoBill(e.target.checked)} /> No Bill {noBill && <span className="text-muted-foreground text-xs">({noBillRemoveGst ? 'GST removed' : 'GST kept'})</span>}
+                  <input type="checkbox" checked={noBill} onChange={(e) => onNoBill(e.target.checked)} /> No Bill {noBill && <span className="text-muted-foreground text-sm">({noBillRemoveGst ? 'GST removed' : 'GST kept'})</span>}
                 </label>
-                <textarea className="border-input bg-background min-h-12 w-full rounded-md border px-3 py-1.5 text-sm" placeholder="Remarks…" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+                <textarea className="border-input bg-background min-h-12 w-full rounded-md border px-3 py-2 text-base" placeholder="Remarks…" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
               </div>
 
-              <div className="bg-muted/30 space-y-1 self-start rounded-md border p-3">
-                <Row2 label="Taxable" value={inr(totals.tAmt)} />
-                <Row2 label="Freight" value={inr(numOr(freight))} />
-                <Row2 label="Packing" value={inr(numOr(packing))} />
-                <Row2 label="Box / Pouch" value={inr(numOr(pouch))} />
-                <EditRow label={`GST${totals.gstRatePct ? ` @ ${totals.gstRatePct}%` : ''}`} computed={totals.tax} manual={manualTax} onManual={setManualTax} />
-                {(draft.isScrap || totals.tcs > 0) && <Row2 label="TCS @ 1%" value={inr(totals.tcs)} />}
-                <div className="-mx-3 my-1 border-t" />
-                <Row2 label="TOTAL" value={inr(totals.total)} strong />
-                {draft.tdsApplicable && (
-                  <>
-                    <Row2 label={`Less: TDS @ ${draft.tdsPercent ?? 0}%`} value={`- ${inr(totals.tdsAmount)}`} className="text-amber-700" />
-                    <Row2 label="Net Receivable" value={inr(totals.netReceivable)} strong className="text-emerald-700" />
-                  </>
-                )}
-                <div className="-mx-3 my-1 border-t" />
-                <EditRow label="Billed (B)" computed={totals.b} manual={manualB} onManual={setManualB} />
-                <EditRow label="Balance (C)" computed={totals.c} manual={manualC} onManual={setManualC} />
+              <div className="self-start overflow-hidden rounded-md border shadow-sm">
+                <div className="bg-card space-y-1 p-3">
+                  <Row2 label="Taxable" value={inr(totals.tAmt)} />
+                  <Row2 label="Freight" value={inr(numOr(freight))} />
+                  <Row2 label="Packing" value={inr(numOr(packing))} />
+                  <Row2 label="Box / Pouch" value={inr(numOr(pouch))} />
+                  <EditRow label={`GST${totals.gstRatePct ? ` @ ${totals.gstRatePct}%` : ''}`} computed={totals.tax} manual={manualTax} onManual={setManualTax} />
+                  {(draft.isScrap || totals.tcs > 0) && <Row2 label="TCS @ 1%" value={inr(totals.tcs)} />}
+                </div>
+                <div className="bg-gradient-brand flex items-center justify-between px-3 py-2.5 text-lg font-bold text-white">
+                  <span>TOTAL</span>
+                  <span className="tabular-nums">{inr(totals.total)}</span>
+                </div>
+                <div className="bg-card space-y-1 p-3">
+                  {draft.tdsApplicable && (
+                    <>
+                      <Row2 label={`Less: TDS @ ${draft.tdsPercent ?? 0}%`} value={`- ${inr(totals.tdsAmount)}`} className="text-amber-700" />
+                      <div className="flex items-center justify-between rounded-md bg-emerald-50 px-2 py-1 text-sm font-semibold text-emerald-700">
+                        <span>Net Receivable</span>
+                        <span className="tabular-nums">{inr(totals.netReceivable)}</span>
+                      </div>
+                    </>
+                  )}
+                  <EditRow label="Billed (B)" computed={totals.b} manual={manualB} onManual={setManualB} />
+                  <EditRow label="Balance (C)" computed={totals.c} manual={manualC} onManual={setManualC} />
+                </div>
               </div>
             </div>
           </>
@@ -525,11 +596,11 @@ export function ChallanFormPage() {
   );
 }
 
-function MetaRow({ label, children }: { label: string; children: React.ReactNode }) {
+function MetaCell({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex min-h-8 items-center justify-between gap-3 text-sm">
-      <span className="text-muted-foreground text-xs">{label}</span>
-      <span className="text-right">{children}</span>
+    <div className="space-y-0.5">
+      <div className="text-muted-foreground text-sm font-semibold tracking-wide uppercase">{label}</div>
+      <div className="text-base leading-tight font-medium">{children}</div>
     </div>
   );
 }
@@ -537,9 +608,9 @@ function MetaRow({ label, children }: { label: string; children: React.ReactNode
 function LockField({ label, value, locked, onUnlock, onChange, onBlur }: { label: string; value: string; locked: boolean; onUnlock: () => void; onChange: (v: string) => void; onBlur: () => void }) {
   return (
     <div className="space-y-1">
-      <Label className="text-[11px] flex items-center gap-1">
+      <Label className="text-base flex items-center gap-1.5">
         {label}
-        {locked ? <Lock className="size-3 text-muted-foreground" /> : <LockOpen className="size-3 text-emerald-600" />}
+        {locked ? <Lock className="size-3.5 text-muted-foreground" /> : <LockOpen className="size-3.5 text-emerald-600" />}
       </Label>
       <Input
         value={value}
@@ -548,7 +619,7 @@ function LockField({ label, value, locked, onUnlock, onChange, onBlur }: { label
         onDoubleClick={onUnlock}
         onChange={(e) => onChange(e.target.value)}
         onBlur={onBlur}
-        className={cn('h-8 text-right tabular-nums', locked && 'bg-muted/40 cursor-default')}
+        className={cn('h-9 text-right text-base tabular-nums', locked && 'bg-muted/40 cursor-default')}
       />
     </div>
   );
@@ -559,16 +630,16 @@ function LockField({ label, value, locked, onUnlock, onChange, onBlur }: { label
 function EditRow({ label, computed, manual, onManual }: { label: string; computed: number; manual: string; onManual: (v: string) => void }) {
   const isManual = manual.trim() !== '';
   return (
-    <div className="flex items-center justify-between gap-2 text-sm">
+    <div className="flex items-center justify-between gap-2 text-base">
       <span className="text-muted-foreground">
         {label}
-        {isManual && <span className="ml-1 text-[10px] font-medium text-amber-600">manual</span>}
+        {isManual && <span className="ml-1 text-[11px] font-medium text-amber-600">manual</span>}
       </span>
       <div className="flex items-center gap-1">
         <input
           value={isManual ? manual : String(Math.round(computed))}
           onChange={(e) => onManual(e.target.value)}
-          className="border-input bg-background h-7 w-28 rounded border px-2 text-right text-sm tabular-nums focus:ring-1"
+          className="border-input bg-background h-8 w-32 rounded border px-2 text-right text-base tabular-nums focus:ring-1"
         />
         {isManual && (
           <button onClick={() => onManual('')} title="Reset to auto" className="text-muted-foreground hover:text-foreground">
@@ -582,7 +653,7 @@ function EditRow({ label, computed, manual, onManual }: { label: string; compute
 
 function Row2({ label, value, strong, className }: { label: string; value: string; strong?: boolean; className?: string }) {
   return (
-    <div className={cn('flex items-center justify-between text-sm', strong && 'text-base font-semibold', className)}>
+    <div className={cn('flex items-center justify-between text-base', strong && 'text-lg font-semibold', className)}>
       <span className={cn('text-muted-foreground', strong && 'text-foreground')}>{label}</span>
       <span className="tabular-nums">{value}</span>
     </div>

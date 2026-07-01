@@ -3,6 +3,7 @@ import type {
   ChallanDraft,
   ChallanDto,
   ChallanEditContext,
+  ChallanPrefixSettings,
   ChallanItemHistoryList,
   ChallanList,
   ChallanQuery,
@@ -23,6 +24,32 @@ export function usePendingChallans(query: PendingChallanQuery) {
     queryKey: [...KEY, 'pending', query],
     queryFn: () => http.get<PendingChallanList>('/challans/pending', { params: query }),
     placeholderData: (prev) => prev,
+  });
+}
+
+/** Configured challan-number prefixes (Settings + Create form dropdown). */
+export function useChallanPrefixSettings() {
+  return useQuery({
+    queryKey: [...KEY, 'prefix-settings'],
+    queryFn: () => http.get<ChallanPrefixSettings>('/challans/settings'),
+  });
+}
+
+export function useSaveChallanPrefixSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ChallanPrefixSettings) => http.put<ChallanPrefixSettings>('/challans/settings', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+/** Preview the next challan number for a prefix + date. */
+export function useChallanNextCode(prefix: string | undefined, date: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: [...KEY, 'next-code', prefix, date],
+    queryFn: () => http.get<{ code: string }>('/challans/next-code', { params: { prefix, date } }),
+    enabled: enabled && !!prefix,
+    staleTime: 30_000,
   });
 }
 

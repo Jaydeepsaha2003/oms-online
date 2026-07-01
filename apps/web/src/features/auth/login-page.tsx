@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Boxes, Eye, EyeOff, KeyRound, Loader2, Lock, Mail } from 'lucide-react';
+import { Eye, EyeOff, KeyRound, Loader2, Lock, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 import { getApiErrorMessage } from '@/lib/api';
 import { useLogin, usePinLogin } from '@/hooks/use-auth';
@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { PinPad } from '@/components/auth/pin-pad';
+import { PandaMascot } from '@/components/auth/panda-mascot';
 
 type Mode = 'password' | 'pin';
 const LAST_EMAIL_KEY = 'oms:last-email';
@@ -30,6 +31,8 @@ export function LoginPage() {
   const [password, setPassword] = useState('');
   const [pin, setPin] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [pwFocused, setPwFocused] = useState(false);
+  const [emailFocused, setEmailFocused] = useState(false);
 
   // The account PIN sign-in applies to — the last account used on this device.
   // PIN mode never shows an email field; it signs in as this remembered account.
@@ -116,9 +119,12 @@ export function LoginPage() {
           />
 
           <div className="relative flex flex-col items-center text-center">
-            <div className="bg-gradient-brand mb-3 flex size-14 items-center justify-center rounded-2xl text-white shadow-lg shadow-blue-600/30 ring-1 ring-white/30">
-              <Boxes className="size-7" />
-            </div>
+            <PandaMascot
+              covering={pwFocused && !showPassword}
+              peeking={pwFocused && showPassword}
+              looking={emailFocused ? 'down' : 'center'}
+              className="mb-1 size-28 drop-shadow"
+            />
             <h1 className="text-2xl font-bold tracking-tight">
               Welcome to <span className="text-gradient-brand">{APP_NAME}</span>
             </h1>
@@ -165,6 +171,8 @@ export function LoginPage() {
                       className="pl-9"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
+                      onFocus={() => setEmailFocused(true)}
+                      onBlur={() => setEmailFocused(false)}
                       onKeyDown={(e) => e.key === 'Enter' && submitPassword()}
                     />
                   </div>
@@ -181,6 +189,8 @@ export function LoginPage() {
                       className="px-9"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
+                      onFocus={() => setPwFocused(true)}
+                      onBlur={() => setPwFocused(false)}
                       onKeyDown={(e) => e.key === 'Enter' && submitPassword()}
                     />
                     <button

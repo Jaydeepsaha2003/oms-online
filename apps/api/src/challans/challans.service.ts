@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import { Prisma } from '@prisma/client';
 import { type ChallanDraft, type ChallanDraftItem, type ChallanDto, type ChallanItemHistoryRow, type Paginated, type PendingChallanLine } from '@oms/shared';
@@ -6,7 +6,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PdfService } from '../pdf/pdf.service';
 import { CreateChallanDto, DraftChallanDto, ItemHistoryQueryDto, PendingChallanQueryDto, ChallanQueryDto } from './dto/challan.dto';
 
-const DEFAULT_PREFIX = 'SSS/26-27';
+const PREFIX_KEY = 'CHALLAN_PREFIXES';
+const FALLBACK_PREFIX = 'SSS';
 const round5 = (x: number) => Math.round(x / 5) * 5;
 const n = (v: number | null | undefined) => (Number.isFinite(v as number) ? (v as number) : 0);
 
@@ -160,9 +161,11 @@ export class ChallansService {
       .filter(Boolean)
       .join(', ');
 
+    const prefixCfg = await this.getPrefixSettings();
     return {
-      code: await this.nextCode(DEFAULT_PREFIX),
-      prefix: DEFAULT_PREFIX,
+      code: await this.nextCode(prefixCfg.default, new Date()),
+      prefix: prefixCfg.default,
+      prefixes: prefixCfg.prefixes,
       customerId: customer?.id ?? null,
       customerName,
       billingAddress,
@@ -183,9 +186,12 @@ export class ChallansService {
   }
 
   async create(dto: CreateChallanDto): Promise<ChallanDto> {
-    const prefix = dto.prefix?.trim() || DEFAULT_PREFIX;
-    const code = dto.code?.trim() || (await this.nextCode(prefix));
     const invDate = dto.invDate ? new Date(dto.invDate) : new Date();
+    const cfg = await this.getPrefixSettings();
+    const wanted = dto.prefix?.trim().toUpperCase();
+    const prefix = wanted && cfg.prefixes.includes(wanted) ? wanted : cfg.default;
+    // Number is always assigned server-side from the PREFIX/FY series (ignores any client code).
+    const code = await this.nextCode(prefix, invDate);
     const paymentTerm = dto.paymentTerm ?? null;
     const dueDate = dto.dueDate ? new Date(dto.dueDate) : paymentTerm != null ? new Date(invDate.getTime() + paymentTerm * 86_400_000) : null;
 
@@ -473,16 +479,59 @@ export class ChallansService {
     return [...new Set(used.map((u) => u.dispatchId!).filter((x): x is number => x != null))];
   }
 
-  /** Legacy InvNo sequencing: max numeric suffix for the prefix, + 1, 2-digit pad. */
-  private async nextCode(prefix: string): Promise<string> {
-    const rows = await this.prisma.challan.findMany({ where: { code: { startsWith: `${prefix}/` } }, select: { code: true } });
+  /** Indian fiscal-year label for a date, e.g. 2026-06 → "26-27" (Apr–Mar). */
+  private fyLabel(d: Date): string {
+    const y = d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1;
+    return `${String(y % 100).padStart(2, '0')}-${String((y + 1) % 100).padStart(2, '0')}`;
+  }
+
+  /** Next challan number for a prefix + date: PREFIX/FY/serial (e.g. SSS/26-27/1),
+   *  serial = 1 + the max serial already used for that PREFIX/FY series. Old imported
+   *  codes in other formats simply don't match the series, so the new run starts clean. */
+  private async nextCode(prefix: string, date: Date): Promise<string> {
+    const full = `${prefix.trim().toUpperCase()}/${this.fyLabel(date)}`;
+    const rows = await this.prisma.challan.findMany({ where: { code: { startsWith: `${full}/` } }, select: { code: true } });
     let max = 0;
     for (const r of rows) {
-      const tail = (r.code ?? '').slice(prefix.length + 1);
-      const num = parseInt(tail, 10);
-      if (Number.isFinite(num) && num > max) max = num;
+      const n = parseInt((r.code ?? '').slice(full.length + 1), 10);
+      if (Number.isFinite(n) && n > max) max = n;
     }
-    return `${prefix}/${String(max + 1).padStart(2, '0')}`;
+    return `${full}/${max + 1}`;
+  }
+
+  /** Configured challan prefixes (Settings). Falls back to a single "SSS". */
+  async getPrefixSettings(): Promise<{ prefixes: string[]; default: string }> {
+    const row = await this.prisma.appConfig.findUnique({ where: { key: PREFIX_KEY } });
+    if (row?.value) {
+      try {
+        const p = JSON.parse(row.value);
+        const prefixes = [...new Set((Array.isArray(p.prefixes) ? p.prefixes : []).map((x: unknown) => String(x).trim().toUpperCase()).filter(Boolean))] as string[];
+        if (prefixes.length) {
+          const def = typeof p.default === 'string' && prefixes.includes(p.default.toUpperCase()) ? p.default.toUpperCase() : prefixes[0];
+          return { prefixes, default: def };
+        }
+      } catch {
+        /* fall through to default */
+      }
+    }
+    return { prefixes: [FALLBACK_PREFIX], default: FALLBACK_PREFIX };
+  }
+
+  async savePrefixSettings(input: { prefixes: string[]; default?: string }): Promise<{ prefixes: string[]; default: string }> {
+    const prefixes = [...new Set((input.prefixes ?? []).map((p) => String(p).trim().toUpperCase()).filter((p) => /^[A-Z0-9]{1,10}$/.test(p)))];
+    if (!prefixes.length) throw new BadRequestException('Add at least one prefix (letters/digits, up to 10 chars).');
+    const def = input.default && prefixes.includes(input.default.trim().toUpperCase()) ? input.default.trim().toUpperCase() : prefixes[0];
+    const value = JSON.stringify({ prefixes, default: def });
+    await this.prisma.appConfig.upsert({ where: { key: PREFIX_KEY }, update: { value }, create: { key: PREFIX_KEY, value } });
+    return { prefixes, default: def };
+  }
+
+  /** Preview the next number for a prefix + date (form invoice-no field). */
+  async previewNextCode(prefix?: string, dateStr?: string): Promise<{ code: string }> {
+    const { prefixes, default: def } = await this.getPrefixSettings();
+    const p = prefix && prefixes.includes(prefix.trim().toUpperCase()) ? prefix.trim().toUpperCase() : def;
+    const date = dateStr ? new Date(dateStr) : new Date();
+    return { code: await this.nextCode(p, isNaN(date.getTime()) ? new Date() : date) };
   }
 
   private map(row: Prisma.ChallanGetPayload<{ include: { items: true } }>): ChallanDto {

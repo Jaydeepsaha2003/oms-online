@@ -21,6 +21,11 @@ export class UpdateChallanStatusDto {
   @IsIn(CHALLAN_STATUSES as unknown as string[]) challanStatus!: string;
 }
 
+export class SavePrefixSettingsDto {
+  @IsArray() @IsString({ each: true }) prefixes!: string[];
+  @IsOptional() @IsString() default?: string;
+}
+
 export class ItemHistoryQueryDto extends PaginationDto {
   @IsOptional() @IsString() product?: string;
 }

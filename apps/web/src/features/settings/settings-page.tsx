@@ -3,7 +3,9 @@ import { ImageIcon, Loader2, Plus, Settings as SettingsIcon, Trash2, Upload } fr
 import { toast } from 'sonner';
 import { SETTING_GROUP_META, type OrderOptionDto, type SettingGroupMeta } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
+import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useChallanPrefixSettings, useSaveChallanPrefixSettings } from '@/features/challans/use-challans';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -35,6 +37,8 @@ export function SettingsPage() {
       {canEdit && <AccessImportCard />}
 
       <PreferencesCard />
+
+      <ChallanPrefixCard canEdit={canEdit} />
 
       {isLoading ? (
         <div className="flex h-40 items-center justify-center text-muted-foreground">
@@ -69,6 +73,129 @@ function PreferencesCard() {
           </span>
           <Switch checked={autoSizePcs} onCheckedChange={setAutoSizePcs} />
         </label>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Current Indian fiscal-year label, e.g. "26-27" (Apr–Mar). */
+function fyLabel() {
+  const d = new Date();
+  const y = d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1;
+  return `${String(y % 100).padStart(2, '0')}-${String((y + 1) % 100).padStart(2, '0')}`;
+}
+
+/** Manage challan-number prefixes. New challans are numbered PREFIX/FY/serial. */
+function ChallanPrefixCard({ canEdit }: { canEdit: boolean }) {
+  const { data } = useChallanPrefixSettings();
+  const save = useSaveChallanPrefixSettings();
+  const [prefixes, setPrefixes] = useState<string[]>([]);
+  const [def, setDef] = useState('');
+  const [input, setInput] = useState('');
+  const fy = fyLabel();
+
+  useEffect(() => {
+    if (data) {
+      setPrefixes(data.prefixes);
+      setDef(data.default);
+    }
+  }, [data]);
+
+  const add = () => {
+    const v = input.trim().toUpperCase();
+    if (!/^[A-Z0-9]{1,10}$/.test(v)) return toast.error('Use letters/digits only (up to 10 characters).');
+    if (!prefixes.includes(v)) setPrefixes((p) => [...p, v]);
+    if (!def) setDef(v);
+    setInput('');
+  };
+  const remove = (p: string) => {
+    const next = prefixes.filter((x) => x !== p);
+    setPrefixes(next);
+    if (def === p) setDef(next[0] ?? '');
+  };
+  const onSave = () => {
+    if (!prefixes.length) return toast.error('Add at least one prefix.');
+    save.mutate(
+      { prefixes, default: def || prefixes[0] },
+      { onSuccess: () => toast.success('Challan prefixes saved'), onError: (e) => toast.error(getApiErrorMessage(e, 'Save failed')) },
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Challan number prefixes</CardTitle>
+        <p className="text-muted-foreground text-xs">
+          New challans are numbered <span className="font-mono">PREFIX / {fy} / serial</span> (e.g.{' '}
+          <span className="text-foreground font-mono font-medium">{(def || 'SSS') + '/' + fy + '/1'}</span>). Add the prefixes you use and pick a default. Imported
+          challans keep their original numbers.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap gap-2">
+          {prefixes.length === 0 && <span className="text-muted-foreground text-sm">No prefixes yet.</span>}
+          {prefixes.map((p) => (
+            <span
+              key={p}
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-full border py-1 pr-1 pl-3 text-sm',
+                p === def ? 'border-primary bg-primary/10 text-primary' : 'bg-muted',
+              )}
+            >
+              <span className="font-semibold">{p}</span>
+              {p === def && <span className="text-[10px] font-semibold tracking-wide uppercase opacity-70">default</span>}
+              {canEdit && (
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive flex size-5 items-center justify-center rounded-full transition-colors"
+                  onClick={() => remove(p)}
+                  aria-label={`Remove ${p}`}
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
+              )}
+            </span>
+          ))}
+        </div>
+
+        {canEdit && (
+          <>
+            <div className="flex max-w-xs gap-2">
+              <Input
+                value={input}
+                onChange={(e) => setInput(e.target.value.toUpperCase())}
+                onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), add())}
+                placeholder="e.g. SSS, NB, RTN"
+                className="uppercase"
+                maxLength={10}
+              />
+              <Button onClick={add} disabled={!input.trim()}>
+                <Plus /> Add
+              </Button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-muted-foreground">Default prefix:</span>
+              <select
+                value={def}
+                onChange={(e) => setDef(e.target.value)}
+                className="border-input bg-background h-8 rounded-md border px-2 text-sm"
+                disabled={!prefixes.length}
+              >
+                {prefixes.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+              <span className="text-muted-foreground text-xs">
+                next: <span className="text-foreground font-mono">{(def || 'SSS') + '/' + fy + '/1'}</span>
+              </span>
+            </div>
+            <Button onClick={onSave} disabled={save.isPending}>
+              {save.isPending ? <Loader2 className="animate-spin" /> : null} Save prefixes
+            </Button>
+          </>
+        )}
       </CardContent>
     </Card>
   );

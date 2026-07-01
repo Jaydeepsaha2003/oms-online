@@ -114,6 +114,12 @@ export interface UpdateChallanStatusInput {
   challanStatus: ChallanStatus;
 }
 
+/** Configurable challan-number prefixes (Settings). Number = PREFIX/FY/serial. */
+export interface ChallanPrefixSettings {
+  prefixes: string[];
+  default: string;
+}
+
 /** One challan line for a product (ViewItemChallan detail grid). */
 export interface ChallanItemHistoryRow {
   id: number;
@@ -161,6 +167,8 @@ export interface ChallanDraftItem {
 export interface ChallanDraft {
   code: string;
   prefix: string;
+  /** Prefixes configured in Settings (for the invoice-no prefix dropdown). */
+  prefixes: string[];
   customerId: number | null;
   customerName: string;
   billingAddress: string;

@@ -415,6 +415,31 @@ export class AccessImportService {
     );
     const truthy = (v: unknown) => v === true || v === -1 || v === 1 || ['true', '1', '-1', 'yes'].includes(String(v ?? '').trim().toLowerCase());
 
+    // PCATEGORY backfill sources (legacy Form14 SearchBtn): SCRAP by name, else from
+    // the dispatch (by DispatchID, else by product name). Header category from CUSTOMER.
+    const dispCatById = new Map<number, string>();
+    const dispCatByName = new Map<string, string>();
+    for (const d of J('DispatchTbl')) {
+      const cat = up(d.PCATEGORY);
+      if (!cat) continue;
+      const id = int(d.DispatchID);
+      if (id != null) dispCatById.set(id, cat);
+      const pn = up(d['Product Name']);
+      if (pn && !dispCatByName.has(pn)) dispCatByName.set(pn, cat);
+    }
+    const custCatByName = new Map<string, string>();
+    for (const c of J('CUSTOMER')) {
+      const pn = up(c['PARTY NAME']);
+      const cat = up(c.CATEGORY);
+      if (pn && cat) custCatByName.set(pn, cat);
+    }
+    const lineCat = (dispatchId: number | null, productName: string | null): string | null => {
+      if (productName && /SCRAP/i.test(productName)) return 'SCRAP';
+      if (dispatchId != null && dispCatById.has(dispatchId)) return dispCatById.get(dispatchId)!;
+      const pn = up(productName);
+      return (pn && dispCatByName.get(pn)) || null;
+    };
+
     // Group line items by challan/InvNo.
     const itemsByInv = new Map<string, any[]>();
     for (const r of J('ChallanTbl')) {
@@ -434,21 +459,25 @@ export class AccessImportService {
         continue;
       }
       const customerName = s(h['Customer Name']) ?? '';
-      const itemData = (itemsByInv.get(code) ?? []).map((r) => ({
-        dispatchId: int(r.DispatchID),
-        productName: s(r['Product Name']),
-        design: s(r.Design),
-        bags: num(r.BAGS),
-        pcs: num(r.PCS),
-        kgs: num(r.KGS),
-        box: num(r.BOX),
-        unit: s(r.Unit),
-        price: num(r.Price),
-        amount: num(r.Amount),
-        pCategory: null as string | null,
-        comment: s(r.Comment),
-        userName: s(r['USER NAME']),
-      }));
+      const itemData = (itemsByInv.get(code) ?? []).map((r) => {
+        const dispatchId = int(r.DispatchID);
+        const productName = s(r['Product Name']);
+        return {
+          dispatchId,
+          productName,
+          design: s(r.Design),
+          bags: num(r.BAGS),
+          pcs: num(r.PCS),
+          kgs: num(r.KGS),
+          box: num(r.BOX),
+          unit: s(r.Unit),
+          price: num(r.Price),
+          amount: num(r.Amount),
+          pCategory: lineCat(dispatchId, productName),
+          comment: s(r.Comment),
+          userName: s(r['USER NAME']),
+        };
+      });
 
       const header = {
         code,
@@ -459,7 +488,7 @@ export class AccessImportService {
         customerName,
         billingAddress: s(h['Billing Add']),
         shippingAddress: s(h['Shipping Add']),
-        category: null as string | null,
+        category: custCatByName.get(customerName.toUpperCase()) ?? null,
         paymentTerm: int(h['Payment Term']),
         dueDate: dt(h['Due Date']),
         transName: s(h['Trans Name']),

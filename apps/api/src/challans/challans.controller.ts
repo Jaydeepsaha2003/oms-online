@@ -5,7 +5,7 @@ import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { Audit } from '../common/decorators/audit.decorator';
 import { ChallansService } from './challans.service';
-import { ChallanQueryDto, CreateChallanDto, DraftChallanDto, ItemHistoryQueryDto, PendingChallanQueryDto, UpdateChallanStatusDto } from './dto/challan.dto';
+import { ChallanQueryDto, CreateChallanDto, DraftChallanDto, ItemHistoryQueryDto, PendingChallanQueryDto, SavePrefixSettingsDto, UpdateChallanStatusDto } from './dto/challan.dto';
 
 const R = RESOURCES.CHALLAN;
 
@@ -55,6 +55,25 @@ export class ChallansController {
   @Permissions(perm(R, ACTIONS.VIEW))
   itemHistory(@Query() query: ItemHistoryQueryDto) {
     return this.challans.itemHistory(query);
+  }
+
+  @Get('settings')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  getPrefixSettings() {
+    return this.challans.getPrefixSettings();
+  }
+
+  @Put('settings')
+  @Permissions(perm(RESOURCES.SETTING, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: RESOURCES.SETTING })
+  savePrefixSettings(@Body() dto: SavePrefixSettingsDto) {
+    return this.challans.savePrefixSettings(dto);
+  }
+
+  @Get('next-code')
+  @Permissions(perm(R, ACTIONS.CREATE))
+  nextCode(@Query('prefix') prefix?: string, @Query('date') date?: string) {
+    return this.challans.previewNextCode(prefix, date);
   }
 
   @Get(':id')
