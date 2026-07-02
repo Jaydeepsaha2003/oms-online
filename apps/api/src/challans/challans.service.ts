@@ -20,46 +20,62 @@ export class ChallansService {
 
   /** Dispatch lines still awaiting a challan (mirrors the legacy PendChallan query:
    *  a dispatch is pending until it appears in a non-cancelled challan). */
-  async pending(q: PendingChallanQueryDto): Promise<Paginated<PendingChallanLine>> {
-    const usedIds = await this.challanedDispatchIds();
+  // Dispatch ids already on a non-cancelled challan, expressed as a parameter-free
+  // subquery. A plain `id NOT IN [..thousands of ids]` blows past SQLite's variable
+  // limit once there are many challans, and Prisma cannot split a negated IN — so the
+  // "un-challaned" condition is done in raw SQL.
+  private static readonly NOT_CHALLANED =
+    "d.id NOT IN (SELECT ci.dispatchId FROM challan_items ci JOIN challans c ON c.id = ci.challanId WHERE ci.dispatchId IS NOT NULL AND c.challanStatus <> 'CANCELLED')";
 
-    const and: Prisma.DispatchWhereInput[] = [];
-    if (usedIds.length) and.push({ id: { notIn: usedIds } });
-    if (q.customerName?.trim()) and.push({ customerName: q.customerName.trim() });
-
+  /** Build the WHERE clause (+ bound params) for the pending-dispatch raw queries. */
+  private pendingWhere(q: { customerName?: string; dateFrom?: string; dateTo?: string; search?: string }): { clause: string; params: unknown[] } {
+    const clauses = [ChallansService.NOT_CHALLANED];
+    const params: unknown[] = [];
+    if (q.customerName?.trim()) {
+      clauses.push('d.customerName = ?');
+      params.push(q.customerName.trim());
+    }
     if (q.dateFrom) {
-      const from = new Date(q.dateFrom);
-      from.setHours(0, 0, 0, 0);
-      and.push({ dispatchDate: { gte: from } });
+      const f = new Date(q.dateFrom);
+      f.setHours(0, 0, 0, 0);
+      clauses.push('d.dispatchDate >= ?');
+      params.push(f);
     }
     if (q.dateTo) {
-      const to = new Date(q.dateTo);
-      to.setHours(23, 59, 59, 999);
-      and.push({ dispatchDate: { lte: to } });
+      const t = new Date(q.dateTo);
+      t.setHours(23, 59, 59, 999);
+      clauses.push('d.dispatchDate <= ?');
+      params.push(t);
     }
-
     const search = q.search?.trim();
     if (search) {
-      for (const t of search.split(',').map((s) => s.trim()).filter(Boolean)) {
-        and.push({
-          OR: [
-            { customerName: { contains: t } },
-            { productName: { contains: t } },
-            { designType: { contains: t } },
-            { calField: { contains: t } },
-          ],
-        });
+      for (const tok of search.split(',').map((s) => s.trim()).filter(Boolean)) {
+        clauses.push('(d.customerName LIKE ? OR d.productName LIKE ? OR d.designType LIKE ? OR d.calField LIKE ?)');
+        const like = `%${tok}%`;
+        params.push(like, like, like, like);
       }
     }
+    return { clause: clauses.join(' AND '), params };
+  }
 
-    const where: Prisma.DispatchWhereInput = and.length ? { AND: and } : {};
-    const [rows, total] = await this.prisma.$transaction([
-      this.prisma.dispatch.findMany({ where, orderBy: [{ dispatchDate: 'desc' }, { id: 'desc' }], skip: q.skip, take: q.pageSize }),
-      this.prisma.dispatch.count({ where }),
-    ]);
+  async pending(q: PendingChallanQueryDto): Promise<Paginated<PendingChallanLine>> {
+    const { clause, params } = this.pendingWhere(q);
+    const countRows = await this.prisma.$queryRawUnsafe<{ c: bigint }[]>(`SELECT COUNT(*) AS c FROM dispatches d WHERE ${clause}`, ...params);
+    const total = Number(countRows[0]?.c ?? 0);
+    const idRows = await this.prisma.$queryRawUnsafe<{ id: number }[]>(
+      `SELECT d.id AS id FROM dispatches d WHERE ${clause} ORDER BY d.dispatchDate DESC, d.id DESC LIMIT ? OFFSET ?`,
+      ...params,
+      q.pageSize,
+      q.skip,
+    );
+    const ids = idRows.map((r) => Number(r.id));
+    // Hydrate the page with Prisma (proper types) then restore the id order.
+    const rows = ids.length ? await this.prisma.dispatch.findMany({ where: { id: { in: ids } } }) : [];
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const ordered = ids.map((id) => byId.get(id)).filter((d): d is (typeof rows)[number] => !!d);
 
     return {
-      items: rows.map((d) => ({
+      items: ordered.map((d) => ({
         dispatchId: d.id,
         dispatchDate: d.dispatchDate.toISOString(),
         orderId: d.orderId,
@@ -84,17 +100,11 @@ export class ChallansService {
 
   /** Distinct parties that still have un-challaned dispatch lines (standalone Create Challan picker). */
   async pendingCustomers(search?: string): Promise<string[]> {
-    const usedIds = await this.challanedDispatchIds();
-    const and: Prisma.DispatchWhereInput[] = [];
-    if (usedIds.length) and.push({ id: { notIn: usedIds } });
-    if (search?.trim()) and.push({ customerName: { contains: search.trim() } });
-    const rows = await this.prisma.dispatch.findMany({
-      where: and.length ? { AND: and } : {},
-      select: { customerName: true },
-      distinct: ['customerName'],
-      orderBy: { customerName: 'asc' },
-      take: 500,
-    });
+    const { clause, params } = this.pendingWhere({ search });
+    const rows = await this.prisma.$queryRawUnsafe<{ customerName: string }[]>(
+      `SELECT DISTINCT d.customerName AS customerName FROM dispatches d WHERE ${clause} ORDER BY d.customerName ASC LIMIT 500`,
+      ...params,
+    );
     return rows.map((r) => r.customerName).filter(Boolean);
   }
 
@@ -107,13 +117,12 @@ export class ChallansService {
     // No explicit selection → offer the customer's entire un-challaned pool.
     let ids = dto.dispatchIds;
     if (!ids || ids.length === 0) {
-      const usedIds = await this.challanedDispatchIds();
-      const pool = await this.prisma.dispatch.findMany({
-        where: { customerName, ...(usedIds.length ? { id: { notIn: usedIds } } : {}) },
-        select: { id: true },
-        orderBy: [{ dispatchDate: 'desc' }, { id: 'desc' }],
-      });
-      ids = pool.map((d) => d.id);
+      const { clause, params } = this.pendingWhere({ customerName });
+      const pool = await this.prisma.$queryRawUnsafe<{ id: number }[]>(
+        `SELECT d.id AS id FROM dispatches d WHERE ${clause} ORDER BY d.dispatchDate DESC, d.id DESC`,
+        ...params,
+      );
+      ids = pool.map((d) => Number(d.id));
     }
 
     const dispatches = await this.prisma.dispatch.findMany({ where: { id: { in: ids } } });
@@ -470,14 +479,6 @@ export class ChallansService {
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────────
-
-  private async challanedDispatchIds(): Promise<number[]> {
-    const used = await this.prisma.challanItem.findMany({
-      where: { dispatchId: { not: null }, challan: { challanStatus: { not: 'CANCELLED' } } },
-      select: { dispatchId: true },
-    });
-    return [...new Set(used.map((u) => u.dispatchId!).filter((x): x is number => x != null))];
-  }
 
   /** Indian fiscal-year label for a date, e.g. 2026-06 → "26-27" (Apr–Mar). */
   private fyLabel(d: Date): string {
