@@ -118,7 +118,8 @@ export function OrderBillPage() {
   };
 
   const totals = useMemo(() => {
-    const items = order?.items ?? [];
+    // Cancelled lines are excluded from the order totals.
+    const items = (order?.items ?? []).filter((it) => it.status !== 'CANCELLED');
     return {
       bags: items.reduce((s, it) => s + (it.bags ?? 0), 0),
       pcs: items.reduce((s, it) => s + (it.pcs ?? 0), 0),
@@ -224,7 +225,7 @@ export function OrderBillPage() {
               </tr>
             </thead>
             <tbody>
-              {order.items.map((it, idx) => (
+              {order.items.filter((it) => it.status !== 'CANCELLED').map((it, idx) => (
                 <tr key={it.id} style={{ background: idx % 2 === 1 ? '#F5F7FA' : '#fff' }}>
                   <td style={{ ...td, textAlign: 'center' }}>{idx + 1}</td>
                   <td style={{ ...td, fontWeight: 600 }}>{it.productName || it.product || '—'}</td>

@@ -27,6 +27,12 @@ export class DispatchController {
     return this.dispatch.filterOptions();
   }
 
+  @Get('pending-filter-options')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  pendingFilterOptions() {
+    return this.dispatch.pendingFilterOptions();
+  }
+
   @Get()
   @Permissions(perm(R, ACTIONS.VIEW))
   list(@Query() query: DispatchQueryDto) {

@@ -37,6 +37,15 @@ export function useDispatchFilterOptions() {
   });
 }
 
+/** Distinct customer/product/design values among lines still pending dispatch. */
+export function usePendingFilterOptions() {
+  return useQuery({
+    queryKey: [...KEY, 'pending-filter-options'],
+    queryFn: () => http.get<DispatchFilterOptions>('/dispatch/pending-filter-options'),
+    staleTime: 60_000,
+  });
+}
+
 export function useCreateDispatch() {
   const qc = useQueryClient();
   return useMutation({

@@ -46,6 +46,7 @@ function toInput(o: OrderDto, items: OrderItemDto[]): OrderInput {
     status: o.status,
     comment: o.comment,
     items: items.map((it) => ({
+      id: it.id,
       pCategory: it.pCategory,
       subCategory: it.subCategory,
       product: it.product,
@@ -63,6 +64,7 @@ function toInput(o: OrderDto, items: OrderItemDto[]): OrderInput {
       calField: it.calField,
       priority: it.priority,
       ordType: it.ordType,
+      status: it.status,
       comment: it.comment,
     })),
   };
@@ -73,7 +75,15 @@ const COLUMNS: DataColumn<Row>[] = [
   { id: 'orderDate', label: 'Order Date', cell: (r) => <span className="whitespace-nowrap">{formatDate(r.order.orderDate)}</span> },
   { id: 'dueDate', label: 'Due Date', cell: (r) => <span className="whitespace-nowrap">{formatDate(r.order.completionDate)}</span> },
   { id: 'customer', label: 'Customer Name', cell: (r) => <span className="font-medium">{r.order.customerName}</span> },
-  { id: 'product', label: 'Product Name', cell: (r) => <span className="font-medium">{r.line.productName || r.line.product || '—'}</span> },
+  {
+    id: 'product',
+    label: 'Product Name',
+    cell: (r) => (
+      <span className={r.line.status === 'CANCELLED' ? 'text-muted-foreground font-medium line-through' : 'font-medium'}>
+        {r.line.productName || r.line.product || '—'}
+      </span>
+    ),
+  },
   { id: 'designType', label: 'Design Type', cell: (r) => r.line.designType || '—' },
   {
     id: 'priority',
@@ -89,11 +99,12 @@ const COLUMNS: DataColumn<Row>[] = [
   {
     id: 'status',
     label: 'Status',
-    cell: (r) => (
-      <span className={`rounded px-1.5 py-0.5 text-xs font-medium ring-1 ${STATUS_STYLE[r.order.status] ?? 'bg-muted text-muted-foreground ring-border'}`}>
-        {r.order.status}
-      </span>
-    ),
+    cell: (r) => {
+      const cancelled = r.line.status === 'CANCELLED';
+      const label = cancelled ? 'CANCELLED' : r.order.status;
+      const style = cancelled ? STATUS_STYLE.CANCELLED : STATUS_STYLE[r.order.status] ?? 'bg-muted text-muted-foreground ring-border';
+      return <span className={`rounded px-1.5 py-0.5 text-xs font-medium ring-1 ${style}`}>{label}</span>;
+    },
   },
 ];
 

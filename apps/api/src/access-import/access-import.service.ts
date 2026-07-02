@@ -366,7 +366,8 @@ export class AccessImportService {
           id: iid, orderId: oid, pCategory: up(r.PCATEGORY), subCategory: s(r['SUB CATEGORY']), product: s(r.PRODUCT), design: s(r.DESIGN),
           productName: s(r['PRODUCT NAME']), designType: s(r['DESIGN TYPE']), psize: num(r.PSIZE), bags: num(r.BAGS), pcs: num(r.PCS),
           gram: num(r.GRAM), box: num(r.BOX), productRate: num(r['PRODUCT RATE']), designRate: num(r['DESIGN RATE']), rate: num(r.RATE),
-          calField: up(r['CAL FIELD']), priority: up(r.PRIORITY), ordType: s(r.ORDTYPE), comment: s(r.COMMENT),
+          calField: up(r['CAL FIELD']), priority: up(r.PRIORITY), ordType: s(r.ORDTYPE),
+          status: up(r.STATUS) === 'CANCELLED' ? 'CANCELLED' : 'CONFIRMED', comment: s(r.COMMENT),
         };
       }).filter(Boolean) as any[];
       if (!dry && itemData.length) await this.prisma.orderItem.createMany({ data: itemData });

@@ -26,6 +26,8 @@ export interface OrderItemDto {
   calField: string | null;
   priority: string | null;
   ordType: string | null;
+  /** CONFIRMED (active) or CANCELLED (kept for the record, excluded from totals). */
+  status: string;
   comment: string | null;
 }
 
@@ -57,6 +59,8 @@ export interface OrderDto {
 }
 
 export interface OrderItemInput {
+  /** Present for existing lines so the server updates them in place (preserving dispatches). */
+  id?: number | null;
   pCategory?: string | null;
   subCategory?: string | null;
   product?: string | null;
@@ -74,6 +78,7 @@ export interface OrderItemInput {
   calField?: string | null;
   priority?: string | null;
   ordType?: string | null;
+  status?: string | null;
   comment?: string | null;
 }
 

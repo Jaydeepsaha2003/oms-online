@@ -137,6 +137,7 @@ export class QuotationsService {
         calField: it.calField,
         priority: it.priority,
         ordType: it.ordType,
+        status: 'CONFIRMED',
         comment: it.comment,
       })),
     };
@@ -261,6 +262,7 @@ export class QuotationsService {
       calField: it.calField,
       priority: it.priority,
       ordType: it.ordType,
+      status: 'CONFIRMED',
       comment: it.comment,
     }));
     return {

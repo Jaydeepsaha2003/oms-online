@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Check, Loader2, Lock, LockOpen, Plus, Printer, RotateCcw, ScrollText, Trash2, UserSearch } from 'lucide-react';
+import { ArrowLeft, Check, History, Loader2, Lock, LockOpen, Plus, Printer, RotateCcw, ScrollText, Trash2, UserSearch } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   CHALLAN_STATUSES,
@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useChallanDraft, useChallanEdit, useChallanNextCode, useCreateChallan, usePendingChallanCustomers, useUpdateChallan } from './use-challans';
+import { clearChallanDraft, loadChallanDraft, saveChallanDraft, type ChallanDraftData } from './challan-draft';
 
 type NavState = { customerName?: string; lines?: PendingChallanLine[] };
 type Row = ChallanDraftItem & { key: string };
@@ -82,6 +83,13 @@ export function ChallanFormPage() {
   const [savedId, setSavedId] = useState<number | null>(null);
   const [savedCode, setSavedCode] = useState('');
 
+  // ── Work-in-progress local draft (Form14 TempChallanTbl): persist a half-built
+  // challan across refresh/navigation and offer it back. New challan only. ──
+  const draftEnabled = !isEdit;
+  const draftReady = useRef(false); // gates auto-save until the initial restore settles
+  const restoreRef = useRef<ChallanDraftData | null>(null); // saved rows/fields awaiting the draft fetch
+  const [restoredDraft, setRestoredDraft] = useState(false);
+
   // Live invoice-no preview for the chosen prefix + date (server assigns the final one on save).
   const nextCodeQ = useChallanNextCode(!isEdit ? prefix || undefined : undefined, invDate, !isEdit);
   const previewCode = isEdit ? savedChallan?.code ?? '—' : nextCodeQ.data?.code ?? draft?.code ?? '—';
@@ -93,6 +101,29 @@ export function ChallanFormPage() {
     setPouch(String(round2(rs.reduce((a, r) => a + n(r.box), 0) * n(d.boxRate))));
     setGstPct(String(Math.max(0, ...rs.map((r) => n(r.gstRate)), 0)));
   };
+
+  // Restore a saved WIP challan once on mount (new challan, not arriving from
+  // Pending Challan). Setting the customer triggers the draft fetch; the init
+  // effect below then applies the saved rows + edits.
+  useEffect(() => {
+    if (!draftEnabled) {
+      draftReady.current = true;
+      return;
+    }
+    if (navCustomer) {
+      // Came from "Create Challan" on the Pending list — honour that selection.
+      draftReady.current = true;
+      return;
+    }
+    const d = loadChallanDraft();
+    if (d && d.customer && Array.isArray(d.rows) && d.rows.length) {
+      restoreRef.current = d;
+      setRestoredDraft(true);
+      setCustomer(d.customer); // fetches the pool → init effect restores the rest
+    } else {
+      draftReady.current = true;
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // One-time init when the data arrives.
   const initedRef = useRef('');
@@ -118,14 +149,60 @@ export function ChallanFormPage() {
       setRemarks(c.remarks ?? '');
       if (draft.isScrap) setM((x) => ({ ...x, product: 'S.S. SCRAP', unit: 'KGS' }));
     } else if (!isEdit) {
+      const restore = restoreRef.current;
+      if (restore && restore.customer === draft.customerName) {
+        // Reinstate the saved WIP challan (TempChallanTbl equivalent).
+        restoreRef.current = null;
+        setRows((restore.rows as Row[]).map((it, i) => ({ ...it, key: `${it.dispatchId ?? 'm'}-${i}` })));
+        setInvDate(restore.invDate || invDate);
+        setPrefix(restore.prefix || draft.prefix);
+        setStatus(restore.status || 'CONFIRMED');
+        setFreight(restore.freight);
+        setPacking(restore.packing);
+        setPouch(restore.pouch);
+        setBillingRate(restore.billingRate || String(draft.billingRate ?? 0));
+        setGstPct(restore.gstPct);
+        setNoBill(!!restore.noBill);
+        setNoBillRemoveGst(!!restore.noBillRemoveGst);
+        setManualTax(restore.manualTax || '');
+        setManualB(restore.manualB || '');
+        setManualC(restore.manualC || '');
+        setRemarks(restore.remarks || '');
+        if (draft.isScrap) setM((x) => ({ ...x, product: 'S.S. SCRAP', unit: 'KGS' }));
+        draftReady.current = true;
+        return;
+      }
       const preset = customer === navCustomer && navIds.size ? draft.items.filter((i) => i.dispatchId != null && navIds.has(i.dispatchId)) : [];
       const next = preset.map((it, i) => ({ ...it, key: `${it.dispatchId ?? 'm'}-${i}` }));
       setRows(next);
       setBillingRate(String(draft.billingRate ?? 0));
       recalc(next, draft);
       if (draft.isScrap) setM((x) => ({ ...x, product: 'S.S. SCRAP', unit: 'KGS' }));
+      draftReady.current = true;
     }
   }, [draft, savedChallan, editQ.data]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-save the WIP challan (debounced) whenever it has content; clear when empty.
+  useEffect(() => {
+    if (!draftEnabled || !draftReady.current) return;
+    const t = setTimeout(() => {
+      if (customer && rows.length) {
+        saveChallanDraft({ customer, invDate, prefix, status, freight, packing, pouch, billingRate, gstPct, noBill, noBillRemoveGst, manualTax, manualB, manualC, remarks, rows });
+      } else {
+        clearChallanDraft();
+      }
+    }, 800);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftEnabled, customer, invDate, prefix, status, freight, packing, pouch, billingRate, gstPct, noBill, noBillRemoveGst, manualTax, manualB, manualC, remarks, rows]);
+
+  // Throw away the restored draft and start blank.
+  const discardDraft = () => {
+    clearChallanDraft();
+    setRestoredDraft(false);
+    restoreRef.current = null;
+    resetForm();
+  };
 
   const pool = draft?.items ?? [];
   const available = useMemo(() => pool.filter((p) => !rows.some((r) => r.dispatchId != null && r.dispatchId === p.dispatchId)), [pool, rows]);
@@ -239,6 +316,8 @@ export function ChallanFormPage() {
 
   const resetForm = () => {
     initedRef.current = '';
+    clearChallanDraft();
+    setRestoredDraft(false);
     setCustomer('');
     setRows([]);
     setAddSel('');
@@ -306,6 +385,8 @@ export function ChallanFormPage() {
       })),
     };
     const onSuccess = (c: { id: number; code: string }) => {
+      clearChallanDraft(); // the WIP is now persisted server-side
+      setRestoredDraft(false);
       setSavedId(c.id);
       setSavedCode(c.code);
       toast.success(`Challan ${c.code} ${isEdit ? 'updated' : 'saved'}`);
@@ -365,6 +446,16 @@ export function ChallanFormPage() {
           </Button>
         )}
       </div>
+
+      {/* Restored work-in-progress notice */}
+      {restoredDraft && (
+        <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          <History className="size-4 shrink-0" /> Restored your unsaved challan from last time — keep editing or discard it.
+          <Button type="button" variant="ghost" size="sm" className="ml-auto h-7 text-amber-800 hover:bg-amber-100 hover:text-amber-900" onClick={discardDraft}>
+            Discard
+          </Button>
+        </div>
+      )}
 
       {/* Invoice paper */}
       <div className="bg-card flex flex-col overflow-hidden rounded-md border shadow-sm">

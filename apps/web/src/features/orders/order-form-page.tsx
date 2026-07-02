@@ -35,6 +35,8 @@ import { clearOrderDraft, loadOrderDraft, saveOrderDraft } from './order-draft';
 /** A line item once added to the order. */
 interface Item {
   key: string;
+  id?: number | null; // DB id of an existing line (undefined for a newly-added row)
+  status?: string | null; // per-line CONFIRMED/CANCELLED, preserved across edits
   itemName: string; // composite display: "{size|pcs} {product} {designType}"
   product: string;
   category: string;
@@ -294,6 +296,8 @@ export function OrderFormPage() {
     setItems(
       existing.items.map((it, i) => ({
         key: `e${it.id}-${i}`,
+        id: it.id,
+        status: it.status,
         itemName: it.productName ?? [it.product, it.designType].filter(Boolean).join(' '),
         product: it.product ?? '',
         category: it.pCategory ?? '',
@@ -601,6 +605,8 @@ export function OrderFormPage() {
     completionDate: completionDate || null,
     status,
     items: items.map((i) => ({
+      id: i.id,
+      status: i.status,
       pCategory: i.category.trim() || null,
       subCategory: i.subCategory.trim() || null,
       product: i.product.trim() || null,

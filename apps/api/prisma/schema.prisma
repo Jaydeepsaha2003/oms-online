@@ -572,6 +572,9 @@ model OrderItem {
   calField    String? // pricing unit: KGS / PCS
   priority    String? // URGENT / NORMAL (per line item)
   ordType     String? // order type (e.g. SALES ORDER)
+  // Per-line status: CONFIRMED (active) or CANCELLED (kept for the record, excluded
+  // from order totals and not dispatchable). Mirrors legacy ORDERTBL.STATUS.
+  status      String   @default("CONFIRMED")
   comment     String?
   createdAt   DateTime @default(now())
 

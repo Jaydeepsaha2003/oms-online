@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { useCreateDispatch, usePendingOrders } from './use-dispatch';
+import { useCreateDispatch, usePendingFilterOptions, usePendingOrders } from './use-dispatch';
 
 const PAGE_SIZE = 50;
 const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? 0 : Number(s));
@@ -45,6 +45,9 @@ export function DispatchOrderPage() {
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [dueType, setDueType] = useState('');
+  const [customer, setCustomer] = useState('');
+  const [product, setProduct] = useState('');
+  const [design, setDesign] = useState('');
   const [page, setPage] = useState(1);
   const [active, setActive] = useState<PendingLineDto | null>(null);
   const [shipped, setShipped] = useState<string | null>(null); // dispatch code → plays the truck animation
@@ -57,7 +60,16 @@ export function DispatchOrderPage() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  const query = { page, pageSize: PAGE_SIZE, search: search || undefined, dueType: dueType || undefined };
+  const { data: options } = usePendingFilterOptions();
+  const query = {
+    page,
+    pageSize: PAGE_SIZE,
+    search: search || undefined,
+    dueType: dueType || undefined,
+    customer: customer || undefined,
+    product: product || undefined,
+    design: design || undefined,
+  };
   const { data, isLoading } = usePendingOrders(query);
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
@@ -83,6 +95,15 @@ export function DispatchOrderPage() {
           </div>
           <div className="w-40">
             <NativeSelect value={dueType} onChange={(v) => { setDueType(v); setPage(1); }} options={['', 'Due', 'Over Due']} placeholder="All due" />
+          </div>
+          <div className="w-64">
+            <NativeSelect value={customer} onChange={(v) => { setCustomer(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="All customers" />
+          </div>
+          <div className="w-64">
+            <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...(options?.products ?? [])]} placeholder="All products" />
+          </div>
+          <div className="w-40">
+            <NativeSelect value={design} onChange={(v) => { setDesign(v); setPage(1); }} options={['', ...(options?.designs ?? [])]} placeholder="All designs" />
           </div>
           <ColumnSettings
             columns={cols.orderedReorderable}

@@ -116,5 +116,12 @@ export interface DispatchFilterOptions {
   designs: string[];
 }
 export type DispatchList = Paginated<DispatchDto>;
-export type PendingQuery = PaginationQuery & { dueType?: string; unit?: string };
+export type PendingQuery = PaginationQuery & {
+  dueType?: string;
+  unit?: string;
+  /** Exact-match filters (values come from the pending-pool {@link DispatchFilterOptions}). */
+  customer?: string;
+  product?: string;
+  design?: string;
+};
 export type PendingList = Paginated<PendingLineDto>;

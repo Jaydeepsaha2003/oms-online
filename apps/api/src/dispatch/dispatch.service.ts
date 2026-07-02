@@ -19,16 +19,19 @@ export class DispatchService {
 
   /* ── Pending order lines (ordered − dispatched) ─────────────────────────── */
 
-  async pending(query: PendingQueryDto): Promise<Paginated<PendingLineDto>> {
+  /** The full pool of order lines still awaiting dispatch (ordered − dispatched > 0),
+   *  before any dropdown/search filtering. Shared by the list and its filter options. */
+  private async computePendingLines(): Promise<PendingLineDto[]> {
     const items = await this.prisma.orderItem.findMany({
-      where: { order: { status: { notIn: ['CANCELLED', 'DRAFT'] } } },
+      // Cancelled lines (and cancelled/draft orders) are not dispatchable.
+      where: { status: { not: 'CANCELLED' }, order: { status: { notIn: ['CANCELLED', 'DRAFT'] } } },
       include: { order: true, dispatches: true },
       orderBy: [{ orderId: 'desc' }, { id: 'asc' }],
     });
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    let lines: PendingLineDto[] = [];
+    const lines: PendingLineDto[] = [];
     for (const it of items) {
       if (it.dispatches.some((d) => d.dispatchStatus === 'FULLY DISPATCH')) continue;
       const sum = it.dispatches.reduce(
@@ -75,6 +78,28 @@ export class DispatchService {
         remBox,
       });
     }
+    return lines;
+  }
+
+  /** Distinct customer / product / design values present in the *pending* pool,
+   *  used to populate the Dispatch Order page's filter dropdowns. */
+  async pendingFilterOptions(): Promise<DispatchFilterOptions> {
+    const lines = await this.computePendingLines();
+    const customers = new Set<string>();
+    const products = new Set<string>();
+    const designs = new Set<string>();
+    for (const l of lines) {
+      if (l.customerName) customers.add(l.customerName);
+      const p = l.productName || l.product;
+      if (p) products.add(p);
+      if (l.designType && l.designType.toUpperCase() !== 'NA') designs.add(l.designType);
+    }
+    const sorted = (s: Set<string>) => [...s].sort((a, b) => a.localeCompare(b));
+    return { customers: sorted(customers), products: sorted(products), designs: sorted(designs) };
+  }
+
+  async pending(query: PendingQueryDto): Promise<Paginated<PendingLineDto>> {
+    let lines = await this.computePendingLines();
 
     const search = query.search?.trim().toLowerCase();
     if (search) {
@@ -83,6 +108,9 @@ export class DispatchService {
       );
     }
     if (query.dueType) lines = lines.filter((l) => l.dueType === query.dueType);
+    if (query.customer) lines = lines.filter((l) => l.customerName === query.customer);
+    if (query.product) lines = lines.filter((l) => (l.productName || l.product) === query.product);
+    if (query.design) lines = lines.filter((l) => l.designType === query.design);
     if (query.unit) {
       const u = query.unit.toUpperCase();
       lines = lines.filter((l) =>
@@ -165,6 +193,9 @@ export class DispatchService {
     if (!it) throw new NotFoundException('Order line not found.');
     if (it.order.status === 'CANCELLED' || it.order.status === 'DRAFT') {
       throw new BadRequestException('This order is not available for dispatch.');
+    }
+    if (it.status === 'CANCELLED') {
+      throw new BadRequestException('This line has been cancelled and cannot be dispatched.');
     }
     if (it.dispatches.some((d) => d.dispatchStatus === 'FULLY DISPATCH')) {
       throw new BadRequestException('This line has already been fully dispatched.');
@@ -279,6 +310,11 @@ export class DispatchService {
     status: string,
     calField?: string | null,
   ) {
+    // No quantity may be negative — a negative on a non-mandatory unit would
+    // otherwise slip past the mandatory + upper-bound checks and corrupt totals.
+    if (q.bags < -EPS || q.pcs < -EPS || q.gram < -EPS || q.box < -EPS) {
+      throw new BadRequestException('Dispatch quantities cannot be negative.');
+    }
     // The priced quantity is mandatory: PCS-priced lines need Pcs, KGS-priced
     // lines need Kgs (mirrors the legacy "PC/KG is Mandatory" checks).
     const cf = (calField ?? '').toUpperCase();

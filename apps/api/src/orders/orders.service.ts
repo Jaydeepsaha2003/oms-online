@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { type OrderDto, type OrderLookups, type Paginated } from '@oms/shared';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
@@ -69,18 +69,55 @@ export class OrdersService {
   async update(id: number, dto: UpdateOrderDto): Promise<OrderDto> {
     await this.ensureExists(id);
     const data = await this.toHeaderData(dto as CreateOrderDto);
-    const row = await this.prisma.order.update({
-      where: { id },
-      data: {
-        ...data,
-        // Replace the whole line-item set with what the form submitted.
-        ...(dto.items
-          ? { items: { deleteMany: {}, create: dto.items.map((it) => this.toItemData(it)) } }
-          : {}),
-      },
-      include: INCLUDE,
-    });
-    return this.toDto(await this.ensureCode(row));
+
+    if (!dto.items) {
+      await this.prisma.order.update({ where: { id }, data });
+    } else {
+      // Reconcile line items BY ID so existing lines keep their identity — and
+      // therefore their dispatch history. A blanket deleteMany+create would give
+      // every line a new id and cascade-delete its dispatches (Dispatch.orderItem
+      // is onDelete: Cascade), making already-dispatched lines reappear as pending.
+      const existing = await this.prisma.orderItem.findMany({
+        where: { orderId: id },
+        select: { id: true, _count: { select: { dispatches: true } } },
+      });
+      const existingIds = new Set(existing.map((e) => e.id));
+      const kept = new Set<number>();
+      const toUpdate: { where: { id: number }; data: Prisma.OrderItemUpdateWithoutOrderInput }[] = [];
+      const toCreate: Prisma.OrderItemCreateWithoutOrderInput[] = [];
+      for (const it of dto.items) {
+        const itemId = toNum(it.id);
+        if (itemId && existingIds.has(itemId)) {
+          kept.add(itemId);
+          toUpdate.push({ where: { id: itemId }, data: this.toItemData(it) });
+        } else {
+          toCreate.push(this.toItemData(it));
+        }
+      }
+      const removed = existing.filter((e) => !kept.has(e.id));
+      // Removing a line would cascade-delete its dispatches — refuse it and steer
+      // the user to Cancel the line (which keeps the record) instead.
+      if (removed.some((e) => e._count.dispatches > 0)) {
+        throw new BadRequestException(
+          'Cannot remove an order line that already has dispatches. Mark it Cancelled instead.',
+        );
+      }
+      const toDelete = removed.map((e) => e.id);
+      await this.prisma.order.update({
+        where: { id },
+        data: {
+          ...data,
+          items: {
+            ...(toDelete.length ? { deleteMany: { id: { in: toDelete } } } : {}),
+            ...(toUpdate.length ? { update: toUpdate } : {}),
+            ...(toCreate.length ? { create: toCreate } : {}),
+          },
+        },
+      });
+    }
+
+    const row = await this.prisma.order.findUnique({ where: { id }, include: INCLUDE });
+    return this.toDto(await this.ensureCode(row!));
   }
 
   async remove(id: number): Promise<void> {
@@ -179,7 +216,9 @@ export class OrdersService {
     const q = (v?: number | null) => (v ? v.toLocaleString('en-IN') : '');
     const d = (s?: string | null) => (s ? new Date(s).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
     const code = order.code ?? `#${order.id}`;
-    const t = order.items.reduce(
+    // Cancelled lines are omitted from the printed sales order.
+    const printItems = order.items.filter((it) => it.status !== 'CANCELLED');
+    const t = printItems.reduce(
       (a, it) => ({ bags: a.bags + (it.bags ?? 0), pcs: a.pcs + (it.pcs ?? 0), kgs: a.kgs + (it.gram ?? 0), box: a.box + (it.box ?? 0) }),
       { bags: 0, pcs: 0, kgs: 0, box: 0 },
     );
@@ -190,7 +229,7 @@ export class OrdersService {
       color: BLACK,
       alignment: i === 0 ? 'center' : i >= 2 && i <= 6 ? 'right' : 'left',
     }));
-    const itemRows = order.items.map((it, idx) => [
+    const itemRows = printItems.map((it, idx) => [
       { text: String(idx + 1), alignment: 'center' },
       { text: it.productName || it.product || '', bold: true },
       { text: q(it.bags), alignment: 'right' },
@@ -324,6 +363,7 @@ export class OrdersService {
       calField: uc(it.calField),
       priority: uc(it.priority),
       ordType: uc(it.ordType),
+      status: uc(it.status) === 'CANCELLED' ? 'CANCELLED' : 'CONFIRMED',
       comment: toStr(it.comment),
     };
   }
@@ -366,8 +406,11 @@ export class OrdersService {
       calField: it.calField,
       priority: it.priority,
       ordType: it.ordType,
+      status: it.status ?? 'CONFIRMED',
       comment: it.comment,
     }));
+    // Cancelled lines are kept for the record but excluded from the order's totals.
+    const active = items.filter((it) => it.status !== 'CANCELLED');
     return {
       id: r.id,
       code: r.code ?? this.codeFor(r.id),
@@ -385,9 +428,9 @@ export class OrdersService {
       comment: r.comment,
       userName: r.userName,
       items,
-      itemCount: items.length,
-      totalRate: items.reduce((s, it) => s + (it.rate ?? 0), 0),
-      totalAmount: items.reduce((s, it) => s + (it.rate ?? 0) * (it.calField === 'PCS' ? (it.pcs ?? 0) : (it.gram ?? 0)), 0),
+      itemCount: active.length,
+      totalRate: active.reduce((s, it) => s + (it.rate ?? 0), 0),
+      totalAmount: active.reduce((s, it) => s + (it.rate ?? 0) * (it.calField === 'PCS' ? (it.pcs ?? 0) : (it.gram ?? 0)), 0),
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     };
