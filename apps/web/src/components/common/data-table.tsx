@@ -76,7 +76,11 @@ export function DataTable<T>({
   actions,
   isLoading,
   emptyText = 'No records found.',
-  maxBodyHeight,
+  // Default: the table body scrolls inside its own region so the column header
+  // (and the frozen columns) stay pinned while scrolling — on every page. Pages
+  // that need a different bound pass their own. The offset leaves room for the
+  // topbar, page heading/filters above and the pagination row below.
+  maxBodyHeight = 'max-h-[calc(100dvh_-_20rem)]',
   dense,
   hideRowView,
 }: {

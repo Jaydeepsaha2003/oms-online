@@ -5,6 +5,7 @@ import { filterMenu, MENU, type MenuNode } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { getMenuIcon } from '@/lib/icons';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useNudgeCount } from '@/features/crm/followup-nudge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -23,9 +24,20 @@ interface SidebarProps {
  * render. Add a node to MENU (in @oms/shared) and it appears here automatically.
  */
 export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
-  const { permissions } = usePermissions();
+  const { permissions, can } = usePermissions();
   const location = useLocation();
-  const items = useMemo(() => filterMenu(permissions, MENU), [permissions]);
+  const nudges = useNudgeCount(can('crm:view'));
+  const items = useMemo(() => {
+    const filtered = filterMenu(permissions, MENU);
+    if (nudges > 0) {
+      // Attach the live "needs attention" count to the CRM → Follow-ups item.
+      for (const g of filtered) {
+        const leaf = g.children?.find((c) => c.id === 'crm-followups');
+        if (leaf) leaf.badge = String(nudges);
+      }
+    }
+    return filtered;
+  }, [permissions, nudges]);
 
   // Accordion: only one group is open at a time. Default to the active route's group.
   const activeGroupId = useMemo(

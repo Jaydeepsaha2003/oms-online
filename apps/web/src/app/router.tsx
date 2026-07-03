@@ -26,6 +26,7 @@ import { PendingChallanPage } from '@/features/challans/pending-challan-page';
 import { ChallanFormPage } from '@/features/challans/challan-form-page';
 import { ChallansListPage } from '@/features/challans/challans-list-page';
 import { ChallanItemsPage } from '@/features/challans/challan-items-page';
+import { FollowupsPage, PaymentsFollowupsPage } from '@/features/crm/followups-page';
 import { SettingsPage } from '@/features/settings/settings-page';
 import { UsersPage } from '@/features/admin/users-page';
 import { RolesPage } from '@/features/admin/roles-page';
@@ -253,6 +254,22 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.CHALLAN, ACTIONS.CREATE)}>
                 <ChallanFormPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/crm"
+            element={
+              <RequirePermission permission={perm(RESOURCES.CRM, ACTIONS.VIEW)}>
+                <FollowupsPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/crm/payments"
+            element={
+              <RequirePermission permission={perm(RESOURCES.CRM, ACTIONS.VIEW)}>
+                <PaymentsFollowupsPage />
               </RequirePermission>
             }
           />

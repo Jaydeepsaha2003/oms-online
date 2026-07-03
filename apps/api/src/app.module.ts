@@ -33,6 +33,7 @@ import { QuotationsModule } from './quotations/quotations.module';
 import { DispatchModule } from './dispatch/dispatch.module';
 import { ChallansModule } from './challans/challans.module';
 import { SpecialRatesModule } from './special-rates/special-rates.module';
+import { CrmModule } from './crm/crm.module';
 import { AccessImportModule } from './access-import/access-import.module'; // TEMP: MS Access connector
 import { SettingsModule } from './settings/settings.module';
 
@@ -73,6 +74,7 @@ import { SettingsModule } from './settings/settings.module';
     DispatchModule,
     ChallansModule,
     SpecialRatesModule,
+    CrmModule,
     AccessImportModule, // TEMP: MS Access connector — remove this line + the folder to delete
 
     SettingsModule,

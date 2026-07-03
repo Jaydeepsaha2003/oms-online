@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import { cn } from '@/lib/utils';
+import { usePermissions } from '@/hooks/use-permissions';
+import { FollowupNudge } from '@/features/crm/followup-nudge';
 import { Sidebar } from './sidebar';
 import { Topbar } from './topbar';
 
@@ -38,6 +40,8 @@ export function AppShell() {
   }, []);
   const [hovered, setHovered] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const { can } = usePermissions();
+  const canViewCrm = can('crm:view');
   const isPinned = pinned && canPin;
   const expanded = isPinned || hovered;
 
@@ -119,6 +123,9 @@ export function AppShell() {
           <Outlet />
         </main>
       </div>
+
+      {/* Global "anti-forget" reminder — only for users who can see CRM. */}
+      {canViewCrm && <FollowupNudge />}
     </div>
   );
 }

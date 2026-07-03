@@ -10,7 +10,7 @@ import {
   type SetStateAction,
 } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRightLeft, BadgePercent, Ban, Check, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Plus, ReceiptText, RotateCcw, Save, Settings2, Trash2 } from 'lucide-react';
+import { ArrowLeft, ArrowRightLeft, BadgePercent, Ban, Check, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Lock, Plus, ReceiptText, RotateCcw, Save, Settings2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ORDER_PRIORITIES, resolveSpecialRates, type OrderInput, type SpecialRateResolution } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -26,6 +26,7 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
 import { NativeSelect } from '@/components/common/combo';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { settingValues, useSettings } from '@/features/settings/use-settings';
 import { useCustomerSpecialRates } from '@/features/special-rates/use-special-rates';
 import { useCreateOrder, useOrder, useOrderLookups, useUpdateOrder } from './use-orders';
@@ -508,20 +509,32 @@ export function OrderFormPage() {
     });
   };
 
-  // Auto-calc Kgs (= Pcs × weight) and Box (= Pcs ÷ pcs-per-box) when a product is picked.
+  // Auto-calc Kgs (= Pcs × weight) as Pcs is typed. Box is NOT auto-filled here —
+  // the user fills it on demand with the tick beside the Box field (fillBox).
   const onPcs = (value: string) => {
     setEntry((e) => {
       const pcs = n(value) ?? 0;
       const w = n(e.weight);
-      const per = n(e.pcsBox);
       const round2 = (x: number) => String(Math.round(x * 100) / 100);
       return {
         ...e,
         pcs: value,
         gram: w != null && value.trim() !== '' ? round2(pcs * w) : e.gram,
-        box: per != null && per > 0 && value.trim() !== '' ? round2(pcs / per) : e.box,
       };
     });
+  };
+
+  // Boxes needed for the current Pcs (= Pcs ÷ pieces-per-box). Only meaningful
+  // once a product with a known pcs-per-box is picked and Pcs is entered.
+  const boxPreview = useMemo(() => {
+    const per = n(entry.pcsBox);
+    const pcs = n(entry.pcs);
+    if (per == null || per <= 0 || pcs == null || entry.pcs.trim() === '') return null;
+    return Math.round((pcs / per) * 100) / 100;
+  }, [entry.pcsBox, entry.pcs]);
+  const fillBox = () => {
+    if (boxPreview == null) return toast.error('Pick a product and enter Pcs first — pieces-per-box is needed.');
+    setEntryField({ box: String(boxPreview) });
   };
 
   // Design names for the SELECTED item's design-type code — legacy:
@@ -967,11 +980,30 @@ export function OrderFormPage() {
               <Label className={cn('text-base', showBy === 'SIZE' && 'text-primary font-semibold')}>Kgs</Label>
               <Input type="number" step="any" value={entry.gram} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ gram: e.target.value })} />
             </div>
-            <div className="space-y-1 lg:col-span-1" data-tabfield="box">
+            <div className="space-y-1 lg:col-span-2" data-tabfield="box">
               <Label className="text-base">Box</Label>
-              <Input type="number" step="any" value={entry.box} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ box: e.target.value })} />
+              <div className="flex gap-1">
+                <Input type="number" step="any" value={entry.box} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ box: e.target.value })} />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="size-9 shrink-0 text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700 disabled:text-slate-300"
+                  disabled={boxPreview == null}
+                  onClick={fillBox}
+                  aria-label="Fill boxes required"
+                  title={boxPreview == null ? 'Enter Pcs (product needs pieces-per-box) to fill boxes' : `Fill boxes required — ${boxPreview} box (Pcs ÷ pcs-per-box)`}
+                >
+                  <Check className="size-4" />
+                </Button>
+              </div>
+              {boxPreview != null && Number(entry.box) !== boxPreview && (
+                <button type="button" onClick={fillBox} className="text-[11px] font-medium text-emerald-600 hover:underline">
+                  {boxPreview} box required — tap ✓ to fill
+                </button>
+              )}
             </div>
-            <div className="col-span-2 space-y-1 sm:col-span-3 lg:col-span-3" data-tabfield="comment">
+            <div className="col-span-2 space-y-1 sm:col-span-3 lg:col-span-2" data-tabfield="comment">
               <Label className="text-base">Remarks</Label>
               <Input value={entry.comment} onChange={(e) => setEntryField({ comment: e.target.value })} placeholder="Item remark…" />
             </div>
@@ -1051,9 +1083,27 @@ export function OrderFormPage() {
                       <td className="text-right font-semibold tabular-nums text-emerald-700">{lineAmount(i).toLocaleString('en-IN')}</td>
                       <td className="max-w-[14rem] truncate" title={i.comment}>{i.comment || '—'}</td>
                       <td>
-                        <Button variant="ghost" size="icon" className="size-7 text-destructive hover:text-destructive" onClick={() => removeItem(i.key)} aria-label="Remove">
-                          <Trash2 className="size-4" />
-                        </Button>
+                        {i.id != null ? (
+                          // A saved line — deleting it belongs on the Order Modify page,
+                          // where the removal (and its dispatch guard) is handled properly.
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="inline-flex cursor-help text-slate-400">
+                                <span className="inline-flex size-7 items-center justify-center">
+                                  <Lock className="size-3.5" />
+                                </span>
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="left" className="max-w-56">
+                              <p className="font-semibold">Saved order line</p>
+                              <p className="opacity-80">Existing items can’t be removed here — delete them from the Order Modify page.</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        ) : (
+                          <Button variant="ghost" size="icon" className="size-7 text-destructive hover:text-destructive" onClick={() => removeItem(i.key)} aria-label="Remove">
+                            <Trash2 className="size-4" />
+                          </Button>
+                        )}
                       </td>
                     </tr>
                   ))

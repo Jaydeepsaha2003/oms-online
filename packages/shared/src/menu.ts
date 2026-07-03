@@ -183,6 +183,28 @@ export const MENU: MenuNode[] = [
     ],
   },
   {
+    id: 'crm-group',
+    label: 'CRM',
+    icon: 'BellRing',
+    anyPermission: [perm(RESOURCES.CRM, ACTIONS.VIEW), perm(RESOURCES.CRM, ACTIONS.CREATE)],
+    children: [
+      {
+        id: 'crm-followups',
+        label: 'Follow-ups',
+        to: '/crm',
+        icon: 'CalendarClock',
+        permission: perm(RESOURCES.CRM, ACTIONS.VIEW),
+      },
+      {
+        id: 'crm-payments',
+        label: 'Payments',
+        to: '/crm/payments',
+        icon: 'Wallet',
+        permission: perm(RESOURCES.CRM, ACTIONS.VIEW),
+      },
+    ],
+  },
+  {
     id: 'challan-group',
     label: 'Challan',
     icon: 'ScrollText',

@@ -2,11 +2,14 @@
 import {
   BadgePercent,
   BarChart3,
+  BellRing,
   Box,
   Boxes,
   Building2,
+  CalendarClock,
   Circle,
   ClipboardList,
+  Wallet,
   Contact,
   Factory,
   FilePlus,
@@ -69,6 +72,9 @@ const ICONS: Record<string, LucideIcon> = {
   FileText,
   FilePlus,
   BadgePercent,
+  BellRing,
+  CalendarClock,
+  Wallet,
 };
 
 /** Resolve a menu icon name to a component, falling back to a neutral dot. */

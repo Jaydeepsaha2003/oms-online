@@ -1,0 +1,24 @@
+{
+  "name": "OMS — Order Management",
+  "short_name": "OMS",
+  "description": "Orders, dispatch, challans and follow-ups for the workshop — in one place.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#ffffff",
+  "theme_color": "#1e40af",
+  "lang": "en",
+  "categories": ["business", "productivity"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Follow-ups", "url": "/crm", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "New Order", "url": "/orders/new", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "View Orders", "url": "/orders", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

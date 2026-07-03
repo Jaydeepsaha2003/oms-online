@@ -51,6 +51,8 @@ export const RESOURCES = {
   GST_RATE: 'gstrate',
   /** Per-customer special rate overrides + logo restrictions (legacy Form10). */
   SPECIAL_RATE: 'specialrate',
+  /** CRM: party follow-ups / commitment tracking + reminders. */
+  CRM: 'crm',
   SUPPLIER: 'supplier',
   INVENTORY: 'inventory',
   PRODUCTION: 'production',
@@ -132,6 +134,12 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
     label: 'Customer Special Rates',
     group: 'Sales',
     actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.DELETE, ACTIONS.MANAGE],
+  },
+  {
+    resource: RESOURCES.CRM,
+    label: 'CRM / Follow-ups',
+    group: 'Sales',
+    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.MANAGE],
   },
   { resource: RESOURCES.INVOICE, label: 'Invoices', group: 'Sales', actions: STANDARD_PRINTABLE },
   {

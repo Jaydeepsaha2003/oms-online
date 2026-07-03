@@ -13,6 +13,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useAutoSizePcs } from '@/lib/auto-size-pcs';
 import { AccessImportCard } from './access-import-card'; // TEMP: MS Access connector — delete this import + usage to remove
+import { CrmReminderCard } from '@/features/crm/crm-settings-card';
 import { useCompany, useCreateOrderOption, useDeleteOrderOption, useSettings, useUpdateCompany } from './use-settings';
 
 export function SettingsPage() {
@@ -39,6 +40,8 @@ export function SettingsPage() {
       <PreferencesCard />
 
       <ChallanPrefixCard canEdit={canEdit} />
+
+      <CrmReminderCard />
 
       {isLoading ? (
         <div className="flex h-40 items-center justify-center text-muted-foreground">

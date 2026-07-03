@@ -2,6 +2,7 @@ import { ArrowUpRight, Boxes, ClipboardList, Factory, Sparkles, Users } from 'lu
 import { useAuthStore } from '@/stores/auth-store';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { DashboardFollowups } from '@/features/crm/dashboard-followups';
 
 type Accent = 'blue' | 'amber' | 'orange' | 'sky';
 
@@ -64,6 +65,9 @@ export function DashboardPage() {
           </p>
         </div>
       </div>
+
+      {/* Follow-ups that need attention — front and centre at login. */}
+      <DashboardFollowups />
 
       {/* Stat cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

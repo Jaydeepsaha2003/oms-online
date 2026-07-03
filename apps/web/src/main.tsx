@@ -17,3 +17,13 @@ createRoot(document.getElementById('root')!).render(
     </AppProviders>
   </StrictMode>,
 );
+
+// PWA: register the service worker so the app is installable (desktop/Android)
+// and keeps a light offline cache. /api is never cached — data stays live.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {
+      /* e.g. plain-HTTP LAN access — install still possible via Add to Home Screen */
+    });
+  });
+}

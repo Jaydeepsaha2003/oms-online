@@ -756,3 +756,60 @@ model AppConfig {
 
   @@map("app_config")
 }
+
+/// CRM follow-up: one commitment to a party (delivery or payment). Carries a
+/// promised date + a reminder loop that re-surfaces it until resolved.
+model Followup {
+  id         Int      @id @default(autoincrement())
+  kind       String   @default("DELIVERY") // DELIVERY | PAYMENT
+  customerId Int?
+  partyName  String // always set (free text when the customer isn't in the system)
+  orderId    Int?
+  orderCode  String?
+  orderItemId Int?
+  itemText   String? // free item text when no linked order line
+  title      String
+  detail     String?
+  stage      String? // POLISHING | SUPPLIER | DISPATCH | READY | free text
+  priority   String   @default("NORMAL")
+  status     String   @default("OPEN") // OPEN | DONE | CANCELLED
+  promisedAt DateTime?
+  // Reminder loop (fall back to CRM defaults when null).
+  reminderIntervalMins Int?
+  maxRemindersPerDay   Int?
+  remindersToday       Int      @default(0)
+  remindersDate        String? // yyyy-mm-dd the counter applies to (resets daily)
+  nextRemindAt         DateTime?
+  lastRemindedAt       DateTime?
+  createdByName String?
+  resolvedByName String?
+  resolvedAt    DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  logs FollowupLog[]
+
+  @@index([status])
+  @@index([kind])
+  @@index([partyName])
+  @@index([promisedAt])
+  @@index([customerId])
+  @@map("followups")
+}
+
+/// One timeline entry on a follow-up (a note / ack / snooze / re-promise).
+model FollowupLog {
+  id           Int      @id @default(autoincrement())
+  followupId   Int
+  kind         String   @default("NOTE") // NOTE | ACK | SNOOZE | PROMISE | STATUS
+  note         String?
+  stage        String?
+  newPromisedAt DateTime?
+  userName     String?
+  createdAt    DateTime @default(now())
+
+  followup Followup @relation(fields: [followupId], references: [id], onDelete: Cascade)
+
+  @@index([followupId])
+  @@map("followup_logs")
+}
