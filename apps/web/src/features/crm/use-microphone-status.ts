@@ -1,47 +1,18 @@
 import { useEffect, useState } from 'react';
 
+/**
+ * Only reports what is knowable before permission is granted: whether the page
+ * is a secure context with getUserMedia available. Deliberately does NOT probe
+ * enumerateDevices() — Safari hides devices until access is granted, so a
+ * pre-permission "no microphone" result is unreliable and must not gate the UI.
+ * Actual mic presence is discovered when getUserMedia runs.
+ */
 export function useMicrophoneStatus() {
-  const [isSupported, setIsSupported] = useState<boolean | null>(null);
-  const [hasMic, setHasMic] = useState<boolean | null>(null);
   const [isSecure, setIsSecure] = useState(true);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    const secure = window.isSecureContext !== false;
-    setIsSecure(secure);
-
-    const supported = !!(navigator.mediaDevices?.getUserMedia);
-    setIsSupported(supported);
-
-    if (!supported) {
-      setHasMic(false);
-      return;
-    }
-
-    const checkDevices = async () => {
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const micExists = devices.some((d) => d.kind === 'audioinput');
-        setHasMic(micExists);
-      } catch {
-        setHasMic(false);
-      }
-    };
-
-    checkDevices();
-
-    // Listen for device changes (e.g. plugging/unplugging a mic)
-    navigator.mediaDevices.addEventListener('devicechange', checkDevices);
-    return () => {
-      navigator.mediaDevices.removeEventListener('devicechange', checkDevices);
-    };
+    setIsSecure(window.isSecureContext !== false && !!navigator.mediaDevices?.getUserMedia);
   }, []);
 
-  return {
-    isSupported,
-    hasMic,
-    isSecure,
-    canRecord: isSupported !== false && hasMic !== false && isSecure,
-  };
+  return { isSecure };
 }

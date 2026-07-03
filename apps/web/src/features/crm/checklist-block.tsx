@@ -7,7 +7,8 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useAiStatus, useVoiceChecklist } from './use-crm';
-import { startVoiceRecording, type VoiceRecorder } from './voice-recorder';
+import { type VoiceRecorder } from './voice-recorder';
+import { useMicAccess } from './mic-permission';
 import { useMicrophoneStatus } from './use-microphone-status';
 
 export interface ChecklistDraftItem {
@@ -47,15 +48,11 @@ export function ChecklistBlock({
   const addTyped = () => { add(text); setText(''); };
   const remove = (i: number) => onChange(items.filter((_, idx) => idx !== i));
 
-  const startRec = async () => {
-    try {
-      recorder.current = await startVoiceRecording();
-      setPhase('recording');
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not start the microphone.');
-      setPhase('idle');
-    }
-  };
+  const micAccess = useMicAccess((rec) => {
+    recorder.current = rec;
+    setPhase('recording');
+  });
+  const startRec = () => micAccess.begin();
   const stopRec = async () => {
     const rec = recorder.current;
     if (!rec) return;
@@ -104,14 +101,8 @@ export function ChecklistBlock({
             variant="outline"
             className="h-11 shrink-0 border-blue-300 px-4 text-blue-700 hover:bg-blue-50"
             onClick={startRec}
-            disabled={micDisabled || !micStatus.canRecord}
-            title={
-              !micStatus.isSecure
-                ? 'Microphone requires a secure connection (HTTPS)'
-                : micStatus.hasMic === false
-                ? 'No microphone detected'
-                : 'Speak your tasks (Hindi or English)'
-            }
+            disabled={micDisabled}
+            title={micStatus.isSecure ? 'Speak your tasks (Hindi or English)' : 'Microphone requires a secure connection (HTTPS)'}
           >
             <Mic className="size-4" /> Speak
           </Button>
@@ -130,11 +121,6 @@ export function ChecklistBlock({
           {!micStatus.isSecure && (
             <p className="text-xs text-amber-600 font-medium flex items-center gap-1">
               <span>⚠️</span> Microphone requires a secure connection (HTTPS or localhost). Access via HTTPS to enable.
-            </p>
-          )}
-          {micStatus.isSecure && micStatus.hasMic === false && (
-            <p className="text-xs text-amber-600 font-medium flex items-center gap-1">
-              <span>⚠️</span> No microphone detected. Please connect a microphone.
             </p>
           )}
           {showSetupHint && ai && !ai.configured && (
@@ -161,6 +147,8 @@ export function ChecklistBlock({
           ))}
         </ul>
       )}
+
+      {micAccess.dialog}
     </div>
   );
 }

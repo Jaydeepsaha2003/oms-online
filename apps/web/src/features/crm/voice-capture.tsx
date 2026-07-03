@@ -5,7 +5,8 @@ import { toast } from 'sonner';
 import { getApiErrorMessage } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { useAiStatus, useVoiceChecklist } from './use-crm';
-import { startVoiceRecording, type VoiceRecorder } from './voice-recorder';
+import { type VoiceRecorder } from './voice-recorder';
+import { useMicAccess } from './mic-permission';
 import { useMicrophoneStatus } from './use-microphone-status';
 
 /** Compose Gemini's result into a description — a one-liner, or multi-line bullets. */
@@ -42,14 +43,11 @@ export function VoiceCapture({
   const [transcript, setTranscript] = useState('');
   const recorder = useRef<VoiceRecorder | null>(null);
 
-  const start = async () => {
-    try {
-      recorder.current = await startVoiceRecording();
-      setPhase('recording');
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not start the microphone.');
-    }
-  };
+  const micAccess = useMicAccess((rec) => {
+    recorder.current = rec;
+    setPhase('recording');
+  });
+  const start = () => micAccess.begin();
   const stop = async () => {
     const rec = recorder.current;
     if (!rec) return;
@@ -90,14 +88,7 @@ export function VoiceCapture({
               variant="outline"
               className="h-11 border-blue-300 px-4 text-blue-700 hover:bg-blue-50"
               onClick={start}
-              disabled={!micStatus.canRecord}
-              title={
-                !micStatus.isSecure
-                  ? 'Microphone requires a secure connection (HTTPS)'
-                  : micStatus.hasMic === false
-                  ? 'No microphone detected'
-                  : 'Speak — Hindi or English'
-              }
+              title={micStatus.isSecure ? 'Speak — Hindi or English' : 'Microphone requires a secure connection (HTTPS)'}
             >
               <Mic className="size-4" /> Speak &amp; summarise
             </Button>
@@ -112,13 +103,10 @@ export function VoiceCapture({
               <span>⚠️</span> Microphone requires a secure connection (HTTPS or localhost). Access via HTTPS to enable.
             </p>
           )}
-          {micStatus.isSecure && micStatus.hasMic === false && (
-            <p className="text-xs text-amber-600 font-medium flex items-center gap-1">
-              <span>⚠️</span> No microphone detected. Please connect a microphone.
-            </p>
-          )}
         </div>
       )}
+
+      {micAccess.dialog}
 
       {phase === 'recording' && (
         <div className="flex items-center justify-between rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5">

@@ -2,14 +2,12 @@ import axios, { AxiosError, type AxiosRequestConfig, type AxiosResponse } from '
 import type { AuthResult } from '@oms/shared';
 import { useAuthStore } from '@/stores/auth-store';
 
-// Resolve the API base URL. By default we derive it from the host the page was
-// opened on, so the same dev server works on localhost AND from phones/other
-// devices on the LAN (e.g. http://192.168.1.50:6173 -> http://192.168.1.50:4000/api).
-// Set VITE_API_URL to an absolute URL to override this entirely.
-const API_PORT = import.meta.env.VITE_API_PORT ?? '4000';
-const API_URL =
-  import.meta.env.VITE_API_URL ??
-  `${window.location.protocol}//${window.location.hostname}:${API_PORT}/api`;
+// Resolve the API base URL. By default we call the same origin the page was
+// opened on (`/api`) and let the Vite dev/preview server proxy it to the Nest
+// API — this works on localhost, over HTTPS, and from phones on the LAN
+// without mixed-content issues. Set VITE_API_URL to an absolute URL to
+// bypass the proxy and hit the API directly.
+const API_URL = import.meta.env.VITE_API_URL ?? '/api';
 
 /** Shared axios instance. `withCredentials` sends the httpOnly refresh cookie. */
 export const api = axios.create({
