@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useAiStatus, useVoiceChecklist } from './use-crm';
 import { startVoiceRecording, type VoiceRecorder } from './voice-recorder';
+import { useMicrophoneStatus } from './use-microphone-status';
 
 export interface ChecklistDraftItem {
   text: string;
@@ -33,6 +34,7 @@ export function ChecklistBlock({
   const navigate = useNavigate();
   const { data: ai } = useAiStatus();
   const voice = useVoiceChecklist();
+  const micStatus = useMicrophoneStatus();
   const [text, setText] = useState('');
   const [phase, setPhase] = useState<'idle' | 'recording' | 'thinking'>('idle');
   const recorder = useRef<VoiceRecorder | null>(null);
@@ -97,7 +99,20 @@ export function ChecklistBlock({
         ) : phase === 'thinking' ? (
           <Button type="button" className="h-11 shrink-0 px-4" disabled><Loader2 className="size-4 animate-spin" /> Reading…</Button>
         ) : (
-          <Button type="button" variant="outline" className="h-11 shrink-0 border-blue-300 px-4 text-blue-700 hover:bg-blue-50" onClick={startRec} disabled={micDisabled} title="Speak your tasks (Hindi or English)">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11 shrink-0 border-blue-300 px-4 text-blue-700 hover:bg-blue-50"
+            onClick={startRec}
+            disabled={micDisabled || !micStatus.canRecord}
+            title={
+              !micStatus.isSecure
+                ? 'Microphone requires a secure connection (HTTPS)'
+                : micStatus.hasMic === false
+                ? 'No microphone detected'
+                : 'Speak your tasks (Hindi or English)'
+            }
+          >
             <Mic className="size-4" /> Speak
           </Button>
         )}
@@ -109,10 +124,27 @@ export function ChecklistBlock({
           <button type="button" onClick={cancelRec} className="text-rose-500 hover:text-rose-700"><X className="size-4" /></button>
         </div>
       )}
-      {showSetupHint && ai && !ai.configured && phase === 'idle' && (
-        <button type="button" onClick={() => navigate('/settings')} className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-xs">
-          <Sparkles className="size-3.5 text-amber-500" /> Turn on voice input — add your free Gemini key in Settings
-        </button>
+
+      {phase === 'idle' && (
+        <div className="space-y-1.5">
+          {!micStatus.isSecure && (
+            <p className="text-xs text-amber-600 font-medium flex items-center gap-1">
+              <span>⚠️</span> Microphone requires a secure connection (HTTPS or localhost). Access via HTTPS to enable.
+            </p>
+          )}
+          {micStatus.isSecure && micStatus.hasMic === false && (
+            <p className="text-xs text-amber-600 font-medium flex items-center gap-1">
+              <span>⚠️</span> No microphone detected. Please connect a microphone.
+            </p>
+          )}
+          {showSetupHint && ai && !ai.configured && (
+            <div>
+              <button type="button" onClick={() => navigate('/settings')} className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-xs">
+                <Sparkles className="size-3.5 text-amber-500" /> Turn on voice input — add your free Gemini key in Settings
+              </button>
+            </div>
+          )}
+        </div>
       )}
 
       {/* items */}

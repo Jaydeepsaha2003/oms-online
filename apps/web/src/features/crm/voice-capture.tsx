@@ -6,6 +6,7 @@ import { getApiErrorMessage } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { useAiStatus, useVoiceChecklist } from './use-crm';
 import { startVoiceRecording, type VoiceRecorder } from './voice-recorder';
+import { useMicrophoneStatus } from './use-microphone-status';
 
 /** Compose Gemini's result into a description — a one-liner, or multi-line bullets. */
 function compose(summary: string, items: string[], transcript: string): string {
@@ -23,6 +24,7 @@ export function VoiceCapture({ onConfirm }: { onConfirm: (text: string) => void 
   const navigate = useNavigate();
   const { data: ai } = useAiStatus();
   const voice = useVoiceChecklist();
+  const micStatus = useMicrophoneStatus();
   const [phase, setPhase] = useState<'idle' | 'recording' | 'thinking' | 'review'>('idle');
   const [draft, setDraft] = useState('');
   const [transcript, setTranscript] = useState('');
@@ -66,14 +68,39 @@ export function VoiceCapture({ onConfirm }: { onConfirm: (text: string) => void 
     <div className="space-y-2">
       {/* trigger */}
       {phase === 'idle' && (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" variant="outline" className="h-11 border-blue-300 px-4 text-blue-700 hover:bg-blue-50" onClick={start} title="Speak — Hindi or English">
-            <Mic className="size-4" /> Speak &amp; summarise
-          </Button>
-          {ai && !ai.configured && (
-            <button type="button" onClick={() => navigate('/settings')} className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-xs">
-              <Sparkles className="size-3.5 text-amber-500" /> Turn on voice — add your free Gemini key in Settings
-            </button>
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 border-blue-300 px-4 text-blue-700 hover:bg-blue-50"
+              onClick={start}
+              disabled={!micStatus.canRecord}
+              title={
+                !micStatus.isSecure
+                  ? 'Microphone requires a secure connection (HTTPS)'
+                  : micStatus.hasMic === false
+                  ? 'No microphone detected'
+                  : 'Speak — Hindi or English'
+              }
+            >
+              <Mic className="size-4" /> Speak &amp; summarise
+            </Button>
+            {ai && !ai.configured && (
+              <button type="button" onClick={() => navigate('/settings')} className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-xs">
+                <Sparkles className="size-3.5 text-amber-500" /> Turn on voice — add your free Gemini key in Settings
+              </button>
+            )}
+          </div>
+          {!micStatus.isSecure && (
+            <p className="text-xs text-amber-600 font-medium flex items-center gap-1">
+              <span>⚠️</span> Microphone requires a secure connection (HTTPS or localhost). Access via HTTPS to enable.
+            </p>
+          )}
+          {micStatus.isSecure && micStatus.hasMic === false && (
+            <p className="text-xs text-amber-600 font-medium flex items-center gap-1">
+              <span>⚠️</span> No microphone detected. Please connect a microphone.
+            </p>
           )}
         </div>
       )}

@@ -13,11 +13,40 @@ export interface VoiceRecorder {
 }
 
 export async function startVoiceRecording(): Promise<VoiceRecorder> {
-  if (!navigator.mediaDevices?.getUserMedia) throw new Error('Microphone is not available on this device/browser.');
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+  if (typeof window !== 'undefined' && window.isSecureContext === false) {
+    throw new Error('Microphone access requires a secure connection (HTTPS or localhost).');
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error('Microphone is not available on this device/browser.');
+  }
+
+  // Create AudioContext synchronously within user gesture context
   const AC: Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: Ctx }).webkitAudioContext;
   const ctx = new AC();
-  if (ctx.state === 'suspended') await ctx.resume();
+  const resumePromise = ctx.resume().catch(() => {});
+
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+  } catch (err) {
+    console.warn('Detailed microphone constraints failed, falling back to simple audio constraints:', err);
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (fallbackErr) {
+      ctx.close().catch(() => {});
+      throw fallbackErr;
+    }
+  }
+
+  await resumePromise;
+  if (ctx.state === 'suspended') {
+    try {
+      await ctx.resume();
+    } catch {
+      // Proceed best effort
+    }
+  }
+
   const source = ctx.createMediaStreamSource(stream);
   const processor = ctx.createScriptProcessor(4096, 1, 1);
   const chunks: Float32Array[] = [];
