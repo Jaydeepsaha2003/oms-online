@@ -69,10 +69,36 @@ export interface SaveCustomerLogoInput {
   subCategory?: string | null;
 }
 
+/** Per-customer bag weight: for this customer + category, 1 bag = `kgsPerBag` kgs.
+ *  The order form auto-fills Kgs = Bags × kgsPerBag as bags are typed. */
+export interface CustomerBagWeightDto {
+  id: number;
+  customerId: number;
+  category: string;
+  kgsPerBag: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Upsert a bag weight (unique per customer + category). */
+export interface SaveCustomerBagWeightInput {
+  customerId: number;
+  category: string;
+  kgsPerBag: number;
+}
+
+/** Apply one bag weight to many customers at once. */
+export interface BulkSaveCustomerBagWeightInput {
+  customerIds: number[];
+  category: string;
+  kgsPerBag: number;
+}
+
 /** Everything configured for one customer. */
 export interface CustomerSpecialRates {
   rates: CustomerRateDto[];
   logos: CustomerLogoDto[];
+  bagWeights: CustomerBagWeightDto[];
 }
 
 /** Catalog values for the cascading category → sub-category → item dropdowns. */

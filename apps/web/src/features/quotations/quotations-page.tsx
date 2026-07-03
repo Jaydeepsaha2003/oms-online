@@ -55,7 +55,7 @@ const COLUMNS: DataColumn<QuotationDto>[] = [
   { id: 'date', label: 'Date', cell: (q) => <span className="whitespace-nowrap">{formatDate(q.orderDate)}</span> },
   { id: 'customer', label: 'Customer', cell: (q) => <span className="font-medium">{q.customerName}</span> },
   { id: 'items', label: 'Items', align: 'right', cell: (q) => <span className="tabular-nums">{q.itemCount}</span> },
-  { id: 'total', label: 'Total Amount', align: 'right', cell: (q) => <span className="font-semibold tabular-nums text-emerald-700">₹{(q.totalAmount ?? 0).toLocaleString()}</span> },
+  { id: 'total', label: 'Total Amount', align: 'right', cell: (q) => <span className="font-semibold tabular-nums text-emerald-700">₹{(q.totalAmount ?? 0).toLocaleString('en-IN')}</span> },
   { id: 'status', label: 'Status', cell: (q) => <StatusBadge s={q.status} /> },
   {
     id: 'outcome',

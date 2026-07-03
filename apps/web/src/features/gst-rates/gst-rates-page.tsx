@@ -43,7 +43,7 @@ import { CustomerGstRates } from './customer-gst-rates';
 import { RateHistoryDialog } from '@/components/common/rate-history-dialog';
 
 const PAGE_SIZE = 50;
-const pct = (n: number | null) => (n == null ? '—' : `${n.toLocaleString()}%`);
+const pct = (n: number | null) => (n == null ? '—' : `${n.toLocaleString('en-IN')}%`);
 
 export function GstRatesPage() {
   const { can } = usePermissions();

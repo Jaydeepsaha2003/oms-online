@@ -115,6 +115,23 @@ export function Combobox({
     listRef.current?.querySelector<HTMLElement>(`[data-idx="${active}"]`)?.scrollIntoView({ block: 'nearest' });
   }, [active, open]);
 
+  // Close ONLY when a scroll container that holds the FIELD scrolls (the page
+  // moving under the anchor would leave the portal'd list floating detached).
+  // Scrolling the option list itself — or anything else inside the portal —
+  // never matches, so browsing the dropdown with the wheel keeps it open.
+  React.useEffect(() => {
+    if (!open) return;
+    const onScroll = (e: Event) => {
+      const t = e.target;
+      const anchor = anchorRef.current;
+      if (!anchor || !(t instanceof Node) || !t.contains(anchor)) return;
+      setOpen(false);
+      inputRef.current?.blur();
+    };
+    window.addEventListener('scroll', onScroll, { capture: true, passive: true });
+    return () => window.removeEventListener('scroll', onScroll, { capture: true });
+  }, [open]);
+
   const commit = (v: string) => {
     onChange(v);
     setText(labelFor(v));
@@ -269,7 +286,7 @@ export function Combobox({
           )}
           {hiddenCount > 0 && (
             <div className="text-muted-foreground border-t px-3 py-1.5 text-xs">
-              +{hiddenCount.toLocaleString()} more — type to narrow…
+              +{hiddenCount.toLocaleString('en-IN')} more — type to narrow…
             </div>
           )}
         </div>

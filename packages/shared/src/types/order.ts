@@ -54,6 +54,9 @@ export interface OrderDto {
   totalRate: number;
   /** Sum of line amounts: rate × quantity (Kgs or Pcs per the line's calc field). */
   totalAmount: number;
+  /** Dispatch roll-up across active lines (list views): FULL = every line fully
+   *  dispatched, PARTIAL = some dispatches exist, NONE = untouched. */
+  dispatchState?: 'NONE' | 'PARTIAL' | 'FULL' | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -95,8 +98,20 @@ export interface OrderInput {
   items: OrderItemInput[];
 }
 
-export type OrderQuery = PaginationQuery & { status?: string };
+export type OrderQuery = PaginationQuery & {
+  status?: string;
+  /** Keep orders that contain this product / design on any line (exact match,
+   *  values come from {@link OrderFilterOptions}). */
+  product?: string;
+  design?: string;
+};
 export type OrderList = Paginated<OrderDto>;
+
+/** Distinct product / design values present on order lines, for the Orders page filters. */
+export interface OrderFilterOptions {
+  products: string[];
+  designs: string[];
+}
 
 /** A product available to order, with its master category/sub-category and rate. */
 export interface OrderProductLite {
@@ -161,4 +176,51 @@ export type CalcField = 'KGS' | 'PCS';
 export interface CategoryFieldDto {
   category: string;
   field: CalcField;
+}
+
+/* ── Order journey timeline (View Orders → truck icon modal) ─────────────────
+ * Ordered → dispatched (per line) → challaned, with dates for the animation. */
+
+export interface OrderTimelineChallanRef {
+  id: number;
+  code: string;
+  invDate: string;
+  challanStatus: string;
+}
+
+export interface OrderTimelineDispatch {
+  id: number;
+  code: string | null;
+  dispatchDate: string;
+  bags: number | null;
+  pcs: number | null;
+  kgs: number | null;
+  box: number | null;
+  dispatchStatus: string;
+  /** The (non-cancelled) challan this dispatch was billed on, if any. */
+  challan: OrderTimelineChallanRef | null;
+}
+
+export interface OrderTimelineLine {
+  orderItemId: number;
+  productName: string | null;
+  designType: string | null;
+  status: string;
+  bags: number | null;
+  pcs: number | null;
+  kgs: number | null;
+  box: number | null;
+  calField: string | null;
+  fullyDispatched: boolean;
+  dispatches: OrderTimelineDispatch[];
+}
+
+export interface OrderTimeline {
+  orderId: number;
+  code: string;
+  customerName: string;
+  orderDate: string;
+  completionDate: string | null;
+  status: string;
+  lines: OrderTimelineLine[];
 }

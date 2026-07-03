@@ -22,9 +22,9 @@ import {
 } from './use-customers';
 
 const PAGE_SIZE = 50;
-const num = (n: number | null) => (n == null ? '—' : n.toLocaleString());
+const num = (n: number | null) => (n == null ? '—' : n.toLocaleString('en-IN'));
 /** Amount prefixed with the rupee symbol; dash when unknown. */
-const money = (n: number | null) => (n == null ? '—' : `₹${n.toLocaleString()}`);
+const money = (n: number | null) => (n == null ? '—' : `₹${n.toLocaleString('en-IN')}`);
 const txt = (s: string | null) => (s && s.trim() !== '' ? s : '—');
 
 /** Every customer column. The most-used ones come first; Code + Customer name

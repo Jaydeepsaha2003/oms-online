@@ -491,6 +491,23 @@ export function OrderFormPage() {
     if (sizePre || pcsPre) setShowBy(sizePre ? 'SIZE' : 'PCS'); // tie → Size
   };
 
+  // Auto-calc Kgs (= Bags × the customer's per-category bag weight) as bags are
+  // typed — configured in Special Rates → "Bag weight (Kgs per bag)". The user
+  // can still overtype Kgs afterwards; without a configured weight nothing changes.
+  const onBags = (value: string) => {
+    setEntry((e) => {
+      const cat = e.category.trim().toUpperCase();
+      const bw = (special?.bagWeights ?? []).find((b) => b.category.trim().toUpperCase() === cat);
+      const bags = n(value) ?? 0;
+      const round2 = (x: number) => String(Math.round(x * 100) / 100);
+      return {
+        ...e,
+        bags: value,
+        gram: bw && value.trim() !== '' ? round2(bags * bw.kgsPerBag) : e.gram,
+      };
+    });
+  };
+
   // Auto-calc Kgs (= Pcs × weight) and Box (= Pcs ÷ pcs-per-box) when a product is picked.
   const onPcs = (value: string) => {
     setEntry((e) => {
@@ -633,7 +650,7 @@ export function OrderFormPage() {
     const noun = target === 'quotation' ? 'quotation' : 'order';
     const ok = await confirm({
       title: isEdit ? `Save changes to this ${noun}?` : `Create this ${noun}?`,
-      description: `${items.length} item${items.length === 1 ? '' : 's'} · total ₹${total.toLocaleString()} for ${customer.trim()}.`,
+      description: `${items.length} item${items.length === 1 ? '' : 's'} · total ₹${total.toLocaleString('en-IN')} for ${customer.trim()}.`,
       confirmText: isEdit ? 'Save changes' : `Create ${noun}`,
     });
     if (!ok) return;
@@ -665,7 +682,7 @@ export function OrderFormPage() {
     if (!validate()) return;
     const ok = await confirm({
       title: 'Save changes and convert to order?',
-      description: `${items.length} item${items.length === 1 ? '' : 's'} · total ₹${total.toLocaleString()} for ${customer.trim()}.`,
+      description: `${items.length} item${items.length === 1 ? '' : 's'} · total ₹${total.toLocaleString('en-IN')} for ${customer.trim()}.`,
       confirmText: 'Save & Convert',
     });
     if (!ok) return;
@@ -696,7 +713,7 @@ export function OrderFormPage() {
           : 'Create this order?',
       description: isDraft
         ? `${items.length} item${items.length === 1 ? '' : 's'} · kept as Draft and hidden from Order Modify until confirmed.`
-        : `${items.length} item${items.length === 1 ? '' : 's'} · total ₹${total.toLocaleString()} for ${customer.trim()}.`,
+        : `${items.length} item${items.length === 1 ? '' : 's'} · total ₹${total.toLocaleString('en-IN')} for ${customer.trim()}.`,
       confirmText: isEdit ? (isDraft ? 'Save draft' : 'Confirm & save') : isDraft ? 'Save draft' : 'Create order',
     });
     if (!ok) return;
@@ -913,17 +930,17 @@ export function OrderFormPage() {
               />
             </div>
             <div className="space-y-1 lg:col-span-1" data-tabfield="productRate">
-              <Label className="text-base">Prod ₹</Label>
+              <Label className="text-base">Product ₹</Label>
               <Input type="number" step="any" className="text-right tabular-nums" value={entry.productRate} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ productRate: e.target.value })} />
             </div>
             <div className="space-y-1 lg:col-span-1" data-tabfield="designRate">
-              <Label className="text-base">Dsgn ₹</Label>
+              <Label className="text-base">Design ₹</Label>
               <Input type="number" step="any" className="text-right tabular-nums" value={entry.designRate} disabled={!designRateEditable} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ designRate: e.target.value })} />
             </div>
             <div className="space-y-1 lg:col-span-1">
               <Label className="text-base">Total ₹</Label>
               <div className="flex h-9 items-center justify-end rounded-md border border-emerald-200 bg-emerald-50 px-2 text-sm font-bold tabular-nums text-emerald-700">
-                {entryTotal.toLocaleString()}
+                {entryTotal.toLocaleString('en-IN')}
               </div>
             </div>
           </div>
@@ -940,7 +957,7 @@ export function OrderFormPage() {
             </div>
             <div className="space-y-1 lg:col-span-1" data-tabfield="bags">
               <Label className="text-base">Bags</Label>
-              <Input type="number" step="any" value={entry.bags} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ bags: e.target.value })} />
+              <Input type="number" step="any" value={entry.bags} onKeyDown={onlyNumericKey} onChange={(e) => onBags(e.target.value)} />
             </div>
             <div className="space-y-1 lg:col-span-1" data-tabfield="pcs">
               <Label className={cn('text-base', showBy === 'PCS' && 'text-primary font-semibold')}>Pcs</Label>
@@ -1030,8 +1047,8 @@ export function OrderFormPage() {
                       <td className="text-right tabular-nums">{i.pcs || '—'}</td>
                       <td className="text-right tabular-nums">{i.gram || '—'}</td>
                       <td className="text-right tabular-nums">{i.box || '—'}</td>
-                      <td className="text-right tabular-nums">{itemRate(i).toLocaleString()}</td>
-                      <td className="text-right font-semibold tabular-nums text-emerald-700">{lineAmount(i).toLocaleString()}</td>
+                      <td className="text-right tabular-nums">{itemRate(i).toLocaleString('en-IN')}</td>
+                      <td className="text-right font-semibold tabular-nums text-emerald-700">{lineAmount(i).toLocaleString('en-IN')}</td>
                       <td className="max-w-[14rem] truncate" title={i.comment}>{i.comment || '—'}</td>
                       <td>
                         <Button variant="ghost" size="icon" className="size-7 text-destructive hover:text-destructive" onClick={() => removeItem(i.key)} aria-label="Remove">
@@ -1048,12 +1065,12 @@ export function OrderFormPage() {
                     <td colSpan={5} className="text-right">
                       Total
                     </td>
-                    <td className="text-right tabular-nums">{totals.bags.toLocaleString()}</td>
-                    <td className="text-right tabular-nums">{totals.pcs.toLocaleString()}</td>
-                    <td className="text-right tabular-nums">{totals.gram.toLocaleString()}</td>
-                    <td className="text-right tabular-nums">{totals.box.toLocaleString()}</td>
-                    <td className="text-right tabular-nums">{totals.rate.toLocaleString()}</td>
-                    <td className="text-right tabular-nums text-emerald-700">{totals.amount.toLocaleString()}</td>
+                    <td className="text-right tabular-nums">{totals.bags.toLocaleString('en-IN')}</td>
+                    <td className="text-right tabular-nums">{totals.pcs.toLocaleString('en-IN')}</td>
+                    <td className="text-right tabular-nums">{totals.gram.toLocaleString('en-IN')}</td>
+                    <td className="text-right tabular-nums">{totals.box.toLocaleString('en-IN')}</td>
+                    <td className="text-right tabular-nums">{totals.rate.toLocaleString('en-IN')}</td>
+                    <td className="text-right tabular-nums text-emerald-700">{totals.amount.toLocaleString('en-IN')}</td>
                     <td colSpan={2} />
                   </tr>
                 </tfoot>
@@ -1068,7 +1085,7 @@ export function OrderFormPage() {
       <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t px-1 py-3">
         <p className="text-sm">
           {items.length} item(s) · total{' '}
-          <span className="font-bold tabular-nums text-emerald-600">₹{total.toLocaleString()}</span>
+          <span className="font-bold tabular-nums text-emerald-600">₹{total.toLocaleString('en-IN')}</span>
         </p>
         <div className="ml-auto flex flex-wrap justify-end gap-2">
           <Button type="button" variant="destructive" onClick={() => navigate(listPath)} title="Cancel (Esc)">

@@ -231,6 +231,7 @@ model Customer {
   transRates  TransRate[]
   rateOverrides    CustomerRate[]
   logoRestrictions CustomerLogoRestriction[]
+  bagWeights       CustomerBagWeight[]
 
   @@index([partyName])
   @@index([agentName])
@@ -267,6 +268,23 @@ model CustomerRate {
   @@unique([customerId, kind, scope, category, subCategory, target])
   @@index([customerId])
   @@map("customer_rates")
+}
+
+// Per-customer bag weight: for this customer + product category, one bag weighs
+// `kgsPerBag` kgs. The order form auto-fills Kgs = Bags × kgsPerBag as bags are typed.
+model CustomerBagWeight {
+  id         Int      @id @default(autoincrement())
+  customerId Int
+  category   String
+  kgsPerBag  Float
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, category])
+  @@index([customerId])
+  @@map("customer_bag_weights")
 }
 
 // A per-customer logo restriction: the logo is NOT ALLOWED for the given category

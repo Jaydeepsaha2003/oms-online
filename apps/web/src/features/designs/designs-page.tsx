@@ -53,9 +53,9 @@ import {
 // Load the whole (filtered) design set so sorting & the scrollable grid cover
 // everything in one place, rather than one page at a time.
 const PAGE_SIZE = 1000;
-const num = (n: number | null) => (n == null ? '—' : n.toLocaleString());
+const num = (n: number | null) => (n == null ? '—' : n.toLocaleString('en-IN'));
 /** Amount prefixed with the rupee symbol; dash when unknown. */
-const money = (n: number | null) => (n == null ? '—' : `₹${n.toLocaleString()}`);
+const money = (n: number | null) => (n == null ? '—' : `₹${n.toLocaleString('en-IN')}`);
 /** Margin = rate − cost; up/green for profit, down/red for loss, dash when unknown. */
 const marginCell = (cost: number | null, rate: number | null) => {
   if (cost == null || rate == null) return <span className="text-muted-foreground">—</span>;
@@ -64,7 +64,7 @@ const marginCell = (cost: number | null, rate: number | null) => {
   const tone = m > 0 ? 'text-emerald-600' : m < 0 ? 'text-destructive' : 'text-muted-foreground';
   return (
     <span className={cn('inline-flex items-center justify-end gap-1 font-medium tabular-nums', tone)}>
-      ₹{m.toLocaleString()}
+      ₹{m.toLocaleString('en-IN')}
       <Icon className="size-3.5 shrink-0" />
     </span>
   );
@@ -580,7 +580,7 @@ function DesignDialog({ design, onClose, onCreated }: { design: DesignDto | null
                   margin < 0 ? 'text-destructive' : 'text-emerald-600',
                 )}
               >
-                ₹{margin.toLocaleString()}
+                ₹{margin.toLocaleString('en-IN')}
                 {marginPct != null && (
                   <span className="text-muted-foreground ml-1 text-xs font-normal">({marginPct.toFixed(1)}%)</span>
                 )}
@@ -676,7 +676,7 @@ function CombinationDialog({
           <div className="bg-muted/40 flex items-center justify-between rounded-lg px-3 py-2 text-sm">
             <span className="font-medium">Combined cost / rate</span>
             <span className="tabular-nums font-semibold">
-              {cost.toLocaleString()} / {rate.toLocaleString()}
+              {cost.toLocaleString('en-IN')} / {rate.toLocaleString('en-IN')}
             </span>
           </div>
 
@@ -793,7 +793,7 @@ function CombineWithDesignDialog({ base, onClose }: { base: DesignDto; onClose: 
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">{all.length} designs · combined cost / rate</span>
-                <span className="font-semibold tabular-nums">{cost.toLocaleString()} / {rate.toLocaleString()}</span>
+                <span className="font-semibold tabular-nums">{cost.toLocaleString('en-IN')} / {rate.toLocaleString('en-IN')}</span>
               </div>
             </div>
           )}

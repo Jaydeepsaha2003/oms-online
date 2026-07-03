@@ -29,9 +29,9 @@ import {
 } from './use-products';
 
 const PAGE_SIZE = 50;
-const num = (n: number | null) => (n == null ? '—' : n.toLocaleString());
+const num = (n: number | null) => (n == null ? '—' : n.toLocaleString('en-IN'));
 /** Amount prefixed with the rupee symbol; dash when unknown. */
-const money = (n: number | null) => (n == null ? '—' : `₹${n.toLocaleString()}`);
+const money = (n: number | null) => (n == null ? '—' : `₹${n.toLocaleString('en-IN')}`);
 
 const COLUMNS: DataColumn<ProductDto>[] = [
   { id: 'category', label: 'Category', pin: 'left0', fixed: true, cell: (p) => <span className="font-medium">{p.category}</span> },

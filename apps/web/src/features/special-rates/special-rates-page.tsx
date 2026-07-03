@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { BadgePercent, Ban, ListFilter, Package, Palette, Plus, Search, Trash2, Users, UsersRound } from 'lucide-react';
+import { BadgePercent, Ban, ListFilter, Package, Palette, Plus, Search, Trash2, Users, UsersRound, Weight } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
   AgentCustomer,
+  CustomerBagWeightDto,
   CustomerLogoDto,
   CustomerRateDto,
   LogoScope,
@@ -22,11 +23,14 @@ import { Label } from '@/components/ui/label';
 import { useCustomers } from '@/features/customers/use-customers';
 import {
   useAgentCustomers,
+  useBulkSaveCustomerBagWeight,
   useBulkSaveCustomerLogo,
   useBulkSaveCustomerRate,
   useCustomerSpecialRates,
+  useDeleteCustomerBagWeight,
   useDeleteCustomerLogo,
   useDeleteCustomerRate,
+  useSaveCustomerBagWeight,
   useSaveCustomerLogo,
   useSaveCustomerRate,
   useSpecialRateAgents,
@@ -45,7 +49,7 @@ const LOGO_LEVELS: { value: LogoScope; label: string; title: string }[] = [
   { value: 'SUBCATEGORY', label: 'Sub-category', title: 'Block the logo for a specific sub-category.' },
 ];
 const scopeLabel = (s: string) => RATE_LEVELS.find((l) => l.value === s)?.label ?? s;
-const signed = (n: number) => (n > 0 ? `+${n.toLocaleString()}` : n.toLocaleString());
+const signed = (n: number) => (n > 0 ? `+${n.toLocaleString('en-IN')}` : n.toLocaleString('en-IN'));
 
 interface Accent {
   ring: string;
@@ -55,7 +59,7 @@ interface Accent {
   active: string;
   idle: string;
 }
-const ACCENTS: Record<'PRODUCT' | 'DESIGN' | 'LOGO', Accent> = {
+const ACCENTS: Record<'PRODUCT' | 'DESIGN' | 'LOGO' | 'BAG', Accent> = {
   PRODUCT: {
     ring: 'border-sky-200',
     head: 'from-sky-50 to-sky-100/40',
@@ -79,6 +83,14 @@ const ACCENTS: Record<'PRODUCT' | 'DESIGN' | 'LOGO', Accent> = {
     solid: 'bg-rose-600 hover:bg-rose-700',
     active: 'border-rose-600 bg-rose-600 text-white',
     idle: 'border-slate-200 bg-white text-slate-600 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700',
+  },
+  BAG: {
+    ring: 'border-amber-200',
+    head: 'from-amber-50 to-amber-100/40',
+    chip: 'bg-amber-100 text-amber-700',
+    solid: 'bg-amber-600 hover:bg-amber-700',
+    active: 'border-amber-600 bg-amber-600 text-white',
+    idle: 'border-slate-200 bg-white text-slate-600 hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700',
   },
 };
 
@@ -109,6 +121,7 @@ export function SpecialRatesPage() {
   const { data: special } = useCustomerSpecialRates(mode === 'single' ? customerId : undefined);
   const rates = special?.rates ?? [];
   const logos = special?.logos ?? [];
+  const bagWeights = special?.bagWeights ?? [];
 
   /* agent (bulk) mode */
   const { data: agents } = useSpecialRateAgents();
@@ -219,7 +232,8 @@ export function SpecialRatesPage() {
             canCreate={canCreate}
             canDelete={canDelete}
           />
-          <LogoPanel className="lg:col-span-2" target={target} lookups={lookups} logos={logos} canCreate={canCreate} canDelete={canDelete} />
+          <LogoPanel target={target} lookups={lookups} logos={logos} canCreate={canCreate} canDelete={canDelete} />
+          <BagWeightPanel target={target} lookups={lookups} bagWeights={bagWeights} canCreate={canCreate} canDelete={canDelete} />
         </div>
       )}
         </>
@@ -653,6 +667,118 @@ function LogoPanel({
         </p>
       ) : (
         <DataTable columns={columns} rows={logos} rowKey={(r) => r.id} dense emptyText="No logo restrictions — the logo is allowed everywhere." actions={canDelete ? deleteAction(onDelete) : undefined} />
+      )}
+    </Panel>
+  );
+}
+
+/* ── Bag weights (Kgs per bag, per category) ─────────────────────────────────── */
+
+function BagWeightPanel({
+  target,
+  lookups,
+  bagWeights,
+  canCreate,
+  canDelete,
+  className,
+}: {
+  target: Target;
+  lookups: SpecialRateLookups | undefined;
+  bagWeights: CustomerBagWeightDto[];
+  canCreate: boolean;
+  canDelete: boolean;
+  className?: string;
+}) {
+  const accent = ACCENTS.BAG;
+  const save = useSaveCustomerBagWeight();
+  const bulkSave = useBulkSaveCustomerBagWeight();
+  const del = useDeleteCustomerBagWeight();
+  const confirm = useConfirm();
+  const bulk = isBulk(target);
+
+  const [category, setCategory] = useState('');
+  const [kgsPerBag, setKgsPerBag] = useState('');
+  const categories = lookups?.categories ?? [];
+
+  const submit = () => {
+    if (!category) return toast.error('Select a category');
+    const kg = Number(kgsPerBag);
+    if (kgsPerBag.trim() === '' || Number.isNaN(kg) || kg <= 0) return toast.error('Enter the kgs one bag weighs (a positive number)');
+    const common = { category, kgsPerBag: kg };
+    const onSuccess = (msg: string) => {
+      toast.success(msg);
+      setCategory('');
+      setKgsPerBag('');
+    };
+    const onError = (e: unknown) => toast.error(getApiErrorMessage(e, 'Save failed'));
+    if (bulk) {
+      bulkSave.mutate({ customerIds: target.customerIds, ...common }, { onSuccess: (r) => onSuccess(`Applied to ${r.applied} customer(s)`), onError });
+    } else {
+      save.mutate({ customerId: target.customerId, ...common }, { onSuccess: () => onSuccess('Bag weight saved'), onError });
+    }
+  };
+
+  const onDelete = async (r: CustomerBagWeightDto) => {
+    const ok = await confirm({
+      title: 'Remove bag weight?',
+      description: `${r.category}: 1 bag = ${r.kgsPerBag} kg will be removed — Kgs will no longer auto-fill from Bags for this category.`,
+      confirmText: 'Remove',
+      destructive: true,
+    });
+    if (!ok) return;
+    del.mutate(r.id, { onSuccess: () => toast.success('Bag weight removed'), onError: (e) => toast.error(getApiErrorMessage(e, 'Delete failed')) });
+  };
+
+  const columns: DataColumn<CustomerBagWeightDto>[] = [
+    { id: 'category', label: 'Category', cell: (r) => <span className="font-medium">{r.category}</span> },
+    {
+      id: 'kgs',
+      label: '1 Bag =',
+      align: 'right',
+      cell: (r) => <span className="font-semibold tabular-nums text-amber-700">{r.kgsPerBag.toLocaleString('en-IN')} kg</span>,
+    },
+  ];
+
+  return (
+    <Panel
+      title="Bag weight (Kgs per bag)"
+      icon={<Weight className="size-4" />}
+      accent={accent}
+      info="For this customer, how many kgs one bag weighs in a category. On the New Order form, typing Bags then auto-fills Kgs = Bags × this weight (the user can still overtype it)."
+      badge={bulk ? `${targetCount(target)} customers` : `${bagWeights.length} set`}
+      className={className}
+    >
+      {canCreate && (
+        <div className="space-y-3 rounded-lg border bg-slate-50/70 p-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Category</Label>
+              <NativeSelect value={category} onChange={setCategory} options={categories} placeholder="Category…" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Kgs per 1 bag</Label>
+              <Input type="number" step="any" min="0" className="text-right tabular-nums" placeholder="e.g. 70" value={kgsPerBag} onChange={(e) => setKgsPerBag(e.target.value)} />
+            </div>
+            <div className="flex items-end">
+              <AddButton
+                accent={accent}
+                onClick={submit}
+                disabled={save.isPending || bulkSave.isPending}
+                title={bulk ? 'Apply this bag weight to every selected customer' : 'Save the bag weight for this customer + category (updates if one exists)'}
+              >
+                <Plus className="size-4" /> {bulk ? `Apply to ${targetCount(target)}` : 'Add / update'}
+              </AddButton>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {bulk ? (
+        <p className="text-muted-foreground rounded-lg border border-dashed px-3 py-4 text-center text-xs">
+          Bulk mode — existing bag weights are listed in “Per customer” mode.
+        </p>
+      ) : (
+        <DataTable columns={columns} rows={bagWeights} rowKey={(r) => r.id} dense emptyText="No bag weights — Kgs is typed manually for this customer." actions={canDelete ? deleteAction(onDelete) : undefined} />
       )}
     </Panel>
   );

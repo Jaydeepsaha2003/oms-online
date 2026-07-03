@@ -1,11 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   AgentCustomer,
+  BulkSaveCustomerBagWeightInput,
   BulkSaveCustomerLogoInput,
   BulkSaveCustomerRateInput,
+  CustomerBagWeightDto,
   CustomerLogoDto,
   CustomerRateDto,
   CustomerSpecialRates,
+  SaveCustomerBagWeightInput,
   SaveCustomerLogoInput,
   SaveCustomerRateInput,
   SpecialRateLookups,
@@ -106,6 +109,30 @@ export function useDeleteCustomerLogo() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => http.delete(`/special-rates/logo/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export function useSaveCustomerBagWeight() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: SaveCustomerBagWeightInput) => http.post<CustomerBagWeightDto>('/special-rates/bag-weight', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export function useBulkSaveCustomerBagWeight() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BulkSaveCustomerBagWeightInput) => http.post<{ applied: number }>('/special-rates/bag-weight/bulk', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export function useDeleteCustomerBagWeight() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => http.delete(`/special-rates/bag-weight/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }

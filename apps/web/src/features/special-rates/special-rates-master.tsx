@@ -27,7 +27,7 @@ const LEVEL_OPTS = [
 ];
 const typeLabel = (v: string) => TYPE_OPTS.find((t) => t.value === v)?.label ?? v;
 const levelLabel = (v: string) => LEVEL_OPTS.find((l) => l.value === v)?.label ?? v;
-const signed = (n: number) => (n > 0 ? `+${n.toLocaleString()}` : n.toLocaleString());
+const signed = (n: number) => (n > 0 ? `+${n.toLocaleString('en-IN')}` : n.toLocaleString('en-IN'));
 
 const TYPE_BADGE: Record<string, string> = {
   PRODUCT: 'bg-sky-100 text-sky-700 ring-sky-200',

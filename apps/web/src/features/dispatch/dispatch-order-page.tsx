@@ -18,7 +18,7 @@ import { useCreateDispatch, usePendingFilterOptions, usePendingOrders } from './
 
 const PAGE_SIZE = 50;
 const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? 0 : Number(s));
-const qty = (v: number | null) => (v ? v.toLocaleString() : '—');
+const qty = (v: number | null) => (v ? v.toLocaleString('en-IN') : '—');
 
 const DueBadge = ({ t }: { t: string }) => (
   <span className={cn('inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset', t === 'Over Due' ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200')}>

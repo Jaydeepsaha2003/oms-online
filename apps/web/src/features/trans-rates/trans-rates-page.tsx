@@ -42,7 +42,7 @@ import { CustomerTransRates } from './customer-trans-rates';
 import { RateHistoryDialog } from '@/components/common/rate-history-dialog';
 
 const PAGE_SIZE = 50;
-const num = (n: number | null) => (n == null ? '—' : n.toLocaleString());
+const num = (n: number | null) => (n == null ? '—' : n.toLocaleString('en-IN'));
 
 export function TransRatesPage() {
   const { can } = usePermissions();

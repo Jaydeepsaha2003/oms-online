@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Plus, Printer, Search, Trash2, Truck } from 'lucide-react';
+import { Ban, ChevronLeft, ChevronRight, Eye, Plus, Printer, Search, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 import type { OrderDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
-import { formatDateTime } from '@/lib/utils';
+import { cn, formatDateTime } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useColumnOrder } from '@/hooks/use-column-order';
@@ -13,7 +13,10 @@ import { ColumnSettings } from '@/components/common/column-settings';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { useDeleteOrder, useOrders } from './use-orders';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { NativeSelect } from '@/components/common/combo';
+import { useCancelOrder, useOrderFilterOptions, useOrders } from './use-orders';
+import { OrderTimelineModal } from './order-timeline-modal';
 
 const PAGE_SIZE = 50;
 
@@ -22,6 +25,25 @@ const STATUS_STYLE: Record<string, string> = {
   PENDING: 'bg-amber-50 text-amber-700 ring-amber-200',
   CANCELLED: 'bg-rose-50 text-rose-700 ring-rose-200',
   DRAFT: 'bg-slate-100 text-slate-700 ring-slate-200',
+};
+
+/** Truck colour + tooltip copy per dispatch roll-up (same colour language as the journey timeline). */
+const TRUCK_STATE: Record<'FULL' | 'PARTIAL' | 'NONE', { cls: string; label: string; detail: string }> = {
+  FULL: {
+    cls: 'text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700',
+    label: 'Fully dispatched',
+    detail: 'Every line of this order has been dispatched.',
+  },
+  PARTIAL: {
+    cls: 'text-sky-600 hover:bg-sky-50 hover:text-sky-700',
+    label: 'Partially dispatched',
+    detail: 'Some lines are dispatched; the rest are still pending.',
+  },
+  NONE: {
+    cls: 'text-amber-500 hover:bg-amber-50 hover:text-amber-600',
+    label: 'Not dispatched yet',
+    detail: 'Nothing has been dispatched for this order so far.',
+  },
 };
 
 const COLUMNS: DataColumn<OrderDto>[] = [
@@ -36,7 +58,7 @@ const COLUMNS: DataColumn<OrderDto>[] = [
     cell: (o) => (o.priority === 'URGENT' ? <span className="font-semibold text-rose-600">URGENT</span> : (o.priority ?? '—')),
   },
   { id: 'items', label: 'Items', align: 'right', cell: (o) => <span className="tabular-nums">{o.itemCount}</span> },
-  { id: 'total', label: 'Total Amount', align: 'right', cell: (o) => <span className="font-semibold tabular-nums">₹{(o.totalAmount ?? 0).toLocaleString()}</span> },
+  { id: 'total', label: 'Total Amount', align: 'right', cell: (o) => <span className="font-semibold tabular-nums">₹{(o.totalAmount ?? 0).toLocaleString('en-IN')}</span> },
   {
     id: 'status',
     label: 'Status',
@@ -61,26 +83,36 @@ export function OrdersPage() {
   const confirm = useConfirm();
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
+  const [product, setProduct] = useState('');
+  const [design, setDesign] = useState('');
   const [page, setPage] = useState(1);
-  const { data, isLoading } = useOrders({ page, pageSize: PAGE_SIZE, search: search || undefined });
-  const del = useDeleteOrder();
+  const { data: filterOptions } = useOrderFilterOptions();
+  const { data, isLoading } = useOrders({
+    page,
+    pageSize: PAGE_SIZE,
+    search: search || undefined,
+    product: product || undefined,
+    design: design || undefined,
+  });
+  const cancel = useCancelOrder();
   const cols = useColumnOrder('orders', COLUMNS);
   const { format, setFormat } = useDateFormat();
+  const [timelineFor, setTimelineFor] = useState<OrderDto | null>(null);
 
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
 
-  const handleDelete = async (o: OrderDto) => {
+  const handleCancel = async (o: OrderDto) => {
     const ok = await confirm({
-      title: 'Delete order?',
-      description: `Order ${o.code ?? `#${o.id}`} for "${o.customerName}" and its line items will be removed.`,
-      confirmText: 'Delete',
+      title: 'Cancel this order?',
+      description: `Order ${o.code ?? `#${o.id}`} for "${o.customerName}" will be marked CANCELLED. It stays on record but can no longer be dispatched.`,
+      confirmText: 'Cancel order',
       destructive: true,
     });
     if (!ok) return;
-    del.mutate(o.id, {
-      onSuccess: () => toast.success('Order deleted'),
-      onError: (e) => toast.error(getApiErrorMessage(e, 'Delete failed')),
+    cancel.mutate(o.id, {
+      onSuccess: () => toast.success('Order cancelled'),
+      onError: (e) => toast.error(getApiErrorMessage(e, 'Cancel failed')),
     });
   };
 
@@ -109,18 +141,28 @@ export function OrdersPage() {
         </div>
       </div>
 
-      <div className="relative max-w-sm">
-        <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
-        <Input
-          placeholder="Search order #, customer or agent…"
-          className="pl-9"
-          value={searchInput}
-          onChange={(e) => {
-            setSearchInput(e.target.value);
-            setSearch(e.target.value.trim());
-            setPage(1);
-          }}
-        />
+      {/* Sticky so the search + filters stay reachable while scrolling the list. */}
+      <div className="bg-background/85 sticky top-0 z-20 -mx-1 flex flex-wrap items-center gap-2 rounded-md px-1 py-1.5 backdrop-blur">
+        <div className="relative w-full sm:w-80">
+          <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
+          <Input
+            placeholder="Search order #, customer or agent…"
+            className="pl-9"
+            value={searchInput}
+            onChange={(e) => {
+              setSearchInput(e.target.value);
+              setSearch(e.target.value.trim());
+              setPage(1);
+            }}
+          />
+        </div>
+        {/* Keep orders whose lines contain the picked product / design. */}
+        <div className="w-64">
+          <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...(filterOptions?.products ?? [])]} placeholder="All products" />
+        </div>
+        <div className="w-48">
+          <NativeSelect value={design} onChange={(v) => { setDesign(v); setPage(1); }} options={['', ...(filterOptions?.designs ?? [])]} placeholder="All designs" />
+        </div>
       </div>
 
       <DataTable
@@ -130,27 +172,100 @@ export function OrdersPage() {
         isLoading={isLoading}
         emptyText="No orders yet — create one."
         onRowClick={can('order:update') ? (o) => navigate(`/orders/${o.id}/edit`) : undefined}
-        actions={(o) =>
-          can('order:print') || can('order:delete') ? (
+        actions={(o) => {
+          if (!(can('order:view') || can('order:print') || can('order:update'))) return null;
+          const truck = TRUCK_STATE[o.dispatchState ?? 'NONE'] ?? TRUCK_STATE.NONE;
+          const alreadyCancelled = o.status === 'CANCELLED';
+          const hasDispatches = (o.dispatchState ?? 'NONE') !== 'NONE';
+          const canCancel = !alreadyCancelled && !hasDispatches;
+          return (
             <div className="flex justify-end gap-1">
-              {can('order:print') && (
-                <Button variant="ghost" size="icon" className="size-8" onClick={() => toast('Challan / Dispatch — coming soon')} aria-label="Challan / Dispatch" title="Challan / Dispatch (coming soon)">
-                  <Truck className="size-4" />
-                </Button>
+              {can('order:view') && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(`/orders/${o.id}/edit`)} aria-label="View order">
+                      <Eye className="size-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    <p className="font-semibold">View order</p>
+                    <p className="opacity-80">Open the full order to see or edit its details.</p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
+              {can('order:view') && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={cn('size-8', truck.cls)}
+                      onClick={() => setTimelineFor(o)}
+                      aria-label={`Order journey — ${truck.label}`}
+                    >
+                      <Truck className="size-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-60">
+                    <p className="font-semibold">Order journey · {truck.label}</p>
+                    <p className="opacity-80">{truck.detail} Click to see every dispatch and challan, step by step.</p>
+                  </TooltipContent>
+                </Tooltip>
               )}
               {can('order:print') && (
-                <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(`/orders/${o.id}/bill`)} aria-label="Bill / Invoice" title="Bill / Invoice">
-                  <Printer className="size-4" />
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(`/orders/${o.id}/bill`)} aria-label="Bill / Invoice">
+                      <Printer className="size-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    <p className="font-semibold">Bill / Invoice</p>
+                    <p className="opacity-80">Open the printable sales-order bill.</p>
+                  </TooltipContent>
+                </Tooltip>
               )}
-              {can('order:delete') && (
-                <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => handleDelete(o)} aria-label="Delete">
-                  <Trash2 className="size-4" />
-                </Button>
+              {can('order:update') && (
+                <Tooltip>
+                  {/* span wrapper — a disabled button swallows pointer events, so the
+                      tooltip explaining WHY it's disabled would never show without it */}
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-8 text-destructive hover:text-destructive disabled:text-slate-300"
+                        disabled={!canCancel}
+                        onClick={() => handleCancel(o)}
+                        aria-label={alreadyCancelled ? 'Order already cancelled' : hasDispatches ? 'Cannot cancel — items dispatched' : 'Cancel order'}
+                      >
+                        <Ban className="size-4" />
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-56">
+                    {alreadyCancelled ? (
+                      <>
+                        <p className="font-semibold">Already cancelled</p>
+                        <p className="opacity-80">This order is cancelled and kept for records.</p>
+                      </>
+                    ) : hasDispatches ? (
+                      <>
+                        <p className="font-semibold">Cannot cancel</p>
+                        <p className="opacity-80">Items of this order are already dispatched — only untouched orders can be cancelled.</p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="font-semibold">Cancel order</p>
+                        <p className="opacity-80">Marks the order CANCELLED. It stays on record but can no longer be dispatched.</p>
+                      </>
+                    )}
+                  </TooltipContent>
+                </Tooltip>
               )}
             </div>
-          ) : null
-        }
+          );
+        }}
       />
 
       <div className="flex items-center justify-between">
@@ -171,6 +286,8 @@ export function OrdersPage() {
           </Button>
         </div>
       </div>
+
+      {timelineFor && <OrderTimelineModal order={timelineFor} onClose={() => setTimelineFor(null)} />}
     </div>
   );
 }

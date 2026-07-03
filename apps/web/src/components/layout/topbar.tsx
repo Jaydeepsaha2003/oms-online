@@ -54,10 +54,12 @@ export function Topbar({
       <Button variant="ghost" size="icon" className="md:hidden" onClick={onToggleMobile} aria-label="Open menu">
         <Menu />
       </Button>
+      {/* Pin/unpin is only meaningful on large desktops — smaller screens always
+          use the hover expand/collapse rail, so the button is hidden there. */}
       <Button
         variant="ghost"
         size="icon"
-        className="hidden md:inline-flex"
+        className="hidden min-[1600px]:inline-flex"
         onClick={onToggleCollapse}
         aria-label="Toggle sidebar"
       >

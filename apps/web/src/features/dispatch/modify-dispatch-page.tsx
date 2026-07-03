@@ -18,7 +18,7 @@ import { useDeleteDispatch, useDispatches, useDispatchFilterOptions, useUpdateDi
 
 const PAGE_SIZE = 50;
 const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? 0 : Number(s));
-const qty = (v: number | null) => (v ? v.toLocaleString() : '—');
+const qty = (v: number | null) => (v ? v.toLocaleString('en-IN') : '—');
 
 const STATUS_STYLE: Record<string, string> = {
   'PARTIALLY DISPATCH': 'bg-amber-50 text-amber-700 ring-amber-200',

@@ -15,7 +15,7 @@ import { usePendingChallans } from './use-challans';
 import { PRESETS, presetRange } from './date-presets';
 
 const PAGE_SIZE = 50;
-const num = (v: number | null) => (v ? v.toLocaleString() : '—');
+const num = (v: number | null) => (v ? v.toLocaleString('en-IN') : '—');
 
 export function PendingChallanPage() {
   const navigate = useNavigate();

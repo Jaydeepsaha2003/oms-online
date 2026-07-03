@@ -1,5 +1,5 @@
 import { PartialType } from '@nestjs/swagger';
-import { IsArray, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsArray, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 export class CreateOrderDto {
@@ -24,8 +24,16 @@ export class CreateOrderDto {
 
 export class UpdateOrderDto extends PartialType(CreateOrderDto) {}
 
+export class UpdateOrderStatusDto {
+  @IsIn(['CONFIRMED', 'CANCELLED']) status!: 'CONFIRMED' | 'CANCELLED';
+}
+
 export class OrderQueryDto extends PaginationDto {
   @IsOptional()
   @IsString()
   status?: string;
+
+  /** Keep orders containing this product / design on any line (exact match). */
+  @IsOptional() @IsString() product?: string;
+  @IsOptional() @IsString() design?: string;
 }

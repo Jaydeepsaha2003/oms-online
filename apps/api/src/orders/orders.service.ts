@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { type OrderDto, type OrderLookups, type Paginated } from '@oms/shared';
+import { type OrderDto, type OrderFilterOptions, type OrderLookups, type OrderTimeline, type OrderTimelineChallanRef, type Paginated } from '@oms/shared';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import { PrismaService } from '../prisma/prisma.service';
 import { PdfService } from '../pdf/pdf.service';
@@ -20,8 +20,13 @@ export class OrdersService {
 
   async findMany(query: OrderQueryDto): Promise<Paginated<OrderDto>> {
     const search = query.search?.trim();
+    // Product / design filters keep an order when ANY of its lines matches.
+    const lineFilters: Prisma.OrderWhereInput[] = [];
+    if (query.product) lineFilters.push({ items: { some: { OR: [{ productName: query.product }, { product: query.product }] } } });
+    if (query.design) lineFilters.push({ items: { some: { designType: query.design } } });
     const where: Prisma.OrderWhereInput = {
       ...(query.status ? { status: uc(query.status)! } : {}),
+      ...(lineFilters.length ? { AND: lineFilters } : {}),
       ...(search
         ? {
             OR: [
@@ -42,8 +47,32 @@ export class OrdersService {
       }),
       this.prisma.order.count({ where }),
     ]);
+
+    // Dispatch roll-up for the page's orders: FULL = every active line has a
+    // "FULLY DISPATCH" record, PARTIAL = some dispatches exist, NONE = untouched.
+    const itemIds = rows.flatMap((r) => r.items.map((it) => it.id));
+    const dispatches = itemIds.length
+      ? await this.prisma.dispatch.findMany({
+          where: { orderItemId: { in: itemIds } },
+          select: { orderItemId: true, dispatchStatus: true },
+        })
+      : [];
+    const hasDispatch = new Set<number>();
+    const hasFull = new Set<number>();
+    for (const d of dispatches) {
+      hasDispatch.add(d.orderItemId);
+      if (d.dispatchStatus === 'FULLY DISPATCH') hasFull.add(d.orderItemId);
+    }
+    const stateOf = (r: Row): OrderDto['dispatchState'] => {
+      const active = r.items.filter((it) => it.status !== 'CANCELLED');
+      if (!active.length) return 'NONE';
+      if (active.every((it) => hasFull.has(it.id))) return 'FULL';
+      if (active.some((it) => hasDispatch.has(it.id))) return 'PARTIAL';
+      return 'NONE';
+    };
+
     return {
-      items: rows.map((r) => this.toDto(r)),
+      items: rows.map((r) => this.toDto(r, stateOf(r))),
       total,
       page: query.page,
       pageSize: query.pageSize,
@@ -123,6 +152,114 @@ export class OrdersService {
   async remove(id: number): Promise<void> {
     await this.ensureExists(id);
     await this.prisma.order.delete({ where: { id } });
+  }
+
+  /** Cancel / restore an order. Cancelling is only allowed while the order is
+   *  untouched — once any line has a dispatch, the order can no longer be
+   *  cancelled (the record must stay consistent with the dispatch history). */
+  async updateStatus(id: number, status: 'CONFIRMED' | 'CANCELLED'): Promise<OrderDto> {
+    const order = await this.prisma.order.findUnique({ where: { id }, select: { id: true, items: { select: { id: true } } } });
+    if (!order) throw new NotFoundException('Order not found.');
+    if (status === 'CANCELLED' && order.items.length) {
+      const dispatched = await this.prisma.dispatch.count({ where: { orderItemId: { in: order.items.map((i) => i.id) } } });
+      if (dispatched > 0) {
+        throw new BadRequestException('This order already has dispatches — it can no longer be cancelled.');
+      }
+    }
+    const row = await this.prisma.order.update({ where: { id }, data: { status }, include: INCLUDE });
+    return this.toDto(row, status === 'CANCELLED' ? 'NONE' : null);
+  }
+
+  /** Order journey: ordered → dispatched (per line) → challaned, for the
+   *  View Orders timeline modal. Each dispatch carries the (non-cancelled)
+   *  challan it was billed on, if any. */
+  async timeline(id: number): Promise<OrderTimeline> {
+    const order = await this.prisma.order.findUnique({ where: { id }, include: { items: true } });
+    if (!order) throw new NotFoundException('Order not found.');
+
+    const dispatches = await this.prisma.dispatch.findMany({
+      where: { orderId: id },
+      orderBy: [{ dispatchDate: 'asc' }, { id: 'asc' }],
+    });
+    const dIds = dispatches.map((d) => d.id);
+    const chItems = dIds.length
+      ? await this.prisma.challanItem.findMany({
+          where: { dispatchId: { in: dIds } },
+          include: { challan: { select: { id: true, code: true, invDate: true, challanStatus: true } } },
+        })
+      : [];
+    // Dispatch → its challan (prefer a non-cancelled one when re-challaned).
+    const chByDispatch = new Map<number, OrderTimelineChallanRef>();
+    for (const ci of chItems) {
+      if (ci.dispatchId == null || !ci.challan) continue;
+      const cur = chByDispatch.get(ci.dispatchId);
+      if (cur && cur.challanStatus !== 'CANCELLED') continue;
+      chByDispatch.set(ci.dispatchId, {
+        id: ci.challan.id,
+        code: ci.challan.code,
+        invDate: ci.challan.invDate.toISOString(),
+        challanStatus: ci.challan.challanStatus,
+      });
+    }
+
+    const byLine = new Map<number, typeof dispatches>();
+    for (const d of dispatches) {
+      const list = byLine.get(d.orderItemId) ?? [];
+      list.push(d);
+      if (!byLine.has(d.orderItemId)) byLine.set(d.orderItemId, list);
+    }
+
+    return {
+      orderId: order.id,
+      code: order.code ?? this.codeFor(order.id),
+      customerName: order.customerName,
+      orderDate: order.orderDate.toISOString(),
+      completionDate: order.completionDate ? order.completionDate.toISOString() : null,
+      status: order.status,
+      lines: order.items.map((it) => {
+        const ds = byLine.get(it.id) ?? [];
+        return {
+          orderItemId: it.id,
+          productName: it.productName,
+          designType: it.designType,
+          status: it.status ?? 'CONFIRMED',
+          bags: it.bags,
+          pcs: it.pcs,
+          kgs: it.gram,
+          box: it.box,
+          calField: it.calField,
+          fullyDispatched: ds.some((d) => d.dispatchStatus === 'FULLY DISPATCH'),
+          dispatches: ds.map((d) => ({
+            id: d.id,
+            code: d.code,
+            dispatchDate: d.dispatchDate.toISOString(),
+            bags: d.bags,
+            pcs: d.pcs,
+            kgs: d.gram,
+            box: d.box,
+            dispatchStatus: d.dispatchStatus,
+            challan: chByDispatch.get(d.id) ?? null,
+          })),
+        };
+      }),
+    };
+  }
+
+  /** Distinct product / design values present on order lines, for the Orders
+   *  page filter dropdowns (only values that can actually match something). */
+  async filterOptions(): Promise<OrderFilterOptions> {
+    const rows = await this.prisma.orderItem.findMany({
+      select: { productName: true, product: true, designType: true },
+    });
+    const products = new Set<string>();
+    const designs = new Set<string>();
+    for (const r of rows) {
+      const p = r.productName || r.product;
+      if (p) products.add(p);
+      if (r.designType && r.designType.toUpperCase() !== 'NA') designs.add(r.designType);
+    }
+    const sorted = (s: Set<string>) => [...s].sort((a, b) => a.localeCompare(b));
+    return { products: sorted(products), designs: sorted(designs) };
   }
 
   async lookups(): Promise<OrderLookups> {
@@ -386,7 +523,7 @@ export class OrdersService {
     if (!c) throw new NotFoundException('Order not found.');
   }
 
-  private toDto(r: Row): OrderDto {
+  private toDto(r: Row, dispatchState: OrderDto['dispatchState'] = null): OrderDto {
     const items = r.items.map((it) => ({
       id: it.id,
       pCategory: it.pCategory,
@@ -431,6 +568,7 @@ export class OrdersService {
       itemCount: active.length,
       totalRate: active.reduce((s, it) => s + (it.rate ?? 0), 0),
       totalAmount: active.reduce((s, it) => s + (it.rate ?? 0) * (it.calField === 'PCS' ? (it.pcs ?? 0) : (it.gram ?? 0)), 0),
+      dispatchState,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     };

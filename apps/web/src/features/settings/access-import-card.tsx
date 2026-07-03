@@ -144,7 +144,7 @@ export function AccessImportCard() {
                     <div className="text-muted-foreground ml-3 grid grid-cols-1 gap-x-6 sm:grid-cols-2">
                       {Object.entries(sec.counts).map(([label, n]) => (
                         <span key={label} className="tabular-nums">
-                          {label}: <b className="text-slate-700">{n.toLocaleString()}</b>
+                          {label}: <b className="text-slate-700">{n.toLocaleString('en-IN')}</b>
                         </span>
                       ))}
                     </div>

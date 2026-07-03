@@ -39,7 +39,7 @@ import {
 } from './use-transporters';
 
 /** Amount prefixed with the rupee symbol; dash when unknown. */
-const money = (n: number | null) => (n == null ? '—' : `₹${n.toLocaleString()}`);
+const money = (n: number | null) => (n == null ? '—' : `₹${n.toLocaleString('en-IN')}`);
 
 const COLUMNS: DataColumn<TransporterDto>[] = [
   { id: 'name', label: 'Transport name', pin: 'left0', fixed: true, cell: (t) => <span className="font-medium">{t.name}</span> },

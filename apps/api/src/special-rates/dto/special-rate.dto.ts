@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ArrayNotEmpty, IsArray, IsIn, IsInt, IsNumber, IsOptional, IsString, MaxLength } from 'class-validator';
+import { ArrayNotEmpty, IsArray, IsIn, IsInt, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 export class SaveCustomerRateDto {
@@ -51,4 +51,16 @@ export class BulkSaveCustomerLogoDto {
   @IsIn(['CATEGORY', 'SUBCATEGORY']) scope!: 'CATEGORY' | 'SUBCATEGORY';
   @IsString() @MaxLength(255) category!: string;
   @IsOptional() @IsString() @MaxLength(255) subCategory?: string;
+}
+
+export class SaveCustomerBagWeightDto {
+  @IsInt() customerId!: number;
+  @IsString() @MaxLength(255) category!: string;
+  @IsNumber() @Min(0.001) kgsPerBag!: number;
+}
+
+export class BulkSaveCustomerBagWeightDto {
+  @IsArray() @ArrayNotEmpty() @IsInt({ each: true }) customerIds!: number[];
+  @IsString() @MaxLength(255) category!: string;
+  @IsNumber() @Min(0.001) kgsPerBag!: number;
 }

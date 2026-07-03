@@ -18,7 +18,7 @@ export function RateHistoryDialog({
   unit?: string;
   onClose: () => void;
 }) {
-  const fmt = (n: number | null) => (n == null ? '—' : `${n.toLocaleString()}${unit}`);
+  const fmt = (n: number | null) => (n == null ? '—' : `${n.toLocaleString('en-IN')}${unit}`);
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-md">

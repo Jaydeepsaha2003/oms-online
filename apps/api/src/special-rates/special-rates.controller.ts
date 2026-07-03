@@ -6,8 +6,10 @@ import { Permissions } from '../common/decorators/permissions.decorator';
 import { SpecialRatesService } from './special-rates.service';
 import {
   AgentQueryDto,
+  BulkSaveCustomerBagWeightDto,
   BulkSaveCustomerLogoDto,
   BulkSaveCustomerRateDto,
+  SaveCustomerBagWeightDto,
   SaveCustomerLogoDto,
   SaveCustomerRateDto,
   SpecialRateMasterQueryDto,
@@ -93,6 +95,28 @@ export class SpecialRatesController {
   @Audit({ action: ACTIONS.DELETE, resource: R })
   async deleteLogo(@Param('id', ParseIntPipe) id: number) {
     await this.special.deleteLogo(id);
+    return { ok: true };
+  }
+
+  @Post('bag-weight/bulk')
+  @Permissions(perm(R, ACTIONS.CREATE))
+  @Audit({ action: ACTIONS.CREATE, resource: R })
+  bulkSaveBagWeight(@Body() dto: BulkSaveCustomerBagWeightDto) {
+    return this.special.bulkSaveBagWeight(dto);
+  }
+
+  @Post('bag-weight')
+  @Permissions(perm(R, ACTIONS.CREATE))
+  @Audit({ action: ACTIONS.CREATE, resource: R })
+  saveBagWeight(@Body() dto: SaveCustomerBagWeightDto) {
+    return this.special.saveBagWeight(dto);
+  }
+
+  @Delete('bag-weight/:id')
+  @Permissions(perm(R, ACTIONS.DELETE))
+  @Audit({ action: ACTIONS.DELETE, resource: R })
+  async deleteBagWeight(@Param('id', ParseIntPipe) id: number) {
+    await this.special.deleteBagWeight(id);
     return { ok: true };
   }
 }

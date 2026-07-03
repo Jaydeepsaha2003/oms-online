@@ -27,7 +27,7 @@ const STATUS_STYLE: Record<string, string> = {
 };
 
 const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? null : Number(s));
-const dash = (v: number | null) => (v == null || v === 0 ? '—' : v.toLocaleString());
+const dash = (v: number | null) => (v == null || v === 0 ? '—' : v.toLocaleString('en-IN'));
 
 /** One flat row = an order line plus its parent order's header info. */
 interface Row {
@@ -94,7 +94,7 @@ const COLUMNS: DataColumn<Row>[] = [
   { id: 'pcs', label: 'Pcs', align: 'right', cell: (r) => <span className="tabular-nums">{dash(r.line.pcs)}</span> },
   { id: 'kgs', label: 'Kgs', align: 'right', cell: (r) => <span className="tabular-nums">{dash(r.line.gram)}</span> },
   { id: 'box', label: 'Box', align: 'right', cell: (r) => <span className="tabular-nums">{dash(r.line.box)}</span> },
-  { id: 'rate', label: 'Rate', align: 'right', cell: (r) => <span className="font-semibold tabular-nums text-emerald-700">₹{(r.line.rate ?? 0).toLocaleString()}</span> },
+  { id: 'rate', label: 'Rate', align: 'right', cell: (r) => <span className="font-semibold tabular-nums text-emerald-700">₹{(r.line.rate ?? 0).toLocaleString('en-IN')}</span> },
   { id: 'comment', label: 'Comment', cell: (r) => <span className="inline-block max-w-[12rem] truncate align-middle" title={r.line.comment ?? ''}>{r.line.comment || '—'}</span> },
   {
     id: 'status',
@@ -412,7 +412,7 @@ function LineEditor({
         </div>
         <Field label="Rate ₹">
           <div className="flex h-9 items-center justify-end rounded-md border border-emerald-200 bg-emerald-50 px-3 text-sm font-bold tabular-nums text-emerald-700">
-            {rate.toLocaleString()}
+            {rate.toLocaleString('en-IN')}
           </div>
         </Field>
         <Field label="Comment">

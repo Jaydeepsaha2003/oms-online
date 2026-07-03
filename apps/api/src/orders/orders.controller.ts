@@ -5,7 +5,7 @@ import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { OrdersService } from './orders.service';
-import { CreateOrderDto, OrderQueryDto, UpdateOrderDto } from './dto/order.dto';
+import { CreateOrderDto, OrderQueryDto, UpdateOrderDto, UpdateOrderStatusDto } from './dto/order.dto';
 
 const R = RESOURCES.ORDER;
 
@@ -27,10 +27,22 @@ export class OrdersController {
     return this.orders.lookups();
   }
 
+  @Get('filter-options')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  filterOptions() {
+    return this.orders.filterOptions();
+  }
+
   @Get(':id')
   @Permissions(perm(R, ACTIONS.VIEW))
   get(@Param('id', ParseIntPipe) id: number) {
     return this.orders.findOne(id);
+  }
+
+  @Get(':id/timeline')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  timeline(@Param('id', ParseIntPipe) id: number) {
+    return this.orders.timeline(id);
   }
 
   @Get(':id/bill.pdf')
@@ -46,6 +58,13 @@ export class OrdersController {
   @Audit({ action: ACTIONS.CREATE, resource: R })
   create(@Body() dto: CreateOrderDto) {
     return this.orders.create(dto);
+  }
+
+  @Patch(':id/status')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  updateStatus(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateOrderStatusDto) {
+    return this.orders.updateStatus(id, dto.status);
   }
 
   @Patch(':id')
