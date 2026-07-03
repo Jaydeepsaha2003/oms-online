@@ -59,10 +59,13 @@ export class GeminiService {
 
     const prompt =
       'You are an assistant for a metal-utensil workshop manager in India. The audio is a quick spoken note in Hindi, English, or a mix (Hinglish). ' +
-      'Do three things: (1) transcribe it faithfully in the language spoken; (2) write a one-line summary; ' +
-      '(3) break it into short, clear, actionable checklist tasks — one task per item, keep party names, product names and dates, ' +
-      'and write each item in the same language it was spoken. ' +
-      'Return ONLY JSON with exactly these keys: {"transcript": string, "summary": string, "items": string[]}. No markdown, no extra text.';
+      'Do the following:\n' +
+      '1. Transcribe it faithfully in the language spoken.\n' +
+      '2. Write a one-line summary.\n' +
+      '3. Break it into short, clear, actionable checklist tasks — one task per item, keeping party names, product names and dates, and write each item in the same language it was spoken.\n' +
+      '4. If a customer or party name is mentioned in the note, identify and extract it into "detectedCustomer" (as a string or null).\n' +
+      '5. If a product, item, or quantity details are mentioned, extract the key item details into "detectedItem" (as a string or null).\n' +
+      'Return ONLY JSON with exactly these keys: {"transcript": string, "summary": string, "items": string[], "detectedCustomer": string | null, "detectedItem": string | null}. No markdown, no extra text.';
 
     const body = {
       contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType || 'audio/wav', data: audioBase64 } }] }],
@@ -111,6 +114,8 @@ export class GeminiService {
       transcript: typeof parsed.transcript === 'string' ? parsed.transcript : '',
       summary: typeof parsed.summary === 'string' ? parsed.summary : '',
       items,
+      detectedCustomer: typeof parsed.detectedCustomer === 'string' && parsed.detectedCustomer.trim() ? parsed.detectedCustomer.trim() : undefined,
+      detectedItem: typeof parsed.detectedItem === 'string' && parsed.detectedItem.trim() ? parsed.detectedItem.trim() : undefined,
     };
   }
 

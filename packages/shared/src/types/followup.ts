@@ -201,6 +201,10 @@ export interface VoiceChecklistResult {
   summary: string;
   /** Short, clear action items extracted from the note. */
   items: string[];
+  /** Optional customer name detected in the note. */
+  detectedCustomer?: string;
+  /** Optional item name/details detected in the note. */
+  detectedItem?: string;
 }
 
 /** AI (Gemini) config — the key is never returned, only whether it's set. */

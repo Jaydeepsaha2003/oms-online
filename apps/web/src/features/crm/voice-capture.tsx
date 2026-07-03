@@ -20,7 +20,19 @@ function compose(summary: string, items: string[], transcript: string): string {
  * where you confirm or edit → the text is handed back to fill the description.
  * `onConfirm(text)` receives the confirmed 1-line or multi-line message.
  */
-export function VoiceCapture({ onConfirm }: { onConfirm: (text: string) => void }) {
+export function VoiceCapture({
+  onConfirm,
+  onVoiceResult,
+}: {
+  onConfirm: (text: string) => void;
+  onVoiceResult?: (result: {
+    transcript: string;
+    summary: string;
+    items: string[];
+    detectedCustomer?: string;
+    detectedItem?: string;
+  }) => void;
+}) {
   const navigate = useNavigate();
   const { data: ai } = useAiStatus();
   const voice = useVoiceChecklist();
@@ -50,6 +62,9 @@ export function VoiceCapture({ onConfirm }: { onConfirm: (text: string) => void 
       setTranscript(res.transcript || '');
       setDraft(compose(res.summary, res.items, res.transcript));
       setPhase('review');
+      if (onVoiceResult) {
+        onVoiceResult(res);
+      }
     } catch (e) {
       toast.error(getApiErrorMessage(e, 'Voice could not be processed.'));
       setPhase('idle');

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { AlarmClock, Bell, CalendarClock, Check, ChevronDown, CircleCheck, Clock, Loader2, Mic, Pencil, Plus, Search, Trash2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { type FollowupDto, type FollowupKind, type FollowupPartyGroup } from '@oms/shared';
-import { getApiErrorMessage } from '@/lib/api';
+import { getApiErrorMessage, http } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -401,6 +401,36 @@ function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing:
     if (o && !party) { setParty(o.customerName); setCustomerId(o.customerId ?? null); }
   };
 
+  const handleVoiceResult = async (result: {
+    detectedCustomer?: string;
+    detectedItem?: string;
+  }) => {
+    if (result.detectedItem) {
+      setItemText(result.detectedItem);
+      toast.success(`Auto-filled item: ${result.detectedItem}`);
+    }
+    if (result.detectedCustomer) {
+      try {
+        const matches = await http.get<{ id: number | null; partyName: string }[]>(
+          '/crm/followups/party-suggest',
+          { params: { q: result.detectedCustomer } }
+        );
+        if (matches && matches.length > 0) {
+          const match = matches[0];
+          setParty(match.partyName);
+          setCustomerId(match.id);
+          toast.success(`Auto-selected party: ${match.partyName}`);
+        } else {
+          setParty(result.detectedCustomer);
+          setCustomerId(null);
+          toast.info(`Set party name: ${result.detectedCustomer}`);
+        }
+      } catch (err) {
+        console.error('Failed to suggest party for voice result', err);
+      }
+    }
+  };
+
   const isPay = kind === 'PAYMENT';
   const submit = () => {
     if (!party.trim()) return toast.error('Choose or type the party first.');
@@ -461,7 +491,7 @@ function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing:
                 <div className="mb-1.5 flex items-center justify-between gap-2">
                   <span className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">💬 Description / notes</span>
                 </div>
-                <VoiceCapture onConfirm={(t) => setDescription((d) => (d.trim() ? `${d.trim()}\n${t}` : t))} />
+                <VoiceCapture onConfirm={(t) => setDescription((d) => (d.trim() ? `${d.trim()}\n${t}` : t))} onVoiceResult={handleVoiceResult} />
                 <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
