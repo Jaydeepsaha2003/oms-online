@@ -72,14 +72,14 @@ export function CrmReminderCard() {
   );
 }
 
-/** Gemini API key for voice → checklist. Stored server-side; never shown back. */
+/** Groq API key for voice → checklist. Stored server-side; never shown back. */
 function VoiceKeySection({ canEdit }: { canEdit: boolean }) {
   const { data: ai } = useAiStatus();
   const saveAi = useSaveAiConfig();
   const [key, setKey] = useState('');
 
   const save = () => {
-    if (!key.trim()) return toast.error('Paste your Gemini API key first.');
+    if (!key.trim()) return toast.error('Paste your Groq API key first.');
     saveAi.mutate({ apiKey: key.trim() }, { onSuccess: () => { toast.success('Voice input enabled'); setKey(''); }, onError: (e) => toast.error(getApiErrorMessage(e, 'Save failed')) });
   };
   const clear = () => saveAi.mutate({ apiKey: '' }, { onSuccess: () => toast.success('Key removed') });
@@ -88,16 +88,16 @@ function VoiceKeySection({ canEdit }: { canEdit: boolean }) {
     <div className="mt-1 rounded-xl border border-blue-200 bg-blue-50/40 p-4">
       <div className="mb-1 flex items-center gap-2">
         <Mic className="size-4 text-blue-600" />
-        <span className="text-[15px] font-semibold">Voice input (Google Gemini)</span>
+        <span className="text-[15px] font-semibold">Voice input (Groq API)</span>
         {ai?.configured && <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600"><CheckCircle2 className="size-3.5" /> Enabled</span>}
       </div>
       <p className="text-muted-foreground mb-3 text-sm">
         Lets you <b>speak</b> the checklist in Hindi or English on the follow-up form. Get a free key at{' '}
-        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" className="text-blue-600 underline">aistudio.google.com/apikey</a> and paste it here — it stays on the server.
+        <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" className="text-blue-600 underline">console.groq.com/keys</a> and paste it here — it stays on the server.
       </p>
       {canEdit && (
         <div className="flex flex-wrap gap-2">
-          <Input className="h-11 flex-1" type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder={ai?.configured ? 'Enter a new key to replace…' : 'Paste your Gemini API key (AIza…)'} />
+          <Input className="h-11 flex-1" type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder={ai?.configured ? 'Enter a new key to replace…' : 'Paste your Groq API key (gsk_…)'} />
           <Button className="h-11" onClick={save} disabled={saveAi.isPending}>{saveAi.isPending ? <Loader2 className="animate-spin" /> : <Sparkles className="size-4" />} {ai?.configured ? 'Replace' : 'Enable'}</Button>
           {ai?.configured && <Button variant="outline" className="h-11" onClick={clear} disabled={saveAi.isPending}>Remove</Button>}
         </div>

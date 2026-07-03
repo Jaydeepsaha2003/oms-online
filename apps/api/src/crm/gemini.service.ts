@@ -3,7 +3,7 @@ import type { AiConfigStatus, VoiceChecklistResult } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 
 const CONFIG_KEY = 'GEMINI_CONFIG';
-const DEFAULT_MODEL = 'gemini-2.0-flash';
+const DEFAULT_MODEL = 'llama-3.3-70b-specdec';
 
 interface GeminiConfig {
   apiKey: string;
@@ -11,9 +11,8 @@ interface GeminiConfig {
 }
 
 /**
- * Thin Google Gemini client. The API key lives ONLY on the server (AppConfig or
- * the GEMINI_API_KEY env var) — never sent to the browser. Turns a spoken note
- * (Hindi / English / mixed) into a structured checklist in one multimodal call.
+ * Groq client for CRM voice notes.
+ * Uses Whisper-Large-v3 for transcription and Llama-3.3-70b-specdec for structuring.
  */
 @Injectable()
 export class GeminiService {
@@ -30,8 +29,8 @@ export class GeminiService {
       }
     }
     return {
-      apiKey: (cfg.apiKey || process.env.GEMINI_API_KEY || '').trim(),
-      model: (cfg.model || process.env.GEMINI_MODEL || DEFAULT_MODEL).trim(),
+      apiKey: (cfg.apiKey || process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY || '').trim(),
+      model: (cfg.model || process.env.GROQ_MODEL || DEFAULT_MODEL).trim(),
     };
   }
 
@@ -43,7 +42,6 @@ export class GeminiService {
 
   async saveConfig(input: { apiKey?: string; model?: string }): Promise<AiConfigStatus> {
     const cur = await this.readConfig();
-    // An empty apiKey means "clear it"; undefined means "leave unchanged".
     const apiKey = input.apiKey === undefined ? cur.apiKey : input.apiKey.trim();
     const model = (input.model || cur.model || DEFAULT_MODEL).trim();
     const value = JSON.stringify({ apiKey, model });
@@ -51,55 +49,103 @@ export class GeminiService {
     return { configured: !!apiKey, model };
   }
 
-  /** Spoken note (base64 audio) → { transcript, summary, items[] }. */
+  /** Spoken note (base64 audio) → { transcript, summary, items[], detectedCustomer, detectedItem }. */
   async voiceToChecklist(audioBase64: string, mimeType: string): Promise<VoiceChecklistResult> {
     const { apiKey, model } = await this.readConfig();
-    if (!apiKey) throw new BadRequestException('Voice input is not set up yet — add your Gemini API key in Settings.');
+    if (!apiKey) throw new BadRequestException('Voice input is not set up yet — add your Groq API key in Settings.');
     if (!audioBase64) throw new BadRequestException('No audio was received.');
 
-    const prompt =
-      'You are an assistant for a metal-utensil workshop manager in India. The audio is a quick spoken note in Hindi, English, or a mix (Hinglish). ' +
-      'Do the following:\n' +
-      '1. Transcribe it faithfully in the language spoken.\n' +
-      '2. Write a one-line summary.\n' +
-      '3. Break it into short, clear, actionable checklist tasks — one task per item, keeping party names, product names and dates, and write each item in the same language it was spoken.\n' +
-      '4. If a customer or party name is mentioned in the note, identify and extract it into "detectedCustomer" (as a string or null).\n' +
-      '5. If a product, item, or quantity details are mentioned, extract the key item details into "detectedItem" (as a string or null).\n' +
-      'Return ONLY JSON with exactly these keys: {"transcript": string, "summary": string, "items": string[], "detectedCustomer": string | null, "detectedItem": string | null}. No markdown, no extra text.';
+    // 1. Transcribe the audio using Groq's Whisper-Large-v3 ASR endpoint
+    const transcript = await this.transcribeAudio(audioBase64, mimeType, apiKey);
+    if (!transcript) throw new BadRequestException('Could not transcribe audio note. Please try speaking louder or clearly.');
 
-    const body = {
-      contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType || 'audio/wav', data: audioBase64 } }] }],
-      generationConfig: { responseMimeType: 'application/json', temperature: 0.2 },
+    // 2. Structuring using Groq's Llama model in JSON Mode
+    const systemPrompt =
+      'You are an assistant for a metal-utensil workshop manager in India. ' +
+      'You will receive a transcript of a spoken note (written in Hindi, English, or Hinglish). ' +
+      'Analyze the transcript and return a JSON object with these fields:\n' +
+      '1. "transcript": Return the input transcript unchanged.\n' +
+      '2. "summary": A brief one-line summary of the note.\n' +
+      '3. "items": An array of short, actionable checklist tasks extracted from the transcript.\n' +
+      '4. "detectedCustomer": The customer or party name mentioned in the transcript (string or null if not found).\n' +
+      '5. "detectedItem": The product or item details mentioned in the transcript (string or null if not found).\n' +
+      'You must return ONLY the raw JSON object. Do not wrap in markdown or add extra explanation.';
+
+    const chatBody = {
+      model: model || DEFAULT_MODEL,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: transcript }
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0.2,
     };
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
-    let res: Response;
+    let chatRes: Response;
     try {
-      res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      chatRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(chatBody),
+      });
     } catch {
-      throw new ServiceUnavailableException('Could not reach Gemini. Check the server’s internet connection.');
-    }
-    if (!res.ok) {
-      const txt = await res.text().catch(() => '');
-      const msg = this.friendlyError(res.status, txt);
-      throw new ServiceUnavailableException(msg);
+      throw new ServiceUnavailableException('Could not reach Groq chat service. Check the server’s internet connection.');
     }
 
-    const json = (await res.json()) as {
-      candidates?: { content?: { parts?: { text?: string }[] } }[];
-      promptFeedback?: { blockReason?: string };
-    };
-    if (json.promptFeedback?.blockReason) throw new BadRequestException('The note could not be processed (content filter). Please try again.');
-    const text = json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
-    return this.parseResult(text);
+    if (!chatRes.ok) {
+      const txt = await chatRes.text().catch(() => '');
+      throw new ServiceUnavailableException(`Groq Chat API failed (${chatRes.status}): ${txt}`);
+    }
+
+    const chatJson = (await chatRes.json()) as { choices?: { message?: { content?: string } }[] };
+    const resultText = chatJson.choices?.[0]?.message?.content ?? '';
+
+    return this.parseResult(resultText, transcript);
   }
 
-  private parseResult(text: string): VoiceChecklistResult {
+  private async transcribeAudio(audioBase64: string, mimeType: string, apiKey: string): Promise<string> {
+    const buffer = Buffer.from(audioBase64, 'base64');
+    let extension = 'wav';
+    if (mimeType.includes('mp3')) extension = 'mp3';
+    else if (mimeType.includes('m4a')) extension = 'm4a';
+    else if (mimeType.includes('webm')) extension = 'webm';
+    else if (mimeType.includes('ogg')) extension = 'ogg';
+
+    const blob = new Blob([buffer], { type: mimeType || 'audio/wav' });
+    const formData = new FormData();
+    formData.append('file', blob, `recording.${extension}`);
+    formData.append('model', 'whisper-large-v3');
+
+    let res: Response;
+    try {
+      res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: formData,
+      });
+    } catch {
+      throw new ServiceUnavailableException('Could not reach Groq Whisper service.');
+    }
+
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      throw new ServiceUnavailableException(`Groq Transcription failed (${res.status}): ${txt}`);
+    }
+
+    const json = (await res.json()) as { text?: string };
+    return (json.text || '').trim();
+  }
+
+  private parseResult(text: string, originalTranscript: string): VoiceChecklistResult {
     let parsed: Partial<VoiceChecklistResult> = {};
     try {
       parsed = JSON.parse(text);
     } catch {
-      // Fallback: strip a ```json fence if the model added one.
       const m = text.match(/\{[\s\S]*\}/);
       if (m) {
         try {
@@ -111,18 +157,11 @@ export class GeminiService {
     }
     const items = Array.isArray(parsed.items) ? parsed.items.map((s) => String(s).trim()).filter(Boolean) : [];
     return {
-      transcript: typeof parsed.transcript === 'string' ? parsed.transcript : '',
+      transcript: parsed.transcript || originalTranscript || '',
       summary: typeof parsed.summary === 'string' ? parsed.summary : '',
       items,
       detectedCustomer: typeof parsed.detectedCustomer === 'string' && parsed.detectedCustomer.trim() ? parsed.detectedCustomer.trim() : undefined,
       detectedItem: typeof parsed.detectedItem === 'string' && parsed.detectedItem.trim() ? parsed.detectedItem.trim() : undefined,
     };
-  }
-
-  private friendlyError(status: number, body: string): string {
-    if (status === 400 && /API key not valid/i.test(body)) return 'The Gemini API key is invalid — check it in Settings.';
-    if (status === 403) return 'The Gemini API key was rejected (check it’s enabled for the Generative Language API).';
-    if (status === 429) return 'Gemini is rate-limited right now — wait a moment and try again.';
-    return `Gemini request failed (${status}). Please try again.`;
   }
 }

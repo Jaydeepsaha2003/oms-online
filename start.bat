@@ -8,6 +8,7 @@ REM    [1] npm install            (new / changed packages)
 REM    [2] prisma migrate deploy  (apply tracked DB migrations)
 REM    [3] prisma db push         (sync schema / new tables made via db push)
 REM    [4] prisma generate        (refresh the Prisma client)
+REM    [5] npm run build:shared   (compile shared types and interfaces)
 REM ============================================================
 cd /d "%~dp0"
 
@@ -50,9 +51,14 @@ echo n | call npm run db:push
 if errorlevel 1 echo    [warning] Schema sync reported an error - check the output above.
 
 echo.
-echo [4/4] Refreshing the Prisma client (prisma generate)...
+echo [4/5] Refreshing the Prisma client (prisma generate)...
 call npm run db:generate
 if errorlevel 1 echo    [warning] Prisma generate reported an error - check the output above.
+
+echo.
+echo [5/5] Building shared dependencies (npm run build:shared)...
+call npm run build:shared
+if errorlevel 1 echo    [warning] Shared library build failed - check the output above.
 
 echo.
 echo Sync complete - launching servers.
