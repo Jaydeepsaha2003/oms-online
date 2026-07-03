@@ -1,6 +1,12 @@
 import { PartialType } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { Type } from 'class-transformer';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, MaxLength, Min, ValidateNested } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
+
+export class ChecklistItemInputDto {
+  @IsString() @MaxLength(500) text!: string;
+  @IsOptional() @IsIn(['MANUAL', 'VOICE']) source?: 'MANUAL' | 'VOICE';
+}
 
 export class CreateFollowupDto {
   @IsOptional() @IsIn(['DELIVERY', 'PAYMENT']) kind?: 'DELIVERY' | 'PAYMENT';
@@ -17,9 +23,25 @@ export class CreateFollowupDto {
   @IsOptional() @IsString() promisedAt?: string | null;
   @IsOptional() @IsInt() @Min(1) reminderIntervalMins?: number | null;
   @IsOptional() @IsInt() @Min(0) maxRemindersPerDay?: number | null;
+  @IsOptional() @IsArray() @ArrayMaxSize(50) @ValidateNested({ each: true }) @Type(() => ChecklistItemInputDto) checklist?: ChecklistItemInputDto[];
 }
 
 export class UpdateFollowupDto extends PartialType(CreateFollowupDto) {}
+
+export class UpdateChecklistItemDto {
+  @IsOptional() @IsBoolean() done?: boolean;
+  @IsOptional() @IsString() @MaxLength(500) text?: string;
+}
+
+export class AiConfigInputDto {
+  @IsOptional() @IsString() @MaxLength(200) apiKey?: string;
+  @IsOptional() @IsString() @MaxLength(80) model?: string;
+}
+
+export class VoiceChecklistDto {
+  @IsString() audio!: string; // base64 (no data: prefix)
+  @IsOptional() @IsString() @MaxLength(60) mimeType?: string;
+}
 
 export class AddFollowupLogDto {
   @IsOptional() @IsString() @MaxLength(2000) note?: string | null;

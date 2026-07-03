@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   AddFollowupLogInput,
+  AiConfigStatus,
   CrmReminderSettings,
   FollowupDto,
   FollowupList,
@@ -8,6 +9,7 @@ import type {
   FollowupQuery,
   FollowupSummary,
   SaveFollowupInput,
+  VoiceChecklistResult,
 } from '@oms/shared';
 import { http } from '@/lib/api';
 
@@ -122,4 +124,30 @@ export function useDeleteFollowup() {
 export function useSaveCrmSettings() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (input: Partial<CrmReminderSettings>) => http.put<CrmReminderSettings>('/crm/followups/settings', input), onSuccess: () => invalidate(qc) });
+}
+
+/* ── Checklist ───────────────────────────────────────────────────────────────── */
+export function useAddChecklist() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: ({ id, items }: { id: number; items: { text: string; source?: 'MANUAL' | 'VOICE' }[] }) => http.post<FollowupDto>(`/crm/followups/${id}/checklist`, items), onSuccess: () => invalidate(qc) });
+}
+export function useUpdateChecklistItem() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: ({ itemId, done, text }: { itemId: number; done?: boolean; text?: string }) => http.patch<FollowupDto>(`/crm/followups/checklist/${itemId}`, { done, text }), onSuccess: () => invalidate(qc) });
+}
+export function useDeleteChecklistItem() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (itemId: number) => http.delete(`/crm/followups/checklist/${itemId}`), onSuccess: () => invalidate(qc) });
+}
+
+/* ── AI (Gemini voice → checklist) ───────────────────────────────────────────── */
+export function useAiStatus() {
+  return useQuery({ queryKey: [...KEY, 'ai-status'], queryFn: () => http.get<AiConfigStatus>('/crm/followups/ai/status'), staleTime: 30_000 });
+}
+export function useSaveAiConfig() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (input: { apiKey?: string; model?: string }) => http.put<AiConfigStatus>('/crm/followups/ai/config', input), onSuccess: () => qc.invalidateQueries({ queryKey: [...KEY, 'ai-status'] }) });
+}
+export function useVoiceChecklist() {
+  return useMutation({ mutationFn: (input: { audio: string; mimeType: string }) => http.post<VoiceChecklistResult>('/crm/followups/ai/voice-checklist', input) });
 }

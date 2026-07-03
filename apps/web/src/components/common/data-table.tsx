@@ -83,6 +83,7 @@ export function DataTable<T>({
   maxBodyHeight = 'max-h-[calc(100dvh_-_20rem)]',
   dense,
   hideRowView,
+  className,
 }: {
   columns: DataColumn<T>[];
   rows: T[];
@@ -99,6 +100,9 @@ export function DataTable<T>({
   /** Suppress the automatic "view" icon shown when rows are clickable (e.g. when
    *  the row click toggles selection rather than opening a form). */
   hideRowView?: boolean;
+  /** Extra classes merged onto the table (e.g. bump the data font). twMerge lets
+   *  a font-size / padding utility here override the dense/comfortable defaults. */
+  className?: string;
 }) {
   // When a row opens a form/detail but has no other action buttons, show an
   // explicit "view" (eye) icon so it's obvious the row is clickable.
@@ -142,6 +146,8 @@ export function DataTable<T>({
               '[&_thead_th]:h-9 [&_thead_th]:text-[11px] [&_td]:py-1.5 [&_tbody_button]:size-7 text-[13px] [&_td]:px-2.5 [&_th]:px-2.5'
             : // Comfortable: roomy padding for readability.
               '[&_thead_th]:h-11 [&_thead_th]:text-xs [&_td]:py-2.5 [&_tbody_button]:size-8 text-sm [&_td]:px-3 [&_th]:px-3 sm:[&_td]:px-5 sm:[&_th]:px-5',
+          // Page override (twMerge lets a passed font-size/padding win over the above).
+          className,
         )}
       >
         <TableHeader>

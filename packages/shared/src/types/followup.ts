@@ -32,6 +32,17 @@ export interface FollowupLogDto {
   createdAt: string;
 }
 
+/** A tick-off task on a follow-up (typed or spoken via Gemini). */
+export interface FollowupChecklistItemDto {
+  id: number;
+  followupId: number;
+  text: string;
+  done: boolean;
+  sortOrder: number;
+  source: 'MANUAL' | 'VOICE';
+  createdAt: string;
+}
+
 export interface FollowupDto {
   id: number;
   kind: FollowupKind;
@@ -62,6 +73,7 @@ export interface FollowupDto {
   createdAt: string;
   updatedAt: string;
   logs?: FollowupLogDto[];
+  checklist?: FollowupChecklistItemDto[];
 }
 
 /* ── Reminder-state engine (shared by the dashboard, board + nudge modal) ────── */
@@ -175,6 +187,26 @@ export interface SaveFollowupInput {
   promisedAt?: string | null;
   reminderIntervalMins?: number | null;
   maxRemindersPerDay?: number | null;
+  /** Checklist tasks to create with the follow-up. */
+  checklist?: { text: string; source?: 'MANUAL' | 'VOICE' }[];
+}
+
+/* ── AI voice → checklist (Gemini) ───────────────────────────────────────────── */
+
+/** Result of turning a spoken note into checklist items. */
+export interface VoiceChecklistResult {
+  /** What Gemini heard (the language spoken — Hindi/English/mixed). */
+  transcript: string;
+  /** One-line gist. */
+  summary: string;
+  /** Short, clear action items extracted from the note. */
+  items: string[];
+}
+
+/** AI (Gemini) config — the key is never returned, only whether it's set. */
+export interface AiConfigStatus {
+  configured: boolean;
+  model: string;
 }
 
 export interface AddFollowupLogInput {

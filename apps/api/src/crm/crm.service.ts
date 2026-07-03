@@ -4,6 +4,7 @@ import {
   DEFAULT_CRM_SETTINGS,
   computeFollowupState,
   type CrmReminderSettings,
+  type FollowupChecklistItemDto,
   type FollowupDto,
   type FollowupKind,
   type FollowupLogDto,
@@ -18,7 +19,8 @@ import { toNum, toStr, uc } from '../common/coerce';
 import { AddFollowupLogDto, CreateFollowupDto, CrmSettingsDto, FollowupQueryDto } from './dto/crm.dto';
 
 const SETTINGS_KEY = 'CRM_REMINDER_DEFAULTS';
-type Row = Prisma.FollowupGetPayload<{ include: { logs: true } }>;
+const INCLUDE = { logs: { orderBy: { createdAt: 'asc' } }, checklist: { orderBy: { sortOrder: 'asc' } } } as const;
+type Row = Prisma.FollowupGetPayload<{ include: typeof INCLUDE }>;
 
 @Injectable()
 export class CrmService {
@@ -69,8 +71,17 @@ export class CrmService {
         reminderIntervalMins: dto.reminderIntervalMins ?? null,
         maxRemindersPerDay: dto.maxRemindersPerDay ?? null,
         createdByName: userName ?? null,
+        ...(dto.checklist?.length
+          ? {
+              checklist: {
+                create: dto.checklist
+                  .map((it, i) => ({ text: (it.text ?? '').trim(), source: it.source === 'VOICE' ? 'VOICE' : 'MANUAL', sortOrder: i }))
+                  .filter((it) => it.text),
+              },
+            }
+          : {}),
       },
-      include: { logs: true },
+      include: INCLUDE,
     });
     return this.toDto(row);
   }
@@ -95,7 +106,7 @@ export class CrmService {
         ...(dto.reminderIntervalMins !== undefined ? { reminderIntervalMins: dto.reminderIntervalMins ?? null } : {}),
         ...(dto.maxRemindersPerDay !== undefined ? { maxRemindersPerDay: dto.maxRemindersPerDay ?? null } : {}),
       },
-      include: { logs: true },
+      include: INCLUDE,
     });
     return this.toDto(row);
   }
@@ -179,7 +190,7 @@ export class CrmService {
   /* ── Reads ──────────────────────────────────────────────────────────────── */
 
   async findOne(id: number): Promise<FollowupDto> {
-    const row = await this.prisma.followup.findUnique({ where: { id }, include: { logs: { orderBy: { createdAt: 'asc' } } } });
+    const row = await this.prisma.followup.findUnique({ where: { id }, include: INCLUDE });
     if (!row) throw new NotFoundException('Follow-up not found.');
     return this.toDto(row);
   }
@@ -187,7 +198,7 @@ export class CrmService {
   async findMany(q: FollowupQueryDto): Promise<Paginated<FollowupDto>> {
     const where = this.listWhere(q);
     const [rows, total] = await this.prisma.$transaction([
-      this.prisma.followup.findMany({ where, include: { logs: true }, orderBy: this.listOrder(), skip: q.skip, take: q.pageSize }),
+      this.prisma.followup.findMany({ where, include: INCLUDE, orderBy: this.listOrder(), skip: q.skip, take: q.pageSize }),
       this.prisma.followup.count({ where }),
     ]);
     const items = rows.map((r) => this.toDto(r)).filter((f) => this.matchesBucket(f, q.bucket));
@@ -197,7 +208,7 @@ export class CrmService {
   /** Party-wise board of OPEN follow-ups. */
   async board(q: FollowupQueryDto): Promise<FollowupPartyGroup[]> {
     const where: Prisma.FollowupWhereInput = { status: 'OPEN', ...(q.kind ? { kind: uc(q.kind)! } : {}), ...(q.party ? { partyName: q.party } : {}) };
-    const rows = await this.prisma.followup.findMany({ where, include: { logs: { orderBy: { createdAt: 'asc' } } }, orderBy: this.listOrder() });
+    const rows = await this.prisma.followup.findMany({ where, include: INCLUDE, orderBy: this.listOrder() });
     const now = new Date();
     const settings = await this.getSettings();
     const groups = new Map<string, FollowupPartyGroup>();
@@ -239,7 +250,7 @@ export class CrmService {
   async due(kind?: string): Promise<FollowupDto[]> {
     const rows = await this.prisma.followup.findMany({
       where: { status: 'OPEN', ...(kind ? { kind: uc(kind)! } : {}) },
-      include: { logs: { orderBy: { createdAt: 'asc' } } },
+      include: INCLUDE,
       orderBy: [{ promisedAt: 'asc' }],
     });
     const settings = await this.getSettings();
@@ -398,6 +409,47 @@ export class CrmService {
         userName: l.userName,
         createdAt: l.createdAt.toISOString(),
       })),
+      checklist: (r.checklist ?? []).map((c): FollowupChecklistItemDto => ({
+        id: c.id,
+        followupId: c.followupId,
+        text: c.text,
+        done: c.done,
+        sortOrder: c.sortOrder,
+        source: (c.source as 'MANUAL' | 'VOICE') ?? 'MANUAL',
+        createdAt: c.createdAt.toISOString(),
+      })),
     };
+  }
+
+  /* ── Checklist items ────────────────────────────────────────────────────── */
+
+  async addChecklistItems(id: number, items: { text: string; source?: 'MANUAL' | 'VOICE' }[]): Promise<FollowupDto> {
+    await this.ensure(id);
+    const max = await this.prisma.followupChecklistItem.aggregate({ where: { followupId: id }, _max: { sortOrder: true } });
+    let order = (max._max.sortOrder ?? -1) + 1;
+    const clean = items.map((it) => ({ text: it.text.trim(), source: it.source })).filter((it) => it.text);
+    if (clean.length) {
+      await this.prisma.followupChecklistItem.createMany({
+        data: clean.map((it) => ({ followupId: id, text: it.text, source: it.source === 'VOICE' ? 'VOICE' : 'MANUAL', sortOrder: order++ })),
+      });
+    }
+    return this.findOne(id);
+  }
+
+  async updateChecklistItem(itemId: number, data: { done?: boolean; text?: string }): Promise<FollowupDto> {
+    const item = await this.prisma.followupChecklistItem.findUnique({ where: { id: itemId } });
+    if (!item) throw new NotFoundException('Checklist item not found.');
+    await this.prisma.followupChecklistItem.update({
+      where: { id: itemId },
+      data: { ...(data.done !== undefined ? { done: data.done } : {}), ...(data.text !== undefined ? { text: data.text.trim() } : {}) },
+    });
+    return this.findOne(item.followupId);
+  }
+
+  async removeChecklistItem(itemId: number): Promise<FollowupDto> {
+    const item = await this.prisma.followupChecklistItem.findUnique({ where: { id: itemId } });
+    if (!item) throw new NotFoundException('Checklist item not found.');
+    await this.prisma.followupChecklistItem.delete({ where: { id: itemId } });
+    return this.findOne(item.followupId);
   }
 }

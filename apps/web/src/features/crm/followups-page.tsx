@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { AlarmClock, Bell, CalendarClock, Check, ChevronDown, CircleCheck, Clock, Loader2, Pencil, Plus, Search, Trash2, TriangleAlert } from 'lucide-react';
+import { AlarmClock, Bell, CalendarClock, Check, ChevronDown, CircleCheck, Clock, Loader2, Mic, Pencil, Plus, Search, Trash2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { type FollowupDto, type FollowupKind, type FollowupPartyGroup } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -24,9 +24,11 @@ import {
   usePartySuggest,
   useResolveFollowup,
   useSnoozeFollowup,
+  useUpdateChecklistItem,
   useUpdateFollowup,
 } from './use-crm';
 import { Chip, initials, itemLine, UrgencyChip } from './crm-shared';
+import { VoiceCapture } from './voice-capture';
 
 const STAGES = ['POLISHING', 'SUPPLIER', 'DISPATCH', 'READY'];
 const BUCKETS = [
@@ -181,6 +183,9 @@ function FollowupRow({ f, canEdit, onEdit }: { f: FollowupDto; canEdit: boolean;
         </button>
       </div>
 
+      {/* Checklist — tick tasks off as they're finished */}
+      {(f.checklist ?? []).length > 0 && <ChecklistProgress f={f} canEdit={canEdit} />}
+
       {canEdit && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setLogOpen(true)}><Pencil className="size-3" /> Update</Button>
@@ -195,7 +200,16 @@ function FollowupRow({ f, canEdit, onEdit }: { f: FollowupDto; canEdit: boolean;
 
       {open && (
         <div className="mt-2 space-y-1.5 rounded-lg border bg-slate-50/60 p-2.5 text-xs">
-          {(f.logs ?? []).length === 0 && <p className="text-muted-foreground">No updates logged yet.</p>}
+          {/* Discussion / notes captured at creation (stored in detail, one per line) */}
+          {(f.detail ?? '').trim() && (
+            <div className="mb-1.5 border-b pb-1.5">
+              <div className="text-muted-foreground mb-1 font-semibold tracking-wide uppercase">💬 Notes</div>
+              {f.detail!.split('\n').filter((s) => s.trim()).map((line, i) => (
+                <div key={i} className="flex gap-1.5"><span className="text-slate-400">•</span><span>{line}</span></div>
+              ))}
+            </div>
+          )}
+          {(f.logs ?? []).length === 0 && (f.detail ?? '').trim() === '' && <p className="text-muted-foreground">No updates logged yet.</p>}
           {(f.logs ?? []).map((l) => (
             <div key={l.id} className="flex gap-2">
               <span className="text-muted-foreground w-24 shrink-0 font-mono">{formatDate(l.createdAt)}</span>
@@ -213,6 +227,42 @@ function FollowupRow({ f, canEdit, onEdit }: { f: FollowupDto; canEdit: boolean;
       )}
 
       {logOpen && <LogDialog f={f} onClose={() => setLogOpen(false)} />}
+    </div>
+  );
+}
+
+/** Tick-off checklist shown on a board follow-up, with a progress bar. */
+function ChecklistProgress({ f, canEdit }: { f: FollowupDto; canEdit: boolean }) {
+  const toggle = useUpdateChecklistItem();
+  const list = f.checklist ?? [];
+  const done = list.filter((c) => c.done).length;
+  const pct = list.length ? Math.round((done / list.length) * 100) : 0;
+  return (
+    <div className="mt-2 rounded-lg border bg-slate-50/60 p-2.5">
+      <div className="mb-1.5 flex items-center gap-2">
+        <span className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">Checklist</span>
+        <span className="text-muted-foreground text-xs tabular-nums">{done}/{list.length}</span>
+        <div className="ml-1 h-1.5 flex-1 overflow-hidden rounded-full bg-slate-200">
+          <div className={cn('h-full rounded-full transition-all', pct === 100 ? 'bg-emerald-500' : 'bg-blue-500')} style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+      <ul className="space-y-1">
+        {list.map((c) => (
+          <li key={c.id} className="flex items-center gap-2 text-sm">
+            <button
+              type="button"
+              disabled={!canEdit || toggle.isPending}
+              onClick={() => toggle.mutate({ itemId: c.id, done: !c.done })}
+              className={cn('flex size-5 shrink-0 items-center justify-center rounded border transition-colors', c.done ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300 bg-white hover:border-emerald-400')}
+              aria-label={c.done ? 'Mark not done' : 'Mark done'}
+            >
+              {c.done && <Check className="size-3.5" />}
+            </button>
+            <span className={cn('flex-1', c.done && 'text-muted-foreground line-through')}>{c.text}</span>
+            {c.source === 'VOICE' && <Mic className="size-3 shrink-0 text-blue-400" />}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -316,13 +366,14 @@ function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing:
   const [orderCode, setOrderCode] = useState(editing?.orderCode ?? '');
   const [itemText, setItemText] = useState(editing?.itemText ?? '');
   const [title, setTitle] = useState(editing?.title ?? '');
-  const [detail, setDetail] = useState(editing?.detail ?? '');
   const [stage, setStage] = useState(editing?.stage ?? '');
   const [priority, setPriority] = useState(editing?.priority ?? 'NORMAL');
   const [promisedAt, setPromisedAt] = useState(editing?.promisedAt?.slice(0, 10) ?? '');
   const [interval, setIntervalMins] = useState(editing?.reminderIntervalMins ? String(editing.reminderIntervalMins) : '');
   const [maxPerDay, setMaxPerDay] = useState(editing?.maxRemindersPerDay != null ? String(editing.maxRemindersPerDay) : '');
   const [showAdvanced, setShowAdvanced] = useState(false);
+  // Description / notes — a 1-line or multi-line message; the mic summarises speech into it.
+  const [description, setDescription] = useState(editing?.detail ?? '');
 
   const { data: parties = [] } = usePartySuggest(partyQuery);
   // With a party picked, this lists THEIR open orders (pending lines > 0) directly.
@@ -361,7 +412,7 @@ function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing:
       (isPay ? 'Payment follow-up' : 'Delivery follow-up');
     const input = {
       kind, customerId, partyName: party.trim(), orderId, orderCode: orderCode || null, itemText: itemText.trim() || null,
-      title: autoTitle, detail: detail.trim() || null, stage: stage.trim() || null, priority: priority as 'NORMAL' | 'URGENT',
+      title: autoTitle, detail: description.trim() || null, stage: stage.trim() || null, priority: priority as 'NORMAL' | 'URGENT',
       promisedAt: promisedAt || null,
       reminderIntervalMins: interval.trim() ? Number(interval) : null,
       maxRemindersPerDay: maxPerDay.trim() ? Number(maxPerDay) : null,
@@ -398,10 +449,28 @@ function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing:
             </div>
           </Block>
 
-          {/* 2 · WHAT */}
-          <Block emoji={isPay ? '💰' : '📦'} title={isPay ? 'What payment?' : 'What did they ask for?'} hint="Type the item / amount — even if it's not in the system.">
-            <Input className={BIG_FIELD} value={itemText} onChange={(e) => setItemText(e.target.value)} placeholder={isPay ? 'e.g. ₹1,20,000 balance for challan 210' : 'e.g. 10 MALBORO — 5 bags'} autoFocus={!editing} />
-            <Input className="mt-2 h-11" value={detail} onChange={(e) => setDetail(e.target.value)} placeholder="💬 Any note… (e.g. promised on Monday call)" />
+          {/* 2 · WHAT — item + a description you can type OR speak (one mic) */}
+          <Block emoji={isPay ? '💰' : '📦'} title={isPay ? 'What payment & notes' : 'What they asked for & notes'} hint="Type it, or tap the mic and just talk — it summarises into the note.">
+            <div className="space-y-4">
+              <div>
+                <div className="text-muted-foreground mb-1 text-xs font-semibold tracking-wide uppercase">{isPay ? 'Payment' : 'Item'}</div>
+                <Input className={BIG_FIELD} value={itemText} onChange={(e) => setItemText(e.target.value)} placeholder={isPay ? 'e.g. ₹1,20,000 balance for challan 210' : 'e.g. 10 MALBORO — 5 bags'} autoFocus={!editing} />
+              </div>
+
+              <div>
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <span className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">💬 Description / notes</span>
+                </div>
+                <VoiceCapture onConfirm={(t) => setDescription((d) => (d.trim() ? `${d.trim()}\n${t}` : t))} />
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  rows={Math.min(8, Math.max(2, description.split('\n').length + 1))}
+                  placeholder="Type the note here — one line or many. Or use the mic above."
+                  className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 mt-2 w-full rounded-md border px-3 py-2 text-base outline-none placeholder:text-muted-foreground focus-visible:ring-[3px]"
+                />
+              </div>
+            </div>
           </Block>
 
           {/* 3 · WHEN */}

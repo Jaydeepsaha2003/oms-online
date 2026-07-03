@@ -787,7 +787,8 @@ model Followup {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  logs FollowupLog[]
+  logs      FollowupLog[]
+  checklist FollowupChecklistItem[]
 
   @@index([status])
   @@index([kind])
@@ -795,6 +796,25 @@ model Followup {
   @@index([promisedAt])
   @@index([customerId])
   @@map("followups")
+}
+
+/// A tick-off task on a follow-up. Added by typing or by voice (Gemini turns
+/// spoken Hindi/English into short checklist items).
+model FollowupChecklistItem {
+  id         Int      @id @default(autoincrement())
+  followupId Int
+  text       String
+  done       Boolean  @default(false)
+  sortOrder  Int      @default(0)
+  /// 'MANUAL' | 'VOICE' — how the item was added.
+  source     String   @default("MANUAL")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  followup Followup @relation(fields: [followupId], references: [id], onDelete: Cascade)
+
+  @@index([followupId])
+  @@map("followup_checklist_items")
 }
 
 /// One timeline entry on a follow-up (a note / ack / snooze / re-promise).

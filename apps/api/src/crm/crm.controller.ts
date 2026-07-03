@@ -5,7 +5,18 @@ import { Audit } from '../common/decorators/audit.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CrmService } from './crm.service';
-import { AddFollowupLogDto, CreateFollowupDto, CrmSettingsDto, FollowupQueryDto, UpdateFollowupDto } from './dto/crm.dto';
+import { GeminiService } from './gemini.service';
+import {
+  AddFollowupLogDto,
+  AiConfigInputDto,
+  ChecklistItemInputDto,
+  CreateFollowupDto,
+  CrmSettingsDto,
+  FollowupQueryDto,
+  UpdateChecklistItemDto,
+  UpdateFollowupDto,
+  VoiceChecklistDto,
+} from './dto/crm.dto';
 
 const R = RESOURCES.CRM;
 
@@ -13,7 +24,31 @@ const R = RESOURCES.CRM;
 @ApiBearerAuth()
 @Controller('crm/followups')
 export class CrmController {
-  constructor(private readonly crm: CrmService) {}
+  constructor(
+    private readonly crm: CrmService,
+    private readonly gemini: GeminiService,
+  ) {}
+
+  /* ── AI (Gemini voice → checklist) ──────────────────────────────────────── */
+
+  @Get('ai/status')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  aiStatus() {
+    return this.gemini.status();
+  }
+
+  @Put('ai/config')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  aiConfig(@Body() dto: AiConfigInputDto) {
+    return this.gemini.saveConfig(dto);
+  }
+
+  @Post('ai/voice-checklist')
+  @Permissions(perm(R, ACTIONS.CREATE))
+  voiceChecklist(@Body() dto: VoiceChecklistDto) {
+    return this.gemini.voiceToChecklist(dto.audio, dto.mimeType ?? 'audio/wav');
+  }
 
   @Get('settings')
   @Permissions(perm(R, ACTIONS.VIEW))
@@ -116,5 +151,25 @@ export class CrmController {
   async remove(@Param('id', ParseIntPipe) id: number) {
     await this.crm.remove(id);
     return { ok: true };
+  }
+
+  /* ── Checklist ──────────────────────────────────────────────────────────── */
+
+  @Post(':id/checklist')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  addChecklist(@Param('id', ParseIntPipe) id: number, @Body() items: ChecklistItemInputDto[]) {
+    return this.crm.addChecklistItems(id, Array.isArray(items) ? items : [items]);
+  }
+
+  @Patch('checklist/:itemId')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  updateChecklist(@Param('itemId', ParseIntPipe) itemId: number, @Body() dto: UpdateChecklistItemDto) {
+    return this.crm.updateChecklistItem(itemId, dto);
+  }
+
+  @Delete('checklist/:itemId')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  removeChecklist(@Param('itemId', ParseIntPipe) itemId: number) {
+    return this.crm.removeChecklistItem(itemId);
   }
 }
