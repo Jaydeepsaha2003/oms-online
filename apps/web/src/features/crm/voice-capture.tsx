@@ -9,7 +9,7 @@ import { type VoiceRecorder } from './voice-recorder';
 import { useMicAccess } from './mic-permission';
 import { useMicrophoneStatus } from './use-microphone-status';
 
-/** Compose Gemini's result into a description — a one-liner, or multi-line bullets. */
+/** Compose Groq's result into a description — a one-liner, or multi-line bullets. */
 function compose(summary: string, items: string[], transcript: string): string {
   if (items.length > 1) return [summary, ...items.map((i) => `• ${i}`)].filter(Boolean).join('\n');
   if (items.length === 1) return summary && summary !== items[0] ? `${summary}\n• ${items[0]}` : items[0];
@@ -17,7 +17,7 @@ function compose(summary: string, items: string[], transcript: string): string {
 }
 
 /**
- * One mic → speak anything → Gemini summarises (Hindi/English) → a review card
+ * One mic → speak anything → Groq summarises (Hindi/English) → a review card
  * where you confirm or edit → the text is handed back to fill the description.
  * `onConfirm(text)` receives the confirmed 1-line or multi-line message.
  */
@@ -94,7 +94,7 @@ export function VoiceCapture({
             </Button>
             {ai && !ai.configured && (
               <button type="button" onClick={() => navigate('/settings')} className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-xs">
-                <Sparkles className="size-3.5 text-amber-500" /> Turn on voice — add your free Gemini key in Settings
+                <Sparkles className="size-3.5 text-amber-500" /> Turn on voice — add your free Groq key in Settings
               </button>
             )}
           </div>

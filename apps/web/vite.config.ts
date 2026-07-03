@@ -33,8 +33,17 @@ export default defineConfig({
     port: 6173,
     strictPort: true,
     proxy: apiProxy,
+    // HMR is turned OFF on purpose. Over self-signed HTTPS on a phone the
+    // hot-reload websocket can't stay connected, so Vite kept reconnecting and
+    // reloading the page ("keeps refreshing") — which also interrupted voice
+    // recording before the note could save. With HMR off the page stays put;
+    // to see code changes, refresh the browser manually.
+    hmr: false,
+    // Don't let OneDrive's background file-touching trigger needless rebuilds.
+    watch: { ignored: ['**/node_modules/**', '**/.git/**', '**/dist/**'] },
   },
   preview: {
+    host: true,
     port: 4173,
     proxy: apiProxy,
   },

@@ -2,17 +2,27 @@ import { BadRequestException, Injectable, ServiceUnavailableException } from '@n
 import type { AiConfigStatus, VoiceChecklistResult } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 
+// Config key kept as-is for backward compatibility with rows saved before the
+// Gemini → Groq migration (the stored API key lives under this key).
 const CONFIG_KEY = 'GEMINI_CONFIG';
-const DEFAULT_MODEL = 'llama-3.3-70b-specdec';
+// Free-tier Groq model, current as of 2026-07 (Groq's recommended replacement
+// for the deprecated llama-3.3-70b-versatile). Reliable with JSON-object mode.
+const DEFAULT_MODEL = 'openai/gpt-oss-120b';
 
 interface GeminiConfig {
   apiKey: string;
   model: string;
 }
 
+/** A stored model left over from the Gemini days (e.g. "gemini-2.0-flash") is
+ *  not a valid Groq model and would make every request fail — ignore it. */
+function isGroqModel(model: string): boolean {
+  return !!model && !/^gemini/i.test(model);
+}
+
 /**
  * Groq client for CRM voice notes.
- * Uses Whisper-Large-v3 for transcription and Llama-3.3-70b-specdec for structuring.
+ * Uses Whisper-Large-v3 for transcription and gpt-oss-120b for structuring — both free tier.
  */
 @Injectable()
 export class GeminiService {
@@ -28,9 +38,10 @@ export class GeminiService {
         /* ignore */
       }
     }
+    const storedModel = (cfg.model || process.env.GROQ_MODEL || '').trim();
     return {
       apiKey: (cfg.apiKey || process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY || '').trim(),
-      model: (cfg.model || process.env.GROQ_MODEL || DEFAULT_MODEL).trim(),
+      model: isGroqModel(storedModel) ? storedModel : DEFAULT_MODEL,
     };
   }
 
@@ -43,7 +54,8 @@ export class GeminiService {
   async saveConfig(input: { apiKey?: string; model?: string }): Promise<AiConfigStatus> {
     const cur = await this.readConfig();
     const apiKey = input.apiKey === undefined ? cur.apiKey : input.apiKey.trim();
-    const model = (input.model || cur.model || DEFAULT_MODEL).trim();
+    const requested = (input.model || cur.model || '').trim();
+    const model = isGroqModel(requested) ? requested : DEFAULT_MODEL;
     const value = JSON.stringify({ apiKey, model });
     await this.prisma.appConfig.upsert({ where: { key: CONFIG_KEY }, update: { value }, create: { key: CONFIG_KEY, value } });
     return { configured: !!apiKey, model };
@@ -62,14 +74,20 @@ export class GeminiService {
     // 2. Structuring using Groq's Llama model in JSON Mode
     const systemPrompt =
       'You are an assistant for a metal-utensil workshop manager in India. ' +
-      'You will receive a transcript of a spoken note (written in Hindi, English, or Hinglish). ' +
-      'Analyze the transcript and return a JSON object with these fields:\n' +
-      '1. "transcript": Return the input transcript unchanged.\n' +
-      '2. "summary": A brief one-line summary of the note.\n' +
-      '3. "items": An array of short, actionable checklist tasks extracted from the transcript.\n' +
-      '4. "detectedCustomer": The customer or party name mentioned in the transcript (string or null if not found).\n' +
-      '5. "detectedItem": The product or item details mentioned in the transcript (string or null if not found).\n' +
-      'You must return ONLY the raw JSON object. Do not wrap in markdown or add extra explanation.';
+      'You will receive a transcript of a spoken note (Hindi, English, or Hinglish).\n' +
+      'LANGUAGE RULE (very important): write "summary" and every "items" entry in HINGLISH — the ' +
+      'casual Hindi-English mix a shopkeeper speaks, written in ROMAN (English/Latin) letters. ' +
+      'Do NOT use Devanagari script, and do NOT translate the note into pure English. Keep common ' +
+      'English words (order, ready, dispatch, payment, steel, glass, etc.) as English. If the ' +
+      'transcript arrives in Devanagari, transliterate it to Roman letters.\n' +
+      'Return a JSON object with these fields:\n' +
+      '1. "transcript": the input transcript, transliterated to Roman/Hinglish letters if it was in Devanagari.\n' +
+      '2. "summary": a brief one-line summary of the note, in Hinglish (Roman letters).\n' +
+      '3. "items": an array of short, actionable checklist tasks, each written in Hinglish (Roman letters).\n' +
+      '4. "detectedCustomer": the customer or party name mentioned in the transcript (string or null if not found).\n' +
+      '5. "detectedItem": the product or item details mentioned in the transcript (string or null if not found).\n' +
+      'Example of a good item: "Sharma ji ko 50 steel thali ka order ready hone ka bolna hai".\n' +
+      'Return ONLY the raw JSON object. Do not wrap in markdown or add any extra text.';
 
     const chatBody = {
       model: model || DEFAULT_MODEL,
