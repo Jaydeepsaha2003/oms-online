@@ -1,7 +1,15 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import { Prisma } from '@prisma/client';
-import { type ChallanDraft, type ChallanDraftItem, type ChallanDto, type ChallanItemHistoryRow, type Paginated, type PendingChallanLine } from '@oms/shared';
+import {
+  type ChallanAnalytics,
+  type ChallanDraft,
+  type ChallanDraftItem,
+  type ChallanDto,
+  type ChallanItemHistoryRow,
+  type Paginated,
+  type PendingChallanLine,
+} from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { PdfService } from '../pdf/pdf.service';
 import { CreateChallanDto, DraftChallanDto, ItemHistoryQueryDto, PendingChallanQueryDto, ChallanQueryDto } from './dto/challan.dto';
@@ -292,6 +300,88 @@ export class ChallansService {
     };
   }
 
+  /** Rich analytics roll-up for the "Show KPI" modal — honours the list filters
+   *  (search / date range / status) plus an optional customer category. */
+  async analytics(q: ChallanQueryDto): Promise<ChallanAnalytics> {
+    const where = this.listWhere(q);
+
+    const [agg, byStatusRows, byCategoryRows, topPartyRows, overdueAgg, catRows] = await Promise.all([
+      this.prisma.challan.aggregate({
+        where,
+        _count: { _all: true },
+        _sum: { total: true, b: true, c: true, tax: true, tds: true, tcs: true, freight: true, packing: true },
+      }),
+      this.prisma.challan.groupBy({ by: ['challanStatus'], where, _count: { _all: true }, _sum: { total: true } }),
+      this.prisma.challan.groupBy({ by: ['category'], where, _count: { _all: true }, _sum: { total: true, b: true, c: true } }),
+      this.prisma.challan.groupBy({
+        by: ['customerName'],
+        where,
+        _count: { _all: true },
+        _sum: { total: true },
+        orderBy: { _sum: { total: 'desc' } },
+        take: 10,
+      }),
+      this.prisma.challan.aggregate({
+        where: { AND: [where, { challanStatus: 'CONFIRMED' }, { dueDate: { lt: new Date() } }] },
+        _count: { _all: true },
+        _sum: { total: true },
+      }),
+      // All distinct categories in the master (unfiltered) so the dropdown is stable.
+      this.prisma.challan.findMany({ distinct: ['category'], select: { category: true }, where: { category: { not: null } } }),
+    ]);
+
+    const count = agg._count._all;
+    const totalSales = agg._sum.total ?? 0;
+    const statusOf = (s: string) => byStatusRows.find((r) => (r.challanStatus ?? '').toUpperCase() === s);
+    const confirmed = statusOf('CONFIRMED');
+    const cancelled = statusOf('CANCELLED');
+
+    return {
+      totals: {
+        count,
+        totalSales,
+        totalB: agg._sum.b ?? 0,
+        totalC: agg._sum.c ?? 0,
+        totalGst: agg._sum.tax ?? 0,
+        totalTds: agg._sum.tds ?? 0,
+        totalTcs: agg._sum.tcs ?? 0,
+        totalFreight: agg._sum.freight ?? 0,
+        totalPacking: agg._sum.packing ?? 0,
+        avgValue: count > 0 ? Math.round(totalSales / count) : 0,
+      },
+      byStatus: {
+        confirmed: { count: confirmed?._count._all ?? 0, total: confirmed?._sum.total ?? 0 },
+        cancelled: { count: cancelled?._count._all ?? 0, total: cancelled?._sum.total ?? 0 },
+      },
+      byCategory: byCategoryRows
+        .map((r) => ({
+          category: r.category ?? '—',
+          count: r._count._all,
+          total: r._sum.total ?? 0,
+          b: r._sum.b ?? 0,
+          c: r._sum.c ?? 0,
+        }))
+        .sort((a, b) => b.total - a.total),
+      topParties: topPartyRows.map((r) => ({ customerName: r.customerName, count: r._count._all, total: r._sum.total ?? 0 })),
+      overdue: { count: overdueAgg._count._all, total: overdueAgg._sum.total ?? 0 },
+      categories: catRows
+        .map((r) => (r.category ?? '').trim())
+        .filter((c) => c.length > 0)
+        .sort((a, b) => a.localeCompare(b)),
+    };
+  }
+
+  /** Every challan (with line items) matching the list filters — no pagination.
+   *  Feeds the client-side "Get Report by" Excel exports (Detailed / Summary). */
+  async exportAll(q: ChallanQueryDto): Promise<{ items: ChallanDto[] }> {
+    const rows = await this.prisma.challan.findMany({
+      where: this.listWhere(q),
+      orderBy: [{ invDate: 'desc' }, { id: 'desc' }],
+      include: { items: true },
+    });
+    return { items: rows.map((r) => this.map(r)) };
+  }
+
   async findOne(id: number): Promise<ChallanDto> {
     const row = await this.prisma.challan.findUnique({ where: { id }, include: { items: true } });
     if (!row) throw new NotFoundException('Challan not found');
@@ -471,6 +561,7 @@ export class ChallansService {
   private listWhere(q: ChallanQueryDto): Prisma.ChallanWhereInput {
     const and: Prisma.ChallanWhereInput[] = [];
     if (q.status) and.push({ challanStatus: q.status.toUpperCase() });
+    if (q.category?.trim()) and.push({ category: q.category.trim() });
     if (q.dateFrom) {
       const from = new Date(q.dateFrom);
       from.setHours(0, 0, 0, 0);

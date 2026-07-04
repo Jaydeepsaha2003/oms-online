@@ -16,6 +16,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { useDashboardKpis, useOrderVsChallan } from './use-analytics';
 import { BacklogSection } from './backlog-section';
+import { InfoTip } from './info-tip';
 import { inrCompact, inrFull } from './format';
 
 function DeltaBadge({ metric }: { metric: PeriodMetric }) {
@@ -43,11 +44,14 @@ function DeltaBadge({ metric }: { metric: PeriodMetric }) {
 }
 
 /** Headline order-value card for one period, comparing against the previous period. */
-function PeriodCard({ label, sub, metric, loading }: { label: string; sub: string; metric?: PeriodMetric; loading: boolean }) {
+function PeriodCard({ label, sub, metric, loading, info }: { label: string; sub: string; metric?: PeriodMetric; loading: boolean; info: string }) {
   return (
     <Card className="card-hover gap-0">
       <CardHeader className="flex-row items-center justify-between space-y-0 pb-1.5">
-        <CardTitle className="text-muted-foreground text-sm font-medium">{label}</CardTitle>
+        <CardTitle className="text-muted-foreground flex items-center gap-1 text-sm font-medium">
+          {label}
+          <InfoTip text={info} />
+        </CardTitle>
         {metric && <DeltaBadge metric={metric} />}
       </CardHeader>
       <CardContent>
@@ -83,6 +87,7 @@ function OpCard({
   tone,
   metric,
   loading,
+  info,
 }: {
   label: string;
   value: string;
@@ -91,11 +96,15 @@ function OpCard({
   tone: OpTone;
   metric?: PeriodMetric;
   loading: boolean;
+  info: string;
 }) {
   return (
     <Card className="card-hover gap-0">
       <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-muted-foreground text-sm font-medium">{label}</CardTitle>
+        <CardTitle className="text-muted-foreground flex items-center gap-1 text-sm font-medium">
+          {label}
+          <InfoTip text={info} />
+        </CardTitle>
         <span className={cn('flex size-9 items-center justify-center rounded-xl text-white shadow-sm', OP_TONE[tone])}>
           <Icon className="size-4.5" />
         </span>
@@ -151,10 +160,10 @@ export function AnalyticsSection() {
           Order value
         </h3>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <PeriodCard label="Today" sub="vs yesterday" metric={k?.orderValue.today} loading={loading} />
-          <PeriodCard label="This Week" sub="vs last week" metric={k?.orderValue.week} loading={loading} />
-          <PeriodCard label="This Month" sub="vs last month" metric={k?.orderValue.month} loading={loading} />
-          <PeriodCard label="This FY" sub="vs last FY · Apr–Mar" metric={k?.orderValue.year} loading={loading} />
+          <PeriodCard label="Today" sub="vs yesterday" metric={k?.orderValue.today} loading={loading} info="Total rupee value of all orders you took today. The coloured badge compares it with yesterday — green is up, red is down." />
+          <PeriodCard label="This Week" sub="vs last week" metric={k?.orderValue.week} loading={loading} info="Total value of orders taken since Monday this week, compared with the same stretch of days last week." />
+          <PeriodCard label="This Month" sub="vs last month" metric={k?.orderValue.month} loading={loading} info="Total value of all orders placed this calendar month so far, compared with the whole of last month." />
+          <PeriodCard label="This FY" sub="vs last FY · Apr–Mar" metric={k?.orderValue.year} loading={loading} info="Total order value for this financial year (April to March), compared with the previous financial year." />
         </div>
       </div>
 
@@ -168,6 +177,7 @@ export function AnalyticsSection() {
           tone="amber"
           metric={k?.challanValueMonth}
           loading={loading}
+          info="MTD = month-to-date. The total value you have billed (created challans / invoices for) so far this month, compared with last month."
         />
         <OpCard
           label="Orders (MTD)"
@@ -177,6 +187,7 @@ export function AnalyticsSection() {
           tone="sky"
           metric={k?.ordersCountMonth}
           loading={loading}
+          info="How many orders you have taken so far this month, compared with last month."
         />
         <OpCard
           label="To-Challan Backlog"
@@ -185,14 +196,16 @@ export function AnalyticsSection() {
           icon={PackageOpen}
           tone="violet"
           loading={loading}
+          info="Value of goods already dispatched (sent out) but not yet put on a challan / invoice. In short: shipped but still to be billed."
         />
         <OpCard
-          label="Open Orders"
+          label="Pending Parties"
           value={k ? k.openOrders.toLocaleString('en-IN') : '—'}
-          hint="with pending dispatch"
+          hint="customers awaiting dispatch"
           icon={ClipboardList}
           tone="sky"
           loading={loading}
+          info="How many different parties (customers) still have at least one order waiting to be dispatched — i.e. not fully shipped and not yet invoiced."
         />
       </div>
 
@@ -208,6 +221,7 @@ export function AnalyticsSection() {
             </span>
             Order value vs Challan value
             <span className="text-muted-foreground text-xs font-normal">last 12 months</span>
+            <InfoTip text="For each of the last 12 months: the blue bars are the total value of orders you took that month, and the amber line is the total value you billed (challaned) that month. Hover any month for exact figures." />
           </CardTitle>
         </CardHeader>
         <CardContent>

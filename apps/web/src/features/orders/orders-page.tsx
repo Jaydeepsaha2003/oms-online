@@ -47,7 +47,7 @@ const TRUCK_STATE: Record<'FULL' | 'PARTIAL' | 'NONE', { cls: string; label: str
 };
 
 const COLUMNS: DataColumn<OrderDto>[] = [
-  { id: 'code', label: 'Order #', fixed: true, cell: (o) => <span className="font-mono text-xs font-medium">{o.code ?? `#${o.id}`}</span> },
+  { id: 'code', label: 'Order #', fixed: true, cell: (o) => <span className="font-mono font-semibold">{(o.code ? o.code.replace(/^ORD-0*/i, '') || String(o.id) : String(o.id))}</span> },
   { id: 'customer', label: 'Customer', cell: (o) => <span className="font-medium">{o.customerName}</span> },
   { id: 'agent', label: 'Agent', cell: (o) => o.agentName ?? '—' },
   { id: 'orderDate', label: 'Order date', cell: (o) => <span className="whitespace-nowrap">{formatDate(o.orderDate)}</span> },
@@ -172,6 +172,8 @@ export function OrdersPage() {
         isLoading={isLoading}
         dense
         maxBodyHeight="max-h-[calc(100dvh-16rem)]"
+        // Larger, easy-to-read data font (columns still auto-fit their content).
+        className="text-[15px] [&_thead_th]:text-[13px] [&_td]:py-2.5 [&_th]:py-2.5 [&_tbody_button]:size-8"
         emptyText="No orders yet — create one."
         onRowClick={can('order:update') ? (o) => navigate(`/orders/${o.id}/edit`) : undefined}
         actions={(o) => {

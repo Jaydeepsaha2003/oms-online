@@ -118,6 +118,13 @@ export const MENU: MenuNode[] = [
         icon: 'ListTree',
         permission: perm(RESOURCES.DESIGN_NAME, ACTIONS.VIEW),
       },
+      {
+        id: 'price-history',
+        label: 'Price History',
+        to: '/price-history',
+        icon: 'History',
+        permission: perm(RESOURCES.BOOKING, ACTIONS.VIEW),
+      },
     ],
   },
   {
@@ -150,13 +157,6 @@ export const MENU: MenuNode[] = [
         label: 'Bag Bookings',
         to: '/bookings',
         icon: 'PackageOpen',
-        permission: perm(RESOURCES.BOOKING, ACTIONS.VIEW),
-      },
-      {
-        id: 'price-history',
-        label: 'Price History',
-        to: '/price-history',
-        icon: 'History',
         permission: perm(RESOURCES.BOOKING, ACTIONS.VIEW),
       },
       {

@@ -333,6 +333,16 @@ export function OrderFormPage() {
   // The selected customer's special rates (deltas), applied when an item is picked.
   const { data: special } = useCustomerSpecialRates(customerId);
 
+  // Keep customerId in sync with the customer NAME + the loaded lookups. Without
+  // this, a customer set outside onCustomer() — a restored draft or an edit load —
+  // leaves customerId undefined, so the customer's special rates and logo blocks
+  // never load (rates aren't applied, blocked logos still show). Setting the same
+  // id is a no-op, so this never fights onCustomer.
+  useEffect(() => {
+    const id = customer.trim() ? lookups?.customers.find((x) => x.name === customer)?.id : undefined;
+    setCustomerId(id);
+  }, [customer, lookups]);
+
   const completionDate = useMemo(
     () => (completionDay.trim() === '' ? '' : addDays(orderDate, Number(completionDay))),
     [orderDate, completionDay],
@@ -519,11 +529,14 @@ export function OrderFormPage() {
     // Hide logo items entirely when this customer's logo is blocked for that
     // category (or category + sub-category) — a blocked logo can't be ordered.
     const logos = special?.logos ?? [];
+    // Compare case/space-insensitively (mirrors resolveSpecialRates) so a casing
+    // mismatch never lets a blocked-logo item slip back into the list.
+    const norm = (v: string | null | undefined) => (v ?? '').trim().toUpperCase();
     const logoBlocked = (category: string, subCategory: string) =>
       logos.some(
         (l) =>
-          (l.scope === 'CATEGORY' && l.category === category) ||
-          (l.scope === 'SUBCATEGORY' && l.category === category && l.subCategory === subCategory),
+          (l.scope === 'CATEGORY' && norm(l.category) === norm(category)) ||
+          (l.scope === 'SUBCATEGORY' && norm(l.category) === norm(category) && norm(l.subCategory) === norm(subCategory)),
       );
     const map = new Map<string, (typeof list)[number]>();
     const labels: string[] = [];
@@ -1413,6 +1426,7 @@ export function OrderFormPage() {
           bookings={activeBookings}
           lookups={lookups}
           bagWeights={special?.bagWeights ?? []}
+          logos={special?.logos ?? []}
           alreadyQueued={alreadyQueuedForBooking}
           onAdd={addBookingLines}
         />

@@ -300,6 +300,7 @@ export function Combobox({
       <PopoverContent
         align="start"
         sideOffset={4}
+        collisionPadding={8}
         className="p-0"
         style={{ width: 'var(--radix-popover-trigger-width)' }}
         onOpenAutoFocus={(e) => e.preventDefault()}
@@ -310,12 +311,13 @@ export function Combobox({
         }}
         onMouseDown={keepFocus}
       >
-        {/* Inline maxHeight (not a Tailwind class): taller list = less scrolling,
-            and it can't silently break if the utility isn't generated. */}
+        {/* Cap the list to the space Radix actually has above/below the field
+            (`--radix-popover-content-available-height`) so it never spills off the
+            top/bottom of the screen, but no taller than a comfortable 480px. */}
         <div
           ref={listRef}
           className="overflow-x-hidden overflow-y-auto overscroll-contain p-1"
-          style={{ maxHeight: 'min(60vh, 480px)' }}
+          style={{ maxHeight: 'min(480px, var(--radix-popover-content-available-height, 480px))' }}
         >
           {listHeader && rows.length > 0 && (
             <div className="bg-popover text-muted-foreground sticky top-0 z-10 flex items-center gap-2 border-b px-2 py-1.5 text-[11px] font-semibold tracking-wide uppercase">

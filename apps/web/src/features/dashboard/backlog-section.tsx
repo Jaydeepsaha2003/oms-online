@@ -3,6 +3,7 @@ import type { AgingBucket } from '@oms/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { useBacklog } from './use-analytics';
+import { InfoTip } from './info-tip';
 import { inrCompact, inrFull, numCompact } from './format';
 
 // Severity ramp for the age bands — older = redder = act first.
@@ -19,17 +20,22 @@ function MiniCard({
   hint,
   icon: Icon,
   tone,
+  info,
 }: {
   label: string;
   value: string;
   hint?: string;
   icon: typeof PackageOpen;
   tone: string;
+  info: string;
 }) {
   return (
     <div className="rounded-xl border bg-card p-3">
       <div className="text-muted-foreground flex items-center justify-between text-xs font-medium">
-        {label}
+        <span className="flex items-center gap-1">
+          {label}
+          <InfoTip text={info} />
+        </span>
         <Icon className={cn('size-4', tone)} />
       </div>
       <div className="mt-1 text-2xl font-bold tracking-tight tabular-nums">{value}</div>
@@ -77,6 +83,7 @@ export function BacklogSection() {
           </span>
           Order backlog
           <span className="text-muted-foreground text-xs font-normal">ordered, not yet dispatched</span>
+          <InfoTip text="Orders you have taken but not fully shipped yet. For every order line it works out ordered quantity minus what has already been dispatched, and adds up what's still left to send. The bars below group these open orders by how old the order is." />
           {data && data.oldestDays > 0 && !empty && (
             <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
               <Clock className="size-3" /> oldest {data.oldestDays}d
@@ -100,6 +107,7 @@ export function BacklogSection() {
                 hint={`${data.openOrders} order${data.openOrders === 1 ? '' : 's'} · ${data.openLines} line${data.openLines === 1 ? '' : 's'}`}
                 icon={PackageOpen}
                 tone="text-violet-600"
+                info="The rupee value of everything that has been ordered but not yet dispatched, added up across all open orders and their item lines."
               />
               <MiniCard
                 label="To dispatch"
@@ -107,6 +115,7 @@ export function BacklogSection() {
                 hint={`${numCompact(data.pendingKgs)} kgs pending`}
                 icon={Layers}
                 tone="text-sky-600"
+                info="The physical quantity still waiting to be shipped — total bags (and kilograms) pending across all open orders."
               />
               <MiniCard
                 label="Urgent pending"
@@ -114,12 +123,16 @@ export function BacklogSection() {
                 hint={data.urgentValue > 0 ? `${inrCompact(data.urgentValue)} to ship` : 'no urgent orders'}
                 icon={AlertTriangle}
                 tone="text-red-600"
+                info="How many of the pending orders are marked URGENT, and their total value still to ship. Handle these first."
               />
             </div>
 
             <div>
               <div className="text-muted-foreground mb-2 flex items-center justify-between text-xs font-medium">
-                <span>Aging by order date — clear the oldest first</span>
+                <span className="flex items-center gap-1">
+                  Aging by order date — clear the oldest first
+                  <InfoTip text="The open orders split by how many days ago they were placed. Red (30+ days) is the oldest, so clear those first. Each bar's length shows the total rupee value of the orders in that age group." />
+                </span>
                 <span>orders</span>
               </div>
               <div className="space-y-1.5">

@@ -28,6 +28,8 @@ const STATUS_STYLE: Record<string, string> = {
 
 const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? null : Number(s));
 const dash = (v: number | null) => (v == null || v === 0 ? '—' : v.toLocaleString('en-IN'));
+// Short order number: "ORD-01160" → "1160" (drop the ORD- prefix + leading zeros).
+const shortOrder = (code: string | null, id: number) => (code ? code.replace(/^ORD-0*/i, '') || String(id) : String(id));
 
 /** One flat row = an order line plus its parent order's header info. */
 interface Row {
@@ -71,7 +73,7 @@ function toInput(o: OrderDto, items: OrderItemDto[]): OrderInput {
 }
 
 const COLUMNS: DataColumn<Row>[] = [
-  { id: 'orderId', label: 'Order ID', fixed: true, cell: (r) => <span className="font-mono text-xs font-medium">{r.order.code ?? `#${r.order.id}`}</span> },
+  { id: 'orderId', label: 'Order ID', fixed: true, cell: (r) => <span className="font-mono font-semibold">{shortOrder(r.order.code, r.order.id)}</span> },
   { id: 'orderDate', label: 'Order Date', cell: (r) => <span className="whitespace-nowrap">{formatDate(r.order.orderDate)}</span> },
   { id: 'dueDate', label: 'Due Date', cell: (r) => <span className="whitespace-nowrap">{formatDate(r.order.completionDate)}</span> },
   { id: 'customer', label: 'Customer Name', cell: (r) => <span className="font-medium">{r.order.customerName}</span> },
@@ -191,6 +193,8 @@ export function OrderModifyPage() {
         isLoading={isLoading}
         dense
         maxBodyHeight="max-h-[calc(100dvh-16rem)]"
+        // Larger, easy-to-read data font (columns still auto-fit their content).
+        className="text-[15px] [&_thead_th]:text-[13px] [&_td]:py-2.5 [&_th]:py-2.5 [&_tbody_button]:size-8"
         emptyText="No order lines found."
         onRowClick={(r) => setEdit(r)}
       />

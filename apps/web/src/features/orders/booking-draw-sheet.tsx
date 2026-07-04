@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BadgePercent, Loader2, PackageOpen, Plus, Split, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { ORDER_PRIORITIES, type BookingDto, type BookingQuoteLine, type ConvertBookingLineInput, type CustomerBagWeightDto, type OrderLookups } from '@oms/shared';
+import { ORDER_PRIORITIES, type BookingDto, type BookingQuoteLine, type ConvertBookingLineInput, type CustomerBagWeightDto, type CustomerLogoDto, type OrderLookups } from '@oms/shared';
 import { formatDate } from '@/lib/date-format';
 import { cn } from '@/lib/utils';
 import { useConfirm } from '@/components/common/confirm';
@@ -74,6 +74,7 @@ export function BookingDrawSheet({
   bookings,
   lookups,
   bagWeights,
+  logos,
   alreadyQueued,
   onAdd,
 }: {
@@ -85,6 +86,8 @@ export function BookingDrawSheet({
   lookups: OrderLookups | undefined;
   /** The customer's per-category "1 bag = X kgs" weights, to auto-fill Kgs from Bags. */
   bagWeights: CustomerBagWeightDto[];
+  /** The customer's logo restrictions — blocked-logo items are hidden from the list. */
+  logos: CustomerLogoDto[];
   /** Bags/kgs already queued in the order for a booking (so remaining is accurate before save). */
   alreadyQueued: (bookingId: number) => { bags: number; kgs: number };
   onAdd: (lines: DrawnBookingLine[]) => void;
@@ -116,16 +119,27 @@ export function BookingDrawSheet({
 
   const itemOptions = useMemo(() => {
     const list = lookups?.items ?? [];
+    // Hide logo items when this customer's logo is blocked for that category /
+    // sub-category — same rule as the main order form.
+    const norm = (v: string | null | undefined) => (v ?? '').trim().toUpperCase();
+    const isLogo = (designType?: string | null) => norm(designType).includes('LOGO');
+    const logoBlocked = (category: string, subCategory: string) =>
+      logos.some(
+        (l) =>
+          (l.scope === 'CATEGORY' && norm(l.category) === norm(category)) ||
+          (l.scope === 'SUBCATEGORY' && norm(l.category) === norm(category) && norm(l.subCategory) === norm(subCategory)),
+      );
     const map = new Map<string, (typeof list)[number]>();
     const labels: string[] = [];
     for (const it of list) {
+      if (isLogo(it.designType) && logoBlocked(it.category, it.subCategory)) continue;
       const label = [fmtNum(it.size), it.product, it.designType ?? ''].filter(Boolean).join(' ');
       if (!label || map.has(label)) continue;
       map.set(label, it);
       labels.push(label);
     }
     return { labels, map };
-  }, [lookups]);
+  }, [lookups, logos]);
 
   const categoryFieldMap = useMemo(() => {
     const m = new Map<string, 'KGS' | 'PCS'>();

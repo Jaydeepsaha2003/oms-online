@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle2, ChevronLeft, ChevronRight, Pencil, Printer, ScrollText, Search, Trash2, X, XCircle } from 'lucide-react';
+import { BarChart3, CheckCircle2, ChevronLeft, ChevronRight, FileSpreadsheet, Layers, Pencil, Printer, ScrollText, Search, Trash2, X, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ChallanDto } from '@oms/shared';
 import { cn } from '@/lib/utils';
@@ -15,8 +15,11 @@ import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useChallans, useChallanSummary, useDeleteChallan, useUpdateChallanStatus } from './use-challans';
+import { fetchAllChallans, useChallans, useDeleteChallan, useUpdateChallanStatus } from './use-challans';
 import { PRESETS, presetRange } from './date-presets';
+import { ChallanAnalyticsDialog } from './challan-analytics-dialog';
+import { ReportDownloadOverlay, type ReportPhase } from './report-download-overlay';
+import { exportDetailedReport, exportSummaryReport, type ReportMeta } from './challan-report';
 
 const PAGE_SIZE = 50;
 const money = (v: number | null) => `₹ ${(v ?? 0).toLocaleString('en-IN')}`;
@@ -50,15 +53,6 @@ function dueInfo(due: string | null): { text: string; over: boolean } {
   const days = Math.round((d.getTime() - today.getTime()) / 86_400_000);
   if (days < 0) return { text: `${Math.abs(days)} over`, over: true };
   return { text: `${days} left`, over: false };
-}
-
-function Kpi({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="bg-card rounded-md border p-3 shadow-sm">
-      <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">{label}</p>
-      <p className="mt-1 text-xl font-semibold tabular-nums">{value}</p>
-    </div>
-  );
 }
 
 export function ChallansListPage() {
@@ -102,12 +96,45 @@ export function ChallansListPage() {
     status: status || undefined,
   };
   const { data, isLoading } = useChallans(query);
-  const { data: summary } = useChallanSummary(query);
   const updateStatus = useUpdateChallanStatus();
   const del = useDeleteChallan();
 
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
+
+  // "Show KPI" analytics modal + "Get Report by" export animation.
+  const [kpiOpen, setKpiOpen] = useState(false);
+  const [report, setReport] = useState<{ kind: 'detailed' | 'summary'; phase: ReportPhase; count?: number } | null>(null);
+
+  const runReport = async (kind: 'detailed' | 'summary') => {
+    const title = kind === 'detailed' ? 'Detailed View' : 'Challan Summary';
+    try {
+      setReport({ kind, phase: 'fetching' });
+      const res = await fetchAllChallans(query);
+      const rows = res.items ?? [];
+      if (rows.length === 0) {
+        toast.error('No challans match the current filters.');
+        setReport(null);
+        return;
+      }
+      setReport({ kind, phase: 'building', count: rows.length });
+      const meta: ReportMeta = {
+        status: status || 'All',
+        category: 'All',
+        dateRange: dateFrom || dateTo ? `${dateFrom ? formatDate(dateFrom) : '…'} to ${dateTo ? formatDate(dateTo) : '…'}` : 'All',
+        search: search || '—',
+      };
+      // brief pause so the download animation registers before the file save dialog
+      await new Promise((r) => setTimeout(r, 650));
+      if (kind === 'detailed') exportDetailedReport(rows, meta);
+      else exportSummaryReport(rows, meta);
+      setReport({ kind, phase: 'done', count: rows.length });
+      setTimeout(() => setReport(null), 1200);
+    } catch {
+      toast.error('Failed to build the report.');
+      setReport(null);
+    }
+  };
 
   const applyPreset = (p: string) => {
     setPreset(p);
@@ -138,7 +165,7 @@ export function ChallansListPage() {
   const remove = async (c: ChallanDto) => {
     const ok = await confirm({
       title: `Delete challan ${c.code}?`,
-      description: `This permanently deletes the challan and frees its dispatches back to Pending. This cannot be undone.`,
+      description: `This challan will be permanently deleted, and its dispatch lines will move back to — and become visible in — the Pending Challan tab.`,
       confirmText: 'Delete',
       destructive: true,
     });
@@ -149,7 +176,7 @@ export function ChallansListPage() {
   const columns: DataColumn<ChallanDto>[] = useMemo(
     () => [
       { id: 'date', label: 'Date', sortValue: (r) => r.invDate, cell: (r) => <span className="whitespace-nowrap">{formatDate(r.invDate)}</span> },
-      { id: 'code', label: 'Challan No', sortValue: (r) => r.code, cell: (r) => <span className="font-mono text-xs font-medium">{r.code}</span> },
+      { id: 'code', label: 'Challan No', sortValue: (r) => r.code, cell: (r) => <span className="font-mono font-semibold">{r.code}</span> },
       { id: 'party', label: 'Party', sortValue: (r) => r.customerName, cell: (r) => <span className="font-medium">{r.customerName}</span> },
       { id: 'total', label: 'Total', align: 'right', sortValue: (r) => r.total ?? 0, cell: (r) => <span className="tabular-nums font-semibold">{money(r.total)}</span> },
       { id: 'b', label: 'B', align: 'right', sortValue: (r) => r.b ?? 0, cell: (r) => <span className="tabular-nums">{money(r.b)}</span> },
@@ -233,7 +260,10 @@ export function ChallansListPage() {
           <h2 className="text-2xl font-semibold tracking-tight">Challans</h2>
           <p className="text-muted-foreground text-sm">{data?.total ?? 0} saved challan(s) · view, print, change status or delete</p>
         </div>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          <Button size="sm" className="bg-gradient-brand text-white shadow-sm hover:opacity-95" onClick={() => setKpiOpen(true)} title="Open analytics dashboard">
+            <BarChart3 /> Show KPI
+          </Button>
           <ColumnSettings
             columns={cols.orderedReorderable}
             hidden={cols.hidden}
@@ -246,13 +276,16 @@ export function ChallansListPage() {
         </div>
       </div>
 
-      {/* KPIs */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        <Kpi label="Total Sales" value={money(summary?.totalSales ?? 0)} />
-        <Kpi label="Total B" value={money(summary?.totalB ?? 0)} />
-        <Kpi label="Total C" value={money(summary?.totalC ?? 0)} />
-        <Kpi label="Total TDS" value={money(summary?.totalTds ?? 0)} />
-        <Kpi label="Challans" value={(summary?.count ?? 0).toLocaleString('en-IN')} />
+      {/* Get Report by — Excel exports over the current filter */}
+      <div className="bg-card flex flex-wrap items-center gap-2 rounded-md border p-2.5 shadow-sm">
+        <span className="text-muted-foreground mr-1 text-xs font-semibold tracking-wide uppercase">Get Report by</span>
+        <Button variant="outline" size="sm" disabled={!!report} onClick={() => runReport('detailed')} title="Export the filtered challan list to Excel">
+          <FileSpreadsheet className="text-emerald-600" /> Detailed View
+        </Button>
+        <Button variant="outline" size="sm" disabled={!!report} onClick={() => runReport('summary')} title="Export challans plus their line items to Excel">
+          <Layers className="text-sky-600" /> Challan Summary
+        </Button>
+        <span className="text-muted-foreground ml-auto text-xs">Exports respect the filters below.</span>
       </div>
 
       {/* Filters */}
@@ -296,6 +329,7 @@ export function ChallansListPage() {
         rowKey={(r) => r.id}
         isLoading={isLoading}
         dense
+        className="text-[15px] [&_thead_th]:text-[13px] [&_td]:py-2.5 [&_th]:py-2.5 [&_tbody_button]:size-8"
         actions={rowActions}
         emptyText="No challans yet — create one from Pending Challan."
       />
@@ -311,6 +345,14 @@ export function ChallansListPage() {
           </Button>
         </div>
       </div>
+
+      <ChallanAnalyticsDialog open={kpiOpen} onOpenChange={setKpiOpen} base={{ search, dateFrom, dateTo, status }} />
+      <ReportDownloadOverlay
+        open={!!report}
+        title={report?.kind === 'summary' ? 'Challan Summary' : 'Detailed View'}
+        phase={report?.phase ?? 'fetching'}
+        count={report?.count}
+      />
     </div>
   );
 }

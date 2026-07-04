@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
+  ChallanAnalytics,
   ChallanDraft,
   ChallanDto,
   ChallanEditContext,
@@ -128,6 +129,21 @@ export function useChallanSummary(query: ChallanQuery) {
     queryFn: () => http.get<ChallanSummary>('/challans/summary', { params: query }),
     placeholderData: (prev) => prev,
   });
+}
+
+/** Rich analytics roll-up for the "Show KPI" modal (enabled while the modal is open). */
+export function useChallanAnalytics(query: ChallanQuery, enabled = true) {
+  return useQuery({
+    queryKey: [...KEY, 'analytics', query],
+    queryFn: () => http.get<ChallanAnalytics>('/challans/analytics', { params: query }),
+    enabled,
+    placeholderData: (prev) => prev,
+  });
+}
+
+/** Fetch the full filtered set (with line items) for a "Get Report by" export. */
+export function fetchAllChallans(query: ChallanQuery): Promise<{ items: ChallanDto[] }> {
+  return http.get<{ items: ChallanDto[] }>('/challans/export', { params: query });
 }
 
 export function useUpdateChallanStatus() {

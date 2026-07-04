@@ -51,6 +51,18 @@ export class ChallansController {
     return this.challans.summary(query);
   }
 
+  @Get('analytics')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  analytics(@Query() query: ChallanQueryDto) {
+    return this.challans.analytics(query);
+  }
+
+  @Get('export')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  exportAll(@Query() query: ChallanQueryDto) {
+    return this.challans.exportAll(query);
+  }
+
   @Get('item-names')
   @Permissions(perm(R, ACTIONS.VIEW))
   itemNames(@Query('search') search?: string) {

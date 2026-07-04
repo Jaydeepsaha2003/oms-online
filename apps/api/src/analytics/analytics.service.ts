@@ -198,14 +198,25 @@ export class AnalyticsService {
 
   /** Count of non-cancelled orders that still have at least one under-dispatched line. */
   private async openOrdersCount(): Promise<number> {
+    // Count DISTINCT PARTIES (customers) that still have a pending order, using the
+    // same "open" rule as the backlog: a confirmed line NOT yet invoiced on a challan
+    // AND with meaningful un-dispatched quantity (leftover above rounding noise —
+    // more than 1% of the ordered qty, min half a unit).
     const rows = await this.prisma.$queryRawUnsafe<{ c: bigint }[]>(
-      `SELECT COUNT(DISTINCT o.id) AS c
+      `SELECT COUNT(DISTINCT o.customerName) AS c
          FROM orders o
          JOIN order_items oi ON oi.orderId = o.id AND oi.status = 'CONFIRMED'
         WHERE o.status <> 'CANCELLED'
+          AND NOT EXISTS (
+            SELECT 1 FROM dispatches dd
+              JOIN challan_items ci ON ci.dispatchId = dd.id
+              JOIN challans ch ON ch.id = ci.challanId AND ch.challanStatus <> 'CANCELLED'
+             WHERE dd.orderItemId = oi.id
+          )
           AND (CASE WHEN UPPER(COALESCE(oi.calField,'')) = 'PCS' THEN COALESCE(oi.pcs,0) ELSE COALESCE(oi.gram,0) END)
               - COALESCE((SELECT SUM(CASE WHEN UPPER(COALESCE(d.calField,'')) = 'PCS' THEN COALESCE(d.pcs,0) ELSE COALESCE(d.gram,0) END)
-                            FROM dispatches d WHERE d.orderItemId = oi.id), 0) > 0.0001`,
+                            FROM dispatches d WHERE d.orderItemId = oi.id), 0)
+              > MAX(0.5, (CASE WHEN UPPER(COALESCE(oi.calField,'')) = 'PCS' THEN COALESCE(oi.pcs,0) ELSE COALESCE(oi.gram,0) END) * 0.01)`,
     );
     return Number(rows[0]?.c ?? 0);
   }
@@ -229,13 +240,22 @@ export class AnalyticsService {
         dPcs: number;
         dGram: number;
         dBags: number;
+        billed: number | bigint;
       }[]
     >(
+      // `billed` = this line's dispatches already appear on a live (non-cancelled)
+      // challan, i.e. it's been invoiced — such lines are treated as done, not backlog.
       `SELECT o.id AS orderId, o.orderDate AS orderDate,
               COALESCE(NULLIF(oi.priority,''), o.priority) AS priority,
               COALESCE(oi.rate,0) AS rate, UPPER(COALESCE(oi.calField,'')) AS unit,
               COALESCE(oi.pcs,0) AS oPcs, COALESCE(oi.gram,0) AS oGram, COALESCE(oi.bags,0) AS oBags,
-              COALESCE(d.dPcs,0) AS dPcs, COALESCE(d.dGram,0) AS dGram, COALESCE(d.dBags,0) AS dBags
+              COALESCE(d.dPcs,0) AS dPcs, COALESCE(d.dGram,0) AS dGram, COALESCE(d.dBags,0) AS dBags,
+              EXISTS (
+                SELECT 1 FROM dispatches dd
+                  JOIN challan_items ci ON ci.dispatchId = dd.id
+                  JOIN challans ch ON ch.id = ci.challanId AND ch.challanStatus <> 'CANCELLED'
+                 WHERE dd.orderItemId = oi.id
+              ) AS billed
          FROM order_items oi
          JOIN orders o ON o.id = oi.orderId
          LEFT JOIN (
@@ -258,8 +278,14 @@ export class AnalyticsService {
     const urgentOrders = new Set<number>();
 
     for (const r of rows) {
-      const pendingUnit = (r.unit === 'PCS' ? r.oPcs - r.dPcs : r.oGram - r.dGram);
-      if (pendingUnit <= 0.0001) continue; // fully dispatched line
+      // Already invoiced on a challan → this line is done, not backlog.
+      if (Number(r.billed) > 0) continue;
+      const orderedUnit = r.unit === 'PCS' ? r.oPcs : r.oGram;
+      const pendingUnit = orderedUnit - (r.unit === 'PCS' ? r.dPcs : r.dGram);
+      // Treat as fully shipped once the leftover is just rounding noise — anything
+      // at or under 1% of the ordered quantity (min half a unit) counts as done.
+      const shipThreshold = Math.max(0.5, orderedUnit * 0.01);
+      if (pendingUnit <= shipThreshold) continue;
       const value = n(r.rate) * pendingUnit;
       openLines += 1;
       openValue += value;

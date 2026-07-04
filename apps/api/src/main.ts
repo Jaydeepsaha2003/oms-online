@@ -1,4 +1,6 @@
 import 'reflect-metadata';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
@@ -44,7 +46,10 @@ async function bootstrap(): Promise<void> {
   app.getHttpAdapter().getInstance().set('trust proxy', 1);
 
   app.setGlobalPrefix(apiPrefix);
-  app.use(helmet());
+  // CSP is disabled because this same server also serves the bundled web app
+  // (single-origin, offline-friendly). The strict default CSP would block the
+  // SPA's own assets; everything is local so this is safe here.
+  app.use(helmet({ contentSecurityPolicy: false }));
   app.use(cookieParser());
   app.enableCors({ origin: corsOrigin, credentials: true });
   app.enableShutdownHooks();
@@ -69,9 +74,25 @@ async function bootstrap(): Promise<void> {
     swaggerOptions: { persistAuthorization: true },
   });
 
+  // Serve the built web app from this same server when a production build exists,
+  // so the whole OMS runs from ONE process on ONE URL (offline-friendly). Real
+  // files (JS/CSS/images) are served directly; every other non-API GET falls back
+  // to index.html for the SPA's client-side routing.
+  const webDist = join(__dirname, '..', '..', '..', 'web', 'dist');
+  const webIndex = join(webDist, 'index.html');
+  if (existsSync(webIndex)) {
+    app.useStaticAssets(webDist, { index: false });
+    app
+      .getHttpAdapter()
+      .getInstance()
+      .get(/^\/(?!api\/).*/, (_req: unknown, res: { sendFile: (p: string) => void }) => res.sendFile(webIndex));
+    Logger.log(`Web app served from ${webDist}`, 'Bootstrap');
+  }
+
   // Listen on all interfaces so the API is reachable on this machine's LAN IP.
   await app.listen(port, '0.0.0.0');
-  Logger.log(`API ready on http://localhost:${port}/${apiPrefix} (and this machine's LAN IP)`, 'Bootstrap');
+  const webNote = existsSync(webIndex) ? ` · Web app at http://localhost:${port}/` : '';
+  Logger.log(`API ready on http://localhost:${port}/${apiPrefix} (and this machine's LAN IP)${webNote}`, 'Bootstrap');
   Logger.log(`Swagger docs at http://localhost:${port}/${apiPrefix}/docs`, 'Bootstrap');
 }
 

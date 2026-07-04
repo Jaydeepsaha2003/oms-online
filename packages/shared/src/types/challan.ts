@@ -98,6 +98,8 @@ export type ChallanQuery = PaginationQuery & {
   /** Inclusive invoice-date range (yyyy-mm-dd). */
   dateFrom?: string;
   dateTo?: string;
+  /** Restrict to one customer category (exact, from the master). */
+  category?: string;
 };
 export type ChallanList = Paginated<ChallanDto>;
 
@@ -108,6 +110,37 @@ export interface ChallanSummary {
   totalB: number;
   totalC: number;
   totalTds: number;
+}
+
+/** Rich analytics roll-up for the Challans "Show KPI" modal. Honours the same
+ *  filters as the list (search / date range / status) plus an optional category. */
+export interface ChallanAnalytics {
+  /** Headline totals over the filtered set. */
+  totals: {
+    count: number;
+    totalSales: number;
+    totalB: number;
+    totalC: number;
+    totalGst: number;
+    totalTds: number;
+    totalTcs: number;
+    totalFreight: number;
+    totalPacking: number;
+    avgValue: number;
+  };
+  /** Split by challan status. */
+  byStatus: {
+    confirmed: { count: number; total: number };
+    cancelled: { count: number; total: number };
+  };
+  /** One row per customer category (largest first). */
+  byCategory: { category: string; count: number; total: number; b: number; c: number }[];
+  /** Highest-billing parties (largest first, capped). */
+  topParties: { customerName: string; count: number; total: number }[];
+  /** Confirmed challans past their due date (money still to receive). */
+  overdue: { count: number; total: number };
+  /** All distinct categories in the master (for the filter dropdown). */
+  categories: string[];
 }
 
 export interface UpdateChallanStatusInput {

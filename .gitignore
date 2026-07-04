@@ -47,3 +47,6 @@ coverage/
 .DS_Store
 Thumbs.db
 *.swp
+
+# Local DB backups (START-OMS / scripts/backup-db)
+backups/
