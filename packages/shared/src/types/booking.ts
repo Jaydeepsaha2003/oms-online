@@ -116,8 +116,16 @@ export interface BookingQuoteLine {
   productDelta: number;
   /** Customer special-rate delta (design) captured at booking. */
   designDelta: number;
-  /** productRate + designRate + productDelta + designDelta. */
+  /** productRate + designRate + productDelta + designDelta (frozen booking-date price). */
   rate: number;
+  /** Current (latest) base product chart rate — may differ if the price changed since booking. */
+  currentProductRate: number;
+  /** Current (latest) base design chart rate. */
+  currentDesignRate: number;
+  /** currentProductRate + currentDesignRate + the (frozen) special deltas. */
+  currentRate: number;
+  /** True when the latest price differs from the frozen booking-date price. */
+  priceChanged: boolean;
   /** Where each delta came from (for display). */
   productFrom: string | null;
   designFrom: string | null;

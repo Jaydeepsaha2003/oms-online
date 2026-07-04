@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type ComponentProps, type Key, type ReactNode } from 'react';
+import { isValidElement, useCallback, useMemo, useState, type ComponentProps, type Key, type ReactNode } from 'react';
 import { ArrowDown, ArrowUp, ChevronsUpDown, Eye, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -22,9 +22,22 @@ export interface DataColumn<T> {
   pin?: 'left0' | 'left1';
   /** When true the column is always shown and excluded from the arrange panel. */
   fixed?: boolean;
-  /** Provide a value to make this column sortable (click the header to sort). */
+  /** Custom sort key. When omitted the column still sorts — the table falls back to
+   *  the cell's rendered text. Set `noSort` to make a column non-sortable. */
   sortValue?: (row: T) => string | number | null | undefined;
+  /** Opt this column out of sorting (e.g. a pure indicator/action column). */
+  noSort?: boolean;
   cell: (row: T) => ReactNode;
+}
+
+/** Recursively pull the plain text out of a rendered cell so any column can sort
+ *  by what the user actually sees, even without an explicit `sortValue`. */
+function nodeText(node: ReactNode): string {
+  if (node == null || node === false || node === true) return '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(nodeText).join(' ');
+  if (isValidElement(node)) return nodeText((node.props as { children?: ReactNode }).children);
+  return '';
 }
 
 const SHADOW_L = 'shadow-[6px_0_12px_-6px_rgba(2,6,23,0.18)]';
@@ -116,10 +129,16 @@ export function DataTable<T>({
   const [sort, setSort] = useState<{ id: string; dir: 'asc' | 'desc' } | null>(null);
   const toggleSort = (id: string) =>
     setSort((s) => (s?.id !== id ? { id, dir: 'asc' } : s.dir === 'asc' ? { id, dir: 'desc' } : null));
+  // Every column sorts unless it opts out. Columns without an explicit `sortValue`
+  // fall back to their rendered cell text, so all headers get a sort control.
+  const sortValueFor = useCallback(
+    (col: DataColumn<T>) => col.sortValue ?? ((row: T) => nodeText(col.cell(row))),
+    [],
+  );
   const sortedRows = useMemo(() => {
     const col = sort && columns.find((c) => c.id === sort.id);
-    if (!sort || !col?.sortValue) return rows;
-    const val = col.sortValue;
+    if (!sort || !col || col.noSort) return rows;
+    const val = sortValueFor(col);
     const out = [...rows].sort((a, b) => {
       const av = val(a);
       const bv = val(b);
@@ -137,8 +156,9 @@ export function DataTable<T>({
         width="auto"
         containerClassName={cn(maxBodyHeight, maxBodyHeight && 'overflow-y-auto')}
         className={cn(
-          '[&_td]:border-r [&_td]:border-border/30 [&_th]:border-r [&_th]:border-border/30',
-          '[&_thead_th]:bg-muted [&_thead_th]:font-bold [&_thead_th]:uppercase [&_thead_th]:tracking-wider',
+          '[&_td]:border-r [&_td]:border-border/30 [&_th]:border-r',
+          // Dark, bold, uppercase header across every list on every page.
+          '[&_thead_th]:bg-slate-800 [&_thead_th]:text-slate-50 [&_thead_th]:border-white/15 [&_thead_th]:font-bold [&_thead_th]:uppercase [&_thead_th]:tracking-wider',
           '[&_tbody_td]:bg-card [&_tbody_tr:nth-child(even)_td]:bg-slate-50 [&_tbody_tr:hover_td]:bg-muted',
           dense
             ? // Compact: tight padding so columns shrink to their content and the
@@ -162,12 +182,14 @@ export function DataTable<T>({
                   pinHead(col.pin, stickyTop),
                 )}
               >
-                {col.sortValue ? (
+                {col.noSort ? (
+                  (col.header ?? col.label)
+                ) : (
                   <button
                     type="button"
                     onClick={() => toggleSort(col.id)}
                     className={cn(
-                      'group/sort hover:text-foreground inline-flex items-center gap-1',
+                      'group/sort inline-flex items-center gap-1 hover:text-white',
                       col.align === 'right' && 'flex-row-reverse',
                     )}
                     title="Sort"
@@ -176,11 +198,9 @@ export function DataTable<T>({
                     {sort?.id === col.id ? (
                       sort.dir === 'asc' ? <ArrowUp className="size-3.5" /> : <ArrowDown className="size-3.5" />
                     ) : (
-                      <ChevronsUpDown className="size-3 opacity-40 group-hover/sort:opacity-70" />
+                      <ChevronsUpDown className="size-3 opacity-50 group-hover/sort:opacity-90" />
                     )}
                   </button>
-                ) : (
-                  (col.header ?? col.label)
                 )}
               </TableHead>
             ))}

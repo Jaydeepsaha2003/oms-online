@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, History, Search, TrendingDown, TrendingUp } from 'lucide-react';
 import type { RateChangeEntry, RateHistoryKind } from '@oms/shared';
 import { formatDateTime } from '@/lib/utils';
@@ -64,9 +65,12 @@ const COLUMNS: DataColumn<RateChangeEntry>[] = [
 ];
 
 export function PriceHistoryPage() {
-  const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch] = useState('');
-  const [kind, setKind] = useState('');
+  // Deep-link support: `/price-history?search=<item>&kind=PRODUCT` (opened from the
+  // Draw-from-Bag-Booking "view price history" link) pre-filters the list.
+  const [params] = useSearchParams();
+  const [searchInput, setSearchInput] = useState(params.get('search') ?? '');
+  const [search, setSearch] = useState((params.get('search') ?? '').trim());
+  const [kind, setKind] = useState(params.get('kind') ?? '');
   const [page, setPage] = useState(1);
   const { data, isLoading } = usePriceHistory({
     page,

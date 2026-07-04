@@ -372,13 +372,14 @@ export class BookingsService {
 
   // ── helpers ────────────────────────────────────────────────────────────────
 
-  /** Base product chart rate as of a date, reconstructed from the change log:
-   *  the oldRate of the earliest change AFTER the date, else the current rate. */
-  private async productRateAsOf(line: ConvertBookingLineDto, asOf: Date): Promise<number> {
+  /** Base product chart rate both AS OF a date (oldRate of the earliest change
+   *  after the date, else current) AND the latest/current rate — so callers can
+   *  tell whether the price has changed since the booking. */
+  private async productRates(line: ConvertBookingLineDto, asOf: Date): Promise<{ asOf: number; current: number }> {
     const product = uc(line.product) ?? uc(line.productName);
     const category = uc(line.pCategory);
     const subCategory = uc(line.subCategory);
-    if (!product) return 0;
+    if (!product) return { asOf: 0, current: 0 };
     const row = await this.prisma.product.findFirst({
       where: {
         product,
@@ -387,50 +388,59 @@ export class BookingsService {
         ...(line.psize != null ? { size: toNum(line.psize) } : {}),
       },
     });
-    if (!row) return 0;
+    if (!row) return { asOf: 0, current: 0 };
+    const current = row.rate ?? 0;
     const hist = await this.prisma.productRateHistory.findFirst({
       where: { productId: row.id, changedAt: { gt: asOf } },
       orderBy: { changedAt: 'asc' },
     });
-    return (hist ? hist.oldRate : row.rate) ?? 0;
+    return { asOf: (hist ? hist.oldRate : row.rate) ?? 0, current };
   }
 
-  /** Base design rate as of a date (same reconstruction as products). */
-  private async designRateAsOf(line: ConvertBookingLineDto, asOf: Date): Promise<number> {
+  /** Base design rate as of a date + current (same reconstruction as products). */
+  private async designRates(line: ConvertBookingLineDto, asOf: Date): Promise<{ asOf: number; current: number }> {
     const designType = uc(line.designType) ?? uc(line.design);
-    if (!designType || designType === 'NA') return 0;
+    if (!designType || designType === 'NA') return { asOf: 0, current: 0 };
     const category = uc(line.pCategory);
     const subCategory = uc(line.subCategory);
     const row = await this.prisma.design.findFirst({
       where: { designType, ...(category ? { category } : {}), ...(subCategory ? { subCategory } : {}) },
     });
-    if (!row) return 0;
+    if (!row) return { asOf: 0, current: 0 };
+    const current = row.rate ?? 0;
     const hist = await this.prisma.designRateHistory.findFirst({
       where: { designId: row.id, changedAt: { gt: asOf } },
       orderBy: { changedAt: 'asc' },
     });
-    return (hist ? hist.oldRate : row.rate) ?? 0;
+    return { asOf: (hist ? hist.oldRate : row.rate) ?? 0, current };
   }
 
-  /** Price one line at the booking-date rates + the customer's snapshotted deltas. */
+  /** Price one line at the booking-date rates + the customer's snapshotted deltas.
+   *  Also exposes the current (latest) price so the draw sheet can offer old-vs-new. */
   private async priceLine(line: ConvertBookingLineDto, asOf: Date, snapshot: RateSnapshot): Promise<BookingQuoteLine> {
-    const productRate = await this.productRateAsOf(line, asOf);
-    const designRate = await this.designRateAsOf(line, asOf);
+    const p = await this.productRates(line, asOf);
+    const d = await this.designRates(line, asOf);
     const resolution = resolveSpecialRates(snapshot, {
       category: uc(line.pCategory) ?? '',
       subCategory: uc(line.subCategory) ?? '',
       product: uc(line.product) ?? uc(line.productName),
       designType: uc(line.designType) ?? uc(line.design),
     });
-    const rate = round2(productRate + designRate + resolution.productDelta + resolution.designDelta);
+    const delta = resolution.productDelta + resolution.designDelta;
+    const rate = round2(p.asOf + d.asOf + delta);
+    const currentRate = round2(p.current + d.current + delta);
     return {
       productName: uc(line.productName) ?? uc(line.product) ?? null,
       designType: uc(line.designType) ?? null,
-      productRate,
-      designRate,
+      productRate: p.asOf,
+      designRate: d.asOf,
       productDelta: resolution.productDelta,
       designDelta: resolution.designDelta,
       rate,
+      currentProductRate: p.current,
+      currentDesignRate: d.current,
+      currentRate,
+      priceChanged: Math.abs(currentRate - rate) > 0.001,
       productFrom: resolution.productFrom,
       designFrom: resolution.designFrom,
     };

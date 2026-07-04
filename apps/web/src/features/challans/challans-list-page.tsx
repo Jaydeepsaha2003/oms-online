@@ -329,7 +329,7 @@ export function ChallansListPage() {
         rowKey={(r) => r.id}
         isLoading={isLoading}
         dense
-        className="text-[15px] [&_thead_th]:text-[13px] [&_td]:py-2.5 [&_th]:py-2.5 [&_tbody_button]:size-8"
+        className="text-[15px] [&_thead_th]:text-[14px] [&_td]:py-2.5 [&_th]:py-2.5 [&_tbody_button]:size-8"
         actions={rowActions}
         emptyText="No challans yet — create one from Pending Challan."
       />
