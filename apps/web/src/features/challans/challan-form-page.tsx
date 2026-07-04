@@ -254,15 +254,6 @@ export function ChallanFormPage() {
     recalc(next);
     setM({ product: draft.isScrap ? 'S.S. SCRAP' : '', design: 'NA', unit: 'KGS', qty: '', price: '' });
   };
-  const setPrice = (key: string, value: string) =>
-    setRows((rs) =>
-      rs.map((r) => {
-        if (r.key !== key) return r;
-        const price = numOr(value);
-        const qty = isKgs(r.unit) ? n(r.kgs) : n(r.pcs);
-        return { ...r, price, amount: round2(qty * price) };
-      }),
-    );
   const removeRow = (key: string) => {
     const next = rows.filter((r) => r.key !== key);
     setRows(next);
@@ -486,10 +477,13 @@ export function ChallanFormPage() {
   const halfBill = numOr(billingRate) > 0 && !noBill;
 
   return (
-    <div className="flex w-full flex-col gap-3">
+    // Fill the available viewport so ONLY the item list scrolls internally — the
+    // bill-to header, charges and totals (and the page header/action bar) stay put
+    // instead of the whole page scrolling under the sticky header (which overlapped).
+    <div className="flex h-full min-h-0 w-full flex-col gap-3">
       {/* Header — pick / show the customer here; Save / Cancel / Reset sit at the
           bottom of the form (sticky). */}
-      <div className="bg-background/85 sticky top-0 z-20 -mt-1 flex items-center gap-2 rounded-md py-1 backdrop-blur">
+      <div className="bg-background/85 z-20 -mt-1 flex shrink-0 items-center gap-2 rounded-md py-1 backdrop-blur">
         <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(isEdit ? '/challans' : '/challans/pending')} title="Back">
           <ArrowLeft className="size-4" />
         </Button>
@@ -518,7 +512,7 @@ export function ChallanFormPage() {
 
       {/* Restored work-in-progress notice */}
       {restoredDraft && (
-        <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+        <div className="flex shrink-0 items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
           <History className="size-4 shrink-0" /> Restored your unsaved challan from last time — keep editing or discard it.
           <Button type="button" variant="ghost" size="sm" className="ml-auto h-7 text-amber-800 hover:bg-amber-100 hover:text-amber-900" onClick={discardDraft}>
             Discard
@@ -526,8 +520,9 @@ export function ChallanFormPage() {
         </div>
       )}
 
-      {/* Invoice paper */}
-      <div className="bg-card flex flex-col overflow-hidden rounded-md border shadow-sm">
+      {/* Invoice paper — flexes to fill the remaining height; its item list is the
+          only part that scrolls (header / charges / totals stay pinned). */}
+      <div className="bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border shadow-sm">
         {/* Header: Bill-to + invoice meta (compact colourful banner) */}
         <div className="from-primary/[0.08] shrink-0 border-b bg-gradient-to-r via-sky-50/50 to-transparent px-4 py-2.5">
           <div className="grid items-start gap-x-6 gap-y-2.5 sm:grid-cols-2 lg:grid-cols-6">
@@ -637,8 +632,8 @@ export function ChallanFormPage() {
               )}
             </div>
 
-            {/* Line items — bounded, always-visible (scrolls internally when long) */}
-            <div className="max-h-[46vh] min-h-[140px] overflow-auto">
+            {/* Line items — fills the remaining space and scrolls internally when long */}
+            <div className="min-h-[120px] flex-1 overflow-auto">
               <table className="w-full text-[15px]">
                 <thead className="bg-muted sticky top-0 z-10">
                   <tr className="text-muted-foreground border-b text-left [&>th]:px-3 [&>th]:py-2 [&>th]:text-sm [&>th]:font-semibold [&>th]:tracking-wide [&>th]:uppercase">
@@ -667,7 +662,7 @@ export function ChallanFormPage() {
                       <td className="w-20 text-right tabular-nums">{r.kgs ?? '—'}</td>
                       <td className="w-20 text-right tabular-nums">{r.box ?? '—'}</td>
                       <td className="w-16 text-muted-foreground">{r.unit || '—'}</td>
-                      <td className="w-28 text-right"><Input className="h-8 w-24 text-right text-[15px] tabular-nums" value={r.price ?? 0} onChange={(e) => setPrice(r.key, e.target.value)} /></td>
+                      <td className="w-28 text-right tabular-nums">₹{(r.price ?? 0).toLocaleString('en-IN')}</td>
                       <td className="w-28 text-right font-semibold tabular-nums">{(r.amount ?? 0).toLocaleString('en-IN')}</td>
                       <td className="w-20 text-muted-foreground text-right tabular-nums">{r.gstRate || 0}</td>
                       <td className="w-10 text-right"><button onClick={() => removeRow(r.key)} className="text-muted-foreground hover:text-destructive" title="Remove line"><Trash2 className="size-3.5" /></button></td>
@@ -685,7 +680,7 @@ export function ChallanFormPage() {
                   )}
                 </tbody>
                 {rows.length > 0 && (
-                  <tfoot className="bg-muted/60 sticky bottom-0 z-10">
+                  <tfoot className="bg-muted/60">
                     <tr className="border-t-2 font-semibold [&>td]:px-3 [&>td]:py-1.5">
                       <td className="w-12"></td>
                       <td className="text-muted-foreground text-sm tracking-wide uppercase">Total · {rows.length} item(s)</td>
@@ -713,7 +708,8 @@ export function ChallanFormPage() {
                   <LockField label="Freight" value={freight} locked={locked.freight} onUnlock={() => unlock('freight')} onChange={setFreight} onBlur={() => setLocked((l) => ({ ...l, freight: true }))} />
                   <LockField label="Packing" value={packing} locked={locked.packing} onUnlock={() => unlock('packing')} onChange={setPacking} onBlur={() => setLocked((l) => ({ ...l, packing: true }))} />
                   <LockField label="Box / Pouch" value={pouch} locked={locked.pouch} onUnlock={() => unlock('pouch')} onChange={setPouch} onBlur={() => setLocked((l) => ({ ...l, pouch: true }))} />
-                  <div className="space-y-1"><Label className="text-base">GST %</Label><Input value={gstPct} onChange={(e) => { setGstPct(e.target.value); setManualTax(''); }} className="h-9 text-right text-base tabular-nums" /></div>
+                  {/* GST % field removed — GST is not editable; it follows the customer's configured
+                      rate (applied automatically) and is shown in the totals panel below. */}
                   <div className="space-y-1"><Label className="text-base">{`Billing Rate${halfBill ? ' · half' : ''}`}</Label><Input value={billingRate} onChange={(e) => setBillingRate(e.target.value)} className="h-9 text-right text-base tabular-nums" /></div>
                 </div>
                 {/* Settlement — B Amount & C Amount, with the No Bill toggle beside B */}
@@ -743,7 +739,7 @@ export function ChallanFormPage() {
                   <Row2 label="Freight" value={inr(numOr(freight))} />
                   <Row2 label="Packing" value={inr(numOr(packing))} />
                   <Row2 label="Box / Pouch" value={inr(numOr(pouch))} />
-                  <EditRow label={`GST${totals.gstRatePct ? ` @ ${totals.gstRatePct}%` : ''}`} computed={totals.tax} manual={manualTax} onManual={setManualTax} />
+                  <Row2 label={`GST${totals.gstRatePct ? ` @ ${totals.gstRatePct}%` : ''}`} value={inr(totals.tax)} />
                   {(draft.isScrap || totals.tcs > 0) && <Row2 label="TCS @ 1%" value={inr(totals.tcs)} />}
                 </div>
                 <div className="bg-gradient-brand flex items-center justify-between px-3 py-2.5 text-lg font-bold text-white">
@@ -765,8 +761,8 @@ export function ChallanFormPage() {
         )}
       </div>
 
-      {/* Bottom action bar — pinned so Cancel / Reset / Save stay reachable. */}
-      <div className="bg-background/95 sticky bottom-0 z-30 -mx-1 mt-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t px-2 py-3 shadow-[0_-4px_12px_-8px_rgba(2,6,23,0.25)] backdrop-blur">
+      {/* Bottom action bar — always at the foot of the form; Cancel / Reset / Save. */}
+      <div className="bg-background/95 z-30 -mx-1 mt-1 flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t px-2 py-3 backdrop-blur">
         <p className="text-sm">
           {rows.length} item(s)
           {draft && (
