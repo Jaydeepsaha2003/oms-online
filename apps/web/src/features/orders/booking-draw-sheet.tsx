@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { ORDER_PRIORITIES, type BookingDto, type BookingQuoteLine, type ConvertBookingLineInput, type OrderLookups } from '@oms/shared';
 import { formatDate } from '@/lib/date-format';
 import { cn } from '@/lib/utils';
+import { useConfirm } from '@/components/common/confirm';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -86,6 +87,7 @@ export function BookingDrawSheet({
   onAdd: (lines: DrawnBookingLine[]) => void;
 }) {
   const quote = useBookingQuote();
+  const confirmDialog = useConfirm();
   const keyer = useRef(0);
 
   const [bookingId, setBookingId] = useState<number | null>(null);
@@ -149,8 +151,6 @@ export function BookingDrawSheet({
   const onItemPick = (label: string) => {
     const it = itemOptions.map.get(label);
     if (!it) return setEntry((e) => ({ ...e, itemName: label, product: label }));
-    // Preselect the item's first design name (never the raw code).
-    const names = it.designType ? (designNamesByCode.get(it.designType.toUpperCase()) ?? []) : [];
     setEntry((e) => ({
       ...e,
       itemName: label,
@@ -158,13 +158,40 @@ export function BookingDrawSheet({
       category: it.category,
       subCategory: it.subCategory,
       designType: it.designType ?? '',
-      designName: names[0] ?? '',
+      // Never pre-pick a design name — the user chooses it explicitly.
+      designName: '',
       psize: it.size != null ? String(it.size) : '',
     }));
   };
 
-  const addLine = () => {
+  const addLine = async () => {
     if (!entry.product.trim() && !entry.designType.trim()) return toast.error('Pick an item to add');
+    // A design name must be chosen explicitly whenever the design code has names.
+    if (!noDesignNames && !entry.designName.trim()) return toast.error('Please select a Design Name for this item');
+    // Quantities can never be negative.
+    for (const [label, v] of [['Bags', entry.bags], ['Pcs', entry.pcs], ['Kgs', entry.gram], ['Box', entry.box]] as const) {
+      const num = n(v);
+      if (num != null && num < 0) return toast.error(`${label} cannot be negative`);
+    }
+    // The billing quantity (Kgs or Pcs, per the category's calc field) is required.
+    const calcBy = categoryFieldMap.get(entry.category.trim().toUpperCase()) ?? 'KGS';
+    const billQty = calcBy === 'PCS' ? n(entry.pcs) : n(entry.gram);
+    if (billQty == null || billQty <= 0) {
+      return toast.error(calcBy === 'PCS' ? 'Enter Pcs — this item is billed by pieces' : 'Enter Kgs — this item is billed by weight');
+    }
+    // Duplicate guard within this draw: same item + design already queued → confirm.
+    const dupName = (noDesignNames ? 'NA' : entry.designName).toUpperCase();
+    const dupIdx = lines.findIndex(
+      (l) => l.itemName.trim().toUpperCase() === entry.itemName.trim().toUpperCase() && (l.designName || 'NA').toUpperCase() === dupName,
+    );
+    if (dupIdx >= 0) {
+      const ok = await confirmDialog({
+        title: 'Item already added',
+        description: `"${entry.itemName}" is already queued (line ${dupIdx + 1}). Add it again as a separate line?`,
+        confirmText: 'Add anyway',
+      });
+      if (!ok) return;
+    }
     // Hard stop at entry time: a line may never draw more bags/kgs than the
     // booking still has left (after the order's + this sheet's queued lines).
     const wantBags = n(entry.bags) ?? 0;
@@ -325,10 +352,10 @@ export function BookingDrawSheet({
                     </div>
                   </div>
                   <div className="grid grid-cols-4 items-end gap-2.5 lg:grid-cols-12">
-                    <div className="space-y-1.5 lg:col-span-2"><Label className="text-base">Bags</Label><Input type="number" step="any" className="h-11 text-right text-lg font-semibold tabular-nums" value={entry.bags} onChange={(e) => setEntry((s) => ({ ...s, bags: e.target.value }))} /></div>
-                    <div className="space-y-1.5 lg:col-span-2"><Label className="text-base">Pcs</Label><Input type="number" step="any" className="h-11 text-right text-lg font-semibold tabular-nums" value={entry.pcs} onChange={(e) => setEntry((s) => ({ ...s, pcs: e.target.value }))} /></div>
-                    <div className="space-y-1.5 lg:col-span-2"><Label className="text-base">Kgs</Label><Input type="number" step="any" className="h-11 text-right text-lg font-semibold tabular-nums" value={entry.gram} onChange={(e) => setEntry((s) => ({ ...s, gram: e.target.value }))} /></div>
-                    <div className="space-y-1.5 lg:col-span-2"><Label className="text-base">Box</Label><Input type="number" step="any" className="h-11 text-right text-lg font-semibold tabular-nums" value={entry.box} onChange={(e) => setEntry((s) => ({ ...s, box: e.target.value }))} /></div>
+                    <div className="space-y-1.5 lg:col-span-2"><Label className="text-base">Bags</Label><Input type="number" step="any" min={0} className="h-11 text-right text-lg font-semibold tabular-nums" value={entry.bags} onChange={(e) => setEntry((s) => ({ ...s, bags: e.target.value }))} /></div>
+                    <div className="space-y-1.5 lg:col-span-2"><Label className="text-base">Pcs</Label><Input type="number" step="any" min={0} className="h-11 text-right text-lg font-semibold tabular-nums" value={entry.pcs} onChange={(e) => setEntry((s) => ({ ...s, pcs: e.target.value }))} /></div>
+                    <div className="space-y-1.5 lg:col-span-2"><Label className="text-base">Kgs</Label><Input type="number" step="any" min={0} className="h-11 text-right text-lg font-semibold tabular-nums" value={entry.gram} onChange={(e) => setEntry((s) => ({ ...s, gram: e.target.value }))} /></div>
+                    <div className="space-y-1.5 lg:col-span-2"><Label className="text-base">Box</Label><Input type="number" step="any" min={0} className="h-11 text-right text-lg font-semibold tabular-nums" value={entry.box} onChange={(e) => setEntry((s) => ({ ...s, box: e.target.value }))} /></div>
                     <div className="col-span-4 space-y-1.5 lg:col-span-2"><Label className="text-base">Remarks</Label><Input className="h-11 text-base" value={entry.comment} onChange={(e) => setEntry((s) => ({ ...s, comment: e.target.value }))} placeholder="Item remark…" /></div>
                     <div className="col-span-4 lg:col-span-2"><Button onClick={addLine} className="h-11 w-full text-base"><Plus /> Add</Button></div>
                   </div>

@@ -97,7 +97,15 @@ export class AuthService {
       include: { user: { include: USER_ACCESS_INCLUDE } },
     });
 
-    if (!existing || existing.revokedAt || existing.expiresAt < new Date()) {
+    if (!existing || existing.expiresAt < new Date()) {
+      throw new UnauthorizedException('Refresh token is invalid or expired.');
+    }
+    // Grace window for rotation races: with several tabs open, two refreshes can
+    // fire at once — the slower tab presents the token the faster one just
+    // rotated. Rejecting it would log the user out of every tab, so a token
+    // revoked within the last minute is still accepted (and a fresh pair issued).
+    const ROTATION_GRACE_MS = 60_000;
+    if (existing.revokedAt && Date.now() - existing.revokedAt.getTime() > ROTATION_GRACE_MS) {
       throw new UnauthorizedException('Refresh token is invalid or expired.');
     }
     if (existing.user.status !== 'active') {
@@ -105,10 +113,12 @@ export class AuthService {
     }
 
     // Rotate: revoke the used token and issue a fresh pair.
-    await this.prisma.refreshToken.update({
-      where: { id: existing.id },
-      data: { revokedAt: new Date() },
-    });
+    if (!existing.revokedAt) {
+      await this.prisma.refreshToken.update({
+        where: { id: existing.id },
+        data: { revokedAt: new Date() },
+      });
+    }
     return this.issueSession(existing.user, meta);
   }
 

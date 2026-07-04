@@ -135,6 +135,10 @@ const TAB_FIELDS = [
   { key: 'comment', label: 'Remarks' },
 ] as const;
 const TAB_PREF_KEY = 'oms:order-tab-order';
+// Saved "rows to show in the item panel" preference (0 = show all).
+const ROWS_PREF_KEY = 'oms:order-rows-to-show';
+const ROWS_OPTIONS = [5, 8, 10, 15, 20, 0];
+const rowsLabel = (n: number) => (n === 0 ? 'All rows' : `${n} rows`);
 const FIELD_LABEL: Record<string, string> = Object.fromEntries(TAB_FIELDS.map((f) => [f.key, f.label]));
 
 interface TabEntry {
@@ -265,6 +269,22 @@ export function OrderFormPage() {
   const [entry, setEntry] = useState(blankEntry());
   const [items, setItems] = useState<Item[]>([]);
 
+  // How many item rows to keep visible in the panel before it scrolls — a saved
+  // per-user preference. 0 = show all (the panel grows and the page scrolls).
+  const [rowsToShow, setRowsToShow] = useState<number>(() => {
+    const raw = Number(localStorage.getItem(ROWS_PREF_KEY));
+    return ROWS_OPTIONS.includes(raw) ? raw : 8;
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(ROWS_PREF_KEY, String(rowsToShow));
+    } catch {
+      /* ignore */
+    }
+  }, [rowsToShow]);
+  // Cap the grid's height to the chosen number of rows (row ≈ 2.5rem + header).
+  const gridMaxHeight = rowsToShow === 0 ? undefined : `${rowsToShow * 2.5 + 2.9}rem`;
+
   // Bag-booking draw-down: pull a customer's reserved bags into this order. The
   // button only shows when the customer actually has a drawable booking.
   const [bookingSheetOpen, setBookingSheetOpen] = useState(false);
@@ -330,44 +350,53 @@ export function OrderFormPage() {
     if (!entry.ordType && orderTypeOptions.length) setEntry((e) => ({ ...e, ordType: orderTypeOptions[0] }));
   }, [orderTypeOptions, entry.ordType]);
 
+  // Populate every field from a saved order (used on load + by the Reset button).
+  const loadExisting = useCallback(
+    (o: NonNullable<typeof existing>) => {
+      setCustomer(o.customerName);
+      setCustomerId(o.customerId ?? undefined);
+      setPoNumber(o.poNumber ?? '');
+      setAgentName(o.agentName ?? '');
+      setCategory(o.category ?? 'SALES');
+      setOrderDate(o.orderDate.slice(0, 10));
+      setCompletionDay(o.completionDay?.toString() ?? '');
+      setStatus(o.status);
+      setEntry(blankEntry());
+      setItems(
+        o.items.map((it, i) => ({
+          key: `e${it.id}-${i}`,
+          id: it.id,
+          status: it.status,
+          bookingId: it.bookingId,
+          bookingCode: it.bookingCode ?? null,
+          itemName: it.productName ?? [it.product, it.designType].filter(Boolean).join(' '),
+          product: it.product ?? '',
+          category: it.pCategory ?? '',
+          subCategory: it.subCategory ?? '',
+          designType: it.designType ?? '',
+          designName: it.designType ? (nameByCode.get(it.designType.toUpperCase()) ?? '') : '',
+          productRate: it.productRate?.toString() ?? '',
+          designRate: it.designRate?.toString() ?? '',
+          weight: '',
+          pcsBox: '',
+          ordType: it.ordType ?? '',
+          priority: it.priority ?? 'NORMAL',
+          bags: it.bags?.toString() ?? '',
+          pcs: it.pcs?.toString() ?? '',
+          gram: it.gram?.toString() ?? '',
+          box: it.box?.toString() ?? '',
+          comment: it.comment ?? '',
+          calField: it.calField ?? 'KGS',
+        })),
+      );
+    },
+    [nameByCode],
+  );
+
   // Load an existing order for editing.
   useEffect(() => {
-    if (!existing) return;
-    setCustomer(existing.customerName);
-    setPoNumber(existing.poNumber ?? '');
-    setAgentName(existing.agentName ?? '');
-    setCategory(existing.category ?? 'SALES');
-    setOrderDate(existing.orderDate.slice(0, 10));
-    setCompletionDay(existing.completionDay?.toString() ?? '');
-    setStatus(existing.status);
-    setItems(
-      existing.items.map((it, i) => ({
-        key: `e${it.id}-${i}`,
-        id: it.id,
-        status: it.status,
-        bookingId: it.bookingId,
-        bookingCode: it.bookingCode ?? null,
-        itemName: it.productName ?? [it.product, it.designType].filter(Boolean).join(' '),
-        product: it.product ?? '',
-        category: it.pCategory ?? '',
-        subCategory: it.subCategory ?? '',
-        designType: it.designType ?? '',
-        designName: it.designType ? (nameByCode.get(it.designType.toUpperCase()) ?? '') : '',
-        productRate: it.productRate?.toString() ?? '',
-        designRate: it.designRate?.toString() ?? '',
-        weight: '',
-        pcsBox: '',
-        ordType: it.ordType ?? '',
-        priority: it.priority ?? 'NORMAL',
-        bags: it.bags?.toString() ?? '',
-        pcs: it.pcs?.toString() ?? '',
-        gram: it.gram?.toString() ?? '',
-        box: it.box?.toString() ?? '',
-        comment: it.comment ?? '',
-        calField: it.calField ?? 'KGS',
-      })),
-    );
-  }, [existing, nameByCode]);
+    if (existing) loadExisting(existing);
+  }, [existing, loadExisting]);
 
   // ── Work-in-progress local draft (auto-save / restore) ───────────────────
   // Only for a brand-new order — restores a half-filled order from last time.
@@ -411,11 +440,10 @@ export function OrderFormPage() {
     return () => window.clearTimeout(t);
   }, [draftEnabled, customer, poNumber, agentName, category, orderDate, completionDay, status, showBy, items]);
 
-  // Throw away the restored draft and start blank.
-  const discardDraft = () => {
-    clearOrderDraft();
-    setRestoredDraft(false);
+  // Clear the whole form back to a blank state.
+  const blankForm = () => {
     setCustomer('');
+    setCustomerId(undefined);
     setPoNumber('');
     setAgentName('');
     setCategory('SALES');
@@ -424,6 +452,38 @@ export function OrderFormPage() {
     setStatus('CONFIRMED');
     setItems([]);
     setEntry(blankEntry());
+  };
+
+  // Throw away the restored draft and start blank.
+  const discardDraft = () => {
+    clearOrderDraft();
+    setRestoredDraft(false);
+    blankForm();
+  };
+
+  // Reset button: on a new form clear everything; when editing, revert every
+  // field back to the saved order (undo unsaved changes). Asks first.
+  const resetForm = async () => {
+    const hasContent = customer.trim() || items.length > 0 || entry.itemName.trim();
+    if (hasContent) {
+      const ok = await confirm({
+        title: isEdit ? `Revert changes to this ${docLabel}?` : `Reset this ${docLabel}?`,
+        description: isEdit
+          ? 'Every field goes back to the last saved values — unsaved changes are discarded.'
+          : 'Clears the customer and all items so you can start fresh.',
+        confirmText: isEdit ? 'Revert' : 'Reset',
+        destructive: true,
+      });
+      if (!ok) return;
+    }
+    if (isEdit && existing) {
+      loadExisting(existing);
+    } else {
+      clearOrderDraft();
+      setRestoredDraft(false);
+      blankForm();
+    }
+    requestAnimationFrame(() => focusField(formRef.current, 'customer'));
   };
 
   // Auto-fill agent + category from the chosen customer, and capture the id so we
@@ -482,10 +542,6 @@ export function OrderFormPage() {
       setEntry((e) => ({ ...e, itemName: label, product: label }));
       return;
     }
-    // The composite item carries a design-type code. Show its human name only —
-    // never the raw code (it.designName falls back to the code when none exists).
-    const realName = it.designName && it.designName !== it.designType ? it.designName : '';
-
     // Apply the customer's special-rate cascade (most-specific level wins) on top
     // of the base product/design rate. Falls through to base rates when none set.
     const res = special
@@ -523,7 +579,9 @@ export function OrderFormPage() {
       pcsBox: it.pcs != null ? String(it.pcs) : '',
       productRate: hasProd ? String(prodRate) : '',
       designType: it.designType ?? '',
-      designName: realName,
+      // Never pre-pick a design name — the user must choose it explicitly
+      // (locked to "NA" only when the design code has no names at all).
+      designName: '',
       designRate: hasDesign ? String(desRate) : '',
       special: specialTip,
     }));
@@ -628,14 +686,58 @@ export function OrderFormPage() {
     return m;
   }, [lookups]);
 
-  const addItem = () => {
+  const addItem = async () => {
     if (!entry.product.trim() && !entry.designType.trim()) {
       return toast.error('Pick a product or design type to add');
     }
-    const designName = noDesignNames ? 'NA' : entry.designName;
+    // The picked item must come from the catalogue (free text can slip in when
+    // the field loses focus without a pick).
+    if (entry.itemName.trim() && !entry.category.trim() && !entry.subCategory.trim()) {
+      return toast.error('Please select a correct item from the list');
+    }
+    // A design name must be chosen explicitly whenever the item's design code
+    // has names in the master (locked to "NA" otherwise).
+    if (!noDesignNames && !entry.designName.trim()) {
+      return toast.error('Please select a Design Name for this item');
+    }
+    // Quantities can never be negative.
+    const qtyFields: [string, string][] = [
+      ['Bags', entry.bags],
+      ['Pcs', entry.pcs],
+      ['Kgs', entry.gram],
+      ['Box', entry.box],
+    ];
+    for (const [label, v] of qtyFields) {
+      const num = n(v);
+      if (num != null && num < 0) return toast.error(`${label} cannot be negative`);
+    }
     // The line's price-calc field follows the product's category mapping; if the
     // category isn't configured, fall back to the Size/Pcs selection.
     const calField = categoryFieldMap.get(entry.category.trim().toUpperCase()) ?? (showBy === 'PCS' ? 'PCS' : 'KGS');
+    // The billing quantity (Kgs or Pcs, per the calc field) must be entered —
+    // otherwise the line's amount would silently be ₹0.
+    const billQty = calField === 'PCS' ? n(entry.pcs) : n(entry.gram);
+    if (billQty == null || billQty <= 0) {
+      return toast.error(
+        calField === 'PCS' ? 'Enter Pcs — this item is billed by pieces' : 'Enter Kgs — this item is billed by weight',
+      );
+    }
+    const designName = noDesignNames ? 'NA' : entry.designName;
+    // Duplicate guard: same item + design name already on the list → confirm.
+    const dupIdx = items.findIndex(
+      (i) =>
+        i.status !== 'CANCELLED' &&
+        i.itemName.trim().toUpperCase() === entry.itemName.trim().toUpperCase() &&
+        (i.designName || 'NA').toUpperCase() === designName.toUpperCase(),
+    );
+    if (dupIdx >= 0) {
+      const ok = await confirm({
+        title: 'Item already added',
+        description: `"${entry.itemName}" is already on this order (line ${dupIdx + 1}). Add it again as a separate line?`,
+        confirmText: 'Add anyway',
+      });
+      if (!ok) return;
+    }
     setItems((its) => [
       ...its,
       { ...entry, key: `i${keyer.current++}`, calField, designName },
@@ -1003,11 +1105,11 @@ export function OrderFormPage() {
             </div>
             <div className="space-y-1 lg:col-span-1" data-tabfield="productRate">
               <Label className="text-base">Product ₹</Label>
-              <Input type="number" step="any" className="text-right tabular-nums" value={entry.productRate} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ productRate: e.target.value })} />
+              <Input type="number" step="any" min={0} className="text-right tabular-nums" value={entry.productRate} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ productRate: e.target.value })} />
             </div>
             <div className="space-y-1 lg:col-span-1" data-tabfield="designRate">
               <Label className="text-base">Design ₹</Label>
-              <Input type="number" step="any" className="text-right tabular-nums" value={entry.designRate} disabled={!designRateEditable} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ designRate: e.target.value })} />
+              <Input type="number" step="any" min={0} className="text-right tabular-nums" value={entry.designRate} disabled={!designRateEditable} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ designRate: e.target.value })} />
             </div>
             <div className="space-y-1 lg:col-span-1">
               <Label className="text-base">Total ₹</Label>
@@ -1029,20 +1131,20 @@ export function OrderFormPage() {
             </div>
             <div className="space-y-1 lg:col-span-1" data-tabfield="bags">
               <Label className="text-base">Bags</Label>
-              <Input type="number" step="any" value={entry.bags} onKeyDown={onlyNumericKey} onChange={(e) => onBags(e.target.value)} />
+              <Input type="number" step="any" min={0} value={entry.bags} onKeyDown={onlyNumericKey} onChange={(e) => onBags(e.target.value)} />
             </div>
             <div className="space-y-1 lg:col-span-1" data-tabfield="pcs">
               <Label className={cn('text-base', showBy === 'PCS' && 'text-primary font-semibold')}>Pcs</Label>
-              <Input type="number" step="any" value={entry.pcs} onKeyDown={onlyNumericKey} onChange={(e) => onPcs(e.target.value)} />
+              <Input type="number" step="any" min={0} value={entry.pcs} onKeyDown={onlyNumericKey} onChange={(e) => onPcs(e.target.value)} />
             </div>
             <div className="space-y-1 lg:col-span-1" data-tabfield="gram">
               <Label className={cn('text-base', showBy === 'SIZE' && 'text-primary font-semibold')}>Kgs</Label>
-              <Input type="number" step="any" value={entry.gram} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ gram: e.target.value })} />
+              <Input type="number" step="any" min={0} value={entry.gram} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ gram: e.target.value })} />
             </div>
             <div className="space-y-1 lg:col-span-2" data-tabfield="box">
               <Label className="text-base">Box</Label>
               <div className="flex gap-1">
-                <Input type="number" step="any" value={entry.box} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ box: e.target.value })} />
+                <Input type="number" step="any" min={0} value={entry.box} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ box: e.target.value })} />
                 <Button
                   type="button"
                   variant="outline"
