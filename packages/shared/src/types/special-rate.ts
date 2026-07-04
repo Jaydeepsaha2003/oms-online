@@ -205,18 +205,23 @@ export function resolveSpecialRates(
   data: { rates: CustomerRateDto[]; logos: CustomerLogoDto[] },
   ctx: SpecialRateContext,
 ): SpecialRateResolution {
-  const cat = ctx.category;
-  const sub = ctx.subCategory;
+  // Compare case- and whitespace-insensitively: saved rates and the order line's
+  // values can differ in casing/trimming, and a stray mismatch would silently
+  // skip a more-specific (ITEM/SUBCATEGORY) override and fall back to CATEGORY.
+  const norm = (v: string | null | undefined) => (v ?? '').trim().toUpperCase();
+  const cat = norm(ctx.category);
+  const sub = norm(ctx.subCategory);
 
   const pick = (kind: RateKind, target: string): { delta: number; from: RateScope | null } => {
     const rs = data.rates.filter((r) => r.kind === kind);
-    if (target) {
-      const item = rs.find((r) => r.scope === 'ITEM' && r.category === cat && r.subCategory === sub && r.target === target);
+    const t = norm(target);
+    if (t) {
+      const item = rs.find((r) => r.scope === 'ITEM' && norm(r.category) === cat && norm(r.subCategory) === sub && norm(r.target) === t);
       if (item) return { delta: item.rate, from: 'ITEM' };
     }
-    const subc = rs.find((r) => r.scope === 'SUBCATEGORY' && r.category === cat && r.subCategory === sub);
+    const subc = rs.find((r) => r.scope === 'SUBCATEGORY' && norm(r.category) === cat && norm(r.subCategory) === sub);
     if (subc) return { delta: subc.rate, from: 'SUBCATEGORY' };
-    const c = rs.find((r) => r.scope === 'CATEGORY' && r.category === cat);
+    const c = rs.find((r) => r.scope === 'CATEGORY' && norm(r.category) === cat);
     if (c) return { delta: c.rate, from: 'CATEGORY' };
     return { delta: 0, from: null };
   };
@@ -225,8 +230,8 @@ export function resolveSpecialRates(
   const design = ctx.designType ? pick('DESIGN', ctx.designType) : { delta: 0, from: null };
   const logoBlocked = data.logos.some(
     (l) =>
-      (l.scope === 'SUBCATEGORY' && l.category === cat && l.subCategory === sub) ||
-      (l.scope === 'CATEGORY' && l.category === cat),
+      (l.scope === 'SUBCATEGORY' && norm(l.category) === cat && norm(l.subCategory) === sub) ||
+      (l.scope === 'CATEGORY' && norm(l.category) === cat),
   );
 
   return {

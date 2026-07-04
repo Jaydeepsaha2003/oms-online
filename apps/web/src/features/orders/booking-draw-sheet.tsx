@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BadgePercent, Loader2, PackageOpen, Plus, Split, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { ORDER_PRIORITIES, type BookingDto, type BookingQuoteLine, type ConvertBookingLineInput, type OrderLookups } from '@oms/shared';
+import { ORDER_PRIORITIES, type BookingDto, type BookingQuoteLine, type ConvertBookingLineInput, type CustomerBagWeightDto, type OrderLookups } from '@oms/shared';
 import { formatDate } from '@/lib/date-format';
 import { cn } from '@/lib/utils';
 import { useConfirm } from '@/components/common/confirm';
@@ -73,6 +73,7 @@ export function BookingDrawSheet({
   customerName,
   bookings,
   lookups,
+  bagWeights,
   alreadyQueued,
   onAdd,
 }: {
@@ -82,6 +83,8 @@ export function BookingDrawSheet({
   /** The customer's drawable bookings (fetched by the order form). */
   bookings: BookingDto[];
   lookups: OrderLookups | undefined;
+  /** The customer's per-category "1 bag = X kgs" weights, to auto-fill Kgs from Bags. */
+  bagWeights: CustomerBagWeightDto[];
   /** Bags/kgs already queued in the order for a booking (so remaining is accurate before save). */
   alreadyQueued: (bookingId: number) => { bags: number; kgs: number };
   onAdd: (lines: DrawnBookingLine[]) => void;
@@ -162,6 +165,22 @@ export function BookingDrawSheet({
       designName: '',
       psize: it.size != null ? String(it.size) : '',
     }));
+  };
+
+  // Auto-fill Kgs (= Bags × the customer's per-category bag weight) as bags are
+  // typed — same as the main order form. The user can still overtype Kgs; with no
+  // weight configured for the item's category, only Bags changes.
+  const onBags = (value: string) => {
+    setEntry((e) => {
+      const cat = e.category.trim().toUpperCase();
+      const bw = bagWeights.find((b) => b.category.trim().toUpperCase() === cat);
+      const bags = n(value) ?? 0;
+      return {
+        ...e,
+        bags: value,
+        gram: bw && value.trim() !== '' ? String(round2(bags * bw.kgsPerBag)) : e.gram,
+      };
+    });
   };
 
   const addLine = async () => {
@@ -352,7 +371,7 @@ export function BookingDrawSheet({
                     </div>
                   </div>
                   <div className="grid grid-cols-4 items-end gap-2.5 lg:grid-cols-12">
-                    <div className="space-y-1.5 lg:col-span-2"><Label className="text-base">Bags</Label><Input type="number" step="any" min={0} className="h-11 text-right text-lg font-semibold tabular-nums" value={entry.bags} onChange={(e) => setEntry((s) => ({ ...s, bags: e.target.value }))} /></div>
+                    <div className="space-y-1.5 lg:col-span-2"><Label className="text-base">Bags</Label><Input type="number" step="any" min={0} className="h-11 text-right text-lg font-semibold tabular-nums" value={entry.bags} onChange={(e) => onBags(e.target.value)} /></div>
                     <div className="space-y-1.5 lg:col-span-2"><Label className="text-base">Pcs</Label><Input type="number" step="any" min={0} className="h-11 text-right text-lg font-semibold tabular-nums" value={entry.pcs} onChange={(e) => setEntry((s) => ({ ...s, pcs: e.target.value }))} /></div>
                     <div className="space-y-1.5 lg:col-span-2"><Label className="text-base">Kgs</Label><Input type="number" step="any" min={0} className="h-11 text-right text-lg font-semibold tabular-nums" value={entry.gram} onChange={(e) => setEntry((s) => ({ ...s, gram: e.target.value }))} /></div>
                     <div className="space-y-1.5 lg:col-span-2"><Label className="text-base">Box</Label><Input type="number" step="any" min={0} className="h-11 text-right text-lg font-semibold tabular-nums" value={entry.box} onChange={(e) => setEntry((s) => ({ ...s, box: e.target.value }))} /></div>

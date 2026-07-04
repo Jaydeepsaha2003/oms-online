@@ -787,15 +787,33 @@ export function OrderFormPage() {
     return true;
   };
 
+  // If the order date is in the future, ask whether the order should be visible
+  // from that day or from today, and return the date to actually save with.
+  const resolveOrderDate = async (): Promise<string> => {
+    if (docKind !== 'order') return orderDate;
+    const todayStr = today();
+    if (!orderDate || orderDate <= todayStr) return orderDate; // today or past — nothing to ask
+    const fromFuture = await confirm({
+      title: 'Order dated in the future',
+      description: `This order's date is ${niceDate(orderDate)} — after today (${niceDate(todayStr)}). Should it be visible from ${niceDate(orderDate)}, or from today?`,
+      confirmText: `From ${niceDate(orderDate)}`,
+      cancelText: 'From today',
+    });
+    const eff = fromFuture ? orderDate : todayStr;
+    if (eff !== orderDate) setOrderDate(eff);
+    return eff;
+  };
+
   // Build the create/update payload from the current form (orders & quotations
-  // share the same shape, so this is reused for save and save-&-convert).
-  const buildInput = (): OrderInput => ({
+  // share the same shape, so this is reused for save and save-&-convert). Pass a
+  // date to override the order date (completion date recomputes from it).
+  const buildInput = (orderDateArg: string = orderDate): OrderInput => ({
     customerName: customer.trim(),
     poNumber: poNumber.trim() || null,
     agentName: agentName.trim() || null,
     category: category.trim() || null,
-    orderDate,
-    completionDate: completionDate || null,
+    orderDate: orderDateArg,
+    completionDate: (completionDay.trim() === '' ? '' : addDays(orderDateArg, Number(completionDay))) || null,
     status,
     items: items.map((i) => ({
       id: i.id,
@@ -831,7 +849,7 @@ export function OrderFormPage() {
       confirmText: isEdit ? 'Save changes' : `Create ${noun}`,
     });
     if (!ok) return;
-    const input = buildInput();
+    const input = buildInput(await resolveOrderDate());
     const listDest = target === 'quotation' ? '/quotations' : '/orders';
     const onError = (e: unknown) => toast.error(getApiErrorMessage(e, 'Save failed'));
     if (isEdit) {
@@ -894,7 +912,7 @@ export function OrderFormPage() {
       confirmText: isEdit ? (isDraft ? 'Save draft' : 'Confirm & save') : isDraft ? 'Save draft' : 'Create order',
     });
     if (!ok) return;
-    const input = { ...buildInput(), status: statusValue };
+    const input = { ...buildInput(await resolveOrderDate()), status: statusValue };
     const onError = (e: unknown) => toast.error(getApiErrorMessage(e, 'Save failed'));
     const done = (orderId?: number) =>
       finishTo(redirectToBill && orderId && can('order:print') ? `/orders/${orderId}/bill` : '/orders');
@@ -1394,6 +1412,7 @@ export function OrderFormPage() {
           customerName={customer}
           bookings={activeBookings}
           lookups={lookups}
+          bagWeights={special?.bagWeights ?? []}
           alreadyQueued={alreadyQueuedForBooking}
           onAdd={addBookingLines}
         />

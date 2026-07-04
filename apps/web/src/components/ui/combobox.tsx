@@ -95,13 +95,18 @@ export function Combobox({
 
   const q = text.trim();
   const ql = q.toLowerCase();
-  const matches = React.useMemo(
-    () =>
-      !dirty || ql === ''
-        ? opts
-        : opts.filter((o) => o.label.toLowerCase().includes(ql) || o.value.toLowerCase().includes(ql)),
-    [opts, dirty, ql],
-  );
+  // Left-to-right (prefix) search: a value matches when the whole string OR any
+  // of its words starts with what was typed — so "amra" finds "7 AMRAPALI (APS)"
+  // but a mid-word substring like "rap" does not. Words split on spaces and the
+  // usual separators found in item names.
+  const matches = React.useMemo(() => {
+    if (!dirty || ql === '') return opts;
+    const prefixed = (s: string) => {
+      const t = s.toLowerCase();
+      return t.startsWith(ql) || t.split(/[\s(),+/-]+/).some((w) => w.startsWith(ql));
+    };
+    return opts.filter((o) => prefixed(o.label) || prefixed(o.value));
+  }, [opts, dirty, ql]);
   const visible = matches.slice(0, RENDER_LIMIT);
   const hiddenCount = matches.length - visible.length;
   const showCreate = creatable && q !== '' && !opts.some((o) => o.value.toLowerCase() === ql);
