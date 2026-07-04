@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -272,7 +273,9 @@ export function OrderFormPage() {
   // How many item rows to keep visible in the panel before it scrolls — a saved
   // per-user preference. 0 = show all (the panel grows and the page scrolls).
   const [rowsToShow, setRowsToShow] = useState<number>(() => {
-    const raw = Number(localStorage.getItem(ROWS_PREF_KEY));
+    const stored = localStorage.getItem(ROWS_PREF_KEY);
+    if (stored == null) return 8; // Number(null) is 0 (= "All"), so guard the empty case.
+    const raw = Number(stored);
     return ROWS_OPTIONS.includes(raw) ? raw : 8;
   });
   useEffect(() => {
@@ -1175,28 +1178,47 @@ export function OrderFormPage() {
             </div>
           </div>
 
-          {/* Draw reserved bags from the customer's bag bookings — only offered
-              when the customer actually has a drawable (open, quantity-left) one. */}
-          {docKind === 'order' && can('booking:view') && activeBookings.length > 0 && (
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-muted-foreground text-xs">
-                Added items{items.some((i) => i.bookingId) ? ` · ${items.filter((i) => i.bookingId).length} from a booking` : ''}
-              </span>
-              <Button
-                type="button"
-                size="sm"
-                className="bg-sky-700 font-semibold text-white shadow-md shadow-sky-700/25 hover:bg-sky-800"
-                onClick={() => setBookingSheetOpen(true)}
-                title="Draw items from this customer’s bag bookings"
-              >
-                <PackageOpen /> Draw from Bag Booking
-                <span className="ml-1 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] font-bold tabular-nums">{activeBookings.length}</span>
-              </Button>
+          {/* Items panel toolbar: count · rows-to-show setting · Draw from booking. */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-muted-foreground text-xs font-medium">
+              Added items{items.length ? ` · ${items.length}` : ''}
+              {items.some((i) => i.bookingId) ? ` · ${items.filter((i) => i.bookingId).length} from a booking` : ''}
+            </span>
+            <div className="flex items-center gap-2">
+              {/* How many item rows stay visible before the panel scrolls. */}
+              <label className="text-muted-foreground flex items-center gap-1.5 text-xs">
+                Show
+                <select
+                  value={rowsToShow}
+                  onChange={(e) => setRowsToShow(Number(e.target.value))}
+                  className="border-input h-8 rounded-md border bg-transparent px-2 text-xs font-medium outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                  title="How many item rows to show before the panel scrolls"
+                >
+                  {ROWS_OPTIONS.map((n) => (
+                    <option key={n} value={n}>
+                      {rowsLabel(n)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {docKind === 'order' && can('booking:view') && activeBookings.length > 0 && (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="bg-sky-700 font-semibold text-white shadow-md shadow-sky-700/25 hover:bg-sky-800"
+                  onClick={() => setBookingSheetOpen(true)}
+                  title="Draw items from this customer’s bag bookings"
+                >
+                  <PackageOpen /> Draw from Bag Booking
+                  <span className="ml-1 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] font-bold tabular-nums">{activeBookings.length}</span>
+                </Button>
+              )}
             </div>
-          )}
+          </div>
 
-          {/* Added items — grid auto-fits to the desktop width */}
-          <div className="max-h-[28vh] overflow-auto rounded-lg border">
+          {/* Added items — grid auto-fits to the desktop width; height follows the
+              chosen "Show N rows" preference (unbounded when set to All). */}
+          <div className="overflow-auto rounded-lg border" style={{ maxHeight: gridMaxHeight }}>
             {/* Prod ₹ / Dsgn ₹ are saved with the order but hidden from this list. */}
             <table className="w-full text-sm">
               <thead className="[&_th]:sticky [&_th]:top-0 [&_th]:bg-gradient-to-b [&_th]:from-sky-50 [&_th]:to-indigo-100 [&_th]:px-3 [&_th]:py-2.5 [&_th]:text-left [&_th]:text-[15px] [&_th]:font-semibold [&_th]:text-slate-900">
@@ -1304,9 +1326,10 @@ export function OrderFormPage() {
         </CardContent>
       </Card>
 
-      {/* Action bar at the end of the form — shown when scrolled to the bottom
-          (not pinned). Wraps so the buttons are never cut off when zoomed in. */}
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t px-1 py-3">
+      {/* Action bar pinned to the bottom of the viewport so Cancel / Save stay
+          reachable no matter how tall the item panel grows. Wraps so the buttons
+          are never cut off when zoomed in. */}
+      <div className="bg-background/95 sticky bottom-0 z-30 -mx-1 mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t px-2 py-3 shadow-[0_-4px_12px_-8px_rgba(2,6,23,0.25)] backdrop-blur">
         <p className="text-sm">
           {items.length} item(s) · total{' '}
           <span className="font-bold tabular-nums text-emerald-600">₹{total.toLocaleString('en-IN')}</span>
@@ -1314,6 +1337,9 @@ export function OrderFormPage() {
         <div className="ml-auto flex flex-wrap justify-end gap-2">
           <Button type="button" variant="destructive" onClick={() => navigate(listPath)} title="Cancel (Esc)">
             Cancel
+          </Button>
+          <Button type="button" variant="outline" onClick={resetForm} title={isEdit ? 'Revert unsaved changes' : 'Clear the form'}>
+            <RotateCcw /> Reset
           </Button>
           {/* Save the order with DRAFT status — hidden from Order Modify until confirmed. */}
           {showSaveDraft && (

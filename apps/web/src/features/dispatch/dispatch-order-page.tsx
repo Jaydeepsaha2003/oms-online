@@ -122,8 +122,9 @@ export function DispatchOrderPage() {
         rowKey={(r) => r.orderItemId}
         isLoading={isLoading}
         dense
-        // Bigger, easy-to-read data font (columns still auto-fit their content).
-        className="text-[15px] [&_thead_th]:h-10 [&_thead_th]:text-[13px] [&_td]:px-3.5 [&_td]:py-2.5 [&_th]:px-3.5 [&_tbody_button]:size-8"
+        maxBodyHeight="max-h-[calc(100dvh-16rem)]"
+        // Compact, readable data font; columns still auto-fit their content.
+        className="text-[13px] [&_thead_th]:h-9 [&_thead_th]:text-[12px] [&_td]:px-3 [&_td]:py-1.5 [&_th]:px-3 [&_tbody_button]:size-7"
         emptyText="No pending order lines — everything is dispatched."
         onRowClick={(r) => setActive(r)}
       />

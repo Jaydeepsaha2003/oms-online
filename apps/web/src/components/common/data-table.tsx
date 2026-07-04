@@ -138,7 +138,7 @@ export function DataTable<T>({
         containerClassName={cn(maxBodyHeight, maxBodyHeight && 'overflow-y-auto')}
         className={cn(
           '[&_td]:border-r [&_td]:border-border/30 [&_th]:border-r [&_th]:border-border/30',
-          '[&_thead_th]:bg-muted [&_thead_th]:font-semibold [&_thead_th]:uppercase [&_thead_th]:tracking-wider',
+          '[&_thead_th]:bg-muted [&_thead_th]:font-bold [&_thead_th]:uppercase [&_thead_th]:tracking-wider',
           '[&_tbody_td]:bg-card [&_tbody_tr:nth-child(even)_td]:bg-slate-50 [&_tbody_tr:hover_td]:bg-muted',
           dense
             ? // Compact: tight padding so columns shrink to their content and the

@@ -189,6 +189,8 @@ export function OrderModifyPage() {
         rows={rows}
         rowKey={(r) => `${r.order.id}-${r.line.id}`}
         isLoading={isLoading}
+        dense
+        maxBodyHeight="max-h-[calc(100dvh-16rem)]"
         emptyText="No order lines found."
         onRowClick={(r) => setEdit(r)}
       />

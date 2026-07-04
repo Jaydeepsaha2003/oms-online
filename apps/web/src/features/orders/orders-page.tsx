@@ -170,6 +170,8 @@ export function OrdersPage() {
         rows={items}
         rowKey={(o) => o.id}
         isLoading={isLoading}
+        dense
+        maxBodyHeight="max-h-[calc(100dvh-16rem)]"
         emptyText="No orders yet — create one."
         onRowClick={can('order:update') ? (o) => navigate(`/orders/${o.id}/edit`) : undefined}
         actions={(o) => {
