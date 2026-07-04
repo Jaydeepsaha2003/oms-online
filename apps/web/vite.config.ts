@@ -1,8 +1,8 @@
 import path from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
-import basicSsl from '@vitejs/plugin-basic-ssl';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
+import mkcert from 'vite-plugin-mkcert';
 
 // All /api calls are proxied to the Nest server so the browser only ever talks
 // to this origin — this keeps HTTPS pages working (no mixed content / no TLS
@@ -16,11 +16,19 @@ const apiProxy = {
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  // basic-ssl generates a self-signed certificate so the dev server runs over
-  // HTTPS — required for microphone access when the app is opened from phones
-  // or other devices on the LAN (browsers block the mic on plain HTTP).
-  // Each device shows a one-time "connection not private" warning: proceed once.
-  plugins: [react(), tailwindcss(), basicSsl()],
+  // mkcert generates a *locally-trusted* certificate (backed by a real local CA)
+  // instead of a random self-signed one — required for microphone access from
+  // phones/other devices on the LAN (browsers block the mic on plain HTTP, and
+  // iOS Safari treats a merely self-signed cert as still insecure even after you
+  // click through the warning, so getUserMedia silently never prompts there).
+  // The CA is installed into this machine's trust store automatically (no more
+  // "Not secure" on desktop). For phones, the same root CA file (rootCA.pem,
+  // under the mkcert cache dir) needs installing as a trusted certificate too.
+  plugins: [
+    react(),
+    tailwindcss(),
+    mkcert({ hosts: ['localhost', '127.0.0.1', '192.168.31.19', '26.142.63.68'] }),
+  ],
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),

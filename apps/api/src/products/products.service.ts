@@ -89,14 +89,36 @@ export class ProductsService {
     }
   }
 
-  async update(id: number, dto: UpdateProductDto): Promise<ProductDto> {
-    await this.ensureExists(id);
+  async update(id: number, dto: UpdateProductDto, changedByName?: string | null): Promise<ProductDto> {
+    const before = await this.prisma.product.findUnique({ where: { id } });
+    if (!before) throw new NotFoundException('Product not found.');
     try {
-      const row = await this.prisma.product.update({ where: { id }, data: this.toData(dto) });
+      const data = this.toData(dto);
+      const row = await this.prisma.product.update({ where: { id }, data });
+      await this.logRateChange(before, row, changedByName);
       return this.toDto(await this.ensureCode(row));
     } catch (err) {
       throw this.conflictOr(err);
     }
+  }
+
+  /** Record an old→new chart-rate change so bag-booking conversion can reprice
+   *  as of any past date, and the price trail stays auditable. No-op when the
+   *  rate is unchanged. */
+  private async logRateChange(before: Row, after: Row, changedByName?: string | null): Promise<void> {
+    if ((before.rate ?? null) === (after.rate ?? null)) return;
+    await this.prisma.productRateHistory.create({
+      data: {
+        productId: after.id,
+        productName: after.product,
+        category: after.category,
+        subCategory: after.subCategory,
+        size: after.size,
+        oldRate: before.rate,
+        newRate: after.rate,
+        changedByName: changedByName ?? null,
+      },
+    });
   }
 
   async remove(id: number): Promise<void> {
@@ -152,7 +174,8 @@ export class ProductsService {
           where: { category, subCategory, product, size: data.size },
         });
         if (existing) {
-          await this.prisma.product.update({ where: { id: existing.id }, data });
+          const updated = await this.prisma.product.update({ where: { id: existing.id }, data });
+          await this.logRateChange(existing, updated, 'Import');
           result.updated++;
         } else {
           const created = await this.prisma.product.create({ data });

@@ -1,13 +1,12 @@
 import { useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Bell, LogOut, Menu, PanelLeft, UserRound } from 'lucide-react';
+import { LogOut, Menu, PanelLeft, UserRound } from 'lucide-react';
 import { menuRoutes } from '@oms/shared';
 import { useAuthStore } from '@/stores/auth-store';
 import { useLogout } from '@/hooks/use-auth';
 import { usePermissions } from '@/hooks/use-permissions';
-import { useNudgeCount } from '@/features/crm/followup-nudge';
+import { NotificationsBell } from '@/features/crm/notifications-bell';
 import { Button } from '@/components/ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   DropdownMenu,
@@ -17,27 +16,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-
-/** Topbar bell: live count of commitments needing attention → opens Follow-ups. */
-function CrmBell() {
-  const navigate = useNavigate();
-  const count = useNudgeCount();
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button variant="ghost" size="icon" className="relative" onClick={() => navigate('/crm')} aria-label={`Follow-ups${count ? ` — ${count} need attention` : ''}`}>
-          <Bell className={count ? 'text-amber-600' : ''} />
-          {count > 0 && (
-            <span className="absolute -right-0.5 -top-0.5 flex min-w-4 items-center justify-center rounded-full bg-rose-600 px-1 text-[10px] font-bold text-white ring-2 ring-background">
-              {count > 99 ? '99+' : count}
-            </span>
-          )}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent side="bottom">{count ? `${count} follow-up${count > 1 ? 's' : ''} need attention` : 'Follow-ups — all clear'}</TooltipContent>
-    </Tooltip>
-  );
-}
 
 function initials(name: string): string {
   return name
@@ -94,7 +72,7 @@ export function Topbar({
       <h1 className="truncate text-base font-bold tracking-tight">{title}</h1>
 
       <div className="ml-auto flex items-center gap-2">
-        {can('crm:view') && <CrmBell />}
+        {can('crm:view') && <NotificationsBell />}
         {user && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

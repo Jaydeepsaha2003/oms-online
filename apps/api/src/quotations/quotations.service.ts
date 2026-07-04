@@ -264,6 +264,7 @@ export class QuotationsService {
       ordType: it.ordType,
       status: 'CONFIRMED',
       comment: it.comment,
+      bookingId: null,
     }));
     return {
       id: r.id,

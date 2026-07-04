@@ -594,12 +594,15 @@ model OrderItem {
   // from order totals and not dispatchable). Mirrors legacy ORDERTBL.STATUS.
   status      String   @default("CONFIRMED")
   comment     String?
+  // Soft link to the bag Booking this line was converted from (null for normal lines).
+  bookingId   Int?
   createdAt   DateTime @default(now())
 
   order      Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
   dispatches Dispatch[]
 
   @@index([orderId])
+  @@index([bookingId])
   @@map("order_items")
 }
 
@@ -832,4 +835,116 @@ model FollowupLog {
 
   @@index([followupId])
   @@map("followup_logs")
+}
+
+/// A bag booking: a customer reserves quantity (bags + kgs) without naming items.
+/// The rates are frozen at `bookingDate`; later it's converted into real order
+/// lines (in parts). `rateSnapshot` captures the customer's special-rate rows at
+/// booking time so the effective rate can be reproduced exactly on conversion.
+model Booking {
+  id            Int      @id @default(autoincrement())
+  code          String?  @unique // BKG-00001
+  customerId    Int?
+  customerName  String
+  agentName     String?
+  category      String? // SALES etc.
+  bookingDate   DateTime @default(now()) // the rate-basis date
+  bags          Float    @default(0) // total booked
+  kgs           Float    @default(0) // total booked (weight)
+  convertedBags Float    @default(0) // drawn down by conversions
+  convertedKgs  Float    @default(0)
+  status        String   @default("OPEN") // OPEN | PARTIALLY_CONVERTED | CONVERTED | CANCELLED
+  comment       String?
+  orderId       Int? // the Order holding converted lines (created lazily)
+  // JSON of the customer's { rates, logos } special-rate rows captured at booking.
+  rateSnapshot  String?
+  userName      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  conversions BookingConversion[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([bookingDate])
+  @@map("bookings")
+}
+
+/// Audit of one conversion step: which items were pulled from a booking, the
+/// booking-date rate used, and the order line created.
+model BookingConversion {
+  id              Int      @id @default(autoincrement())
+  bookingId       Int
+  orderItemId     Int?
+  productName     String?
+  designType      String?
+  bags            Float?
+  kgs             Float?
+  pcs             Float?
+  box             Float?
+  frozenRate      Float? // the effective rate as of the booking date
+  amount          Float?
+  convertedByName String?
+  convertedAt     DateTime @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@map("booking_conversions")
+}
+
+/// Every change to a product's chart rate (old -> new). Powers "rate as of date"
+/// for bag-booking conversion + an auditable price-change trail.
+model ProductRateHistory {
+  id            Int      @id @default(autoincrement())
+  productId     Int
+  productName   String
+  category      String
+  subCategory   String
+  size          Float?
+  oldRate       Float?
+  newRate       Float?
+  changedByName String?
+  changedAt     DateTime @default(now())
+
+  @@index([productId])
+  @@index([changedAt])
+  @@map("product_rate_history")
+}
+
+/// Every change to a design's rate (old -> new).
+model DesignRateHistory {
+  id            Int      @id @default(autoincrement())
+  designId      Int
+  designType    String
+  category      String
+  subCategory   String
+  oldRate       Float?
+  newRate       Float?
+  changedByName String?
+  changedAt     DateTime @default(now())
+
+  @@index([designId])
+  @@index([changedAt])
+  @@map("design_rate_history")
+}
+
+/// Every change to a per-customer special-rate override (old -> new; null = removed).
+model CustomerRateHistory {
+  id            Int      @id @default(autoincrement())
+  customerId    Int
+  customerName  String?
+  kind          String // PRODUCT | DESIGN
+  scope         String
+  category      String
+  subCategory   String
+  target        String
+  oldRate       Float?
+  newRate       Float?
+  changedByName String?
+  changedAt     DateTime @default(now())
+
+  @@index([customerId])
+  @@index([changedAt])
+  @@map("customer_rate_history")
 }

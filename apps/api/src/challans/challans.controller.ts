@@ -27,6 +27,12 @@ export class ChallansController {
     return this.challans.pendingCustomers(search);
   }
 
+  @Get('customer-names')
+  @Permissions(perm(R, ACTIONS.CREATE))
+  allCustomerNames(@Query('search') search?: string) {
+    return this.challans.allCustomerNames(search);
+  }
+
   @Post('draft')
   @Permissions(perm(R, ACTIONS.CREATE))
   draft(@Body() dto: DraftChallanDto) {

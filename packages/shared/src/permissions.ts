@@ -36,6 +36,8 @@ export type Action = (typeof ACTIONS)[keyof typeof ACTIONS];
 export const RESOURCES = {
   DASHBOARD: 'dashboard',
   ORDER: 'order',
+  /** Bag bookings: provisional bags+kgs, rate frozen at booking date, convert-to-items later. */
+  BOOKING: 'booking',
   QUOTATION: 'quotation',
   DISPATCH: 'dispatch',
   /** Challan / tax invoice (legacy PendChallan + Form14). */
@@ -106,6 +108,12 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
   { resource: RESOURCES.DASHBOARD, label: 'Dashboard', group: 'General', actions: [ACTIONS.VIEW] },
 
   { resource: RESOURCES.ORDER, label: 'Orders', group: 'Sales', actions: STANDARD_PRINTABLE },
+  {
+    resource: RESOURCES.BOOKING,
+    label: 'Bag Bookings',
+    group: 'Sales',
+    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.CONVERT, ACTIONS.CANCEL, ACTIONS.MANAGE],
+  },
   {
     resource: RESOURCES.QUOTATION,
     label: 'Quotations',

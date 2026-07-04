@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { SpecialRatesService } from './special-rates.service';
 import {
   AgentQueryDto,
@@ -57,8 +58,8 @@ export class SpecialRatesController {
   @Post('rate/bulk')
   @Permissions(perm(R, ACTIONS.CREATE))
   @Audit({ action: ACTIONS.CREATE, resource: R })
-  bulkSaveRate(@Body() dto: BulkSaveCustomerRateDto) {
-    return this.special.bulkSaveRate(dto);
+  bulkSaveRate(@Body() dto: BulkSaveCustomerRateDto, @CurrentUser('name') userName: string) {
+    return this.special.bulkSaveRate(dto, userName);
   }
 
   @Post('logo/bulk')
@@ -71,15 +72,15 @@ export class SpecialRatesController {
   @Post('rate')
   @Permissions(perm(R, ACTIONS.CREATE))
   @Audit({ action: ACTIONS.CREATE, resource: R })
-  saveRate(@Body() dto: SaveCustomerRateDto) {
-    return this.special.saveRate(dto);
+  saveRate(@Body() dto: SaveCustomerRateDto, @CurrentUser('name') userName: string) {
+    return this.special.saveRate(dto, userName);
   }
 
   @Delete('rate/:id')
   @Permissions(perm(R, ACTIONS.DELETE))
   @Audit({ action: ACTIONS.DELETE, resource: R })
-  async deleteRate(@Param('id', ParseIntPipe) id: number) {
-    await this.special.deleteRate(id);
+  async deleteRate(@Param('id', ParseIntPipe) id: number, @CurrentUser('name') userName: string) {
+    await this.special.deleteRate(id, userName);
     return { ok: true };
   }
 

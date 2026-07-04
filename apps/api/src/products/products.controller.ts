@@ -17,6 +17,7 @@ import type { Response } from 'express';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ExcelService } from '../excel/excel.service';
 import { ProductsService } from './products.service';
 import {
@@ -97,8 +98,8 @@ export class ProductsController {
   @Patch(':id')
   @Permissions(perm(R, ACTIONS.UPDATE))
   @Audit({ action: ACTIONS.UPDATE, resource: R })
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateProductDto) {
-    return this.products.update(id, dto);
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateProductDto, @CurrentUser('name') userName: string) {
+    return this.products.update(id, dto, userName);
   }
 
   @Delete(':id')

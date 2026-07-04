@@ -77,14 +77,32 @@ export class DesignsService {
     }
   }
 
-  async update(id: number, dto: UpdateDesignDto): Promise<DesignDto> {
-    await this.ensureExists(id);
+  async update(id: number, dto: UpdateDesignDto, changedByName?: string | null): Promise<DesignDto> {
+    const before = await this.prisma.design.findUnique({ where: { id } });
+    if (!before) throw new NotFoundException('Design not found.');
     try {
       const row = await this.prisma.design.update({ where: { id }, data: this.toData(dto) });
+      await this.logRateChange(before, row, changedByName);
       return this.toDto(await this.ensureCode(row));
     } catch (err) {
       throw this.conflictOr(err);
     }
+  }
+
+  /** Record an old→new design-rate change (for booking-date repricing + audit). */
+  private async logRateChange(before: Row, after: Row, changedByName?: string | null): Promise<void> {
+    if ((before.rate ?? null) === (after.rate ?? null)) return;
+    await this.prisma.designRateHistory.create({
+      data: {
+        designId: after.id,
+        designType: after.designType,
+        category: after.category,
+        subCategory: after.subCategory,
+        oldRate: before.rate,
+        newRate: after.rate,
+        changedByName: changedByName ?? null,
+      },
+    });
   }
 
   async remove(id: number): Promise<void> {
@@ -136,7 +154,8 @@ export class DesignsService {
           existing = await this.prisma.design.findFirst({ where: { category, subCategory, designType } });
         }
         if (existing) {
-          await this.prisma.design.update({ where: { id: existing.id }, data });
+          const updated = await this.prisma.design.update({ where: { id: existing.id }, data });
+          await this.logRateChange(existing, updated, 'Import');
           result.updated++;
         } else {
           const created = await this.prisma.design.create({ data });

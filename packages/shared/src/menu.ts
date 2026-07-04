@@ -128,6 +128,7 @@ export const MENU: MenuNode[] = [
       perm(RESOURCES.ORDER, ACTIONS.VIEW),
       perm(RESOURCES.ORDER, ACTIONS.CREATE),
       perm(RESOURCES.QUOTATION, ACTIONS.VIEW),
+      perm(RESOURCES.BOOKING, ACTIONS.VIEW),
     ],
     children: [
       {
@@ -143,6 +144,20 @@ export const MENU: MenuNode[] = [
         to: '/orders',
         icon: 'ListChecks',
         permission: perm(RESOURCES.ORDER, ACTIONS.VIEW),
+      },
+      {
+        id: 'bag-bookings',
+        label: 'Bag Bookings',
+        to: '/bookings',
+        icon: 'PackageOpen',
+        permission: perm(RESOURCES.BOOKING, ACTIONS.VIEW),
+      },
+      {
+        id: 'price-history',
+        label: 'Price History',
+        to: '/price-history',
+        icon: 'History',
+        permission: perm(RESOURCES.BOOKING, ACTIONS.VIEW),
       },
       {
         id: 'order-modify',

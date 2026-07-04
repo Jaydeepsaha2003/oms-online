@@ -82,6 +82,11 @@ export function Combobox({
   const anchorRef = React.useRef<HTMLDivElement>(null);
   const listRef = React.useRef<HTMLDivElement>(null);
   const navByKey = React.useRef(false); // last highlight change came from the keyboard
+  const touchY = React.useRef(0); // last touch Y, for the manual scroll fallback
+  // True while the pointer is held down inside the list (e.g. dragging its
+  // scrollbar) — that steals focus from the field, and without this flag the
+  // blur handler would close the dropdown mid-drag.
+  const draggingList = React.useRef(false);
 
   // Reflect external value changes into the field when not actively editing.
   React.useEffect(() => {
@@ -114,6 +119,42 @@ export function Combobox({
     navByKey.current = false;
     listRef.current?.querySelector<HTMLElement>(`[data-idx="${active}"]`)?.scrollIntoView({ block: 'nearest' });
   }, [active, open]);
+
+  // Inside a modal Sheet/Dialog, the scroll-lock (react-remove-scroll) swallows
+  // wheel/touch on portaled popovers — the list freezes. Take over with native
+  // non-passive listeners: when the body is scroll-locked, scroll the list
+  // manually and stop the event before the lock's document-level handler sees
+  // it. On normal (unlocked) pages the listeners do nothing — native scroll runs.
+  React.useEffect(() => {
+    const el = listRef.current;
+    if (!open || !el) return;
+    const locked = () => document.body.hasAttribute('data-scroll-locked');
+    const onWheel = (e: WheelEvent) => {
+      if (!locked()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      el.scrollTop += e.deltaY;
+    };
+    const onTouchStart = (e: TouchEvent) => {
+      touchY.current = e.touches[0]?.clientY ?? 0;
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      if (!locked()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const y = e.touches[0]?.clientY ?? 0;
+      el.scrollTop += touchY.current - y;
+      touchY.current = y;
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+    };
+  }, [open]);
 
   // Close ONLY when a scroll container that holds the FIELD scrolls (the page
   // moving under the anchor would leave the portal'd list floating detached).
@@ -156,6 +197,12 @@ export function Combobox({
 
   const onBlur = () => {
     blurTimer.current = setTimeout(() => {
+      // Blur caused by pressing inside the list (scrollbar drag, etc.): keep the
+      // dropdown open and hand focus straight back to the field.
+      if (draggingList.current) {
+        inputRef.current?.focus();
+        return;
+      }
       focused.current = false;
       setOpen(false);
       if (!creatable) {
@@ -175,7 +222,22 @@ export function Combobox({
   };
   const keepFocus = () => {
     if (blurTimer.current) clearTimeout(blurTimer.current);
+    draggingList.current = true;
   };
+
+  // Release the "interacting with the list" flag as soon as the pointer lifts,
+  // wherever it lifts (a scrollbar drag can end far outside the popover).
+  React.useEffect(() => {
+    const release = () => {
+      draggingList.current = false;
+    };
+    window.addEventListener('mouseup', release);
+    window.addEventListener('touchend', release);
+    return () => {
+      window.removeEventListener('mouseup', release);
+      window.removeEventListener('touchend', release);
+    };
+  }, []);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'ArrowDown') {
@@ -243,7 +305,13 @@ export function Combobox({
         }}
         onMouseDown={keepFocus}
       >
-        <div ref={listRef} className="max-h-64 overflow-x-hidden overflow-y-auto overscroll-contain p-1">
+        {/* Inline maxHeight (not a Tailwind class): taller list = less scrolling,
+            and it can't silently break if the utility isn't generated. */}
+        <div
+          ref={listRef}
+          className="overflow-x-hidden overflow-y-auto overscroll-contain p-1"
+          style={{ maxHeight: 'min(60vh, 480px)' }}
+        >
           {listHeader && rows.length > 0 && (
             <div className="bg-popover text-muted-foreground sticky top-0 z-10 flex items-center gap-2 border-b px-2 py-1.5 text-[11px] font-semibold tracking-wide uppercase">
               <span className="size-4 shrink-0" />

@@ -18,6 +18,10 @@ import { OrdersPage } from '@/features/orders/orders-page';
 import { OrderFormPage } from '@/features/orders/order-form-page';
 import { OrderModifyPage } from '@/features/orders/order-modify-page';
 import { OrderBillPage } from '@/features/orders/order-bill-page';
+import { BookingsPage } from '@/features/bookings/bookings-page';
+import { BookingFormPage } from '@/features/bookings/booking-form-page';
+import { BookingConvertPage } from '@/features/bookings/booking-convert-page';
+import { PriceHistoryPage } from '@/features/bookings/price-history-page';
 import { QuotationsPage } from '@/features/quotations/quotations-page';
 import { DispatchOrderPage } from '@/features/dispatch/dispatch-order-page';
 import { ModifyDispatchPage } from '@/features/dispatch/modify-dispatch-page';
@@ -174,6 +178,38 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.ORDER, ACTIONS.PRINT)}>
                 <OrderBillPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/bookings"
+            element={
+              <RequirePermission permission={perm(RESOURCES.BOOKING, ACTIONS.VIEW)}>
+                <BookingsPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/bookings/new"
+            element={
+              <RequirePermission permission={perm(RESOURCES.BOOKING, ACTIONS.CREATE)}>
+                <BookingFormPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/bookings/:id/convert"
+            element={
+              <RequirePermission permission={perm(RESOURCES.BOOKING, ACTIONS.CONVERT)}>
+                <BookingConvertPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/price-history"
+            element={
+              <RequirePermission permission={perm(RESOURCES.BOOKING, ACTIONS.VIEW)}>
+                <PriceHistoryPage />
               </RequirePermission>
             }
           />

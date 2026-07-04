@@ -29,6 +29,10 @@ export interface OrderItemDto {
   /** CONFIRMED (active) or CANCELLED (kept for the record, excluded from totals). */
   status: string;
   comment: string | null;
+  /** Set when this line was drawn from a bag Booking (rates frozen at that booking's date). */
+  bookingId: number | null;
+  /** The source booking's code (e.g. BKG-00001), when bookingId is set. */
+  bookingCode?: string | null;
 }
 
 export interface OrderDto {
@@ -83,6 +87,8 @@ export interface OrderItemInput {
   ordType?: string | null;
   status?: string | null;
   comment?: string | null;
+  /** Draw this line from a bag Booking — the server freezes its rate to the booking date. */
+  bookingId?: number | null;
 }
 
 export interface OrderInput {

@@ -108,6 +108,20 @@ export class ChallansService {
     return rows.map((r) => r.customerName).filter(Boolean);
   }
 
+  /** Every party in the Customer master, regardless of whether they currently
+   *  have un-challaned dispatches — lets Create Challan pick any customer (the
+   *  draft simply comes back with an empty pool if they have nothing pending). */
+  async allCustomerNames(search?: string): Promise<string[]> {
+    const s = search?.trim();
+    const rows = await this.prisma.customer.findMany({
+      where: { partyName: { not: null }, ...(s ? { partyName: { contains: s } } : {}) },
+      select: { partyName: true },
+      orderBy: { partyName: 'asc' },
+      take: 2000,
+    });
+    return rows.map((r) => r.partyName).filter((n): n is string => !!n);
+  }
+
   /** Form14 CreateGridList: resolve per-line freight/packing/GST rates for the
    *  selected dispatches and pre-compute the suggested charges + header. */
   async draft(dto: DraftChallanDto): Promise<ChallanDraft> {

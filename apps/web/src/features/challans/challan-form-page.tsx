@@ -16,7 +16,7 @@ import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useChallanDraft, useChallanEdit, useChallanNextCode, useCreateChallan, usePendingChallanCustomers, useUpdateChallan } from './use-challans';
+import { useAllChallanCustomers, useChallanDraft, useChallanEdit, useChallanNextCode, useCreateChallan, useUpdateChallan } from './use-challans';
 import { clearChallanDraft, loadChallanDraft, saveChallanDraft, type ChallanDraftData } from './challan-draft';
 
 type NavState = { customerName?: string; lines?: PendingChallanLine[] };
@@ -46,7 +46,7 @@ export function ChallanFormPage() {
   const navIds = useMemo(() => new Set((state?.lines ?? []).map((l) => l.dispatchId)), [state]);
 
   const [customer, setCustomer] = useState(navCustomer);
-  const { data: customers = [], isLoading: custLoading } = usePendingChallanCustomers('');
+  const { data: customers = [], isLoading: custLoading } = useAllChallanCustomers();
   const createDraftQ = useChallanDraft(!isEdit && customer ? { customerName: customer } : null);
   const editQ = useChallanEdit(isEdit ? editId : null);
 
@@ -181,6 +181,12 @@ export function ChallanFormPage() {
       draftReady.current = true;
     }
   }, [draft, savedChallan, editQ.data]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Scrap parties bill as manual lines (there's no dispatched pool), so open the
+  // manual entry automatically — its design field is locked (scrap carries no design).
+  useEffect(() => {
+    if (draft?.isScrap) setShowManual(true);
+  }, [draft?.isScrap]);
 
   // Auto-save the WIP challan (debounced) whenever it has content; clear when empty.
   useEffect(() => {
@@ -396,6 +402,20 @@ export function ChallanFormPage() {
     else createChallan.mutate(payload, { onSuccess, onError });
   };
 
+  // Ctrl/Cmd+S saves the challan (bound once; always calls the latest `save`).
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        saveRef.current();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   // ── Success ──
   if (savedId) {
     return (
@@ -441,8 +461,9 @@ export function ChallanFormPage() {
           <h2 className="truncate text-base font-semibold tracking-tight">{title}</h2>
         </div>
         {draft && (
-          <Button onClick={save} disabled={saving || rows.length === 0}>
-            {saving ? <Loader2 className="animate-spin" /> : <Check />} {isEdit ? 'Update' : 'Save'}
+          <Button onClick={save} disabled={saving || rows.length === 0} title={`${isEdit ? 'Update' : 'Create'} challan (Ctrl+S)`}>
+            {saving ? <Loader2 className="animate-spin" /> : <Check />} {isEdit ? 'Update Challan' : 'Create Challan'}
+            <kbd className="ml-1 rounded bg-white/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold">Ctrl+S</kbd>
           </Button>
         )}
       </div>
@@ -569,7 +590,7 @@ export function ChallanFormPage() {
               {showManual && (
                 <div className="grid items-end gap-2 sm:grid-cols-6">
                   <div className="space-y-1 sm:col-span-2"><Label className="text-base">Product</Label><Input value={m.product} onChange={(e) => setM({ ...m, product: e.target.value })} placeholder="e.g. S.S. SCRAP" className="h-9 text-base" /></div>
-                  <div className="space-y-1"><Label className="text-base">Design</Label><Input value={m.design} onChange={(e) => setM({ ...m, design: e.target.value })} className="h-9 text-base" /></div>
+                  <div className="space-y-1"><Label className="text-base">Design</Label><Input value={m.design} onChange={(e) => setM({ ...m, design: e.target.value })} disabled={draft.isScrap} title={draft.isScrap ? 'Scrap items carry no design' : undefined} className={cn('h-9 text-base', draft.isScrap && 'bg-muted/40 cursor-not-allowed')} /></div>
                   <div className="space-y-1"><Label className="text-base">Unit</Label><NativeSelect value={m.unit} onChange={(v) => setM({ ...m, unit: v })} options={['KGS', 'PCS']} className="h-9 text-base" /></div>
                   <div className="space-y-1"><Label className="text-base">Qty</Label><Input value={m.qty} onChange={(e) => setM({ ...m, qty: e.target.value })} className="h-9 text-right text-base tabular-nums" /></div>
                   <div className="space-y-1"><Label className="text-base">Price</Label><Input value={m.price} onChange={(e) => setM({ ...m, price: e.target.value })} className="h-9 text-right text-base tabular-nums" /></div>
@@ -583,32 +604,43 @@ export function ChallanFormPage() {
               <table className="w-full text-[15px]">
                 <thead className="bg-muted sticky top-0 z-10">
                   <tr className="text-muted-foreground border-b text-left [&>th]:px-3 [&>th]:py-2 [&>th]:text-sm [&>th]:font-semibold [&>th]:tracking-wide [&>th]:uppercase">
-                    <th className="w-8 text-center">#</th><th>Product</th><th>Design</th><th className="text-right">Bags</th><th className="text-right">Pcs</th><th className="text-right">Kgs</th><th className="text-right">Box</th><th>Unit</th><th className="text-right">Price</th><th className="text-right">Amount</th><th className="text-right">GST%</th><th className="w-8"></th>
+                    <th className="w-12 text-center">#</th>
+                    <th>Product</th>
+                    <th className="w-28">Design</th>
+                    <th className="w-20 text-right">Bags</th>
+                    <th className="w-20 text-right">Pcs</th>
+                    <th className="w-20 text-right">Kgs</th>
+                    <th className="w-20 text-right">Box</th>
+                    <th className="w-16">Unit</th>
+                    <th className="w-28 text-right">Price</th>
+                    <th className="w-28 text-right">Amount</th>
+                    <th className="w-20 text-right">GST%</th>
+                    <th className="w-10"></th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((r, idx) => (
                     <tr key={r.key} className="odd:bg-muted/20 hover:bg-primary/5 border-b transition-colors last:border-0 [&>td]:px-3 [&>td]:py-2">
-                      <td className="text-muted-foreground text-center tabular-nums">{idx + 1}</td>
+                      <td className="w-12 text-center text-muted-foreground tabular-nums">{idx + 1}</td>
                       <td className="font-medium">{r.productName || '—'}{r.dispatchId == null && <span className="bg-muted text-muted-foreground ml-1 rounded px-1 text-[10px]">manual</span>}</td>
-                      <td className="text-muted-foreground">{r.design || '—'}</td>
-                      <td className="text-right tabular-nums">{r.bags ?? '—'}</td>
-                      <td className="text-right tabular-nums">{r.pcs ?? '—'}</td>
-                      <td className="text-right tabular-nums">{r.kgs ?? '—'}</td>
-                      <td className="text-right tabular-nums">{r.box ?? '—'}</td>
-                      <td className="text-muted-foreground">{r.unit || '—'}</td>
-                      <td className="text-right"><Input className="h-8 w-24 text-right text-[15px] tabular-nums" value={r.price ?? 0} onChange={(e) => setPrice(r.key, e.target.value)} /></td>
-                      <td className="text-right font-semibold tabular-nums">{(r.amount ?? 0).toLocaleString('en-IN')}</td>
-                      <td className="text-muted-foreground text-right tabular-nums">{r.gstRate || 0}</td>
-                      <td className="text-right"><button onClick={() => removeRow(r.key)} className="text-muted-foreground hover:text-destructive" title="Remove line"><Trash2 className="size-3.5" /></button></td>
+                      <td className="w-28 text-muted-foreground">{r.design || '—'}</td>
+                      <td className="w-20 text-right tabular-nums">{r.bags ?? '—'}</td>
+                      <td className="w-20 text-right tabular-nums">{r.pcs ?? '—'}</td>
+                      <td className="w-20 text-right tabular-nums">{r.kgs ?? '—'}</td>
+                      <td className="w-20 text-right tabular-nums">{r.box ?? '—'}</td>
+                      <td className="w-16 text-muted-foreground">{r.unit || '—'}</td>
+                      <td className="w-28 text-right"><Input className="h-8 w-24 text-right text-[15px] tabular-nums" value={r.price ?? 0} onChange={(e) => setPrice(r.key, e.target.value)} /></td>
+                      <td className="w-28 text-right font-semibold tabular-nums">{(r.amount ?? 0).toLocaleString('en-IN')}</td>
+                      <td className="w-20 text-muted-foreground text-right tabular-nums">{r.gstRate || 0}</td>
+                      <td className="w-10 text-right"><button onClick={() => removeRow(r.key)} className="text-muted-foreground hover:text-destructive" title="Remove line"><Trash2 className="size-3.5" /></button></td>
                     </tr>
                   ))}
                   {rows.length === 0 && (
                     <tr>
                       <td colSpan={12} className="px-3 py-10 text-center">
                         <div className="text-muted-foreground flex flex-col items-center gap-1.5 text-sm">
-                          <Plus className="size-5 opacity-40" />
-                          No items yet — pick a dispatched product above, or add a manual line.
+                           <Plus className="size-5 opacity-40" />
+                           No items yet — pick a dispatched product above, or add a manual line.
                         </div>
                       </td>
                     </tr>
@@ -617,18 +649,18 @@ export function ChallanFormPage() {
                 {rows.length > 0 && (
                   <tfoot className="bg-muted/60 sticky bottom-0 z-10">
                     <tr className="border-t-2 font-semibold [&>td]:px-3 [&>td]:py-1.5">
-                      <td></td>
+                      <td className="w-12"></td>
                       <td className="text-muted-foreground text-sm tracking-wide uppercase">Total · {rows.length} item(s)</td>
-                      <td></td>
-                      <td className="text-right tabular-nums">{totals.tBags || ''}</td>
-                      <td className="text-right tabular-nums">{totals.tPcs || ''}</td>
-                      <td className="text-right tabular-nums">{totals.tKgs || ''}</td>
-                      <td className="text-right tabular-nums">{totals.tBox || ''}</td>
-                      <td></td>
-                      <td></td>
-                      <td className="text-primary text-right tabular-nums">{totals.tAmt.toLocaleString('en-IN')}</td>
-                      <td></td>
-                      <td></td>
+                      <td className="w-28"></td>
+                      <td className="w-20 text-right tabular-nums">{totals.tBags || ''}</td>
+                      <td className="w-20 text-right tabular-nums">{totals.tPcs || ''}</td>
+                      <td className="w-20 text-right tabular-nums">{totals.tKgs || ''}</td>
+                      <td className="w-20 text-right tabular-nums">{totals.tBox || ''}</td>
+                      <td className="w-16"></td>
+                      <td className="w-28"></td>
+                      <td className="w-28 text-primary text-right tabular-nums">{totals.tAmt.toLocaleString('en-IN')}</td>
+                      <td className="w-20"></td>
+                      <td className="w-10"></td>
                     </tr>
                   </tfoot>
                 )}
@@ -646,9 +678,24 @@ export function ChallanFormPage() {
                   <div className="space-y-1"><Label className="text-base">GST %</Label><Input value={gstPct} onChange={(e) => { setGstPct(e.target.value); setManualTax(''); }} className="h-9 text-right text-base tabular-nums" /></div>
                   <div className="space-y-1"><Label className="text-base">{`Billing Rate${halfBill ? ' · half' : ''}`}</Label><Input value={billingRate} onChange={(e) => setBillingRate(e.target.value)} className="h-9 text-right text-base tabular-nums" /></div>
                 </div>
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={noBill} onChange={(e) => onNoBill(e.target.checked)} /> No Bill {noBill && <span className="text-muted-foreground text-sm">({noBillRemoveGst ? 'GST removed' : 'GST kept'})</span>}
-                </label>
+                {/* Settlement — B Amount & C Amount, with the No Bill toggle beside B */}
+                <div className="grid items-stretch gap-2.5 sm:grid-cols-[1fr_auto_1fr]">
+                  <EditRow label="B AMOUNT" computed={totals.b} manual={manualB} onManual={setManualB} prominent />
+                  <label
+                    className={cn(
+                      'flex cursor-pointer flex-col justify-center gap-1 rounded-md border px-4 py-2 transition-colors select-none',
+                      noBill ? 'border-primary/50 bg-primary/5' : 'bg-card hover:bg-muted/40',
+                    )}
+                    title="Bill without a tax invoice"
+                  >
+                    <span className="text-muted-foreground flex items-center gap-2 text-sm font-semibold tracking-wide uppercase">
+                      <input type="checkbox" checked={noBill} onChange={(e) => onNoBill(e.target.checked)} className="size-4 accent-blue-600" />
+                      No Bill
+                    </span>
+                    {noBill && <span className="text-[11px] font-medium text-amber-600">{noBillRemoveGst ? 'GST removed' : 'GST kept'}</span>}
+                  </label>
+                  <EditRow label="C AMOUNT" computed={totals.c} manual={manualC} onManual={setManualC} prominent />
+                </div>
                 <textarea className="border-input bg-background min-h-12 w-full rounded-md border px-3 py-2 text-base" placeholder="Remarks…" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
               </div>
 
@@ -665,19 +712,15 @@ export function ChallanFormPage() {
                   <span>TOTAL</span>
                   <span className="tabular-nums">{inr(totals.total)}</span>
                 </div>
-                <div className="bg-card space-y-1 p-3">
-                  {draft.tdsApplicable && (
-                    <>
-                      <Row2 label={`Less: TDS @ ${draft.tdsPercent ?? 0}%`} value={`- ${inr(totals.tdsAmount)}`} className="text-amber-700" />
-                      <div className="flex items-center justify-between rounded-md bg-emerald-50 px-2 py-1 text-sm font-semibold text-emerald-700">
-                        <span>Net Receivable</span>
-                        <span className="tabular-nums">{inr(totals.netReceivable)}</span>
-                      </div>
-                    </>
-                  )}
-                  <EditRow label="Billed (B)" computed={totals.b} manual={manualB} onManual={setManualB} />
-                  <EditRow label="Balance (C)" computed={totals.c} manual={manualC} onManual={setManualC} />
-                </div>
+                {draft.tdsApplicable && (
+                  <div className="bg-card space-y-1 p-3">
+                    <Row2 label={`Less: TDS @ ${draft.tdsPercent ?? 0}%`} value={`- ${inr(totals.tdsAmount)}`} className="text-amber-700" />
+                    <div className="flex items-center justify-between rounded-md bg-emerald-50 px-2 py-1 text-sm font-semibold text-emerald-700">
+                      <span>Net Receivable</span>
+                      <span className="tabular-nums">{inr(totals.netReceivable)}</span>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </>
@@ -717,9 +760,44 @@ function LockField({ label, value, locked, onUnlock, onChange, onBlur }: { label
 }
 
 /** A totals row whose amount is directly editable (Form14 Tax/B/C). Shows the live
- *  computed value; typing overrides it; the ↺ reverts to auto. */
-function EditRow({ label, computed, manual, onManual }: { label: string; computed: number; manual: string; onManual: (v: string) => void }) {
+ *  computed value; typing overrides it; the ↺ reverts to auto. `prominent` renders
+ *  it as a bigger stacked card (used for B/C at the top of the totals panel). */
+function EditRow({
+  label,
+  computed,
+  manual,
+  onManual,
+  prominent,
+}: {
+  label: string;
+  computed: number;
+  manual: string;
+  onManual: (v: string) => void;
+  prominent?: boolean;
+}) {
   const isManual = manual.trim() !== '';
+  if (prominent) {
+    return (
+      <div className="bg-card rounded-md border px-3 py-2">
+        <div className="flex items-center justify-between gap-1">
+          <span className="text-muted-foreground text-sm font-semibold tracking-wide uppercase">{label}</span>
+          {isManual ? (
+            <button onClick={() => onManual('')} title="Reset to auto" className="text-amber-600 hover:text-amber-700" type="button">
+              <RotateCcw className="size-3.5" />
+            </button>
+          ) : (
+            <span className="w-3.5" />
+          )}
+        </div>
+        <input
+          value={isManual ? manual : String(Math.round(computed))}
+          onChange={(e) => onManual(e.target.value)}
+          className="border-input bg-background mt-1 h-10 w-full rounded border px-2 text-right text-xl font-bold tabular-nums focus:ring-1"
+        />
+        {isManual && <span className="text-[11px] font-medium text-amber-600">manual override</span>}
+      </div>
+    );
+  }
   return (
     <div className="flex items-center justify-between gap-2 text-base">
       <span className="text-muted-foreground">

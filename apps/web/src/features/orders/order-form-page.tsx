@@ -10,9 +10,9 @@ import {
   type SetStateAction,
 } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRightLeft, BadgePercent, Ban, Check, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Lock, Plus, ReceiptText, RotateCcw, Save, Settings2, Trash2 } from 'lucide-react';
+import { ArrowLeft, ArrowRightLeft, BadgePercent, Check, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Lock, PackageOpen, Plus, ReceiptText, RotateCcw, Save, Settings2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { ORDER_PRIORITIES, resolveSpecialRates, type OrderInput, type SpecialRateResolution } from '@oms/shared';
+import { ORDER_PRIORITIES, resolveSpecialRates, type OrderInput } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useAutoSizePcs } from '@/lib/auto-size-pcs';
@@ -32,12 +32,17 @@ import { useCustomerSpecialRates } from '@/features/special-rates/use-special-ra
 import { useCreateOrder, useOrder, useOrderLookups, useUpdateOrder } from './use-orders';
 import { useConvertQuotation, useCreateQuotation, useQuotation, useUpdateQuotation } from '../quotations/use-quotations';
 import { clearOrderDraft, loadOrderDraft, saveOrderDraft } from './order-draft';
+import { useActiveCustomerBookings } from '@/features/bookings/use-bookings';
+import { BookingDrawSheet, type DrawnBookingLine } from './booking-draw-sheet';
 
 /** A line item once added to the order. */
 interface Item {
   key: string;
   id?: number | null; // DB id of an existing line (undefined for a newly-added row)
   status?: string | null; // per-line CONFIRMED/CANCELLED, preserved across edits
+  bookingId?: number | null; // set when the line was drawn from a bag Booking (rate frozen)
+  bookingCode?: string | null; // the source booking's code, for the badge
+  special?: string | null; // human note when a customer special rate priced this line (shows the "special" tag)
   itemName: string; // composite display: "{size|pcs} {product} {designType}"
   product: string;
   category: string;
@@ -260,9 +265,50 @@ export function OrderFormPage() {
   const [entry, setEntry] = useState(blankEntry());
   const [items, setItems] = useState<Item[]>([]);
 
-  // The selected customer's special rates (deltas) + a note shown when one applies.
+  // Bag-booking draw-down: pull a customer's reserved bags into this order. The
+  // button only shows when the customer actually has a drawable booking.
+  const [bookingSheetOpen, setBookingSheetOpen] = useState(false);
+  const { data: activeBookings = [] } = useActiveCustomerBookings(docKind === 'order' ? customer.trim() : '');
+  // Bags/kgs already queued in THIS order for a given booking (so the sheet can
+  // show the true remaining before the order is even saved).
+  const alreadyQueuedForBooking = (bookingId: number) =>
+    items.reduce(
+      (a, i) => (i.bookingId === bookingId && i.status !== 'CANCELLED' ? { bags: a.bags + (n(i.bags) ?? 0), kgs: a.kgs + (n(i.gram) ?? 0) } : a),
+      { bags: 0, kgs: 0 },
+    );
+  // Append booking-drawn lines (already priced at the frozen rate) to the order.
+  const addBookingLines = (drawn: DrawnBookingLine[]) => {
+    setItems((its) => [
+      ...its,
+      ...drawn.map((d) => ({
+        key: `bkg${keyer.current++}`,
+        bookingId: d.bookingId,
+        bookingCode: d.bookingCode,
+        itemName: d.itemName,
+        product: d.product,
+        category: d.category,
+        subCategory: d.subCategory,
+        designType: d.designType,
+        designName: d.designName || 'NA',
+        productRate: d.productRate,
+        designRate: d.designRate,
+        weight: '',
+        pcsBox: '',
+        ordType: entry.ordType,
+        priority: d.priority || 'NORMAL',
+        bags: d.bags,
+        pcs: d.pcs,
+        gram: d.gram,
+        box: d.box,
+        comment: d.comment,
+        calField: d.calField,
+      })),
+    ]);
+    toast.success(`${drawn.length} item${drawn.length === 1 ? '' : 's'} drawn from booking`);
+  };
+
+  // The selected customer's special rates (deltas), applied when an item is picked.
   const { data: special } = useCustomerSpecialRates(customerId);
-  const [specialNote, setSpecialNote] = useState<SpecialRateResolution | null>(null);
 
   const completionDate = useMemo(
     () => (completionDay.trim() === '' ? '' : addDays(orderDate, Number(completionDay))),
@@ -299,6 +345,8 @@ export function OrderFormPage() {
         key: `e${it.id}-${i}`,
         id: it.id,
         status: it.status,
+        bookingId: it.bookingId,
+        bookingCode: it.bookingCode ?? null,
         itemName: it.productName ?? [it.product, it.designType].filter(Boolean).join(' '),
         product: it.product ?? '',
         category: it.pCategory ?? '',
@@ -384,7 +432,6 @@ export function OrderFormPage() {
     setCustomer(name);
     const c = lookups?.customers.find((x) => x.name === name);
     setCustomerId(c?.id);
-    setSpecialNote(null);
     if (c) {
       setAgentName(c.agentName ?? '');
       if (c.category) setCategory(c.category);
@@ -454,7 +501,17 @@ export function OrderFormPage() {
     const prodRate = (it.productRate ?? 0) + (res?.productDelta ?? 0);
     const desRate = (it.designRate ?? 0) + (res?.designDelta ?? 0);
 
-    setSpecialNote(res && (res.productDelta !== 0 || res.designDelta !== 0 || res.logoBlocked) ? res : null);
+    // When a special rate priced this pick, carry a human note onto the line so
+    // the grid can show a "special" tag right beside the item (no banner).
+    const specialTip =
+      res && (res.productDelta !== 0 || res.designDelta !== 0)
+        ? [
+            res.productDelta !== 0 ? `product ${fmtDelta(res.productDelta)} (${scopeWord(res.productFrom)})` : '',
+            res.designDelta !== 0 ? `design ${fmtDelta(res.designDelta)} (${scopeWord(res.designFrom)})` : '',
+          ]
+            .filter(Boolean)
+            .join(' · ')
+        : null;
 
     setEntry((e) => ({
       ...e,
@@ -468,6 +525,7 @@ export function OrderFormPage() {
       designType: it.designType ?? '',
       designName: realName,
       designRate: hasDesign ? String(desRate) : '',
+      special: specialTip,
     }));
   };
 
@@ -637,6 +695,7 @@ export function OrderFormPage() {
     items: items.map((i) => ({
       id: i.id,
       status: i.status,
+      bookingId: i.bookingId ?? null,
       pCategory: i.category.trim() || null,
       subCategory: i.subCategory.trim() || null,
       product: i.product.trim() || null,
@@ -1014,28 +1073,23 @@ export function OrderFormPage() {
             </div>
           </div>
 
-          {specialNote && (
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-sky-200 bg-sky-50/70 px-3 py-2 text-sm">
-              <span className="inline-flex items-center gap-1.5 font-semibold text-sky-800">
-                <BadgePercent className="size-4 text-sky-600" /> Special rate applied
+          {/* Draw reserved bags from the customer's bag bookings — only offered
+              when the customer actually has a drawable (open, quantity-left) one. */}
+          {docKind === 'order' && can('booking:view') && activeBookings.length > 0 && (
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-muted-foreground text-xs">
+                Added items{items.some((i) => i.bookingId) ? ` · ${items.filter((i) => i.bookingId).length} from a booking` : ''}
               </span>
-              {specialNote.productDelta !== 0 && (
-                <span className="text-sky-700">
-                  product <b className="tabular-nums">{fmtDelta(specialNote.productDelta)}</b>
-                  <span className="text-sky-500"> ({scopeWord(specialNote.productFrom)})</span>
-                </span>
-              )}
-              {specialNote.designDelta !== 0 && (
-                <span className="text-violet-700">
-                  design <b className="tabular-nums">{fmtDelta(specialNote.designDelta)}</b>
-                  <span className="text-violet-500"> ({scopeWord(specialNote.designFrom)})</span>
-                </span>
-              )}
-              {specialNote.logoBlocked && (
-                <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">
-                  <Ban className="size-3" /> Logo not allowed
-                </span>
-              )}
+              <Button
+                type="button"
+                size="sm"
+                className="bg-sky-700 font-semibold text-white shadow-md shadow-sky-700/25 hover:bg-sky-800"
+                onClick={() => setBookingSheetOpen(true)}
+                title="Draw items from this customer’s bag bookings"
+              >
+                <PackageOpen /> Draw from Bag Booking
+                <span className="ml-1 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] font-bold tabular-nums">{activeBookings.length}</span>
+              </Button>
             </div>
           )}
 
@@ -1071,7 +1125,25 @@ export function OrderFormPage() {
                   items.map((i, idx) => (
                     <tr key={i.key} className="hover:bg-muted/40">
                       <td className="text-muted-foreground text-center tabular-nums">{idx + 1}</td>
-                      <td className="font-medium">{i.itemName || i.product || '—'}</td>
+                      <td className="font-medium">
+                        {i.itemName || i.product || '—'}
+                        {i.special && (
+                          <span
+                            className="ml-2 inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700"
+                            title={`Special rate applied — ${i.special}`}
+                          >
+                            <BadgePercent className="size-3" /> special
+                          </span>
+                        )}
+                        {i.bookingId && (
+                          <span
+                            className="ml-2 inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700"
+                            title={`Drawn from booking ${i.bookingCode ?? ''} — rate frozen to the booking date`}
+                          >
+                            <PackageOpen className="size-3" /> {i.bookingCode ?? 'Booking'}
+                          </span>
+                        )}
+                      </td>
                       <td>{i.designName || '—'}</td>
                       <td>{i.ordType || '—'}</td>
                       <td>{i.priority === 'URGENT' ? <span className="font-semibold text-rose-600">URGENT</span> : i.priority}</td>
@@ -1185,6 +1257,19 @@ export function OrderFormPage() {
           </Button>
         </div>
       </div>
+
+      {/* Draw-from-booking slide-over */}
+      {docKind === 'order' && (
+        <BookingDrawSheet
+          open={bookingSheetOpen}
+          onOpenChange={setBookingSheetOpen}
+          customerName={customer}
+          bookings={activeBookings}
+          lookups={lookups}
+          alreadyQueued={alreadyQueuedForBooking}
+          onAdd={addBookingLines}
+        />
+      )}
     </div>
   );
 }

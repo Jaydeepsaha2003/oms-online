@@ -1,126 +1,57 @@
-import { ArrowUpRight, Boxes, ClipboardList, Factory, Sparkles, Users } from 'lucide-react';
-import { useAuthStore } from '@/stores/auth-store';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { cn } from '@/lib/utils';
+import { useState } from 'react';
+import { Bell } from 'lucide-react';
 import { DashboardFollowups } from '@/features/crm/dashboard-followups';
+import { AnalyticsSection } from './analytics-section';
 
-type Accent = 'blue' | 'amber' | 'orange' | 'sky';
-
-const ACCENTS: Record<Accent, { tile: string; ring: string; text: string }> = {
-  blue: {
-    tile: 'bg-gradient-to-br from-blue-500 to-blue-700',
-    ring: 'group-hover:ring-blue-500/30',
-    text: 'text-blue-600',
-  },
-  amber: {
-    tile: 'bg-gradient-to-br from-amber-400 to-amber-600',
-    ring: 'group-hover:ring-amber-500/30',
-    text: 'text-amber-600',
-  },
-  orange: {
-    tile: 'bg-gradient-to-br from-orange-400 to-orange-600',
-    ring: 'group-hover:ring-orange-500/30',
-    text: 'text-orange-600',
-  },
-  sky: {
-    tile: 'bg-gradient-to-br from-sky-400 to-sky-600',
-    ring: 'group-hover:ring-sky-500/30',
-    text: 'text-sky-600',
-  },
-};
-
-const STATS: { label: string; value: string; delta: string; icon: typeof ClipboardList; accent: Accent }[] = [
-  { label: 'Open Orders', value: '—', delta: 'Live soon', icon: ClipboardList, accent: 'blue' },
-  { label: 'In Production', value: '—', delta: 'Live soon', icon: Factory, accent: 'amber' },
-  { label: 'Low Stock Items', value: '—', delta: 'Live soon', icon: Boxes, accent: 'orange' },
-  { label: 'Active Users', value: '—', delta: 'Live soon', icon: Users, accent: 'sky' },
-];
+const HIDE_KEY = 'oms:notif-panel-hidden';
 
 export function DashboardPage() {
-  const user = useAuthStore((s) => s.user);
+  const [hidden, setHidden] = useState(() => {
+    try {
+      return localStorage.getItem(HIDE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggle = (v: boolean) => {
+    setHidden(v);
+    try {
+      localStorage.setItem(HIDE_KEY, v ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  };
 
   return (
-    <div className="space-y-6">
-      {/* Hero */}
-      <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-800 p-6 text-white shadow-lg shadow-blue-900/20 sm:p-8">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -right-12 -top-16 size-64 rounded-full bg-amber-400/30 blur-3xl"
-        />
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -bottom-20 right-1/3 size-56 rounded-full bg-orange-500/20 blur-3xl"
-        />
-        <div className="relative">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-xs font-medium ring-1 ring-white/25 backdrop-blur">
-            <Sparkles className="size-3.5 text-amber-300" />
-            OMS Workspace
-          </span>
-          <h2 className="mt-3 text-2xl font-bold tracking-tight sm:text-3xl">
-            Welcome back{user ? `, ${user.name.split(' ')[0]}` : ''}
-          </h2>
-          <p className="mt-1 max-w-xl text-sm text-blue-100/90">
-            Your production &amp; order management hub. Connect these cards to live data as you build
-            out the modules.
-          </p>
-        </div>
+    // At lg the row itself is the scroll container and stretches to the content-area
+    // edges (its vertical scrollbar therefore sits at the far right, just after the
+    // docked Notifications panel). The left padding of `main` is kept.
+    <div className="flex h-full flex-col gap-6 lg:-my-6 lg:h-[calc(100%+3rem)] lg:w-[calc(100%+1.5rem)] lg:items-start lg:gap-0 lg:overflow-y-auto lg:flex-row">
+      {/* Main column — analytics KPIs + order-vs-challan chart. */}
+      <div className="min-w-0 flex-1 lg:py-6 lg:pr-6">
+        <AnalyticsSection />
       </div>
 
-      {/* Follow-ups that need attention — front and centre at login. */}
-      <DashboardFollowups />
+      {/* Notifications — a normal card on small screens; on desktop it docks flush to
+          the top, right and bottom edges as a sticky full-height rail. */}
+      {!hidden && (
+        <aside className="shrink-0 lg:sticky lg:top-0 lg:h-full lg:w-[340px]">
+          <DashboardFollowups docked onHide={() => toggle(true)} />
+        </aside>
+      )}
 
-      {/* Stat cards */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {STATS.map((stat) => {
-          const a = ACCENTS[stat.accent];
-          return (
-            <Card
-              key={stat.label}
-              className={cn('card-hover group gap-0 ring-1 ring-transparent', a.ring)}
-            >
-              <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-muted-foreground text-sm font-medium">
-                  {stat.label}
-                </CardTitle>
-                <span
-                  className={cn(
-                    'flex size-9 items-center justify-center rounded-xl text-white shadow-sm',
-                    a.tile,
-                  )}
-                >
-                  <stat.icon className="size-4.5" />
-                </span>
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-bold tracking-tight tabular-nums">{stat.value}</div>
-                <div className={cn('mt-1 inline-flex items-center gap-1 text-xs font-medium', a.text)}>
-                  <ArrowUpRight className="size-3.5" />
-                  {stat.delta}
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
-
-      {/* Getting started */}
-      <Card className="card-hover">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <span className="bg-gradient-brand flex size-7 items-center justify-center rounded-lg text-white shadow-sm">
-              <Sparkles className="size-4" />
-            </span>
-            Getting started
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="text-muted-foreground space-y-2 text-sm">
-          <p>The architecture is ready. Each menu item routes to a scaffold page for now.</p>
-          <p>
-            Build a screen, add its permissions to <code>@oms/shared</code>, register a node in the
-            <code> MENU</code> registry, and it appears in the sidebar for the right roles.
-          </p>
-        </CardContent>
-      </Card>
+      {/* When hidden: a slim tab to bring it back (notifications also live on the bell). */}
+      {hidden && (
+        <button
+          type="button"
+          onClick={() => toggle(false)}
+          className="bg-card hover:bg-accent fixed right-0 top-24 z-20 flex items-center gap-1 rounded-l-lg border border-r-0 px-1.5 py-3 text-xs font-medium text-amber-700 shadow-sm [writing-mode:vertical-rl]"
+          aria-label="Show notifications panel"
+        >
+          <Bell className="size-4 rotate-180" />
+          Notifications
+        </button>
+      )}
     </div>
   );
 }

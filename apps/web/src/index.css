@@ -196,8 +196,40 @@
   }
 }
 
+/* Notification bell: a repeating "ring" swing while there are pending alerts. */
+@keyframes oms-bell-ring {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+  10%,
+  30%,
+  50% {
+    transform: rotate(12deg);
+  }
+  20%,
+  40%,
+  60% {
+    transform: rotate(-12deg);
+  }
+  70% {
+    transform: rotate(7deg);
+  }
+  80% {
+    transform: rotate(-7deg);
+  }
+  90% {
+    transform: rotate(3deg);
+  }
+}
+.animate-bell-ring {
+  transform-origin: top center;
+  animation: oms-bell-ring 1s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .oms-blob {
+  .oms-blob,
+  .animate-bell-ring {
     animation: none !important;
   }
 }

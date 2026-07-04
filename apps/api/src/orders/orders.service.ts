@@ -4,6 +4,7 @@ import { type OrderDto, type OrderFilterOptions, type OrderLookups, type OrderTi
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import { PrismaService } from '../prisma/prisma.service';
 import { PdfService } from '../pdf/pdf.service';
+import { BookingsService } from '../bookings/bookings.service';
 import { toNum, toStr, uc } from '../common/coerce';
 import { readCategoryFields } from '../common/category-fields';
 import { CreateOrderDto, OrderQueryDto, UpdateOrderDto } from './dto/order.dto';
@@ -16,6 +17,7 @@ export class OrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly pdf: PdfService,
+    private readonly bookings: BookingsService,
   ) {}
 
   async findMany(query: OrderQueryDto): Promise<Paginated<OrderDto>> {
@@ -88,20 +90,36 @@ export class OrdersService {
 
   async create(dto: CreateOrderDto): Promise<OrderDto> {
     const data = await this.toHeaderData(dto);
+    // Booking-sourced lines are re-priced at their booking's frozen date rates and
+    // checked against what's left on the booking before anything is written.
+    await this.applyBookingPricing(dto.items ?? []);
+    await this.assertBookingCapacity(dto.items ?? []);
     const row = await this.prisma.order.create({
       data: { ...data, items: { create: (dto.items ?? []).map((it) => this.toItemData(it)) } },
       include: INCLUDE,
     });
+    await this.recomputeBookings(this.bookingIdsOf(row.items));
     return this.toDto(await this.ensureCode(row));
   }
 
   async update(id: number, dto: UpdateOrderDto): Promise<OrderDto> {
     await this.ensureExists(id);
     const data = await this.toHeaderData(dto as CreateOrderDto);
+    // Bookings that were already drawn into this order — they may lose lines (which
+    // frees their quantity) so they must be recomputed even if no line references
+    // them any more.
+    const bookingsBefore = await this.prisma.orderItem.findMany({
+      where: { orderId: id, bookingId: { not: null } },
+      select: { bookingId: true },
+    });
 
     if (!dto.items) {
       await this.prisma.order.update({ where: { id }, data });
     } else {
+      // Re-price + capacity-check booking-sourced lines before writing (this order's
+      // own current draw is excluded so its kept lines don't count against itself).
+      await this.applyBookingPricing(dto.items);
+      await this.assertBookingCapacity(dto.items, id);
       // Reconcile line items BY ID so existing lines keep their identity — and
       // therefore their dispatch history. A blanket deleteMany+create would give
       // every line a new id and cascade-delete its dispatches (Dispatch.orderItem
@@ -146,12 +164,23 @@ export class OrdersService {
     }
 
     const row = await this.prisma.order.findUnique({ where: { id }, include: INCLUDE });
+    // Recompute every booking this order touched — before and after the change.
+    await this.recomputeBookings([
+      ...this.bookingIdsOf(row!.items),
+      ...bookingsBefore.map((b) => b.bookingId!),
+    ]);
     return this.toDto(await this.ensureCode(row!));
   }
 
   async remove(id: number): Promise<void> {
     await this.ensureExists(id);
+    const bookingLines = await this.prisma.orderItem.findMany({
+      where: { orderId: id, bookingId: { not: null } },
+      select: { bookingId: true },
+    });
     await this.prisma.order.delete({ where: { id } });
+    // Deleting the order frees any booking quantity its lines had drawn.
+    await this.recomputeBookings(bookingLines.map((b) => b.bookingId!));
   }
 
   /** Cancel / restore an order. Cancelling is only allowed while the order is
@@ -167,6 +196,9 @@ export class OrdersService {
       }
     }
     const row = await this.prisma.order.update({ where: { id }, data: { status }, include: INCLUDE });
+    // Cancelling/restoring the order changes whether its booking lines count as
+    // drawn — recompute any booking it references.
+    await this.recomputeBookings(this.bookingIdsOf(row.items));
     return this.toDto(row, status === 'CANCELLED' ? 'NONE' : null);
   }
 
@@ -502,7 +534,63 @@ export class OrdersService {
       ordType: uc(it.ordType),
       status: uc(it.status) === 'CANCELLED' ? 'CANCELLED' : 'CONFIRMED',
       comment: toStr(it.comment),
+      bookingId: toNum(it.bookingId),
     };
+  }
+
+  // ── Bag-booking draw-down (order lines sourced from a booking) ───────────────
+
+  /** Distinct booking ids referenced by a set of order-item rows. */
+  private bookingIdsOf(items: { bookingId: number | null }[]): number[] {
+    return [...new Set(items.map((it) => it.bookingId).filter((v): v is number => v != null))];
+  }
+
+  private async recomputeBookings(ids: number[]): Promise<void> {
+    for (const bid of new Set(ids)) await this.bookings.recompute(bid);
+  }
+
+  /** Re-price every booking-sourced line at its booking's frozen date rates so the
+   *  stored rate can't drift from (or be tampered against) the booking-date value. */
+  private async applyBookingPricing(items: Record<string, unknown>[]): Promise<void> {
+    for (const it of items) {
+      const bookingId = toNum(it.bookingId);
+      if (!bookingId) continue;
+      const priced = await this.bookings.priceOrderLine(bookingId, {
+        pCategory: toStr(it.pCategory),
+        subCategory: toStr(it.subCategory),
+        product: toStr(it.product),
+        productName: toStr(it.productName),
+        designType: toStr(it.designType),
+        design: toStr(it.design),
+        psize: toNum(it.psize),
+      });
+      if (!priced) throw new BadRequestException('The booking for a drawn line no longer exists.');
+      it.productRate = priced.productRate + priced.productDelta;
+      it.designRate = priced.designRate + priced.designDelta;
+      it.rate = priced.rate;
+    }
+  }
+
+  /** Reject a save that would draw more bags/kgs than a booking has left. When
+   *  updating, `excludeOrderId` drops this order's own current draw from the tally
+   *  so its kept lines aren't counted against it. */
+  private async assertBookingCapacity(items: Record<string, unknown>[], excludeOrderId?: number): Promise<void> {
+    const byBooking = new Map<number, { bags: number; kgs: number }>();
+    for (const it of items) {
+      const bookingId = toNum(it.bookingId);
+      if (!bookingId || uc(it.status) === 'CANCELLED') continue;
+      const acc = byBooking.get(bookingId) ?? { bags: 0, kgs: 0 };
+      acc.bags += toNum(it.bags) ?? 0;
+      acc.kgs += toNum(it.gram) ?? 0;
+      byBooking.set(bookingId, acc);
+    }
+    for (const [bookingId, sum] of byBooking) {
+      const info = await this.bookings.remainingFor(bookingId, excludeOrderId);
+      if (!info) throw new BadRequestException('A drawn booking no longer exists.');
+      if (info.booking.status === 'CANCELLED') throw new BadRequestException(`Booking ${info.booking.code ?? bookingId} is cancelled and can't be drawn.`);
+      if (sum.bags - info.remBags > 0.001) throw new BadRequestException(`Drawing ${sum.bags} bags exceeds the ${info.remBags} left on booking ${info.booking.code ?? bookingId}.`);
+      if (sum.kgs - info.remKgs > 0.001) throw new BadRequestException(`Drawing ${sum.kgs} kgs exceeds the ${info.remKgs} left on booking ${info.booking.code ?? bookingId}.`);
+    }
   }
 
   private codeFor(id: number): string {
@@ -545,6 +633,10 @@ export class OrdersService {
       ordType: it.ordType,
       status: it.status ?? 'CONFIRMED',
       comment: it.comment,
+      bookingId: it.bookingId ?? null,
+      // Booking codes use the fixed BKG-##### format (see BookingsService), so the
+      // source code can be derived without another query.
+      bookingCode: it.bookingId != null ? `BKG-${String(it.bookingId).padStart(5, '0')}` : null,
     }));
     // Cancelled lines are kept for the record but excluded from the order's totals.
     const active = items.filter((it) => it.status !== 'CANCELLED');

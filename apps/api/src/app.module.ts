@@ -29,11 +29,13 @@ import { DesignsModule } from './designs/designs.module';
 import { DesignNamesModule } from './design-names/design-names.module';
 import { CombinationsModule } from './combinations/combinations.module';
 import { OrdersModule } from './orders/orders.module';
+import { BookingsModule } from './bookings/bookings.module';
 import { QuotationsModule } from './quotations/quotations.module';
 import { DispatchModule } from './dispatch/dispatch.module';
 import { ChallansModule } from './challans/challans.module';
 import { SpecialRatesModule } from './special-rates/special-rates.module';
 import { CrmModule } from './crm/crm.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 import { AccessImportModule } from './access-import/access-import.module'; // TEMP: MS Access connector
 import { SettingsModule } from './settings/settings.module';
 
@@ -70,11 +72,13 @@ import { SettingsModule } from './settings/settings.module';
     DesignNamesModule,
     CombinationsModule,
     OrdersModule,
+    BookingsModule,
     QuotationsModule,
     DispatchModule,
     ChallansModule,
     SpecialRatesModule,
     CrmModule,
+    AnalyticsModule,
     AccessImportModule, // TEMP: MS Access connector — remove this line + the folder to delete
 
     SettingsModule,

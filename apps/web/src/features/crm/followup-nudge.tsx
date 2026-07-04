@@ -4,36 +4,12 @@ import { AlarmClock, ArrowRight, BellRing, Check, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { FollowupDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
+import { buzz, playChime } from '@/lib/chime';
 import { formatDate } from '@/lib/date-format';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { useCrmSettings, useFollowupDue, useResolveFollowup, useSnoozeFollowup } from './use-crm';
 import { Chip, itemLine, UrgencyChip } from './crm-shared';
-
-/** A short two-tone chime via WebAudio (no asset needed). */
-function playChime() {
-  try {
-    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    const ctx = new Ctx();
-    const now = ctx.currentTime;
-    [880, 1175].forEach((freq, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.value = freq;
-      const t = now + i * 0.16;
-      gain.gain.setValueAtTime(0.0001, t);
-      gain.gain.exponentialRampToValueAtTime(0.18, t + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(t);
-      osc.stop(t + 0.24);
-    });
-    setTimeout(() => ctx.close().catch(() => {}), 800);
-  } catch {
-    /* audio blocked — ignore */
-  }
-}
 
 /**
  * The "anti-forget" reminder. Polls the active nudges and pops an intrusive modal
@@ -68,7 +44,10 @@ export function FollowupNudge() {
     else setOpen(false);
     if (fresh.length === 0) return;
 
-    if (settings?.sound !== false) playChime();
+    if (settings?.sound !== false) {
+      playChime();
+      buzz();
+    }
     if (settings?.desktopNotifications && 'Notification' in window && Notification.permission === 'granted') {
       for (const f of fresh.slice(0, 3)) {
         try {

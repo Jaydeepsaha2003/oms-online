@@ -53,12 +53,24 @@ export function useChallanNextCode(prefix: string | undefined, date: string | un
   });
 }
 
-/** Parties that still have un-challaned dispatch lines (standalone Create Challan picker). */
+/** Parties that still have un-challaned dispatch lines (Pending Challan list filter). */
 export function usePendingChallanCustomers(search: string) {
   return useQuery({
     queryKey: [...KEY, 'pending-customers', search],
     queryFn: () => http.get<string[]>('/challans/pending-customers', { params: { search: search || undefined } }),
     placeholderData: (prev) => prev,
+  });
+}
+
+/** Every party in the Customer master (Create Challan picker) — not just parties
+ *  that currently have un-challaned dispatches; picking one with nothing pending
+ *  still opens the form so a manual line can be added. */
+export function useAllChallanCustomers(search = '') {
+  return useQuery({
+    queryKey: [...KEY, 'customer-names', search],
+    queryFn: () => http.get<string[]>('/challans/customer-names', { params: { search: search || undefined } }),
+    placeholderData: (prev) => prev,
+    staleTime: 60_000,
   });
 }
 
