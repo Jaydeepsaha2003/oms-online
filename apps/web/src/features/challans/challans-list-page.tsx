@@ -4,9 +4,12 @@ import { CheckCircle2, ChevronLeft, ChevronRight, Pencil, Printer, ScrollText, S
 import { toast } from 'sonner';
 import type { ChallanDto } from '@oms/shared';
 import { cn } from '@/lib/utils';
-import { formatDate } from '@/lib/date-format';
+import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
 import { openPdf } from '@/lib/pdf';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useColumnOrder } from '@/hooks/use-column-order';
+import { useConfirm } from '@/components/common/confirm';
+import { ColumnSettings } from '@/components/common/column-settings';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
@@ -17,6 +20,24 @@ import { PRESETS, presetRange } from './date-presets';
 
 const PAGE_SIZE = 50;
 const money = (v: number | null) => `₹ ${(v ?? 0).toLocaleString('en-IN')}`;
+
+// Persist the list's filters so they survive navigating into a challan and back.
+const FILTER_KEY = 'oms:challans-filters';
+interface ChallanFilters {
+  searchInput: string;
+  dateFrom: string;
+  dateTo: string;
+  preset: string;
+  status: string;
+  page: number;
+}
+const loadFilters = (): Partial<ChallanFilters> => {
+  try {
+    return JSON.parse(sessionStorage.getItem(FILTER_KEY) || '{}') as Partial<ChallanFilters>;
+  } catch {
+    return {};
+  }
+};
 
 /** Days-to-due text from the due date (the legacy PAID state needs the accounting
  *  module, so this shows only DUE / OVER DUE relative to today). */
@@ -42,18 +63,22 @@ function Kpi({ label, value }: { label: string; value: string }) {
 
 export function ChallansListPage() {
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const { can } = usePermissions();
+  const { format, setFormat } = useDateFormat();
   const canUpdate = can('challan:update');
   const canDelete = can('challan:delete');
   const canPrint = can('challan:print');
 
-  const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
-  const [preset, setPreset] = useState('');
-  const [status, setStatus] = useState('');
-  const [page, setPage] = useState(1);
+  // Restore the last-used filters (kept in sessionStorage) so they survive a
+  // round-trip into a challan's edit form and back.
+  const [searchInput, setSearchInput] = useState(() => loadFilters().searchInput ?? '');
+  const [search, setSearch] = useState(() => (loadFilters().searchInput ?? '').trim());
+  const [dateFrom, setDateFrom] = useState(() => loadFilters().dateFrom ?? '');
+  const [dateTo, setDateTo] = useState(() => loadFilters().dateTo ?? '');
+  const [preset, setPreset] = useState(() => loadFilters().preset ?? '');
+  const [status, setStatus] = useState(() => loadFilters().status ?? '');
+  const [page, setPage] = useState(() => loadFilters().page ?? 1);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -62,6 +87,11 @@ export function ChallansListPage() {
     }, 300);
     return () => clearTimeout(t);
   }, [searchInput]);
+
+  // Persist the current filters whenever they change.
+  useEffect(() => {
+    sessionStorage.setItem(FILTER_KEY, JSON.stringify({ searchInput, dateFrom, dateTo, preset, status, page }));
+  }, [searchInput, dateFrom, dateTo, preset, status, page]);
 
   const query = {
     page,
@@ -96,15 +126,23 @@ export function ChallansListPage() {
     setPreset('');
     setStatus('');
     setPage(1);
+    sessionStorage.removeItem(FILTER_KEY);
   };
+  const hasFilters = !!(search || dateFrom || dateTo || preset || status);
 
   const setRowStatus = (c: ChallanDto, next: 'CONFIRMED' | 'CANCELLED') =>
     updateStatus.mutate(
       { id: c.id, challanStatus: next },
       { onSuccess: () => toast.success(`${c.code} marked ${next}`), onError: () => toast.error('Failed to update status') },
     );
-  const remove = (c: ChallanDto) => {
-    if (!window.confirm(`Delete challan ${c.code}? This frees its dispatches back to Pending and cannot be undone.`)) return;
+  const remove = async (c: ChallanDto) => {
+    const ok = await confirm({
+      title: `Delete challan ${c.code}?`,
+      description: `This permanently deletes the challan and frees its dispatches back to Pending. This cannot be undone.`,
+      confirmText: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
     del.mutate(c.id, { onSuccess: () => toast.success(`${c.code} deleted`), onError: () => toast.error('Failed to delete') });
   };
 
@@ -147,43 +185,42 @@ export function ChallansListPage() {
           </span>
         ),
       },
-      {
-        id: 'actions',
-        label: '',
-        fixed: true,
-        cell: (r) => (
-          <div className="flex items-center justify-end gap-1.5">
-            {canPrint && (
-              <button onClick={() => openPdf(`/challans/${r.id}/challan.pdf`)} className="text-muted-foreground hover:text-foreground" title="Print / PDF">
-                <Printer className="size-4" />
-              </button>
-            )}
-            {canUpdate && (
-              <button onClick={() => navigate(`/challans/${r.id}/edit`)} className="text-muted-foreground hover:text-foreground" title="Edit">
-                <Pencil className="size-4" />
-              </button>
-            )}
-            {canUpdate &&
-              (r.challanStatus === 'CONFIRMED' ? (
-                <button onClick={() => setRowStatus(r, 'CANCELLED')} className="text-muted-foreground hover:text-rose-600" title="Mark Cancelled">
-                  <XCircle className="size-4" />
-                </button>
-              ) : (
-                <button onClick={() => setRowStatus(r, 'CONFIRMED')} className="text-muted-foreground hover:text-emerald-600" title="Mark Confirmed">
-                  <CheckCircle2 className="size-4" />
-                </button>
-              ))}
-            {canDelete && (
-              <button onClick={() => remove(r)} className="text-muted-foreground hover:text-destructive" title="Delete">
-                <Trash2 className="size-4" />
-              </button>
-            )}
-          </div>
-        ),
-      },
     ],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [canPrint, canUpdate, canDelete],
+    [],
+  );
+
+  // Per-user column order + show/hide (persisted); the sticky Actions column is
+  // rendered separately via the DataTable's `actions` prop.
+  const cols = useColumnOrder('challans', columns);
+
+  const rowActions = (r: ChallanDto) => (
+    <div className="flex items-center justify-end gap-1.5">
+      {canPrint && (
+        <button onClick={() => openPdf(`/challans/${r.id}/challan.pdf`)} className="text-muted-foreground hover:text-foreground" title="Print / PDF">
+          <Printer className="size-4" />
+        </button>
+      )}
+      {canUpdate && (
+        <button onClick={() => navigate(`/challans/${r.id}/edit`)} className="text-muted-foreground hover:text-foreground" title="Edit">
+          <Pencil className="size-4" />
+        </button>
+      )}
+      {canUpdate &&
+        (r.challanStatus === 'CONFIRMED' ? (
+          <button onClick={() => setRowStatus(r, 'CANCELLED')} className="text-muted-foreground hover:text-rose-600" title="Mark Cancelled">
+            <XCircle className="size-4" />
+          </button>
+        ) : (
+          <button onClick={() => setRowStatus(r, 'CONFIRMED')} className="text-muted-foreground hover:text-emerald-600" title="Mark Confirmed">
+            <CheckCircle2 className="size-4" />
+          </button>
+        ))}
+      {canDelete && (
+        <button onClick={() => remove(r)} className="text-muted-foreground hover:text-destructive" title="Delete">
+          <Trash2 className="size-4" />
+        </button>
+      )}
+    </div>
   );
 
   return (
@@ -195,6 +232,17 @@ export function ChallansListPage() {
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">Challans</h2>
           <p className="text-muted-foreground text-sm">{data?.total ?? 0} saved challan(s) · view, print, change status or delete</p>
+        </div>
+        <div className="ml-auto">
+          <ColumnSettings
+            columns={cols.orderedReorderable}
+            hidden={cols.hidden}
+            onReorder={cols.moveBefore}
+            onMove={cols.move}
+            onToggle={cols.toggle}
+            onReset={cols.reset}
+            dateFormat={{ value: format, options: DATE_FORMATS, onChange: setFormat }}
+          />
         </div>
       </div>
 
@@ -230,14 +278,27 @@ export function ChallansListPage() {
           <Label className="text-xs">Status</Label>
           <NativeSelect value={status} onChange={(v) => { setStatus(v); setPage(1); }} options={['', 'CONFIRMED', 'CANCELLED']} placeholder="All statuses" />
         </div>
-        {(search || dateFrom || dateTo || preset || status) && (
-          <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={clearAll}>
-            <X /> Clear
-          </Button>
-        )}
+        <Button
+          variant="outline"
+          size="sm"
+          className="text-muted-foreground"
+          onClick={clearAll}
+          disabled={!hasFilters}
+          title={hasFilters ? 'Clear all filters' : 'No filters applied'}
+        >
+          <X /> Reset filters
+        </Button>
       </div>
 
-      <DataTable columns={columns} rows={items} rowKey={(r) => r.id} isLoading={isLoading} dense hideRowView emptyText="No challans yet — create one from Pending Challan." />
+      <DataTable
+        columns={cols.visibleColumns}
+        rows={items}
+        rowKey={(r) => r.id}
+        isLoading={isLoading}
+        dense
+        actions={rowActions}
+        emptyText="No challans yet — create one from Pending Challan."
+      />
 
       <div className="flex items-center justify-between">
         <p className="text-muted-foreground text-sm">Page {data?.page ?? page} of {totalPages}</p>
