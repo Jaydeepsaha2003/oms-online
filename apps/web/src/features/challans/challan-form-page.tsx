@@ -338,6 +338,37 @@ export function ChallanFormPage() {
     setStatus('CONFIRMED');
   };
 
+  // Leave the form. Always drop the saved WIP draft first so it never resurfaces
+  // as a "Restored your unsaved challan" prompt next time.
+  const handleCancel = () => {
+    clearChallanDraft();
+    setRestoredDraft(false);
+    restoreRef.current = null;
+    navigate(isEdit ? '/challans' : '/challans/pending');
+  };
+
+  // Reset button: clear back to blank (new) or reload the saved challan (edit),
+  // after a confirm when there's anything to lose.
+  const handleReset = async () => {
+    const hasContent = customer.trim() || rows.length > 0;
+    if (hasContent) {
+      const ok = await confirm({
+        title: isEdit ? 'Revert changes to this challan?' : 'Reset this challan?',
+        description: isEdit
+          ? 'Every line and field goes back to the last saved challan.'
+          : 'Clears the customer and all items so you can start fresh.',
+        confirmText: isEdit ? 'Revert' : 'Reset',
+        destructive: true,
+      });
+      if (!ok) return;
+    }
+    if (isEdit) {
+      initedRef.current = ''; // re-run the load effect against the saved challan
+    } else {
+      resetForm();
+    }
+  };
+
   const save = async () => {
     if (!draft || rows.length === 0) return toast.error('Add at least one item.');
     if (status === 'CANCELLED') {
@@ -402,14 +433,22 @@ export function ChallanFormPage() {
     else createChallan.mutate(payload, { onSuccess, onError });
   };
 
-  // Ctrl/Cmd+S saves the challan (bound once; always calls the latest `save`).
+  // Ctrl/Cmd+S saves the challan; Esc cancels (bound once; always call the
+  // latest closures via refs).
   const saveRef = useRef(save);
   saveRef.current = save;
+  const cancelRef = useRef(handleCancel);
+  cancelRef.current = handleCancel;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
         saveRef.current();
+      } else if (e.key === 'Escape') {
+        // Let an open dropdown / dialog swallow Esc first; only cancel when none is open.
+        if (!document.querySelector('[data-slot="popover-content"], [role="dialog"], [role="alertdialog"]')) {
+          cancelRef.current();
+        }
       }
     };
     window.addEventListener('keydown', onKey);
@@ -445,11 +484,11 @@ export function ChallanFormPage() {
   }
 
   const halfBill = numOr(billingRate) > 0 && !noBill;
-  const title = isEdit ? `Edit Challan${savedChallan ? ` — ${savedChallan.customerName}` : ''}` : `Create Challan${draft ? ` — ${draft.customerName}` : ''}`;
 
   return (
     <div className="flex w-full flex-col gap-3">
-      {/* Action bar — sticky so Save stays reachable while scrolling */}
+      {/* Header — pick / show the customer here; Save / Cancel / Reset sit at the
+          bottom of the form (sticky). */}
       <div className="bg-background/85 sticky top-0 z-20 -mt-1 flex items-center gap-2 rounded-md py-1 backdrop-blur">
         <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(isEdit ? '/challans' : '/challans/pending')} title="Back">
           <ArrowLeft className="size-4" />
@@ -457,15 +496,24 @@ export function ChallanFormPage() {
         <div className="bg-gradient-brand flex size-8 items-center justify-center rounded-md text-white shadow-sm ring-1 ring-white/20">
           <ScrollText className="size-4" />
         </div>
-        <div className="mr-auto min-w-0">
-          <h2 className="truncate text-base font-semibold tracking-tight">{title}</h2>
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="text-muted-foreground shrink-0 text-sm font-semibold whitespace-nowrap">
+            {isEdit ? 'Edit Challan' : 'Create Challan'} <span className="text-muted-foreground/60">—</span>
+          </span>
+          {isEdit ? (
+            <span className="truncate text-base font-bold tracking-tight">{savedChallan?.customerName ?? ''}</span>
+          ) : (
+            <div className="min-w-0 max-w-md flex-1">
+              <NativeSelect
+                value={customer}
+                onChange={setCustomer}
+                options={customers}
+                placeholder={custLoading ? 'Loading…' : 'Select a customer…'}
+                className="bg-background h-9 w-full rounded-md text-base font-semibold"
+              />
+            </div>
+          )}
         </div>
-        {draft && (
-          <Button onClick={save} disabled={saving || rows.length === 0} title={`${isEdit ? 'Update' : 'Create'} challan (Ctrl+S)`}>
-            {saving ? <Loader2 className="animate-spin" /> : <Check />} {isEdit ? 'Update Challan' : 'Create Challan'}
-            <kbd className="ml-1 rounded bg-white/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold">Ctrl+S</kbd>
-          </Button>
-        )}
       </div>
 
       {/* Restored work-in-progress notice */}
@@ -493,19 +541,9 @@ export function ChallanFormPage() {
                 {draft?.tdsApplicable && <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">TDS {draft.tdsPercent ?? 0}%</span>}
                 {draft?.isScrap && <span className="rounded bg-purple-100 px-2 py-0.5 text-xs font-semibold text-purple-700">SCRAP · 1% TCS</span>}
               </div>
-              {isEdit ? (
-                <div className="text-xl font-bold tracking-tight">{savedChallan?.customerName ?? ''}</div>
-              ) : (
-                <div className="w-full max-w-md">
-                  <NativeSelect
-                    value={customer}
-                    onChange={setCustomer}
-                    options={customers}
-                    placeholder={custLoading ? 'Loading…' : 'Select a customer…'}
-                    className="bg-background h-9 w-full rounded-md text-base font-medium"
-                  />
-                </div>
-              )}
+              {/* Customer is chosen in the top header now — shown here read-only so
+                  the invoice still reads its bill-to. */}
+              {draft && <div className="text-xl font-bold tracking-tight">{isEdit ? savedChallan?.customerName : draft.customerName}</div>}
               {draft && <p className="text-muted-foreground max-w-md truncate text-sm">{(isEdit ? savedChallan?.billingAddress : draft.billingAddress) || '—'}</p>}
             </div>
 
@@ -725,6 +763,32 @@ export function ChallanFormPage() {
             </div>
           </>
         )}
+      </div>
+
+      {/* Bottom action bar — pinned so Cancel / Reset / Save stay reachable. */}
+      <div className="bg-background/95 sticky bottom-0 z-30 -mx-1 mt-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t px-2 py-3 shadow-[0_-4px_12px_-8px_rgba(2,6,23,0.25)] backdrop-blur">
+        <p className="text-sm">
+          {rows.length} item(s)
+          {draft && (
+            <>
+              {' '}· total <span className="font-bold tabular-nums text-emerald-600">{inr(totals.total)}</span>
+            </>
+          )}
+        </p>
+        <div className="ml-auto flex flex-wrap justify-end gap-2">
+          <Button type="button" variant="destructive" onClick={handleCancel} title="Cancel (Esc)">
+            Cancel
+          </Button>
+          <Button type="button" variant="outline" onClick={handleReset} title={isEdit ? 'Revert unsaved changes' : 'Clear the form'}>
+            <RotateCcw /> Reset
+          </Button>
+          {draft && (
+            <Button onClick={save} disabled={saving || rows.length === 0} title={`${isEdit ? 'Update' : 'Create'} challan (Ctrl+S)`}>
+              {saving ? <Loader2 className="animate-spin" /> : <Check />} {isEdit ? 'Update Challan' : 'Create Challan'}
+              <kbd className="ml-1 rounded bg-white/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold">Ctrl+S</kbd>
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );
