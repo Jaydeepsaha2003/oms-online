@@ -29,6 +29,12 @@ import {
 } from './use-crm';
 import { Chip, initials, itemLine, UrgencyChip } from './crm-shared';
 import { VoiceCapture } from './voice-capture';
+import { VoiceResolveDialog, type ResolveAnswer, type ResolveField } from './voice-resolve';
+
+type PartyHit = { id: number | null; partyName: string };
+type ProductHit = { id: number; name: string; category: string; subCategory: string };
+/** A catalogue item shown as "ROYAL · GLASS" so the category disambiguates. */
+const itemLabel = (p: ProductHit) => (p.category ? `${p.name} · ${p.category}` : p.name);
 
 const STAGES = ['POLISHING', 'SUPPLIER', 'DISPATCH', 'READY'];
 const BUCKETS = [
@@ -401,34 +407,54 @@ function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing:
     if (o && !party) { setParty(o.customerName); setCustomerId(o.customerId ?? null); }
   };
 
-  const handleVoiceResult = async (result: {
-    detectedCustomer?: string;
-    detectedItem?: string;
-  }) => {
-    if (result.detectedItem) {
-      setItemText(result.detectedItem);
-      toast.success(`Auto-filled item: ${result.detectedItem}`);
+  // Voice fields (customer/item) that matched >1 list entry → ask the user.
+  const [resolve, setResolve] = useState<ResolveField[] | null>(null);
+
+  const applyCustomer = (name: string, id: number | null) => { setParty(name); setCustomerId(id); };
+
+  /**
+   * Match a spoken customer against the customer list and a spoken item against
+   * the product catalogue. Exact or single match → fill it silently; several
+   * matches → collect a question; none → keep what was said. Any collected
+   * questions open the "Just to be sure…" dialog.
+   */
+  const handleVoiceResult = async (result: { detectedCustomer?: string; detectedItem?: string }) => {
+    const customer = result.detectedCustomer?.trim();
+    const item = result.detectedItem?.trim();
+    const questions: ResolveField[] = [];
+
+    if (customer) {
+      const hits = await http
+        .get<PartyHit[]>('/crm/followups/party-match', { params: { q: customer } })
+        .catch(() => [] as PartyHit[]);
+      const exact = hits.find((h) => h.partyName.toLowerCase() === customer.toLowerCase());
+      if (exact) { applyCustomer(exact.partyName, exact.id); toast.success(`Party matched: ${exact.partyName}`); }
+      else if (hits.length === 1) { applyCustomer(hits[0].partyName, hits[0].id); toast.success(`Party matched: ${hits[0].partyName}`); }
+      else if (hits.length > 1) { questions.push({ kind: 'customer', spoken: customer, candidates: hits.map((h) => ({ id: h.id, label: h.partyName })) }); }
+      else { applyCustomer(customer, null); toast.info(`New party noted: ${customer}`); }
     }
-    if (result.detectedCustomer) {
-      try {
-        const matches = await http.get<{ id: number | null; partyName: string }[]>(
-          '/crm/followups/party-suggest',
-          { params: { q: result.detectedCustomer } }
-        );
-        if (matches && matches.length > 0) {
-          const match = matches[0];
-          setParty(match.partyName);
-          setCustomerId(match.id);
-          toast.success(`Auto-selected party: ${match.partyName}`);
-        } else {
-          setParty(result.detectedCustomer);
-          setCustomerId(null);
-          toast.info(`Set party name: ${result.detectedCustomer}`);
-        }
-      } catch (err) {
-        console.error('Failed to suggest party for voice result', err);
-      }
+
+    if (item) {
+      const hits = await http
+        .get<ProductHit[]>('/crm/followups/product-suggest', { params: { q: item } })
+        .catch(() => [] as ProductHit[]);
+      const exact = hits.find((h) => h.name.toLowerCase() === item.toLowerCase());
+      if (exact) { setItemText(itemLabel(exact)); toast.success(`Item matched: ${exact.name}`); }
+      else if (hits.length === 1) { setItemText(itemLabel(hits[0])); toast.success(`Item matched: ${hits[0].name}`); }
+      else if (hits.length > 1) { questions.push({ kind: 'item', spoken: item, candidates: hits.map((h) => ({ id: h.id, label: itemLabel(h) })) }); }
+      else { setItemText(item); toast.info(`Item noted: ${item}`); }
     }
+
+    if (questions.length > 0) setResolve(questions);
+  };
+
+  const applyResolved = (answers: ResolveAnswer[]) => {
+    for (const a of answers) {
+      if (a.kind === 'customer') applyCustomer(a.label, a.id);
+      else setItemText(a.label);
+    }
+    setResolve(null);
+    toast.success('Updated from your voice');
   };
 
   const isPay = kind === 'PAYMENT';
@@ -599,6 +625,10 @@ function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing:
           </Button>
         </DialogFooter>
       </DialogContent>
+
+      {resolve && (
+        <VoiceResolveDialog fields={resolve} onCancel={() => setResolve(null)} onResolve={applyResolved} />
+      )}
     </Dialog>
   );
 }

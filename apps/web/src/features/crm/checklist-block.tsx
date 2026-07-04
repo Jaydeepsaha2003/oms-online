@@ -16,7 +16,7 @@ export interface ChecklistDraftItem {
   source?: 'MANUAL' | 'VOICE';
 }
 
-/** A multi-add list you build by typing OR speaking (Gemini splits Hindi/English
+/** A multi-add list you build by typing OR speaking (Groq splits Hindi/English
  *  speech into short items). Reused for both the task checklist and the notes /
  *  discussion list on the New-follow-up form. */
 export function ChecklistBlock({
@@ -126,7 +126,7 @@ export function ChecklistBlock({
           {showSetupHint && ai && !ai.configured && (
             <div>
               <button type="button" onClick={() => navigate('/settings')} className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-xs">
-                <Sparkles className="size-3.5 text-amber-500" /> Turn on voice input — add your free Gemini key in Settings
+                <Sparkles className="size-3.5 text-amber-500" /> Turn on voice input — add your free Groq key in Settings
               </button>
             </div>
           )}

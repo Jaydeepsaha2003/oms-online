@@ -65,7 +65,7 @@ export function CrmReminderCard() {
           <Button onClick={onSave} disabled={save.isPending}>{save.isPending ? <Loader2 className="animate-spin" /> : null} Save reminder settings</Button>
         )}
 
-        {/* Voice input (Gemini) */}
+        {/* Voice input (Groq) */}
         <VoiceKeySection canEdit={canEdit} />
       </CardContent>
     </Card>

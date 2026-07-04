@@ -93,6 +93,18 @@ export class CrmController {
     return this.crm.orderSuggest(q, party);
   }
 
+  @Get('product-suggest')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  productSuggest(@Query('q') q?: string) {
+    return this.crm.productSuggest(q);
+  }
+
+  @Get('party-match')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  partyMatch(@Query('q') q?: string) {
+    return this.crm.partyMatch(q);
+  }
+
   @Get()
   @Permissions(perm(R, ACTIONS.VIEW))
   list(@Query() q: FollowupQueryDto) {
