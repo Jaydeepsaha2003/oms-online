@@ -3,6 +3,7 @@ import type {
   CreateRoleDto,
   CreateUserDto,
   RoleDto,
+  SessionList,
   UpdateRoleDto,
   UpdateUserDto,
   UserDto,
@@ -13,6 +14,7 @@ import { http } from '@/lib/api';
 
 const USERS = ['users'] as const;
 const ROLES = ['roles'] as const;
+const SESSIONS = ['user-sessions'] as const;
 
 /* ── Users ──────────────────────────────────────────────────────────────── */
 
@@ -45,6 +47,33 @@ export function useDeleteUser() {
   return useMutation({
     mutationFn: (id: string) => http.delete(`/users/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: USERS }),
+  });
+}
+
+/* ── Sessions / devices (admin) ─────────────────────────────────────────── */
+
+/** Active devices a user is signed in from. */
+export function useUserSessions(userId: string | null) {
+  return useQuery({
+    queryKey: [...SESSIONS, userId],
+    queryFn: () => http.get<SessionList>(`/users/${userId}/sessions`),
+    enabled: !!userId,
+  });
+}
+
+export function useRevokeUserSession(userId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (sessionId: string) => http.delete(`/users/${userId}/sessions/${sessionId}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [...SESSIONS, userId] }),
+  });
+}
+
+export function useRevokeAllUserSessions(userId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => http.delete(`/users/${userId}/sessions`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [...SESSIONS, userId] }),
   });
 }
 

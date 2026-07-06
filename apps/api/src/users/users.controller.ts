@@ -13,10 +13,12 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
-import { ACTIONS, perm, RESOURCES } from '@oms/shared';
+import { ACTIONS, perm, RESOURCES, type SessionList } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
+import { SessionsService } from '../auth/sessions.service';
+import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { ExcelService } from '../excel/excel.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -29,6 +31,7 @@ import { UsersService } from './users.service';
 export class UsersController {
   constructor(
     private readonly users: UsersService,
+    private readonly sessions: SessionsService,
     private readonly excel: ExcelService,
   ) {}
 
@@ -76,5 +79,31 @@ export class UsersController {
     }
     await this.users.remove(id);
     return { ok: true };
+  }
+
+  // ── Sessions / devices (admin) ──────────────────────────────────────────────
+
+  /** Active devices a user is signed in from. */
+  @Get(':id/sessions')
+  @Permissions(perm(RESOURCES.USER, ACTIONS.VIEW))
+  userSessions(@Param('id') id: string, @CurrentUser() me: AuthenticatedUser): Promise<SessionList> {
+    // Mark "this device" only when an admin is viewing their own row.
+    return this.sessions.list(id, id === me.id ? me.sid : undefined);
+  }
+
+  /** Sign a specific device out (immediate — the guard rejects the revoked session). */
+  @Delete(':id/sessions/:sid')
+  @Permissions(perm(RESOURCES.USER, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: RESOURCES.USER, description: 'Signed a user out of a device' })
+  revokeUserSession(@Param('id') id: string, @Param('sid') sid: string): Promise<{ id: string }> {
+    return this.sessions.revoke(id, sid);
+  }
+
+  /** Sign a user out of every device (revokes all + bumps tokenVersion). */
+  @Delete(':id/sessions')
+  @Permissions(perm(RESOURCES.USER, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: RESOURCES.USER, description: 'Signed a user out everywhere' })
+  revokeAllUserSessions(@Param('id') id: string): Promise<{ count: number }> {
+    return this.sessions.revokeAll(id);
   }
 }

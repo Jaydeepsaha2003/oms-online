@@ -14,6 +14,7 @@ import { Switch } from '@/components/ui/switch';
 import { useAutoSizePcs } from '@/lib/auto-size-pcs';
 import { AccessImportCard } from './access-import-card'; // TEMP: MS Access connector — delete this import + usage to remove
 import { CrmReminderCard } from '@/features/crm/crm-settings-card';
+import { MyDevicesCard } from './my-devices-card';
 import { useCompany, useCreateOrderOption, useDeleteOrderOption, useSettings, useUpdateCompany } from './use-settings';
 
 export function SettingsPage() {
@@ -32,6 +33,8 @@ export function SettingsPage() {
           <p className="text-muted-foreground text-sm">Manage the option lists used across the app.</p>
         </div>
       </div>
+
+      <MyDevicesCard />
 
       <CompanyCard canEdit={canEdit} />
 

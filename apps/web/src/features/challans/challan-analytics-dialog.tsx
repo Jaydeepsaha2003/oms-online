@@ -62,23 +62,18 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
 
-  // On each open, re-sync from the list filters. When the list has no date range,
-  // default to the current financial year (Apr–today) instead of all-time so the
-  // KPIs are meaningful out of the box.
+  // On each open, seed straight from the list's own filters so the KPIs reflect
+  // exactly what the list is showing — all-time when the list has no date range.
+  // (Previously this forced "This Year", which silently hid older data: e.g. a
+  // sparse, mostly-historical category like SCRAP looked empty and its totals
+  // never matched the list. Users can still narrow with the Quick-range picker.)
   useEffect(() => {
     if (!open) return;
     setCategory('');
     setStatus(base.status ?? '');
-    if (base.dateFrom || base.dateTo) {
-      setPreset('');
-      setDateFrom(base.dateFrom ?? '');
-      setDateTo(base.dateTo ?? '');
-    } else {
-      const r = presetRange('This Year');
-      setPreset('This Year');
-      setDateFrom(r?.from ?? '');
-      setDateTo(r?.to ?? '');
-    }
+    setDateFrom(base.dateFrom ?? '');
+    setDateTo(base.dateTo ?? '');
+    setPreset('');
     // Only re-run when the dialog opens; base is read at that moment.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);

@@ -1,14 +1,15 @@
-import { Body, Controller, Get, HttpCode, Post, Req, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Post, Req, Res } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
-import type { AuthResult, AuthUser } from '@oms/shared';
+import type { AuthResult, AuthUser, SessionList } from '@oms/shared';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import type { JwtConfig } from '../config/configuration';
 import { AuthService, type RequestMeta } from './auth.service';
+import { SessionsService } from './sessions.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { LoginDto } from './dto/login.dto';
 import { PinLoginDto } from './dto/pin-login.dto';
@@ -25,6 +26,7 @@ export class AuthController {
 
   constructor(
     private readonly auth: AuthService,
+    private readonly sessions: SessionsService,
     config: ConfigService,
   ) {
     this.cookieName = config.get<JwtConfig>('jwt')!.refreshCookieName;
@@ -111,6 +113,30 @@ export class AuthController {
   ): Promise<{ ok: true }> {
     await this.auth.changePassword(userId, dto.currentPassword, dto.newPassword);
     return { ok: true };
+  }
+
+  /** "My devices" — the current user's own active sessions. */
+  @Get('sessions')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List my active sign-in sessions (devices).' })
+  mySessions(@CurrentUser() user: AuthenticatedUser): Promise<SessionList> {
+    return this.sessions.list(user.id, user.sid);
+  }
+
+  /** Sign one of my devices out. */
+  @Delete('sessions/:id')
+  @ApiBearerAuth()
+  @HttpCode(200)
+  async revokeMySession(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string): Promise<{ id: string }> {
+    return this.sessions.revoke(user.id, id);
+  }
+
+  /** Sign out all my OTHER devices (keeps this one). */
+  @Delete('sessions')
+  @ApiBearerAuth()
+  @HttpCode(200)
+  async revokeMyOtherSessions(@CurrentUser() user: AuthenticatedUser): Promise<{ count: number }> {
+    return this.sessions.revokeAll(user.id, user.sid);
   }
 
   // ── helpers ───────────────────────────────────────────────────────────────

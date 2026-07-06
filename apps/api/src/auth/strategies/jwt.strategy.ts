@@ -39,8 +39,22 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (user.tokenVersion !== payload.tv) {
       throw new UnauthorizedException('Session is no longer valid.');
     }
+    // Per-device sign-out: reject the moment this session's refresh token is
+    // revoked, so a remote logout takes effect on the very next request. (Refresh
+    // is reactive — only on a 401 — so a live session's sid is never revoked by
+    // normal rotation, and no grace window is needed here.) Legacy access tokens
+    // without a sid are still honoured for backward compatibility.
+    if (payload.sid) {
+      const session = await this.prisma.refreshToken.findUnique({
+        where: { id: payload.sid },
+        select: { revokedAt: true },
+      });
+      if (!session || session.revokedAt) {
+        throw new UnauthorizedException('This device was signed out.');
+      }
+    }
 
     const { roles, permissions } = flattenAccess(user);
-    return { id: user.id, email: user.email, name: user.name, roles, permissions };
+    return { id: user.id, email: user.email, name: user.name, roles, permissions, sid: payload.sid };
   }
 }

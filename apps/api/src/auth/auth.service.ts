@@ -226,15 +226,12 @@ export class AuthService {
   }
 
   private async issueSession(user: UserWithAccess, meta: RequestMeta): Promise<IssuedSession> {
-    const payload: JwtPayload = { sub: user.id, email: user.email, tv: user.tokenVersion };
-    const accessToken = await this.jwt.signAsync(payload, {
-      secret: this.jwtCfg.accessSecret,
-      expiresIn: this.jwtCfg.accessTtl,
-    } as JwtSignOptions);
-
+    // Create the refresh-token row FIRST so its id can be embedded in the access
+    // token as the session id (`sid`) — that's what lets one device be logged out
+    // remotely (the guard rejects a revoked sid).
     const refreshToken = randomBytes(48).toString('hex');
     const refreshExpiresAt = new Date(Date.now() + durationToMs(this.jwtCfg.refreshTtl));
-    await this.prisma.refreshToken.create({
+    const session = await this.prisma.refreshToken.create({
       data: {
         userId: user.id,
         tokenHash: this.hashToken(refreshToken),
@@ -243,6 +240,12 @@ export class AuthService {
         userAgent: meta.userAgent ?? null,
       },
     });
+
+    const payload: JwtPayload = { sub: user.id, email: user.email, tv: user.tokenVersion, sid: session.id };
+    const accessToken = await this.jwt.signAsync(payload, {
+      secret: this.jwtCfg.accessSecret,
+      expiresIn: this.jwtCfg.accessTtl,
+    } as JwtSignOptions);
 
     const auth: AuthResult = {
       accessToken,

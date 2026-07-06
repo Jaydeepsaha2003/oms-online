@@ -7,4 +7,6 @@ export interface AuthenticatedUser {
   roles: string[];
   /** Flattened permission keys; contains '*' for super admins. */
   permissions: string[];
+  /** Session id (the refresh-token row this access token was issued with). */
+  sid?: string;
 }

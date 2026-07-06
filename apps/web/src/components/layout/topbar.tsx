@@ -99,7 +99,7 @@ export function Topbar({
                 Roles: {user.roles.join(', ') || '—'}
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => navigate('/admin/settings')}>
+              <DropdownMenuItem onClick={() => navigate('/settings')}>
                 <UserRound />
                 Account & settings
               </DropdownMenuItem>
