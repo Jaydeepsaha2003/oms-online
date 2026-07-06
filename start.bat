@@ -28,7 +28,7 @@ if not errorlevel 1 (
     exit /b
 )
 
-echo [1/4] Syncing dependencies (npm install)...
+echo [1/6] Syncing dependencies (npm install)...
 call npm install --no-audit --no-fund
 if errorlevel 1 (
     echo.
@@ -39,24 +39,29 @@ if errorlevel 1 (
 )
 
 echo.
-echo [2/4] Applying tracked migrations (prisma migrate deploy)...
+echo [2/6] Applying tracked migrations (prisma migrate deploy)...
 call npm run db:deploy
 if errorlevel 1 echo    [warning] Migration step reported an error - check the output above.
 
 echo.
-echo [3/4] Syncing the schema / new tables (prisma db push)...
+echo [3/6] Seeding database (roles, permissions, admin user)...
+call npm run db:seed -w @oms/api
+if errorlevel 1 echo    [warning] Seed step reported an error - check the output above.
+
+echo.
+echo [4/6] Syncing the schema / new tables (prisma db push)...
 REM Pipe "n" so a (rare) data-loss prompt is auto-declined instead of hanging
 REM the script; additive changes (new tables/columns) apply without any prompt.
 echo n | call npm run db:push
 if errorlevel 1 echo    [warning] Schema sync reported an error - check the output above.
 
 echo.
-echo [4/5] Refreshing the Prisma client (prisma generate)...
+echo [5/6] Refreshing the Prisma client (prisma generate)...
 call npm run db:generate
 if errorlevel 1 echo    [warning] Prisma generate reported an error - check the output above.
 
 echo.
-echo [5/5] Building shared dependencies (npm run build:shared)...
+echo [6/6] Building shared dependencies (npm run build:shared)...
 call npm run build:shared
 if errorlevel 1 echo    [warning] Shared library build failed - check the output above.
 
