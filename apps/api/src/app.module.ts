@@ -35,6 +35,10 @@ import { DispatchModule } from './dispatch/dispatch.module';
 import { ChallansModule } from './challans/challans.module';
 import { SpecialRatesModule } from './special-rates/special-rates.module';
 import { CrmModule } from './crm/crm.module';
+import { ChequesModule } from './cheques/cheques.module';
+import { BankAccountsModule } from './bank-accounts/bank-accounts.module';
+import { OpeningBalancesModule } from './opening-balances/opening-balances.module';
+import { PaymentsModule } from './payments/payments.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { AccessImportModule } from './access-import/access-import.module'; // TEMP: MS Access connector
 import { SettingsModule } from './settings/settings.module';
@@ -78,6 +82,10 @@ import { SettingsModule } from './settings/settings.module';
     ChallansModule,
     SpecialRatesModule,
     CrmModule,
+    ChequesModule,
+    BankAccountsModule,
+    OpeningBalancesModule,
+    PaymentsModule,
     AnalyticsModule,
     AccessImportModule, // TEMP: MS Access connector — remove this line + the folder to delete
 

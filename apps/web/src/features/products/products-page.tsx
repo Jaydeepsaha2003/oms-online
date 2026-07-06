@@ -55,6 +55,8 @@ export function ProductsPage() {
   const confirm = useConfirm();
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
+  const [category, setCategory] = useState('');
+  const [subCategory, setSubCategory] = useState('');
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<ProductDto | null>(null);
   const [creating, setCreating] = useState(false);
@@ -68,7 +70,16 @@ export function ProductsPage() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  const query = { page, pageSize: PAGE_SIZE, search: search || undefined };
+  // Dropdown filter options (distinct categories / sub-categories from the master).
+  const { data: lookups } = useProductLookups();
+
+  const query = {
+    page,
+    pageSize: PAGE_SIZE,
+    search: search || undefined,
+    category: category || undefined,
+    subCategory: subCategory || undefined,
+  };
   const { data, isLoading } = useProducts(query);
   const del = useDeleteProduct();
   const importMut = useImportProducts();
@@ -104,12 +115,43 @@ export function ProductsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Products</h2>
-          <p className="text-muted-foreground text-sm">{data?.total ?? 0} records</p>
+      {/* One compact toolbar row: search → category/sub-category filters → live
+          count → actions. (No page title — the topbar already says "Products".) */}
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+        <div className="relative w-full max-w-xs">
+          <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
+          <Input
+            placeholder="Search category, sub category, product…"
+            className="pl-9"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+          />
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="w-44">
+          <NativeSelect
+            value={category}
+            onChange={(v) => {
+              setCategory(v);
+              setSubCategory(''); // a sub from another category would return nothing
+              setPage(1);
+            }}
+            options={['', ...(lookups?.categories ?? [])]}
+            placeholder="All categories"
+          />
+        </div>
+        <div className="w-48">
+          <NativeSelect
+            value={subCategory}
+            onChange={(v) => {
+              setSubCategory(v);
+              setPage(1);
+            }}
+            options={['', ...(lookups?.subCategories ?? [])]}
+            placeholder="All sub categories"
+          />
+        </div>
+        <p className="text-muted-foreground shrink-0 text-sm tabular-nums">{(data?.total ?? 0).toLocaleString('en-IN')} records</p>
+        <div className="flex flex-wrap items-center gap-2 lg:ml-auto">
           <ColumnSettings
             columns={cols.orderedReorderable}
             hidden={cols.hidden}
@@ -131,21 +173,13 @@ export function ProductsPage() {
         </div>
       </div>
 
-      <div className="relative max-w-sm">
-        <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
-        <Input
-          placeholder="Search category, sub category, product…"
-          className="pl-9"
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
-        />
-      </div>
-
       <DataTable
         columns={cols.visibleColumns}
         rows={items}
         rowKey={(p) => p.id}
         isLoading={isLoading}
+        // Compact single-row header above → give the reclaimed space to the table.
+        maxBodyHeight="max-h-[calc(100dvh_-_12rem)]"
         emptyText="No products yet."
         onRowClick={(p) => can('product:update') && setEditing(p)}
         actions={(p) => (

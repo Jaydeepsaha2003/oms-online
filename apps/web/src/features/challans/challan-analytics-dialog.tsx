@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, BarChart3, Building2, Layers, TrendingUp } from 'lucide-react';
 import type { ChallanQuery } from '@oms/shared';
 import { cn } from '@/lib/utils';
@@ -54,12 +54,34 @@ function SectionTitle({ icon: Icon, children }: { icon: typeof Layers; children:
 }
 
 export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
-  // The modal keeps its own filter state, seeded from the list's current filters.
+  // The modal keeps its own filter state, (re)seeded from the list's current
+  // filters each time it opens.
   const [category, setCategory] = useState('');
   const [status, setStatus] = useState(base.status ?? '');
-  const [preset, setPreset] = useState('');
-  const [dateFrom, setDateFrom] = useState(base.dateFrom ?? '');
-  const [dateTo, setDateTo] = useState(base.dateTo ?? '');
+  const [preset, setPreset] = useState('This Year');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
+  // On each open, re-sync from the list filters. When the list has no date range,
+  // default to the current financial year (Apr–today) instead of all-time so the
+  // KPIs are meaningful out of the box.
+  useEffect(() => {
+    if (!open) return;
+    setCategory('');
+    setStatus(base.status ?? '');
+    if (base.dateFrom || base.dateTo) {
+      setPreset('');
+      setDateFrom(base.dateFrom ?? '');
+      setDateTo(base.dateTo ?? '');
+    } else {
+      const r = presetRange('This Year');
+      setPreset('This Year');
+      setDateFrom(r?.from ?? '');
+      setDateTo(r?.to ?? '');
+    }
+    // Only re-run when the dialog opens; base is read at that moment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const query: ChallanQuery = useMemo(
     () => ({

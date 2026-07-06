@@ -93,7 +93,7 @@ export function DataTable<T>({
   // (and the frozen columns) stay pinned while scrolling — on every page. Pages
   // that need a different bound pass their own. The offset leaves room for the
   // topbar, page heading/filters above and the pagination row below.
-  maxBodyHeight = 'max-h-[calc(100dvh_-_20rem)]',
+  maxBodyHeight = 'max-h-[calc(100dvh_-_15rem)]',
   dense,
   hideRowView,
   className,
@@ -150,22 +150,25 @@ export function DataTable<T>({
     });
     return sort.dir === 'desc' ? out.reverse() : out;
   }, [rows, sort, columns]);
+
   return (
     <div className="overflow-hidden rounded-[5px] border bg-card shadow-sm">
       <Table
         width="auto"
         containerClassName={cn(maxBodyHeight, maxBodyHeight && 'overflow-y-auto')}
         className={cn(
-          '[&_td]:border-r [&_td]:border-border/30 [&_th]:border-r',
-          // Dark, bold, uppercase header across every list on every page.
-          '[&_thead_th]:bg-slate-800 [&_thead_th]:text-slate-50 [&_thead_th]:border-white/15 [&_thead_th]:font-bold [&_thead_th]:uppercase [&_thead_th]:tracking-wider',
+          '[&_td]:border-r [&_td]:border-border/30 [&_th]:border-r [&_thead_th]:border-white/15',
+          // Brand blue→indigo gradient, bold, uppercase header with white text on every page.
+          '[&_thead_th]:bg-gradient-to-b [&_thead_th]:from-blue-800 [&_thead_th]:to-indigo-800 [&_thead_th]:text-white [&_thead_th]:font-bold [&_thead_th]:uppercase [&_thead_th]:tracking-wider',
           '[&_tbody_td]:bg-card [&_tbody_tr:nth-child(even)_td]:bg-slate-50 [&_tbody_tr:hover_td]:bg-muted',
           dense
             ? // Compact: tight padding so columns shrink to their content and the
-              // most columns possible stay on screen.
-              '[&_thead_th]:h-9 [&_thead_th]:text-[11px] [&_td]:py-1.5 [&_tbody_button]:size-7 text-[13px] [&_td]:px-2.5 [&_th]:px-2.5'
-            : // Comfortable: roomy padding for readability.
-              '[&_thead_th]:h-11 [&_thead_th]:text-xs [&_td]:py-2.5 [&_tbody_button]:size-8 text-sm [&_td]:px-3 [&_th]:px-3 sm:[&_td]:px-5 sm:[&_th]:px-5',
+              // most columns possible stay on screen. Heights are auto (padding-based).
+              '[&_thead_th]:py-2 [&_thead_th]:text-[13px] [&_td]:py-2 [&_tbody_button]:size-8 text-[14px] [&_td]:px-2.5 [&_th]:px-2.5'
+            : // Comfortable: larger type, snug padding so rows auto-fit their content
+              // (height grows only as much as the content needs). Action buttons are
+              // size-8 so they don't force tall rows.
+              '[&_thead_th]:py-2 [&_thead_th]:text-[14px] [&_td]:py-1.5 [&_tbody_button]:size-8 text-[16px] [&_td]:px-3 [&_th]:px-3 sm:[&_td]:px-5 sm:[&_th]:px-5',
           // Page override (twMerge lets a passed font-size/padding win over the above).
           className,
         )}
@@ -189,7 +192,9 @@ export function DataTable<T>({
                     type="button"
                     onClick={() => toggleSort(col.id)}
                     className={cn(
-                      'group/sort inline-flex items-center gap-1 hover:text-white',
+                      // `uppercase` here too: Tailwind preflight resets `button` to
+                      // text-transform:none, so the th's uppercase doesn't inherit.
+                      'group/sort inline-flex items-center gap-1 uppercase hover:text-white',
                       col.align === 'right' && 'flex-row-reverse',
                     )}
                     title="Sort"
@@ -198,7 +203,7 @@ export function DataTable<T>({
                     {sort?.id === col.id ? (
                       sort.dir === 'asc' ? <ArrowUp className="size-3.5" /> : <ArrowDown className="size-3.5" />
                     ) : (
-                      <ChevronsUpDown className="size-3 opacity-50 group-hover/sort:opacity-90" />
+                      <ChevronsUpDown className="size-3 opacity-40 group-hover/sort:opacity-70" />
                     )}
                   </button>
                 )}

@@ -252,7 +252,7 @@ export function ChallansListPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
           <ScrollText className="size-5" />
         </div>
@@ -260,7 +260,14 @@ export function ChallansListPage() {
           <h2 className="text-2xl font-semibold tracking-tight">Challans</h2>
           <p className="text-muted-foreground text-sm">{data?.total ?? 0} saved challan(s) · view, print, change status or delete</p>
         </div>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <span className="text-muted-foreground mr-1 hidden text-xs font-semibold tracking-wide uppercase sm:inline">Get Report by</span>
+          <Button variant="outline" size="sm" disabled={!!report} onClick={() => runReport('detailed')} title="Export the filtered challan list to Excel">
+            <FileSpreadsheet className="text-emerald-600" /> Detailed View
+          </Button>
+          <Button variant="outline" size="sm" disabled={!!report} onClick={() => runReport('summary')} title="Export challans plus their line items to Excel">
+            <Layers className="text-sky-600" /> Challan Summary
+          </Button>
           <Button size="sm" className="bg-gradient-brand text-white shadow-sm hover:opacity-95" onClick={() => setKpiOpen(true)} title="Open analytics dashboard">
             <BarChart3 /> Show KPI
           </Button>
@@ -274,18 +281,6 @@ export function ChallansListPage() {
             dateFormat={{ value: format, options: DATE_FORMATS, onChange: setFormat }}
           />
         </div>
-      </div>
-
-      {/* Get Report by — Excel exports over the current filter */}
-      <div className="bg-card flex flex-wrap items-center gap-2 rounded-md border p-2.5 shadow-sm">
-        <span className="text-muted-foreground mr-1 text-xs font-semibold tracking-wide uppercase">Get Report by</span>
-        <Button variant="outline" size="sm" disabled={!!report} onClick={() => runReport('detailed')} title="Export the filtered challan list to Excel">
-          <FileSpreadsheet className="text-emerald-600" /> Detailed View
-        </Button>
-        <Button variant="outline" size="sm" disabled={!!report} onClick={() => runReport('summary')} title="Export challans plus their line items to Excel">
-          <Layers className="text-sky-600" /> Challan Summary
-        </Button>
-        <span className="text-muted-foreground ml-auto text-xs">Exports respect the filters below.</span>
       </div>
 
       {/* Filters */}
@@ -329,7 +324,7 @@ export function ChallansListPage() {
         rowKey={(r) => r.id}
         isLoading={isLoading}
         dense
-        className="text-[15px] [&_thead_th]:text-[14px] [&_td]:py-2.5 [&_th]:py-2.5 [&_tbody_button]:size-8"
+        className="text-[16px] [&_thead_th]:text-[14px] [&_td]:py-1.5 [&_th]:py-2 [&_tbody_button]:size-8"
         actions={rowActions}
         emptyText="No challans yet — create one from Pending Challan."
       />

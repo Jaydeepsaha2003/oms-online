@@ -48,7 +48,11 @@ export class CreateProductDto {
 
 export class UpdateProductDto extends PartialType(CreateProductDto) {}
 
-export class ProductQueryDto extends PaginationDto {}
+export class ProductQueryDto extends PaginationDto {
+  /** Exact-match list filters (Products page dropdowns). */
+  @IsOptional() @IsString() category?: string;
+  @IsOptional() @IsString() subCategory?: string;
+}
 
 export class ImportProductsDto {
   @IsArray()

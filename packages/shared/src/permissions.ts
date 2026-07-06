@@ -55,6 +55,14 @@ export const RESOURCES = {
   SPECIAL_RATE: 'specialrate',
   /** CRM: party follow-ups / commitment tracking + reminders. */
   CRM: 'crm',
+  /** Accounts → Manage Cheques (legacy Cheque Management System). */
+  CHEQUE: 'cheque',
+  /** Company bank accounts master (legacy SETTING_BANK_NAME). */
+  BANK_ACCOUNT: 'bankaccount',
+  /** Accounts → Payment (receipt allocation subledger, legacy PaymentForm). */
+  PAYMENT: 'payment',
+  /** Accounts → Opening Balance (per-customer opening bank/cash, DR/CR). */
+  OPENING_BALANCE: 'openingbalance',
   SUPPLIER: 'supplier',
   INVENTORY: 'inventory',
   PRODUCTION: 'production',
@@ -150,6 +158,31 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
     actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.MANAGE],
   },
   { resource: RESOURCES.INVOICE, label: 'Invoices', group: 'Sales', actions: STANDARD_PRINTABLE },
+
+  {
+    resource: RESOURCES.CHEQUE,
+    label: 'Manage Cheques',
+    group: 'Accounts',
+    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.EXPORT, ACTIONS.MANAGE],
+  },
+  {
+    resource: RESOURCES.BANK_ACCOUNT,
+    label: 'Bank Accounts',
+    group: 'Accounts',
+    actions: STANDARD,
+  },
+  {
+    resource: RESOURCES.PAYMENT,
+    label: 'Payment / Receipts',
+    group: 'Accounts',
+    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.DELETE, ACTIONS.EXPORT, ACTIONS.MANAGE],
+  },
+  {
+    resource: RESOURCES.OPENING_BALANCE,
+    label: 'Opening Balance',
+    group: 'Accounts',
+    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.MANAGE],
+  },
   {
     resource: RESOURCES.SHIPMENT,
     label: 'Shipments',

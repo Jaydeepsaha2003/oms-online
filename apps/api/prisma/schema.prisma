@@ -948,3 +948,175 @@ model CustomerRateHistory {
   @@index([changedAt])
   @@map("customer_rate_history")
 }
+
+// ── Accounts: Cheque management ─────────────────────────────────────────────
+
+/// Company bank accounts (legacy SETTING_BANK_NAME). The Manage Cheques form's
+/// "deposit bank" picker shows "BANK NAME-<last 4 of A/C>".
+model BankAccount {
+  id        Int      @id @default(autoincrement())
+  bankName  String
+  acNo      String
+  ifsc      String?
+  branch    String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([bankName, acNo])
+  @@map("bank_accounts")
+}
+
+/// A received cheque and its lifecycle (legacy ACCT MANAGE CHEQUE):
+/// PENDING → DEPOSITED → CLEARED | BOUNCED. Deposit is only allowed on/after the
+/// due date. A bounced cheque may be re-deposited (isRepresent).
+model Cheque {
+  id            Int       @id @default(autoincrement())
+  // Snapshot of the party + FK to the customer (legacy CUS ID).
+  customerId    Int?
+  partyName     String
+  chequeNo      String
+  chequeAmt     Float
+  // Party's/payer's bank (free text) and our deposit bank ("BANK NAME-1234").
+  payeeBank     String?
+  drawerBank    String?
+  recDate       DateTime  @default(now())
+  dueDate       DateTime
+  depositDate   DateTime?
+  // Clear/bounce (account transaction) date.
+  acctTransDate DateTime?
+  bounceCharges Float?
+  // SELF | PARTY (only when bounced).
+  chargesPaidBy String?
+  // Bounced cheque being re-deposited (legacy IS CHEQUE REPRESENT).
+  isRepresent   Boolean   @default(false)
+  comments      String?
+  // PENDING | DEPOSITED | CLEARED | BOUNCED.
+  status        String    @default("PENDING")
+  userName      String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([status])
+  @@index([dueDate])
+  @@index([customerId])
+  @@index([chequeNo])
+  @@map("cheques")
+}
+
+// ── Accounts: Receivables subledger (Payment / Opening Balance) ──────────────
+// Ported from the legacy PaymentForm accounting tables. Invoices being paid are
+// CONFIRMED challans (b = bank/billed portion, c = cash portion). The three legacy
+// "…Summary" Access views are computed in the service layer as aggregations of
+// these tables (a challan's pending = b/c minus the receipts allocated to it; an
+// advance's balance = its amount minus receipts that reference it; opening pending
+// = opening entries minus opening clearances).
+
+/// Master ledger — one row per receipt voucher (legacy ACCT LEDGER). Voucher no is
+/// RN/<serial> (agent) or R/<serial> style; source of the running voucher number.
+model AcctLedger {
+  id           Int      @id @default(autoincrement())
+  voucherNo    String
+  transDate    DateTime
+  customerName String
+  custId       Int      @default(0)
+  agentName    String?
+  particulars  String?
+  voucherType  String   @default("RECEIPT")
+  transMode    String // BANK | CHEQUE | CASH
+  bankDebit    Float    @default(0)
+  cashDebit    Float    @default(0)
+  bankCredit   Float    @default(0)
+  cashCredit   Float    @default(0)
+  transRemarks String?
+  userName     String?
+  createdAt    DateTime @default(now())
+
+  @@index([custId])
+  @@index([voucherNo])
+  @@index([transDate])
+  @@map("acct_ledger")
+}
+
+/// Receipt allocation lines (legacy ACCT PAYMENT RECEIPT). One row per (invoice,
+/// funding source). refRecId links to the voucher (fresh receipt) or to an advance
+/// REF ID (when an old advance funded the allocation). modeOfAdj = AUTOMATIC/AGST
+/// REF/ADVANCE.
+model AcctPaymentReceipt {
+  id                Int      @id @default(autoincrement())
+  refId             String
+  recDate           DateTime
+  invNo             String
+  customerName      String
+  custId            Int
+  recType           String   @default("RECEIPT")
+  recAmt            Float
+  payMode           String
+  bankName          String?
+  chequeNo          String?
+  cashTransLocation String?
+  cashRecBy         String?
+  modeOfAdj         String?
+  // Voucher no (fresh receipt) OR advance REF ID (advance-funded allocation).
+  refRecId          String?
+  createdAt         DateTime @default(now())
+
+  @@index([custId])
+  @@index([invNo])
+  @@index([refRecId])
+  @@index([recDate])
+  @@map("acct_payment_receipt")
+}
+
+/// On-account / advance balances (legacy ACCT PARTY ADVANCE). Consumed FIFO by
+/// receipts whose refRecId = this refId. takeAccOn = PARTY | AGENT.
+model AcctPartyAdvance {
+  id                Int      @id @default(autoincrement())
+  refId             String
+  recDate           DateTime
+  custId            Int
+  customerName      String
+  agentName         String?
+  bankAmt           Float    @default(0)
+  cashAmt           Float    @default(0)
+  payMode           String
+  bankName          String?
+  chequeNo          String?
+  cashTransLocation String?
+  cashRecBy         String?
+  recType           String   @default("RECEIPT")
+  // Originating voucher no.
+  refRecId          String?
+  takeAccOn         String? // PARTY | AGENT
+  createdAt         DateTime @default(now())
+
+  @@index([custId])
+  @@index([refId])
+  @@index([recDate])
+  @@map("acct_party_advance")
+}
+
+/// Opening balances + their clearances (legacy ACCT OPENING TRANS). kind = OPENING
+/// (entered on the Opening Balance form, with drCr = DEBIT/CREDIT) or CLEARANCE
+/// (written when a receipt clears opening pending, linked via refRecId = voucher).
+/// A DEBIT opening = customer owes us (cleared by receipts); CREDIT = we owe them.
+model AcctOpeningTrans {
+  id           Int      @id @default(autoincrement())
+  kind         String   @default("OPENING") // OPENING | CLEARANCE
+  customerName String
+  custId       Int
+  transDate    DateTime
+  bankAmt      Float    @default(0)
+  cashAmt      Float    @default(0)
+  drCr         String? // DEBIT | CREDIT (OPENING rows only)
+  // Voucher no that cleared this opening (CLEARANCE rows only).
+  refRecId     String?
+  remarks      String?
+  userName     String?
+  createdAt    DateTime @default(now())
+
+  @@index([custId])
+  @@index([kind])
+  @@index([transDate])
+  @@map("acct_opening_trans")
+}

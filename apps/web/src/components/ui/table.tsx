@@ -4,11 +4,18 @@ import { cn } from '@/lib/utils';
 function Table({
   className,
   containerClassName,
+  containerRef,
   width = 'full',
   ...props
-}: React.ComponentProps<'table'> & { containerClassName?: string; width?: 'full' | 'auto' }) {
+}: React.ComponentProps<'table'> & {
+  containerClassName?: string;
+  /** Ref to the scroll container (for e.g. syncing an external top scrollbar). */
+  containerRef?: React.Ref<HTMLDivElement>;
+  width?: 'full' | 'auto';
+}) {
   return (
     <div
+      ref={containerRef}
       data-slot="table-container"
       className={cn('relative w-full overflow-x-auto', containerClassName)}
     >

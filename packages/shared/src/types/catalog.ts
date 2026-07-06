@@ -107,7 +107,11 @@ export interface DesignLookups {
   subCategories: string[];
 }
 
-export type ProductQuery = PaginationQuery;
+export type ProductQuery = PaginationQuery & {
+  /** Exact-match list filters (Products page dropdowns). */
+  category?: string;
+  subCategory?: string;
+};
 export type DesignQuery = PaginationQuery;
 export type DesignNameQuery = PaginationQuery;
 export type CombinationQuery = PaginationQuery;

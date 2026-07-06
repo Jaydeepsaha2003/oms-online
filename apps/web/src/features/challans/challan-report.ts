@@ -16,8 +16,14 @@ export interface ReportMeta {
   category: string;
 }
 
-const MONEY_FMT = '₹ #,##0';
-const DATE_FMT = 'dd-mmm-yyyy';
+// IMPORTANT: use only *built-in* Excel number-format codes here. SheetJS registers
+// any custom format string at a numFmtId inside the reserved 0–163 range (e.g. a
+// "₹ #,##0" format lands at id 60/61), which violates the OOXML schema — Excel then
+// rejects the file with "file format or extension is not valid". Built-in codes map
+// to their reserved ids safely: '#,##0' → 3, 'd-mmm-yy' → 15. The ₹ unit is shown in
+// the column headers instead, so cells stay numeric (and summable).
+const MONEY_FMT = '#,##0';
+const DATE_FMT = 'd-mmm-yy';
 
 const asDate = (iso: string | null): Date | '' => {
   if (!iso) return '';
@@ -44,7 +50,7 @@ const dat = (v: Date | '', z = DATE_FMT): Cell => (v === '' ? txt('') : { t: 'd'
 
 /** Build the shared "Challans" sheet (title + meta block + the list table). */
 function buildChallansSheet(rows: ChallanDto[], meta: ReportMeta, title: string): XLSX.WorkSheet {
-  const headers = ['Date', 'Challan No', 'Party', 'Category', 'B', 'C', 'GST', 'TDS', 'Total', 'Due', 'Status', 'Remarks'];
+  const headers = ['Date', 'Challan No', 'Party', 'Category', 'B (₹)', 'C (₹)', 'GST (₹)', 'TDS (₹)', 'Total (₹)', 'Due', 'Status', 'Remarks'];
   const lastCol = headers.length - 1;
 
   const aoa: Cell[][] = [
@@ -97,7 +103,7 @@ function buildChallansSheet(rows: ChallanDto[], meta: ReportMeta, title: string)
 
 /** Build the "Challan Items" sheet: one row per line across all challans. */
 function buildItemsSheet(rows: ChallanDto[]): XLSX.WorkSheet {
-  const headers = ['InvDate', 'Challan No', 'Party', 'Product Name', 'Design', 'BAGS', 'PCS', 'KGS', 'BOX', 'Unit', 'Price', 'Amount', 'P.Category', 'Comment'];
+  const headers = ['InvDate', 'Challan No', 'Party', 'Product Name', 'Design', 'BAGS', 'PCS', 'KGS', 'BOX', 'Unit', 'Price (₹)', 'Amount (₹)', 'P.Category', 'Comment'];
   const body: Cell[][] = [];
   for (const c of rows) {
     const d = asDate(c.invDate);

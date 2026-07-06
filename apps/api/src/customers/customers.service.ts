@@ -3,7 +3,14 @@ import { Prisma } from '@prisma/client';
 import {
   type CustomerDto,
   type CustomerLookups,
+  type CustomerRateList,
+  type CustomerRateListDesign,
+  type CustomerRateListProduct,
+  type CustomerRateDto,
   type Paginated,
+  type RateChangeEntry,
+  type RateHistoryKind,
+  resolveSpecialRates,
   PARTY_SOURCES,
   PAY_BYS,
 } from '@oms/shared';
@@ -440,6 +447,103 @@ export class CustomersService {
       tdsPercent: r.tdsPercent,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
+    };
+  }
+
+  /* ── Rate List (Customers → Rate List) ───────────────────────────────────── */
+
+  /** This customer's own special-rate change history (old→new, when, by whom),
+   *  newest first — the on-screen "versions grouped by date/time". */
+  async rateHistory(id: number): Promise<RateChangeEntry[]> {
+    const customer = await this.prisma.customer.findUnique({ where: { id } });
+    if (!customer) throw new NotFoundException('Customer not found');
+    const rows = await this.prisma.customerRateHistory.findMany({
+      where: { customerId: id },
+      orderBy: [{ changedAt: 'desc' }, { id: 'desc' }],
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      kind: 'CUSTOMER' as RateHistoryKind,
+      name: r.customerName ?? customer.partyName ?? `#${r.customerId}`,
+      category: r.category,
+      subCategory: r.subCategory,
+      rateKind: r.kind,
+      scope: r.scope,
+      target: r.target,
+      oldRate: r.oldRate,
+      newRate: r.newRate,
+      changedByName: r.changedByName,
+      changedAt: r.changedAt.toISOString(),
+    }));
+  }
+
+  /** The customer's CURRENT effective rate list: every product/design at its base
+   *  chart rate + this customer's special-rate adjustment (resolved cascade). Feeds
+   *  the PDF/Excel download. */
+  async rateList(id: number): Promise<CustomerRateList> {
+    const customer = await this.prisma.customer.findUnique({ where: { id } });
+    if (!customer) throw new NotFoundException('Customer not found');
+
+    const [products, designs, rates] = await Promise.all([
+      this.prisma.product.findMany({ orderBy: [{ category: 'asc' }, { subCategory: 'asc' }, { product: 'asc' }, { size: 'asc' }] }),
+      this.prisma.design.findMany({ orderBy: [{ category: 'asc' }, { subCategory: 'asc' }, { designType: 'asc' }] }),
+      this.prisma.customerRate.findMany({ where: { customerId: id } }),
+    ]);
+
+    // Snapshot the customer's special rates in the shape resolveSpecialRates expects.
+    const snapshot = {
+      rates: rates.map<CustomerRateDto>((r) => ({
+        id: r.id,
+        customerId: r.customerId,
+        kind: r.kind as CustomerRateDto['kind'],
+        scope: r.scope as CustomerRateDto['scope'],
+        category: r.category,
+        subCategory: r.subCategory,
+        target: r.target,
+        rate: r.rate,
+        createdAt: r.createdAt.toISOString(),
+        updatedAt: r.updatedAt.toISOString(),
+      })),
+      logos: [],
+    };
+
+    const productLines: CustomerRateListProduct[] = products.map((p) => {
+      const res = resolveSpecialRates(snapshot, { category: p.category, subCategory: p.subCategory, product: p.product, designType: null });
+      const base = p.rate ?? 0;
+      return {
+        category: p.category,
+        subCategory: p.subCategory,
+        product: p.product,
+        size: p.size,
+        pcs: p.pcs,
+        weight: p.weight,
+        baseRate: base,
+        delta: res.productDelta,
+        rate: Math.round((base + res.productDelta) * 100) / 100,
+        from: res.productFrom,
+      };
+    });
+
+    const designLines: CustomerRateListDesign[] = designs.map((d) => {
+      const res = resolveSpecialRates(snapshot, { category: d.category, subCategory: d.subCategory, designType: d.designType });
+      const base = d.rate ?? 0;
+      return {
+        category: d.category,
+        subCategory: d.subCategory,
+        designType: d.designType,
+        baseRate: base,
+        delta: res.designDelta,
+        rate: Math.round((base + res.designDelta) * 100) / 100,
+        from: res.designFrom,
+      };
+    });
+
+    return {
+      customerId: customer.id,
+      customerName: customer.partyName ?? `#${customer.id}`,
+      generatedAt: new Date().toISOString(),
+      products: productLines,
+      designs: designLines,
     };
   }
 }

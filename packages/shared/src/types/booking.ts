@@ -122,9 +122,13 @@ export interface BookingQuoteLine {
   currentProductRate: number;
   /** Current (latest) base design chart rate. */
   currentDesignRate: number;
-  /** currentProductRate + currentDesignRate + the (frozen) special deltas. */
+  /** Current customer special-rate delta (product) — resolved from today's rates, not the snapshot. */
+  currentProductDelta: number;
+  /** Current customer special-rate delta (design). */
+  currentDesignDelta: number;
+  /** currentProductRate + currentDesignRate + currentProductDelta + currentDesignDelta (latest effective price). */
   currentRate: number;
-  /** True when the latest price differs from the frozen booking-date price. */
+  /** True when the latest price differs from the frozen booking-date price (base chart OR special rate changed). */
   priceChanged: boolean;
   /** Where each delta came from (for display). */
   productFrom: string | null;

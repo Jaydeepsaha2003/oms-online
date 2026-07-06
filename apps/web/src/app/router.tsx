@@ -7,6 +7,7 @@ import { LoginPage } from '@/features/auth/login-page';
 import { DashboardPage } from '@/features/dashboard/dashboard-page';
 import { CustomersPage } from '@/features/customers/customers-page';
 import { CustomerFormPage } from '@/features/customers/customer-form-page';
+import { RateListPage } from '@/features/customers/rate-list-page';
 import { TransportersPage } from '@/features/transporters/transporters-page';
 import { AgentsPage } from '@/features/agents/agents-page';
 import { GstRatesPage } from '@/features/gst-rates/gst-rates-page';
@@ -31,6 +32,10 @@ import { ChallanFormPage } from '@/features/challans/challan-form-page';
 import { ChallansListPage } from '@/features/challans/challans-list-page';
 import { ChallanItemsPage } from '@/features/challans/challan-items-page';
 import { FollowupsPage, PaymentsFollowupsPage } from '@/features/crm/followups-page';
+import { ManageChequesPage } from '@/features/account/manage-cheques-page';
+import { BankAccountsPage } from '@/features/account/bank-accounts-page';
+import { OpeningBalancePage } from '@/features/account/opening-balance-page';
+import { PaymentPage } from '@/features/account/payment-page';
 import { SettingsPage } from '@/features/settings/settings-page';
 import { UsersPage } from '@/features/admin/users-page';
 import { RolesPage } from '@/features/admin/roles-page';
@@ -66,6 +71,14 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.CUSTOMER, ACTIONS.CREATE)}>
                 <CustomerFormPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/customers/rate-list"
+            element={
+              <RequirePermission permission={perm(RESOURCES.CUSTOMER, ACTIONS.VIEW)}>
+                <RateListPage />
               </RequirePermission>
             }
           />
@@ -290,6 +303,38 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.CHALLAN, ACTIONS.CREATE)}>
                 <ChallanFormPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/account/payment"
+            element={
+              <RequirePermission permission={perm(RESOURCES.PAYMENT, ACTIONS.VIEW)}>
+                <PaymentPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/account/cheques"
+            element={
+              <RequirePermission permission={perm(RESOURCES.CHEQUE, ACTIONS.VIEW)}>
+                <ManageChequesPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/account/bank-accounts"
+            element={
+              <RequirePermission permission={perm(RESOURCES.BANK_ACCOUNT, ACTIONS.VIEW)}>
+                <BankAccountsPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/account/opening-balance"
+            element={
+              <RequirePermission permission={perm(RESOURCES.OPENING_BALANCE, ACTIONS.VIEW)}>
+                <OpeningBalancePage />
               </RequirePermission>
             }
           />

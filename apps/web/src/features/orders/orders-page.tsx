@@ -173,7 +173,7 @@ export function OrdersPage() {
         dense
         maxBodyHeight="max-h-[calc(100dvh-16rem)]"
         // Larger, easy-to-read data font (columns still auto-fit their content).
-        className="text-[15px] [&_thead_th]:text-[13px] [&_td]:py-2.5 [&_th]:py-2.5 [&_tbody_button]:size-8"
+        className="text-[16px] [&_thead_th]:text-[14px] [&_td]:py-1.5 [&_th]:py-2 [&_tbody_button]:size-8"
         emptyText="No orders yet — create one."
         onRowClick={can('order:update') ? (o) => navigate(`/orders/${o.id}/edit`) : undefined}
         actions={(o) => {

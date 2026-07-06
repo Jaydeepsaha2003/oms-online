@@ -14,15 +14,20 @@ export class ProductsService {
 
   async findMany(query: ProductQueryDto): Promise<Paginated<ProductDto>> {
     const search = query.search?.trim();
-    const where: Prisma.ProductWhereInput = search
-      ? {
-          OR: [
-            { category: { contains: search } },
-            { subCategory: { contains: search } },
-            { product: { contains: search } },
-          ],
-        }
-      : {};
+    const and: Prisma.ProductWhereInput[] = [];
+    if (search) {
+      and.push({
+        OR: [
+          { category: { contains: search } },
+          { subCategory: { contains: search } },
+          { product: { contains: search } },
+        ],
+      });
+    }
+    // Exact-match dropdown filters (Products page).
+    if (query.category?.trim()) and.push({ category: query.category.trim() });
+    if (query.subCategory?.trim()) and.push({ subCategory: query.subCategory.trim() });
+    const where: Prisma.ProductWhereInput = and.length ? { AND: and } : {};
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.product.findMany({
         where,

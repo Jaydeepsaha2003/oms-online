@@ -5,6 +5,8 @@ import type {
   CustomerList,
   CustomerLookups,
   CustomerQuery,
+  CustomerRateList,
+  RateChangeEntry,
 } from '@oms/shared';
 import { downloadFile, http } from '@/lib/api';
 
@@ -30,6 +32,31 @@ export function useCustomer(id: number | undefined) {
     queryKey: [...KEY, 'one', id],
     queryFn: () => http.get<CustomerDto>(`/customers/${id}`),
     enabled: id != null,
+  });
+}
+
+/** This customer's special-rate change history (newest first) for the Rate List page. */
+export function useCustomerRateHistory(id: number | undefined) {
+  return useQuery({
+    queryKey: [...KEY, 'rate-history', id],
+    queryFn: () => http.get<RateChangeEntry[]>(`/customers/${id}/rate-history`),
+    enabled: id != null,
+    placeholderData: (prev) => prev,
+  });
+}
+
+/** Fetch the customer's current effective rate list on demand (for the PDF/Excel download). */
+export function fetchCustomerRateList(id: number): Promise<CustomerRateList> {
+  return http.get<CustomerRateList>(`/customers/${id}/rate-list`);
+}
+
+/** The customer's current effective rate list, for the on-screen preview. */
+export function useCustomerRateList(id: number | undefined) {
+  return useQuery({
+    queryKey: [...KEY, 'rate-list', id],
+    queryFn: () => fetchCustomerRateList(id!),
+    enabled: id != null,
+    placeholderData: (prev) => prev,
   });
 }
 

@@ -21,13 +21,14 @@ function openPriceHistory(product: string) {
   window.open(`/price-history?${q.toString()}`, '_blank', 'noopener,noreferrer');
 }
 
-/** One line whose latest price differs from the frozen booking-date price. */
-interface PriceChange {
-  key: string;
+/** Prompt shown at Add time when an item's latest price differs from the frozen
+ *  booking-date price; `resolve` returns the user's choice (or null if cancelled). */
+interface LinePrompt {
   item: string;
   product: string;
   oldRate: number;
   newRate: number;
+  resolve: (choice: 'old' | 'new' | null) => void;
 }
 
 /** One item drawn from a booking, ready to drop into the order's item list. */
@@ -73,6 +74,9 @@ interface EntryLine {
   box: string;
   calField: string;
   comment: string;
+  /** When the item's price changed since booking, the user's choice: bill the
+   *  latest price (true) or keep the frozen booking-date price (false/undefined). */
+  useLatest?: boolean;
 }
 const blank = (priority = 'NORMAL'): Omit<EntryLine, 'key'> => ({
   itemName: '', product: '', category: '', subCategory: '', designType: '', designName: '',
@@ -119,9 +123,9 @@ export function BookingDrawSheet({
   const [entry, setEntry] = useState(blank());
   const [lines, setLines] = useState<EntryLine[]>([]);
   const [quoted, setQuoted] = useState<BookingQuoteLine[]>([]);
-  // Set when Add-to-order finds lines whose latest price differs from the frozen
-  // booking-date price — the user is asked to keep the old or take the new price.
-  const [pricePrompt, setPricePrompt] = useState<PriceChange[] | null>(null);
+  // Set while asking the user, at Add time, whether a just-added item should bill
+  // its frozen booking-date price or the newer current price.
+  const [linePrompt, setLinePrompt] = useState<LinePrompt | null>(null);
 
   // Reset when the sheet opens or the customer changes.
   useEffect(() => {
@@ -266,7 +270,29 @@ export function BookingDrawSheet({
     }
     const calField = categoryFieldMap.get(entry.category.trim().toUpperCase()) ?? 'KGS';
     const designName = noDesignNames ? 'NA' : entry.designName;
-    setLines((ls) => [...ls, { ...entry, key: `d${keyer.current++}`, calField, designName }]);
+
+    // Price this line now. If the current price differs from the frozen booking-
+    // date price, ask which one to bill BEFORE queuing the line.
+    let useLatest = false;
+    if (booking) {
+      try {
+        const priced = { ...entry, key: 'temp', calField, designName } as EntryLine;
+        const res = await quote.mutateAsync({ id: booking.id, lines: [toQuoteInput(priced)] });
+        const q0 = res.lines?.[0];
+        if (q0?.priceChanged) {
+          const choice = await new Promise<'old' | 'new' | null>((resolve) =>
+            setLinePrompt({ item: entry.itemName || entry.product, product: entry.product || entry.itemName, oldRate: q0.rate, newRate: q0.currentRate, resolve }),
+          );
+          setLinePrompt(null);
+          if (choice === null) return; // user backed out of adding this item
+          useLatest = choice === 'new';
+        }
+      } catch {
+        // If pricing fails, fall through and add at the frozen booking rate.
+      }
+    }
+
+    setLines((ls) => [...ls, { ...entry, key: `d${keyer.current++}`, calField, designName, useLatest }]);
     // Keep the chosen priority for the next line — matches the order form's flow.
     setEntry(blank(entry.priority));
   };
@@ -313,18 +339,17 @@ export function BookingDrawSheet({
   const overBags = remaining.bags < -0.001;
   const overKgs = remaining.kgs < -0.001;
 
-  // Build the drawn lines and hand them to the order. `useNew` decides, for any
-  // line whose price changed since the booking, whether to bill the latest price
-  // (true) or keep the frozen booking-date price (false).
-  const buildAndAdd = (useNew: boolean) => {
+  // Build the drawn lines and hand them to the order. Each line already carries the
+  // user's per-item choice (`useLatest`, made at Add time) of latest vs booking price.
+  const buildAndAdd = () => {
     if (!booking) return;
     const drawn: DrawnBookingLine[] = lines.map((l, i) => {
       const q = quoted[i];
-      const pickNew = useNew && !!q?.priceChanged;
-      const baseProduct = q ? (pickNew ? q.currentProductRate : q.productRate) : 0;
-      const baseDesign = q ? (pickNew ? q.currentDesignRate : q.designRate) : 0;
-      const productRate = q ? baseProduct + q.productDelta : 0;
-      const designRate = q ? baseDesign + q.designDelta : 0;
+      const pickNew = !!l.useLatest && !!q?.priceChanged;
+      // Latest price uses the current base + current special delta; the frozen
+      // (booking-date) price uses the snapshotted base + snapshotted delta.
+      const productRate = q ? (pickNew ? q.currentProductRate + q.currentProductDelta : q.productRate + q.productDelta) : 0;
+      const designRate = q ? (pickNew ? q.currentDesignRate + q.currentDesignDelta : q.designRate + q.designDelta) : 0;
       return {
         bookingId: booking.id,
         bookingCode: booking.code,
@@ -346,7 +371,6 @@ export function BookingDrawSheet({
         comment: l.comment,
       };
     });
-    setPricePrompt(null);
     onAdd(drawn);
     onOpenChange(false);
   };
@@ -355,16 +379,8 @@ export function BookingDrawSheet({
     if (!booking) return toast.error('Pick a booking first');
     if (!lines.length) return toast.error('Add at least one item');
     if (overBags || overKgs) return toast.error('The items exceed what is left on this booking');
-    // If any line's price moved since the booking, ask which price to use first.
-    const changed: PriceChange[] = lines
-      .map((l, i) => ({ l, q: quoted[i] }))
-      .filter((x) => x.q?.priceChanged)
-      .map(({ l, q }) => ({ key: l.key, item: l.itemName || l.product || '—', product: l.product || l.itemName, oldRate: q!.rate, newRate: q!.currentRate }));
-    if (changed.length) {
-      setPricePrompt(changed);
-      return;
-    }
-    buildAndAdd(false);
+    // Each line's old/new price was already chosen at Add time — just build.
+    buildAndAdd();
   };
 
   return (
@@ -449,7 +465,7 @@ export function BookingDrawSheet({
                         <th className="text-right">Pcs</th>
                         <th className="text-right">Kgs</th>
                         <th className="text-right">Box</th>
-                        <th className="text-right">Frozen ₹</th>
+                        <th className="text-right">Rate ₹</th>
                         <th>Remarks</th>
                         <th className="w-8" />
                       </tr>
@@ -478,15 +494,15 @@ export function BookingDrawSheet({
                                   <Loader2 className="ml-auto size-3 animate-spin" />
                                 ) : q ? (
                                   <div className="flex flex-col items-end gap-0.5">
-                                    <span>{money(q.rate)}</span>
+                                    <span className={cn(l.useLatest && q.priceChanged && 'text-amber-700')}>{money(l.useLatest ? q.currentRate : q.rate)}</span>
                                     {q.priceChanged && (
                                       <button
                                         type="button"
                                         onClick={() => openPriceHistory(l.product || l.itemName)}
-                                        title={`Price changed since booking (latest ₹${money(q.currentRate)}) — view history`}
+                                        title={`booking ₹${money(q.rate)} · latest ₹${money(q.currentRate)} — view history`}
                                         className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 hover:bg-amber-200"
                                       >
-                                        <History className="size-3" /> new ₹{money(q.currentRate)}
+                                        <History className="size-3" /> {l.useLatest ? 'latest price' : 'booking price'}
                                       </button>
                                     )}
                                   </div>
@@ -517,39 +533,34 @@ export function BookingDrawSheet({
       </SheetContent>
     </Sheet>
 
-      {/* Old-vs-new price confirmation — shown when a drawn item's price changed
-          since the booking. The user keeps the frozen price or takes the latest. */}
-      <Dialog open={!!pricePrompt} onOpenChange={(o) => { if (!o) setPricePrompt(null); }}>
+      {/* Old-vs-new price confirmation — shown at Add time when the item being added
+          has a newer price than the frozen booking-date rate. */}
+      <Dialog open={!!linePrompt} onOpenChange={(o) => { if (!o) linePrompt?.resolve(null); }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <History className="size-5 text-amber-600" /> Newer price found
+            <DialogTitle className="flex items-center gap-2 text-2xl">
+              <History className="size-6 text-amber-600" /> Newer price found
             </DialogTitle>
-            <DialogDescription>
-              {pricePrompt?.length} item{(pricePrompt?.length ?? 0) > 1 ? 's have' : ' has'} a newer price than the booking-date rate. Which price should this order use?
+            <DialogDescription className="text-base">
+              “{linePrompt?.item}” has a newer price than the booking-date rate. Which price should this item use?
             </DialogDescription>
           </DialogHeader>
-          <div className="max-h-72 space-y-1.5 overflow-auto">
-            {pricePrompt?.map((c) => (
-              <div key={c.key} className="flex items-center justify-between gap-2 rounded-md border bg-slate-50/70 px-3 py-2">
-                <span className="min-w-0 flex-1 truncate font-medium">{c.item}</span>
-                <span className="shrink-0 text-sm tabular-nums">
-                  booking <b className="text-slate-700">₹{money(c.oldRate)}</b> → latest <b className="text-amber-700">₹{money(c.newRate)}</b>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => openPriceHistory(c.product)}
-                  title="View this item's price history"
-                  className="text-muted-foreground hover:text-primary inline-flex shrink-0 items-center gap-0.5 text-xs font-medium"
-                >
-                  History <ExternalLink className="size-3.5" />
-                </button>
-              </div>
-            ))}
+          <div className="flex items-center justify-between gap-2 rounded-md border bg-slate-50/70 px-4 py-3">
+            <span className="text-lg tabular-nums">
+              booking <b className="text-slate-700">₹{money(linePrompt?.oldRate ?? 0)}</b> → latest <b className="text-amber-700">₹{money(linePrompt?.newRate ?? 0)}</b>
+            </span>
+            <button
+              type="button"
+              onClick={() => linePrompt && openPriceHistory(linePrompt.product)}
+              title="View this item's price history"
+              className="text-muted-foreground hover:text-primary inline-flex shrink-0 items-center gap-1 text-sm font-medium"
+            >
+              History <ExternalLink className="size-4" />
+            </button>
           </div>
           <DialogFooter className="gap-2 sm:justify-between">
-            <Button variant="outline" onClick={() => buildAndAdd(false)}>Keep booking price</Button>
-            <Button className="bg-amber-600 text-white hover:bg-amber-700" onClick={() => buildAndAdd(true)}>Use latest price</Button>
+            <Button className="h-11 bg-amber-600 text-base text-white hover:bg-amber-700" onClick={() => linePrompt?.resolve('new')}>Use latest price</Button>
+            <Button variant="outline" className="h-11 text-base" onClick={() => linePrompt?.resolve('old')}>Keep booking price</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

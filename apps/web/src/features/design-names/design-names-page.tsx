@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { DataTable, type DataColumn } from '@/components/common/data-table';
 import {
   exportDesignNames,
   useCreateDesignName,
@@ -48,6 +48,21 @@ export function DesignNamesPage() {
 
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
+
+  const columns: DataColumn<DesignNameDto>[] = [
+    { id: 'designType', label: 'Design type', cell: (d) => <span className="font-medium">{d.designType}</span> },
+    { id: 'designName', label: 'Design name', cell: (d) => d.designName },
+    {
+      id: 'updated',
+      label: 'Last updated',
+      sortValue: (d) => d.updatedAt,
+      cell: (d) => (
+        <span className="text-muted-foreground whitespace-nowrap font-mono text-xs" title={formatDateTime(d.updatedAt)}>
+          {formatDateShort(d.updatedAt)}
+        </span>
+      ),
+    },
+  ];
 
   const handleDelete = async (d: DesignNameDto) => {
     const ok = await confirm({
@@ -104,67 +119,34 @@ export function DesignNamesPage() {
         />
       </div>
 
-      <div className="rounded-lg border bg-card">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Design type</TableHead>
-              <TableHead>Design name</TableHead>
-              <TableHead className="whitespace-nowrap">Last updated</TableHead>
-              <TableHead className="w-20 text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <TableRow>
-                <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
-                  <Loader2 className="mx-auto size-5 animate-spin" />
-                </TableCell>
-              </TableRow>
-            ) : items.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
-                  No design names yet.
-                </TableCell>
-              </TableRow>
-            ) : (
-              items.map((d) => (
-                <TableRow
-                  key={d.id}
-                  className="cursor-pointer"
-                  onClick={() => can('designname:update') && setEditing(d)}
-                >
-                  <TableCell className="font-medium">{d.designType}</TableCell>
-                  <TableCell>{d.designName}</TableCell>
-                  <TableCell className="text-muted-foreground whitespace-nowrap font-mono text-xs" title={formatDateTime(d.updatedAt)}>
-                    {formatDateShort(d.updatedAt)}
-                  </TableCell>
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <div className="flex justify-end gap-1">
-                      {can('designname:update') && (
-                        <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(d)} aria-label="Edit">
-                          <Pencil className="size-4" />
-                        </Button>
-                      )}
-                      {can('designname:delete') && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-8 text-destructive hover:text-destructive"
-                          onClick={() => handleDelete(d)}
-                          aria-label="Delete"
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))
+      <DataTable
+        columns={columns}
+        rows={items}
+        rowKey={(d) => d.id}
+        isLoading={isLoading}
+        onRowClick={(d) => can('designname:update') && setEditing(d)}
+        emptyText="No design names yet."
+        actions={(d) => (
+          <div className="flex justify-end gap-1">
+            {can('designname:update') && (
+              <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(d)} aria-label="Edit">
+                <Pencil className="size-4" />
+              </Button>
             )}
-          </TableBody>
-        </Table>
-      </div>
+            {can('designname:delete') && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8 text-destructive hover:text-destructive"
+                onClick={() => handleDelete(d)}
+                aria-label="Delete"
+              >
+                <Trash2 className="size-4" />
+              </Button>
+            )}
+          </div>
+        )}
+      />
 
       <div className="flex items-center justify-between">
         <p className="text-muted-foreground text-sm">

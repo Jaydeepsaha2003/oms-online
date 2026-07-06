@@ -73,6 +73,18 @@ export class CustomersController {
     return this.customers.findOne(id);
   }
 
+  @Get(':id/rate-list')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  rateList(@Param('id', ParseIntPipe) id: number) {
+    return this.customers.rateList(id);
+  }
+
+  @Get(':id/rate-history')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  rateHistory(@Param('id', ParseIntPipe) id: number) {
+    return this.customers.rateHistory(id);
+  }
+
   @Post()
   @Permissions(perm(R, ACTIONS.CREATE))
   @Audit({ action: ACTIONS.CREATE, resource: R })

@@ -164,9 +164,13 @@ export class BookingsService {
     const booking = await this.prisma.booking.findUnique({ where: { id } });
     if (!booking) throw new NotFoundException('Booking not found.');
     const snapshot = this.parseSnapshot(booking.rateSnapshot);
+    // The customer's CURRENT special rates (may differ from the frozen snapshot if
+    // rates were added/changed after the booking) — drives the "new price" prompt.
+    const customer = await this.prisma.customer.findFirst({ where: { partyName: booking.customerName } });
+    const currentSnapshot = customer ? await this.snapshotSpecialRates(customer.id) : snapshot;
     const lines: BookingQuoteLine[] = [];
     for (const line of dto.lines ?? []) {
-      lines.push(await this.priceLine(line, booking.bookingDate, snapshot));
+      lines.push(await this.priceLine(line, booking.bookingDate, snapshot, currentSnapshot));
     }
     return { bookingDate: booking.bookingDate.toISOString(), lines };
   }
@@ -416,33 +420,43 @@ export class BookingsService {
   }
 
   /** Price one line at the booking-date rates + the customer's snapshotted deltas.
-   *  Also exposes the current (latest) price so the draw sheet can offer old-vs-new. */
-  private async priceLine(line: ConvertBookingLineDto, asOf: Date, snapshot: RateSnapshot): Promise<BookingQuoteLine> {
+   *  Also exposes the current (latest) price — using the customer's CURRENT special
+   *  rates when `currentSnapshot` is supplied — so the draw sheet can offer old-vs-new.
+   *  A "new price" can come from a base chart-rate change OR a special-rate change. */
+  private async priceLine(
+    line: ConvertBookingLineDto,
+    asOf: Date,
+    snapshot: RateSnapshot,
+    currentSnapshot: RateSnapshot = snapshot,
+  ): Promise<BookingQuoteLine> {
     const p = await this.productRates(line, asOf);
     const d = await this.designRates(line, asOf);
-    const resolution = resolveSpecialRates(snapshot, {
+    const key = {
       category: uc(line.pCategory) ?? '',
       subCategory: uc(line.subCategory) ?? '',
       product: uc(line.product) ?? uc(line.productName),
       designType: uc(line.designType) ?? uc(line.design),
-    });
-    const delta = resolution.productDelta + resolution.designDelta;
-    const rate = round2(p.asOf + d.asOf + delta);
-    const currentRate = round2(p.current + d.current + delta);
+    };
+    const frozen = resolveSpecialRates(snapshot, key);
+    const current = resolveSpecialRates(currentSnapshot, key);
+    const rate = round2(p.asOf + d.asOf + frozen.productDelta + frozen.designDelta);
+    const currentRate = round2(p.current + d.current + current.productDelta + current.designDelta);
     return {
       productName: uc(line.productName) ?? uc(line.product) ?? null,
       designType: uc(line.designType) ?? null,
       productRate: p.asOf,
       designRate: d.asOf,
-      productDelta: resolution.productDelta,
-      designDelta: resolution.designDelta,
+      productDelta: frozen.productDelta,
+      designDelta: frozen.designDelta,
       rate,
       currentProductRate: p.current,
       currentDesignRate: d.current,
+      currentProductDelta: current.productDelta,
+      currentDesignDelta: current.designDelta,
       currentRate,
       priceChanged: Math.abs(currentRate - rate) > 0.001,
-      productFrom: resolution.productFrom,
-      designFrom: resolution.designFrom,
+      productFrom: frozen.productFrom,
+      designFrom: frozen.designFrom,
     };
   }
 
