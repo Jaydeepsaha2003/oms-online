@@ -7,7 +7,7 @@ import { useAuthStore } from '@/stores/auth-store';
 // API — this works on localhost, over HTTPS, and from phones on the LAN
 // without mixed-content issues. Set VITE_API_URL to an absolute URL to
 // bypass the proxy and hit the API directly.
-const API_URL = import.meta.env.VITE_API_URL ?? '/api';
+const API_URL = import.meta.env.VITE_API_URL || '/api';
 
 /** Shared axios instance. `withCredentials` sends the httpOnly refresh cookie. */
 export const api = axios.create({
