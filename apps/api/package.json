@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "OMS backend — NestJS + Prisma (MySQL).",
-  "main": "dist/main.js",
+  "main": "dist/src/main.js",
   "prisma": {
     "seed": "ts-node --project tsconfig.json prisma/seed.ts"
   },
@@ -11,7 +11,7 @@
     "build": "nest build",
     "dev": "nest start --watch",
     "start": "nest start",
-    "start:prod": "node dist/main.js",
+    "start:prod": "node dist/src/main.js",
     "lint": "tsc --noEmit -p tsconfig.json",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",

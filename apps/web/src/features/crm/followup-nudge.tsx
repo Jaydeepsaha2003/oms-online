@@ -1,20 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlarmClock, ArrowRight, BellRing, Check, Loader2 } from 'lucide-react';
+import { AlarmClock, ArrowRight, BellRing, Check, Loader2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { FollowupDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { buzz, playChime } from '@/lib/chime';
 import { formatDate } from '@/lib/date-format';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { useCrmSettings, useFollowupDue, useResolveFollowup, useSnoozeFollowup } from './use-crm';
 import { Chip, itemLine, UrgencyChip } from './crm-shared';
 
 /**
- * The "anti-forget" reminder. Polls the active nudges and pops an intrusive modal
- * that can't be plainly dismissed — you snooze (re-arms after the interval) or
- * resolve. Fires a chime + desktop notification when a new commitment comes due.
+ * The reminder manager.
+ * Plays the loud chime, triggers desktop browser notifications, and displays
+ * beautiful Instagram-style in-app notification banners at the top of the viewport
+ * for mobile & desktop Chrome browsers.
+ *
  * Mounted once in the app shell.
  */
 export function FollowupNudge() {
@@ -24,7 +25,7 @@ export function FollowupNudge() {
   const snooze = useSnoozeFollowup();
   const resolve = useResolveFollowup();
 
-  const [open, setOpen] = useState(false);
+  const [activeBanners, setActiveBanners] = useState<{ id: number; followup: FollowupDto }[]>([]);
   const seen = useRef<Set<number>>(new Set());
   const askedPermission = useRef(false);
 
@@ -37,94 +38,185 @@ export function FollowupNudge() {
     }
   }, [settings?.desktopNotifications]);
 
-  // When new nudges appear: open the modal, chime, and fire desktop notifications.
+  // When new nudges appear: chime, vibrate, show banners, and fire desktop notifications.
   useEffect(() => {
     const fresh = due.filter((f) => !seen.current.has(f.id));
-    if (due.length > 0) setOpen(true);
-    else setOpen(false);
-    if (fresh.length === 0) return;
+    
+    if (fresh.length > 0) {
+      // Add new followups to active banners list
+      setActiveBanners((prev) => {
+        const existingIds = new Set(prev.map((b) => b.id));
+        const toAdd = fresh
+          .filter((f) => !existingIds.has(f.id))
+          .map((f) => ({ id: f.id, followup: f }));
+        return [...prev, ...toAdd];
+      });
 
-    if (settings?.sound !== false) {
-      playChime();
-      buzz();
-    }
-    if (settings?.desktopNotifications && 'Notification' in window && Notification.permission === 'granted') {
-      for (const f of fresh.slice(0, 3)) {
-        try {
-          new Notification(`Follow-up: ${f.partyName}`, { body: `${f.title}${f.promisedAt ? ` · promised ${formatDate(f.promisedAt)}` : ''}`, tag: `followup-${f.id}` });
-        } catch {
-          /* ignore */
+      if (settings?.sound !== false) {
+        playChime();
+        buzz();
+        // Play a second chime after a short pause so it's impossible to miss
+        const timer = setTimeout(() => {
+          playChime();
+          buzz();
+        }, 2500);
+        return () => clearTimeout(timer);
+      }
+
+      if (settings?.desktopNotifications && 'Notification' in window && Notification.permission === 'granted') {
+        for (const f of fresh.slice(0, 3)) {
+          try {
+            new Notification(`Follow-up: ${f.partyName}`, {
+              body: `${f.title}${f.promisedAt ? ` · promised ${formatDate(f.promisedAt)}` : ''}`,
+              tag: `followup-${f.id}`,
+            });
+          } catch {
+            /* ignore */
+          }
         }
       }
+
+      fresh.forEach((f) => seen.current.add(f.id));
     }
-    fresh.forEach((f) => seen.current.add(f.id));
-    // Drop ids no longer due so a later re-trigger chimes again.
+
+    // Clean up tracking and banner list for resolved or rescheduled items
     const active = new Set(due.map((f) => f.id));
-    for (const id of [...seen.current]) if (!active.has(id)) seen.current.delete(id);
+    for (const id of [...seen.current]) {
+      if (!active.has(id)) {
+        seen.current.delete(id);
+        setActiveBanners((prev) => prev.filter((b) => b.id !== id));
+      }
+    }
   }, [due, settings?.sound, settings?.desktopNotifications]);
 
-  const snoozeAll = () => {
-    due.forEach((f) => snooze.mutate(f.id));
-    setOpen(false);
-    toast.success('Snoozed — I’ll nudge you again after the interval.');
-  };
-
-  if (!open || due.length === 0) return null;
-
   return (
-    <Dialog open onOpenChange={() => { /* not plainly dismissible — must snooze or resolve */ }}>
-      <DialogContent className="max-w-lg gap-3 border-amber-300 [&>button]:hidden">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-amber-700">
-            <span className="relative flex size-8 items-center justify-center rounded-full bg-amber-100">
-              <BellRing className="size-4 text-amber-600" />
-              <span className="absolute inset-0 animate-ping rounded-full bg-amber-400/40" />
-            </span>
-            {due.length} commitment{due.length > 1 ? 's' : ''} need your attention
-          </DialogTitle>
-          <DialogDescription>Update the status, snooze to be reminded again, or mark it done. It won’t stop until you resolve it.</DialogDescription>
-        </DialogHeader>
-
-        <div className="-mx-1 max-h-[52vh] space-y-2 overflow-y-auto px-1">
-          {due.map((f) => <NudgeRow key={f.id} f={f} snooze={snooze} resolve={resolve} onOpen={() => { setOpen(false); navigate('/crm'); }} />)}
-        </div>
-
-        <DialogFooter className="justify-between sm:justify-between">
-          <Button variant="ghost" onClick={() => { setOpen(false); navigate('/crm'); }}>
-            Open Follow-ups <ArrowRight className="size-4" />
-          </Button>
-          <Button variant="outline" onClick={snoozeAll} disabled={snooze.isPending}>
-            <AlarmClock className="size-4" /> Snooze all
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <>
+      {/* Slide-down Instagram-style in-app notification container */}
+      <div className="fixed top-4 left-4 right-4 z-[99999] flex flex-col items-center gap-2 pointer-events-none md:left-auto md:right-4 md:w-96">
+        {activeBanners.map(({ id, followup }) => (
+          <FollowupBannerNotification
+            key={id}
+            f={followup}
+            snooze={snooze}
+            resolve={resolve}
+            onOpen={() => {
+              setActiveBanners((prev) => prev.filter((b) => b.id !== id));
+              navigate('/crm');
+            }}
+            onDismiss={() => {
+              setActiveBanners((prev) => prev.filter((b) => b.id !== id));
+            }}
+          />
+        ))}
+      </div>
+    </>
   );
 }
 
-function NudgeRow({ f, snooze, resolve, onOpen }: { f: FollowupDto; snooze: ReturnType<typeof useSnoozeFollowup>; resolve: ReturnType<typeof useResolveFollowup>; onOpen: () => void }) {
+/**
+ * Individual Instagram-style notification banner.
+ * Auto-dismisses after 12 seconds if not interacted with.
+ */
+function FollowupBannerNotification({
+  f,
+  snooze,
+  resolve,
+  onOpen,
+  onDismiss,
+}: {
+  f: FollowupDto;
+  snooze: ReturnType<typeof useSnoozeFollowup>;
+  resolve: ReturnType<typeof useResolveFollowup>;
+  onOpen: () => void;
+  onDismiss: () => void;
+}) {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      onDismiss();
+    }, 12000); // 12 seconds auto-dismiss
+    return () => clearTimeout(timer);
+  }, [onDismiss]);
+
   const line = itemLine(f);
+
   return (
-    <div className="rounded-lg border bg-amber-50/40 p-2.5">
-      <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1">
-          <span className="flex flex-wrap items-center gap-1.5">
-            {f.priority === 'URGENT' && <Chip tone="rose">URGENT</Chip>}
-            <span className="font-semibold">{f.partyName}</span>
-            <UrgencyChip f={f} />
-          </span>
-          <span className="text-muted-foreground mt-0.5 block truncate text-sm">
-            {f.title}{line ? ` · ${line}` : ''}{f.stage ? ` · ${f.stage}` : ''}
-          </span>
-        </span>
+    <div className="w-full max-w-sm pointer-events-auto bg-card/95 dark:bg-card/98 backdrop-blur-md border border-border/80 shadow-2xl rounded-2xl p-3 flex flex-col gap-2.5 animate-slide-in-top transition-all duration-300">
+      {/* Banner Header (iOS/Instagram look) */}
+      <div className="flex items-center justify-between border-b border-border/40 pb-1.5">
+        <div className="flex items-center gap-2">
+          {/* App Badge Icon */}
+          <div className="relative flex size-6 items-center justify-center rounded-lg bg-gradient-brand text-[9px] font-black text-white shadow-md shadow-primary/20">
+            OMS
+            <span className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-rose-500 animate-pulse" />
+          </div>
+          <span className="text-[10px] font-bold tracking-wide text-muted-foreground uppercase">Follow-up Reminder</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-muted-foreground">now</span>
+          <button
+            onClick={onDismiss}
+            className="text-muted-foreground hover:text-foreground transition-colors p-0.5 rounded-md hover:bg-muted"
+            aria-label="Dismiss alert"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
       </div>
-      <div className="mt-2 flex gap-1.5">
-        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onOpen}>Update</Button>
-        <Button size="sm" variant="outline" className="h-7 text-xs text-amber-700" disabled={snooze.isPending} onClick={() => snooze.mutate(f.id, { onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) })}>
-          {snooze.isPending ? <Loader2 className="size-3 animate-spin" /> : <AlarmClock className="size-3" />} Snooze
+
+      {/* Banner Details */}
+      <div className="flex flex-col">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {f.priority === 'URGENT' && <Chip tone="rose">URGENT</Chip>}
+          <span className="font-semibold text-sm">{f.partyName}</span>
+          <UrgencyChip f={f} />
+        </div>
+        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+          {f.title}
+          {line ? ` · ${line}` : ''}
+          {f.stage ? ` · ${f.stage}` : ''}
+        </p>
+      </div>
+
+      {/* Quick Action Buttons */}
+      <div className="flex items-center gap-2 border-t border-border/40 pt-2 mt-0.5">
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-8 flex-1 text-xs justify-center hover:bg-muted font-semibold transition-colors"
+          onClick={onOpen}
+        >
+          View
         </Button>
-        <Button size="sm" variant="outline" className="h-7 text-xs text-emerald-700" disabled={resolve.isPending} onClick={() => resolve.mutate(f.id, { onSuccess: () => toast.success('Done'), onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) })}>
-          <Check className="size-3" /> Done
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-8 flex-1 text-xs justify-center text-amber-600 dark:text-amber-500 hover:bg-amber-50/50 dark:hover:bg-amber-950/20 font-semibold transition-colors"
+          disabled={snooze.isPending}
+          onClick={() =>
+            snooze.mutate(f.id, {
+              onSuccess: onDismiss,
+              onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')),
+            })
+          }
+        >
+          {snooze.isPending ? <Loader2 className="size-3 animate-spin" /> : <AlarmClock className="size-3.5 mr-1" />} Snooze
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-8 flex-1 text-xs justify-center text-emerald-600 dark:text-emerald-500 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/20 font-semibold transition-colors"
+          disabled={resolve.isPending}
+          onClick={() =>
+            resolve.mutate(f.id, {
+              onSuccess: () => {
+                toast.success('Resolved');
+                onDismiss();
+              },
+              onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')),
+            })
+          }
+        >
+          <Check className="size-3.5 mr-1" /> Done
         </Button>
       </div>
     </div>

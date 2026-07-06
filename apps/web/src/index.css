@@ -227,6 +227,21 @@
   animation: oms-bell-ring 1s ease-in-out infinite;
 }
 
+@keyframes slide-in-top {
+  0% {
+    transform: translateY(-120%) scale(0.92);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-slide-in-top {
+  animation: slide-in-top 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .oms-blob,
   .animate-bell-ring {
