@@ -86,8 +86,8 @@ if defined READY (
     echo   OMS dev servers are RUNNING in the background.
     echo ============================================================
     echo.
-    echo   On this PC     :  http://localhost:6173
-    if defined LANIP echo   On your phone  :  http://%LANIP%:6173
+    echo   On this PC     :  https://localhost:6173
+    if defined LANIP echo   On your phone  :  https://%LANIP%:6173
     echo.
     echo   API: http://localhost:4000/api     Docs: http://localhost:4000/api/docs
 ) else (

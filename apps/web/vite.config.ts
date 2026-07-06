@@ -27,7 +27,7 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
-    mkcert({ hosts: ['localhost', '127.0.0.1', '192.168.31.19', '26.142.63.68'] }),
+    mkcert({ hosts: ['localhost', '127.0.0.1', '192.168.31.19', '192.168.0.236', '26.142.63.68'] }),
   ],
   resolve: {
     alias: {
