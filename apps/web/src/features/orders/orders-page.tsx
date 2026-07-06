@@ -4,7 +4,7 @@ import { Ban, ChevronLeft, ChevronRight, Eye, Plus, Printer, Search, Truck } fro
 import { toast } from 'sonner';
 import type { OrderDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
-import { cn, formatDateTime } from '@/lib/utils';
+import { cn, formatDateTime, shortOrderCode } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useColumnOrder } from '@/hooks/use-column-order';
@@ -47,7 +47,7 @@ const TRUCK_STATE: Record<'FULL' | 'PARTIAL' | 'NONE', { cls: string; label: str
 };
 
 const COLUMNS: DataColumn<OrderDto>[] = [
-  { id: 'code', label: 'Order #', fixed: true, cell: (o) => <span className="font-mono font-semibold">{(o.code ? o.code.replace(/^ORD-0*/i, '') || String(o.id) : String(o.id))}</span> },
+  { id: 'code', label: 'Order #', fixed: true, cell: (o) => <span className="font-mono font-semibold">{shortOrderCode(o.code, o.id)}</span> },
   { id: 'customer', label: 'Customer', cell: (o) => <span className="font-medium">{o.customerName}</span> },
   { id: 'agent', label: 'Agent', cell: (o) => o.agentName ?? '—' },
   { id: 'orderDate', label: 'Order date', cell: (o) => <span className="whitespace-nowrap">{formatDate(o.orderDate)}</span> },

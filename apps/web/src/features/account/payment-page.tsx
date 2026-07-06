@@ -410,9 +410,9 @@ export function PaymentPage() {
       {/* Pending invoices grid */}
       <div className="bg-card overflow-hidden rounded-md border shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full text-base">
+          <table className="w-full text-base [&_td]:border-r [&_td]:border-border/60 [&_td:last-child]:border-r-0">
             <thead>
-              <tr className="bg-gradient-to-b from-blue-800 to-indigo-800 text-white [&_th]:px-3 [&_th]:py-2.5 [&_th]:text-left [&_th]:text-sm [&_th]:font-bold [&_th]:tracking-wider [&_th]:uppercase [&_th]:whitespace-nowrap">
+              <tr className="bg-gradient-to-b from-blue-800 to-indigo-800 text-white [&_th]:border-r [&_th]:border-white/25 [&_th:last-child]:border-r-0 [&_th]:px-3 [&_th]:py-2.5 [&_th]:text-left [&_th]:text-sm [&_th]:font-bold [&_th]:tracking-wider [&_th]:uppercase [&_th]:whitespace-nowrap">
                 {adjMode === 'AGST REF' && <th className="w-10">Sel</th>}
                 <th>Inv Date</th>
                 <th>Inv No</th>
@@ -486,9 +486,9 @@ export function PaymentPage() {
           </div>
           {!!result?.allocations?.length && (
             <div className="max-h-56 overflow-auto rounded-md border">
-              <table className="w-full text-sm">
+              <table className="w-full text-sm [&_td]:border-r [&_td]:border-border/60 [&_td:last-child]:border-r-0">
                 <thead>
-                  <tr className="bg-muted text-muted-foreground [&_th]:px-2.5 [&_th]:py-1.5 [&_th]:text-left [&_th]:text-xs [&_th]:uppercase">
+                  <tr className="bg-muted text-muted-foreground [&_th]:border-r [&_th]:border-border/40 [&_th:last-child]:border-r-0 [&_th]:px-2.5 [&_th]:py-1.5 [&_th]:text-left [&_th]:text-xs [&_th]:uppercase">
                     <th>What</th><th>Invoice</th><th>Funded by</th><th className="!text-right">Amount</th>
                   </tr>
                 </thead>
@@ -533,9 +533,9 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
           <DialogDescription className="text-base">Vouchers this financial year (Apr–Mar).</DialogDescription>
         </DialogHeader>
         <div className="overflow-x-auto rounded-md border">
-          <table className="w-full text-sm">
+          <table className="w-full text-sm [&_td]:border-r [&_td]:border-border/60 [&_td:last-child]:border-r-0">
             <thead>
-              <tr className="bg-gradient-to-b from-blue-800 to-indigo-800 text-white [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:text-xs [&_th]:font-bold [&_th]:uppercase [&_th]:whitespace-nowrap">
+              <tr className="bg-gradient-to-b from-blue-800 to-indigo-800 text-white [&_th]:border-r [&_th]:border-white/25 [&_th:last-child]:border-r-0 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:text-xs [&_th]:font-bold [&_th]:uppercase [&_th]:whitespace-nowrap">
                 <th>Voucher</th><th>Date</th><th>Customer</th><th>Mode</th><th>Particulars</th><th className="!text-right">Bank Cr</th><th className="!text-right">Cash Cr</th><th>Remarks</th>
               </tr>
             </thead>

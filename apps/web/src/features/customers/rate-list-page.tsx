@@ -94,7 +94,7 @@ function VersionCard({ v, defaultOpen }: { v: Version; defaultOpen: boolean }) {
       </button>
       {open && (
         <div className="border-t">
-          <table className="w-full text-[15px]">
+          <table className="w-full text-[15px] [&_td]:border-r [&_td]:border-border/60 [&_td:last-child]:border-r-0">
             <tbody className="[&_td]:border-t [&_td]:px-4 [&_td]:py-2 [&_tr:first-child_td]:border-t-0">
               {v.changes.map((c) => (
                 <tr key={c.id}>
@@ -121,7 +121,7 @@ function PivotCard({ t }: { t: PivotTable }) {
     <div className="bg-card overflow-hidden rounded-lg border shadow-sm">
       <div className="bg-gradient-brand px-4 py-2.5 text-sm font-semibold tracking-wide text-white">{t.title}</div>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full text-sm [&_td]:border-r [&_td]:border-border/60 [&_td:last-child]:border-r-0 [&_th]:border-r [&_th]:border-border/40 [&_th:last-child]:border-r-0">
           <thead>
             <tr className="bg-muted/60 text-muted-foreground text-xs uppercase">
               <th className="w-12 px-3 py-2 text-left font-semibold">SR</th>

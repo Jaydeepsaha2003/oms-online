@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
 import { Button } from '@/components/ui/button';
+import { shortOrderCode } from '@/lib/utils';
 import { useOrder } from './use-orders';
 import { useQuotation } from '../quotations/use-quotations';
 import { useCompany } from '@/features/settings/use-settings';
@@ -184,7 +185,7 @@ export function OrderBillPage() {
         {/* Title bar — blue with amber accent */}
         <div style={{ background: BLUE, color: '#fff', borderBottom: `4px solid ${AMBER}`, padding: '10px 16px', display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, letterSpacing: 1 }}>{docTitle}</h1>
-          <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 16 }}>{order.code ?? `#${order.id}`}</span>
+          <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 16 }}>{shortOrderCode(order.code, order.id)}</span>
         </div>
 
         {/* Bill-to + order meta */}
@@ -196,7 +197,7 @@ export function OrderBillPage() {
           <table style={{ borderCollapse: 'collapse', fontSize: 13 }}>
             <tbody>
               {([
-                ['Order No', order.code ?? `#${order.id}`],
+                ['Order No', shortOrderCode(order.code, order.id)],
                 ['Order Date', fmtDate(order.orderDate)],
                 ['Due Date', fmtDate(order.completionDate)],
               ] as const).map(([label, value]) => (

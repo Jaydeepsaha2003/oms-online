@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Loader2, Pencil, Search, Trash2 } from 'luci
 import { toast } from 'sonner';
 import { DISPATCH_STATUSES, type DispatchDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
-import { cn, formatDateShort } from '@/lib/utils';
+import { cn, formatDateShort, shortOrderCode } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useColumnOrder } from '@/hooks/use-column-order';
 import { useConfirm } from '@/components/common/confirm';
@@ -31,7 +31,7 @@ const StatusBadge = ({ s }: { s: string }) => (
 const COLUMNS: DataColumn<DispatchDto>[] = [
   { id: 'code', label: 'Dispatch #', pin: 'left0', fixed: true, cell: (d) => <span className="font-mono text-xs font-medium">{d.code ?? `#${d.id}`}</span> },
   { id: 'date', label: 'Date', cell: (d) => <span className="whitespace-nowrap">{formatDateShort(d.dispatchDate)}</span> },
-  { id: 'order', label: 'Order #', cell: (d) => <span className="font-mono text-xs">{d.orderCode ?? `#${d.orderId}`}</span> },
+  { id: 'order', label: 'Order #', cell: (d) => <span className="font-mono text-xs">{shortOrderCode(d.orderCode, d.orderId)}</span> },
   { id: 'customer', label: 'Customer', cell: (d) => <span className="font-medium">{d.customerName}</span> },
   { id: 'product', label: 'Product', cell: (d) => <span className="font-medium">{d.productName || d.product || '—'}</span> },
   { id: 'design', label: 'Design', cell: (d) => d.designType || '—' },
@@ -218,7 +218,7 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
         <div className="grid gap-4">
           <div className="bg-muted/40 rounded-lg border p-3 text-sm">
             <div className="font-medium">{dispatch.productName || dispatch.product}{dispatch.designType ? ` · ${dispatch.designType}` : ''}</div>
-            <div className="text-muted-foreground">{dispatch.customerName} · {dispatch.orderCode ?? `#${dispatch.orderId}`}</div>
+            <div className="text-muted-foreground">{dispatch.customerName} · {shortOrderCode(dispatch.orderCode, dispatch.orderId)}</div>
           </div>
           <div className="grid grid-cols-4 gap-3">
             {(['bags', 'pcs', 'gram', 'box'] as const).map((k, i) => (

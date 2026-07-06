@@ -634,7 +634,7 @@ export function ChallanFormPage() {
 
             {/* Line items — fills the remaining space and scrolls internally when long */}
             <div className="min-h-[120px] flex-1 overflow-auto">
-              <table className="w-full text-[15px]">
+              <table className="w-full text-[15px] [&_td]:border-r [&_td]:border-border/60 [&_td:last-child]:border-r-0 [&_th]:border-r [&_th]:border-border/40 [&_th:last-child]:border-r-0">
                 <thead className="bg-muted sticky top-0 z-10">
                   <tr className="text-muted-foreground border-b text-left [&>th]:px-3 [&>th]:py-2 [&>th]:text-sm [&>th]:font-semibold [&>th]:tracking-wide [&>th]:uppercase">
                     <th className="w-12 text-center">#</th>

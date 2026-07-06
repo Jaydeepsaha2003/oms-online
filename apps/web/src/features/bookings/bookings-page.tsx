@@ -4,6 +4,7 @@ import { Ban, ChevronLeft, ChevronRight, PackageOpen, Plus, Search, Split, Trash
 import { toast } from 'sonner';
 import type { BookingDto, BookingStatus } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
+import { shortOrderCode } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/common/confirm';
@@ -52,7 +53,7 @@ const COLUMNS: DataColumn<BookingDto>[] = [
   { id: 'bags', label: 'Bags', align: 'right', cell: (b) => <span className="tabular-nums">{num(b.convertedBags)} / {num(b.bags)}</span> },
   { id: 'kgs', label: 'Kgs', align: 'right', cell: (b) => <span className="tabular-nums">{num(b.convertedKgs)} / {num(b.kgs)}</span> },
   { id: 'progress', label: 'Converted', cell: (b) => <Progress done={b.convertedBags + b.convertedKgs} total={b.bags + b.kgs} /> },
-  { id: 'order', label: 'Order', cell: (b) => (b.orderCode ? <span className="font-mono text-xs text-sky-700">{b.orderCode}</span> : <span className="text-muted-foreground">—</span>) },
+  { id: 'order', label: 'Order', cell: (b) => (b.orderCode ? <span className="font-mono text-xs text-sky-700">{shortOrderCode(b.orderCode)}</span> : <span className="text-muted-foreground">—</span>) },
   {
     id: 'status',
     label: 'Status',

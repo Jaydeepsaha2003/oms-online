@@ -15,7 +15,7 @@ import { ArrowLeft, ArrowRightLeft, BadgePercent, Check, ChevronDown, ChevronUp,
 import { toast } from 'sonner';
 import { ORDER_PRIORITIES, resolveSpecialRates, type OrderInput } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
-import { cn } from '@/lib/utils';
+import { cn, shortOrderCode } from '@/lib/utils';
 import { useAutoSizePcs } from '@/lib/auto-size-pcs';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/common/confirm';
@@ -1019,7 +1019,7 @@ export function OrderFormPage() {
           <h2 className="truncate text-xl font-bold tracking-tight">{isEdit ? `Modify ${docLabel}` : `New ${docLabel}`}</h2>
           <p className="text-muted-foreground truncate text-xs">
             {isEdit
-              ? (existing?.code ?? `#${id}`)
+              ? shortOrderCode(existing?.code, id)
               : docKind === 'quotation'
                 ? 'Create a quotation — add items one by one'
                 : 'Create a sales order — or save it as a quotation'}
@@ -1251,7 +1251,7 @@ export function OrderFormPage() {
               chosen "Show N rows" preference (unbounded when set to All). */}
           <div className="overflow-auto rounded-lg border" style={{ maxHeight: gridMaxHeight }}>
             {/* Prod ₹ / Dsgn ₹ are saved with the order but hidden from this list. */}
-            <table className="w-full text-sm">
+            <table className="w-full text-sm [&_td]:border-r [&_td]:border-border/60 [&_td:last-child]:border-r-0 [&_th]:border-r [&_th]:border-border/40 [&_th:last-child]:border-r-0">
               <thead className="[&_th]:sticky [&_th]:top-0 [&_th]:bg-gradient-to-b [&_th]:from-sky-50 [&_th]:to-indigo-100 [&_th]:px-3 [&_th]:py-2.5 [&_th]:text-left [&_th]:text-[15px] [&_th]:font-semibold [&_th]:text-slate-900">
                 <tr>
                   <th className="w-10 text-center">Sr</th>

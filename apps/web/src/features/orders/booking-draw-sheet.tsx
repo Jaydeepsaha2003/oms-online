@@ -455,7 +455,7 @@ export function BookingDrawSheet({
 
                 {/* Queued lines with frozen-rate quote */}
                 <div className="overflow-auto rounded-lg border">
-                  <table className="w-full text-base">
+                  <table className="w-full text-base [&_td]:border-r [&_td]:border-border/60 [&_td:last-child]:border-r-0 [&_th]:border-r [&_th]:border-border/40 [&_th:last-child]:border-r-0">
                     <thead className="[&_th]:bg-muted [&_th]:px-3.5 [&_th]:py-2.5 [&_th]:text-left [&_th]:text-sm [&_th]:font-semibold">
                       <tr>
                         <th>Item</th>

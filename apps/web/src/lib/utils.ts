@@ -11,6 +11,20 @@ export function dateStamp(d = new Date()): string {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Short order number for display: "ORD-01160" → "1160" (drop the ORD- prefix and
+ * leading zeros). Falls back to "#<id>" when there's no usable code, or the raw
+ * code if stripping leaves it empty. Used everywhere an order is shown.
+ */
+export function shortOrderCode(code: string | null | undefined, id?: number | string | null): string {
+  if (code) {
+    const stripped = code.replace(/^ORD-0*/i, '');
+    if (stripped) return stripped;
+    return code;
+  }
+  return id != null && id !== '' ? `#${id}` : '—';
+}
+
 /** Human-readable date + time, e.g. "20 Jun 2026, 09:10 PM". Returns "—" if empty/invalid. */
 export function formatDateTime(value: string | Date | null | undefined): string {
   if (!value) return '—';

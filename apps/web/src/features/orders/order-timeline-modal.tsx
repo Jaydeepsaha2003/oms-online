@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Ban, ChevronDown, CircleCheck, ClipboardList, Clock, Loader2, Package, ScrollText, Truck } from 'lucide-react';
 import type { OrderDto, OrderTimeline, OrderTimelineDispatch, OrderTimelineLine } from '@oms/shared';
-import { cn } from '@/lib/utils';
+import { cn, shortOrderCode } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { useOrderTimeline } from './use-orders';
@@ -211,7 +211,7 @@ export function OrderTimelineModal({ order, onClose }: { order: OrderDto; onClos
         <style>{TIMELINE_CSS}</style>
         <DialogHeader>
           <DialogTitle className="flex flex-wrap items-center gap-2">
-            <Truck className="text-primary size-5" /> Order journey — {order.code ?? `#${order.id}`}
+            <Truck className="text-primary size-5" /> Order journey — {shortOrderCode(order.code, order.id)}
           </DialogTitle>
           <DialogDescription>
             {order.customerName} · the story of this order — click an event to see the items in it.

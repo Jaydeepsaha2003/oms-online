@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Loader2, Package, PackageCheck, Search, Truc
 import { toast } from 'sonner';
 import { DISPATCH_STATUSES, type DispatchStatus, type PendingLineDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
-import { cn } from '@/lib/utils';
+import { cn, shortOrderCode } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { useColumnOrder } from '@/hooks/use-column-order';
 import { useConfirm } from '@/components/common/confirm';
@@ -27,7 +27,7 @@ const DueBadge = ({ t }: { t: string }) => (
 );
 
 const COLUMNS: DataColumn<PendingLineDto>[] = [
-  { id: 'order', label: 'Order #', pin: 'left0', fixed: true, cell: (r) => <span className="font-mono text-xs font-medium">{r.orderCode ?? `#${r.orderId}`}</span> },
+  { id: 'order', label: 'Order #', pin: 'left0', fixed: true, cell: (r) => <span className="font-mono text-xs font-medium">{shortOrderCode(r.orderCode, r.orderId)}</span> },
   { id: 'orderDate', label: 'Order date', cell: (r) => <span className="whitespace-nowrap">{formatDate(r.orderDate)}</span> },
   { id: 'due', label: 'Due', cell: (r) => <span className="flex items-center gap-2 whitespace-nowrap">{formatDate(r.dueDate)} <DueBadge t={r.dueType} /></span> },
   { id: 'customer', label: 'Customer', cell: (r) => <span className="font-medium">{r.customerName}</span> },
@@ -283,7 +283,7 @@ function DispatchSheet({ line, onClose, onDispatched }: { line: PendingLineDto; 
   return (
     <SheetContent className="flex w-full max-w-lg flex-col">
       <SheetHeader>
-        <SheetTitle>Dispatch — {line.orderCode ?? `#${line.orderId}`}</SheetTitle>
+        <SheetTitle>Dispatch — {shortOrderCode(line.orderCode, line.orderId)}</SheetTitle>
         <p className="text-muted-foreground truncate text-sm">{line.customerName}</p>
       </SheetHeader>
 

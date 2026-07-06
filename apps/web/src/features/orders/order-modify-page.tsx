@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import type { OrderDto, OrderInput, OrderItemDto } from '@oms/shared';
 import { ORDER_PRIORITIES } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
+import { shortOrderCode } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
 import { useColumnOrder } from '@/hooks/use-column-order';
 import { useConfirm } from '@/components/common/confirm';
@@ -28,8 +29,6 @@ const STATUS_STYLE: Record<string, string> = {
 
 const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? null : Number(s));
 const dash = (v: number | null) => (v == null || v === 0 ? '—' : v.toLocaleString('en-IN'));
-// Short order number: "ORD-01160" → "1160" (drop the ORD- prefix + leading zeros).
-const shortOrder = (code: string | null, id: number) => (code ? code.replace(/^ORD-0*/i, '') || String(id) : String(id));
 
 /** One flat row = an order line plus its parent order's header info. */
 interface Row {
@@ -73,7 +72,7 @@ function toInput(o: OrderDto, items: OrderItemDto[]): OrderInput {
 }
 
 const COLUMNS: DataColumn<Row>[] = [
-  { id: 'orderId', label: 'Order ID', fixed: true, cell: (r) => <span className="font-mono font-semibold">{shortOrder(r.order.code, r.order.id)}</span> },
+  { id: 'orderId', label: 'Order ID', fixed: true, cell: (r) => <span className="font-mono font-semibold">{shortOrderCode(r.order.code, r.order.id)}</span> },
   { id: 'orderDate', label: 'Order Date', cell: (r) => <span className="whitespace-nowrap">{formatDate(r.order.orderDate)}</span> },
   { id: 'dueDate', label: 'Due Date', cell: (r) => <span className="whitespace-nowrap">{formatDate(r.order.completionDate)}</span> },
   { id: 'customer', label: 'Customer Name', cell: (r) => <span className="font-medium">{r.order.customerName}</span> },

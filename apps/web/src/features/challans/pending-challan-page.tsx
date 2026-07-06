@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, ClipboardList, ScrollText, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { PendingChallanLine } from '@oms/shared';
-import { cn } from '@/lib/utils';
+import { cn, shortOrderCode } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
@@ -93,7 +93,7 @@ export function PendingChallanPage() {
         </span>
       ),
     },
-    { id: 'order', label: 'Order #', sortValue: (r) => r.orderId ?? 0, cell: (r) => <span className="font-mono text-xs">{r.orderCode ?? (r.orderId != null ? `#${r.orderId}` : '—')}</span> },
+    { id: 'order', label: 'Order #', sortValue: (r) => r.orderId ?? 0, cell: (r) => <span className="font-mono text-xs">{shortOrderCode(r.orderCode, r.orderId)}</span> },
     { id: 'date', label: 'D-Date', sortValue: (r) => r.dispatchDate, cell: (r) => <span className="whitespace-nowrap">{formatDate(r.dispatchDate)}</span> },
     { id: 'customer', label: 'Customer', sortValue: (r) => r.customerName, cell: (r) => <span className="font-medium">{r.customerName}</span> },
     { id: 'product', label: 'Product', sortValue: (r) => r.productName ?? '', cell: (r) => r.productName || '—' },

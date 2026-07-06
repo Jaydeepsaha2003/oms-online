@@ -4,6 +4,7 @@ import { ArrowLeft, BadgePercent, Check, Loader2, Plus, Split, Trash2 } from 'lu
 import { toast } from 'sonner';
 import type { BookingQuoteLine, ConvertBookingLineInput } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
+import { shortOrderCode } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { useConfirm } from '@/components/common/confirm';
 import { Button } from '@/components/ui/button';
@@ -160,7 +161,7 @@ export function BookingConvertPage() {
     if (overKgs) return toast.error(`Kgs (${money(totals.kgs)}) exceed the ${money(remainingKgs)} remaining`);
     const ok = await confirm({
       title: 'Convert these items?',
-      description: `${lines.length} line(s) · ₹${money(Math.round(totals.amount))} will be added to ${booking?.orderCode ? `order ${booking.orderCode}` : 'a new order'} at the frozen booking-date rates.`,
+      description: `${lines.length} line(s) · ₹${money(Math.round(totals.amount))} will be added to ${booking?.orderCode ? `order ${shortOrderCode(booking.orderCode)}` : 'a new order'} at the frozen booking-date rates.`,
       confirmText: 'Convert',
     });
     if (!ok) return;
@@ -267,7 +268,7 @@ export function BookingConvertPage() {
 
           {/* Queued lines with live frozen-rate quote */}
           <div className="max-h-[40vh] overflow-auto rounded-lg border">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm [&_td]:border-r [&_td]:border-border/60 [&_td:last-child]:border-r-0 [&_th]:border-r [&_th]:border-border/40 [&_th:last-child]:border-r-0">
               <thead className="[&_th]:sticky [&_th]:top-0 [&_th]:bg-gradient-to-b [&_th]:from-sky-50 [&_th]:to-indigo-100 [&_th]:px-3 [&_th]:py-2.5 [&_th]:text-left [&_th]:font-semibold [&_th]:text-slate-900">
                 <tr>
                   <th className="w-10 text-center">Sr</th>
@@ -345,7 +346,7 @@ export function BookingConvertPage() {
           <CardContent className="px-4 py-3">
             <p className="mb-2 text-sm font-semibold text-slate-700">Already converted ({booking.conversions.length})</p>
             <div className="max-h-40 overflow-auto rounded-lg border">
-              <table className="w-full text-sm">
+              <table className="w-full text-sm [&_td]:border-r [&_td]:border-border/60 [&_td:last-child]:border-r-0 [&_th]:border-r [&_th]:border-border/40 [&_th:last-child]:border-r-0">
                 <thead className="[&_th]:bg-muted [&_th]:px-3 [&_th]:py-1.5 [&_th]:text-left [&_th]:text-xs [&_th]:font-semibold">
                   <tr>
                     <th>Item</th>

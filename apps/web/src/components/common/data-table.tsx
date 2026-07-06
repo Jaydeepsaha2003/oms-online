@@ -157,7 +157,7 @@ export function DataTable<T>({
         width="auto"
         containerClassName={cn(maxBodyHeight, maxBodyHeight && 'overflow-y-auto')}
         className={cn(
-          '[&_td]:border-r [&_td]:border-border/30 [&_th]:border-r [&_thead_th]:border-white/15',
+          '[&_td]:border-r [&_td]:border-border/60 [&_th]:border-r [&_thead_th]:border-white/25',
           // Brand blue→indigo gradient, bold, uppercase header with white text on every page.
           '[&_thead_th]:bg-gradient-to-b [&_thead_th]:from-blue-800 [&_thead_th]:to-indigo-800 [&_thead_th]:text-white [&_thead_th]:font-bold [&_thead_th]:uppercase [&_thead_th]:tracking-wider',
           '[&_tbody_td]:bg-card [&_tbody_tr:nth-child(even)_td]:bg-slate-50 [&_tbody_tr:hover_td]:bg-muted',
