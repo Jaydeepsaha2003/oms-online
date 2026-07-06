@@ -239,10 +239,17 @@ export const MENU: MenuNode[] = [
     children: [
       {
         id: 'payment',
-        label: 'Payment',
+        label: 'Make Payment',
         to: '/account/payment',
         icon: 'HandCoins',
         permission: perm(RESOURCES.PAYMENT, ACTIONS.VIEW),
+      },
+      {
+        id: 'sales-discount',
+        label: 'Sales Discount',
+        to: '/account/discount',
+        icon: 'BadgePercent',
+        permission: perm(RESOURCES.DISCOUNT, ACTIONS.VIEW),
       },
       {
         id: 'manage-cheques',

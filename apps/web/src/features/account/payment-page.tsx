@@ -277,8 +277,8 @@ export function PaymentPage() {
           <HandCoins className="size-5" />
         </div>
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Payment</h2>
-          <p className="text-muted-foreground text-sm">Receive money from a party or an agent — openings clear first, then invoices oldest-first, the rest parks on account.</p>
+          <h2 className="text-3xl font-semibold tracking-tight">Make Payment</h2>
+          <p className="text-muted-foreground text-base">Receive money from a party or an agent — openings clear first, then invoices oldest-first, the rest parks on account.</p>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button
@@ -298,31 +298,31 @@ export function PaymentPage() {
       <div className="bg-card space-y-3 rounded-md border p-4 shadow-sm">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="space-y-1">
-            <Label className="text-xs">Receipt Date *</Label>
+            <Label className="text-sm">Receipt Date *</Label>
             <Input type="date" max={TODAY()} value={recDate} onChange={(e) => setRecDate(e.target.value)} />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Party Name</Label>
+            <Label className="text-sm">Party Name</Label>
             <NativeSelect value={party} onChange={(v) => { setParty(v); if (v) setAgent(''); setSelected([]); }} options={['', ...partyOptions]} placeholder="Select party…" disabled={!!agent} />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Agent Name</Label>
+            <Label className="text-sm">Agent Name</Label>
             <NativeSelect value={agent} onChange={(v) => { setAgent(v); if (v) setParty(''); setSelected([]); }} options={['', ...agentOptions]} placeholder="…or select agent" disabled={!!party} />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Payment Mode *</Label>
+            <Label className="text-sm">Payment Mode *</Label>
             <NativeSelect value={payMode} onChange={(v) => { setPayMode(v); setChequeNo(''); setSelected([]); }} options={['', 'BANK', 'CHEQUE', 'CASH']} placeholder="BANK / CHEQUE / CASH" />
           </div>
 
           {(payMode === 'BANK' || payMode === 'CHEQUE') && (
             <div className="space-y-1">
-              <Label className="text-xs">Bank Name *</Label>
+              <Label className="text-sm">Bank Name *</Label>
               <NativeSelect value={bankName} onChange={setBankName} options={bankOptions} placeholder="Our receiving account…" />
             </div>
           )}
           {payMode === 'CHEQUE' && (
             <div className="space-y-1">
-              <Label className="text-xs">Cheque No * <span className="text-muted-foreground">(cleared)</span></Label>
+              <Label className="text-sm">Cheque No * <span className="text-muted-foreground">(cleared)</span></Label>
               <NativeSelect
                 value={chequeNo}
                 onChange={pickCheque}
@@ -335,26 +335,26 @@ export function PaymentPage() {
           {payMode === 'CASH' && (
             <>
               <div className="space-y-1">
-                <Label className="text-xs">Cash Transfer Location *</Label>
+                <Label className="text-sm">Cash Transfer Location *</Label>
                 <Input value={cashLoc} onChange={(e) => setCashLoc(e.target.value)} className="uppercase" placeholder="e.g. SHOP" />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Cash Received By *</Label>
+                <Label className="text-sm">Cash Received By *</Label>
                 <Input value={cashBy} onChange={(e) => setCashBy(e.target.value)} className="uppercase" placeholder="Who collected" />
               </div>
             </>
           )}
 
           <div className="space-y-1">
-            <Label className="text-xs">Mode of Adj *</Label>
+            <Label className="text-sm">Mode of Adj *</Label>
             <NativeSelect value={adjMode} onChange={(v) => { setAdjMode(v); setSelected([]); }} options={['AUTOMATIC', 'ADVANCE', 'AGST REF']} />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Receipt Amount *</Label>
+            <Label className="text-sm">Receipt Amount *</Label>
             <Input value={receiptStr} onChange={(e) => setReceiptStr(e.target.value)} inputMode="decimal" placeholder="0" className="text-right text-base font-semibold tabular-nums" />
           </div>
           <div className="space-y-1 sm:col-span-2">
-            <Label className="text-xs">Remarks</Label>
+            <Label className="text-sm">Remarks</Label>
             <Input value={remarks} onChange={(e) => setRemarks(e.target.value)} className="uppercase" placeholder="Optional" />
           </div>
         </div>
@@ -363,8 +363,8 @@ export function PaymentPage() {
           <p className="rounded-md bg-slate-600 px-3 py-1.5 text-sm font-semibold text-white">Cheque note: {chequeComment}</p>
         )}
         {bankOptions.length === 0 && (payMode === 'BANK' || payMode === 'CHEQUE') && (
-          <p className="flex items-center gap-1.5 text-xs text-amber-600">
-            <Landmark className="size-3.5" /> No active bank accounts — add one under Account → Bank Accounts.
+          <p className="flex items-center gap-1.5 text-sm text-amber-600">
+            <Landmark className="size-4" /> No active bank accounts — add one under Account → Bank Accounts.
           </p>
         )}
 
@@ -377,7 +377,7 @@ export function PaymentPage() {
           <Button variant="outline" className="border-rose-200 text-rose-600 hover:bg-rose-50" onClick={clearAll}>
             <RotateCcw /> CLEAR
           </Button>
-          <div className="text-muted-foreground ml-auto flex flex-wrap gap-x-5 gap-y-1 text-sm">
+          <div className="text-muted-foreground ml-auto flex flex-wrap gap-x-5 gap-y-1 text-base">
             <span>Opening: <b className="text-foreground tabular-nums">{money(openingLabel)}</b></span>
             <span>Invoices ({bucket.toLowerCase()}): <b className="text-foreground tabular-nums">{money(invoiceOutstanding)}</b></span>
             <span>Advance available: <b className="text-foreground tabular-nums">{money(advanceAvail)}</b></span>
@@ -396,8 +396,8 @@ export function PaymentPage() {
             const tone = k === 'NORMAL' ? 'emerald' : k === 'PAST DUE' ? 'amber' : 'rose';
             return (
               <div key={k} className={cn('rounded-lg border p-3 shadow-sm transition-opacity', `border-${tone}-200 bg-${tone}-50/60`, !active && 'opacity-70')}>
-                <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">{k} DUE'S ({v.count})</p>
-                <div className="mt-1 flex gap-5 text-sm tabular-nums">
+                <p className="text-muted-foreground text-sm font-semibold tracking-wide uppercase">{k} DUE'S ({v.count})</p>
+                <div className="mt-1 flex gap-5 text-base tabular-nums">
                   <span className={cn(payMode && bucket === 'BANK' && 'font-bold')}>Bank: {money(v.bank)}</span>
                   <span className={cn(payMode && bucket === 'CASH' && 'font-bold')}>Cash: {money(v.cash)}</span>
                 </div>
@@ -410,9 +410,9 @@ export function PaymentPage() {
       {/* Pending invoices grid */}
       <div className="bg-card overflow-hidden rounded-md border shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full text-[15px]">
+          <table className="w-full text-base">
             <thead>
-              <tr className="bg-gradient-to-b from-blue-800 to-indigo-800 text-white [&_th]:px-3 [&_th]:py-2.5 [&_th]:text-left [&_th]:text-[13px] [&_th]:font-bold [&_th]:tracking-wider [&_th]:uppercase [&_th]:whitespace-nowrap">
+              <tr className="bg-gradient-to-b from-blue-800 to-indigo-800 text-white [&_th]:px-3 [&_th]:py-2.5 [&_th]:text-left [&_th]:text-sm [&_th]:font-bold [&_th]:tracking-wider [&_th]:uppercase [&_th]:whitespace-nowrap">
                 {adjMode === 'AGST REF' && <th className="w-10">Sel</th>}
                 <th>Inv Date</th>
                 <th>Inv No</th>
@@ -453,12 +453,12 @@ export function PaymentPage() {
                       <td>{r.transaction}</td>
                       <td>{prettyDate(r.dueDate)}</td>
                       <td>
-                        <span className={cn('rounded px-1.5 py-0.5 text-xs font-semibold ring-1 ring-inset', style.badge)}>{r.dueType}</span>
+                        <span className={cn('rounded px-1.5 py-0.5 text-sm font-semibold ring-1 ring-inset', style.badge)}>{r.dueType}</span>
                       </td>
                       <td className="text-right font-semibold tabular-nums">{n2(amt)}</td>
                       <td className={cn('text-right tabular-nums', adj > 0 && 'font-bold text-blue-700')}>{adj ? n2(adj) : '—'}</td>
                       <td className="text-right tabular-nums">{n2(bal)}</td>
-                      <td className={cn('text-xs font-semibold', r.dueType === 'OVERDUE' ? 'text-rose-600' : 'text-muted-foreground')}>{r.dueDays}</td>
+                      <td className={cn('text-sm font-semibold', r.dueType === 'OVERDUE' ? 'text-rose-600' : 'text-muted-foreground')}>{r.dueDays}</td>
                     </tr>
                   );
                 })

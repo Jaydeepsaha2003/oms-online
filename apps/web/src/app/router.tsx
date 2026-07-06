@@ -36,6 +36,7 @@ import { ManageChequesPage } from '@/features/account/manage-cheques-page';
 import { BankAccountsPage } from '@/features/account/bank-accounts-page';
 import { OpeningBalancePage } from '@/features/account/opening-balance-page';
 import { PaymentPage } from '@/features/account/payment-page';
+import { SalesDiscountPage } from '@/features/account/sales-discount-page';
 import { SettingsPage } from '@/features/settings/settings-page';
 import { UsersPage } from '@/features/admin/users-page';
 import { RolesPage } from '@/features/admin/roles-page';
@@ -311,6 +312,14 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.PAYMENT, ACTIONS.VIEW)}>
                 <PaymentPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/account/discount"
+            element={
+              <RequirePermission permission={perm(RESOURCES.DISCOUNT, ACTIONS.VIEW)}>
+                <SalesDiscountPage />
               </RequirePermission>
             }
           />

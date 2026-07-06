@@ -1120,3 +1120,30 @@ model AcctOpeningTrans {
   @@index([transDate])
   @@map("acct_opening_trans")
 }
+
+/// Sales discount granted against a pending invoice (legacy ACCT PARTY DISCOUNT).
+/// Reduces the invoice's BANK (b) or CASH (c) outstanding, exactly like a receipt:
+/// pending = amount − Σ(receipts) − Σ(discounts). Each save also posts a matching
+/// SALES DISCOUNT voucher (SD/<id>) to AcctLedger as a credit on the mode's bucket.
+model AcctPartyDiscount {
+  id           Int      @id @default(autoincrement())
+  disDate      DateTime
+  invNo        String
+  customerName String
+  custId       Int
+  // Snapshot of the invoice's B (BANK) or C (CASH) amount at discount time.
+  invAmt       Float    @default(0)
+  disAmt       Float
+  // BANK | CASH — which bucket this discount settles.
+  billType     String
+  // Linked ledger voucher (SD/<id>); kept so edit/delete can update/remove it.
+  voucherNo    String?
+  userName     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([invNo])
+  @@index([custId])
+  @@index([billType])
+  @@map("acct_party_discount")
+}

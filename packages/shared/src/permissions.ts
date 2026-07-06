@@ -63,6 +63,8 @@ export const RESOURCES = {
   PAYMENT: 'payment',
   /** Accounts → Opening Balance (per-customer opening bank/cash, DR/CR). */
   OPENING_BALANCE: 'openingbalance',
+  /** Accounts → Sales Discount (discount pending invoices, legacy SalesDiscount). */
+  DISCOUNT: 'discount',
   SUPPLIER: 'supplier',
   INVENTORY: 'inventory',
   PRODUCTION: 'production',
@@ -180,6 +182,12 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
   {
     resource: RESOURCES.OPENING_BALANCE,
     label: 'Opening Balance',
+    group: 'Accounts',
+    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.MANAGE],
+  },
+  {
+    resource: RESOURCES.DISCOUNT,
+    label: 'Sales Discount',
     group: 'Accounts',
     actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.MANAGE],
   },

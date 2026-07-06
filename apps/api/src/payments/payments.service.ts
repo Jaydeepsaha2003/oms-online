@@ -393,23 +393,31 @@ export class PaymentsService {
       select: { code: true, invDate: true, dueDate: true, transaction: true, customerName: true, b: true, c: true },
     });
     if (!challans.length) return [];
-    const recs = await db.acctPaymentReceipt.groupBy({
-      by: ['invNo', 'payMode'],
-      where: { invNo: { in: challans.map((c) => c.code) } },
-      _sum: { recAmt: true },
-    });
+    const codes = challans.map((c) => c.code);
+    // Pending = amount − Σ receipts − Σ discounts (Sales Discount reduces the
+    // same bank/cash bucket, so both screens reconcile).
+    const [recs, discs] = await Promise.all([
+      db.acctPaymentReceipt.groupBy({ by: ['invNo', 'payMode'], where: { invNo: { in: codes } }, _sum: { recAmt: true } }),
+      db.acctPartyDiscount.groupBy({ by: ['invNo', 'billType'], where: { invNo: { in: codes } }, _sum: { disAmt: true } }),
+    ]);
     const bankRec = new Map<string, number>();
     const cashRec = new Map<string, number>();
     for (const r of recs) {
       const m = BANK_MODES.includes(r.payMode) ? bankRec : cashRec;
       m.set(r.invNo, r2((m.get(r.invNo) ?? 0) + (r._sum.recAmt ?? 0)));
     }
+    const bankDisc = new Map<string, number>();
+    const cashDisc = new Map<string, number>();
+    for (const d of discs) {
+      const m = d.billType === 'BANK' ? bankDisc : cashDisc;
+      m.set(d.invNo, r2((m.get(d.invNo) ?? 0) + (d._sum.disAmt ?? 0)));
+    }
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const rows: PendingInvoiceRow[] = [];
     for (const c of challans) {
-      const bankBal = r2((c.b ?? 0) - (bankRec.get(c.code) ?? 0));
-      const cashBal = r2((c.c ?? 0) - (cashRec.get(c.code) ?? 0));
+      const bankBal = r2((c.b ?? 0) - (bankRec.get(c.code) ?? 0) - (bankDisc.get(c.code) ?? 0));
+      const cashBal = r2((c.c ?? 0) - (cashRec.get(c.code) ?? 0) - (cashDisc.get(c.code) ?? 0));
       if (bankBal <= EPS && cashBal <= EPS) continue;
       const dd = dueTypeOf(c.invDate, c.dueDate, today);
       rows.push({

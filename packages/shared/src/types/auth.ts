@@ -47,9 +47,33 @@ export interface JwtPayload {
   email: string;
   /** token version, bumped to invalidate all sessions of a user */
   tv: number;
+  /** session id = the refresh-token row this access token was issued with;
+   *  lets a single device be logged out remotely (guard rejects a revoked sid). */
+  sid?: string;
   iat?: number;
   exp?: number;
 }
+
+/** A device/session the user is (or was) signed in from. */
+export interface SessionDto {
+  id: string;
+  /** Login IP (normalised, ::ffff: stripped). */
+  ip: string | null;
+  /** Offline label: "This device" / "Local network" / "External network" / "Unknown". */
+  location: string;
+  /** 'mobile' | 'tablet' | 'desktop' | 'unknown'. */
+  deviceType: string;
+  /** e.g. "Chrome on Windows". */
+  deviceLabel: string;
+  browser: string;
+  os: string;
+  /** This session belongs to the request that asked (don't surprise-logout yourself). */
+  current: boolean;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export type SessionList = SessionDto[];
 
 export interface ChangePasswordDto {
   currentPassword: string;

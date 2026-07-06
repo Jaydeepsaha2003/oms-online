@@ -11,12 +11,18 @@ import type {
   ChequeSummary,
   CreateChequeInput,
   DepositChequeInput,
+  DiscountDto,
+  DiscountHistoryList,
+  DiscountInvoiceList,
+  DiscountInvoiceQuery,
   LedgerList,
   OpeningBalanceDto,
   OpeningBalanceInput,
   OpeningBalanceList,
   OpeningBalanceQuery,
   PaymentContext,
+  SaveDiscountInput,
+  SaveDiscountResult,
   SavePaymentInput,
   SavePaymentResult,
   SettleChequeInput,
@@ -221,3 +227,61 @@ export function useSavePayment() {
     onSuccess: () => qc.invalidateQueries({ queryKey: PAYMENT_KEY }),
   });
 }
+
+/* ── Sales discount ───────────────────────────────────────────────────────── */
+
+const DISCOUNT_KEY = ['discounts'] as const;
+
+/** Pending-invoice grid (bank & cash amount / discount / received / balance). */
+export function useDiscountInvoices(q: DiscountInvoiceQuery) {
+  return useQuery({
+    queryKey: [...DISCOUNT_KEY, 'invoices', q],
+    queryFn: () => http.get<DiscountInvoiceList>('/discounts/invoices', { params: q }),
+    placeholderData: (prev) => prev,
+  });
+}
+
+/** Saved discounts for one invoice (per-invoice history). */
+export function useDiscountHistory(invNo: string | null) {
+  return useQuery({
+    queryKey: [...DISCOUNT_KEY, 'history', invNo],
+    queryFn: () => http.get<DiscountHistoryList>('/discounts/history', { params: { invNo, pageSize: 100 } }),
+    enabled: !!invNo,
+    placeholderData: (prev) => prev,
+  });
+}
+
+/** After any discount change, refresh both discount + payment caches (pending shifts). */
+function useInvalidateDiscounts() {
+  const qc = useQueryClient();
+  return () => {
+    qc.invalidateQueries({ queryKey: DISCOUNT_KEY });
+    qc.invalidateQueries({ queryKey: PAYMENT_KEY });
+  };
+}
+
+export function useSaveDiscount() {
+  const invalidate = useInvalidateDiscounts();
+  return useMutation({
+    mutationFn: (input: SaveDiscountInput) => http.post<SaveDiscountResult>('/discounts', input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdateDiscount() {
+  const invalidate = useInvalidateDiscounts();
+  return useMutation({
+    mutationFn: ({ id, ...input }: { id: number } & SaveDiscountInput) => http.put<SaveDiscountResult>(`/discounts/${id}`, input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDeleteDiscount() {
+  const invalidate = useInvalidateDiscounts();
+  return useMutation({
+    mutationFn: (id: number) => http.delete<{ id: number }>(`/discounts/${id}`),
+    onSuccess: invalidate,
+  });
+}
+
+export type { DiscountDto };
