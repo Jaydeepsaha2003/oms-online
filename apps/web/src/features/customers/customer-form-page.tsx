@@ -54,6 +54,7 @@ const EMPTY = {
   payBy: '',
   tdsApplicable: false,
   tdsPercent: '',
+  active: true,
 };
 type FormState = typeof EMPTY;
 
@@ -109,6 +110,7 @@ export function CustomerFormPage() {
       payBy: existing.payBy ?? '',
       tdsApplicable: existing.tdsApplicable ?? false,
       tdsPercent: existing.tdsPercent?.toString() ?? '',
+      active: existing.active ?? true,
     };
     setForm(loaded);
     setBaseline(loaded);
@@ -193,6 +195,7 @@ export function CustomerFormPage() {
       payBy: form.payBy || null,
       tdsApplicable: form.tdsApplicable,
       tdsPercent: form.tdsApplicable ? numOrNull(form.tdsPercent) : null,
+      active: form.active,
     };
 
     const opts = {
@@ -385,6 +388,15 @@ export function CustomerFormPage() {
                 }
               />
               <span className="text-muted-foreground text-sm">{form.tdsApplicable ? 'Yes' : 'No'}</span>
+            </div>
+          </Field>
+          <Field label="Party Status">
+            <div className="flex h-9 items-center gap-2">
+              <Switch checked={form.active} onCheckedChange={(v) => setForm((f) => ({ ...f, active: v }))} />
+              <span className={form.active ? 'text-sm font-semibold text-emerald-600' : 'text-sm font-semibold text-rose-600'}>
+                {form.active ? 'ACTIVE' : 'INACTIVE'}
+              </span>
+              {!form.active && <span className="text-muted-foreground text-xs">— hidden from all pickers</span>}
             </div>
           </Field>
           {form.tdsApplicable && (

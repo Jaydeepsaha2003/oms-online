@@ -297,7 +297,7 @@ export class OrdersService {
   async lookups(): Promise<OrderLookups> {
     const [customers, prodCats, subCats, products, designs, allProducts, designNames] = await Promise.all([
       this.prisma.customer.findMany({
-        where: { partyName: { not: null } },
+        where: { partyName: { not: null }, active: true },
         select: { id: true, partyName: true, agentName: true, category: true },
         orderBy: { partyName: 'asc' },
       }),

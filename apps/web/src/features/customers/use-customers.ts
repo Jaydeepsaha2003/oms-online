@@ -104,6 +104,7 @@ export function useImportCustomers() {
 export function exportCustomers(query: CustomerQuery) {
   const params = new URLSearchParams();
   if (query.search) params.set('search', query.search);
+  if (query.status) params.set('status', query.status);
   if (query.sortBy) params.set('sortBy', query.sortBy);
   if (query.sortOrder) params.set('sortOrder', query.sortOrder);
   const qs = params.toString();

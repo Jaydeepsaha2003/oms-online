@@ -223,6 +223,9 @@ model Customer {
   // TDS: whether tax is deducted at source for this customer, and at what %.
   tdsApplicable Boolean  @default(false)
   tdsPercent    Float?
+  // Active parties show in every picker; inactive ones are hidden from dropdowns
+  // (but kept for history + visible on the Customers master via a status filter).
+  active        Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

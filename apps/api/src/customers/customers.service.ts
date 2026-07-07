@@ -291,7 +291,12 @@ export class CustomersService {
 
   private buildWhere(query: CustomerQueryDto): Prisma.CustomerWhereInput {
     const search = query.search?.trim();
+    // Default (no status) = active-only, so every picker that hits /customers shows
+    // only active parties. The Customers master passes ALL / INACTIVE explicitly.
+    const status = (query.status ?? 'ACTIVE').toUpperCase();
+    const activeFilter = status === 'ALL' ? {} : { active: status !== 'INACTIVE' };
     return {
+      ...activeFilter,
       ...(query.agentName ? { agentName: query.agentName } : {}),
       ...(query.category ? { category: query.category } : {}),
       ...(search
@@ -378,6 +383,8 @@ export class CustomersService {
       payBy: uc(dto.payBy),
       tdsApplicable: dto.tdsApplicable ?? false,
       tdsPercent: dto.tdsApplicable ? (dto.tdsPercent ?? null) : null,
+      // Pass-through: undefined ⇒ Prisma default (true) on create, unchanged on update.
+      active: dto.active,
     };
   }
 
@@ -445,6 +452,7 @@ export class CustomersService {
       payBy: r.payBy,
       tdsApplicable: r.tdsApplicable,
       tdsPercent: r.tdsPercent,
+      active: r.active,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     };

@@ -76,7 +76,7 @@ async function seedAdmin() {
 
   const user = await prisma.user.upsert({
     where: { email },
-    update: { name, ...(pinHash ? { pinHash } : {}) },
+    update: { name, passwordHash, ...(pinHash ? { pinHash } : {}) },
     create: { email, name, passwordHash, status: 'active', ...(pinHash ? { pinHash } : {}) },
   });
 

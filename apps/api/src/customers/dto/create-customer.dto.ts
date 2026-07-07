@@ -128,4 +128,9 @@ export class CreateCustomerDto {
   @Type(() => Number)
   @IsNumber()
   tdsPercent?: number;
+
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  active?: boolean;
 }

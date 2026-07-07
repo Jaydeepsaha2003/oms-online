@@ -337,7 +337,7 @@ export class CrmService {
   async partySuggest(qStr?: string): Promise<{ id: number | null; partyName: string }[]> {
     const s = qStr?.trim();
     const customers = await this.prisma.customer.findMany({
-      where: { partyName: { not: null }, ...(s ? { partyName: { contains: s } } : {}) },
+      where: { partyName: { not: null }, active: true, ...(s ? { partyName: { contains: s } } : {}) },
       select: { id: true, partyName: true },
       orderBy: { partyName: 'asc' },
       take: 30,
@@ -353,7 +353,7 @@ export class CrmService {
     const s = qStr?.trim();
     if (!s) return [];
     const customers = await this.prisma.customer.findMany({
-      where: { partyName: { not: null } },
+      where: { partyName: { not: null }, active: true },
       select: { id: true, partyName: true },
     });
     return customers

@@ -112,7 +112,7 @@ export class TransRatesService {
   async lookups(): Promise<TransRateLookups> {
     const [customers, prodCats, trCats, types, transporters] = await Promise.all([
       this.prisma.customer.findMany({
-        where: { partyName: { not: null } },
+        where: { partyName: { not: null }, active: true },
         select: { partyName: true },
         distinct: ['partyName'],
         orderBy: { partyName: 'asc' },
@@ -179,7 +179,7 @@ export class TransRatesService {
   async templateRows(): Promise<Record<string, unknown>[]> {
     const [customers, prodCats, typeRows, existing] = await Promise.all([
       this.prisma.customer.findMany({
-        where: { partyName: { not: null } },
+        where: { partyName: { not: null }, active: true },
         select: { partyName: true },
         distinct: ['partyName'],
         orderBy: { partyName: 'asc' },

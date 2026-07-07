@@ -42,6 +42,8 @@ export interface CustomerDto {
   /** Whether TDS is deducted at source for this customer, and at what %. */
   tdsApplicable: boolean;
   tdsPercent: number | null;
+  /** Active parties appear in every picker; inactive ones are hidden from dropdowns. */
+  active: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -69,12 +71,18 @@ export interface CustomerInput {
   payBy?: string | null;
   tdsApplicable?: boolean;
   tdsPercent?: number | null;
+  active?: boolean;
 }
+
+export const CUSTOMER_STATUSES = ['ACTIVE', 'INACTIVE', 'ALL'] as const;
+export type CustomerStatus = (typeof CUSTOMER_STATUSES)[number];
 
 export interface CustomerQuery extends PaginationQuery {
   // search/sort handled by PaginationQuery
   agentName?: string;
   category?: string;
+  /** ACTIVE (default when omitted) | INACTIVE | ALL. Pickers omit it → active-only. */
+  status?: string;
 }
 
 export type CustomerList = Paginated<CustomerDto>;

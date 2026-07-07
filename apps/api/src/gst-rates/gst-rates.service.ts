@@ -77,7 +77,7 @@ export class GstRatesService {
   async lookups(): Promise<GstRateLookups> {
     const [customers, prodCats, gstCats] = await Promise.all([
       this.prisma.customer.findMany({
-        where: { partyName: { not: null } },
+        where: { partyName: { not: null }, active: true },
         select: { partyName: true },
         distinct: ['partyName'],
         orderBy: { partyName: 'asc' },
@@ -129,7 +129,7 @@ export class GstRatesService {
   async templateRows(): Promise<Record<string, unknown>[]> {
     const [customers, prodCats, existing] = await Promise.all([
       this.prisma.customer.findMany({
-        where: { partyName: { not: null } },
+        where: { partyName: { not: null }, active: true },
         select: { partyName: true },
         distinct: ['partyName'],
         orderBy: { partyName: 'asc' },

@@ -122,7 +122,7 @@ export class ChallansService {
   async allCustomerNames(search?: string): Promise<string[]> {
     const s = search?.trim();
     const rows = await this.prisma.customer.findMany({
-      where: { partyName: { not: null }, ...(s ? { partyName: { contains: s } } : {}) },
+      where: { partyName: { not: null }, active: true, ...(s ? { partyName: { contains: s } } : {}) },
       select: { partyName: true },
       orderBy: { partyName: 'asc' },
       take: 2000,

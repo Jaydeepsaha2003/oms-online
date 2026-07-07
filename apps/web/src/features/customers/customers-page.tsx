@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { CustomerDto } from '@oms/shared';
+import type { CustomerDto, CustomerStatus } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { parseExcelFile } from '@/lib/excel';
 import { cn } from '@/lib/utils';
@@ -31,6 +31,20 @@ const txt = (s: string | null) => (s && s.trim() !== '' ? s : '—');
  * are frozen to the left so identity stays visible while scrolling the wide row. */
 const COLUMNS: DataColumn<CustomerDto>[] = [
   { id: 'name', label: 'Customer name', pin: 'left0', fixed: true, cell: (c) => <span className="font-semibold">{txt(c.partyName)}</span> },
+  {
+    id: 'status',
+    label: 'Status',
+    cell: (c) =>
+      c.active ? (
+        <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-600/20">
+          Active
+        </span>
+      ) : (
+        <span className="inline-flex items-center rounded-full bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700 ring-1 ring-rose-600/20">
+          Inactive
+        </span>
+      ),
+  },
   { id: 'agent', label: 'Agent', cell: (c) => txt(c.agentName) },
   { id: 'category', label: 'Category', cell: (c) => txt(c.category) },
   { id: 'city', label: 'City', cell: (c) => txt(c.city) },
@@ -59,6 +73,7 @@ export function CustomersPage() {
 
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
+  const [status, setStatus] = useState<CustomerStatus>('ALL');
   const [page, setPage] = useState(1);
 
   // Debounce the search box.
@@ -70,7 +85,7 @@ export function CustomersPage() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  const query = { page, pageSize: PAGE_SIZE, search: search || undefined };
+  const query = { page, pageSize: PAGE_SIZE, search: search || undefined, status };
   const { data, isLoading, isFetching } = useCustomers(query);
   const del = useDeleteCustomer();
   const importMut = useImportCustomers();
@@ -137,14 +152,36 @@ export function CustomersPage() {
         </div>
       </div>
 
-      <div className="relative max-w-sm">
-        <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
-        <Input
-          placeholder="Search name, agent, city, mobile, email…"
-          className="pl-9"
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
-        />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="relative w-full max-w-sm">
+          <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
+          <Input
+            placeholder="Search name, agent, city, mobile, email…"
+            className="pl-9"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+          />
+        </div>
+        <div className="bg-muted inline-flex items-center gap-0.5 rounded-md p-0.5">
+          {(['ALL', 'ACTIVE', 'INACTIVE'] as const).map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => {
+                setStatus(s);
+                setPage(1);
+              }}
+              className={cn(
+                'rounded px-3 py-1 text-xs font-semibold capitalize transition-colors',
+                status === s
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {s.toLowerCase()}
+            </button>
+          ))}
+        </div>
       </div>
 
       <DataTable
