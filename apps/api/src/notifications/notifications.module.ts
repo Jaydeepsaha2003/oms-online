@@ -8,5 +8,6 @@ import { PushService } from './push.service';
   imports: [JwtModule.register({})],
   controllers: [NotificationsController],
   providers: [NotificationsGateway, PushService],
+  exports: [NotificationsGateway, PushService],
 })
 export class NotificationsModule {}

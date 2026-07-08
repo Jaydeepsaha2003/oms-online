@@ -35,13 +35,19 @@ export class PushService {
    * Returns how many sends were attempted.
    */
   async broadcastPush(payload: TestNotificationPayload): Promise<number> {
+    return this.sendToAll(
+      JSON.stringify({ title: 'OMS test notification', body: `Triggered by ${payload.triggeredBy}` }),
+    );
+  }
+
+  /** Same delivery mechanism as broadcastPush, for any feature that needs its own title/body/data. */
+  async broadcastGeneric(notification: { title: string; body: string; data?: Record<string, unknown> }): Promise<number> {
+    return this.sendToAll(JSON.stringify(notification));
+  }
+
+  private async sendToAll(body: string): Promise<number> {
     this.ensureVapidConfigured();
     const subscriptions = await this.prisma.pushSubscription.findMany();
-
-    const body = JSON.stringify({
-      title: 'OMS test notification',
-      body: `Triggered by ${payload.triggeredBy}`,
-    });
 
     await Promise.all(
       subscriptions.map(async (sub) => {

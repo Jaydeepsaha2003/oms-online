@@ -58,4 +58,10 @@ export class NotificationsGateway implements OnGatewayConnection {
     this.server.emit('test-notification', payload);
     return this.server.sockets.sockets.size;
   }
+
+  /** Generic broadcast for features beyond the test button (e.g. CRM followup reminders). */
+  broadcast(notification: { title: string; body: string; data?: Record<string, unknown> }): number {
+    this.server.emit('notification', notification);
+    return this.server.sockets.sockets.size;
+  }
 }
