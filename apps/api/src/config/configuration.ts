@@ -8,6 +8,12 @@ export interface JwtConfig {
   refreshCookieName: string;
 }
 
+export interface VapidConfig {
+  publicKey: string;
+  privateKey: string;
+  subject: string;
+}
+
 export interface AppConfig {
   env: string;
   isProduction: boolean;
@@ -15,6 +21,7 @@ export interface AppConfig {
   apiPrefix: string;
   corsOrigins: string[];
   jwt: JwtConfig;
+  vapid: VapidConfig;
 }
 
 export const configuration = (): AppConfig => {
@@ -34,6 +41,11 @@ export const configuration = (): AppConfig => {
       refreshSecret: process.env.JWT_REFRESH_SECRET ?? 'dev-refresh-secret-change-me',
       refreshTtl: process.env.JWT_REFRESH_TTL ?? '7d',
       refreshCookieName: process.env.REFRESH_COOKIE_NAME ?? 'oms_rt',
+    },
+    vapid: {
+      publicKey: process.env.VAPID_PUBLIC_KEY ?? '',
+      privateKey: process.env.VAPID_PRIVATE_KEY ?? '',
+      subject: process.env.VAPID_SUBJECT ?? 'mailto:admin@oms.local',
     },
   };
 };

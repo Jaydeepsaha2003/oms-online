@@ -34,9 +34,10 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  roles         UserRole[]
-  refreshTokens RefreshToken[]
-  auditLogs     AuditLog[]
+  roles             UserRole[]
+  refreshTokens     RefreshToken[]
+  pushSubscriptions PushSubscription[]
+  auditLogs         AuditLog[]
 
   @@index([status])
   @@map("users")
@@ -117,6 +118,23 @@ model RefreshToken {
 
   @@index([userId])
   @@map("refresh_tokens")
+}
+
+// One row per device's Web Push subscription — lets a broadcast reach a
+// device even when the app is fully closed.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("push_subscriptions")
 }
 
 // ── Audit trail: who did what, when, from where ─────────────────────────────
