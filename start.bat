@@ -7,11 +7,18 @@ REM  load fast on phones/other devices over the LAN, not just
 REM  on this PC. For active coding with fast edit+refresh, use
 REM  dev.bat instead.
 REM
-REM  On launch it auto-syncs so new code "just works":
+REM  Skips the sync/build below entirely if nothing under
+REM  apps/*/src, packages/shared/src, prisma/schema.prisma, or any
+REM  package.json has changed since the last build - most day-to-day
+REM  starts finish in ~2 seconds instead of ~20-30. Any real change
+REM  (or a fresh git pull) is detected automatically and triggers the
+REM  full sync below, so you never run stale code.
+REM
+REM  On launch (when needed) it auto-syncs so new code "just works":
 REM    [1] npm install            (new / changed packages)
 REM    [2] prisma migrate deploy  (apply tracked DB migrations)
-REM    [3] prisma db push         (sync schema / new tables made via db push)
-REM    [4] prisma generate        (refresh the Prisma client)
+REM    [3] prisma db seed         (roles, permissions, admin user)
+REM    [4] prisma db push         (sync schema - also refreshes the Prisma client)
 REM    [5] npm run build          (build shared -> api -> web, bundled+minified)
 REM ============================================================
 cd /d "%~dp0"
@@ -32,7 +39,18 @@ if not errorlevel 1 (
     exit /b
 )
 
-echo [1/6] Syncing dependencies (npm install)...
+REM Fast path: skip the sync/build entirely if nothing has changed since the
+REM last build (compares the newest source file's timestamp against the
+REM existing build outputs' timestamps).
+powershell -NoProfile -Command "$srcPaths=@('apps\api\src','apps\web\src','packages\shared\src','apps\api\prisma\schema.prisma','package.json','apps\api\package.json','apps\web\package.json','packages\shared\package.json'); $newestSrc=$null; foreach($p in $srcPaths){ if(Test-Path $p){ $items=Get-ChildItem -Path $p -Recurse -File -EA SilentlyContinue; if(-not $items){ $items=Get-Item $p -EA SilentlyContinue }; foreach($i in $items){ if(-not $newestSrc -or $i.LastWriteTime -gt $newestSrc){ $newestSrc=$i.LastWriteTime } } } }; $markers=@('packages\shared\dist\esm\index.js','apps\api\dist\src\main.js','apps\web\dist\index.html'); $allExist=$true; $oldestMarker=$null; foreach($m in $markers){ if(-not (Test-Path $m)){ $allExist=$false; break }; $mt=(Get-Item $m).LastWriteTime; if(-not $oldestMarker -or $mt -lt $oldestMarker){ $oldestMarker=$mt } }; if($allExist -and $newestSrc -and $oldestMarker -gt $newestSrc){ exit 0 } else { exit 1 }"
+if not errorlevel 1 (
+    echo Nothing has changed since the last build - skipping sync/build.
+    echo ^(Want to force a full sync anyway? Use restart.bat, or delete the dist folders.^)
+    echo.
+    goto launch
+)
+
+echo [1/5] Syncing dependencies (npm install)...
 call npm install --no-audit --no-fund
 if errorlevel 1 (
     echo.
@@ -43,29 +61,25 @@ if errorlevel 1 (
 )
 
 echo.
-echo [2/6] Applying tracked migrations (prisma migrate deploy)...
+echo [2/5] Applying tracked migrations (prisma migrate deploy)...
 call npm run db:deploy
 if errorlevel 1 echo    [warning] Migration step reported an error - check the output above.
 
 echo.
-echo [3/6] Seeding database (roles, permissions, admin user)...
+echo [3/5] Seeding database (roles, permissions, admin user)...
 call npm run db:seed -w @oms/api
 if errorlevel 1 echo    [warning] Seed step reported an error - check the output above.
 
 echo.
-echo [4/6] Syncing the schema / new tables (prisma db push)...
+echo [4/5] Syncing the schema / new tables (prisma db push)...
 REM Pipe "n" so a (rare) data-loss prompt is auto-declined instead of hanging
 REM the script; additive changes (new tables/columns) apply without any prompt.
+REM db push also refreshes the Prisma client itself - no separate generate step needed.
 echo n | call npm run db:push
 if errorlevel 1 echo    [warning] Schema sync reported an error - check the output above.
 
 echo.
-echo [5/6] Refreshing the Prisma client (prisma generate)...
-call npm run db:generate
-if errorlevel 1 echo    [warning] Prisma generate reported an error - check the output above.
-
-echo.
-echo [6/6] Building production bundles (npm run build)...
+echo [5/5] Building production bundles (npm run build)...
 call npm run build
 if errorlevel 1 (
     echo.
@@ -79,6 +93,7 @@ echo.
 echo Build complete - launching servers.
 echo.
 
+:launch
 REM Detect this PC's LAN IPv4 (active adapter with a default gateway) via a temp file.
 set "LANIP="
 set "_ipf=%TEMP%\_oms_lanip.txt"
