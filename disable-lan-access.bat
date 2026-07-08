@@ -14,9 +14,10 @@ if not "%errorlevel%"=="0" (
 
 echo Removing OMS firewall rules...
 netsh advfirewall firewall delete rule name="OMS Web 6173" >nul 2>&1
+netsh advfirewall firewall delete rule name="OMS Web 4173" >nul 2>&1
 netsh advfirewall firewall delete rule name="OMS API 4000" >nul 2>&1
 
 echo.
-echo Done. Inbound access on ports 4000/6173 is closed again.
+echo Done. Inbound access on ports 4000/4173/6173 is closed again.
 echo.
 pause

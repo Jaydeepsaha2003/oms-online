@@ -1,26 +1,29 @@
 @echo off
 REM ============================================================
-REM  OMS - STOP development servers
-REM  Double-click this file to stop everything started by start.bat.
+REM  OMS - STOP servers
+REM  Double-click this file to stop everything started by start.bat
+REM  (or dev.bat, which manages its own console window).
 REM ============================================================
 cd /d "%~dp0"
 
 echo ============================================================
-echo   Stopping OMS development servers...
+echo   Stopping OMS servers...
 echo ============================================================
 echo.
 
-REM 1) Kill the "OMS Dev Server" window and its whole child tree
+REM 1) Kill the "OMS Server" window and its whole child tree
 REM    (npm, concurrently, NestJS, Vite and the tsc watchers).
-taskkill /FI "WINDOWTITLE eq OMS Dev Server*" /T /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq OMS Server*" /T /F >nul 2>&1
 if "%errorlevel%"=="0" (
-    echo - Closed the "OMS Dev Server" window and its processes.
+    echo - Closed the "OMS Server" window and its processes.
 ) else (
-    echo - No "OMS Dev Server" window was open.
+    echo - No "OMS Server" window was open.
 )
 
-REM 2) Fallback: free the dev ports in case anything is still bound.
+REM 2) Fallback: free the ports in case anything is still bound
+REM    (4173 = production web, 6173 = dev.bat's Vite dev server).
 call :freeport 4000 API
+call :freeport 4173 Web
 call :freeport 6173 Web
 
 REM 3) Final sweep: stop any leftover node/tsc processes that were
