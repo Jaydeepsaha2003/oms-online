@@ -10,12 +10,17 @@
  * (spawned PowerShell — read-only on the file), then imported in-process with the
  * shared PrismaService (no second DB connection, so no SQLite lock contention).
  */
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { spawn } from 'child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { ACCESS_IMPORT_FILE_PATH, APP_CONFIG_FILE_PATH_KEY, ensureAccessImportDir } from './access-import.constants';
+import {
+  ACCESS_IMPORT_FILE_PATH,
+  APP_CONFIG_FILE_PATH_KEY,
+  APP_CONFIG_LAST_SYNC_KEY,
+  ensureAccessImportDir,
+} from './access-import.constants';
 import { PrismaService } from '../prisma/prisma.service';
 
 const TABLES = [
@@ -91,8 +96,34 @@ const dt = (v: unknown): Date | null => {
 };
 
 @Injectable()
-export class AccessImportService {
+export class AccessImportService implements OnApplicationBootstrap {
+  private readonly logger = new Logger(AccessImportService.name);
+
   constructor(private readonly prisma: PrismaService) {}
+
+  /** Fires once the app has finished initializing. Never awaited from here on
+   *  purpose — a large Access file must never delay the server actually
+   *  starting to listen for requests. */
+  onApplicationBootstrap(): void {
+    this.runStartupSync().catch((err) => this.logger.warn(`Startup Access sync failed: ${(err as Error).message}`));
+  }
+
+  private async runStartupSync(): Promise<void> {
+    if (process.platform !== 'win32') return;
+    const row = await this.prisma.appConfig.findUnique({ where: { key: APP_CONFIG_FILE_PATH_KEY } });
+    if (!row?.value || !existsSync(row.value)) return;
+
+    this.logger.log(`Running startup Access sync from ${row.value}`);
+    const buffer = readFileSync(row.value);
+    const file = { buffer, originalname: 'source.accdb' } as Express.Multer.File;
+    const result = await this.run(file, [], false);
+    await this.prisma.appConfig.upsert({
+      where: { key: APP_CONFIG_LAST_SYNC_KEY },
+      create: { key: APP_CONFIG_LAST_SYNC_KEY, value: JSON.stringify({ at: new Date().toISOString(), results: result.results }) },
+      update: { value: JSON.stringify({ at: new Date().toISOString(), results: result.results }) },
+    });
+    this.logger.log(`Startup Access sync complete: ${JSON.stringify(result.results)}`);
+  }
 
   status() {
     return { supported: process.platform === 'win32', platform: process.platform };
