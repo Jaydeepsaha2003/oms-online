@@ -51,11 +51,17 @@ export class PushService {
             body,
           );
         } catch (err) {
-          const statusCode = (err as { statusCode?: number }).statusCode;
+          const webPushErr = err as { statusCode?: number; body?: string; headers?: Record<string, string> };
+          const statusCode = webPushErr.statusCode;
           if (statusCode === 404 || statusCode === 410) {
             await this.prisma.pushSubscription.delete({ where: { id: sub.id } }).catch(() => {});
           } else {
-            this.logger.warn(`Push send failed for subscription ${sub.id}: ${(err as Error).message}`);
+            // DIAGNOSTIC: web-push's own .message is just "Received unexpected response
+            // code" with no detail — the real reason is in .statusCode/.body/.headers.
+            this.logger.warn(
+              `Push send failed for subscription ${sub.id} (endpoint: ${sub.endpoint.slice(0, 60)}...): ` +
+                `statusCode=${statusCode} body=${webPushErr.body} headers=${JSON.stringify(webPushErr.headers)}`,
+            );
           }
         }
       }),
