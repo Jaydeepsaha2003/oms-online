@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { armAudioUnlock } from '@/lib/chime';
+import { connectNotificationsSocket } from '@/lib/notifications-socket';
 import { usePermissions } from '@/hooks/use-permissions';
 import { FollowupNudge } from '@/features/crm/followup-nudge';
 import { Sidebar } from './sidebar';
@@ -43,8 +44,12 @@ export function AppShell() {
   const panelRef = useRef<HTMLDivElement>(null);
   const { can } = usePermissions();
 
-  // Unlock the reminder chime on the first interaction (autoplay policy).
-  useEffect(() => armAudioUnlock(), []);
+  // Unlock the reminder chime on the first interaction (autoplay policy), and
+  // open the live connection used for broadcast test notifications.
+  useEffect(() => {
+    armAudioUnlock();
+    connectNotificationsSocket();
+  }, []);
   const canViewCrm = can('crm:view');
   const isPinned = pinned && canPin;
   const expanded = isPinned || hovered;

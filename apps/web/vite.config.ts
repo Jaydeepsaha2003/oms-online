@@ -12,6 +12,13 @@ const apiProxy = {
     target: 'http://localhost:4000',
     changeOrigin: true,
   },
+  // Test-notification WebSocket (Socket.IO's default path) — same single-origin
+  // reasoning as /api above, extended with `ws: true` for the upgrade.
+  '/socket.io': {
+    target: 'http://localhost:4000',
+    changeOrigin: true,
+    ws: true,
+  },
 };
 
 // https://vitejs.dev/config/

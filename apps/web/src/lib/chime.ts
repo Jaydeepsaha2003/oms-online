@@ -134,6 +134,29 @@ export function playChime(): void {
   }
 }
 
+/**
+ * A short, gentle "test notification" chime — a soft ascending triad, clearly
+ * distinct from the urgent multi-phase playChime() used for CRM reminders.
+ * Always plays (alongside the native OS notification sound where permission
+ * was granted), so there's an audible cue even on platforms/browsers that
+ * stay silent for web Notifications.
+ */
+export function playTestChime(): void {
+  const c = ensureCtx();
+  if (!c) return;
+  if (c.state === 'suspended') c.resume().catch(() => {});
+
+  try {
+    const now = c.currentTime;
+    const notes = [660, 880, 1108]; // E5, A5, C#6 — soft ascending triad
+    notes.forEach((freq, i) => {
+      tone(c, freq, now + i * 0.14, 0.28, 0.35, 'sine');
+    });
+  } catch {
+    /* audio unavailable — ignore */
+  }
+}
+
 /** Best-effort haptic buzz on devices that support the Vibration API. */
 export function buzz(pattern: number | number[] = [80, 50, 80, 50, 120]): void {
   try {
