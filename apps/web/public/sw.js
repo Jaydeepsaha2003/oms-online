@@ -1,7 +1,7 @@
 /* OMS service worker — makes the app installable and adds a light offline layer.
  * Strategy: network-first with cache fallback for same-origin GET static assets
  * and navigations. NEVER caches /api (live data) or the Vite dev internals. */
-const CACHE = 'oms-v1';
+const CACHE = 'oms-v2';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -15,6 +15,10 @@ self.addEventListener('activate', (event) => {
 });
 
 const NEVER_CACHE = [/^\/api\//, /\/@vite/, /\/@react-refresh/, /\/node_modules\//, /^\/src\//, /hot-update/];
+// Vite's build output is content-hashed (a new build always gets new
+// filenames), so these are safe to serve straight from cache forever —
+// no need to hit the network first on every single app open.
+const IMMUTABLE = [/^\/assets\//];
 
 self.addEventListener('fetch', (event) => {
   const req = event.request;
@@ -22,6 +26,22 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
   if (NEVER_CACHE.some((re) => re.test(url.pathname))) return;
+
+  if (IMMUTABLE.some((re) => re.test(url.pathname))) {
+    event.respondWith(
+      caches.match(req).then((hit) => {
+        if (hit) return hit;
+        return fetch(req).then((res) => {
+          if (res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+          }
+          return res;
+        });
+      }),
+    );
+    return;
+  }
 
   event.respondWith(
     fetch(req)

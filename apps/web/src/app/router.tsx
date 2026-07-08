@@ -1,53 +1,62 @@
+import { lazy, Suspense } from 'react';
 import { Route, Routes } from 'react-router-dom';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { ProtectedRoute } from '@/components/auth/protected-route';
 import { RequirePermission } from '@/components/auth/require-permission';
 import { AppShell } from '@/components/layout/app-shell';
-import { LoginPage } from '@/features/auth/login-page';
-import { DashboardPage } from '@/features/dashboard/dashboard-page';
-import { CustomersPage } from '@/features/customers/customers-page';
-import { CustomerFormPage } from '@/features/customers/customer-form-page';
-import { RateListPage } from '@/features/customers/rate-list-page';
-import { TransportersPage } from '@/features/transporters/transporters-page';
-import { AgentsPage } from '@/features/agents/agents-page';
-import { GstRatesPage } from '@/features/gst-rates/gst-rates-page';
-import { TransRatesPage } from '@/features/trans-rates/trans-rates-page';
-import { ProductsPage } from '@/features/products/products-page';
-import { DesignsPage } from '@/features/designs/designs-page';
-import { DesignNamesPage } from '@/features/design-names/design-names-page';
-import { OrdersPage } from '@/features/orders/orders-page';
-import { OrderFormPage } from '@/features/orders/order-form-page';
-import { OrderModifyPage } from '@/features/orders/order-modify-page';
-import { OrderBillPage } from '@/features/orders/order-bill-page';
-import { BookingsPage } from '@/features/bookings/bookings-page';
-import { BookingFormPage } from '@/features/bookings/booking-form-page';
-import { BookingConvertPage } from '@/features/bookings/booking-convert-page';
-import { PriceHistoryPage } from '@/features/bookings/price-history-page';
-import { QuotationsPage } from '@/features/quotations/quotations-page';
-import { DispatchOrderPage } from '@/features/dispatch/dispatch-order-page';
-import { ModifyDispatchPage } from '@/features/dispatch/modify-dispatch-page';
-import { SpecialRatesPage } from '@/features/special-rates/special-rates-page';
-import { PendingChallanPage } from '@/features/challans/pending-challan-page';
-import { ChallanFormPage } from '@/features/challans/challan-form-page';
-import { ChallansListPage } from '@/features/challans/challans-list-page';
-import { ChallanItemsPage } from '@/features/challans/challan-items-page';
-import { FollowupsPage, PaymentsFollowupsPage } from '@/features/crm/followups-page';
-import { ManageChequesPage } from '@/features/account/manage-cheques-page';
-import { BankAccountsPage } from '@/features/account/bank-accounts-page';
-import { OpeningBalancePage } from '@/features/account/opening-balance-page';
-import { PaymentPage } from '@/features/account/payment-page';
-import { SalesDiscountPage } from '@/features/account/sales-discount-page';
-import { NotesPage } from '@/features/account/notes-page';
-import { PartyLedgerPage } from '@/features/account/party-ledger-page';
-import { SettingsPage } from '@/features/settings/settings-page';
-import { UsersPage } from '@/features/admin/users-page';
-import { RolesPage } from '@/features/admin/roles-page';
-import { ForbiddenPage } from '@/features/errors/forbidden-page';
-import { NotFoundPage } from '@/features/errors/not-found-page';
+import { FullScreenLoader } from '@/components/common/full-screen-loader';
+
+// Every screen loads on demand instead of all being bundled into one giant
+// upfront chunk — first paint only pulls in the page you're actually on
+// (e.g. jspdf/xlsx/recharts only load with the pages that use them), so the
+// PWA opens fast even on a slow phone connection.
+const LoginPage = lazy(() => import('@/features/auth/login-page').then((m) => ({ default: m.LoginPage })));
+const DashboardPage = lazy(() => import('@/features/dashboard/dashboard-page').then((m) => ({ default: m.DashboardPage })));
+const CustomersPage = lazy(() => import('@/features/customers/customers-page').then((m) => ({ default: m.CustomersPage })));
+const CustomerFormPage = lazy(() => import('@/features/customers/customer-form-page').then((m) => ({ default: m.CustomerFormPage })));
+const RateListPage = lazy(() => import('@/features/customers/rate-list-page').then((m) => ({ default: m.RateListPage })));
+const TransportersPage = lazy(() => import('@/features/transporters/transporters-page').then((m) => ({ default: m.TransportersPage })));
+const AgentsPage = lazy(() => import('@/features/agents/agents-page').then((m) => ({ default: m.AgentsPage })));
+const GstRatesPage = lazy(() => import('@/features/gst-rates/gst-rates-page').then((m) => ({ default: m.GstRatesPage })));
+const TransRatesPage = lazy(() => import('@/features/trans-rates/trans-rates-page').then((m) => ({ default: m.TransRatesPage })));
+const ProductsPage = lazy(() => import('@/features/products/products-page').then((m) => ({ default: m.ProductsPage })));
+const DesignsPage = lazy(() => import('@/features/designs/designs-page').then((m) => ({ default: m.DesignsPage })));
+const DesignNamesPage = lazy(() => import('@/features/design-names/design-names-page').then((m) => ({ default: m.DesignNamesPage })));
+const OrdersPage = lazy(() => import('@/features/orders/orders-page').then((m) => ({ default: m.OrdersPage })));
+const OrderFormPage = lazy(() => import('@/features/orders/order-form-page').then((m) => ({ default: m.OrderFormPage })));
+const OrderModifyPage = lazy(() => import('@/features/orders/order-modify-page').then((m) => ({ default: m.OrderModifyPage })));
+const OrderBillPage = lazy(() => import('@/features/orders/order-bill-page').then((m) => ({ default: m.OrderBillPage })));
+const BookingsPage = lazy(() => import('@/features/bookings/bookings-page').then((m) => ({ default: m.BookingsPage })));
+const BookingFormPage = lazy(() => import('@/features/bookings/booking-form-page').then((m) => ({ default: m.BookingFormPage })));
+const BookingConvertPage = lazy(() => import('@/features/bookings/booking-convert-page').then((m) => ({ default: m.BookingConvertPage })));
+const PriceHistoryPage = lazy(() => import('@/features/bookings/price-history-page').then((m) => ({ default: m.PriceHistoryPage })));
+const QuotationsPage = lazy(() => import('@/features/quotations/quotations-page').then((m) => ({ default: m.QuotationsPage })));
+const DispatchOrderPage = lazy(() => import('@/features/dispatch/dispatch-order-page').then((m) => ({ default: m.DispatchOrderPage })));
+const ModifyDispatchPage = lazy(() => import('@/features/dispatch/modify-dispatch-page').then((m) => ({ default: m.ModifyDispatchPage })));
+const SpecialRatesPage = lazy(() => import('@/features/special-rates/special-rates-page').then((m) => ({ default: m.SpecialRatesPage })));
+const PendingChallanPage = lazy(() => import('@/features/challans/pending-challan-page').then((m) => ({ default: m.PendingChallanPage })));
+const ChallanFormPage = lazy(() => import('@/features/challans/challan-form-page').then((m) => ({ default: m.ChallanFormPage })));
+const ChallansListPage = lazy(() => import('@/features/challans/challans-list-page').then((m) => ({ default: m.ChallansListPage })));
+const ChallanItemsPage = lazy(() => import('@/features/challans/challan-items-page').then((m) => ({ default: m.ChallanItemsPage })));
+const FollowupsPage = lazy(() => import('@/features/crm/followups-page').then((m) => ({ default: m.FollowupsPage })));
+const PaymentsFollowupsPage = lazy(() => import('@/features/crm/followups-page').then((m) => ({ default: m.PaymentsFollowupsPage })));
+const ManageChequesPage = lazy(() => import('@/features/account/manage-cheques-page').then((m) => ({ default: m.ManageChequesPage })));
+const BankAccountsPage = lazy(() => import('@/features/account/bank-accounts-page').then((m) => ({ default: m.BankAccountsPage })));
+const OpeningBalancePage = lazy(() => import('@/features/account/opening-balance-page').then((m) => ({ default: m.OpeningBalancePage })));
+const PaymentPage = lazy(() => import('@/features/account/payment-page').then((m) => ({ default: m.PaymentPage })));
+const SalesDiscountPage = lazy(() => import('@/features/account/sales-discount-page').then((m) => ({ default: m.SalesDiscountPage })));
+const NotesPage = lazy(() => import('@/features/account/notes-page').then((m) => ({ default: m.NotesPage })));
+const PartyLedgerPage = lazy(() => import('@/features/account/party-ledger-page').then((m) => ({ default: m.PartyLedgerPage })));
+const SettingsPage = lazy(() => import('@/features/settings/settings-page').then((m) => ({ default: m.SettingsPage })));
+const UsersPage = lazy(() => import('@/features/admin/users-page').then((m) => ({ default: m.UsersPage })));
+const RolesPage = lazy(() => import('@/features/admin/roles-page').then((m) => ({ default: m.RolesPage })));
+const ForbiddenPage = lazy(() => import('@/features/errors/forbidden-page').then((m) => ({ default: m.ForbiddenPage })));
+const NotFoundPage = lazy(() => import('@/features/errors/not-found-page').then((m) => ({ default: m.NotFoundPage })));
 
 /** Explicit route table. We add a route per screen as it's built. */
 export function AppRoutes() {
   return (
+    <Suspense fallback={<FullScreenLoader />}>
     <Routes>
       <Route path="/login" element={<LoginPage />} />
 
@@ -410,5 +419,6 @@ export function AppRoutes() {
         </Route>
       </Route>
     </Routes>
+    </Suspense>
   );
 }
