@@ -170,7 +170,9 @@ export class PartyLedgerService {
 
   private async collectRows(from: Date, toExclusive: Date, custIds: number[] | null): Promise<RawRow[]> {
     // Sale invoices (Challan, excluding Debit Notes) — B = bank Dr, C = cash Dr.
-    const challanWhere: Prisma.ChallanWhereInput = { invDate: { gte: from, lt: toExclusive } };
+    // Only CONFIRMED challans are ledger debits; a CANCELLED challan is void and must
+    // not appear as a receivable (matches the Payment receivables view).
+    const challanWhere: Prisma.ChallanWhereInput = { challanStatus: 'CONFIRMED', invDate: { gte: from, lt: toExclusive } };
     if (custIds) challanWhere.customerId = { in: custIds };
     const challans = await this.prisma.challan.findMany({
       where: challanWhere,
@@ -371,7 +373,9 @@ export class PartyLedgerService {
   /** Σ(Dr − Cr) of sale invoices (non-DN) + ledger vouchers in [start, end). */
   private async movement(start: Date, end: Date, custIds: number[] | null): Promise<{ bank: number; cash: number }> {
     if (end <= start) return { bank: 0, cash: 0 };
-    const chWhere: Prisma.ChallanWhereInput = { invDate: { gte: start, lt: end } };
+    // CONFIRMED only — a cancelled challan is void, so it must not move the opening
+    // balance either (keeps opening/closing consistent with the grid and Payments).
+    const chWhere: Prisma.ChallanWhereInput = { challanStatus: 'CONFIRMED', invDate: { gte: start, lt: end } };
     const ldWhere: Prisma.AcctLedgerWhereInput = { transDate: { gte: start, lt: end } };
     if (custIds) {
       chWhere.customerId = { in: custIds };
