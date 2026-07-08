@@ -1,20 +1,27 @@
 /**
- * TEMPORARY MS Access → OMS connector (Settings → Data Import).
+ * MS Access → OMS connector (Settings → Data Import).
  *
- * Self-contained so it can be deleted cleanly later:
- *   1. delete this folder (src/access-import)
- *   2. remove AccessImportModule from app.module.ts
- *   3. remove the <AccessImportCard/> from the Settings page
+ * Access stays a live parallel data source, so this isn't a one-time
+ * migration tool — a manual upload persists the file (see
+ * access-import.constants.ts) and every server start re-syncs from it
+ * automatically (see onApplicationBootstrap below), insert-only: once a
+ * legacy row is in OMS, later syncs never update or delete it.
  *
- * Flow: an uploaded .accdb is exported to JSON via the Windows ACE OLEDB provider
+ * Flow: the .accdb is exported to JSON via the Windows ACE OLEDB provider
  * (spawned PowerShell — read-only on the file), then imported in-process with the
  * shared PrismaService (no second DB connection, so no SQLite lock contention).
  */
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { spawn } from 'child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import {
+  ACCESS_IMPORT_FILE_PATH,
+  APP_CONFIG_FILE_PATH_KEY,
+  APP_CONFIG_LAST_SYNC_KEY,
+  ensureAccessImportDir,
+} from './access-import.constants';
 import { PrismaService } from '../prisma/prisma.service';
 
 const TABLES = [
@@ -90,11 +97,46 @@ const dt = (v: unknown): Date | null => {
 };
 
 @Injectable()
-export class AccessImportService {
+export class AccessImportService implements OnApplicationBootstrap {
+  private readonly logger = new Logger(AccessImportService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
-  status() {
-    return { supported: process.platform === 'win32', platform: process.platform };
+  /** Fires once the app has finished initializing. Never awaited from here on
+   *  purpose — a large Access file must never delay the server actually
+   *  starting to listen for requests. */
+  onApplicationBootstrap(): void {
+    this.runStartupSync().catch((err) => this.logger.warn(`Startup Access sync failed: ${(err as Error).message}`));
+  }
+
+  private async runStartupSync(): Promise<void> {
+    if (process.platform !== 'win32') return;
+    const row = await this.prisma.appConfig.findUnique({ where: { key: APP_CONFIG_FILE_PATH_KEY } });
+    if (!row?.value || !existsSync(row.value)) return;
+
+    this.logger.log(`Running startup Access sync from ${row.value}`);
+    const buffer = readFileSync(row.value);
+    const file = { buffer, originalname: 'source.accdb' } as Express.Multer.File;
+    const result = await this.run(file, [], false);
+    await this.prisma.appConfig.upsert({
+      where: { key: APP_CONFIG_LAST_SYNC_KEY },
+      create: { key: APP_CONFIG_LAST_SYNC_KEY, value: JSON.stringify({ at: new Date().toISOString(), results: result.results }) },
+      update: { value: JSON.stringify({ at: new Date().toISOString(), results: result.results }) },
+    });
+    this.logger.log(`Startup Access sync complete: ${JSON.stringify(result.results)}`);
+  }
+
+  async status() {
+    const [fileRow, syncRow] = await Promise.all([
+      this.prisma.appConfig.findUnique({ where: { key: APP_CONFIG_FILE_PATH_KEY } }),
+      this.prisma.appConfig.findUnique({ where: { key: APP_CONFIG_LAST_SYNC_KEY } }),
+    ]);
+    return {
+      supported: process.platform === 'win32',
+      platform: process.platform,
+      hasPersistedFile: !!fileRow?.value && existsSync(fileRow.value),
+      lastSync: syncRow?.value ? JSON.parse(syncRow.value) : null,
+    };
   }
 
   /** Save the upload, export via ACE, import the requested sections, clean up. */
@@ -123,10 +165,24 @@ export class AccessImportService {
       if (run('challans')) results.push({ section: 'Challans', counts: await this.importChallans(J, dry) });
       if (run('accounts')) results.push({ section: 'Accounts', counts: await this.importAccounts(J, dry) });
 
+      if (!dry) await this.persistUploadedFile(file.buffer);
+
       return { ok: true, dry, fileName: file.originalname, results };
     } finally {
       try { rmSync(work, { recursive: true, force: true }); } catch { /* ignore */ }
     }
+  }
+
+  /** Saves the uploaded file to the private, non-web-servable storage location and
+   *  remembers its path so future server starts can reuse it without a new upload. */
+  private async persistUploadedFile(buffer: Buffer): Promise<void> {
+    ensureAccessImportDir();
+    writeFileSync(ACCESS_IMPORT_FILE_PATH, buffer);
+    await this.prisma.appConfig.upsert({
+      where: { key: APP_CONFIG_FILE_PATH_KEY },
+      create: { key: APP_CONFIG_FILE_PATH_KEY, value: ACCESS_IMPORT_FILE_PATH },
+      update: { value: ACCESS_IMPORT_FILE_PATH },
+    });
   }
 
   private export(dbPath: string, outDir: string): Promise<void> {
@@ -343,7 +399,7 @@ export class AccessImportService {
 
   private async importOrders(J: (n: string) => any[], dry: boolean): Promise<Counts> {
     const cmap = await this.customerMap(J);
-    if (!dry) await this.prisma.order.deleteMany({});
+    const existingIds = new Set((await this.prisma.order.findMany({ select: { id: true } })).map((o) => o.id));
     const groups = new Map<number, any[]>();
     for (const r of J('ORDERTBL')) {
       const oid = int(r['ORDER ID']);
@@ -353,7 +409,12 @@ export class AccessImportService {
     }
     let orders = 0;
     let items = 0;
+    let skippedExisting = 0;
     for (const [oid, gr] of groups) {
+      if (existingIds.has(oid)) {
+        skippedExisting++;
+        continue;
+      }
       const h = gr[0];
       const header = {
         id: oid, code: `ORD-${String(oid).padStart(5, '0')}`, customerId: cmap.get(int(h['CUST ID']) ?? -1) ?? null,
@@ -377,22 +438,27 @@ export class AccessImportService {
       if (!dry && itemData.length) await this.prisma.orderItem.createMany({ data: itemData });
       items += itemData.length;
     }
-    return { orders, 'order items': items };
+    return { orders, 'order items': items, 'already imported (skipped)': skippedExisting };
   }
 
   private async importDispatch(J: (n: string) => any[], dry: boolean): Promise<Counts> {
     const cmap = await this.customerMap(J);
     const itemIds = new Set((await this.prisma.orderItem.findMany({ select: { id: true } })).map((x) => x.id));
     const orderIds = new Set((await this.prisma.order.findMany({ select: { id: true } })).map((x) => x.id));
-    if (!dry) await this.prisma.dispatch.deleteMany({});
+    const existingDispatchIds = new Set((await this.prisma.dispatch.findMany({ select: { id: true } })).map((x) => x.id));
     const batch: any[] = [];
     let skipped = 0;
+    let skippedExisting = 0;
     for (const r of J('DispatchTbl')) {
       const id = int(r.DispatchID);
       const oid = int(r['ORDER ID']);
       const oitem = int(r.OrdTrans);
       if (!id || !oid || !oitem || !orderIds.has(oid) || !itemIds.has(oitem)) {
         skipped++;
+        continue;
+      }
+      if (existingDispatchIds.has(id)) {
+        skippedExisting++;
         continue;
       }
       const st = up(r.DispatchStatus) ?? '';
@@ -407,7 +473,7 @@ export class AccessImportService {
       });
     }
     if (!dry) for (let i = 0; i < batch.length; i += 500) await this.prisma.dispatch.createMany({ data: batch.slice(i, i + 500) });
-    return { dispatches: batch.length, 'skipped (no matching order/item)': skipped };
+    return { dispatches: batch.length, 'skipped (no matching order/item)': skipped, 'already imported (skipped)': skippedExisting };
   }
 
   /** InvTbl (header) + ChallanTbl (lines) → challans / challan_items. Upsert by
@@ -592,13 +658,18 @@ export class AccessImportService {
       cashAmt: num(r['CASH AMT']) ?? 0,
       refRecId: s(r['REC REF ID']),
     }));
+    const existingOpening = new Set(
+      (await this.prisma.acctOpeningTrans.findMany({ select: { custId: true, transDate: true, kind: true, refRecId: true } }))
+        .map((r) => `${r.custId}|${r.transDate.toISOString()}|${r.kind}|${r.refRecId ?? ''}`),
+    );
+    const newOpeningRows = openingRows.filter((r) => !existingOpening.has(`${r.custId}|${r.transDate.toISOString()}|OPENING|`));
+    const newClearanceRows = clearanceRows.filter((r) => !existingOpening.has(`${r.custId}|${r.transDate.toISOString()}|CLEARANCE|${r.refRecId ?? ''}`));
     if (!dry) {
-      await this.prisma.acctOpeningTrans.deleteMany({});
-      await insertMany(openingRows, (b) => this.prisma.acctOpeningTrans.createMany({ data: b }));
-      await insertMany(clearanceRows, (b) => this.prisma.acctOpeningTrans.createMany({ data: b }));
+      await insertMany(newOpeningRows, (b) => this.prisma.acctOpeningTrans.createMany({ data: b }));
+      await insertMany(newClearanceRows, (b) => this.prisma.acctOpeningTrans.createMany({ data: b }));
     }
-    c['opening balances'] = openingRows.length;
-    c['opening clearances'] = clearanceRows.length;
+    c['opening balances (new)'] = newOpeningRows.length;
+    c['opening clearances (new)'] = newClearanceRows.length;
 
     // ── Ledger vouchers ───────────────────────────────────────────────────────
     const ledgerRows = J('ACCT_LEDGER').map((r) => ({
@@ -616,11 +687,15 @@ export class AccessImportService {
       cashCredit: num(r['CASH CREDIT']) ?? 0,
       transRemarks: s(r['TRANS REMARKS']),
     }));
+    const existingLedger = new Set(
+      (await this.prisma.acctLedger.findMany({ select: { voucherNo: true, transDate: true, custId: true } }))
+        .map((r) => `${r.voucherNo}|${r.transDate.toISOString()}|${r.custId}`),
+    );
+    const newLedgerRows = ledgerRows.filter((r) => !existingLedger.has(`${r.voucherNo}|${r.transDate.toISOString()}|${r.custId}`));
     if (!dry) {
-      await this.prisma.acctLedger.deleteMany({});
-      await insertMany(ledgerRows, (b) => this.prisma.acctLedger.createMany({ data: b }));
+      await insertMany(newLedgerRows, (b) => this.prisma.acctLedger.createMany({ data: b }));
     }
-    c['ledger vouchers'] = ledgerRows.length;
+    c['ledger vouchers (new)'] = newLedgerRows.length;
 
     // ── Payment receipts (allocation lines) ───────────────────────────────────
     const receiptRows = J('ACCT_PAYMENT_RECEIPT').map((r) => ({
@@ -639,11 +714,12 @@ export class AccessImportService {
       modeOfAdj: s(r['MODE OF ADJ']),
       refRecId: s(r['REF REC ID']),
     }));
+    const existingReceipts = new Set((await this.prisma.acctPaymentReceipt.findMany({ select: { refId: true } })).map((r) => r.refId));
+    const newReceiptRows = receiptRows.filter((r) => !existingReceipts.has(r.refId));
     if (!dry) {
-      await this.prisma.acctPaymentReceipt.deleteMany({});
-      await insertMany(receiptRows, (b) => this.prisma.acctPaymentReceipt.createMany({ data: b }));
+      await insertMany(newReceiptRows, (b) => this.prisma.acctPaymentReceipt.createMany({ data: b }));
     }
-    c.receipts = receiptRows.length;
+    c['receipts (new)'] = newReceiptRows.length;
 
     // ── Party advances (on-account) ───────────────────────────────────────────
     const advanceRows = J('ACCT_PARTY_ADVANCE').map((r) => ({
@@ -663,11 +739,12 @@ export class AccessImportService {
       refRecId: s(r['REC REF ID']),
       takeAccOn: s(r['TAKE ACC ON']),
     }));
+    const existingAdvances = new Set((await this.prisma.acctPartyAdvance.findMany({ select: { refId: true } })).map((r) => r.refId));
+    const newAdvanceRows = advanceRows.filter((r) => !existingAdvances.has(r.refId));
     if (!dry) {
-      await this.prisma.acctPartyAdvance.deleteMany({});
-      await insertMany(advanceRows, (b) => this.prisma.acctPartyAdvance.createMany({ data: b }));
+      await insertMany(newAdvanceRows, (b) => this.prisma.acctPartyAdvance.createMany({ data: b }));
     }
-    c.advances = advanceRows.length;
+    c['advances (new)'] = newAdvanceRows.length;
 
     // ── Sales discounts ───────────────────────────────────────────────────────
     const discountRows = J('ACCT_PARTY_DISCOUNT').map((r) => ({
@@ -680,11 +757,15 @@ export class AccessImportService {
       billType: s(r['BILL TYPE']) ?? 'BANK',
       voucherNo: null as string | null,
     }));
+    const existingDiscounts = new Set(
+      (await this.prisma.acctPartyDiscount.findMany({ select: { invNo: true, custId: true, disDate: true } }))
+        .map((r) => `${r.invNo}|${r.custId}|${r.disDate.toISOString()}`),
+    );
+    const newDiscountRows = discountRows.filter((r) => !existingDiscounts.has(`${r.invNo}|${r.custId}|${r.disDate.toISOString()}`));
     if (!dry) {
-      await this.prisma.acctPartyDiscount.deleteMany({});
-      await insertMany(discountRows, (b) => this.prisma.acctPartyDiscount.createMany({ data: b }));
+      await insertMany(newDiscountRows, (b) => this.prisma.acctPartyDiscount.createMany({ data: b }));
     }
-    c.discounts = discountRows.length;
+    c['discounts (new)'] = newDiscountRows.length;
 
     // ── Credit notes (InvTblR header + ChallanTblR lines) ─────────────────────
     const custCatByName = new Map<string, string>();
@@ -707,12 +788,17 @@ export class AccessImportService {
     let cnHeaders = 0;
     let cnItems = 0;
     let cnSkipped = 0;
+    let cnSkippedExisting = 0;
     const cnHeaderRows = J('InvTblR');
-    if (!dry) await this.prisma.creditNote.deleteMany({});
+    const existingCnCodes = new Set((await this.prisma.creditNote.findMany({ select: { code: true } })).map((r) => r.code));
     for (const h of cnHeaderRows) {
       const code = s(h.InvNo);
       if (!code) {
         cnSkipped++;
+        continue;
+      }
+      if (existingCnCodes.has(code)) {
+        cnSkippedExisting++;
         continue;
       }
       const customerName = s(h['Customer Name']) ?? '';
@@ -771,6 +857,7 @@ export class AccessImportService {
     c['credit notes'] = cnHeaders;
     c['credit note items'] = cnItems;
     if (cnSkipped) c['credit notes skipped (no InvNo)'] = cnSkipped;
+    if (cnSkippedExisting) c['credit notes already imported (skipped)'] = cnSkippedExisting;
 
     return c;
   }
