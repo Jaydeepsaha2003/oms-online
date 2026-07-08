@@ -35,6 +35,7 @@ pnpm-debug.log*
 # Generated / uploads / temp artifacts
 apps/api/uploads/
 apps/api/generated/
+data/access-import/
 coverage/
 .nyc_output/
 

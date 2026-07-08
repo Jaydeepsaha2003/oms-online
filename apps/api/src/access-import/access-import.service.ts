@@ -15,6 +15,7 @@ import { spawn } from 'child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { ACCESS_IMPORT_FILE_PATH, APP_CONFIG_FILE_PATH_KEY, ensureAccessImportDir } from './access-import.constants';
 import { PrismaService } from '../prisma/prisma.service';
 
 const TABLES = [
@@ -123,10 +124,24 @@ export class AccessImportService {
       if (run('challans')) results.push({ section: 'Challans', counts: await this.importChallans(J, dry) });
       if (run('accounts')) results.push({ section: 'Accounts', counts: await this.importAccounts(J, dry) });
 
+      if (!dry) await this.persistUploadedFile(file.buffer);
+
       return { ok: true, dry, fileName: file.originalname, results };
     } finally {
       try { rmSync(work, { recursive: true, force: true }); } catch { /* ignore */ }
     }
+  }
+
+  /** Saves the uploaded file to the private, non-web-servable storage location and
+   *  remembers its path so future server starts can reuse it without a new upload. */
+  private async persistUploadedFile(buffer: Buffer): Promise<void> {
+    ensureAccessImportDir();
+    writeFileSync(ACCESS_IMPORT_FILE_PATH, buffer);
+    await this.prisma.appConfig.upsert({
+      where: { key: APP_CONFIG_FILE_PATH_KEY },
+      create: { key: APP_CONFIG_FILE_PATH_KEY, value: ACCESS_IMPORT_FILE_PATH },
+      update: { value: ACCESS_IMPORT_FILE_PATH },
+    });
   }
 
   private export(dbPath: string, outDir: string): Promise<void> {
