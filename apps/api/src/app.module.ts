@@ -46,6 +46,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { AccessImportModule } from './access-import/access-import.module'; // TEMP: MS Access connector
 import { SettingsModule } from './settings/settings.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -98,6 +99,7 @@ import { SettingsModule } from './settings/settings.module';
     AccessImportModule, // TEMP: MS Access connector — remove this line + the folder to delete
 
     SettingsModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [
