@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import type { RefreshToken } from '@prisma/client';
 import type { SessionDto } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { toSessionDto } from './session-util';
@@ -12,13 +13,37 @@ import { toSessionDto } from './session-util';
 export class SessionsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** A user's active sessions, newest first. `currentSid` marks the caller's own. */
+  /** A user's active sessions, newest first, deduplicated to one row per device.
+   *  `currentSid` marks the caller's own. */
   async list(userId: string, currentSid?: string): Promise<SessionDto[]> {
     const rows = await this.prisma.refreshToken.findMany({
       where: { userId, revokedAt: null, expiresAt: { gt: new Date() } },
       orderBy: { createdAt: 'desc' },
     });
-    return rows.map((r) => toSessionDto(r, currentSid));
+    return this.dedupeByDevice(rows, currentSid).map((r) => toSessionDto(r, currentSid));
+  }
+
+  /** Repeated logins from the same browser/device (identical userAgent) collapse to
+   *  one row — the caller's own current session if it's among them, otherwise the
+   *  most recently created. Rows with no userAgent are never merged (no reliable
+   *  way to say they're "the same device"). */
+  private dedupeByDevice(rows: RefreshToken[], currentSid?: string): RefreshToken[] {
+    const kept: RefreshToken[] = [];
+    const indexByAgent = new Map<string, number>();
+    for (const row of rows) {
+      if (!row.userAgent) {
+        kept.push(row);
+        continue;
+      }
+      const existingIndex = indexByAgent.get(row.userAgent);
+      if (existingIndex === undefined) {
+        indexByAgent.set(row.userAgent, kept.length);
+        kept.push(row);
+      } else if (row.id === currentSid) {
+        kept[existingIndex] = row;
+      }
+    }
+    return kept;
   }
 
   /** Revoke a single device's session (immediate logout via sid enforcement). */
