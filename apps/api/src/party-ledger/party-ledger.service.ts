@@ -482,49 +482,34 @@ export class PartyLedgerService {
 
   async exportExcel(q: PartyLedgerQuery): Promise<{ buffer: Buffer; filename: string }> {
     const res = await this.ledger(q);
-    const rows = res.rows.map((r) => ({
-      Date: new Date(r.txnDate).toLocaleDateString('en-GB'),
-      'Due From': r.dueFrom,
-      Particulars: r.particulars,
-      'Voucher Type': r.voucherType,
-      'Voucher No': r.voucherNo,
-      'Bank Dr': r.bankDr || '',
-      'Bank Cr': r.bankCr || '',
-      'Cash Dr': r.cashDr || '',
-      'Cash Cr': r.cashCr || '',
-    }));
-    const f = res.footer;
-    const foot = (label: string, b: { bankDr: number; bankCr: number; cashDr: number; cashCr: number }) => ({
-      Date: '',
-      'Due From': '',
-      Particulars: '',
-      'Voucher Type': '',
-      'Voucher No': label,
-      'Bank Dr': b.bankDr || '',
-      'Bank Cr': b.bankCr || '',
-      'Cash Dr': b.cashDr || '',
-      'Cash Cr': b.cashCr || '',
-    });
-    rows.push(foot('OPENING BALANCE', f.opening), foot('CURRENT TOTAL', f.current), foot('CLOSING BALANCE', f.closing));
-    const buffer = this.excel.jsonToBuffer(rows);
+    const buffer = await buildLedgerXlsx(res, (q.mode ?? 'BOTH').toUpperCase());
     return { buffer, filename: `${this.baseName(res)}.xlsx` };
   }
 
   async exportPdf(q: PartyLedgerQuery): Promise<{ buffer: Buffer; filename: string }> {
     const res = await this.ledger(q);
-    const buffer = await this.pdf.render(buildLedgerDoc(res));
+    const buffer = await this.pdf.render(buildLedgerDoc(res, (q.mode ?? 'BOTH').toUpperCase()));
     return { buffer, filename: `${this.baseName(res)}.pdf` };
   }
 }
 
+/* ── Shared export helpers ────────────────────────────────────────────────── */
+
+const modeLabel = (m: string) => (m === 'B' ? 'Bank only' : m === 'C' ? 'Cash only' : 'Bank & Cash');
+const partyOf = (res: PartyLedgerResult) =>
+  res.scope === 'CUSTOMER' ? (res.customerName ?? 'Party') : res.scope === 'AGENT' ? `Agent: ${res.agentName}` : 'All Parties';
+const shortDate = (s: string | null) =>
+  s ? new Date(s).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }) : '';
+
 /* ── PDF document ─────────────────────────────────────────────────────────── */
 
-function buildLedgerDoc(res: PartyLedgerResult): TDocumentDefinitions {
+function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefinitions {
   const NAVY = '#0E1E36';
   const AMBER = '#F59E0B';
   const q0 = (v: number) => (v ? v.toLocaleString('en-IN', { maximumFractionDigits: 0 }) : '');
-  const d = (s: string | null) => (s ? new Date(s).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }) : '');
-  const who = res.scope === 'CUSTOMER' ? res.customerName : res.scope === 'AGENT' ? `Agent: ${res.agentName}` : 'All Parties';
+  const d = shortDate;
+  const who = partyOf(res);
+  const k = res.kpis;
 
   const head = ['Date', 'Due From', 'Particulars', 'Voucher Type', 'Voucher No', 'Bank Dr', 'Bank Cr', 'Cash Dr', 'Cash Cr'].map((text, i) => ({
     text,
@@ -572,7 +557,40 @@ function buildLedgerDoc(res: PartyLedgerResult): TDocumentDefinitions {
         layout: { fillColor: () => NAVY, hLineWidth: () => 0, vLineWidth: () => 0, paddingLeft: () => 10, paddingRight: () => 10, paddingTop: () => 6, paddingBottom: () => 6 },
       },
       { canvas: [{ type: 'rect', x: 0, y: 0, w: 793, h: 3, color: AMBER }], margin: [0, 0, 0, 8] },
-      { text: who ?? '', bold: true, fontSize: 12, margin: [0, 0, 0, 8] },
+      {
+        columns: [
+          { width: '*', text: who ?? '', bold: true, fontSize: 12 },
+          {
+            width: 'auto',
+            stack: [
+              { text: `Period:  ${d(res.from)}  –  ${d(res.to)}`, fontSize: 8, color: '#475569', alignment: 'right' },
+              { text: `Mode: ${modeLabel(mode)}   •   Generated: ${new Date().toLocaleString('en-GB')}`, fontSize: 8, color: '#94A3B8', alignment: 'right', margin: [0, 1, 0, 0] },
+            ],
+          },
+        ],
+        margin: [0, 0, 0, 6],
+      },
+      {
+        table: {
+          widths: ['*', '*', '*'],
+          body: [[
+            { stack: [{ text: 'OVER DUE', fontSize: 7, bold: true, color: '#991B1B' }, { text: `₹ ${q0(k.overDue.amount) || '0'}`, fontSize: 11, bold: true, color: '#B91C1C', margin: [0, 1, 0, 0] }, { text: `${k.overDue.count} invoice(s)`, fontSize: 7, color: '#64748B' }], margin: [7, 4, 7, 4] },
+            { stack: [{ text: 'DUE SOON / PARTIAL', fontSize: 7, bold: true, color: '#92400E' }, { text: `₹ ${q0(k.pastDue.amount) || '0'}`, fontSize: 11, bold: true, color: '#B45309', margin: [0, 1, 0, 0] }, { text: `${k.pastDue.count} invoice(s)`, fontSize: 7, color: '#64748B' }], margin: [7, 4, 7, 4] },
+            { stack: [{ text: 'WITHIN TERMS', fontSize: 7, bold: true, color: '#166534' }, { text: `₹ ${q0(k.normal.amount) || '0'}`, fontSize: 11, bold: true, color: '#15803D', margin: [0, 1, 0, 0] }, { text: `${k.normal.count} invoice(s)`, fontSize: 7, color: '#64748B' }], margin: [7, 4, 7, 4] },
+          ]],
+        },
+        layout: {
+          fillColor: (_r: number, _n: unknown, c: number) => ['#FEF2F2', '#FFFBEB', '#F0FDF4'][c] ?? null,
+          hLineWidth: () => 0,
+          vLineWidth: (i: number) => (i === 1 || i === 2 ? 3 : 0),
+          vLineColor: () => '#FFFFFF',
+          paddingLeft: () => 0,
+          paddingRight: () => 0,
+          paddingTop: () => 0,
+          paddingBottom: () => 0,
+        },
+        margin: [0, 0, 0, 10],
+      },
       {
         table: { headerRows: 1, widths: [42, 44, '*', 70, 60, 58, 58, 58, 58], body: [head, ...body, footRow('OPENING BALANCE', f.opening, false), footRow('CURRENT TOTAL', f.current, false), footRow('CLOSING BALANCE', f.closing, true)] },
         layout: {
@@ -596,4 +614,161 @@ function buildLedgerDoc(res: PartyLedgerResult): TDocumentDefinitions {
       ],
     }),
   } as unknown as TDocumentDefinitions;
+}
+
+/* ── Excel document (styled, standardized statement) ──────────────────────── */
+
+async function buildLedgerXlsx(res: PartyLedgerResult, mode: string): Promise<Buffer> {
+  // Palette (ARGB) — mirrors the PDF's navy / amber identity.
+  const NAVY = 'FF0E1E36';
+  const AMBER = 'FFF59E0B';
+  const WHITE = 'FFFFFFFF';
+  const GREEN = 'FF15803D';
+  const RED = 'FFB91C1C';
+  const SLATE = 'FF334155';
+  const GREY = 'FF64748B';
+  const ZEBRA = 'FFF6F8FB';
+  const TOTAL_BG = 'FFECFDF5';
+  const LINE = 'FFD6DEE8';
+
+  const showBank = mode !== 'C';
+  const showCash = mode !== 'B';
+  const q = (v: number) => (v ? v : null); // 0 → blank cell
+
+  interface Col {
+    header: string;
+    width: number;
+    align: 'left' | 'right' | 'center';
+    num?: boolean;
+    get: (r: PartyLedgerRow) => string | number | null;
+    color?: (r: PartyLedgerRow) => string | undefined;
+  }
+  const cols: Col[] = [
+    { header: 'Date', width: 12, align: 'left', get: (r) => shortDate(r.txnDate) },
+    {
+      header: 'Due From', width: 12, align: 'left',
+      get: (r) => r.dueFrom || '',
+      color: (r) => (/Over/i.test(r.dueFrom) ? RED : /Early|On Time|Late/i.test(r.dueFrom) ? GREEN : SLATE),
+    },
+    { header: 'Particulars', width: 36, align: 'left', get: (r) => r.particulars },
+    { header: 'Voucher Type', width: 16, align: 'left', get: (r) => r.voucherType },
+    { header: 'Voucher No', width: 16, align: 'left', get: (r) => r.voucherNo },
+    { header: 'Status', width: 8, align: 'center', get: (r) => r.status || '' },
+    ...(showBank
+      ? ([
+          { header: 'Bank Dr', width: 14, align: 'right', num: true, get: (r) => q(r.bankDr) },
+          { header: 'Bank Cr', width: 14, align: 'right', num: true, get: (r) => q(r.bankCr), color: () => GREEN },
+        ] as Col[])
+      : []),
+    ...(showCash
+      ? ([
+          { header: 'Cash Dr', width: 14, align: 'right', num: true, get: (r) => q(r.cashDr) },
+          { header: 'Cash Cr', width: 14, align: 'right', num: true, get: (r) => q(r.cashCr), color: () => GREEN },
+        ] as Col[])
+      : []),
+  ];
+  const nCols = cols.length;
+  const labelCol = 5; // "Voucher No" column — where the totals labels sit (1-based)
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'OMS';
+  wb.created = new Date();
+  const ws = wb.addWorksheet('Party Ledger', {
+    views: [{ state: 'frozen', ySplit: 4 }], // keep the title + header rows visible
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } },
+  });
+  cols.forEach((c, i) => (ws.getColumn(i + 1).width = c.width));
+
+  const thin = { style: 'thin' as const, color: { argb: LINE } };
+  const allBorders = { top: thin, left: thin, bottom: thin, right: thin };
+
+  // Row 1 — title band.
+  ws.mergeCells(1, 1, 1, nCols);
+  const title = ws.getCell(1, 1);
+  title.value = 'PARTY LEDGER';
+  title.font = { name: 'Calibri', size: 16, bold: true, color: { argb: WHITE } };
+  title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+  for (let c = 1; c <= nCols; c++) ws.getCell(1, c).border = { bottom: { style: 'medium', color: { argb: AMBER } } };
+  ws.getRow(1).height = 30;
+
+  // Row 2 — party / agent / scope.
+  ws.mergeCells(2, 1, 2, nCols);
+  const party = ws.getCell(2, 1);
+  party.value = partyOf(res);
+  party.font = { name: 'Calibri', size: 12, bold: true, color: { argb: NAVY } };
+  party.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  ws.getRow(2).height = 20;
+
+  // Row 3 — meta (period · mode · generated).
+  ws.mergeCells(3, 1, 3, nCols);
+  const meta = ws.getCell(3, 1);
+  meta.value = `Period:  ${shortDate(res.from)}  –  ${shortDate(res.to)}      •      Mode: ${modeLabel(mode)}      •      Generated: ${new Date().toLocaleString('en-GB')}`;
+  meta.font = { name: 'Calibri', size: 9, color: { argb: GREY } };
+  meta.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  ws.getRow(3).height = 16;
+
+  // Row 4 — column headers.
+  const headRow = ws.getRow(4);
+  cols.forEach((c, i) => {
+    const cell = headRow.getCell(i + 1);
+    cell.value = c.header;
+    cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: WHITE } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+    cell.alignment = { vertical: 'middle', horizontal: c.align === 'right' ? 'right' : c.align === 'center' ? 'center' : 'left' };
+    cell.border = allBorders;
+  });
+  headRow.height = 20;
+
+  // Data rows.
+  let rIdx = 5;
+  res.rows.forEach((r, i) => {
+    const row = ws.getRow(rIdx);
+    const zebra = i % 2 === 1;
+    cols.forEach((c, ci) => {
+      const cell = row.getCell(ci + 1);
+      cell.value = c.get(r);
+      cell.alignment = { vertical: 'middle', horizontal: c.align };
+      cell.font = { name: 'Calibri', size: 9, color: { argb: c.color?.(r) ?? 'FF111827' } };
+      if (c.num) cell.numFmt = '#,##0';
+      if (zebra) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
+      cell.border = allBorders;
+    });
+    rIdx++;
+  });
+
+  // Totals band — opening / current / closing.
+  const f = res.footer;
+  const totalRow = (label: string, b: { bankDr: number; bankCr: number; cashDr: number; cashCr: number }, strong: boolean) => {
+    const row = ws.getRow(rIdx);
+    cols.forEach((c, ci) => {
+      const cell = row.getCell(ci + 1);
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TOTAL_BG } };
+      cell.border = { ...allBorders, top: { style: strong ? 'medium' : 'thin', color: { argb: strong ? NAVY : LINE } } };
+      cell.alignment = { vertical: 'middle', horizontal: c.align };
+      if (ci + 1 === labelCol) {
+        cell.value = label;
+        cell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: strong ? NAVY : SLATE } };
+        cell.alignment = { vertical: 'middle', horizontal: 'right' };
+      } else if (c.num) {
+        const val = c.header === 'Bank Dr' ? b.bankDr : c.header === 'Bank Cr' ? b.bankCr : c.header === 'Cash Dr' ? b.cashDr : b.cashCr;
+        cell.value = val || null;
+        cell.numFmt = '#,##0';
+        cell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: c.header.endsWith('Cr') ? GREEN : NAVY } };
+      } else {
+        cell.font = { name: 'Calibri', size: 9, bold: true };
+      }
+    });
+    row.height = strong ? 18 : 16;
+    rIdx++;
+  };
+  totalRow('OPENING BALANCE', f.opening, false);
+  totalRow('CURRENT TOTAL', f.current, false);
+  totalRow('CLOSING BALANCE', f.closing, true);
+
+  // Filter + freeze already set; enable a filter on the header row.
+  ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: nCols } };
+
+  const out = await wb.xlsx.writeBuffer();
+  return Buffer.from(out as ArrayBuffer);
 }

@@ -122,8 +122,29 @@ export function PartyLedgerPage() {
     if (q.voucherType) params.set('voucherType', q.voucherType);
     return `/party-ledger/export.${fmt}?${params.toString()}`;
   };
-  const onPdf = () => openPdf(exportUrl('pdf')).catch((e) => toast.error(getApiErrorMessage(e, 'PDF failed')));
-  const onExcel = () => downloadFile(exportUrl('xlsx'), 'party-ledger.xlsx').catch((e) => toast.error(getApiErrorMessage(e, 'Export failed')));
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [excelLoading, setExcelLoading] = useState(false);
+  const onPdf = async () => {
+    setPdfLoading(true);
+    try {
+      await openPdf(exportUrl('pdf'));
+    } catch (e) {
+      toast.error(getApiErrorMessage(e, 'PDF failed'));
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+  const onExcel = async () => {
+    setExcelLoading(true);
+    try {
+      await downloadFile(exportUrl('xlsx'), `${(data?.customerName || data?.agentName || 'party-ledger').replace(/[\\/:*?"<>|]/g, '-')}.xlsx`);
+      toast.success('Excel ledger downloaded');
+    } catch (e) {
+      toast.error(getApiErrorMessage(e, 'Export failed'));
+    } finally {
+      setExcelLoading(false);
+    }
+  };
 
   const statusChip = (s: string) => {
     if (s === 'F') return <span className="rounded bg-emerald-100 px-1.5 text-xs font-bold text-emerald-700" title="Fully paid">F</span>;
@@ -176,13 +197,13 @@ export function PartyLedgerPage() {
         </div>
         <div className="ml-auto flex items-center gap-2">
           {can('partyledger:print') && (
-            <Button variant="outline" size="sm" onClick={onPdf} disabled={!rows.length}>
-              <Printer /> PDF
+            <Button variant="outline" size="sm" onClick={onPdf} disabled={!rows.length || pdfLoading}>
+              {pdfLoading ? <Loader2 className="animate-spin" /> : <Printer />} PDF
             </Button>
           )}
           {can('partyledger:export') && (
-            <Button variant="outline" size="sm" onClick={onExcel} disabled={!rows.length}>
-              <FileSpreadsheet /> Excel
+            <Button variant="outline" size="sm" onClick={onExcel} disabled={!rows.length || excelLoading}>
+              {excelLoading ? <Loader2 className="animate-spin" /> : <FileSpreadsheet />} Excel
             </Button>
           )}
         </div>

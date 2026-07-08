@@ -11,11 +11,11 @@ import {
   type SetStateAction,
 } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRightLeft, BadgePercent, Camera, Check, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Lock, PackageOpen, Plus, ReceiptText, RotateCcw, Save, Settings2, Trash2 } from 'lucide-react';
+import { ArrowLeft, ArrowRightLeft, BadgePercent, Camera, Check, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Lock, PackageOpen, Plus, RotateCcw, Save, Settings2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ORDER_PRIORITIES, resolveSpecialRates, type OrderInput } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
-import { cn, shortOrderCode } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 import { useAutoSizePcs } from '@/lib/auto-size-pcs';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/common/confirm';
@@ -1034,24 +1034,12 @@ export function OrderFormPage() {
         </div>
       )}
 
-      {/* Header */}
+      {/* Slim toolbar — the page title already shows in the top bar, so the big
+          in-page heading is dropped to avoid a duplicate title and free up space. */}
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate(listPath)} aria-label="Back">
+        <Button variant="ghost" size="icon" onClick={() => navigate(listPath)} aria-label="Back" title="Back">
           <ArrowLeft />
         </Button>
-        <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
-          <ReceiptText className="size-5" />
-        </div>
-        <div className="min-w-0">
-          <h2 className="truncate text-xl font-bold tracking-tight">{isEdit ? `Modify ${docLabel}` : `New ${docLabel}`}</h2>
-          <p className="text-muted-foreground truncate text-xs">
-            {isEdit
-              ? shortOrderCode(existing?.code, id)
-              : docKind === 'quotation'
-                ? 'Create a quotation — add items one by one'
-                : 'Create a sales order — or save it as a quotation'}
-          </p>
-        </div>
         <div className="ml-auto flex items-center gap-2">
           {isEdit && existing?.code && (
             <span className="rounded-lg border bg-muted px-3 py-1.5 font-mono text-xs text-muted-foreground">
@@ -1397,10 +1385,10 @@ export function OrderFormPage() {
         </CardContent>
       </Card>
 
-      {/* Action bar pinned to the bottom of the viewport so Cancel / Save stay
-          reachable no matter how tall the item panel grows. Wraps so the buttons
-          are never cut off when zoomed in. */}
-      <div className="bg-background/95 sticky bottom-0 z-30 -mx-1 mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t px-2 py-3 shadow-[0_-4px_12px_-8px_rgba(2,6,23,0.25)] backdrop-blur">
+      {/* Action bar flows at the end of the form (not pinned) — it appears right
+          after the content, so with many line items you reach it at the bottom.
+          Wraps so the buttons are never cut off when zoomed in. */}
+      <div className="-mx-1 mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t px-2 py-3">
         <p className="text-sm">
           {items.length} item(s) · total{' '}
           <span className="font-bold tabular-nums text-emerald-600">₹{total.toLocaleString('en-IN')}</span>
