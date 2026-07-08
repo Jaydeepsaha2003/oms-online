@@ -8,6 +8,25 @@ export interface TestNotificationPayload {
 
 /** Response body of `POST /notifications/test`. */
 export interface TestNotificationResult {
-  /** How many devices (open sockets) the broadcast reached, including the sender's own tab. */
+  /** How many devices had an open WebSocket connection (existing path). */
   devicesNotified: number;
+  /** How many stored push subscriptions a send was attempted against (new — reaches closed apps). */
+  pushDevicesNotified: number;
+}
+
+/** The two encryption keys every Web Push subscription carries. */
+export interface PushSubscriptionKeys {
+  p256dh: string;
+  auth: string;
+}
+
+/** Body of `POST /notifications/push-subscribe` — the browser's PushSubscription, JSON-shaped. */
+export interface PushSubscriptionRequest {
+  endpoint: string;
+  keys: PushSubscriptionKeys;
+}
+
+/** Response body of `GET /notifications/vapid-public-key`. */
+export interface VapidPublicKeyResult {
+  publicKey: string;
 }
