@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { AlarmClock, Bell, CalendarClock, Check, ChevronDown, CircleCheck, Clock, Loader2, Mic, Pencil, Plus, Search, Trash2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { type FollowupDto, type FollowupKind, type FollowupPartyGroup } from '@oms/shared';
@@ -53,6 +54,18 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
   const query = useMemo(() => ({ kind, bucket: bucket || undefined, search: search || undefined }), [kind, bucket, search]);
   const { data: groups = [], isLoading } = useFollowupBoard(query);
   const { data: summary } = useFollowupSummary(kind);
+
+  const [searchParams] = useSearchParams();
+  useEffect(() => {
+    const id = searchParams.get('followup');
+    if (!id) return;
+    const el = document.getElementById(`followup-${id}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.add('ring-2', 'ring-indigo-400', 'ring-offset-2');
+    const timer = setTimeout(() => el.classList.remove('ring-2', 'ring-indigo-400', 'ring-offset-2'), 2200);
+    return () => clearTimeout(timer);
+  }, [searchParams, groups]);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<FollowupDto | null>(null);
@@ -170,7 +183,7 @@ function FollowupRow({ f, canEdit, onEdit }: { f: FollowupDto; canEdit: boolean;
   };
 
   return (
-    <div className="px-3 py-2.5">
+    <div id={`followup-${f.id}`} className="rounded-md px-3 py-2.5 transition-shadow">
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
