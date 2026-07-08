@@ -207,7 +207,7 @@ export class CrmService {
         where: { id },
         data: {
           ...(dto.stage !== undefined && dto.stage !== null ? { stage: uc(dto.stage) } : {}),
-          ...(newPromised ? { promisedAt: newPromised, nextRemindAt: null } : {}), // re-promise re-opens the window
+          ...(newPromised ? { promisedAt: newPromised, nextRemindAt: null, pushSentAt: null } : {}), // re-promise re-opens the window
         },
       }),
     ]);
@@ -231,7 +231,7 @@ export class CrmService {
       this.prisma.followupLog.create({ data: { followupId: id, kind: 'SNOOZE', note: `Snoozed ${intervalMins} min`, userName: userName ?? null } }),
       this.prisma.followup.update({
         where: { id },
-        data: { nextRemindAt: next, lastRemindedAt: now, remindersToday, remindersDate: todayStr },
+        data: { nextRemindAt: next, lastRemindedAt: now, remindersToday, remindersDate: todayStr, pushSentAt: null },
       }),
     ]);
     return this.findOne(id);
@@ -250,7 +250,7 @@ export class CrmService {
     await this.ensure(id);
     await this.prisma.$transaction([
       this.prisma.followupLog.create({ data: { followupId: id, kind: 'STATUS', note: 'Reopened', userName: userName ?? null } }),
-      this.prisma.followup.update({ where: { id }, data: { status: 'OPEN', resolvedAt: null, resolvedByName: null, nextRemindAt: null } }),
+      this.prisma.followup.update({ where: { id }, data: { status: 'OPEN', resolvedAt: null, resolvedByName: null, nextRemindAt: null, pushSentAt: null } }),
     ]);
     return this.findOne(id);
   }
@@ -330,6 +330,23 @@ export class CrmService {
     const settings = await this.getSettings();
     const now = new Date();
     return rows.map((r) => this.toDto(r)).filter((f) => computeFollowupState(f, now, settings.leadDays).isActiveNudge);
+  }
+
+  /** Same as due(), but only followups that haven't had a push sent for this cycle yet. */
+  async dueUnpushed(): Promise<FollowupDto[]> {
+    const rows = await this.prisma.followup.findMany({
+      where: { status: 'OPEN', pushSentAt: null },
+      include: INCLUDE,
+      orderBy: [{ promisedAt: 'asc' }],
+    });
+    const settings = await this.getSettings();
+    const now = new Date();
+    return rows.map((r) => this.toDto(r)).filter((f) => computeFollowupState(f, now, settings.leadDays).isActiveNudge);
+  }
+
+  /** Marks a followup as pushed for its current due-cycle. */
+  async markPushed(id: number): Promise<void> {
+    await this.prisma.followup.update({ where: { id }, data: { pushSentAt: new Date() } });
   }
 
   /* ── Suggest helpers (new-followup form) ────────────────────────────────── */

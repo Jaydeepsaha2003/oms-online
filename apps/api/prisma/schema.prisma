@@ -903,6 +903,7 @@ model Followup {
   remindersDate        String? // yyyy-mm-dd the counter applies to (resets daily)
   nextRemindAt         DateTime?
   lastRemindedAt       DateTime?
+  pushSentAt DateTime? // set once a push has fired for the current due-cycle; cleared on re-promise/snooze/reopen
   createdByName String?
   resolvedByName String?
   resolvedAt    DateTime?
