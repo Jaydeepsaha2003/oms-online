@@ -358,7 +358,7 @@ export class AccessImportService {
 
   private async importOrders(J: (n: string) => any[], dry: boolean): Promise<Counts> {
     const cmap = await this.customerMap(J);
-    if (!dry) await this.prisma.order.deleteMany({});
+    const existingIds = new Set((await this.prisma.order.findMany({ select: { id: true } })).map((o) => o.id));
     const groups = new Map<number, any[]>();
     for (const r of J('ORDERTBL')) {
       const oid = int(r['ORDER ID']);
@@ -368,7 +368,12 @@ export class AccessImportService {
     }
     let orders = 0;
     let items = 0;
+    let skippedExisting = 0;
     for (const [oid, gr] of groups) {
+      if (existingIds.has(oid)) {
+        skippedExisting++;
+        continue;
+      }
       const h = gr[0];
       const header = {
         id: oid, code: `ORD-${String(oid).padStart(5, '0')}`, customerId: cmap.get(int(h['CUST ID']) ?? -1) ?? null,
@@ -392,22 +397,27 @@ export class AccessImportService {
       if (!dry && itemData.length) await this.prisma.orderItem.createMany({ data: itemData });
       items += itemData.length;
     }
-    return { orders, 'order items': items };
+    return { orders, 'order items': items, 'already imported (skipped)': skippedExisting };
   }
 
   private async importDispatch(J: (n: string) => any[], dry: boolean): Promise<Counts> {
     const cmap = await this.customerMap(J);
     const itemIds = new Set((await this.prisma.orderItem.findMany({ select: { id: true } })).map((x) => x.id));
     const orderIds = new Set((await this.prisma.order.findMany({ select: { id: true } })).map((x) => x.id));
-    if (!dry) await this.prisma.dispatch.deleteMany({});
+    const existingDispatchIds = new Set((await this.prisma.dispatch.findMany({ select: { id: true } })).map((x) => x.id));
     const batch: any[] = [];
     let skipped = 0;
+    let skippedExisting = 0;
     for (const r of J('DispatchTbl')) {
       const id = int(r.DispatchID);
       const oid = int(r['ORDER ID']);
       const oitem = int(r.OrdTrans);
       if (!id || !oid || !oitem || !orderIds.has(oid) || !itemIds.has(oitem)) {
         skipped++;
+        continue;
+      }
+      if (existingDispatchIds.has(id)) {
+        skippedExisting++;
         continue;
       }
       const st = up(r.DispatchStatus) ?? '';
@@ -422,7 +432,7 @@ export class AccessImportService {
       });
     }
     if (!dry) for (let i = 0; i < batch.length; i += 500) await this.prisma.dispatch.createMany({ data: batch.slice(i, i + 500) });
-    return { dispatches: batch.length, 'skipped (no matching order/item)': skipped };
+    return { dispatches: batch.length, 'skipped (no matching order/item)': skipped, 'already imported (skipped)': skippedExisting };
   }
 
   /** InvTbl (header) + ChallanTbl (lines) → challans / challan_items. Upsert by
