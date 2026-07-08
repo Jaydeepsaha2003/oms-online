@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useAutoSizePcs } from '@/lib/auto-size-pcs';
-import { AccessImportCard } from './access-import-card'; // TEMP: MS Access connector — delete this import + usage to remove
+import { AccessImportCard } from './access-import-card'; // MS Access connector — Access stays a live parallel data source
 import { CrmReminderCard } from '@/features/crm/crm-settings-card';
 import { MyDevicesCard } from './my-devices-card';
 import { TestNotificationCard } from './test-notification-card';

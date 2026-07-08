@@ -1,12 +1,13 @@
 /**
- * TEMPORARY MS Access → OMS connector (Settings → Data Import).
+ * MS Access → OMS connector (Settings → Data Import).
  *
- * Self-contained so it can be deleted cleanly later:
- *   1. delete this folder (src/access-import)
- *   2. remove AccessImportModule from app.module.ts
- *   3. remove the <AccessImportCard/> from the Settings page
+ * Access stays a live parallel data source, so this isn't a one-time
+ * migration tool — a manual upload persists the file (see
+ * access-import.constants.ts) and every server start re-syncs from it
+ * automatically (see onApplicationBootstrap below), insert-only: once a
+ * legacy row is in OMS, later syncs never update or delete it.
  *
- * Flow: an uploaded .accdb is exported to JSON via the Windows ACE OLEDB provider
+ * Flow: the .accdb is exported to JSON via the Windows ACE OLEDB provider
  * (spawned PowerShell — read-only on the file), then imported in-process with the
  * shared PrismaService (no second DB connection, so no SQLite lock contention).
  */
@@ -125,8 +126,17 @@ export class AccessImportService implements OnApplicationBootstrap {
     this.logger.log(`Startup Access sync complete: ${JSON.stringify(result.results)}`);
   }
 
-  status() {
-    return { supported: process.platform === 'win32', platform: process.platform };
+  async status() {
+    const [fileRow, syncRow] = await Promise.all([
+      this.prisma.appConfig.findUnique({ where: { key: APP_CONFIG_FILE_PATH_KEY } }),
+      this.prisma.appConfig.findUnique({ where: { key: APP_CONFIG_LAST_SYNC_KEY } }),
+    ]);
+    return {
+      supported: process.platform === 'win32',
+      platform: process.platform,
+      hasPersistedFile: !!fileRow?.value && existsSync(fileRow.value),
+      lastSync: syncRow?.value ? JSON.parse(syncRow.value) : null,
+    };
   }
 
   /** Save the upload, export via ACE, import the requested sections, clean up. */

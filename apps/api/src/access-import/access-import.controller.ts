@@ -7,8 +7,8 @@ import { AccessImportService } from './access-import.service';
 
 const R = RESOURCES.SETTING;
 
-/** TEMPORARY MS Access connector. Delete this folder + the module registration to remove. */
-@ApiTags('Access Import (temporary)')
+/** MS Access → OMS connector — Access stays a live parallel data source (see Settings → Data Import). */
+@ApiTags('Access Import')
 @ApiBearerAuth()
 @Controller('access-import')
 export class AccessImportController {
