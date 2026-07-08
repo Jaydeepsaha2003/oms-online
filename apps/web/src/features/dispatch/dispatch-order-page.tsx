@@ -5,7 +5,9 @@ import { DISPATCH_STATUSES, type DispatchStatus, type PendingLineDto } from '@om
 import { getApiErrorMessage } from '@/lib/api';
 import { cn, shortOrderCode } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
+import { usePermissions } from '@/hooks/use-permissions';
 import { useColumnOrder } from '@/hooks/use-column-order';
+import { LiveLinePhotos } from '../orders/line-photos';
 import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
@@ -224,6 +226,7 @@ const QTY_FIELDS = [
 function DispatchSheet({ line, onClose, onDispatched }: { line: PendingLineDto; onClose: () => void; onDispatched: (code: string) => void }) {
   const create = useCreateDispatch();
   const confirm = useConfirm();
+  const { can } = usePermissions();
   const [form, setForm] = useState({
     bags: '',
     pcs: '',
@@ -331,6 +334,11 @@ function DispatchSheet({ line, onClose, onDispatched }: { line: PendingLineDto; 
         <div className="space-y-1">
           <Label className="text-xs">Comment</Label>
           <Input value={form.comment} onChange={(e) => set({ comment: e.target.value })} placeholder="Dispatch remark…" />
+        </div>
+
+        {/* This order line's photos — view, and add more from the shop floor. */}
+        <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+          <LiveLinePhotos orderItemId={line.orderItemId} canEdit={can('order:update')} title="Order-line photos" />
         </div>
       </div>
 

@@ -277,7 +277,7 @@ export function PaymentPage() {
           <HandCoins className="size-5" />
         </div>
         <div>
-          <h2 className="text-3xl font-semibold tracking-tight">Make Payment</h2>
+          <h2 className="text-3xl font-semibold tracking-tight">Receive Payment</h2>
           <p className="text-muted-foreground text-base">Receive money from a party or an agent — openings clear first, then invoices oldest-first, the rest parks on account.</p>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">

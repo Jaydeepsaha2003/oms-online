@@ -1,5 +1,5 @@
 import axios, { AxiosError, type AxiosRequestConfig, type AxiosResponse } from 'axios';
-import type { AuthResult } from '@oms/shared';
+import type { AuthResult, UploadedFileDto } from '@oms/shared';
 import { useAuthStore } from '@/stores/auth-store';
 
 // Resolve the API base URL. By default we call the same origin the page was
@@ -91,6 +91,27 @@ export const http = {
   delete: <T>(url: string, config?: AxiosRequestConfig) =>
     api.delete<T>(url, config).then((r) => r.data),
 };
+
+/** Upload a single file (multipart) and get back its stored path + served URL. */
+export async function uploadFile(
+  file: File,
+  onProgress?: (percent: number) => void,
+): Promise<UploadedFileDto> {
+  const body = new FormData();
+  body.append('file', file);
+  const res = await api.post<{ success?: boolean; data?: UploadedFileDto } | UploadedFileDto>(
+    '/files/upload',
+    body,
+    {
+      onUploadProgress: (e) => {
+        if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100));
+      },
+    },
+  );
+  // The response interceptor already unwraps { success, data }; guard both shapes.
+  const data = res.data as { data?: UploadedFileDto } | UploadedFileDto;
+  return (data as { data?: UploadedFileDto }).data ?? (data as UploadedFileDto);
+}
 
 /** Download a binary response (Excel/PDF) from an API endpoint as a file. */
 export async function downloadFile(

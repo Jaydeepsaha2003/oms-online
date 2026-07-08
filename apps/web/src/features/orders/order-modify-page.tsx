@@ -17,7 +17,9 @@ import { Label } from '@/components/ui/label';
 import { NativeSelect } from '@/components/common/combo';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { settingValues, useSettings } from '@/features/settings/use-settings';
+import { usePermissions } from '@/hooks/use-permissions';
 import { useOrderLookups, useOrders, useSaveOrder } from './use-orders';
+import { LiveLinePhotos } from './line-photos';
 
 const PAGE_SIZE = 50;
 
@@ -248,6 +250,7 @@ function LineEditor({
   onClose: () => void;
 }) {
   const { order, line } = row;
+  const { can } = usePermissions();
   const { data: lookups } = useOrderLookups();
   const s = (v: number | null) => (v == null ? '' : String(v));
   const [form, setForm] = useState({
@@ -423,6 +426,11 @@ function LineEditor({
         <Field label="Comment">
           <Input value={form.comment} onChange={(e) => set({ comment: e.target.value })} placeholder="Item remark…" />
         </Field>
+
+        {/* Line photos — attach/detach immediately (independent of Save). */}
+        <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+          <LiveLinePhotos orderItemId={line.id} canEdit={can('order:update')} title="Line photos" />
+        </div>
 
         <button type="button" onClick={onViewFull} className="text-primary flex items-center gap-1.5 pt-1 text-sm font-medium hover:underline">
           <ExternalLink className="size-3.5" /> Open full order

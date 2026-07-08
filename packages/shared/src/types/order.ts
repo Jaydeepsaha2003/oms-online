@@ -7,6 +7,43 @@ export const ORDER_STATUSES = ['PENDING', 'CONFIRMED', 'CANCELLED'] as const;
 export type OrderPriority = (typeof ORDER_PRIORITIES)[number];
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
+/** A file the upload endpoint stored — path + served URL, ready to attach to a line. */
+export interface UploadedFileDto {
+  /** Path relative to the /uploads root, e.g. "order-items/<uuid>.jpg". */
+  path: string;
+  /** Same-origin URL the web app loads. */
+  url: string;
+  filename: string | null;
+  mimeType: string | null;
+  size: number | null;
+  uploadedBy: string | null;
+}
+
+/** A photo attached to an order line (stored on disk under /uploads). */
+export interface OrderItemPhotoDto {
+  id: number;
+  /** Path relative to the /uploads root. */
+  path: string;
+  /** Same-origin URL the web app loads. */
+  url: string;
+  filename: string | null;
+  mimeType: string | null;
+  size: number | null;
+  uploadedBy: string | null;
+  createdAt: string;
+}
+
+/** A photo on an order-line input: existing photos carry `id`; newly-uploaded
+ *  ones carry `path` + `url` (from {@link UploadedFileDto}). */
+export interface OrderItemPhotoInput {
+  id?: number | null;
+  path?: string | null;
+  url?: string | null;
+  filename?: string | null;
+  mimeType?: string | null;
+  size?: number | null;
+}
+
 export interface OrderItemDto {
   id: number;
   pCategory: string | null;
@@ -33,6 +70,8 @@ export interface OrderItemDto {
   bookingId: number | null;
   /** The source booking's code (e.g. BKG-00001), when bookingId is set. */
   bookingCode?: string | null;
+  /** Photos attached to this line (reference images / artwork / packing shots). */
+  photos?: OrderItemPhotoDto[];
 }
 
 export interface OrderDto {
@@ -89,6 +128,10 @@ export interface OrderItemInput {
   comment?: string | null;
   /** Draw this line from a bag Booking — the server freezes its rate to the booking date. */
   bookingId?: number | null;
+  /** Full desired photo set for this line. Existing photos keep their `id`;
+   *  new uploads carry `path` + `url`. Omit the field entirely to leave a line's
+   *  photos untouched (only present-and-synced when the caller manages photos). */
+  photos?: OrderItemPhotoInput[];
 }
 
 export interface OrderInput {

@@ -601,12 +601,36 @@ model OrderItem {
   bookingId   Int?
   createdAt   DateTime @default(now())
 
-  order      Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order      Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
   dispatches Dispatch[]
+  photos     OrderItemPhoto[]
 
   @@index([orderId])
   @@index([bookingId])
   @@map("order_items")
+}
+
+/// A photo attached to an order line (reference image, artwork, packing shot…).
+/// The file lives on disk under the project's /uploads folder; only its path +
+/// served URL are stored here. Visible/editable from Order, Order Modify and
+/// Dispatch — all keyed on the same order line.
+model OrderItemPhoto {
+  id          Int      @id @default(autoincrement())
+  orderItemId Int
+  /// Path relative to the /uploads root, e.g. "order-items/<uuid>.jpg".
+  path        String
+  /// Same-origin URL the web app loads, e.g. "/api/uploads/order-items/<uuid>.jpg".
+  url         String
+  filename    String? // original upload name (for download / display)
+  mimeType    String?
+  size        Int? // bytes
+  uploadedBy  String? // user name/email that uploaded it
+  createdAt   DateTime @default(now())
+
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  @@index([orderItemId])
+  @@map("order_item_photos")
 }
 
 /// A single dispatch (shipment) of an order line — partial or full. The pending
@@ -737,6 +761,80 @@ model ChallanItem {
   @@index([challanId])
   @@index([dispatchId])
   @@map("challan_items")
+}
+
+/// Credit Note header (legacy InvTblR). Kept in its own table — like the legacy —
+/// so credit notes never count as pending sales. A CN posts a CREDIT NOTE ledger
+/// row and clears opening balance → pending invoices FIFO → parks the rest as a
+/// party advance. code = "CN/<n>". Debit Notes, by contrast, live in `Challan`
+/// (prefix='DN', transaction='DEBIT NOTE') because a DN *is* a pending debit.
+model CreditNote {
+  id              Int       @id @default(autoincrement())
+  code            String    @unique
+  prefix          String    @default("CN")
+  invDate         DateTime  @default(now())
+  invTime         String?
+  customerId      Int?
+  customerName    String
+  billingAddress  String?
+  shippingAddress String?
+  category        String?
+  paymentTerm     Int?
+  dueDate         DateTime?
+  transName       String?
+  packing         Float?
+  freight         Float?
+  pouch           Float?
+  tax             Float? // GST amount
+  total           Float?
+  b               Float? // bank portion
+  c               Float? // cash portion
+  remarks         String?
+  gst             Float? // GST rate %
+  freightRate     Float?
+  packingRate     Float?
+  billingRate     Float?
+  bpcRate         Float?
+  noBill          Boolean   @default(false)
+  status          String    @default("CREDIT NOTE")
+  userName        String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  items CreditNoteItem[]
+
+  @@index([customerName])
+  @@index([customerId])
+  @@index([invDate])
+  @@map("credit_notes")
+}
+
+model CreditNoteItem {
+  id           Int      @id @default(autoincrement())
+  creditNoteId Int
+  // Source dispatch line the return refers to (0/null for manual rows).
+  dispatchId   Int?
+  // Original sale invoice this line credits against (legacy ChallanTblR.[Ref InvNo]).
+  refInvNo     String?
+  productName  String?
+  design       String?
+  bags         Float?
+  pcs          Float?
+  kgs          Float?
+  box          Float?
+  unit         String?
+  price        Float?
+  amount       Float?
+  pCategory    String?
+  comment      String?
+  userName     String?
+  createdAt    DateTime @default(now())
+
+  creditNote CreditNote @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
+
+  @@index([creditNoteId])
+  @@index([dispatchId])
+  @@map("credit_note_items")
 }
 
 /// User-editable option lists (e.g. completion-day choices, order types),

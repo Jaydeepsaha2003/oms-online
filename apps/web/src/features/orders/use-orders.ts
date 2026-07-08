@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { OrderDto, OrderFilterOptions, OrderInput, OrderList, OrderLookups, OrderQuery, OrderTimeline } from '@oms/shared';
+import type { OrderDto, OrderFilterOptions, OrderInput, OrderItemPhotoDto, OrderList, OrderLookups, OrderQuery, OrderTimeline, UploadedFileDto } from '@oms/shared';
 import { http } from '@/lib/api';
 
 const KEY = ['orders'] as const;
+const photoKey = (itemId: number) => [...KEY, 'item-photos', itemId] as const;
 
 export function useOrders(query: OrderQuery) {
   return useQuery({
@@ -85,5 +86,47 @@ export function useDeleteOrder() {
   return useMutation({
     mutationFn: (id: number) => http.delete(`/orders/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+// ── Order-line photos (live mode: Order Modify & Dispatch, where the line exists) ──
+
+/** An existing order line's photos, fetched on demand (e.g. when a sheet opens). */
+export function useOrderItemPhotos(itemId?: number) {
+  return useQuery({
+    queryKey: itemId != null ? photoKey(itemId) : [...KEY, 'item-photos', 'none'],
+    queryFn: () => http.get<OrderItemPhotoDto[]>(`/orders/items/${itemId}/photos`),
+    enabled: itemId != null,
+  });
+}
+
+/** Attach an already-uploaded file to an order line. */
+export function useAddOrderItemPhoto(itemId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (file: UploadedFileDto) =>
+      http.post<OrderItemPhotoDto>(`/orders/items/${itemId}/photos`, {
+        path: file.path,
+        url: file.url,
+        filename: file.filename ?? undefined,
+        mimeType: file.mimeType ?? undefined,
+        size: file.size ?? undefined,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: photoKey(itemId) });
+      qc.invalidateQueries({ queryKey: KEY });
+    },
+  });
+}
+
+/** Detach a photo from an order line (also deletes its file). */
+export function useDeleteOrderItemPhoto(itemId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (photoId: number) => http.delete(`/orders/photos/${photoId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: photoKey(itemId) });
+      qc.invalidateQueries({ queryKey: KEY });
+    },
   });
 }

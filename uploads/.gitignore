@@ -1,0 +1,4 @@
+# User-uploaded files live here (order-line photos). The folder is kept in git;
+# its contents are ignored.
+*
+!.gitignore

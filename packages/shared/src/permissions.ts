@@ -65,6 +65,12 @@ export const RESOURCES = {
   OPENING_BALANCE: 'openingbalance',
   /** Accounts → Sales Discount (discount pending invoices, legacy SalesDiscount). */
   DISCOUNT: 'discount',
+  /** Debit / Credit Note (legacy DebitNote form). DN posts a debit + squares off
+   *  advances; CN posts a credit + clears opening/invoices FIFO then parks advance. */
+  NOTE: 'note',
+  /** Party Ledger / Trial Balance (legacy Party Ledger Account) — Tally-style
+   *  per-party statement with opening, running Dr/Cr, aging KPIs & closing. */
+  PARTY_LEDGER: 'partyledger',
   SUPPLIER: 'supplier',
   INVENTORY: 'inventory',
   PRODUCTION: 'production',
@@ -190,6 +196,18 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
     label: 'Sales Discount',
     group: 'Accounts',
     actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.MANAGE],
+  },
+  {
+    resource: RESOURCES.NOTE,
+    label: 'Debit / Credit Note',
+    group: 'Accounts',
+    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.PRINT, ACTIONS.MANAGE],
+  },
+  {
+    resource: RESOURCES.PARTY_LEDGER,
+    label: 'Party Ledger',
+    group: 'Accounts',
+    actions: [ACTIONS.VIEW, ACTIONS.EXPORT, ACTIONS.PRINT],
   },
   {
     resource: RESOURCES.SHIPMENT,

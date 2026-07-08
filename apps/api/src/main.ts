@@ -9,6 +9,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { UPLOADS_URL_PREFIX, ensureUploadDir } from './uploads/uploads.constants';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -73,6 +74,14 @@ async function bootstrap(): Promise<void> {
   SwaggerModule.setup(`${apiPrefix}/docs`, app, document, {
     swaggerOptions: { persistAuthorization: true },
   });
+
+  // Serve user-uploaded files (order-line photos) from the project's /uploads
+  // folder at `${prefix}/uploads`. Served as plain static assets — no Nest guard
+  // runs, so <img> tags load them without a bearer token. The path sits under
+  // `/api` so the Vite dev proxy routes it here unchanged.
+  const uploadsDir = ensureUploadDir();
+  app.useStaticAssets(uploadsDir, { prefix: UPLOADS_URL_PREFIX });
+  Logger.log(`Uploads served from ${uploadsDir} at ${UPLOADS_URL_PREFIX}`, 'Bootstrap');
 
   // Serve the built web app from this same server when a production build exists,
   // so the whole OMS runs from ONE process on ONE URL (offline-friendly). Real

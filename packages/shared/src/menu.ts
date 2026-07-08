@@ -232,6 +232,9 @@ export const MENU: MenuNode[] = [
     icon: 'Landmark',
     anyPermission: [
       perm(RESOURCES.PAYMENT, ACTIONS.VIEW),
+      perm(RESOURCES.DISCOUNT, ACTIONS.VIEW),
+      perm(RESOURCES.NOTE, ACTIONS.VIEW),
+      perm(RESOURCES.PARTY_LEDGER, ACTIONS.VIEW),
       perm(RESOURCES.CHEQUE, ACTIONS.VIEW),
       perm(RESOURCES.OPENING_BALANCE, ACTIONS.VIEW),
       perm(RESOURCES.BANK_ACCOUNT, ACTIONS.VIEW),
@@ -239,7 +242,7 @@ export const MENU: MenuNode[] = [
     children: [
       {
         id: 'payment',
-        label: 'Make Payment',
+        label: 'Receive Payment',
         to: '/account/payment',
         icon: 'HandCoins',
         permission: perm(RESOURCES.PAYMENT, ACTIONS.VIEW),
@@ -250,6 +253,20 @@ export const MENU: MenuNode[] = [
         to: '/account/discount',
         icon: 'BadgePercent',
         permission: perm(RESOURCES.DISCOUNT, ACTIONS.VIEW),
+      },
+      {
+        id: 'debit-credit-note',
+        label: 'Debit / Credit Note',
+        to: '/account/notes',
+        icon: 'NotebookPen',
+        permission: perm(RESOURCES.NOTE, ACTIONS.VIEW),
+      },
+      {
+        id: 'party-ledger',
+        label: 'Party Ledger',
+        to: '/account/party-ledger',
+        icon: 'BookText',
+        permission: perm(RESOURCES.PARTY_LEDGER, ACTIONS.VIEW),
       },
       {
         id: 'manage-cheques',

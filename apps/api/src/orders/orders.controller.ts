@@ -3,9 +3,11 @@ import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
+import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { OrdersService } from './orders.service';
-import { CreateOrderDto, OrderQueryDto, UpdateOrderDto, UpdateOrderStatusDto } from './dto/order.dto';
+import { AddOrderItemPhotoDto, CreateOrderDto, OrderQueryDto, UpdateOrderDto, UpdateOrderStatusDto } from './dto/order.dto';
 
 const R = RESOURCES.ORDER;
 
@@ -31,6 +33,32 @@ export class OrdersController {
   @Permissions(perm(R, ACTIONS.VIEW))
   filterOptions() {
     return this.orders.filterOptions();
+  }
+
+  // ── Order-line photos (shared by Order Modify & Dispatch) ──────────────────
+  @Get('items/:itemId/photos')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  listPhotos(@Param('itemId', ParseIntPipe) itemId: number) {
+    return this.orders.listPhotos(itemId);
+  }
+
+  @Post('items/:itemId/photos')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  addPhoto(
+    @Param('itemId', ParseIntPipe) itemId: number,
+    @Body() dto: AddOrderItemPhotoDto,
+    @CurrentUser() user: AuthenticatedUser | undefined,
+  ) {
+    return this.orders.addPhoto(itemId, dto, user?.email ?? null);
+  }
+
+  @Delete('photos/:photoId')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  async deletePhoto(@Param('photoId', ParseIntPipe) photoId: number) {
+    await this.orders.deletePhoto(photoId);
+    return { ok: true };
   }
 
   @Get(':id')

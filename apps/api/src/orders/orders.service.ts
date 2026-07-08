@@ -1,16 +1,20 @@
+import { unlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { type OrderDto, type OrderFilterOptions, type OrderLookups, type OrderTimeline, type OrderTimelineChallanRef, type Paginated } from '@oms/shared';
+import { type OrderDto, type OrderFilterOptions, type OrderItemPhotoDto, type OrderLookups, type OrderTimeline, type OrderTimelineChallanRef, type Paginated } from '@oms/shared';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import { PrismaService } from '../prisma/prisma.service';
 import { PdfService } from '../pdf/pdf.service';
 import { BookingsService } from '../bookings/bookings.service';
 import { toNum, toStr, uc } from '../common/coerce';
 import { readCategoryFields } from '../common/category-fields';
-import { CreateOrderDto, OrderQueryDto, UpdateOrderDto } from './dto/order.dto';
+import { UPLOADS_DIR } from '../uploads/uploads.constants';
+import { AddOrderItemPhotoDto, CreateOrderDto, OrderQueryDto, UpdateOrderDto } from './dto/order.dto';
 
-const INCLUDE = { items: true } as const;
+const INCLUDE = { items: { include: { photos: { orderBy: { id: 'asc' } } } } } as const;
 type Row = Prisma.OrderGetPayload<{ include: typeof INCLUDE }>;
+type PhotoRow = Prisma.OrderItemPhotoGetPayload<object>;
 
 @Injectable()
 export class OrdersService {
@@ -95,7 +99,10 @@ export class OrdersService {
     await this.applyBookingPricing(dto.items ?? []);
     await this.assertBookingCapacity(dto.items ?? []);
     const row = await this.prisma.order.create({
-      data: { ...data, items: { create: (dto.items ?? []).map((it) => this.toItemData(it)) } },
+      data: {
+        ...data,
+        items: { create: (dto.items ?? []).map((it) => ({ ...this.toItemData(it), ...this.photoCreateNested(it) })) },
+      },
       include: INCLUDE,
     });
     await this.recomputeBookings(this.bookingIdsOf(row.items));
@@ -136,9 +143,9 @@ export class OrdersService {
         const itemId = toNum(it.id);
         if (itemId && existingIds.has(itemId)) {
           kept.add(itemId);
-          toUpdate.push({ where: { id: itemId }, data: this.toItemData(it) });
+          toUpdate.push({ where: { id: itemId }, data: { ...this.toItemData(it), ...this.photoUpdateNested(it) } });
         } else {
-          toCreate.push(this.toItemData(it));
+          toCreate.push({ ...this.toItemData(it), ...this.photoCreateNested(it) });
         }
       }
       const removed = existing.filter((e) => !kept.has(e.id));
@@ -538,6 +545,103 @@ export class OrdersService {
     };
   }
 
+  // ── Order-line photos ────────────────────────────────────────────────────────
+
+  /** New (not-yet-saved) photo rows from a line input — the ones with a `path`
+   *  but no `id` (freshly uploaded via POST /files/upload). */
+  private newPhotoRows(it: Record<string, unknown>): Prisma.OrderItemPhotoCreateWithoutOrderItemInput[] {
+    const photos = Array.isArray(it.photos) ? (it.photos as Record<string, unknown>[]) : [];
+    return photos
+      .filter((p) => !toNum(p.id) && toStr(p.path) && toStr(p.url))
+      .map((p) => ({
+        path: toStr(p.path)!,
+        url: toStr(p.url)!,
+        filename: toStr(p.filename),
+        mimeType: toStr(p.mimeType),
+        size: toNum(p.size),
+      }));
+  }
+
+  /** Nested `create` clause for a brand-new line's photos (empty when none). */
+  private photoCreateNested(it: Record<string, unknown>): Prisma.OrderItemCreateWithoutOrderInput {
+    const create = this.newPhotoRows(it);
+    return create.length ? { photos: { create } } : {};
+  }
+
+  /** Nested photo reconcile for an existing line. Only touches photos when the
+   *  input actually carries a `photos` array — so callers that don't manage
+   *  photos (e.g. Order Modify's line save) leave them untouched. Photos present
+   *  by `id` are kept; any others on the line are removed; new uploads are added. */
+  private photoUpdateNested(it: Record<string, unknown>): Prisma.OrderItemUpdateWithoutOrderInput {
+    if (!Array.isArray(it.photos)) return {};
+    const keptIds = (it.photos as Record<string, unknown>[])
+      .map((p) => toNum(p.id))
+      .filter((v): v is number => v != null);
+    const create = this.newPhotoRows(it);
+    return {
+      photos: {
+        // deleteMany:{} (empty filter) removes every photo of this line — correct
+        // when the user cleared them all; otherwise keep the ones still referenced.
+        deleteMany: keptIds.length ? { id: { notIn: keptIds } } : {},
+        ...(create.length ? { create } : {}),
+      },
+    };
+  }
+
+  private toPhotoDto(ph: PhotoRow): OrderItemPhotoDto {
+    return {
+      id: ph.id,
+      path: ph.path,
+      url: ph.url,
+      filename: ph.filename,
+      mimeType: ph.mimeType,
+      size: ph.size,
+      uploadedBy: ph.uploadedBy,
+      createdAt: ph.createdAt.toISOString(),
+    };
+  }
+
+  /** List an order line's photos (used by the Dispatch & Order-Modify sheets). */
+  async listPhotos(orderItemId: number): Promise<OrderItemPhotoDto[]> {
+    await this.ensureItemExists(orderItemId);
+    const rows = await this.prisma.orderItemPhoto.findMany({ where: { orderItemId }, orderBy: { id: 'asc' } });
+    return rows.map((r) => this.toPhotoDto(r));
+  }
+
+  /** Attach an already-uploaded file to an order line. */
+  async addPhoto(orderItemId: number, dto: AddOrderItemPhotoDto, uploadedBy?: string | null): Promise<OrderItemPhotoDto> {
+    await this.ensureItemExists(orderItemId);
+    const row = await this.prisma.orderItemPhoto.create({
+      data: {
+        orderItemId,
+        path: dto.path,
+        url: dto.url,
+        filename: dto.filename ?? null,
+        mimeType: dto.mimeType ?? null,
+        size: dto.size ?? null,
+        uploadedBy: uploadedBy ?? null,
+      },
+    });
+    return this.toPhotoDto(row);
+  }
+
+  /** Detach a photo and best-effort delete its file from /uploads. */
+  async deletePhoto(photoId: number): Promise<void> {
+    const row = await this.prisma.orderItemPhoto.findUnique({ where: { id: photoId } });
+    if (!row) throw new NotFoundException('Photo not found.');
+    await this.prisma.orderItemPhoto.delete({ where: { id: photoId } });
+    try {
+      await unlink(join(UPLOADS_DIR, row.path));
+    } catch {
+      /* file already gone — nothing to clean up */
+    }
+  }
+
+  private async ensureItemExists(orderItemId: number): Promise<void> {
+    const c = await this.prisma.orderItem.count({ where: { id: orderItemId } });
+    if (!c) throw new NotFoundException('Order line not found.');
+  }
+
   // ── Bag-booking draw-down (order lines sourced from a booking) ───────────────
 
   /** Distinct booking ids referenced by a set of order-item rows. */
@@ -637,6 +741,7 @@ export class OrdersService {
       // Booking codes use the fixed BKG-##### format (see BookingsService), so the
       // source code can be derived without another query.
       bookingCode: it.bookingId != null ? `BKG-${String(it.bookingId).padStart(5, '0')}` : null,
+      photos: (it.photos ?? []).map((ph) => this.toPhotoDto(ph)),
     }));
     // Cancelled lines are kept for the record but excluded from the order's totals.
     const active = items.filter((it) => it.status !== 'CANCELLED');

@@ -21,6 +21,9 @@ const TABLES = [
   'CUSTOMER', 'PRODUCT', 'DESIGN', 'DESIGNNAME', 'COMBINATION', 'TRANSPORTER', 'CUSTOMER GST RATE', 'TRANS RATE', 'PRICECAL',
   'SPRODUCT', 'SCSPRODUCT', 'SCPRODUCT', 'SDESIGN', 'SCSDESIGN', 'SCDESIGN', 'SP_CATEGORY_LOGO', 'SP_SUBCATEGORY_LOGO',
   'ORDERTBL', 'DispatchTbl', 'InvTbl', 'ChallanTbl',
+  // Accounts subledger (receipts, advances, ledger, opening balances, discounts) + credit notes.
+  'ACCT PAYMENT RECEIPT', 'ACCT PARTY ADVANCE', 'ACCT LEDGER', 'ACCT OPENING TRANS', 'ACCT OPENING BALANCE', 'ACCT PARTY DISCOUNT',
+  'InvTblR', 'ChallanTblR',
 ];
 
 /** PowerShell exporter: reads each table via ACE and writes <name>.json to OutDir. */
@@ -59,7 +62,7 @@ foreach($t in $tables){
 $conn.Close()
 `;
 
-type Section = 'masters' | 'pricecal' | 'agents' | 'special' | 'orders' | 'dispatch' | 'challans';
+type Section = 'masters' | 'pricecal' | 'agents' | 'special' | 'orders' | 'dispatch' | 'challans' | 'accounts';
 interface Counts { [label: string]: number }
 
 const s = (v: unknown): string | null => {
@@ -118,6 +121,7 @@ export class AccessImportService {
       if (run('orders')) results.push({ section: 'Orders', counts: await this.importOrders(J, dry) });
       if (run('dispatch')) results.push({ section: 'Dispatch', counts: await this.importDispatch(J, dry) });
       if (run('challans')) results.push({ section: 'Challans', counts: await this.importChallans(J, dry) });
+      if (run('accounts')) results.push({ section: 'Accounts', counts: await this.importAccounts(J, dry) });
 
       return { ok: true, dry, fileName: file.originalname, results };
     } finally {
@@ -525,5 +529,249 @@ export class AccessImportService {
       items += itemData.length;
     }
     return { challans: headers, 'challan items': items, 'skipped (no InvNo)': skipped };
+  }
+
+  /**
+   * Accounts subledger (verbatim migration). All voucher nos / ref-ids / invoice
+   * codes are preserved as-is, so receipts↔invoices↔advances↔openings reconcile
+   * automatically; only the legacy CUS ID is remapped to the OMS customer id.
+   *
+   *   ACCT OPENING BALANCE  → AcctOpeningTrans (kind OPENING, drCr DEBIT)
+   *   ACCT OPENING TRANS    → AcctOpeningTrans (kind CLEARANCE)
+   *   ACCT LEDGER           → AcctLedger        (RECEIPT / DEBIT NOTE / CREDIT NOTE / SALES DISCOUNT)
+   *   ACCT PAYMENT RECEIPT  → AcctPaymentReceipt
+   *   ACCT PARTY ADVANCE    → AcctPartyAdvance
+   *   ACCT PARTY DISCOUNT   → AcctPartyDiscount
+   *   InvTblR + ChallanTblR → CreditNote + CreditNoteItem
+   *
+   * Debit Notes are NOT here — they live in InvTbl (prefix DN, Transaction='DEBIT NOTE')
+   * and load via the Challans section. Each target table is fully replaced on run
+   * (like Orders/Dispatch), so re-running is safe but overwrites in-app entries.
+   */
+  private async importAccounts(J: (n: string) => any[], dry: boolean): Promise<Counts> {
+    const c: Counts = {};
+    const cmap = await this.customerMap(J);
+    const omsByName = new Map(
+      (await this.prisma.customer.findMany({ select: { id: true, partyName: true } })).filter((x) => x.partyName).map((x) => [x.partyName!.toUpperCase(), x.id]),
+    );
+    /** Legacy CUS ID → OMS id, falling back to a name match, else 0 (agent/on-account). */
+    const mapCust = (legacyId: unknown, name: unknown): number => {
+      const lid = int(legacyId);
+      if (lid != null && cmap.has(lid)) return cmap.get(lid)!;
+      const nm = up(name);
+      return (nm ? omsByName.get(nm) : undefined) ?? 0;
+    };
+    const insertMany = async (rows: any[], insert: (batch: any[]) => Promise<unknown>) => {
+      for (let i = 0; i < rows.length; i += 500) await insert(rows.slice(i, i + 500));
+    };
+
+    // ── Opening balances: OPENING (debit) + CLEARANCE rows into one table ──────
+    // A NEGATIVE opening figure in the Access data is not a debit owed to us — it's
+    // a CREDIT balance the party holds (an advance). Store it as a positive CREDIT
+    // so it reads as an advance rather than a negative debit.
+    const openingRows = J('ACCT_OPENING_BALANCE').map((r) => {
+      const bank = num(r['BANK OPENING BALANCE']) ?? 0;
+      const cash = num(r['CASH OPENING BALANCE']) ?? 0;
+      const isCredit = bank + cash < 0;
+      return {
+        kind: 'OPENING',
+        customerName: s(r['CUSTOMER NAME']) ?? '',
+        custId: mapCust(r['CUS ID'], r['CUSTOMER NAME']),
+        transDate: dt(r['OPENING DATE']) ?? new Date(0),
+        bankAmt: isCredit ? -bank : bank,
+        cashAmt: isCredit ? -cash : cash,
+        drCr: isCredit ? 'CREDIT' : 'DEBIT',
+      };
+    });
+    const clearanceRows = J('ACCT_OPENING_TRANS').map((r) => ({
+      kind: 'CLEARANCE',
+      customerName: s(r['CUSTOMER NAME']) ?? '',
+      custId: mapCust(r['CUS ID'], r['CUSTOMER NAME']),
+      transDate: dt(r['TRANS DATE']) ?? new Date(0),
+      bankAmt: num(r['BANK AMT']) ?? 0,
+      cashAmt: num(r['CASH AMT']) ?? 0,
+      refRecId: s(r['REC REF ID']),
+    }));
+    if (!dry) {
+      await this.prisma.acctOpeningTrans.deleteMany({});
+      await insertMany(openingRows, (b) => this.prisma.acctOpeningTrans.createMany({ data: b }));
+      await insertMany(clearanceRows, (b) => this.prisma.acctOpeningTrans.createMany({ data: b }));
+    }
+    c['opening balances'] = openingRows.length;
+    c['opening clearances'] = clearanceRows.length;
+
+    // ── Ledger vouchers ───────────────────────────────────────────────────────
+    const ledgerRows = J('ACCT_LEDGER').map((r) => ({
+      voucherNo: s(r['VOUCHER NO']) ?? '',
+      transDate: dt(r['TRANS DATE']) ?? new Date(0),
+      customerName: s(r['CUSTOMER NAME']) ?? '',
+      custId: mapCust(r['CUST ID'], r['CUSTOMER NAME']),
+      agentName: s(r['AGENT NAME']),
+      particulars: s(r['PARTICULARS']),
+      voucherType: s(r['VOUCHER TYPE']) ?? 'RECEIPT',
+      transMode: s(r['TRANS MODE']) ?? 'NONE',
+      bankDebit: num(r['BANK DEBIT']) ?? 0,
+      cashDebit: num(r['CASH DEBIT']) ?? 0,
+      bankCredit: num(r['BANK CREDIT']) ?? 0,
+      cashCredit: num(r['CASH CREDIT']) ?? 0,
+      transRemarks: s(r['TRANS REMARKS']),
+    }));
+    if (!dry) {
+      await this.prisma.acctLedger.deleteMany({});
+      await insertMany(ledgerRows, (b) => this.prisma.acctLedger.createMany({ data: b }));
+    }
+    c['ledger vouchers'] = ledgerRows.length;
+
+    // ── Payment receipts (allocation lines) ───────────────────────────────────
+    const receiptRows = J('ACCT_PAYMENT_RECEIPT').map((r) => ({
+      refId: s(r['REF ID']) ?? '',
+      recDate: dt(r['REC DATE']) ?? new Date(0),
+      invNo: s(r['INV NO']) ?? '',
+      customerName: s(r['CUSTOMER NAME']) ?? '',
+      custId: mapCust(r['CUS ID'], r['CUSTOMER NAME']),
+      recType: s(r['REC TYPE']) ?? 'RECEIPT',
+      recAmt: num(r['REC AMT']) ?? 0,
+      payMode: s(r['PAY MODE']) ?? '',
+      bankName: s(r['BANK NAME']),
+      chequeNo: s(r['CHEQUE NO']),
+      cashTransLocation: s(r['CASH TRANS LOCATION']),
+      cashRecBy: s(r['CASH REC BY']),
+      modeOfAdj: s(r['MODE OF ADJ']),
+      refRecId: s(r['REF REC ID']),
+    }));
+    if (!dry) {
+      await this.prisma.acctPaymentReceipt.deleteMany({});
+      await insertMany(receiptRows, (b) => this.prisma.acctPaymentReceipt.createMany({ data: b }));
+    }
+    c.receipts = receiptRows.length;
+
+    // ── Party advances (on-account) ───────────────────────────────────────────
+    const advanceRows = J('ACCT_PARTY_ADVANCE').map((r) => ({
+      refId: s(r['REF ID']) ?? '',
+      recDate: dt(r['REC DATE']) ?? new Date(0),
+      custId: mapCust(r['CUS ID'], r['CUSTOMER NAME']),
+      customerName: s(r['CUSTOMER NAME']) ?? '',
+      agentName: s(r['AGENT NAME']),
+      bankAmt: num(r['BANK AMT']) ?? 0,
+      cashAmt: num(r['CASH AMT']) ?? 0,
+      payMode: s(r['PAY MODE']) ?? '',
+      bankName: s(r['BANK NAME']),
+      chequeNo: s(r['CHEQUE NO']),
+      cashTransLocation: s(r['CASH TRANS LOCATION']),
+      cashRecBy: s(r['CASH REC BY']),
+      recType: s(r['REC TYPE']) ?? 'RECEIPT',
+      refRecId: s(r['REC REF ID']),
+      takeAccOn: s(r['TAKE ACC ON']),
+    }));
+    if (!dry) {
+      await this.prisma.acctPartyAdvance.deleteMany({});
+      await insertMany(advanceRows, (b) => this.prisma.acctPartyAdvance.createMany({ data: b }));
+    }
+    c.advances = advanceRows.length;
+
+    // ── Sales discounts ───────────────────────────────────────────────────────
+    const discountRows = J('ACCT_PARTY_DISCOUNT').map((r) => ({
+      disDate: dt(r['DIS DATE']) ?? new Date(0),
+      invNo: s(r['INV NO']) ?? '',
+      customerName: s(r['CUSTOMER NAME']) ?? '',
+      custId: mapCust(r['CUS ID'], r['CUSTOMER NAME']),
+      invAmt: num(r['INV AMT']) ?? 0,
+      disAmt: num(r['DIS AMT']) ?? 0,
+      billType: s(r['BILL TYPE']) ?? 'BANK',
+      voucherNo: null as string | null,
+    }));
+    if (!dry) {
+      await this.prisma.acctPartyDiscount.deleteMany({});
+      await insertMany(discountRows, (b) => this.prisma.acctPartyDiscount.createMany({ data: b }));
+    }
+    c.discounts = discountRows.length;
+
+    // ── Credit notes (InvTblR header + ChallanTblR lines) ─────────────────────
+    const custCatByName = new Map<string, string>();
+    for (const cu of J('CUSTOMER')) {
+      const pn = up(cu['PARTY NAME']);
+      const cat = up(cu.CATEGORY);
+      if (pn && cat) custCatByName.set(pn, cat);
+    }
+    const cnItemsByInv = new Map<string, any[]>();
+    for (const r of J('ChallanTblR')) {
+      const inv = s(r.InvNo);
+      if (!inv) continue;
+      if (!cnItemsByInv.has(inv)) cnItemsByInv.set(inv, []);
+      cnItemsByInv.get(inv)!.push(r);
+    }
+    const timeOf = (v: unknown): string | null => {
+      const d = dt(v);
+      return d ? d.toTimeString().slice(0, 5) : null;
+    };
+    let cnHeaders = 0;
+    let cnItems = 0;
+    let cnSkipped = 0;
+    const cnHeaderRows = J('InvTblR');
+    if (!dry) await this.prisma.creditNote.deleteMany({});
+    for (const h of cnHeaderRows) {
+      const code = s(h.InvNo);
+      if (!code) {
+        cnSkipped++;
+        continue;
+      }
+      const customerName = s(h['Customer Name']) ?? '';
+      const itemData = (cnItemsByInv.get(code) ?? []).map((r) => ({
+        dispatchId: int(r.DispatchID) || null,
+        refInvNo: s(r['Ref InvNo']),
+        productName: s(r['Product Name']),
+        design: s(r.Design),
+        bags: num(r.BAGS),
+        pcs: num(r.PCS),
+        kgs: num(r.KGS),
+        box: num(r.BOX),
+        unit: s(r.Unit),
+        price: num(r.Price),
+        amount: num(r.Amount),
+        pCategory: up(r.PCATEGORY),
+        comment: s(r.Comment),
+        userName: s(r['USER NAME']),
+      }));
+      cnItems += itemData.length;
+      cnHeaders++;
+      if (dry) continue;
+      await this.prisma.creditNote.create({
+        data: {
+          code,
+          prefix: s(h.Prefix) ?? 'CN',
+          invDate: dt(h.InvDate) ?? new Date(0),
+          invTime: timeOf(h.InvTime),
+          customerId: mapCust(h.CustID, customerName) || null,
+          customerName,
+          billingAddress: s(h['Billing Add']),
+          shippingAddress: s(h['Shipping Add']),
+          category: custCatByName.get(customerName.toUpperCase()) ?? null,
+          paymentTerm: int(h['Payment Term']),
+          dueDate: dt(h['Due Date']),
+          transName: s(h['Trans Name']),
+          packing: num(h.Packing),
+          freight: num(h.Freight),
+          pouch: num(h.Pouch),
+          tax: num(h.Tax),
+          total: num(h.Total),
+          b: num(h.B),
+          c: num(h.C),
+          remarks: s(h.Remarks),
+          gst: num(h.GST),
+          freightRate: num(h.FreightRate),
+          packingRate: num(h.PackingRate),
+          billingRate: num(h.BillingRate),
+          bpcRate: num(h.BpcRate),
+          noBill: false,
+          status: 'CREDIT NOTE',
+          items: { create: itemData },
+        },
+      });
+    }
+    c['credit notes'] = cnHeaders;
+    c['credit note items'] = cnItems;
+    if (cnSkipped) c['credit notes skipped (no InvNo)'] = cnSkipped;
+
+    return c;
   }
 }

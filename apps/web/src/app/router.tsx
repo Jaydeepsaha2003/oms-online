@@ -37,6 +37,8 @@ import { BankAccountsPage } from '@/features/account/bank-accounts-page';
 import { OpeningBalancePage } from '@/features/account/opening-balance-page';
 import { PaymentPage } from '@/features/account/payment-page';
 import { SalesDiscountPage } from '@/features/account/sales-discount-page';
+import { NotesPage } from '@/features/account/notes-page';
+import { PartyLedgerPage } from '@/features/account/party-ledger-page';
 import { SettingsPage } from '@/features/settings/settings-page';
 import { UsersPage } from '@/features/admin/users-page';
 import { RolesPage } from '@/features/admin/roles-page';
@@ -320,6 +322,22 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.DISCOUNT, ACTIONS.VIEW)}>
                 <SalesDiscountPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/account/notes"
+            element={
+              <RequirePermission permission={perm(RESOURCES.NOTE, ACTIONS.VIEW)}>
+                <NotesPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/account/party-ledger"
+            element={
+              <RequirePermission permission={perm(RESOURCES.PARTY_LEDGER, ACTIONS.VIEW)}>
+                <PartyLedgerPage />
               </RequirePermission>
             }
           />

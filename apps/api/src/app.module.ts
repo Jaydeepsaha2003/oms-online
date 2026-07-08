@@ -40,7 +40,10 @@ import { BankAccountsModule } from './bank-accounts/bank-accounts.module';
 import { OpeningBalancesModule } from './opening-balances/opening-balances.module';
 import { PaymentsModule } from './payments/payments.module';
 import { DiscountsModule } from './discounts/discounts.module';
+import { NotesModule } from './notes/notes.module';
+import { PartyLedgerModule } from './party-ledger/party-ledger.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { UploadsModule } from './uploads/uploads.module';
 import { AccessImportModule } from './access-import/access-import.module'; // TEMP: MS Access connector
 import { SettingsModule } from './settings/settings.module';
 
@@ -88,7 +91,10 @@ import { SettingsModule } from './settings/settings.module';
     OpeningBalancesModule,
     PaymentsModule,
     DiscountsModule,
+    NotesModule,
+    PartyLedgerModule,
     AnalyticsModule,
+    UploadsModule,
     AccessImportModule, // TEMP: MS Access connector — remove this line + the folder to delete
 
     SettingsModule,

@@ -11,7 +11,7 @@ import {
   type SetStateAction,
 } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRightLeft, BadgePercent, Check, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Lock, PackageOpen, Plus, ReceiptText, RotateCcw, Save, Settings2, Trash2 } from 'lucide-react';
+import { ArrowLeft, ArrowRightLeft, BadgePercent, Camera, Check, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Lock, PackageOpen, Plus, ReceiptText, RotateCcw, Save, Settings2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ORDER_PRIORITIES, resolveSpecialRates, type OrderInput } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -33,6 +33,7 @@ import { useCustomerSpecialRates } from '@/features/special-rates/use-special-ra
 import { useCreateOrder, useOrder, useOrderLookups, useUpdateOrder } from './use-orders';
 import { useConvertQuotation, useCreateQuotation, useQuotation, useUpdateQuotation } from '../quotations/use-quotations';
 import { clearOrderDraft, loadOrderDraft, saveOrderDraft } from './order-draft';
+import { DraftLinePhotos, toPhotoInput, type LinePhoto } from './line-photos';
 import { useActiveCustomerBookings } from '@/features/bookings/use-bookings';
 import { BookingDrawSheet, type DrawnBookingLine } from './booking-draw-sheet';
 
@@ -62,6 +63,7 @@ interface Item {
   box: string;
   comment: string;
   calField: string;
+  photos?: LinePhoto[]; // reference images attached to this line
 }
 
 const blankEntry = (): Omit<Item, 'key'> => ({
@@ -325,6 +327,7 @@ export function OrderFormPage() {
         box: d.box,
         comment: d.comment,
         calField: d.calField,
+        photos: [],
       })),
     ]);
     toast.success(`${drawn.length} item${drawn.length === 1 ? '' : 's'} drawn from booking`);
@@ -400,6 +403,14 @@ export function OrderFormPage() {
           box: it.box?.toString() ?? '',
           comment: it.comment ?? '',
           calField: it.calField ?? 'KGS',
+          photos: (it.photos ?? []).map((ph) => ({
+            id: ph.id,
+            url: ph.url,
+            path: ph.path,
+            filename: ph.filename,
+            mimeType: ph.mimeType,
+            size: ph.size,
+          })),
         })),
       );
     },
@@ -695,6 +706,10 @@ export function OrderFormPage() {
 
   const entryTotal = itemRate(entry);
 
+  // Items can only be built once a customer is chosen (the special rates, bag
+  // weights and category all key off the customer). Lock item entry until then.
+  const noCustomer = !customer.trim();
+
   // Per-category price-calc field (KGS/PCS), configured on the Products page.
   const categoryFieldMap = useMemo(() => {
     const m = new Map<string, 'KGS' | 'PCS'>();
@@ -703,6 +718,12 @@ export function OrderFormPage() {
   }, [lookups]);
 
   const addItem = async () => {
+    // A customer must be chosen before any item can be added to the order.
+    if (!customer.trim()) {
+      toast.error('Please select a customer first');
+      requestAnimationFrame(() => focusField(formRef.current, 'customer'));
+      return;
+    }
     if (!entry.product.trim() && !entry.designType.trim()) {
       return toast.error('Pick a product or design type to add');
     }
@@ -756,7 +777,7 @@ export function OrderFormPage() {
     }
     setItems((its) => [
       ...its,
-      { ...entry, key: `i${keyer.current++}`, calField, designName },
+      { ...entry, key: `i${keyer.current++}`, calField, designName, photos: [] },
     ]);
     // Reset the item fields but keep order type / priority for the next line.
     setEntry((e) => ({ ...blankEntry(), ordType: e.ordType, priority: e.priority }));
@@ -765,6 +786,9 @@ export function OrderFormPage() {
   };
 
   const removeItem = (key: string) => setItems((its) => its.filter((i) => i.key !== key));
+
+  const setItemPhotos = (key: string, photos: LinePhoto[]) =>
+    setItems((its) => its.map((i) => (i.key === key ? { ...i, photos } : i)));
 
   // The order's money total = sum of line amounts (rate × Kgs/Pcs).
   const total = useMemo(() => items.reduce((s, i) => s + lineAmount(i), 0), [items]);
@@ -848,6 +872,9 @@ export function OrderFormPage() {
       box: n(i.box),
       comment: i.comment.trim() || null,
       calField: i.calField || null,
+      // Photos only apply to orders (quotation lines have none) — sending the full
+      // set (existing by id + new uploads) lets the server sync additions/removals.
+      ...(docKind === 'order' && i.photos !== undefined ? { photos: toPhotoInput(i.photos) } : {}),
     })),
   });
 
@@ -1095,6 +1122,13 @@ export function OrderFormPage() {
       {/* Card 2 — item entry (2 rows) + grid */}
       <Card className="border-border border-l-4 border-l-slate-400 bg-slate-50/70 py-0">
         <CardContent className="space-y-2 px-4 py-3">
+          {/* Prompt to choose a customer before any item can be entered. */}
+          {noCustomer && (
+            <div className="animate-in fade-in flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 duration-200">
+              <ArrowLeft className="size-4 shrink-0" />
+              Select a customer above to start adding items.
+            </div>
+          )}
           {/* Row 1 */}
           <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-3 lg:grid-cols-12">
             {/* Manual Size/Pcs picker — shown only when auto-detect is turned off. */}
@@ -1118,8 +1152,9 @@ export function OrderFormPage() {
                 onChange={onItemPick}
                 onType={detectShowBy}
                 options={itemOptions.labels}
-                placeholder="Item name"
+                placeholder={noCustomer ? 'Select a customer first' : 'Item name'}
                 className="text-left"
+                disabled={noCustomer}
                 onInvalidEntry={() => {
                   toast.error('Please select a correct item');
                   requestAnimationFrame(() => focusField(formRef.current, 'itemName'));
@@ -1203,7 +1238,7 @@ export function OrderFormPage() {
               <Input value={entry.comment} onChange={(e) => setEntryField({ comment: e.target.value })} placeholder="Item remark…" />
             </div>
             <div className="col-span-2 sm:col-span-1 lg:col-span-1">
-              <Button onClick={addItem} className="w-full" aria-label="Add item" title="Add item (Alt+A)">
+              <Button onClick={addItem} disabled={noCustomer} className="w-full" aria-label="Add item" title={noCustomer ? 'Select a customer first' : 'Add item (Alt+A)'}>
                 <Plus /> Add
               </Button>
             </div>
@@ -1266,7 +1301,7 @@ export function OrderFormPage() {
                   <th className="text-right">Rate ₹</th>
                   <th className="text-right">Amount ₹</th>
                   <th>Remarks</th>
-                  <th className="w-8" />
+                  <th className="w-16 text-center">Photos</th>
                 </tr>
               </thead>
               <tbody className="[&_td]:border-t [&_td]:px-3 [&_td]:py-2">
@@ -1310,7 +1345,11 @@ export function OrderFormPage() {
                       <td className="text-right font-semibold tabular-nums text-emerald-700">{lineAmount(i).toLocaleString('en-IN')}</td>
                       <td className="max-w-[14rem] truncate" title={i.comment}>{i.comment || '—'}</td>
                       <td>
-                        {i.id != null ? (
+                        <div className="flex items-center justify-center gap-0.5">
+                          {docKind === 'order' && (
+                            <LinePhotoButton photos={i.photos ?? []} onChange={(photos) => setItemPhotos(i.key, photos)} />
+                          )}
+                          {i.id != null ? (
                           // A saved line — deleting it belongs on the Order Modify page,
                           // where the removal (and its dispatch guard) is handled properly.
                           <Tooltip>
@@ -1326,11 +1365,12 @@ export function OrderFormPage() {
                               <p className="opacity-80">Existing items can’t be removed here — delete them from the Order Modify page.</p>
                             </TooltipContent>
                           </Tooltip>
-                        ) : (
-                          <Button variant="ghost" size="icon" className="size-7 text-destructive hover:text-destructive" onClick={() => removeItem(i.key)} aria-label="Remove">
-                            <Trash2 className="size-4" />
-                          </Button>
-                        )}
+                          ) : (
+                            <Button variant="ghost" size="icon" className="size-7 text-destructive hover:text-destructive" onClick={() => removeItem(i.key)} aria-label="Remove">
+                              <Trash2 className="size-4" />
+                            </Button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -1432,6 +1472,35 @@ export function OrderFormPage() {
         />
       )}
     </div>
+  );
+}
+
+/** Per-row camera button → popover with the line's draft photo manager. */
+function LinePhotoButton({ photos, onChange }: { photos: LinePhoto[]; onChange: (photos: LinePhoto[]) => void }) {
+  const count = photos.length;
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className={cn('relative size-7', count ? 'text-indigo-600' : 'text-slate-400 hover:text-indigo-600')}
+          aria-label="Line photos"
+          title={count ? `${count} photo${count === 1 ? '' : 's'}` : 'Add photos'}
+        >
+          <Camera className="size-4" />
+          {count > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-indigo-600 px-0.5 text-[9px] font-bold text-white tabular-nums">
+              {count}
+            </span>
+          )}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-80">
+        <DraftLinePhotos value={photos} onChange={onChange} />
+      </PopoverContent>
+    </Popover>
   );
 }
 
