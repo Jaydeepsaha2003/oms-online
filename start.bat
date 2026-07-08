@@ -30,9 +30,9 @@ echo.
 
 REM If a server is already running, skip the sync (its files are locked)
 REM and point the user at restart.bat to pick up changes.
-netstat -aon | findstr /C:":4173 " | findstr /C:"LISTENING" >nul 2>&1
+netstat -aon | findstr /C:":6173 " | findstr /C:"LISTENING" >nul 2>&1
 if not errorlevel 1 (
-    echo Servers already appear to be running on http://localhost:4173.
+    echo Servers already appear to be running on http://localhost:6173.
     echo To apply code changes, run restart.bat instead.
     echo.
     pause
@@ -107,7 +107,7 @@ wscript "%~dp0run-prod-hidden.vbs"
 
 REM Wait until both ports are listening so we can confirm a real startup.
 set "READY=1"
-powershell -NoProfile -Command "$d=(Get-Date).AddSeconds(45); while((Get-Date) -lt $d){ if((Get-NetTCPConnection -State Listen -LocalPort 4000 -EA SilentlyContinue) -and (Get-NetTCPConnection -State Listen -LocalPort 4173 -EA SilentlyContinue)){ exit 0 }; Start-Sleep -Milliseconds 700 }; exit 1"
+powershell -NoProfile -Command "$d=(Get-Date).AddSeconds(45); while((Get-Date) -lt $d){ if((Get-NetTCPConnection -State Listen -LocalPort 4000 -EA SilentlyContinue) -and (Get-NetTCPConnection -State Listen -LocalPort 6173 -EA SilentlyContinue)){ exit 0 }; Start-Sleep -Milliseconds 700 }; exit 1"
 if errorlevel 1 set "READY="
 
 echo.
@@ -116,8 +116,8 @@ if defined READY (
     echo   OMS production servers are RUNNING in the background.
     echo ============================================================
     echo.
-    echo   On this PC     :  https://localhost:4173
-    if defined LANIP echo   On your phone  :  https://%LANIP%:4173
+    echo   On this PC     :  https://localhost:6173
+    if defined LANIP echo   On your phone  :  https://%LANIP%:6173
     echo.
     echo   API: http://localhost:4000/api     Docs: http://localhost:4000/api/docs
 ) else (

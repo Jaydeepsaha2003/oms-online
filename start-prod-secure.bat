@@ -44,8 +44,8 @@ echo.
 echo   ============================================================
 echo     OMS Production (Secure HTTPS) is starting...
 echo.
-echo     On this PC     :  https://localhost:4173
-if defined LANIP echo     On your phone  :  https://%LANIP%:4173
+echo     On this PC     :  https://localhost:6173
+if defined LANIP echo     On your phone  :  https://%LANIP%:6173
 echo.
 echo     Keep this window open. Press Ctrl+C to stop.
 echo   ============================================================
@@ -53,7 +53,7 @@ echo.
 
 rem Open the browser a few seconds after the server boots
 if defined LANIP (
-  start "" cmd /c "timeout /t 5 >nul & start https://localhost:4173"
+  start "" cmd /c "timeout /t 5 >nul & start https://localhost:6173"
 )
 
 call npm run start
