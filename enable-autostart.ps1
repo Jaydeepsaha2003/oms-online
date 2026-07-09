@@ -1,15 +1,22 @@
-# OMS - Create a Startup-folder shortcut that silently launches
-# autostart-oms.vbs whenever this Windows user logs in.
+# OMS - Register a Task Scheduler task that runs at every Windows power-on
+# (before any login), as SYSTEM, silently launching autostart-oms.vbs.
+# Also removes the older Startup-folder shortcut (login-only) if present,
+# since this task supersedes it.
 $ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$TaskName = 'OMS Auto Start'
+
 $Startup = [Environment]::GetFolderPath('Startup')
-$ShortcutPath = Join-Path $Startup 'OMS Auto Start.lnk'
+$OldShortcut = Join-Path $Startup 'OMS Auto Start.lnk'
+if (Test-Path $OldShortcut) {
+    Remove-Item $OldShortcut -Force
+    Write-Host 'Removed the older login-only Startup shortcut.'
+}
 
-$WshShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut($ShortcutPath)
-$Shortcut.TargetPath = 'wscript.exe'
-$Shortcut.Arguments = "`"$ProjectDir\autostart-oms.vbs`""
-$Shortcut.WorkingDirectory = $ProjectDir
-$Shortcut.Description = 'Silently starts the OMS production server on Windows login'
-$Shortcut.Save()
+$Action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$ProjectDir\autostart-oms.vbs`""
+$Trigger = New-ScheduledTaskTrigger -AtStartup
+$Principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+$Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
 
-Write-Host "Created: $ShortcutPath"
+Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Settings $Settings -Force | Out-Null
+
+Write-Host "Scheduled task '$TaskName' created - OMS will now start at Windows power-on, before login, with no browser opened."

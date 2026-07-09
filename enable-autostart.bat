@@ -1,28 +1,36 @@
 @echo off
 REM ============================================================
-REM  OMS - Enable auto-start on Windows login (run ONCE).
-REM  Creates a shortcut in your Startup folder that silently starts
-REM  the OMS production server whenever you log into Windows, using
-REM  whatever build is already on disk - no rebuild, so login stays
-REM  fast. Does nothing if the server happens to already be running
-REM  (e.g. the PC only slept). To pick up new code, still run
-REM  restart.bat yourself afterwards.
-REM  To undo this, run disable-autostart.bat.
+REM  OMS - Enable auto-start at Windows power-on (run ONCE).
+REM  Registers a Task Scheduler task (runs as SYSTEM) that silently starts
+REM  the OMS production server as soon as Windows boots - before you even
+REM  log in, no browser opened automatically, no rebuild (uses whatever
+REM  build is already on disk; run restart.bat yourself after pulling new
+REM  code). Skips launching if the server's already running.
+REM  Requires administrator rights (one-time, to register the task).
+REM  To undo, run disable-autostart.bat.
 REM ============================================================
-cd /d "%~dp0"
 
+REM Self-elevate to Administrator if we are not already.
+net session >nul 2>&1
+if not "%errorlevel%"=="0" (
+    echo Administrator rights are required - asking for permission...
+    powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+    exit /b
+)
+
+cd /d "%~dp0"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0enable-autostart.ps1"
 if errorlevel 1 (
     echo.
-    echo [ERROR] Could not create the Startup shortcut - see the message above.
+    echo [ERROR] Could not register the scheduled task - see the message above.
     pause
     exit /b 1
 )
 
 echo.
 echo ============================================================
-echo   Done. OMS will now start automatically next time you log
-echo   into Windows (using whatever build is already on disk).
+echo   Done. OMS will now start automatically at Windows power-on,
+echo   before you even log in - silently, with no browser opened.
 echo.
 echo   To turn this off again, run disable-autostart.bat.
 echo ============================================================
