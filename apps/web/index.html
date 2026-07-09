@@ -156,6 +156,30 @@
         var el = document.getElementById('app-splash');
         if (el) el.classList.add('app-splash--hide');
       }, 8000);
+
+      // Recovery: if React never mounted anything into #root after a generous
+      // wait, the most likely cause is a stuck old service worker serving a
+      // stale cached page from a previous deploy (its cached HTML can point at
+      // JS paths that no longer exist). Unregister it, clear its caches, and
+      // reload once — guarded by sessionStorage so a genuinely broken deploy
+      // doesn't reload-loop forever.
+      window.setTimeout(function () {
+        var root = document.getElementById('root');
+        if (root && root.childElementCount > 0) return;
+        if (sessionStorage.getItem('oms-sw-recovery-done')) return;
+        sessionStorage.setItem('oms-sw-recovery-done', '1');
+        if (!('serviceWorker' in navigator)) return;
+        navigator.serviceWorker.getRegistrations().then(function (regs) {
+          return Promise.all(regs.map(function (r) { return r.unregister(); }));
+        }).then(function () {
+          if (!('caches' in window)) return;
+          return caches.keys().then(function (names) {
+            return Promise.all(names.map(function (n) { return caches.delete(n); }));
+          });
+        }).finally(function () {
+          location.reload();
+        });
+      }, 6000);
     </script>
 
     <script type="module" src="/src/main.tsx"></script>
