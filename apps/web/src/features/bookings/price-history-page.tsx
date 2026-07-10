@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, History, Search, TrendingDown, TrendingUp } from 'lucide-react';
 import type { RateChangeEntry, RateHistoryKind } from '@oms/shared';
-import { formatDateTime } from '@/lib/utils';
+import { cn, formatDateTime } from '@/lib/utils';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -82,6 +82,39 @@ export function PriceHistoryPage() {
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
 
+  // Phones: one stacked card per change instead of a horizontally-scrolling table.
+  const historyMobileCard = (r: RateChangeEntry) => {
+    const up = (r.newRate ?? 0) > (r.oldRate ?? 0);
+    const down = (r.newRate ?? 0) < (r.oldRate ?? 0);
+    return (
+      <div className="space-y-2">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <span className={cn('rounded px-1.5 py-0.5 text-xs font-medium ring-1', KIND_STYLE[r.kind])}>{KIND_LABEL[r.kind]}</span>
+            <p className="mt-1 truncate font-medium leading-tight">{r.name}</p>
+            <p className="text-muted-foreground truncate text-xs">
+              {[r.category, r.subCategory].filter(Boolean).join(' · ')}
+              {r.kind === 'CUSTOMER' && r.rateKind ? ` · ${r.rateKind}${r.target ? ` · ${r.target}` : ''} (${(r.scope ?? '').toLowerCase()})` : ''}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 text-sm">
+          <span className="text-muted-foreground tabular-nums">{rateStr(r.oldRate)}</span>
+          <span className="text-muted-foreground">→</span>
+          <span className={cn('inline-flex items-center gap-1 font-semibold tabular-nums', up ? 'text-rose-600' : down ? 'text-emerald-600' : '')}>
+            {up && <TrendingUp className="size-3.5" />}
+            {down && <TrendingDown className="size-3.5" />}
+            {rateStr(r.newRate)}
+          </span>
+        </div>
+        <div className="text-muted-foreground flex items-center justify-between border-t pt-2 text-xs">
+          <span>{r.changedByName ?? '—'}</span>
+          <span className="font-mono">{formatDateTime(r.changedAt)}</span>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
@@ -125,6 +158,7 @@ export function PriceHistoryPage() {
         rowKey={(r) => `${r.kind}-${r.id}`}
         isLoading={isLoading}
         emptyText="No price changes recorded yet."
+        mobileCard={historyMobileCard}
       />
 
       <div className="flex items-center justify-between">

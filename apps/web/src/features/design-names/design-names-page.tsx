@@ -49,6 +49,39 @@ export function DesignNamesPage() {
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
 
+  // Phones: one stacked card per design name instead of a horizontally-scrolling table.
+  const designNameMobileCard = (d: DesignNameDto) => (
+    <div className="space-y-2">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="leading-tight font-medium">{d.designType}</p>
+          <p className="text-muted-foreground text-sm">{d.designName}</p>
+        </div>
+        <span className="text-muted-foreground shrink-0 font-mono text-[11px]" title={formatDateTime(d.updatedAt)}>
+          {formatDateShort(d.updatedAt)}
+        </span>
+      </div>
+      <div className="flex items-center justify-end gap-1 border-t pt-2" onClick={(e) => e.stopPropagation()}>
+        {can('designname:update') && (
+          <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(d)} aria-label="Edit">
+            <Pencil className="size-4" />
+          </Button>
+        )}
+        {can('designname:delete') && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8 text-destructive hover:text-destructive"
+            onClick={() => handleDelete(d)}
+            aria-label="Delete"
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+
   const columns: DataColumn<DesignNameDto>[] = [
     { id: 'designType', label: 'Design type', cell: (d) => <span className="font-medium">{d.designType}</span> },
     { id: 'designName', label: 'Design name', cell: (d) => d.designName },
@@ -126,6 +159,7 @@ export function DesignNamesPage() {
         isLoading={isLoading}
         onRowClick={(d) => can('designname:update') && setEditing(d)}
         emptyText="No design names yet."
+        mobileCard={designNameMobileCard}
         actions={(d) => (
           <div className="flex justify-end gap-1">
             {can('designname:update') && (
