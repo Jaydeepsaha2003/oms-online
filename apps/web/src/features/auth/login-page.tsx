@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { PinPad } from '@/components/auth/pin-pad';
 import { PandaMascot } from '@/components/auth/panda-mascot';
+import { IntroVideo } from '@/features/auth/intro-video';
 
 type Mode = 'password' | 'pin';
 const LAST_EMAIL_KEY = 'oms:last-email';
@@ -33,6 +34,7 @@ export function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [pwFocused, setPwFocused] = useState(false);
   const [emailFocused, setEmailFocused] = useState(false);
+  const [showIntro, setShowIntro] = useState(true);
 
   // The account PIN sign-in applies to — the last account used on this device.
   // PIN mode never shows an email field; it signs in as this remembered account.
@@ -90,6 +92,7 @@ export function LoginPage() {
   }, [mode, rememberedEmail, submitPin]);
 
   if (user) return <Navigate to={from} replace />;
+  if (showIntro) return <IntroVideo onFinish={() => setShowIntro(false)} />;
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gradient-to-br from-blue-50 via-white to-amber-50 px-4 py-10">

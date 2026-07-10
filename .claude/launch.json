@@ -5,7 +5,7 @@
       "name": "web",
       "runtimeExecutable": "cmd.exe",
       "runtimeArgs": ["/c", "D:\\OneDrive\\Documents\\ONLINE-OMS-JAYDEEP-19.06.2026\\oms-online\\scripts\\preview-web.cmd"],
-      "port": 5173,
+      "port": 6173,
       "autoPort": false
     },
     {
