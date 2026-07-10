@@ -20,20 +20,20 @@ const sanitize = (s: string) => s.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, 
 const stampFull = (iso: string) =>
   new Date(iso).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-/* ─────────────────────────── palette ─────────────────────────── */
+/* ─────────────────────────── palette ───────────────────────────
+ * Brand three: navy #305496, peach #F4B084, white — everything else here is
+ * a tint/shade of those two (plus neutral ink for body text/hairlines). */
 
-const INK: [number, number, number] = [15, 23, 42]; // slate-900
+const INK: [number, number, number] = [15, 23, 42]; // slate-900 — body text
 const MUTED: [number, number, number] = [100, 116, 139]; // slate-500
 const FAINT: [number, number, number] = [148, 163, 184]; // slate-400
-const HAIRLINE: [number, number, number] = [226, 232, 240]; // slate-200
-const ZEBRA: [number, number, number] = [248, 250, 252]; // slate-50
-const BLUE_900: [number, number, number] = [30, 58, 138];
-const BLUE_700: [number, number, number] = [29, 78, 216];
-const BLUE_600: [number, number, number] = [37, 99, 235];
-const BLUE_100: [number, number, number] = [219, 234, 254];
-const BLUE_200: [number, number, number] = [191, 219, 254];
-const AMBER: [number, number, number] = [245, 158, 11];
-const AMBER_300: [number, number, number] = [252, 211, 77];
+const HAIRLINE: [number, number, number] = [232, 224, 216]; // warm-neutral divider (peach-tinted)
+const WHITE: [number, number, number] = [255, 255, 255];
+const NAVY: [number, number, number] = [48, 84, 150]; // #305496
+const NAVY_DARK: [number, number, number] = [24, 42, 82]; // gradient top / deepest shade
+const PEACH: [number, number, number] = [244, 176, 132]; // #F4B084
+const PEACH_TINT: [number, number, number] = [251, 227, 212]; // pale peach column banding
+const NAVY_TEXT_ON_DARK: [number, number, number] = [253, 239, 230]; // warm off-white for secondary text on navy
 
 /** Load the KAVISH logo once as a base64 data URL (+ natural size) for the PDF
  *  watermark. Uses only fetch + jsPDF itself so it runs in the browser AND in
@@ -125,36 +125,36 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
     doc.restoreGraphicsState();
   };
 
-  /** Page-1 masthead: vertical blue gradient band + amber keyline. */
+  /** Page-1 masthead: navy gradient band + peach keyline. */
   const heroHeader = () => {
     const heroH = 108;
     const steps = 36;
     for (let i = 0; i < steps; i++) {
       const t = i / (steps - 1);
       doc.setFillColor(
-        Math.round(BLUE_900[0] + (BLUE_600[0] - BLUE_900[0]) * t),
-        Math.round(BLUE_900[1] + (BLUE_600[1] - BLUE_900[1]) * t),
-        Math.round(BLUE_900[2] + (BLUE_600[2] - BLUE_900[2]) * t),
+        Math.round(NAVY_DARK[0] + (NAVY[0] - NAVY_DARK[0]) * t),
+        Math.round(NAVY_DARK[1] + (NAVY[1] - NAVY_DARK[1]) * t),
+        Math.round(NAVY_DARK[2] + (NAVY[2] - NAVY_DARK[2]) * t),
       );
       doc.rect(0, (heroH / steps) * i, pageW, heroH / steps + 1, 'F');
     }
-    doc.setFillColor(...AMBER);
+    doc.setFillColor(...PEACH);
     doc.rect(0, heroH, pageW, 2.5, 'F');
 
-    doc.setTextColor(...AMBER_300).setFont('helvetica', 'bold').setFontSize(8);
+    doc.setTextColor(...PEACH).setFont('helvetica', 'bold').setFontSize(8);
     doc.text('KAVISH  ·  THE UNIQUE', margin, 28, { charSpace: 2 });
-    doc.setTextColor(255).setFontSize(27);
+    doc.setTextColor(...WHITE).setFontSize(27);
     doc.text('RATE LIST', margin, 60, { charSpace: 4 });
     doc.setFontSize(12.5);
     doc.text(list.customerName, margin, 82);
-    doc.setFont('helvetica', 'normal').setFontSize(8).setTextColor(...BLUE_100);
+    doc.setFont('helvetica', 'normal').setFontSize(8).setTextColor(...NAVY_TEXT_ON_DARK);
     doc.text('Effective rates for this customer  ·  base chart + special adjustments  ·  amounts in INR', margin, 96);
 
-    doc.setFont('helvetica', 'bold').setFontSize(7).setTextColor(...BLUE_200);
+    doc.setFont('helvetica', 'bold').setFontSize(7).setTextColor(...PEACH);
     doc.text('GENERATED', pageW - margin, 30, { align: 'right', charSpace: 1.5 });
-    doc.setFontSize(10).setTextColor(255);
+    doc.setFontSize(10).setTextColor(...WHITE);
     doc.text(stampFull(list.generatedAt), pageW - margin, 44, { align: 'right' });
-    doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...BLUE_100);
+    doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...NAVY_TEXT_ON_DARK);
     doc.text(`${productCount} products  ·  ${designCount} designs`, pageW - margin, 58, { align: 'right' });
 
     headerH = heroH + 2.5;
@@ -164,13 +164,13 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
 
   /** Slim masthead for continuation pages. */
   const contHeader = () => {
-    doc.setFillColor(...BLUE_900);
+    doc.setFillColor(...NAVY);
     doc.rect(0, 0, pageW, 40, 'F');
-    doc.setFillColor(...AMBER);
+    doc.setFillColor(...PEACH);
     doc.rect(0, 40, pageW, 2, 'F');
-    doc.setTextColor(255).setFont('helvetica', 'bold').setFontSize(9.5);
+    doc.setTextColor(...WHITE).setFont('helvetica', 'bold').setFontSize(9.5);
     doc.text(`RATE LIST  ·  ${list.customerName}`, margin, 25, { charSpace: 1 });
-    doc.setFont('helvetica', 'normal').setFontSize(8).setTextColor(...BLUE_200);
+    doc.setFont('helvetica', 'normal').setFontSize(8).setTextColor(...NAVY_TEXT_ON_DARK);
     doc.text(stampFull(list.generatedAt), pageW - margin, 25, { align: 'right' });
     headerH = 42;
     y = headerH + 22;
@@ -224,8 +224,8 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
 
     ensure(rowH * 4 + 34);
 
-    // Section heading: amber accent bar + title, item count on the right.
-    doc.setFillColor(...AMBER);
+    // Section heading: peach accent bar + title, item count on the right.
+    doc.setFillColor(...PEACH);
     doc.rect(margin, y - 10, 3.5, 13, 'F');
     doc.setFont('helvetica', 'bold').setFontSize(11.5).setTextColor(...INK);
     doc.text(t.title, margin + 10, y);
@@ -235,13 +235,25 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
     });
     y += 10;
 
+    // Header row: navy block over SR+ITEM, peach block over AVAILABLE PCS, plain
+    // white over the rate columns — mirrors the printed sheet's column banding.
+    const identityW = widths[0] + widths[1] + (showAvail ? widths[2] : 0);
     const headerRow = () => {
-      doc.setFillColor(...BLUE_700);
-      doc.roundedRect(margin, y, usable, rowH + 1, 3, 3, 'F');
-      doc.setTextColor(255).setFont('helvetica', 'bold');
+      doc.setFillColor(...NAVY);
+      doc.rect(margin, y, widths[0] + widths[1], rowH + 1, 'F');
+      if (showAvail) {
+        doc.setFillColor(...PEACH);
+        doc.rect(margin + widths[0] + widths[1], y, widths[2], rowH + 1, 'F');
+      }
+      doc.setDrawColor(...NAVY);
+      doc.setLineWidth(1);
+      doc.line(margin, y + rowH + 1, margin + usable, y + rowH + 1);
+
+      doc.setFont('helvetica', 'bold');
       let x = margin;
       headers.forEach((h, i) => {
         const right = i >= firstRateCol;
+        doc.setTextColor(...(i < 2 ? WHITE : i === 2 && showAvail ? INK : NAVY));
         fitText(h, right ? x + widths[i] - 5 : x + 6, y + 12.5, widths[i] - 10, 8, right ? { align: 'right' } : undefined);
         x += widths[i];
       });
@@ -254,19 +266,19 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
         breakPage();
         headerRow();
       }
-      if (idx % 2 === 1) {
-        doc.setFillColor(...ZEBRA);
-        doc.rect(margin, y - 2, usable, rowH, 'F');
-      }
+      // Pale peach band behind the identity columns on every row (the rate
+      // columns stay plain white) — reproduces the printed sheet's look.
+      doc.setFillColor(...PEACH_TINT);
+      doc.rect(margin, y - 2, identityW, rowH, 'F');
       let x = margin;
       // SR
-      doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...FAINT);
+      doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...MUTED);
       doc.text(String(r.sr), x + 6, y + 10);
       x += widths[0];
-      // ITEM (+ amber dot for special-rate items); single line, shrink-to-fit.
+      // ITEM (+ peach dot for special-rate items); single line, shrink-to-fit.
       let itemX = x + 6;
       if (r.special) {
-        doc.setFillColor(...AMBER);
+        doc.setFillColor(...NAVY);
         doc.circle(x + 8.5, y + 7.5, 2, 'F');
         itemX = x + 15;
       }
@@ -309,7 +321,7 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
     doc.setDrawColor(...HAIRLINE);
     doc.setLineWidth(0.75);
     doc.line(margin, footerTop + 6, pageW - margin, footerTop + 6);
-    doc.setFont('helvetica', 'bold').setFontSize(7).setTextColor(...AMBER);
+    doc.setFont('helvetica', 'bold').setFontSize(7).setTextColor(...NAVY);
     doc.text('KAVISH · THE UNIQUE', margin, footerTop + 18, { charSpace: 1 });
     doc.setFont('helvetica', 'normal').setFontSize(7.5).setTextColor(...FAINT);
     doc.text(`${list.customerName}  ·  ${stampFull(list.generatedAt)}${anySpecial ? '  ·  • special rate applied' : ''}`, pageW / 2, footerTop + 18, {

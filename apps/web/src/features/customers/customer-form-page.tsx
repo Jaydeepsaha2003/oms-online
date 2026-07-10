@@ -425,8 +425,9 @@ export function CustomerFormPage() {
           </Field>
         </Section>
 
-        {/* Sticky action bar */}
-        <div className="sticky bottom-0 z-10 -mx-1 flex items-center justify-end gap-2 border-t bg-background/85 px-1 py-3 backdrop-blur">
+        {/* Action bar: sits at the end of the form and scrolls with the page —
+            not pinned, so it never overlaps the last fields on short screens. */}
+        <div className="flex items-center justify-end gap-2 border-t px-1 py-3">
           <Button type="button" variant="outline" onClick={() => navigate('/customers')}>
             Cancel
           </Button>
