@@ -4,14 +4,14 @@
     {
       "name": "web",
       "runtimeExecutable": "cmd.exe",
-      "runtimeArgs": ["/c", "D:\\OneDrive\\Documents\\ONLINE-OMS-JAYDEEP-19.06.2026\\oms-online\\scripts\\preview-web.cmd"],
+      "runtimeArgs": ["/c", "scripts\\preview-web.cmd"],
       "port": 6173,
       "autoPort": false
     },
     {
       "name": "api",
       "runtimeExecutable": "cmd.exe",
-      "runtimeArgs": ["/c", "D:\\OneDrive\\Documents\\ONLINE-OMS-JAYDEEP-19.06.2026\\oms-online\\scripts\\preview-api.cmd"],
+      "runtimeArgs": ["/c", "scripts\\preview-api.cmd"],
       "port": 4000,
       "autoPort": false
     }
