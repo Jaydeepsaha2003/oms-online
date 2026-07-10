@@ -22,7 +22,7 @@ createRoot(document.getElementById('root')!).render(
 // Fade out the instant welcome splash (index.html) once React has mounted, keeping
 // it up for a minimum time so the animation is actually seen on fast reloads.
 (() => {
-  const SPLASH_MIN_MS = 900;
+  const SPLASH_MIN_MS = 250;
   const hide = () => {
     const el = document.getElementById('app-splash');
     if (!el) return;
@@ -41,5 +41,12 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').catch(() => {
       /* e.g. plain-HTTP LAN access — install still possible via Add to Home Screen */
     });
+  });
+  // Once a new service worker takes over an already-open tab (a deploy shipped
+  // while it was open, or the index.html recovery script unregistered a stuck
+  // one), reload immediately so the tab reflects the fresh version instead of
+  // silently running on whatever it had loaded before.
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    window.location.reload();
   });
 }

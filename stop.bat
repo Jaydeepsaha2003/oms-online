@@ -21,10 +21,10 @@ if "%errorlevel%"=="0" (
 )
 
 REM 2) Fallback: free the ports in case anything is still bound
-REM    (4173 = production web, 6173 = dev.bat's Vite dev server).
+REM    (6173 = production web, 5173 = dev.bat's Vite dev server).
 call :freeport 4000 API
-call :freeport 4173 Web
 call :freeport 6173 Web
+call :freeport 5173 Web
 
 REM 3) Final sweep: stop any leftover node/tsc processes that were
 REM    started from THIS project folder (and nothing else).

@@ -1,7 +1,9 @@
 @echo off
 REM ============================================================
-REM  OMS - Remove the LAN-access firewall rules added by
-REM  enable-lan-access.bat.
+REM  OMS - Disable auto-start at Windows power-on.
+REM  Removes the Task Scheduler task created by enable-autostart.bat.
+REM  Does NOT stop a server that's already running - use stop.bat for that.
+REM  Requires administrator rights (one-time).
 REM ============================================================
 
 REM Self-elevate to Administrator if we are not already.
@@ -12,12 +14,8 @@ if not "%errorlevel%"=="0" (
     exit /b
 )
 
-echo Removing OMS firewall rules...
-netsh advfirewall firewall delete rule name="OMS Web 6173" >nul 2>&1
-netsh advfirewall firewall delete rule name="OMS Web 5173" >nul 2>&1
-netsh advfirewall firewall delete rule name="OMS API 4000" >nul 2>&1
+cd /d "%~dp0"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0disable-autostart.ps1"
 
-echo.
-echo Done. Inbound access on ports 4000/6173/5173 is closed again.
 echo.
 pause

@@ -45,7 +45,7 @@ export default defineConfig({
     // Bind to all interfaces (0.0.0.0) so the dev server is reachable from
     // phones and other devices on the same network, not just localhost.
     host: true,
-    port: 6173,
+    port: 5173,
     strictPort: true,
     proxy: apiProxy,
     // HMR is turned OFF on purpose. Over self-signed HTTPS on a phone the
@@ -59,7 +59,7 @@ export default defineConfig({
   },
   preview: {
     host: true,
-    port: 4173,
+    port: 6173,
     https: {},
     proxy: apiProxy,
   },
