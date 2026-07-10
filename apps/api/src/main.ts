@@ -76,6 +76,23 @@ async function bootstrap(): Promise<void> {
   const webDist = join(__dirname, '..', '..', '..', 'web', 'dist');
   const webIndex = join(webDist, 'index.html');
   if (existsSync(webIndex)) {
+    // Serve the local mkcert root CA with the proper certificate MIME so a phone
+    // opening /oms-rootCA.crt is offered "Install profile" (tap → Install →
+    // trust) instead of just downloading an unrecognised file. Installing it
+    // once per phone removes the "Not secure" warning permanently, even across
+    // server restarts (the leaf cert changes, but the root CA stays the same).
+    // Registered before the static handler so it wins and sets the right type.
+    const caFile = join(webDist, 'oms-rootCA.crt');
+    if (existsSync(caFile)) {
+      app
+        .getHttpAdapter()
+        .getInstance()
+        .get('/oms-rootCA.crt', (_req: unknown, res: { setHeader: (k: string, v: string) => void; sendFile: (p: string) => void }) => {
+          res.setHeader('Content-Type', 'application/x-x509-ca-cert');
+          res.sendFile(caFile);
+        });
+    }
+
     app.useStaticAssets(webDist, { index: false });
     app
       .getHttpAdapter()
