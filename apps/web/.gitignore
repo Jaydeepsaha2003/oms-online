@@ -1,0 +1,4 @@
+# Machine-specific mkcert root CA, copied here (by hand or by the cert-install
+# step) so phones can download it at /oms-rootCA.crt and trust the LAN HTTPS
+# cert. Each PC's CA differs, so it must never be committed.
+public/oms-rootCA.crt
