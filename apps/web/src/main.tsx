@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 // Self-hosted variable fonts (no external CDN, works offline).
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
+import '@fontsource-variable/montserrat';
 import App from '@/App';
 import { AppProviders } from '@/app/providers';
 import '@/index.css';

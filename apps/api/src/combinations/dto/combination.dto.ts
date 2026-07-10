@@ -16,7 +16,10 @@ export class CreateCombinationDto {
 
 export class UpdateCombinationDto extends PartialType(CreateCombinationDto) {}
 
-export class CombinationQueryDto extends PaginationDto {}
+export class CombinationQueryDto extends PaginationDto {
+  @IsOptional() @IsString() category?: string;
+  @IsOptional() @IsString() subCategory?: string;
+}
 
 export class ImportCombinationsDto {
   @IsArray()

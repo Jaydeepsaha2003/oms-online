@@ -13,6 +13,10 @@ export interface ProductDto {
   weight: number | null;
   pcs: number | null;
   rate: number | null;
+  /** Inactive products are hidden from the order item pickers (kept for the record). */
+  active: boolean;
+  /** Whether this product is shown on the customer Rate List. */
+  showOnRateList: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -25,6 +29,14 @@ export interface ProductInput {
   weight?: number | null;
   pcs?: number | null;
   rate?: number | null;
+  active?: boolean;
+  showOnRateList?: boolean;
+}
+
+/** Quick partial update of a catalog item's active / rate-list flags (inline toggle). */
+export interface CatalogFlagsInput {
+  active?: boolean;
+  showOnRateList?: boolean;
 }
 
 export interface DesignDto {
@@ -35,6 +47,10 @@ export interface DesignDto {
   designType: string;
   cost: number | null;
   rate: number | null;
+  /** Inactive designs are hidden from the order item pickers (kept for the record). */
+  active: boolean;
+  /** Whether this design is shown on the customer Rate List. */
+  showOnRateList: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -45,6 +61,8 @@ export interface DesignInput {
   designType: string;
   cost?: number | null;
   rate?: number | null;
+  active?: boolean;
+  showOnRateList?: boolean;
 }
 
 export interface DesignNameDto {
@@ -112,9 +130,17 @@ export type ProductQuery = PaginationQuery & {
   category?: string;
   subCategory?: string;
 };
-export type DesignQuery = PaginationQuery;
+export type DesignQuery = PaginationQuery & {
+  /** Exact-match list filters (Designs page dropdowns). */
+  category?: string;
+  subCategory?: string;
+};
 export type DesignNameQuery = PaginationQuery;
-export type CombinationQuery = PaginationQuery;
+export type CombinationQuery = PaginationQuery & {
+  /** Exact-match list filters (Combinations grid dropdowns). */
+  category?: string;
+  subCategory?: string;
+};
 
 export type ProductList = Paginated<ProductDto>;
 export type DesignList = Paginated<DesignDto>;

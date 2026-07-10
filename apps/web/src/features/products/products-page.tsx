@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { ChevronLeft, ChevronRight, Loader2, Pencil, Plus, Scale, Search, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Filter, Loader2, Pencil, Plus, RotateCcw, Scale, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { CategoryFieldDto, ProductDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -10,12 +10,15 @@ import { useColumnOrder } from '@/hooks/use-column-order';
 import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
+import { RowCheckbox } from '@/components/common/row-checkbox';
 import { ExportButton, ImportButton } from '@/components/common/excel-actions';
 import { Combo, NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   exportProducts,
@@ -25,6 +28,7 @@ import {
   useProductLookups,
   useProducts,
   useSaveCategoryFields,
+  useSetProductFlags,
   useUpdateProduct,
 } from './use-products';
 
@@ -34,9 +38,9 @@ const num = (n: number | null) => (n == null ? '—' : n.toLocaleString('en-IN')
 const money = (n: number | null) => (n == null ? '—' : `₹${n.toLocaleString('en-IN')}`);
 
 const COLUMNS: DataColumn<ProductDto>[] = [
-  { id: 'category', label: 'Category', pin: 'left0', fixed: true, cell: (p) => <span className="font-medium">{p.category}</span> },
-  { id: 'subCategory', label: 'Sub category', cell: (p) => p.subCategory },
-  { id: 'product', label: 'Product', cell: (p) => <span className="font-medium">{p.product}</span> },
+  { id: 'category', label: 'Category', pin: 'left0', fixed: true, cell: (p) => <span className={cn('font-medium', !p.active && 'text-muted-foreground line-through')}>{p.category}</span> },
+  { id: 'subCategory', label: 'Sub category', cell: (p) => <span className={cn('font-medium', !p.active && 'text-muted-foreground')}>{p.subCategory}</span> },
+  { id: 'product', label: 'Product', cell: (p) => <span className={cn('font-medium', !p.active && 'text-muted-foreground line-through')}>{p.product}</span> },
   { id: 'size', label: 'Size', align: 'right', cell: (p) => num(p.size) },
   { id: 'weight', label: 'Weight', align: 'right', cell: (p) => num(p.weight) },
   { id: 'pcs', label: 'PCS', align: 'right', cell: (p) => num(p.pcs) },
@@ -48,7 +52,52 @@ const COLUMNS: DataColumn<ProductDto>[] = [
       <span className="text-muted-foreground whitespace-nowrap font-mono text-xs" title={formatDateTime(p.updatedAt)}>{formatDateShort(p.updatedAt)}</span>
     ),
   },
+  // Kept as the LAST scrollable column (right before the sticky Actions column) so
+  // it lands in the visible strip next to Actions on mobile, instead of scrolling
+  // past and ending up hidden underneath the sticky column.
+  { id: 'active', label: 'Active', sortValue: (p) => (p.active ? 1 : 0), cell: (p) => <div className="flex justify-center"><ProductActiveToggle product={p} /></div> },
 ];
+
+/** Inline active/inactive toggle for a product row. Stops row-click (which opens edit). */
+function ProductActiveToggle({ product }: { product: ProductDto }) {
+  const setFlags = useSetProductFlags();
+  return (
+    <span className="inline-flex" onClick={(e) => e.stopPropagation()}>
+      <Switch
+        checked={product.active}
+        disabled={setFlags.isPending}
+        onCheckedChange={(v) =>
+          setFlags.mutate(
+            { id: product.id, active: v },
+            {
+              onSuccess: () => toast.success(v ? `${product.product} activated` : `${product.product} deactivated`),
+              onError: (e) => toast.error(getApiErrorMessage(e, 'Update failed')),
+            },
+          )
+        }
+        aria-label={`Active — ${product.product}`}
+      />
+    </span>
+  );
+}
+
+/** Inline "show on rate list" checkbox for a product row. */
+function ProductRateListCheckbox({ product }: { product: ProductDto }) {
+  const setFlags = useSetProductFlags();
+  return (
+    <RowCheckbox
+      checked={product.showOnRateList}
+      loading={setFlags.isPending}
+      onChange={(v) =>
+        setFlags.mutate(
+          { id: product.id, showOnRateList: v },
+          { onError: (er) => toast.error(getApiErrorMessage(er, 'Update failed')) },
+        )
+      }
+      label={`Show ${product.product} on rate list`}
+    />
+  );
+}
 
 export function ProductsPage() {
   const { can } = usePermissions();
@@ -61,6 +110,13 @@ export function ProductsPage() {
   const [editing, setEditing] = useState<ProductDto | null>(null);
   const [creating, setCreating] = useState(false);
   const [showFields, setShowFields] = useState(false);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const activeFilterCount = (category ? 1 : 0) + (subCategory ? 1 : 0);
+  const resetFilters = () => {
+    setCategory('');
+    setSubCategory('');
+    setPage(1);
+  };
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -113,21 +169,96 @@ export function ProductsPage() {
     }
   };
 
+  // Phones: one stacked card per product instead of a horizontally-scrolling table.
+  const productMobileCard = (p: ProductDto) => (
+    <div className="space-y-2.5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className={cn('leading-tight font-medium', !p.active && 'text-muted-foreground line-through')}>{p.product}</p>
+          <p className="text-muted-foreground text-xs">
+            {p.category} · <span className="font-montserrat">{p.subCategory}</span>
+          </p>
+        </div>
+        <ProductActiveToggle product={p} />
+      </div>
+      <div className="grid grid-cols-4 gap-2 text-xs">
+        <div>
+          <p className="text-muted-foreground">Size</p>
+          <p className="font-medium tabular-nums">{num(p.size)}</p>
+        </div>
+        <div>
+          <p className="text-muted-foreground">Weight</p>
+          <p className="font-medium tabular-nums">{num(p.weight)}</p>
+        </div>
+        <div>
+          <p className="text-muted-foreground">PCS</p>
+          <p className="font-medium tabular-nums">{num(p.pcs)}</p>
+        </div>
+        <div>
+          <p className="text-muted-foreground">Rate</p>
+          <p className="font-medium tabular-nums">{money(p.rate)}</p>
+        </div>
+      </div>
+      <div className="flex items-center justify-between border-t pt-2.5" onClick={(e) => e.stopPropagation()}>
+        <label className="text-muted-foreground flex cursor-pointer items-center gap-2 text-xs font-medium">
+          <ProductRateListCheckbox product={p} />
+          Rate list
+        </label>
+        <div className="flex items-center gap-1">
+          {can('product:update') && (
+            <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(p)} aria-label="Edit">
+              <Pencil className="size-4" />
+            </Button>
+          )}
+          {can('product:delete') && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 text-destructive hover:text-destructive"
+              onClick={() => handleDelete(p)}
+              aria-label="Delete"
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="space-y-4">
       {/* One compact toolbar row: search → category/sub-category filters → live
-          count → actions. (No page title — the topbar already says "Products".) */}
+          count → actions. (No page title — the topbar already says "Products".)
+          On phones the dropdowns move behind a Filter icon (see the sheet below)
+          so the row doesn't stack into a wall of controls above the cards. */}
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-        <div className="relative w-full max-w-xs">
-          <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
-          <Input
-            placeholder="Search category, sub category, product…"
-            className="pl-9"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-          />
+        <div className="flex items-center gap-2">
+          <div className="relative w-full max-w-xs">
+            <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
+            <Input
+              placeholder="Search category, sub category, product…"
+              className="pl-9"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+            />
+          </div>
+          <Button
+            variant="outline"
+            size="icon"
+            className="relative shrink-0 lg:hidden"
+            onClick={() => setMobileFiltersOpen(true)}
+            aria-label="Filters"
+          >
+            <Filter className="size-4" />
+            {activeFilterCount > 0 && (
+              <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-medium">
+                {activeFilterCount}
+              </span>
+            )}
+          </Button>
         </div>
-        <div className="w-44">
+        <div className="hidden w-44 lg:block">
           <NativeSelect
             value={category}
             onChange={(v) => {
@@ -139,7 +270,7 @@ export function ProductsPage() {
             placeholder="All categories"
           />
         </div>
-        <div className="w-48">
+        <div className="hidden w-48 lg:block">
           <NativeSelect
             value={subCategory}
             onChange={(v) => {
@@ -173,17 +304,69 @@ export function ProductsPage() {
         </div>
       </div>
 
+      {/* Phones only: Category / Sub category live behind the Filter icon above. */}
+      <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
+        <SheetContent side="bottom" className="lg:hidden">
+          <SheetHeader>
+            <div className="flex items-center justify-between">
+              <SheetTitle>Filters</SheetTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground -mr-2 gap-1.5"
+                onClick={resetFilters}
+                disabled={activeFilterCount === 0}
+              >
+                <RotateCcw className="size-3.5" /> Reset
+              </Button>
+            </div>
+          </SheetHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Category</Label>
+              <NativeSelect
+                value={category}
+                onChange={(v) => {
+                  setCategory(v);
+                  setSubCategory('');
+                  setPage(1);
+                }}
+                options={['', ...(lookups?.categories ?? [])]}
+                placeholder="All categories"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Sub category</Label>
+              <NativeSelect
+                value={subCategory}
+                onChange={(v) => {
+                  setSubCategory(v);
+                  setPage(1);
+                }}
+                options={['', ...(lookups?.subCategories ?? [])]}
+                placeholder="All sub categories"
+              />
+            </div>
+          </div>
+          <SheetFooter>
+            <Button className="w-full" onClick={() => setMobileFiltersOpen(false)}>
+              Show {(data?.total ?? 0).toLocaleString('en-IN')} products
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
+
       <DataTable
         columns={cols.visibleColumns}
         rows={items}
         rowKey={(p) => p.id}
         isLoading={isLoading}
-        // Compact single-row header above → give the reclaimed space to the table.
-        maxBodyHeight="max-h-[calc(100dvh_-_12rem)]"
         emptyText="No products yet."
         onRowClick={(p) => can('product:update') && setEditing(p)}
+        mobileCard={productMobileCard}
         actions={(p) => (
-          <div className="flex justify-end gap-1">
+          <div className="flex items-center justify-end gap-2">
+            <ProductRateListCheckbox product={p} />
             {can('product:update') && (
               <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(p)} aria-label="Edit">
                 <Pencil className="size-4" />
@@ -332,6 +515,8 @@ function ProductDialog({ product, onClose }: { product: ProductDto | null; onClo
     weight: product?.weight?.toString() ?? '',
     pcs: product?.pcs?.toString() ?? '',
     rate: product?.rate?.toString() ?? '',
+    active: product?.active ?? true,
+    showOnRateList: product?.showOnRateList ?? true,
   });
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const numOrNull = (v: string) => (v.trim() === '' || Number.isNaN(Number(v)) ? null : Number(v));
@@ -348,6 +533,8 @@ function ProductDialog({ product, onClose }: { product: ProductDto | null; onClo
       weight: numOrNull(form.weight),
       pcs: numOrNull(form.pcs),
       rate: numOrNull(form.rate),
+      active: form.active,
+      showOnRateList: form.showOnRateList,
     };
     const opts = {
       onSuccess: () => {
@@ -414,6 +601,20 @@ function ProductDialog({ product, onClose }: { product: ProductDto | null; onClo
               <Label>Rate</Label>
               <Input type="number" step="any" value={form.rate} onChange={(e) => set('rate', e.target.value)} />
             </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-6 rounded-lg border bg-muted/40 px-3 py-2.5">
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+              <Switch checked={form.active} onCheckedChange={(v) => setForm((f) => ({ ...f, active: v }))} />
+              Active <span className="text-muted-foreground font-normal">(shown in order pickers)</span>
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium normal-case">
+              <RowCheckbox
+                checked={form.showOnRateList}
+                onChange={(v) => setForm((f) => ({ ...f, showOnRateList: v }))}
+                label="Show on rate list"
+              />
+              Show on rate list
+            </label>
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>

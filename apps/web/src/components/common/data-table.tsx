@@ -89,14 +89,14 @@ export function DataTable<T>({
   actions,
   isLoading,
   emptyText = 'No records found.',
-  // Default: the table body scrolls inside its own region so the column header
-  // (and the frozen columns) stay pinned while scrolling — on every page. Pages
-  // that need a different bound pass their own. The offset leaves room for the
-  // topbar, page heading/filters above and the pagination row below.
-  maxBodyHeight = 'max-h-[calc(100dvh_-_15rem)]',
+  // No height cap by default: the table grows to fit its rows (a page of ~50)
+  // and the page itself scrolls. Pass this only where a table needs its own
+  // internal scroll region (e.g. a long picklist inside a fixed-height panel).
+  maxBodyHeight,
   dense,
   hideRowView,
   className,
+  mobileCard,
 }: {
   columns: DataColumn<T>[];
   rows: T[];
@@ -116,6 +116,10 @@ export function DataTable<T>({
   /** Extra classes merged onto the table (e.g. bump the data font). twMerge lets
    *  a font-size / padding utility here override the dense/comfortable defaults. */
   className?: string;
+  /** Opt in to a stacked-card layout below the `sm` breakpoint instead of a
+   *  horizontally-scrolling table — renders one card per row; the table itself
+   *  is hidden on phones. Omit to keep the table on every screen size (default). */
+  mobileCard?: (row: T) => ReactNode;
 }) {
   // When a row opens a form/detail but has no other action buttons, show an
   // explicit "view" (eye) icon so it's obvious the row is clickable.
@@ -155,7 +159,7 @@ export function DataTable<T>({
     <div className="overflow-hidden rounded-[5px] border bg-card shadow-sm">
       <Table
         width="auto"
-        containerClassName={cn(maxBodyHeight, maxBodyHeight && 'overflow-y-auto')}
+        containerClassName={cn(maxBodyHeight, maxBodyHeight && 'overflow-y-auto', mobileCard && 'hidden sm:block')}
         className={cn(
           '[&_td]:border-r [&_td]:border-border/60 [&_th]:border-r [&_thead_th]:border-white/25',
           // Brand blue→indigo gradient, bold, uppercase header with white text on every page.
@@ -164,11 +168,11 @@ export function DataTable<T>({
           dense
             ? // Compact: tight padding so columns shrink to their content and the
               // most columns possible stay on screen. Heights are auto (padding-based).
-              '[&_thead_th]:py-2 [&_thead_th]:text-[13px] [&_td]:py-2 [&_tbody_button]:size-8 text-[14px] [&_td]:px-2.5 [&_th]:px-2.5'
+              '[&_thead_th]:py-2 [&_thead_th]:text-[13px] [&_td]:py-2 [&_tbody_button:not([role=switch]):not([role=checkbox])]:size-8 text-[14px] [&_td]:px-2.5 [&_th]:px-2.5'
             : // Comfortable: larger type, snug padding so rows auto-fit their content
               // (height grows only as much as the content needs). Action buttons are
               // size-8 so they don't force tall rows.
-              '[&_thead_th]:py-2 [&_thead_th]:text-[14px] [&_td]:py-1.5 [&_tbody_button]:size-8 text-[16px] [&_td]:px-3 [&_th]:px-3 sm:[&_td]:px-5 sm:[&_th]:px-5',
+              '[&_thead_th]:py-2 [&_thead_th]:text-[14px] [&_td]:py-1.5 [&_tbody_button:not([role=switch]):not([role=checkbox])]:size-8 text-[16px] [&_td]:px-3 [&_th]:px-3 sm:[&_td]:px-5 sm:[&_th]:px-5',
           // Page override (twMerge lets a passed font-size/padding win over the above).
           className,
         )}
@@ -285,6 +289,28 @@ export function DataTable<T>({
           )}
         </TableBody>
       </Table>
+
+      {mobileCard && (
+        <div className="divide-y sm:hidden">
+          {isLoading ? (
+            <div className="text-muted-foreground flex h-24 items-center justify-center">
+              <Loader2 className="size-5 animate-spin" />
+            </div>
+          ) : rows.length === 0 ? (
+            <div className="text-muted-foreground px-4 py-10 text-center text-sm">{emptyText}</div>
+          ) : (
+            sortedRows.map((row) => (
+              <div
+                key={rowKey(row)}
+                className={cn('p-3', onRowClick && 'active:bg-muted cursor-pointer')}
+                onClick={onRowClick ? () => onRowClick(row) : undefined}
+              >
+                {mobileCard(row)}
+              </div>
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 }

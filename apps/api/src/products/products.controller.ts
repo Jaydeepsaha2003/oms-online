@@ -25,6 +25,7 @@ import {
   ImportProductsDto,
   ProductQueryDto,
   SetCategoryFieldsDto,
+  SetProductFlagsDto,
   UpdateProductDto,
 } from './dto/product.dto';
 
@@ -93,6 +94,13 @@ export class ProductsController {
   @Audit({ action: ACTIONS.CREATE, resource: R })
   create(@Body() dto: CreateProductDto) {
     return this.products.create(dto);
+  }
+
+  @Patch(':id/flags')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Toggled product active / rate-list flag' })
+  setFlags(@Param('id', ParseIntPipe) id: number, @Body() dto: SetProductFlagsDto) {
+    return this.products.setFlags(id, dto);
   }
 
   @Patch(':id')

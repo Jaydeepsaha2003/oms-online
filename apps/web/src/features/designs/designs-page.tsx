@@ -5,12 +5,14 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Filter,
   IndianRupee,
   Layers,
   Loader2,
   Minus,
   Pencil,
   Plus,
+  RotateCcw,
   Search,
   Shapes,
   Trash2,
@@ -25,14 +27,17 @@ import { cn, formatDateShort, formatDateTime } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useColumnOrder } from '@/hooks/use-column-order';
 import { useConfirm } from '@/components/common/confirm';
-import { Combo } from '@/components/common/combo';
+import { Combo, NativeSelect } from '@/components/common/combo';
 import { ColumnSettings } from '@/components/common/column-settings';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
+import { RowCheckbox } from '@/components/common/row-checkbox';
 import { ExportButton, ImportButton } from '@/components/common/excel-actions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import {
   exportDesigns,
   useCreateDesign,
@@ -40,6 +45,7 @@ import {
   useDesignLookups,
   useDesigns,
   useImportDesigns,
+  useSetDesignFlags,
   useUpdateDesign,
 } from './use-designs';
 import {
@@ -50,9 +56,7 @@ import {
   useImportCombinations,
 } from '../combinations/use-combinations';
 
-// Load the whole (filtered) design set so sorting & the scrollable grid cover
-// everything in one place, rather than one page at a time.
-const PAGE_SIZE = 1000;
+const PAGE_SIZE = 50;
 const num = (n: number | null) => (n == null ? '—' : n.toLocaleString('en-IN'));
 /** Amount prefixed with the rupee symbol; dash when unknown. */
 const money = (n: number | null) => (n == null ? '—' : `₹${n.toLocaleString('en-IN')}`);
@@ -70,13 +74,59 @@ const marginCell = (cost: number | null, rate: number | null) => {
   );
 };
 
+/** Inline active/inactive toggle for a design row. Stops row-click (which selects). */
+function DesignActiveToggle({ design }: { design: DesignDto }) {
+  const setFlags = useSetDesignFlags();
+  return (
+    <span className="inline-flex" onClick={(e) => e.stopPropagation()}>
+      <Switch
+        checked={design.active}
+        disabled={setFlags.isPending}
+        onCheckedChange={(v) =>
+          setFlags.mutate(
+            { id: design.id, active: v },
+            {
+              onSuccess: () => toast.success(v ? `${design.designType} activated` : `${design.designType} deactivated`),
+              onError: (e) => toast.error(getApiErrorMessage(e, 'Update failed')),
+            },
+          )
+        }
+        aria-label={`Active — ${design.designType}`}
+      />
+    </span>
+  );
+}
+
+/** Inline "show on rate list" checkbox for a design row. */
+function DesignRateListCheckbox({ design }: { design: DesignDto }) {
+  const setFlags = useSetDesignFlags();
+  return (
+    <RowCheckbox
+      checked={design.showOnRateList}
+      loading={setFlags.isPending}
+      onChange={(v) =>
+        setFlags.mutate(
+          { id: design.id, showOnRateList: v },
+          { onError: (er) => toast.error(getApiErrorMessage(er, 'Update failed')) },
+        )
+      }
+      label={`Show ${design.designType} on rate list`}
+    />
+  );
+}
+
 export function DesignsPage() {
   const { can } = usePermissions();
   const confirm = useConfirm();
 
+  // Shared category / sub-category dropdown options for both filter rows below.
+  const { data: lookups } = useDesignLookups();
+
   // ── Designs (top) ──────────────────────────────────────────────────────────
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
+  const [category, setCategory] = useState('');
+  const [subCategory, setSubCategory] = useState('');
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<DesignDto | null>(null);
   const [creating, setCreating] = useState(false);
@@ -84,8 +134,21 @@ export function DesignsPage() {
   const [combining, setCombining] = useState(false);
   // After a new design is created, offer to combine it with same-category designs.
   const [combineWith, setCombineWith] = useState<DesignDto | null>(null);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const activeFilterCount = (category ? 1 : 0) + (subCategory ? 1 : 0);
+  const resetFilters = () => {
+    setCategory('');
+    setSubCategory('');
+    setPage(1);
+  };
 
-  const query = { page, pageSize: PAGE_SIZE, search: search || undefined };
+  const query = {
+    page,
+    pageSize: PAGE_SIZE,
+    search: search || undefined,
+    category: category || undefined,
+    subCategory: subCategory || undefined,
+  };
   const { data, isLoading } = useDesigns(query);
   const del = useDeleteDesign();
   const importMut = useImportDesigns();
@@ -102,10 +165,30 @@ export function DesignsPage() {
     });
 
   // ── Combinations (bottom) ──────────────────────────────────────────────────
-  const { data: comboData, isLoading: combosLoading } = useCombinations({ page: 1, pageSize: 200 });
+  const [comboSearchInput, setComboSearchInput] = useState('');
+  const [comboSearch, setComboSearch] = useState('');
+  const [comboCategory, setComboCategory] = useState('');
+  const [comboSubCategory, setComboSubCategory] = useState('');
+  const [comboPage, setComboPage] = useState(1);
+  const [comboMobileFiltersOpen, setComboMobileFiltersOpen] = useState(false);
+  const comboActiveFilterCount = (comboCategory ? 1 : 0) + (comboSubCategory ? 1 : 0);
+  const resetComboFilters = () => {
+    setComboCategory('');
+    setComboSubCategory('');
+    setComboPage(1);
+  };
+  const comboQuery = {
+    page: comboPage,
+    pageSize: PAGE_SIZE,
+    search: comboSearch || undefined,
+    category: comboCategory || undefined,
+    subCategory: comboSubCategory || undefined,
+  };
+  const { data: comboData, isLoading: combosLoading } = useCombinations(comboQuery);
   const delCombo = useDeleteCombination();
   const importComboMut = useImportCombinations();
   const combos = comboData?.items ?? [];
+  const comboTotalPages = comboData?.totalPages ?? 1;
 
   const handleDelete = async (d: DesignDto) => {
     const ok = await confirm({
@@ -183,12 +266,13 @@ export function DesignsPage() {
           </span>
         ),
       },
-      { id: 'category', label: 'Category', sortValue: (d) => d.category, cell: (d) => d.category },
-      { id: 'subCategory', label: 'Sub category', sortValue: (d) => d.subCategory, cell: (d) => d.subCategory },
-      { id: 'designType', label: 'Design type', sortValue: (d) => d.designType, cell: (d) => <span className="font-medium">{d.designType}</span> },
+      { id: 'category', label: 'Category', sortValue: (d) => d.category, cell: (d) => <span className={cn(!d.active && 'text-muted-foreground')}>{d.category}</span> },
+      { id: 'subCategory', label: 'Sub category', sortValue: (d) => d.subCategory, cell: (d) => <span className={cn(!d.active && 'text-muted-foreground')}>{d.subCategory}</span> },
+      { id: 'designType', label: 'Design type', sortValue: (d) => d.designType, cell: (d) => <span className={cn('font-medium', !d.active && 'text-muted-foreground line-through')}>{d.designType}</span> },
       { id: 'cost', label: 'Cost', align: 'right', sortValue: (d) => d.cost, cell: (d) => money(d.cost) },
       { id: 'rate', label: 'Rate', align: 'right', sortValue: (d) => d.rate, cell: (d) => money(d.rate) },
       { id: 'margin', label: 'Margin', align: 'right', sortValue: (d) => (d.cost != null && d.rate != null ? d.rate - d.cost : null), cell: (d) => marginCell(d.cost, d.rate) },
+      { id: 'active', label: 'Active', sortValue: (d) => (d.active ? 1 : 0), cell: (d) => <div className="flex justify-center"><DesignActiveToggle design={d} /></div> },
     ],
     [selected],
   );
@@ -215,6 +299,123 @@ export function DesignsPage() {
   // Designs/Combinations pages, whose saved order would otherwise scramble these).
   const designCols = useColumnOrder('designs-merged', designColumns);
   const comboCols = useColumnOrder('combinations-merged-v2', comboColumns);
+
+  // Phones: one stacked card per design instead of a horizontally-scrolling table.
+  // Selection (for building a combination) uses a ROUND indicator + a full
+  // left-edge accent stripe — deliberately not another small SQUARE checkbox,
+  // which would look like a near-duplicate of the square Rate list checkbox
+  // below and the two get mixed up. The circle always shows (even unselected)
+  // so it's clear the card is tappable.
+  const designMobileCard = (d: DesignDto) => (
+    <div
+      className={cn(
+        '-m-3 space-y-2.5 border-l-4 p-3 transition-colors',
+        selected.has(d.id) ? 'border-l-primary bg-primary/5' : 'border-l-transparent',
+      )}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-start gap-2">
+          <span
+            className={cn(
+              'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border-2 transition-colors',
+              selected.has(d.id) ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/30',
+            )}
+          >
+            {selected.has(d.id) && <Check className="size-2.5" strokeWidth={3} />}
+          </span>
+          <div className="min-w-0">
+            <p className={cn('leading-tight font-medium', !d.active && 'text-muted-foreground line-through')}>{d.designType}</p>
+            <p className="text-muted-foreground text-xs">
+              {d.category} · {d.subCategory}
+            </p>
+          </div>
+        </div>
+        <DesignActiveToggle design={d} />
+      </div>
+      <div className="grid grid-cols-3 gap-2 text-xs">
+        <div>
+          <p className="text-muted-foreground">Cost</p>
+          <p className="font-medium tabular-nums">{money(d.cost)}</p>
+        </div>
+        <div>
+          <p className="text-muted-foreground">Rate</p>
+          <p className="font-medium tabular-nums">{money(d.rate)}</p>
+        </div>
+        <div>
+          <p className="text-muted-foreground">Margin</p>
+          <p className="font-medium">{marginCell(d.cost, d.rate)}</p>
+        </div>
+      </div>
+      <div className="flex items-center justify-between border-t pt-2.5" onClick={(e) => e.stopPropagation()}>
+        <label className="text-muted-foreground flex cursor-pointer items-center gap-2 text-xs font-medium">
+          <DesignRateListCheckbox design={d} />
+          Rate list
+        </label>
+        <div className="flex items-center gap-1">
+          {can('design:update') && (
+            <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(d)} aria-label="Edit">
+              <Pencil className="size-4" />
+            </Button>
+          )}
+          {can('design:delete') && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 text-destructive hover:text-destructive"
+              onClick={() => handleDelete(d)}
+              aria-label="Delete"
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  // Phones: one stacked card per combination instead of a horizontally-scrolling table.
+  const comboMobileCard = (c: CombinationDto) => (
+    <div className="space-y-2.5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="leading-tight font-medium">{c.name}</p>
+          <p className="text-muted-foreground text-xs">
+            {c.category || '—'} · {c.subCategory || '—'}
+          </p>
+        </div>
+        <span className="text-muted-foreground shrink-0 font-mono text-[11px]" title={formatDateTime(c.updatedAt)}>
+          {formatDateShort(c.updatedAt)}
+        </span>
+      </div>
+      <div className="grid grid-cols-3 gap-2 text-xs">
+        <div>
+          <p className="text-muted-foreground">Cost</p>
+          <p className="font-medium tabular-nums">{money(c.cost)}</p>
+        </div>
+        <div>
+          <p className="text-muted-foreground">Rate</p>
+          <p className="font-medium tabular-nums">{money(c.rate)}</p>
+        </div>
+        <div>
+          <p className="text-muted-foreground">Margin</p>
+          <p className="font-medium">{marginCell(c.cost, c.rate)}</p>
+        </div>
+      </div>
+      {can('combination:delete') && (
+        <div className="flex justify-end border-t pt-2.5">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8 text-destructive hover:text-destructive"
+            onClick={() => handleDeleteCombo(c)}
+            aria-label="Delete"
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="space-y-4">
@@ -246,22 +447,61 @@ export function DesignsPage() {
           </div>
         </div>
 
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative max-w-sm flex-1">
-            <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
-            <Input
-              placeholder="Search category, sub category, design type…"
-              className="pl-9"
-              value={searchInput}
-              onChange={(e) => {
-                setSearchInput(e.target.value);
-                setSearch(e.target.value.trim());
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="flex items-center gap-2">
+            <div className="relative max-w-sm flex-1">
+              <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
+              <Input
+                placeholder="Search category, sub category, design type…"
+                className="pl-9"
+                value={searchInput}
+                onChange={(e) => {
+                  setSearchInput(e.target.value);
+                  setSearch(e.target.value.trim());
+                  setPage(1);
+                }}
+              />
+            </div>
+            <Button
+              variant="outline"
+              size="icon"
+              className="relative shrink-0 lg:hidden"
+              onClick={() => setMobileFiltersOpen(true)}
+              aria-label="Filters"
+            >
+              <Filter className="size-4" />
+              {activeFilterCount > 0 && (
+                <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-medium">
+                  {activeFilterCount}
+                </span>
+              )}
+            </Button>
+          </div>
+          <div className="hidden w-44 lg:block">
+            <NativeSelect
+              value={category}
+              onChange={(v) => {
+                setCategory(v);
+                setSubCategory(''); // a sub from another category would return nothing
                 setPage(1);
               }}
+              options={['', ...(lookups?.categories ?? [])]}
+              placeholder="All categories"
+            />
+          </div>
+          <div className="hidden w-48 lg:block">
+            <NativeSelect
+              value={subCategory}
+              onChange={(v) => {
+                setSubCategory(v);
+                setPage(1);
+              }}
+              options={['', ...(lookups?.subCategories ?? [])]}
+              placeholder="All sub categories"
             />
           </div>
           {selected.size > 0 && (
-            <div className="bg-primary/5 ring-primary/15 flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm ring-1">
+            <div className="bg-primary/5 ring-primary/15 flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm ring-1 sm:ml-auto">
               <span className="font-medium">{selected.size} selected</span>
               {can('combination:create') && (
                 <Button size="sm" onClick={() => setCombining(true)}>
@@ -275,18 +515,71 @@ export function DesignsPage() {
           )}
         </div>
 
+        {/* Phones only: Category / Sub category live behind the Filter icon above. */}
+        <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
+          <SheetContent side="bottom" className="lg:hidden">
+            <SheetHeader>
+              <div className="flex items-center justify-between">
+                <SheetTitle>Filters</SheetTitle>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground -mr-2 gap-1.5"
+                  onClick={resetFilters}
+                  disabled={activeFilterCount === 0}
+                >
+                  <RotateCcw className="size-3.5" /> Reset
+                </Button>
+              </div>
+            </SheetHeader>
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label className="text-muted-foreground text-xs font-medium uppercase">Category</Label>
+                <NativeSelect
+                  value={category}
+                  onChange={(v) => {
+                    setCategory(v);
+                    setSubCategory('');
+                    setPage(1);
+                  }}
+                  options={['', ...(lookups?.categories ?? [])]}
+                  placeholder="All categories"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-muted-foreground text-xs font-medium uppercase">Sub category</Label>
+                <NativeSelect
+                  value={subCategory}
+                  onChange={(v) => {
+                    setSubCategory(v);
+                    setPage(1);
+                  }}
+                  options={['', ...(lookups?.subCategories ?? [])]}
+                  placeholder="All sub categories"
+                />
+              </div>
+            </div>
+            <SheetFooter>
+              <Button className="w-full" onClick={() => setMobileFiltersOpen(false)}>
+                Show {(data?.total ?? 0).toLocaleString('en-IN')} designs
+              </Button>
+            </SheetFooter>
+          </SheetContent>
+        </Sheet>
+
         <DataTable
           dense
           hideRowView
-          maxBodyHeight="max-h-[65vh]"
           columns={designCols.visibleColumns}
           rows={items}
           rowKey={(d) => d.id}
           isLoading={isLoading}
           emptyText="No designs yet."
           onRowClick={(d) => toggle(d)}
+          mobileCard={designMobileCard}
           actions={(d) => (
-            <div className="flex justify-end gap-1">
+            <div className="flex items-center justify-end gap-2">
+              <DesignRateListCheckbox design={d} />
               {can('design:update') && (
                 <Button variant="ghost" size="icon" className="size-7" onClick={() => setEditing(d)} aria-label="Edit">
                   <Pencil className="size-4" />
@@ -350,7 +643,7 @@ export function DesignsPage() {
               onReset={comboCols.reset}
             />
             {can('combination:export') && combos.length > 0 && (
-              <ExportButton onClick={() => exportCombinations({ page: 1, pageSize: 200 })} />
+              <ExportButton onClick={() => exportCombinations(comboQuery)} />
             )}
             {can('combination:import') && (
               <ImportButton onFile={handleImportCombo} pending={importComboMut.isPending} />
@@ -358,13 +651,120 @@ export function DesignsPage() {
           </div>
         </div>
 
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="flex items-center gap-2">
+            <div className="relative max-w-sm flex-1">
+              <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
+              <Input
+                placeholder="Search combination name, design type…"
+                className="pl-9"
+                value={comboSearchInput}
+                onChange={(e) => {
+                  setComboSearchInput(e.target.value);
+                  setComboSearch(e.target.value.trim());
+                  setComboPage(1);
+                }}
+              />
+            </div>
+            <Button
+              variant="outline"
+              size="icon"
+              className="relative shrink-0 lg:hidden"
+              onClick={() => setComboMobileFiltersOpen(true)}
+              aria-label="Filters"
+            >
+              <Filter className="size-4" />
+              {comboActiveFilterCount > 0 && (
+                <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-medium">
+                  {comboActiveFilterCount}
+                </span>
+              )}
+            </Button>
+          </div>
+          <div className="hidden w-44 lg:block">
+            <NativeSelect
+              value={comboCategory}
+              onChange={(v) => {
+                setComboCategory(v);
+                setComboSubCategory(''); // a sub from another category would return nothing
+                setComboPage(1);
+              }}
+              options={['', ...(lookups?.categories ?? [])]}
+              placeholder="All categories"
+            />
+          </div>
+          <div className="hidden w-48 lg:block">
+            <NativeSelect
+              value={comboSubCategory}
+              onChange={(v) => {
+                setComboSubCategory(v);
+                setComboPage(1);
+              }}
+              options={['', ...(lookups?.subCategories ?? [])]}
+              placeholder="All sub categories"
+            />
+          </div>
+        </div>
+
+        {/* Phones only: Category / Sub category live behind the Filter icon above. */}
+        <Sheet open={comboMobileFiltersOpen} onOpenChange={setComboMobileFiltersOpen}>
+          <SheetContent side="bottom" className="lg:hidden">
+            <SheetHeader>
+              <div className="flex items-center justify-between">
+                <SheetTitle>Filters</SheetTitle>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground -mr-2 gap-1.5"
+                  onClick={resetComboFilters}
+                  disabled={comboActiveFilterCount === 0}
+                >
+                  <RotateCcw className="size-3.5" /> Reset
+                </Button>
+              </div>
+            </SheetHeader>
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label className="text-muted-foreground text-xs font-medium uppercase">Category</Label>
+                <NativeSelect
+                  value={comboCategory}
+                  onChange={(v) => {
+                    setComboCategory(v);
+                    setComboSubCategory('');
+                    setComboPage(1);
+                  }}
+                  options={['', ...(lookups?.categories ?? [])]}
+                  placeholder="All categories"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-muted-foreground text-xs font-medium uppercase">Sub category</Label>
+                <NativeSelect
+                  value={comboSubCategory}
+                  onChange={(v) => {
+                    setComboSubCategory(v);
+                    setComboPage(1);
+                  }}
+                  options={['', ...(lookups?.subCategories ?? [])]}
+                  placeholder="All sub categories"
+                />
+              </div>
+            </div>
+            <SheetFooter>
+              <Button className="w-full" onClick={() => setComboMobileFiltersOpen(false)}>
+                Show {(comboData?.total ?? 0).toLocaleString('en-IN')} combinations
+              </Button>
+            </SheetFooter>
+          </SheetContent>
+        </Sheet>
+
         <DataTable
-          maxBodyHeight="max-h-[26vh]"
           columns={comboCols.visibleColumns}
           rows={combos}
           rowKey={(c) => c.id}
           isLoading={combosLoading}
           emptyText="No combinations yet — select designs above and click Create combination."
+          mobileCard={comboMobileCard}
           actions={(c) =>
             can('combination:delete') ? (
               <div className="flex justify-end">
@@ -381,6 +781,27 @@ export function DesignsPage() {
             ) : null
           }
         />
+
+        {comboTotalPages > 1 && (
+          <div className="flex items-center justify-between">
+            <p className="text-muted-foreground text-sm">
+              Page {comboData?.page ?? comboPage} of {comboTotalPages}
+            </p>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => setComboPage((p) => Math.max(1, p - 1))} disabled={comboPage <= 1}>
+                <ChevronLeft /> Prev
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setComboPage((p) => Math.min(comboTotalPages, p + 1))}
+                disabled={comboPage >= comboTotalPages}
+              >
+                Next <ChevronRight />
+              </Button>
+            </div>
+          </div>
+        )}
       </section>
 
       {(creating || editing) && (
@@ -463,8 +884,10 @@ function DesignDialog({ design, onClose, onCreated }: { design: DesignDto | null
     designType: design?.designType ?? '',
     cost: design?.cost?.toString() ?? '',
     rate: design?.rate?.toString() ?? '',
+    active: design?.active ?? true,
+    showOnRateList: design?.showOnRateList ?? true,
   });
-  const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
+  const set = (k: 'category' | 'subCategory' | 'designType' | 'cost' | 'rate', v: string) => setForm((f) => ({ ...f, [k]: v }));
   const numOrNull = (v: string) => (v.trim() === '' || Number.isNaN(Number(v)) ? null : Number(v));
 
   // Live margin readout — only meaningful once both cost and rate are entered.
@@ -483,6 +906,8 @@ function DesignDialog({ design, onClose, onCreated }: { design: DesignDto | null
       designType: form.designType.trim(),
       cost: numOrNull(form.cost),
       rate: numOrNull(form.rate),
+      active: form.active,
+      showOnRateList: form.showOnRateList,
     };
     if (isEdit) {
       update.mutate(input, {
@@ -566,6 +991,21 @@ function DesignDialog({ design, onClose, onCreated }: { design: DesignDto | null
             <Field label="Rate">
               <MoneyInput value={form.rate} onChange={(v) => set('rate', v)} />
             </Field>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border bg-muted/40 px-3 py-2.5">
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium normal-case">
+              <Switch checked={form.active} onCheckedChange={(v) => setForm((f) => ({ ...f, active: v }))} />
+              Active <span className="text-muted-foreground font-normal">(order pickers)</span>
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium normal-case">
+              <RowCheckbox
+                checked={form.showOnRateList}
+                onChange={(v) => setForm((f) => ({ ...f, showOnRateList: v }))}
+                label="Show on rate list"
+              />
+              Show on rate list
+            </label>
           </div>
 
           {/* Live margin strip — appears only once both cost and rate are set. */}
@@ -775,7 +1215,7 @@ function CombineWithDesignDialog({ base, onClose }: { base: DesignDto; onClose: 
             ) : (
               filtered.map((d) => (
                 <label key={d.id} className="hover:bg-accent flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm">
-                  <input type="checkbox" className="size-4 accent-primary" checked={picked.has(d.id)} onChange={() => toggle(d.id)} />
+                  <RowCheckbox checked={picked.has(d.id)} onChange={() => toggle(d.id)} label={`Include ${d.designType}`} />
                   <span className="font-medium">{d.designType}</span>
                   <span className="text-muted-foreground ml-auto text-xs tabular-nums">
                     cost {num(d.cost)} · rate {num(d.rate)}

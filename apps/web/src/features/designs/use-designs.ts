@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { DesignDto, DesignInput, DesignList, DesignLookups, DesignQuery } from '@oms/shared';
+import type { CatalogFlagsInput, DesignDto, DesignInput, DesignList, DesignLookups, DesignQuery } from '@oms/shared';
 import { downloadFile, http } from '@/lib/api';
 
 export interface ImportResult {
@@ -55,6 +55,19 @@ export function useDeleteDesign() {
   return useMutation({
     mutationFn: (id: number) => http.delete(`/designs/${id}`),
     onSuccess: () => invalidateDesignsAndCombos(qc),
+  });
+}
+
+/** Inline toggle of a design's active / rate-list flags (doesn't touch other fields). */
+export function useSetDesignFlags() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...flags }: CatalogFlagsInput & { id: number }) =>
+      http.patch<DesignDto>(`/designs/${id}/flags`, flags),
+    onSuccess: () => {
+      invalidateDesignsAndCombos(qc);
+      qc.invalidateQueries({ queryKey: ['orders', 'lookups'] });
+    },
   });
 }
 

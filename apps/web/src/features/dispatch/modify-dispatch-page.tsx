@@ -135,7 +135,6 @@ export function ModifyDispatchPage() {
         rowKey={(d) => d.id}
         isLoading={isLoading}
         dense
-        maxBodyHeight="max-h-[calc(100dvh-16rem)]"
         emptyText="No dispatch records yet."
         onRowClick={(d) => can('dispatch:update') && setEditing(d)}
         actions={(d) => (

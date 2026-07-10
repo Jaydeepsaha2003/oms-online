@@ -493,8 +493,8 @@ export class CustomersService {
     if (!customer) throw new NotFoundException('Customer not found');
 
     const [products, designs, rates] = await Promise.all([
-      this.prisma.product.findMany({ orderBy: [{ category: 'asc' }, { subCategory: 'asc' }, { product: 'asc' }, { size: 'asc' }] }),
-      this.prisma.design.findMany({ orderBy: [{ category: 'asc' }, { subCategory: 'asc' }, { designType: 'asc' }] }),
+      this.prisma.product.findMany({ where: { showOnRateList: true }, orderBy: [{ category: 'asc' }, { subCategory: 'asc' }, { product: 'asc' }, { size: 'asc' }] }),
+      this.prisma.design.findMany({ where: { showOnRateList: true }, orderBy: [{ category: 'asc' }, { subCategory: 'asc' }, { designType: 'asc' }] }),
       this.prisma.customerRate.findMany({ where: { customerId: id } }),
     ]);
 

@@ -7,13 +7,14 @@ const Sheet = DialogPrimitive.Root;
 const SheetTrigger = DialogPrimitive.Trigger;
 const SheetClose = DialogPrimitive.Close;
 
-/** A slide-over panel. Defaults to the right edge. */
+/** A slide-over panel. Defaults to the right edge; `bottom` gives a mobile-style
+ *  bottom sheet (slides up, capped height, rounded top corners) instead. */
 function SheetContent({
   className,
   children,
   side = 'right',
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Content> & { side?: 'right' | 'left' }) {
+}: React.ComponentProps<typeof DialogPrimitive.Content> & { side?: 'right' | 'left' | 'bottom' }) {
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay
@@ -23,12 +24,14 @@ function SheetContent({
       <DialogPrimitive.Content
         data-slot="sheet-content"
         className={cn(
-          'bg-background fixed inset-y-0 z-50 flex h-full w-full max-w-md flex-col gap-4 p-5 shadow-xl outline-none',
+          'bg-background fixed z-50 flex flex-col gap-4 p-5 shadow-xl outline-none',
           'data-[state=open]:animate-in data-[state=closed]:animate-out duration-300',
           side === 'right' &&
-            'right-0 border-l data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right',
+            'inset-y-0 right-0 h-full w-full max-w-md border-l data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right',
           side === 'left' &&
-            'left-0 border-r data-[state=open]:slide-in-from-left data-[state=closed]:slide-out-to-left',
+            'inset-y-0 left-0 h-full w-full max-w-md border-r data-[state=open]:slide-in-from-left data-[state=closed]:slide-out-to-left',
+          side === 'bottom' &&
+            'inset-x-0 bottom-0 max-h-[85vh] w-full rounded-t-xl border-t data-[state=open]:slide-in-from-bottom data-[state=closed]:slide-out-to-bottom',
           className,
         )}
         {...props}

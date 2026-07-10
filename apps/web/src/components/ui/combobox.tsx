@@ -313,11 +313,13 @@ export function Combobox({
       >
         {/* Cap the list to the space Radix actually has above/below the field
             (`--radix-popover-content-available-height`) so it never spills off the
-            top/bottom of the screen, but no taller than a comfortable 480px. */}
+            top/bottom of the screen, but no taller than ~5 rows (row height =
+            the option's `py-1.5` padding + `text-sm` line-height; +0.5rem for
+            the list's own `p-1`) — more rows always scroll into view. */}
         <div
           ref={listRef}
           className="overflow-x-hidden overflow-y-auto overscroll-contain p-1"
-          style={{ maxHeight: 'min(480px, var(--radix-popover-content-available-height, 480px))' }}
+          style={{ maxHeight: 'min(calc((0.75rem + 1.25rem) * 5 + 0.5rem), var(--radix-popover-content-available-height, 480px))' }}
         >
           {listHeader && rows.length > 0 && (
             <div className="bg-popover text-muted-foreground sticky top-0 z-10 flex items-center gap-2 border-b px-2 py-1.5 text-[11px] font-semibold tracking-wide uppercase">

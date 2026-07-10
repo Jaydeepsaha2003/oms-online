@@ -4,7 +4,7 @@ import { type CategoryFieldDto, type Paginated, type ProductDto, type ProductLoo
 import { PrismaService } from '../prisma/prisma.service';
 import { toNum, uc } from '../common/coerce';
 import { readCategoryFields, writeCategoryFields } from '../common/category-fields';
-import { CreateProductDto, ImportProductsDto, ProductQueryDto, UpdateProductDto } from './dto/product.dto';
+import { CreateProductDto, ImportProductsDto, ProductQueryDto, SetProductFlagsDto, UpdateProductDto } from './dto/product.dto';
 
 type Row = Prisma.ProductGetPayload<object>;
 
@@ -126,6 +126,19 @@ export class ProductsService {
     });
   }
 
+  /** Inline toggle: flip active / rate-list flags without touching other fields. */
+  async setFlags(id: number, dto: SetProductFlagsDto): Promise<ProductDto> {
+    await this.ensureExists(id);
+    const row = await this.prisma.product.update({
+      where: { id },
+      data: {
+        ...(dto.active !== undefined ? { active: dto.active } : {}),
+        ...(dto.showOnRateList !== undefined ? { showOnRateList: dto.showOnRateList } : {}),
+      },
+    });
+    return this.toDto(row);
+  }
+
   async remove(id: number): Promise<void> {
     await this.ensureExists(id);
     await this.prisma.product.delete({ where: { id } });
@@ -205,6 +218,8 @@ export class ProductsService {
       weight: dto.weight ?? null,
       pcs: dto.pcs ?? null,
       rate: dto.rate ?? null,
+      active: dto.active ?? true,
+      showOnRateList: dto.showOnRateList ?? true,
     };
   }
 
@@ -240,6 +255,8 @@ export class ProductsService {
       weight: r.weight,
       pcs: r.pcs,
       rate: r.rate,
+      active: r.active,
+      showOnRateList: r.showOnRateList,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     };

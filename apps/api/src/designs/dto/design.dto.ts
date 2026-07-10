@@ -1,6 +1,6 @@
 import { PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsArray, IsNumber, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsArray, IsBoolean, IsNumber, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 export class CreateDesignDto {
@@ -28,11 +28,23 @@ export class CreateDesignDto {
   @Type(() => Number)
   @IsNumber()
   rate?: number;
+
+  @IsOptional() @IsBoolean() active?: boolean;
+  @IsOptional() @IsBoolean() showOnRateList?: boolean;
 }
 
 export class UpdateDesignDto extends PartialType(CreateDesignDto) {}
 
-export class DesignQueryDto extends PaginationDto {}
+/** Inline toggle of a design's active / rate-list flags (partial). */
+export class SetDesignFlagsDto {
+  @IsOptional() @IsBoolean() active?: boolean;
+  @IsOptional() @IsBoolean() showOnRateList?: boolean;
+}
+
+export class DesignQueryDto extends PaginationDto {
+  @IsOptional() @IsString() category?: string;
+  @IsOptional() @IsString() subCategory?: string;
+}
 
 export class ImportDesignsDto {
   @IsArray()

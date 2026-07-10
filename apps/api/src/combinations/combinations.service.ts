@@ -19,14 +19,24 @@ export class CombinationsService {
 
   async findMany(query: CombinationQueryDto): Promise<Paginated<CombinationDto>> {
     const search = query.search?.trim();
-    const where: Prisma.CombinationWhereInput = search
-      ? {
-          OR: [
-            { name: { contains: search } },
-            { designLinks: { some: { design: { designType: { contains: search } } } } },
-          ],
-        }
-      : {};
+    const and: Prisma.CombinationWhereInput[] = [];
+    if (search) {
+      and.push({
+        OR: [
+          { name: { contains: search } },
+          { designLinks: { some: { design: { designType: { contains: search } } } } },
+        ],
+      });
+    }
+    // Exact-match dropdown filters (Combinations grid) — a combo matches when any
+    // of its linked designs is in that category / sub-category.
+    if (query.category?.trim()) {
+      and.push({ designLinks: { some: { design: { category: query.category.trim() } } } });
+    }
+    if (query.subCategory?.trim()) {
+      and.push({ designLinks: { some: { design: { subCategory: query.subCategory.trim() } } } });
+    }
+    const where: Prisma.CombinationWhereInput = and.length ? { AND: and } : {};
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.combination.findMany({
         where,

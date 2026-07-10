@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { type DesignDto, type DesignLookups, type Paginated } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { toNum, uc } from '../common/coerce';
-import { CreateDesignDto, DesignQueryDto, ImportDesignsDto, UpdateDesignDto } from './dto/design.dto';
+import { CreateDesignDto, DesignQueryDto, ImportDesignsDto, SetDesignFlagsDto, UpdateDesignDto } from './dto/design.dto';
 
 type Row = Prisma.DesignGetPayload<object>;
 
@@ -13,15 +13,20 @@ export class DesignsService {
 
   async findMany(query: DesignQueryDto): Promise<Paginated<DesignDto>> {
     const search = query.search?.trim();
-    const where: Prisma.DesignWhereInput = search
-      ? {
-          OR: [
-            { category: { contains: search } },
-            { subCategory: { contains: search } },
-            { designType: { contains: search } },
-          ],
-        }
-      : {};
+    const and: Prisma.DesignWhereInput[] = [];
+    if (search) {
+      and.push({
+        OR: [
+          { category: { contains: search } },
+          { subCategory: { contains: search } },
+          { designType: { contains: search } },
+        ],
+      });
+    }
+    // Exact-match dropdown filters (Designs page).
+    if (query.category?.trim()) and.push({ category: query.category.trim() });
+    if (query.subCategory?.trim()) and.push({ subCategory: query.subCategory.trim() });
+    const where: Prisma.DesignWhereInput = and.length ? { AND: and } : {};
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.design.findMany({
         where,
@@ -105,6 +110,19 @@ export class DesignsService {
     });
   }
 
+  /** Inline toggle: flip active / rate-list flags without touching other fields. */
+  async setFlags(id: number, dto: SetDesignFlagsDto): Promise<DesignDto> {
+    await this.ensureExists(id);
+    const row = await this.prisma.design.update({
+      where: { id },
+      data: {
+        ...(dto.active !== undefined ? { active: dto.active } : {}),
+        ...(dto.showOnRateList !== undefined ? { showOnRateList: dto.showOnRateList } : {}),
+      },
+    });
+    return this.toDto(row);
+  }
+
   async remove(id: number): Promise<void> {
     await this.ensureExists(id);
     await this.prisma.design.delete({ where: { id } });
@@ -178,6 +196,8 @@ export class DesignsService {
       designType: (uc(dto.designType) ?? '') as string,
       cost: dto.cost ?? null,
       rate: dto.rate ?? null,
+      active: dto.active ?? true,
+      showOnRateList: dto.showOnRateList ?? true,
     };
   }
 
@@ -211,6 +231,8 @@ export class DesignsService {
       designType: r.designType,
       cost: r.cost,
       rate: r.rate,
+      active: r.active,
+      showOnRateList: r.showOnRateList,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     };

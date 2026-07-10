@@ -4,6 +4,7 @@ import {
   Banknote,
   CalendarClock,
   CheckCircle2,
+  ChevronLeft,
   ChevronRight,
   Landmark,
   Loader2,
@@ -80,8 +81,10 @@ export function ManageChequesPage() {
   // grid filters
   const [status, setStatus] = useState('');
   const [searchInput, setSearchInput] = useState('');
-  const query = { page: 1, pageSize: PAGE_SIZE, status: status || undefined, search: searchInput.trim() || undefined };
+  const [page, setPage] = useState(1);
+  const query = { page, pageSize: PAGE_SIZE, status: status || undefined, search: searchInput.trim() || undefined };
   const { data: gridData, isLoading } = useCheques(query);
+  const totalPages = gridData?.totalPages ?? 1;
 
   // modals
   const [addOpen, setAddOpen] = useState(false);
@@ -203,11 +206,11 @@ export function ManageChequesPage() {
           <div className="bg-card flex flex-wrap items-end gap-2 rounded-md border p-3 shadow-sm">
             <div className="w-44 space-y-1">
               <Label className="text-xs">Status</Label>
-              <NativeSelect value={status} onChange={setStatus} options={['', 'PENDING', 'DEPOSITED', 'CLEARED', 'BOUNCED']} placeholder="All statuses" />
+              <NativeSelect value={status} onChange={(v) => { setStatus(v); setPage(1); }} options={['', 'PENDING', 'DEPOSITED', 'CLEARED', 'BOUNCED']} placeholder="All statuses" />
             </div>
             <div className="flex-1 space-y-1">
               <Label className="text-xs">Search</Label>
-              <Input placeholder="Cheque no, party, bank…" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
+              <Input placeholder="Cheque no, party, bank…" value={searchInput} onChange={(e) => { setSearchInput(e.target.value); setPage(1); }} />
             </div>
           </div>
 
@@ -218,10 +221,25 @@ export function ManageChequesPage() {
             isLoading={isLoading}
             dense
             className="text-[15px] [&_thead_th]:text-[13px] [&_td]:py-2 [&_th]:py-2 [&_tbody_button]:size-8"
-            maxBodyHeight="max-h-[calc(100dvh_-_26rem)]"
             actions={rowActions}
             emptyText="No cheques match the current filter."
           />
+
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between">
+              <p className="text-muted-foreground text-sm">
+                Page {gridData?.page ?? page} of {totalPages}
+              </p>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+                  <ChevronLeft /> Prev
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+                  Next <ChevronRight />
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* RIGHT: reminder cards */}

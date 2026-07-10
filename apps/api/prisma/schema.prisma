@@ -404,6 +404,10 @@ model Product {
   weight      Float?
   pcs         Float?
   rate        Float?
+  // Active products show in the order item pickers; inactive ones are hidden but kept.
+  active         Boolean  @default(true)
+  // Whether this product appears on the customer Rate List.
+  showOnRateList Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -423,6 +427,10 @@ model Design {
   designType  String
   cost        Float?
   rate        Float?
+  // Active designs show in the order item pickers; inactive ones are hidden but kept.
+  active         Boolean  @default(true)
+  // Whether this design appears on the customer Rate List.
+  showOnRateList Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

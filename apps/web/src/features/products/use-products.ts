@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
+  CatalogFlagsInput,
   CategoryFieldDto,
   ProductDto,
   ProductInput,
@@ -55,6 +56,20 @@ export function useDeleteProduct() {
   return useMutation({
     mutationFn: (id: number) => http.delete(`/products/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+/** Inline toggle of a product's active / rate-list flags (doesn't touch other fields). */
+export function useSetProductFlags() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...flags }: CatalogFlagsInput & { id: number }) =>
+      http.patch<ProductDto>(`/products/${id}/flags`, flags),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEY });
+      // Order item pickers depend on active; the rate list depends on showOnRateList.
+      qc.invalidateQueries({ queryKey: ['orders', 'lookups'] });
+    },
   });
 }
 

@@ -19,7 +19,7 @@ import { Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ExcelService } from '../excel/excel.service';
 import { DesignsService } from './designs.service';
-import { CreateDesignDto, DesignQueryDto, ImportDesignsDto, UpdateDesignDto } from './dto/design.dto';
+import { CreateDesignDto, DesignQueryDto, ImportDesignsDto, SetDesignFlagsDto, UpdateDesignDto } from './dto/design.dto';
 
 const R = RESOURCES.DESIGN;
 
@@ -73,6 +73,13 @@ export class DesignsController {
   @Audit({ action: ACTIONS.CREATE, resource: R })
   create(@Body() dto: CreateDesignDto) {
     return this.designs.create(dto);
+  }
+
+  @Patch(':id/flags')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Toggled design active / rate-list flag' })
+  setFlags(@Param('id', ParseIntPipe) id: number, @Body() dto: SetDesignFlagsDto) {
+    return this.designs.setFlags(id, dto);
   }
 
   @Patch(':id')

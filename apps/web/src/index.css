@@ -140,6 +140,8 @@
   --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
     Helvetica, Arial, sans-serif;
   --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-calibri: Calibri, 'Segoe UI', var(--font-sans);
+  --font-montserrat: 'Montserrat Variable', var(--font-sans);
 }
 
 @layer base {

@@ -311,19 +311,20 @@ export class OrdersService {
       this.prisma.product.findMany({ where: { category: { not: '' } }, select: { category: true }, distinct: ['category'], orderBy: { category: 'asc' } }),
       this.prisma.product.findMany({ where: { subCategory: { not: '' } }, select: { subCategory: true }, distinct: ['subCategory'], orderBy: { subCategory: 'asc' } }),
       this.prisma.product.findMany({
-        where: { product: { not: '' } },
+        where: { product: { not: '' }, active: true },
         select: { product: true, category: true, subCategory: true, rate: true },
         distinct: ['product'],
         orderBy: { product: 'asc' },
       }),
       this.prisma.design.findMany({
+        where: { active: true },
         select: { category: true, subCategory: true, designType: true, rate: true },
         distinct: ['category', 'subCategory', 'designType'],
         orderBy: [{ category: 'asc' }, { designType: 'asc' }],
       }),
-      // Every product row (incl. size variants) for the composite item-name list.
+      // Every ACTIVE product row (incl. size variants) for the composite item-name list.
       this.prisma.product.findMany({
-        where: { product: { not: '' } },
+        where: { product: { not: '' }, active: true },
         select: { product: true, category: true, subCategory: true, size: true, pcs: true, weight: true, rate: true },
         orderBy: [{ subCategory: 'asc' }, { product: 'asc' }],
       }),
