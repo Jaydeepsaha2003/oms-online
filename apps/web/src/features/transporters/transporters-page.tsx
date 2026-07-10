@@ -85,6 +85,50 @@ export function TransportersPage() {
 
   const items = data?.items ?? [];
 
+  // Phones: one stacked card per transporter instead of a horizontally-scrolling table.
+  const transporterMobileCard = (t: TransporterDto) => (
+    <div className="space-y-2.5">
+      <div className="flex items-start justify-between gap-2">
+        <p className="leading-tight font-medium">{t.name}</p>
+        <span className="text-muted-foreground shrink-0 font-mono text-[11px]" title={`Updated ${formatDateTime(t.updatedAt)} · Added ${formatDateTime(t.createdAt)}`}>
+          {formatDateShort(t.updatedAt)}
+        </span>
+      </div>
+      <div className="grid grid-cols-3 gap-2 text-xs">
+        <div>
+          <p className="text-muted-foreground">Packing</p>
+          <p className="font-medium tabular-nums">{money(t.packing)}</p>
+        </div>
+        <div>
+          <p className="text-muted-foreground">Freight</p>
+          <p className="font-medium tabular-nums">{money(t.freight)}</p>
+        </div>
+        <div>
+          <p className="text-muted-foreground">Customers</p>
+          <p className="font-medium tabular-nums">{t.customerCount ?? 0}</p>
+        </div>
+      </div>
+      <div className="flex items-center justify-end gap-1 border-t pt-2.5" onClick={(e) => e.stopPropagation()}>
+        {can('transporter:update') && (
+          <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(t)} aria-label="Edit">
+            <Pencil className="size-4" />
+          </Button>
+        )}
+        {can('transporter:delete') && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8 text-destructive hover:text-destructive"
+            onClick={() => handleDelete(t)}
+            aria-label="Delete"
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+
   const handleDelete = async (t: TransporterDto) => {
     const ok = await confirm({
       title: 'Delete transporter?',
@@ -155,6 +199,7 @@ export function TransportersPage() {
         isLoading={isLoading}
         emptyText="No transporters yet."
         onRowClick={(t) => can('transporter:update') && setEditing(t)}
+        mobileCard={transporterMobileCard}
         actions={(t) => (
           <div className="flex justify-end gap-1">
             {can('transporter:update') && (

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Ban, ChevronLeft, ChevronRight, Search, Trash2, X } from 'lucide-react';
+import { Ban, ChevronLeft, ChevronRight, Filter, RotateCcw, Search, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { SpecialRateMasterRow } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -11,6 +11,7 @@ import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { useCustomers } from '@/features/customers/use-customers';
 import { useAllSpecialRates, useDeleteCustomerLogo, useDeleteCustomerRate, useSpecialRateAgents, useSpecialRateLookups } from './use-special-rates';
 
@@ -65,6 +66,7 @@ export function SpecialRatesMaster() {
   const [category, setCategory] = useState('');
   const [subCategory, setSubCategory] = useState('');
   const [page, setPage] = useState(1);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -97,6 +99,18 @@ export function SpecialRatesMaster() {
   const clearAll = () => {
     setSearchInput('');
     setSearch('');
+    setCustomer('');
+    setAgent('');
+    setType('');
+    setScope('');
+    setCategory('');
+    setSubCategory('');
+    setPage(1);
+  };
+  // Phones: Customer/Agent/Type/Level/Category/Sub-category live behind the
+  // Filter icon (Search stays inline) — this count drives that icon's badge.
+  const dropdownFilterCount = [customer, agent, type, scope, category, subCategory].filter(Boolean).length;
+  const resetDropdownFilters = () => {
     setCustomer('');
     setAgent('');
     setType('');
@@ -149,6 +163,56 @@ export function SpecialRatesMaster() {
     },
   ];
 
+  // Phones: one stacked card per rate/restriction instead of a horizontally-scrolling table.
+  const rowMobileCard = (r: SpecialRateMasterRow) => (
+    <div className="space-y-2.5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="leading-tight font-medium">{r.customerName}</p>
+          <p className="text-muted-foreground text-xs">{r.agentName || '—'}</p>
+        </div>
+        <span className={cn('inline-flex shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset', TYPE_BADGE[r.type] ?? 'bg-muted')}>
+          {typeLabel(r.type)}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <div>
+          <p className="text-muted-foreground">Level</p>
+          <p className="font-medium">{levelLabel(r.scope)}</p>
+        </div>
+        <div>
+          <p className="text-muted-foreground">Category</p>
+          <p className="font-medium">
+            {r.category}
+            {r.subCategory ? ` / ${r.subCategory}` : ''}
+          </p>
+        </div>
+        {r.target && (
+          <div className="col-span-2">
+            <p className="text-muted-foreground">Item</p>
+            <p className="font-medium">{r.target}</p>
+          </div>
+        )}
+      </div>
+      <div className="flex items-center justify-between border-t pt-2.5" onClick={(e) => e.stopPropagation()}>
+        {r.type === 'LOGO' ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700 ring-1 ring-inset ring-rose-200">
+            <Ban className="size-3" /> Not allowed
+          </span>
+        ) : (
+          <span className={cn('font-semibold tabular-nums', (r.rate ?? 0) > 0 ? 'text-emerald-600' : (r.rate ?? 0) < 0 ? 'text-rose-600' : '')}>
+            {signed(r.rate ?? 0)}
+          </span>
+        )}
+        {canDelete && (
+          <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => onDelete(r)} aria-label="Remove">
+            <Trash2 className="size-4" />
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div className="space-y-3">
       {/* Filters */}
@@ -159,32 +223,46 @@ export function SpecialRatesMaster() {
             <Search className="text-muted-foreground pointer-events-none absolute top-[30px] left-3 size-4" />
             <Input className="pl-9" placeholder="Customer, category, item…" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
           </div>
-          <div className="w-48 space-y-1">
+          <Button
+            variant="outline"
+            size="icon"
+            className="relative shrink-0 lg:hidden"
+            onClick={() => setMobileFiltersOpen(true)}
+            aria-label="Filters"
+          >
+            <Filter className="size-4" />
+            {dropdownFilterCount > 0 && (
+              <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-medium">
+                {dropdownFilterCount}
+              </span>
+            )}
+          </Button>
+          <div className="hidden w-48 space-y-1 lg:block">
             <Label className="text-xs">Customer</Label>
             <NativeSelect value={customer} onChange={(v) => setFilter(() => setCustomer(v))} options={['', ...customerNames]} placeholder="All customers" />
           </div>
-          <div className="w-40 space-y-1">
+          <div className="hidden w-40 space-y-1 lg:block">
             <Label className="text-xs">Agent</Label>
             <NativeSelect value={agent} onChange={(v) => setFilter(() => setAgent(v))} options={['', ...(agents ?? [])]} placeholder="All agents" />
           </div>
-          <div className="w-40 space-y-1">
+          <div className="hidden w-40 space-y-1 lg:block">
             <Label className="text-xs">Type</Label>
             <MapSelect value={type} onChange={(v) => setFilter(() => setType(v))} opts={TYPE_OPTS} placeholder="All types" />
           </div>
-          <div className="w-44 space-y-1">
+          <div className="hidden w-44 space-y-1 lg:block">
             <Label className="text-xs">Level</Label>
             <MapSelect value={scope} onChange={(v) => setFilter(() => setScope(v))} opts={LEVEL_OPTS} placeholder="All levels" />
           </div>
-          <div className="w-40 space-y-1">
+          <div className="hidden w-40 space-y-1 lg:block">
             <Label className="text-xs">Category</Label>
             <NativeSelect value={category} onChange={(v) => setFilter(() => { setCategory(v); setSubCategory(''); })} options={['', ...(lookups?.categories ?? [])]} placeholder="All categories" />
           </div>
-          <div className="w-44 space-y-1">
+          <div className="hidden w-44 space-y-1 lg:block">
             <Label className="text-xs">Sub-category</Label>
             <NativeSelect value={subCategory} onChange={(v) => setFilter(() => setSubCategory(v))} options={['', ...subOptions]} placeholder="All sub-cats" />
           </div>
           {anyFilter && (
-            <Button variant="ghost" size="sm" onClick={clearAll} className="text-muted-foreground">
+            <Button variant="ghost" size="sm" onClick={clearAll} className="hidden text-muted-foreground lg:inline-flex">
               <X /> Clear
             </Button>
           )}
@@ -192,7 +270,58 @@ export function SpecialRatesMaster() {
         <p className="text-muted-foreground text-xs">{data?.total ?? 0} matching record(s) across all customers.</p>
       </div>
 
-      <DataTable columns={columns} rows={rows} rowKey={(r) => r.rowKey} isLoading={isLoading} dense emptyText="No special rates match these filters." actions={canDelete ? (r) => (
+      {/* Phones only: the 6 dropdown filters live behind the Filter icon above. */}
+      <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
+        <SheetContent side="bottom" className="lg:hidden">
+          <SheetHeader>
+            <div className="flex items-center justify-between">
+              <SheetTitle>Filters</SheetTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground -mr-2 gap-1.5"
+                onClick={resetDropdownFilters}
+                disabled={dropdownFilterCount === 0}
+              >
+                <RotateCcw className="size-3.5" /> Reset
+              </Button>
+            </div>
+          </SheetHeader>
+          <div className="max-h-[60vh] space-y-4 overflow-y-auto">
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Customer</Label>
+              <NativeSelect value={customer} onChange={(v) => setFilter(() => setCustomer(v))} options={['', ...customerNames]} placeholder="All customers" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Agent</Label>
+              <NativeSelect value={agent} onChange={(v) => setFilter(() => setAgent(v))} options={['', ...(agents ?? [])]} placeholder="All agents" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Type</Label>
+              <MapSelect value={type} onChange={(v) => setFilter(() => setType(v))} opts={TYPE_OPTS} placeholder="All types" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Level</Label>
+              <MapSelect value={scope} onChange={(v) => setFilter(() => setScope(v))} opts={LEVEL_OPTS} placeholder="All levels" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Category</Label>
+              <NativeSelect value={category} onChange={(v) => setFilter(() => { setCategory(v); setSubCategory(''); })} options={['', ...(lookups?.categories ?? [])]} placeholder="All categories" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Sub-category</Label>
+              <NativeSelect value={subCategory} onChange={(v) => setFilter(() => setSubCategory(v))} options={['', ...subOptions]} placeholder="All sub-cats" />
+            </div>
+          </div>
+          <SheetFooter>
+            <Button className="w-full" onClick={() => setMobileFiltersOpen(false)}>
+              Show {(data?.total ?? 0).toLocaleString('en-IN')} records
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
+
+      <DataTable columns={columns} rows={rows} rowKey={(r) => r.rowKey} isLoading={isLoading} dense mobileCard={rowMobileCard} emptyText="No special rates match these filters." actions={canDelete ? (r) => (
         <div className="flex justify-end">
           <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => onDelete(r)} aria-label="Remove" title="Remove">
             <Trash2 className="size-4" />

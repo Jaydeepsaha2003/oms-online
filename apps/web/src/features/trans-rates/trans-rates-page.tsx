@@ -105,6 +105,51 @@ function RatesList() {
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
 
+  // Phones: one stacked card per rate instead of a horizontally-scrolling table.
+  const rateMobileCard = (r: TransRateDto) => (
+    <div className="space-y-2.5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="leading-tight font-medium">{r.customerName}</p>
+          <p className="text-muted-foreground text-xs">
+            {r.category} · {r.type}
+          </p>
+        </div>
+        <span className="font-semibold tabular-nums">{num(r.rate)}</span>
+      </div>
+      <div className="text-xs">
+        <p className="text-muted-foreground">Transporter</p>
+        <p className="font-medium">{r.transportName ?? '—'}</p>
+      </div>
+      <div className="flex items-center justify-between border-t pt-2.5" onClick={(e) => e.stopPropagation()}>
+        <span className="text-muted-foreground font-mono text-[11px]" title={formatDateTime(r.updatedAt)}>
+          {formatDateShort(r.updatedAt)}
+        </span>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="icon" className="size-8" onClick={() => setHistoryFor(r)} aria-label="History">
+            <History className="size-4" />
+          </Button>
+          {can('transrate:update') && (
+            <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(r)} aria-label="Edit">
+              <Pencil className="size-4" />
+            </Button>
+          )}
+          {can('transrate:delete') && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 text-destructive hover:text-destructive"
+              onClick={() => handleDelete(r)}
+              aria-label="Delete"
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
   const handleDelete = async (r: TransRateDto) => {
     const ok = await confirm({
       title: 'Delete transport rate?',
@@ -167,6 +212,7 @@ function RatesList() {
           isLoading={isLoading}
           emptyText="No transport rates yet — add one or import a sheet."
           onRowClick={can('transrate:update') ? (r) => setEditing(r) : undefined}
+          mobileCard={rateMobileCard}
           actions={(r) => (
             <div className="flex justify-end gap-1">
               <Button variant="ghost" size="icon" className="size-8" onClick={() => setHistoryFor(r)} aria-label="History">

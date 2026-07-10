@@ -80,6 +80,50 @@ export function AgentsPage() {
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
 
+  // Phones: one stacked card per agent instead of a horizontally-scrolling table.
+  const agentMobileCard = (a: AgentDto) => (
+    <div className="space-y-2.5">
+      <div className="flex items-start justify-between gap-2">
+        <p className="leading-tight font-medium">{a.name}</p>
+        <span className="text-muted-foreground shrink-0 font-mono text-[11px]" title={formatDateTime(a.updatedAt)}>
+          {formatDateShort(a.updatedAt)}
+        </span>
+      </div>
+      <div className="grid grid-cols-3 gap-2 text-xs">
+        <div>
+          <p className="text-muted-foreground">Contact</p>
+          <p className="font-medium">{a.contactNo ?? '—'}</p>
+        </div>
+        <div>
+          <p className="text-muted-foreground">State</p>
+          <p className="font-medium">{a.state ?? '—'}</p>
+        </div>
+        <div>
+          <p className="text-muted-foreground">City</p>
+          <p className="font-medium">{a.city ?? '—'}</p>
+        </div>
+      </div>
+      <div className="flex items-center justify-end gap-1 border-t pt-2.5" onClick={(e) => e.stopPropagation()}>
+        {can('agent:update') && (
+          <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(a)} aria-label="Edit">
+            <Pencil className="size-4" />
+          </Button>
+        )}
+        {can('agent:delete') && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8 text-destructive hover:text-destructive"
+            onClick={() => handleDelete(a)}
+            aria-label="Delete"
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+
   const handleDelete = async (a: AgentDto) => {
     const ok = await confirm({
       title: 'Delete agent?',
@@ -148,6 +192,7 @@ export function AgentsPage() {
         isLoading={isLoading}
         emptyText="No agents yet."
         onRowClick={(a) => can('agent:update') && setEditing(a)}
+        mobileCard={agentMobileCard}
         actions={(a) => (
           <div className="flex justify-end gap-1">
             {can('agent:update') && (

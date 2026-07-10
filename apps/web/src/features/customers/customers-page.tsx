@@ -95,6 +95,72 @@ export function CustomersPage() {
   const total = data?.total ?? 0;
   const totalPages = data?.totalPages ?? 1;
 
+  // Phones: one stacked card per customer instead of a horizontally-scrolling
+  // table — surfaces the most-used fields only (full detail stays behind Edit).
+  const customerMobileCard = (c: CustomerDto) => (
+    <div className="space-y-2.5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="leading-tight font-semibold">{txt(c.partyName)}</p>
+          <p className="text-muted-foreground text-xs">
+            {txt(c.agentName)} · {txt(c.city)}
+          </p>
+        </div>
+        {c.active ? (
+          <span className="inline-flex shrink-0 items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-600/20">
+            Active
+          </span>
+        ) : (
+          <span className="inline-flex shrink-0 items-center rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700 ring-1 ring-rose-600/20">
+            Inactive
+          </span>
+        )}
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <div>
+          <p className="text-muted-foreground">Category</p>
+          <p className="font-medium">{txt(c.category)}</p>
+        </div>
+        <div>
+          <p className="text-muted-foreground">Mobile</p>
+          <p className="font-medium">{txt(c.mobile)}</p>
+        </div>
+        <div>
+          <p className="text-muted-foreground">Billing Rate/KGS</p>
+          <p className="font-medium tabular-nums">{money(c.billingRate)}</p>
+        </div>
+        <div>
+          <p className="text-muted-foreground">Credit period</p>
+          <p className="font-medium tabular-nums">{num(c.creditPeriod)}</p>
+        </div>
+      </div>
+      <div className="flex items-center justify-end gap-1 border-t pt-2.5" onClick={(e) => e.stopPropagation()}>
+        {can('customer:update') && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8"
+            onClick={() => navigate(`/customers/${c.id}/edit`)}
+            aria-label="Edit"
+          >
+            <Pencil className="size-4" />
+          </Button>
+        )}
+        {can('customer:delete') && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8 text-destructive hover:text-destructive"
+            onClick={() => handleDelete(c)}
+            aria-label="Delete"
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+
   const handleDelete = async (c: CustomerDto) => {
     const ok = await confirm({
       title: 'Delete customer?',
@@ -191,6 +257,7 @@ export function CustomersPage() {
         isLoading={isLoading}
         emptyText="No customers found."
         onRowClick={(c) => can('customer:update') && navigate(`/customers/${c.id}/edit`)}
+        mobileCard={customerMobileCard}
         actions={(c) => (
           <div className="flex justify-end gap-1">
             {can('customer:update') && (
