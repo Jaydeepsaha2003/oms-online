@@ -254,7 +254,7 @@ export function LoginPage() {
 
         <p className="mt-4 text-center text-xs text-muted-foreground">
           Dev login: <span className="font-medium">admin@oms.local</span> · password{' '}
-          <span className="font-medium">Oms-MAPstFPxt!59</span> · PIN <span className="font-medium">246813</span>
+          <span className="font-medium">Admin@12345</span> · PIN <span className="font-medium">246813</span>
         </p>
       </div>
     </div>
