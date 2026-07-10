@@ -21,7 +21,7 @@ netsh advfirewall firewall delete rule name="OMS Web 6173" >nul 2>&1
 netsh advfirewall firewall delete rule name="OMS Web 5173" >nul 2>&1
 netsh advfirewall firewall delete rule name="OMS API 4000" >nul 2>&1
 
-REM 6173 = start.bat / start-prod-secure.bat (production build, fast on mobile)
+REM 6173 = start.bat (production build, fast on mobile)
 REM 5173 = dev.bat (raw Vite dev server, for active coding on this PC)
 netsh advfirewall firewall add rule name="OMS Web 6173" dir=in action=allow protocol=TCP localport=6173
 netsh advfirewall firewall add rule name="OMS Web 5173" dir=in action=allow protocol=TCP localport=5173
