@@ -1,8 +1,38 @@
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import mkcert from 'vite-plugin-mkcert';
+
+// iOS only offers the "Install profile" flow when a downloaded CA arrives with
+// a certificate MIME type. Vite's static server sends .crt files with no
+// Content-Type, so phones fetching /oms-rootCA.crt from the dev URL just got a
+// bare download and the CA was never actually installed — leaving the site
+// "Not secure". Serve the route ourselves, straight from the live plugin CA
+// (~/.vite-plugin-mkcert/rootCA.pem) so it also can't go stale if the CA is
+// ever regenerated. Mirrors the same route on the Nest server (main.ts).
+const sendRootCa = (_req: unknown, res: { setHeader: (k: string, v: string) => void; end: (body: string | Buffer) => void; statusCode: number }) => {
+  try {
+    const ca = readFileSync(path.join(homedir(), '.vite-plugin-mkcert', 'rootCA.pem'));
+    res.setHeader('Content-Type', 'application/x-x509-ca-cert');
+    res.end(ca);
+  } catch {
+    res.statusCode = 404;
+    res.end('root CA not found on this machine');
+  }
+};
+
+const serveRootCa: Plugin = {
+  name: 'oms-serve-root-ca',
+  configureServer(server) {
+    server.middlewares.use('/oms-rootCA.crt', sendRootCa);
+  },
+  configurePreviewServer(server) {
+    server.middlewares.use('/oms-rootCA.crt', sendRootCa);
+  },
+};
 
 // All /api calls are proxied to the Nest server so the browser only ever talks
 // to this origin — this keeps HTTPS pages working (no mixed content / no TLS
@@ -35,6 +65,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
     mkcert({ hosts: ['localhost', '127.0.0.1', '192.168.31.19', '192.168.0.236', '26.142.63.68'] }),
+    serveRootCa,
   ],
   resolve: {
     alias: {
