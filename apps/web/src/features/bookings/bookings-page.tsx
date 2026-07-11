@@ -1,17 +1,19 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Ban, ChevronLeft, ChevronRight, PackageOpen, Plus, Search, Split, Trash2 } from 'lucide-react';
+import { Ban, ChevronLeft, ChevronRight, Filter, PackageOpen, Plus, RotateCcw, Search, Split, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { BookingDto, BookingStatus } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
-import { shortOrderCode } from '@/lib/utils';
+import { cn, shortOrderCode } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/common/confirm';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { NativeSelect } from '@/components/common/combo';
 import { useBookings, useCancelBooking, useDeleteBooking } from './use-bookings';
 
@@ -71,6 +73,12 @@ export function BookingsPage() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const activeFilterCount = status ? 1 : 0;
+  const resetFilters = () => {
+    setStatus('');
+    setPage(1);
+  };
   const { data, isLoading } = useBookings({
     page,
     pageSize: PAGE_SIZE,
@@ -111,6 +119,76 @@ export function BookingsPage() {
     });
   };
 
+  // Phones: one stacked card per booking instead of a horizontally-scrolling table.
+  const bookingMobileCard = (b: BookingDto) => {
+    const convertible = b.status === 'OPEN' || b.status === 'PARTIALLY_CONVERTED';
+    const untouched = b.convertedBags === 0 && b.convertedKgs === 0;
+    return (
+      <div className="space-y-2.5">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-muted-foreground font-mono text-xs font-semibold">{b.code}</p>
+            <p className="truncate leading-tight font-medium">{b.customerName}</p>
+            <p className="text-muted-foreground truncate text-xs">{b.agentName ?? '—'} · {formatDate(b.bookingDate)}</p>
+          </div>
+          <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-xs font-medium ring-1', STATUS_STYLE[b.status])}>{STATUS_LABEL[b.status]}</span>
+        </div>
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <div>
+            <p className="text-muted-foreground">Bags</p>
+            <p className="font-medium tabular-nums">{num(b.convertedBags)} / {num(b.bags)}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">Kgs</p>
+            <p className="font-medium tabular-nums">{num(b.convertedKgs)} / {num(b.kgs)}</p>
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <Progress done={b.convertedBags + b.convertedKgs} total={b.bags + b.kgs} />
+          {b.orderCode && <span className="font-mono text-xs text-sky-700">{shortOrderCode(b.orderCode)}</span>}
+        </div>
+        <div className="flex items-center justify-end gap-1 border-t pt-2.5" onClick={(e) => e.stopPropagation()}>
+          {can('booking:convert') && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 text-sky-600 hover:bg-sky-50 hover:text-sky-700 disabled:text-slate-300"
+              disabled={!convertible}
+              onClick={() => navigate(`/bookings/${b.id}/convert`)}
+              aria-label="Convert to items"
+            >
+              <Split className="size-4" />
+            </Button>
+          )}
+          {can('booking:cancel') && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 text-amber-600 hover:bg-amber-50 hover:text-amber-700 disabled:text-slate-300"
+              disabled={!untouched || b.status === 'CANCELLED'}
+              onClick={() => handleCancel(b)}
+              aria-label="Cancel booking"
+            >
+              <Ban className="size-4" />
+            </Button>
+          )}
+          {can('booking:delete') && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 text-destructive hover:text-destructive disabled:text-slate-300"
+              disabled={!untouched}
+              onClick={() => handleDelete(b)}
+              aria-label="Delete booking"
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -131,7 +209,7 @@ export function BookingsPage() {
       </div>
 
       <div className="bg-background/85 sticky top-0 z-20 -mx-1 flex flex-wrap items-center gap-2 rounded-md px-1 py-1.5 backdrop-blur">
-        <div className="relative w-full sm:w-80">
+        <div className="relative w-full flex-1 sm:w-80 sm:flex-none">
           <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
           <Input
             placeholder="Search booking #, customer or agent…"
@@ -144,7 +222,22 @@ export function BookingsPage() {
             }}
           />
         </div>
-        <div className="w-52">
+        {/* Phones: Status filter moves behind this icon (see the sheet below). */}
+        <Button
+          variant="outline"
+          size="icon"
+          className="relative shrink-0 sm:hidden"
+          onClick={() => setMobileFiltersOpen(true)}
+          aria-label="Filters"
+        >
+          <Filter className="size-4" />
+          {activeFilterCount > 0 && (
+            <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-medium">
+              {activeFilterCount}
+            </span>
+          )}
+        </Button>
+        <div className="hidden w-52 sm:block">
           <NativeSelect
             value={status}
             onChange={(v) => { setStatus(v); setPage(1); }}
@@ -155,6 +248,43 @@ export function BookingsPage() {
         </div>
       </div>
 
+      {/* Phones only: Status lives behind the Filter icon above. */}
+      <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
+        <SheetContent side="bottom" className="sm:hidden">
+          <SheetHeader>
+            <div className="flex items-center justify-between">
+              <SheetTitle>Filters</SheetTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground -mr-2 gap-1.5"
+                onClick={resetFilters}
+                disabled={activeFilterCount === 0}
+              >
+                <RotateCcw className="size-3.5" /> Reset
+              </Button>
+            </div>
+          </SheetHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Status</Label>
+              <NativeSelect
+                value={status}
+                onChange={(v) => { setStatus(v); setPage(1); }}
+                options={['', 'OPEN', 'PARTIALLY_CONVERTED', 'CONVERTED', 'CANCELLED']}
+                placeholder="All statuses"
+                renderOption={(v) => (v ? STATUS_LABEL[v as BookingStatus] : 'All statuses')}
+              />
+            </div>
+          </div>
+          <SheetFooter>
+            <Button className="w-full" onClick={() => setMobileFiltersOpen(false)}>
+              Show {(data?.total ?? 0).toLocaleString('en-IN')} bookings
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
+
       <DataTable
         columns={COLUMNS}
         rows={items}
@@ -162,6 +292,7 @@ export function BookingsPage() {
         isLoading={isLoading}
         emptyText="No bookings yet — create one."
         onRowClick={can('booking:convert') ? (b) => navigate(`/bookings/${b.id}/convert`) : undefined}
+        mobileCard={bookingMobileCard}
         actions={(b) => {
           const convertible = b.status === 'OPEN' || b.status === 'PARTIALLY_CONVERTED';
           const untouched = b.convertedBags === 0 && b.convertedKgs === 0;

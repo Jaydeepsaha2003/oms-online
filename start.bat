@@ -105,8 +105,13 @@ if errorlevel 1 (
 
 echo.
 echo [2/3] Syncing the schema / new tables (prisma db push)...
-REM Pipe "n" so a (rare) data-loss prompt is auto-declined instead of hanging
-REM the script; additive changes (new tables/columns) apply without any prompt.
+REM db:push always passes --accept-data-loss (see apps/api/package.json). SQLite
+REM has no real column types, so Prisma's "data loss" warning here is almost
+REM always a false positive from a column's *declared* type text not matching
+REM (e.g. an old INTEGER-declared boolean column) - no data is actually at risk.
+REM Piping a plain "n" used to be tried here, but Prisma refuses non-interactive
+REM input outright and demands this flag instead - so that trick never actually
+REM protected anything; it just made every push with a flagged column fail silently.
 REM db push also refreshes the Prisma client itself - no separate generate step needed.
 echo n | call npm run db:push
 if errorlevel 1 (

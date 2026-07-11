@@ -6,10 +6,12 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Filter,
   Loader2,
   Pencil,
   Plus,
   Printer,
+  RotateCcw,
   Search,
   Send,
   Trash2,
@@ -27,6 +29,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { settingValues, useSettings } from '@/features/settings/use-settings';
 import {
   useCancelQuotation,
@@ -86,6 +89,12 @@ export function QuotationsPage() {
   const [page, setPage] = useState(1);
   const [acting, setActing] = useState<QuotationDto | null>(null);
   const [cancelling, setCancelling] = useState<QuotationDto | null>(null);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const activeFilterCount = statusFilter ? 1 : 0;
+  const resetFilters = () => {
+    setStatusFilter('');
+    setPage(1);
+  };
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -142,6 +151,57 @@ export function QuotationsPage() {
     });
   };
 
+  // Phones: one stacked card per quotation instead of a horizontally-scrolling table.
+  const quotationMobileCard = (q: QuotationDto) => (
+    <div className="space-y-2.5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-muted-foreground font-mono text-xs font-semibold">{q.code ?? `#${q.id}`}</p>
+          <p className="truncate leading-tight font-medium">{q.customerName}</p>
+          <p className="text-muted-foreground text-xs">{formatDate(q.orderDate)}</p>
+        </div>
+        <StatusBadge s={q.status} />
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <div>
+          <p className="text-muted-foreground">Items</p>
+          <p className="font-medium tabular-nums">{q.itemCount}</p>
+        </div>
+        <div>
+          <p className="text-muted-foreground">Total Amount</p>
+          <p className="font-semibold tabular-nums text-emerald-700">₹{(q.totalAmount ?? 0).toLocaleString('en-IN')}</p>
+        </div>
+      </div>
+      {q.status === 'CONVERTED' ? (
+        <p className="text-xs text-emerald-700">
+          → {q.convertedOrderCode ?? 'order'}
+          {q.convertMode ? <span className="text-muted-foreground"> ({q.convertMode.toLowerCase()})</span> : ''}
+        </p>
+      ) : q.status === 'CANCELLED' ? (
+        <p className="truncate text-xs text-rose-700" title={q.cancelNote ?? undefined}>{q.cancelReason ?? 'Cancelled'}</p>
+      ) : q.status === 'SENT' ? (
+        <p className="text-xs text-sky-700">Sent {q.sentAt ? formatDate(q.sentAt) : ''}</p>
+      ) : null}
+      <div className="flex items-center justify-end gap-1 border-t pt-2.5" onClick={(e) => e.stopPropagation()}>
+        {isOpen(q.status) && (can('quotation:convert') || can('quotation:cancel') || can('quotation:update')) && (
+          <Button variant="outline" size="sm" className="h-8" onClick={() => setActing(q)}>
+            Action <ChevronDown className="size-3.5" />
+          </Button>
+        )}
+        {q.status === 'CONVERTED' && can('quotation:view') && (
+          <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(`/quotations/${q.id}/bill`)} aria-label="Print">
+            <Printer className="size-4" />
+          </Button>
+        )}
+        {can('quotation:delete') && (
+          <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => handleDelete(q)} aria-label="Delete">
+            <Trash2 className="size-4" />
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -157,14 +217,60 @@ export function QuotationsPage() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative max-w-sm flex-1">
+        <div className="relative w-full flex-1 sm:max-w-sm">
           <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
           <Input placeholder="Search quote #, customer or agent…" className="pl-9" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
         </div>
-        <div className="w-40">
+        {/* Phones: Status filter moves behind this icon (see the sheet below). */}
+        <Button
+          variant="outline"
+          size="icon"
+          className="relative shrink-0 sm:hidden"
+          onClick={() => setMobileFiltersOpen(true)}
+          aria-label="Filters"
+        >
+          <Filter className="size-4" />
+          {activeFilterCount > 0 && (
+            <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-medium">
+              {activeFilterCount}
+            </span>
+          )}
+        </Button>
+        <div className="hidden w-40 sm:block">
           <NativeSelect value={statusFilter} onChange={(v) => { setStatusFilter(v); setPage(1); }} options={['', ...QUOTATION_STATUSES]} placeholder="All statuses" />
         </div>
       </div>
+
+      {/* Phones only: Status lives behind the Filter icon above. */}
+      <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
+        <SheetContent side="bottom" className="sm:hidden">
+          <SheetHeader>
+            <div className="flex items-center justify-between">
+              <SheetTitle>Filters</SheetTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground -mr-2 gap-1.5"
+                onClick={resetFilters}
+                disabled={activeFilterCount === 0}
+              >
+                <RotateCcw className="size-3.5" /> Reset
+              </Button>
+            </div>
+          </SheetHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Status</Label>
+              <NativeSelect value={statusFilter} onChange={(v) => { setStatusFilter(v); setPage(1); }} options={['', ...QUOTATION_STATUSES]} placeholder="All statuses" />
+            </div>
+          </div>
+          <SheetFooter>
+            <Button className="w-full" onClick={() => setMobileFiltersOpen(false)}>
+              Show {(data?.total ?? 0).toLocaleString('en-IN')} quotations
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
 
       <DataTable
         columns={COLUMNS}
@@ -173,6 +279,7 @@ export function QuotationsPage() {
         isLoading={isLoading}
         emptyText="No quotations yet."
         onRowClick={(q) => { if (isOpen(q.status)) setActing(q); }}
+        mobileCard={quotationMobileCard}
         actions={(q) => (
           <div className="flex justify-end gap-1">
             {isOpen(q.status) && (can('quotation:convert') || can('quotation:cancel') || can('quotation:update')) && (

@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import type { OrderDto, OrderInput, OrderItemDto } from '@oms/shared';
 import { ORDER_PRIORITIES } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
-import { shortOrderCode } from '@/lib/utils';
+import { cn, shortOrderCode } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
 import { useColumnOrder } from '@/hooks/use-column-order';
 import { useConfirm } from '@/components/common/confirm';
@@ -132,6 +132,24 @@ export function OrderModifyPage() {
   // Flatten every order's lines into a single list (order info repeats per line).
   const rows = useMemo<Row[]>(() => orders.flatMap((order) => order.items.map((line) => ({ order, line }))), [orders]);
 
+  // Phones: group lines by their parent order — one card per order, its lines
+  // nested underneath, instead of repeating the order/customer on every line.
+  const groupedByOrder = useMemo(() => {
+    const order: number[] = [];
+    const groups = new Map<number, Row[]>();
+    for (const r of rows) {
+      if (!groups.has(r.order.id)) {
+        groups.set(r.order.id, []);
+        order.push(r.order.id);
+      }
+      groups.get(r.order.id)!.push(r);
+    }
+    return order.map((id) => {
+      const lines = groups.get(id)!;
+      return { order: lines[0].order, lines };
+    });
+  }, [rows]);
+
   const saveItems = (order: OrderDto, items: OrderItemDto[], okMsg: string) => {
     save.mutate(
       { id: order.id, input: toInput(order, items) },
@@ -187,17 +205,91 @@ export function OrderModifyPage() {
         />
       </div>
 
-      <DataTable
-        columns={cols.visibleColumns}
-        rows={rows}
-        rowKey={(r) => `${r.order.id}-${r.line.id}`}
-        isLoading={isLoading}
-        dense
-        // Larger, easy-to-read data font (columns still auto-fit their content).
-        className="text-[16px] [&_thead_th]:text-[14px] [&_td]:py-1.5 [&_th]:py-2 [&_tbody_button]:size-8"
-        emptyText="No order lines found."
-        onRowClick={(r) => setEdit(r)}
-      />
+      <div className="hidden sm:block">
+        <DataTable
+          columns={cols.visibleColumns}
+          rows={rows}
+          rowKey={(r) => `${r.order.id}-${r.line.id}`}
+          isLoading={isLoading}
+          dense
+          // Larger, easy-to-read data font (columns still auto-fit their content).
+          className="text-[16px] [&_thead_th]:text-[14px] [&_td]:py-1.5 [&_th]:py-2 [&_tbody_button]:size-8"
+          emptyText="No order lines found."
+          onRowClick={(r) => setEdit(r)}
+        />
+      </div>
+
+      {/* Phones: one card per order, its lines grouped underneath. */}
+      <div className="sm:hidden">
+        {isLoading ? (
+          <div className="text-muted-foreground flex h-24 items-center justify-center">
+            <Loader2 className="size-5 animate-spin" />
+          </div>
+        ) : groupedByOrder.length === 0 ? (
+          <div className="text-muted-foreground rounded-lg border px-4 py-10 text-center text-sm">No order lines found.</div>
+        ) : (
+          <div className="space-y-3">
+            {groupedByOrder.map(({ order: o, lines }) => (
+              <div key={o.id} className="bg-card overflow-hidden rounded-lg border shadow-sm">
+                <div className="bg-muted/40 border-b px-3 py-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-muted-foreground font-mono text-xs font-semibold">{shortOrderCode(o.code, o.id)}</p>
+                      <p className="truncate font-semibold">{o.customerName}</p>
+                    </div>
+                    <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-xs font-medium ring-1', STATUS_STYLE[o.status] ?? 'bg-muted text-muted-foreground ring-border')}>
+                      {o.status}
+                    </span>
+                  </div>
+                  <p className="text-muted-foreground text-xs">
+                    {formatDate(o.orderDate)} → {formatDate(o.completionDate)} · {lines.length} line{lines.length === 1 ? '' : 's'}
+                  </p>
+                </div>
+                <div className="divide-y">
+                  {lines.map((r) => {
+                    const cancelled = r.line.status === 'CANCELLED';
+                    return (
+                      <div key={r.line.id} className="active:bg-muted cursor-pointer px-3 py-2.5" onClick={() => setEdit(r)}>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className={cn('truncate text-sm font-medium', cancelled && 'text-muted-foreground line-through')}>
+                              {r.line.productName || r.line.product || '—'}
+                            </p>
+                            <p className="text-muted-foreground truncate text-xs">
+                              {r.line.designType || '—'}
+                              {r.line.priority === 'URGENT' && <span className="ml-1.5 font-semibold text-rose-600">URGENT</span>}
+                            </p>
+                          </div>
+                          <span className="shrink-0 font-semibold tabular-nums text-emerald-700">₹{(r.line.rate ?? 0).toLocaleString('en-IN')}</span>
+                        </div>
+                        <div className="mt-1.5 grid grid-cols-4 gap-2 text-xs">
+                          <div>
+                            <p className="text-muted-foreground">Bags</p>
+                            <p className="font-medium tabular-nums">{dash(r.line.bags)}</p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground">Pcs</p>
+                            <p className="font-medium tabular-nums">{dash(r.line.pcs)}</p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground">Kgs</p>
+                            <p className="font-medium tabular-nums">{dash(r.line.gram)}</p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground">Box</p>
+                            <p className="font-medium tabular-nums">{dash(r.line.box)}</p>
+                          </div>
+                        </div>
+                        {r.line.comment && <p className="text-muted-foreground mt-1.5 truncate text-xs">{r.line.comment}</p>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       <div className="flex items-center justify-between">
         <p className="text-muted-foreground text-sm">

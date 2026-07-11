@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Ban, ChevronLeft, ChevronRight, Eye, Plus, Printer, Search, Truck } from 'lucide-react';
+import { Ban, ChevronLeft, ChevronRight, Eye, Filter, Plus, Printer, RotateCcw, Search, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 import type { OrderDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -13,7 +13,9 @@ import { ColumnSettings } from '@/components/common/column-settings';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { NativeSelect } from '@/components/common/combo';
 import { useCancelOrder, useOrderFilterOptions, useOrders } from './use-orders';
 import { OrderTimelineModal } from './order-timeline-modal';
@@ -58,7 +60,7 @@ const COLUMNS: DataColumn<OrderDto>[] = [
     cell: (o) => (o.priority === 'URGENT' ? <span className="font-semibold text-rose-600">URGENT</span> : (o.priority ?? '—')),
   },
   { id: 'items', label: 'Items', align: 'right', cell: (o) => <span className="tabular-nums">{o.itemCount}</span> },
-  { id: 'total', label: 'Total Amount', align: 'right', cell: (o) => <span className="font-semibold tabular-nums">₹{(o.totalAmount ?? 0).toLocaleString('en-IN')}</span> },
+  { id: 'total', label: 'Total Amount', align: 'right', cell: (o) => <span className="text-[17px] font-bold tabular-nums">₹{(o.totalAmount ?? 0).toLocaleString('en-IN')}</span> },
   {
     id: 'status',
     label: 'Status',
@@ -86,6 +88,13 @@ export function OrdersPage() {
   const [product, setProduct] = useState('');
   const [design, setDesign] = useState('');
   const [page, setPage] = useState(1);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const activeFilterCount = (product ? 1 : 0) + (design ? 1 : 0);
+  const resetFilters = () => {
+    setProduct('');
+    setDesign('');
+    setPage(1);
+  };
   const { data: filterOptions } = useOrderFilterOptions();
   const { data, isLoading } = useOrders({
     page,
@@ -116,6 +125,87 @@ export function OrdersPage() {
     });
   };
 
+  // Phones: one stacked card per order instead of a horizontally-scrolling table.
+  const orderMobileCard = (o: OrderDto) => {
+    const truck = TRUCK_STATE[o.dispatchState ?? 'NONE'] ?? TRUCK_STATE.NONE;
+    const alreadyCancelled = o.status === 'CANCELLED';
+    const hasDispatches = (o.dispatchState ?? 'NONE') !== 'NONE';
+    const canCancel = !alreadyCancelled && !hasDispatches;
+    return (
+      <div className="space-y-2.5">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-muted-foreground font-mono text-xs font-semibold">{shortOrderCode(o.code, o.id)}</p>
+            <p className="truncate leading-tight font-medium">{o.customerName}</p>
+            <p className="text-muted-foreground truncate text-xs">
+              {o.agentName ?? '—'} · {formatDate(o.orderDate)}
+              {o.priority === 'URGENT' && <span className="ml-1.5 font-semibold text-rose-600">URGENT</span>}
+            </p>
+          </div>
+          <span
+            className={cn(
+              'shrink-0 rounded px-1.5 py-0.5 text-xs font-medium ring-1',
+              STATUS_STYLE[o.status] ?? 'bg-muted text-muted-foreground ring-border',
+            )}
+          >
+            {o.status}
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <div>
+            <p className="text-muted-foreground">Items</p>
+            <p className="font-medium tabular-nums">{o.itemCount}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">Total Amount</p>
+            <p className="text-lg font-bold tabular-nums">₹{(o.totalAmount ?? 0).toLocaleString('en-IN')}</p>
+          </div>
+        </div>
+        <div className="flex items-center justify-between border-t pt-2.5" onClick={(e) => e.stopPropagation()}>
+          <span className="text-muted-foreground font-mono text-[11px]" title={formatDateTime(o.updatedAt)}>
+            {formatDate(o.updatedAt)}
+          </span>
+          <div className="flex items-center gap-1">
+            {can('order:view') && (
+              <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(`/orders/${o.id}/edit`)} aria-label="View order">
+                <Eye className="size-4" />
+              </Button>
+            )}
+            {can('order:view') && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn('size-8', truck.cls)}
+                onClick={() => setTimelineFor(o)}
+                aria-label={`Order journey — ${truck.label}`}
+                title={truck.label}
+              >
+                <Truck className="size-4" />
+              </Button>
+            )}
+            {can('order:print') && (
+              <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(`/orders/${o.id}/bill`)} aria-label="Bill / Invoice">
+                <Printer className="size-4" />
+              </Button>
+            )}
+            {can('order:update') && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8 text-destructive hover:text-destructive disabled:text-slate-300"
+                disabled={!canCancel}
+                onClick={() => handleCancel(o)}
+                aria-label={alreadyCancelled ? 'Order already cancelled' : hasDispatches ? 'Cannot cancel — items dispatched' : 'Cancel order'}
+              >
+                <Ban className="size-4" />
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -143,7 +233,7 @@ export function OrdersPage() {
 
       {/* Sticky so the search + filters stay reachable while scrolling the list. */}
       <div className="bg-background/85 sticky top-0 z-20 -mx-1 flex flex-wrap items-center gap-2 rounded-md px-1 py-1.5 backdrop-blur">
-        <div className="relative w-full sm:w-80">
+        <div className="relative w-full flex-1 sm:w-80 sm:flex-none">
           <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
           <Input
             placeholder="Search order #, customer or agent…"
@@ -156,14 +246,74 @@ export function OrdersPage() {
             }}
           />
         </div>
+        {/* Phones: Product / Design filters move behind this icon (see the sheet below). */}
+        <Button
+          variant="outline"
+          size="icon"
+          className="relative shrink-0 lg:hidden"
+          onClick={() => setMobileFiltersOpen(true)}
+          aria-label="Filters"
+        >
+          <Filter className="size-4" />
+          {activeFilterCount > 0 && (
+            <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-medium">
+              {activeFilterCount}
+            </span>
+          )}
+        </Button>
         {/* Keep orders whose lines contain the picked product / design. */}
-        <div className="w-64">
+        <div className="hidden w-64 lg:block">
           <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...(filterOptions?.products ?? [])]} placeholder="All products" />
         </div>
-        <div className="w-48">
+        <div className="hidden w-48 lg:block">
           <NativeSelect value={design} onChange={(v) => { setDesign(v); setPage(1); }} options={['', ...(filterOptions?.designs ?? [])]} placeholder="All designs" />
         </div>
       </div>
+
+      {/* Phones only: Product / Design live behind the Filter icon above. */}
+      <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
+        <SheetContent side="bottom" className="lg:hidden">
+          <SheetHeader>
+            <div className="flex items-center justify-between">
+              <SheetTitle>Filters</SheetTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground -mr-2 gap-1.5"
+                onClick={resetFilters}
+                disabled={activeFilterCount === 0}
+              >
+                <RotateCcw className="size-3.5" /> Reset
+              </Button>
+            </div>
+          </SheetHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Product</Label>
+              <NativeSelect
+                value={product}
+                onChange={(v) => { setProduct(v); setPage(1); }}
+                options={['', ...(filterOptions?.products ?? [])]}
+                placeholder="All products"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Design</Label>
+              <NativeSelect
+                value={design}
+                onChange={(v) => { setDesign(v); setPage(1); }}
+                options={['', ...(filterOptions?.designs ?? [])]}
+                placeholder="All designs"
+              />
+            </div>
+          </div>
+          <SheetFooter>
+            <Button className="w-full" onClick={() => setMobileFiltersOpen(false)}>
+              Show {(data?.total ?? 0).toLocaleString('en-IN')} orders
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
 
       <DataTable
         columns={cols.visibleColumns}
@@ -175,6 +325,7 @@ export function OrdersPage() {
         className="text-[16px] [&_thead_th]:text-[14px] [&_td]:py-1.5 [&_th]:py-2 [&_tbody_button]:size-8"
         emptyText="No orders yet — create one."
         onRowClick={can('order:update') ? (o) => navigate(`/orders/${o.id}/edit`) : undefined}
+        mobileCard={orderMobileCard}
         actions={(o) => {
           if (!(can('order:view') || can('order:print') || can('order:update'))) return null;
           const truck = TRUCK_STATE[o.dispatchState ?? 'NONE'] ?? TRUCK_STATE.NONE;

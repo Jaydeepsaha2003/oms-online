@@ -221,8 +221,12 @@ export class ChallansService {
     const cfg = await this.getPrefixSettings();
     const wanted = dto.prefix?.trim().toUpperCase();
     const prefix = wanted && cfg.prefixes.includes(wanted) ? wanted : cfg.default;
-    // Number is always assigned server-side from the PREFIX/FY series (ignores any client code).
-    const code = await this.nextCode(prefix, invDate);
+    // Number defaults to the next PREFIX/FY serial, but an operator can override it
+    // (Form14 InvNo is a free-editable textbox) — a manually-typed number can skip
+    // ahead, which is exactly what the Missing Challan tool tracks.
+    const manualCode = dto.code?.trim().toUpperCase();
+    const code = manualCode || (await this.nextCode(prefix, invDate));
+    if (manualCode) await this.assertCodeAvailable(manualCode);
     const paymentTerm = dto.paymentTerm ?? null;
     const dueDate = dto.dueDate ? new Date(dto.dueDate) : paymentTerm != null ? new Date(invDate.getTime() + paymentTerm * 86_400_000) : null;
 
@@ -443,17 +447,25 @@ export class ChallansService {
 
   /** Replace a saved challan's header + lines (invoice no is preserved). */
   async update(id: number, dto: CreateChallanDto): Promise<ChallanDto> {
-    const existing = await this.prisma.challan.findUnique({ where: { id }, select: { id: true } });
+    const existing = await this.prisma.challan.findUnique({ where: { id }, select: { id: true, code: true } });
     if (!existing) throw new NotFoundException('Challan not found');
     const invDate = dto.invDate ? new Date(dto.invDate) : undefined;
     const paymentTerm = dto.paymentTerm ?? null;
     const dueDate = dto.dueDate ? new Date(dto.dueDate) : paymentTerm != null && invDate ? new Date(invDate.getTime() + paymentTerm * 86_400_000) : null;
+
+    // The invoice number stays editable after save too (matches the legacy
+    // InvNo textbox) — renumbering an existing challan just needs the new
+    // number to not already belong to a different one.
+    const manualCode = dto.code?.trim().toUpperCase();
+    const code = manualCode && manualCode !== existing.code ? manualCode : undefined;
+    if (code) await this.assertCodeAvailable(code, id);
 
     await this.prisma.$transaction([
       this.prisma.challanItem.deleteMany({ where: { challanId: id } }),
       this.prisma.challan.update({
         where: { id },
         data: {
+          ...(code ? { code } : {}),
           ...(invDate ? { invDate } : {}),
           customerName: dto.customerName.trim(),
           billingAddress: dto.billingAddress ?? null,
@@ -638,6 +650,117 @@ export class ChallansService {
     const p = prefix && prefixes.includes(prefix.trim().toUpperCase()) ? prefix.trim().toUpperCase() : def;
     const date = dateStr ? new Date(dateStr) : new Date();
     return { code: await this.nextCode(p, isNaN(date.getTime()) ? new Date() : date) };
+  }
+
+  /** Rejects a manually-typed invoice number that's already used by another challan. */
+  private async assertCodeAvailable(code: string, excludeId?: number): Promise<void> {
+    const dup = await this.prisma.challan.findUnique({ where: { code }, select: { id: true } });
+    if (dup && dup.id !== excludeId) throw new BadRequestException(`Invoice number "${code}" is already used by another challan.`);
+  }
+
+  // ── Missing Challan (legacy MissingChallanForm) ─────────────────────────────
+  // Free-editable invoice numbers can skip ahead, leaving gaps in a PREFIX/FY
+  // series (e.g. #44 then #46, #45 never issued). This surfaces those gaps so
+  // an operator can either notice a genuine mistake or "dismiss" an intentional
+  // skip (e.g. voided by hand) — dismissals are reversible ("restore").
+
+  /** Every FY that has a challan under this prefix, newest first, plus the current
+   *  calendar FY (always offered even with nothing filed yet) and the FY of the most
+   *  recently created ("last built") invoice — the sensible default series to check,
+   *  since right after a fiscal-year rollover "today's FY" can still be empty while
+   *  the previous year's series is the one that actually needs reviewing. */
+  async missingChallanFys(prefix: string): Promise<{ fys: string[]; current: string; lastBuilt: string }> {
+    const p = prefix.trim().toUpperCase();
+    const current = this.fyLabel(new Date());
+    const rows = await this.prisma.challan.findMany({
+      where: { code: { startsWith: `${p}/` } },
+      select: { code: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    const fys = new Set<string>([current]);
+    let lastBuilt = current;
+    let sawAny = false;
+    for (const r of rows) {
+      const m = /^([^/]+)\/([^/]+)\//.exec(r.code);
+      if (!m) continue;
+      fys.add(m[2]);
+      if (!sawAny) {
+        lastBuilt = m[2]; // rows are newest-created first, so the first match is the last built
+        sawAny = true;
+      }
+    }
+    return { fys: [...fys].sort().reverse(), current, lastBuilt };
+  }
+
+  /** Gap (or, in deletedOnly mode, dismissed-gap) invoice numbers for one PREFIX/FY series. */
+  async missingChallanList(prefix: string, fy: string, deletedOnly: boolean): Promise<{ code: string; invNo: number; reason?: string | null }[]> {
+    const p = prefix.trim().toUpperCase();
+    const f = fy.trim();
+    const full = `${p}/${f}`;
+
+    const dismissed = await this.currentlyDismissedMap(p, f);
+
+    if (deletedOnly) {
+      return [...dismissed.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([invNo, info]) => ({ code: `${full}/${invNo}`, invNo, reason: info.reason }));
+    }
+
+    const rows = await this.prisma.challan.findMany({ where: { code: { startsWith: `${full}/` } }, select: { code: true } });
+    const present = new Set<number>();
+    for (const r of rows) {
+      const n = parseInt(r.code.slice(full.length + 1), 10);
+      if (Number.isFinite(n)) present.add(n);
+    }
+    if (present.size === 0) return [];
+    const min = Math.min(...present);
+    const max = Math.max(...present);
+    const missing: { code: string; invNo: number }[] = [];
+    for (let i = min; i <= max; i++) {
+      if (!present.has(i) && !dismissed.has(i)) missing.push({ code: `${full}/${i}`, invNo: i });
+    }
+    return missing;
+  }
+
+  /** Acknowledge a gap so it stops showing on the missing list ("delete from list").
+   *  A reason is required — kept on record so "Show Deleted Only" means something later. */
+  async dismissMissingChallan(prefix: string, fy: string, invNo: number, reason?: string): Promise<void> {
+    const trimmedReason = reason?.trim();
+    if (!trimmedReason) throw new BadRequestException('A reason is required to dismiss a missing invoice number.');
+    await this.prisma.challanMissingLog.create({
+      data: { prefix: prefix.trim().toUpperCase(), fy: fy.trim(), invNo, deletedAt: new Date(), reason: trimmedReason },
+    });
+  }
+
+  /** Undo a dismissal, bringing the gap back onto the missing list. */
+  async restoreMissingChallan(prefix: string, fy: string, invNo: number): Promise<void> {
+    const p = prefix.trim().toUpperCase();
+    const f = fy.trim();
+    const row = await this.prisma.challanMissingLog.findFirst({
+      where: { prefix: p, fy: f, invNo, recycledAt: null },
+      orderBy: { deletedAt: 'desc' },
+    });
+    if (!row) throw new BadRequestException('Nothing to restore — it may already be restored.');
+    await this.prisma.challanMissingLog.update({ where: { id: row.id }, data: { recycledAt: new Date() } });
+  }
+
+  /** Numbers whose latest dismissal hasn't been restored yet, with the reason it was dismissed for. */
+  private async currentlyDismissedMap(prefix: string, fy: string): Promise<Map<number, { reason: string | null }>> {
+    const rows = await this.prisma.challanMissingLog.findMany({
+      where: { prefix, fy },
+      select: { invNo: true, deletedAt: true, recycledAt: true, reason: true },
+      orderBy: { deletedAt: 'asc' },
+    });
+    const latest = new Map<number, { deletedAt: Date; recycledAt: Date | null; reason: string | null }>();
+    for (const r of rows) {
+      const prev = latest.get(r.invNo);
+      if (!prev || r.deletedAt >= prev.deletedAt) latest.set(r.invNo, r);
+    }
+    const open = new Map<number, { reason: string | null }>();
+    for (const [invNo, r] of latest) {
+      if (!r.recycledAt || r.recycledAt < r.deletedAt) open.set(invNo, { reason: r.reason });
+    }
+    return open;
   }
 
   private map(row: Prisma.ChallanGetPayload<{ include: { items: true } }>): ChallanDto {

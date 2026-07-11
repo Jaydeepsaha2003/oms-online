@@ -762,6 +762,24 @@ model Challan {
   @@map("challans")
 }
 
+// Gaps in a prefix/FY invoice-number series that were explicitly acknowledged
+// ("dismissed") by an operator, so they stop showing on the Missing Challan
+// list. recycledAt set = restored back onto the missing list.
+model ChallanMissingLog {
+  id         Int       @id @default(autoincrement())
+  prefix     String
+  fy         String
+  invNo      Int
+  // Why this number was skipped (e.g. "voided by hand", "duplicate order") —
+  // required at dismiss time so it means something on the "Show Deleted Only" list.
+  reason     String?
+  deletedAt  DateTime  @default(now())
+  recycledAt DateTime?
+
+  @@index([prefix, fy])
+  @@map("challan_missing_log")
+}
+
 model ChallanItem {
   id          Int      @id @default(autoincrement())
   challanId   Int

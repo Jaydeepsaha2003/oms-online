@@ -5,7 +5,17 @@ import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { Audit } from '../common/decorators/audit.decorator';
 import { ChallansService } from './challans.service';
-import { ChallanQueryDto, CreateChallanDto, DraftChallanDto, ItemHistoryQueryDto, PendingChallanQueryDto, SavePrefixSettingsDto, UpdateChallanStatusDto } from './dto/challan.dto';
+import {
+  ChallanQueryDto,
+  CreateChallanDto,
+  DismissMissingChallanDto,
+  DraftChallanDto,
+  ItemHistoryQueryDto,
+  MissingChallanQueryDto,
+  PendingChallanQueryDto,
+  SavePrefixSettingsDto,
+  UpdateChallanStatusDto,
+} from './dto/challan.dto';
 
 const R = RESOURCES.CHALLAN;
 
@@ -92,6 +102,34 @@ export class ChallansController {
   @Permissions(perm(R, ACTIONS.CREATE))
   nextCode(@Query('prefix') prefix?: string, @Query('date') date?: string) {
     return this.challans.previewNextCode(prefix, date);
+  }
+
+  @Get('missing/fys')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  missingFys(@Query('prefix') prefix: string) {
+    return this.challans.missingChallanFys(prefix);
+  }
+
+  @Get('missing')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  missingList(@Query() query: MissingChallanQueryDto) {
+    return this.challans.missingChallanList(query.prefix, query.fy, !!query.deletedOnly);
+  }
+
+  @Post('missing/dismiss')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  async dismissMissing(@Body() dto: DismissMissingChallanDto) {
+    await this.challans.dismissMissingChallan(dto.prefix, dto.fy, dto.invNo, dto.reason);
+    return { ok: true };
+  }
+
+  @Post('missing/restore')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  async restoreMissing(@Body() dto: DismissMissingChallanDto) {
+    await this.challans.restoreMissingChallan(dto.prefix, dto.fy, dto.invNo);
+    return { ok: true };
   }
 
   @Get(':id')

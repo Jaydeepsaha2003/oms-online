@@ -178,7 +178,7 @@ export function ChallansListPage() {
       { id: 'date', label: 'Date', sortValue: (r) => r.invDate, cell: (r) => <span className="whitespace-nowrap">{formatDate(r.invDate)}</span> },
       { id: 'code', label: 'Challan No', sortValue: (r) => r.code, cell: (r) => <span className="font-mono font-semibold">{r.code}</span> },
       { id: 'party', label: 'Party', sortValue: (r) => r.customerName, cell: (r) => <span className="font-medium">{r.customerName}</span> },
-      { id: 'total', label: 'Total', align: 'right', sortValue: (r) => r.total ?? 0, cell: (r) => <span className="tabular-nums font-semibold">{money(r.total)}</span> },
+      { id: 'total', label: 'Total', align: 'right', sortValue: (r) => r.total ?? 0, cell: (r) => <span className="text-[15px] font-bold tabular-nums">{money(r.total)}</span> },
       { id: 'b', label: 'B', align: 'right', sortValue: (r) => r.b ?? 0, cell: (r) => <span className="tabular-nums">{money(r.b)}</span> },
       { id: 'c', label: 'C', align: 'right', sortValue: (r) => r.c ?? 0, cell: (r) => <span className="tabular-nums">{money(r.c)}</span> },
       { id: 'gst', label: 'GST', align: 'right', sortValue: (r) => r.tax ?? 0, cell: (r) => <span className="tabular-nums">{money(r.tax)}</span> },

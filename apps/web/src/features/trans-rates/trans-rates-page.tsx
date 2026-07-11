@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -17,7 +17,7 @@ import { toast } from 'sonner';
 import type { TransRateDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { parseExcelFile } from '@/lib/excel';
-import { formatDateShort, formatDateTime } from '@/lib/utils';
+import { cn, formatDateShort, formatDateTime } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/common/confirm';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
@@ -105,48 +105,42 @@ function RatesList() {
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
 
-  // Phones: one stacked card per rate instead of a horizontally-scrolling table.
-  const rateMobileCard = (r: TransRateDto) => (
-    <div className="space-y-2.5">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="leading-tight font-medium">{r.customerName}</p>
-          <p className="text-muted-foreground text-xs">
-            {r.category} · {r.type}
-          </p>
-        </div>
-        <span className="font-semibold tabular-nums">{num(r.rate)}</span>
-      </div>
-      <div className="text-xs">
-        <p className="text-muted-foreground">Transporter</p>
-        <p className="font-medium">{r.transportName ?? '—'}</p>
-      </div>
-      <div className="flex items-center justify-between border-t pt-2.5" onClick={(e) => e.stopPropagation()}>
-        <span className="text-muted-foreground font-mono text-[11px]" title={formatDateTime(r.updatedAt)}>
-          {formatDateShort(r.updatedAt)}
-        </span>
-        <div className="flex items-center gap-1">
-          <Button variant="ghost" size="icon" className="size-8" onClick={() => setHistoryFor(r)} aria-label="History">
-            <History className="size-4" />
-          </Button>
-          {can('transrate:update') && (
-            <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(r)} aria-label="Edit">
-              <Pencil className="size-4" />
-            </Button>
-          )}
-          {can('transrate:delete') && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-8 text-destructive hover:text-destructive"
-              onClick={() => handleDelete(r)}
-              aria-label="Delete"
-            >
-              <Trash2 className="size-4" />
-            </Button>
-          )}
-        </div>
-      </div>
+  // Phones: group rates by customer — one card per customer, its category/type
+  // rows nested underneath, instead of repeating the customer name on every card.
+  const groupedByCustomer = useMemo(() => {
+    const order: string[] = [];
+    const groups = new Map<string, TransRateDto[]>();
+    for (const r of items) {
+      if (!groups.has(r.customerName)) {
+        groups.set(r.customerName, []);
+        order.push(r.customerName);
+      }
+      groups.get(r.customerName)!.push(r);
+    }
+    return order.map((customerName) => ({ customerName, rates: groups.get(customerName)! }));
+  }, [items]);
+
+  const rateRowActions = (r: TransRateDto) => (
+    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+      <Button variant="ghost" size="icon" className="size-7" onClick={() => setHistoryFor(r)} aria-label="History">
+        <History className="size-4" />
+      </Button>
+      {can('transrate:update') && (
+        <Button variant="ghost" size="icon" className="size-7" onClick={() => setEditing(r)} aria-label="Edit">
+          <Pencil className="size-4" />
+        </Button>
+      )}
+      {can('transrate:delete') && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7 text-destructive hover:text-destructive"
+          onClick={() => handleDelete(r)}
+          aria-label="Delete"
+        >
+          <Trash2 className="size-4" />
+        </Button>
+      )}
     </div>
   );
 
@@ -205,38 +199,88 @@ function RatesList() {
           )}
         </div>
 
-        <DataTable
-          columns={columns}
-          rows={items}
-          rowKey={(r) => r.id}
-          isLoading={isLoading}
-          emptyText="No transport rates yet — add one or import a sheet."
-          onRowClick={can('transrate:update') ? (r) => setEditing(r) : undefined}
-          mobileCard={rateMobileCard}
-          actions={(r) => (
-            <div className="flex justify-end gap-1">
-              <Button variant="ghost" size="icon" className="size-8" onClick={() => setHistoryFor(r)} aria-label="History">
-                <History className="size-4" />
-              </Button>
-              {can('transrate:update') && (
-                <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(r)} aria-label="Edit">
-                  <Pencil className="size-4" />
+        <div className="hidden sm:block">
+          <DataTable
+            columns={columns}
+            rows={items}
+            rowKey={(r) => r.id}
+            isLoading={isLoading}
+            emptyText="No transport rates yet — add one or import a sheet."
+            onRowClick={can('transrate:update') ? (r) => setEditing(r) : undefined}
+            actions={(r) => (
+              <div className="flex justify-end gap-1">
+                <Button variant="ghost" size="icon" className="size-8" onClick={() => setHistoryFor(r)} aria-label="History">
+                  <History className="size-4" />
                 </Button>
-              )}
-              {can('transrate:delete') && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-8 text-destructive hover:text-destructive"
-                  onClick={() => handleDelete(r)}
-                  aria-label="Delete"
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              )}
+                {can('transrate:update') && (
+                  <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(r)} aria-label="Edit">
+                    <Pencil className="size-4" />
+                  </Button>
+                )}
+                {can('transrate:delete') && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-8 text-destructive hover:text-destructive"
+                    onClick={() => handleDelete(r)}
+                    aria-label="Delete"
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                )}
+              </div>
+            )}
+          />
+        </div>
+
+        {/* Phones: one card per customer, its category/type rates grouped underneath. */}
+        <div className="sm:hidden">
+          {isLoading ? (
+            <div className="text-muted-foreground flex h-24 items-center justify-center">
+              <Loader2 className="size-5 animate-spin" />
+            </div>
+          ) : groupedByCustomer.length === 0 ? (
+            <div className="text-muted-foreground rounded-lg border px-4 py-10 text-center text-sm">
+              No transport rates yet — add one or import a sheet.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {groupedByCustomer.map(({ customerName, rates }) => (
+                <div key={customerName} className="bg-card overflow-hidden rounded-lg border shadow-sm">
+                  <div className="bg-muted/40 border-b px-3 py-2">
+                    <p className="font-semibold">{customerName}</p>
+                    <p className="text-muted-foreground text-xs">
+                      {rates.length} rate{rates.length === 1 ? '' : 's'}
+                    </p>
+                  </div>
+                  <div className="divide-y">
+                    {rates.map((r) => (
+                      <div
+                        key={r.id}
+                        className={cn('px-3 py-2.5', can('transrate:update') && 'cursor-pointer active:bg-muted')}
+                        onClick={can('transrate:update') ? () => setEditing(r) : undefined}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm font-medium">
+                            {r.category} · {r.type}
+                          </p>
+                          <span className="font-semibold tabular-nums">{num(r.rate)}</span>
+                        </div>
+                        <p className="text-muted-foreground text-xs">Transporter: {r.transportName ?? '—'}</p>
+                        <div className="mt-1 flex items-center justify-between">
+                          <span className="text-muted-foreground font-mono text-[11px]" title={formatDateTime(r.updatedAt)}>
+                            {formatDateShort(r.updatedAt)}
+                          </span>
+                          {rateRowActions(r)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
-        />
+        </div>
 
         <div className="flex items-center justify-between">
           <p className="text-muted-foreground text-sm">

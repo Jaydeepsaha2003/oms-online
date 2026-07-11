@@ -49,7 +49,7 @@ const COLUMNS: DataColumn<CustomerDto>[] = [
   { id: 'category', label: 'Category', cell: (c) => txt(c.category) },
   { id: 'city', label: 'City', cell: (c) => txt(c.city) },
   { id: 'transport', label: 'Transport', cell: (c) => txt(c.transportName) },
-  { id: 'billingRate', label: 'Billing Rate/KGS', align: 'right', cell: (c) => money(c.billingRate) },
+  { id: 'billingRate', label: 'Billing Rate/KGS', align: 'right', cell: (c) => <span className="text-[15px] font-bold">{money(c.billingRate)}</span> },
   { id: 'creditPeriod', label: 'Credit period', align: 'right', cell: (c) => num(c.creditPeriod) },
   { id: 'tds', label: 'TDS %', align: 'right', cell: (c) => (c.tdsApplicable && c.tdsPercent != null ? <span className="tabular-nums">{c.tdsPercent}%</span> : '—') },
   { id: 'state', label: 'State', cell: (c) => txt(c.state) },
@@ -58,10 +58,10 @@ const COLUMNS: DataColumn<CustomerDto>[] = [
   { id: 'email', label: 'Email', cell: (c) => txt(c.email) },
   { id: 'brand', label: 'Brand', cell: (c) => txt(c.brand) },
   { id: 'bag', label: 'Bag', cell: (c) => txt(c.bagName) },
-  { id: 'packing', label: 'Packing', align: 'right', cell: (c) => money(c.packing) },
-  { id: 'freight', label: 'Freight', align: 'right', cell: (c) => money(c.freight) },
-  { id: 'boxRate', label: 'Box rate', align: 'right', cell: (c) => money(c.boxRate) },
-  { id: 'billRatePc', label: 'Billing Rate/Pcs', align: 'right', cell: (c) => money(c.billRatePc) },
+  { id: 'packing', label: 'Packing', align: 'right', cell: (c) => <span className="font-semibold">{money(c.packing)}</span> },
+  { id: 'freight', label: 'Freight', align: 'right', cell: (c) => <span className="font-semibold">{money(c.freight)}</span> },
+  { id: 'boxRate', label: 'Box rate', align: 'right', cell: (c) => <span className="font-semibold">{money(c.boxRate)}</span> },
+  { id: 'billRatePc', label: 'Billing Rate/Pcs', align: 'right', cell: (c) => <span className="text-[15px] font-bold">{money(c.billRatePc)}</span> },
   { id: 'payBy', label: 'Pay by', cell: (c) => txt(c.payBy) },
   { id: 'partySource', label: 'Party source', cell: (c) => txt(c.partySource) },
 ];
@@ -127,7 +127,7 @@ export function CustomersPage() {
         </div>
         <div>
           <p className="text-muted-foreground">Billing Rate/KGS</p>
-          <p className="font-medium tabular-nums">{money(c.billingRate)}</p>
+          <p className="text-base font-bold tabular-nums">{money(c.billingRate)}</p>
         </div>
         <div>
           <p className="text-muted-foreground">Credit period</p>

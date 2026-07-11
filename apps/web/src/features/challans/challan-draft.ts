@@ -11,6 +11,7 @@ export interface ChallanDraftData {
   customer: string;
   invDate: string;
   prefix: string;
+  manualCode: string;
   status: string;
   freight: string;
   packing: string;
@@ -22,6 +23,7 @@ export interface ChallanDraftData {
   manualTax: string;
   manualB: string;
   manualC: string;
+  shippingAddress: string;
   remarks: string;
   /** Added grid rows (the form's Row shape). */
   rows: unknown[];

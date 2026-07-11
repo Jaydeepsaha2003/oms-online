@@ -10,7 +10,11 @@ import type {
   ChallanQuery,
   ChallanSummary,
   CreateChallanInput,
+  DismissMissingChallanInput,
   DraftChallanInput,
+  MissingChallanEntry,
+  MissingChallanFysDto,
+  MissingChallanQuery,
   PendingChallanList,
   PendingChallanQuery,
   UpdateChallanStatusInput,
@@ -178,5 +182,41 @@ export function useChallanItemHistory(product: string | null) {
     queryFn: () => http.get<ChallanItemHistoryList>('/challans/item-history', { params: { product, pageSize: 200 } }),
     enabled: !!product,
     placeholderData: (prev) => prev,
+  });
+}
+
+/* ── Missing Challan (legacy MissingChallanForm) ──────────────────────────────── */
+
+/** FYs on record for a prefix, plus the current FY (for the FY dropdown). */
+export function useMissingChallanFys(prefix: string, enabled = true) {
+  return useQuery({
+    queryKey: [...KEY, 'missing-fys', prefix],
+    queryFn: () => http.get<MissingChallanFysDto>('/challans/missing/fys', { params: { prefix } }),
+    enabled: enabled && !!prefix,
+  });
+}
+
+/** Gap (or dismissed-gap) invoice numbers for one prefix/FY series. */
+export function useMissingChallanList(query: MissingChallanQuery | null) {
+  return useQuery({
+    queryKey: [...KEY, 'missing-list', query],
+    queryFn: () => http.get<MissingChallanEntry[]>('/challans/missing', { params: query! }),
+    enabled: !!query?.prefix && !!query?.fy,
+  });
+}
+
+export function useDismissMissingChallan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: DismissMissingChallanInput) => http.post('/challans/missing/dismiss', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [...KEY, 'missing-list'] }),
+  });
+}
+
+export function useRestoreMissingChallan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: DismissMissingChallanInput) => http.post('/challans/missing/restore', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [...KEY, 'missing-list'] }),
   });
 }

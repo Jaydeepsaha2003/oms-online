@@ -1330,7 +1330,7 @@ export function OrderFormPage() {
                       <td className="text-right tabular-nums">{i.gram || '—'}</td>
                       <td className="text-right tabular-nums">{i.box || '—'}</td>
                       <td className="text-right tabular-nums">{itemRate(i).toLocaleString('en-IN')}</td>
-                      <td className="text-right font-semibold tabular-nums text-emerald-700">{lineAmount(i).toLocaleString('en-IN')}</td>
+                      <td className="text-right text-[15px] font-bold tabular-nums text-emerald-700">{lineAmount(i).toLocaleString('en-IN')}</td>
                       <td className="max-w-[14rem] truncate" title={i.comment}>{i.comment || '—'}</td>
                       <td>
                         <div className="flex items-center justify-center gap-0.5">
@@ -1375,7 +1375,7 @@ export function OrderFormPage() {
                     <td className="text-right tabular-nums">{totals.gram.toLocaleString('en-IN')}</td>
                     <td className="text-right tabular-nums">{totals.box.toLocaleString('en-IN')}</td>
                     <td className="text-right tabular-nums">{totals.rate.toLocaleString('en-IN')}</td>
-                    <td className="text-right tabular-nums text-emerald-700">{totals.amount.toLocaleString('en-IN')}</td>
+                    <td className="text-right text-[15px] tabular-nums text-emerald-700">{totals.amount.toLocaleString('en-IN')}</td>
                     <td colSpan={2} />
                   </tr>
                 </tfoot>
@@ -1391,7 +1391,7 @@ export function OrderFormPage() {
       <div className="-mx-1 mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t px-2 py-3">
         <p className="text-sm">
           {items.length} item(s) · total{' '}
-          <span className="font-bold tabular-nums text-emerald-600">₹{total.toLocaleString('en-IN')}</span>
+          <span className="text-lg font-bold tabular-nums text-emerald-600">₹{total.toLocaleString('en-IN')}</span>
         </p>
         <div className="ml-auto flex flex-wrap justify-end gap-2">
           <Button type="button" variant="destructive" onClick={() => navigate(listPath)} title="Cancel (Esc)">
