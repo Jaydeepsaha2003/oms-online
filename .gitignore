@@ -57,3 +57,6 @@ certs/
 
 # start.bat's "DB already synced" stamp (per-machine)
 .db-sync-stamp*
+
+# stop.bat's "stopped on purpose" marker for the auto-start watchdog
+.oms-stopped

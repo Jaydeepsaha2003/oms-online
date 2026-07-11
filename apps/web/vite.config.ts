@@ -1,10 +1,25 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, networkInterfaces } from 'node:os';
 import path from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
 import mkcert from 'vite-plugin-mkcert';
+
+// Auto-detect every IPv4 address on this machine (Wi-Fi, Ethernet, VPN adapters)
+// so the mkcert HTTPS certificate is always valid for any IP, even if the network
+// changes or a VPN adapter is added/removed. No more stale hardcoded IPs.
+function getAllLocalIPs(): string[] {
+  const ips = new Set<string>(['localhost', '127.0.0.1']);
+  const ifaces = networkInterfaces();
+  for (const adapters of Object.values(ifaces)) {
+    if (!adapters) continue;
+    for (const a of adapters) {
+      if (a.family === 'IPv4' && !a.internal) ips.add(a.address);
+    }
+  }
+  return [...ips];
+}
 
 // The boot-time autostart task runs this server as SYSTEM, whose home dir is
 // C:\Windows\system32\config\systemprofile. In that context vite-plugin-mkcert
@@ -15,16 +30,25 @@ import mkcert from 'vite-plugin-mkcert';
 // ~/.vite-plugin-mkcert on every user-run start).
 const runningAsSystem = homedir().toLowerCase().includes('systemprofile');
 const certsDir = path.resolve(import.meta.dirname, '..', '..', 'certs');
-let projectHttps: { cert: Buffer; key: Buffer } | undefined;
-if (runningAsSystem) {
+
+// Always load HTTPS certs for the preview (production) server. Try the user's
+// mkcert cache first, then the project-local certs/ copy. This ensures `vite
+// preview` always serves HTTPS with a valid cert on ALL interfaces (IPv4+IPv6),
+// regardless of whether it's run as the user or as SYSTEM.
+let previewHttps: { cert: Buffer; key: Buffer } | undefined;
+const certCandidates = [
+  // User's mkcert cache (preferred, always up-to-date)
+  { cert: path.join(homedir(), '.vite-plugin-mkcert', 'cert.pem'), key: path.join(homedir(), '.vite-plugin-mkcert', 'dev.pem') },
+  // Project-local copy (fallback for SYSTEM / autostart)
+  { cert: path.join(certsDir, 'cert.pem'), key: path.join(certsDir, 'dev.pem') },
+];
+for (const c of certCandidates) {
   try {
-    projectHttps = {
-      cert: readFileSync(path.join(certsDir, 'cert.pem')),
-      key: readFileSync(path.join(certsDir, 'dev.pem')),
-    };
-  } catch {
-    // No project certs yet - run start.bat once as the user to create them.
-  }
+    if (existsSync(c.cert) && existsSync(c.key)) {
+      previewHttps = { cert: readFileSync(c.cert), key: readFileSync(c.key) };
+      break;
+    }
+  } catch { /* try next */ }
 }
 
 // iOS only offers the "Install profile" flow when a downloaded CA arrives with
@@ -93,7 +117,8 @@ export default defineConfig({
     tailwindcss(),
     // As SYSTEM (boot autostart) the plugin would crash on `mkcert -install`;
     // the explicit `https` config below serves the project-local certs instead.
-    ...(runningAsSystem ? [] : [mkcert({ hosts: ['localhost', '127.0.0.1', '192.168.31.19', '192.168.0.236', '26.142.63.68'] })]),
+    // Hosts list is auto-detected from all active network interfaces (LAN, VPN, etc.)
+    ...(runningAsSystem ? [] : [mkcert({ hosts: getAllLocalIPs() })]),
     serveRootCa,
   ],
   resolve: {
@@ -120,7 +145,8 @@ export default defineConfig({
   preview: {
     host: true,
     port: 6173,
-    https: projectHttps ?? {},
+    strictPort: true,
+    https: previewHttps ?? {},
     proxy: apiProxy,
   },
 });

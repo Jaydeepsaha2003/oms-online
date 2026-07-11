@@ -11,29 +11,36 @@ echo   Stopping OMS servers...
 echo ============================================================
 echo.
 
-REM 1) Kill the "OMS Server" window and its whole child tree
-REM    (npm, concurrently, NestJS, Vite and the tsc watchers).
-taskkill /FI "WINDOWTITLE eq OMS Server*" /T /F >nul 2>&1
-if "%errorlevel%"=="0" (
-    echo - Closed the "OMS Server" window and its processes.
-) else (
-    echo - No "OMS Server" window was open.
-)
+REM Tell the auto-start watchdog this stop is intentional - the servers stay
+REM stopped (even across reboots) until start.bat / restart.bat runs again.
+echo stopped>".oms-stopped"
 
-REM 2) Fallback: free the ports in case anything is still bound
-REM    (6173 = production web, 5173 = dev.bat's Vite dev server).
+REM ---------- PRIMARY METHOD: kill every node/npm/cmd in THIS project ----------
+REM This works regardless of window titles, hidden windows, or how the server
+REM was launched (start.bat, autostart task, manual npm run start, etc.).
+powershell -NoProfile -Command ^
+  "$root = (Get-Location).Path;"^
+  "Get-CimInstance Win32_Process | Where-Object {"^
+  "  $_.CommandLine -and"^
+  "  ($_.Name -eq 'node.exe' -or $_.Name -eq 'cmd.exe') -and"^
+  "  $_.CommandLine -like ('*' + $root + '*')"^
+  "} | ForEach-Object {"^
+  "  Write-Host ('  - Stopping ' + $_.Name + ' [PID ' + $_.ProcessId + ']');"^
+  "  Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue"^
+  "}"
+echo.
+
+REM ---------- FALLBACK: free the ports in case anything is still bound ----------
+REM  (6173 = production web, 5173 = dev.bat's Vite dev server).
 call :freeport 4000 API
 call :freeport 6173 Web
 call :freeport 5173 Web
 
-REM 3) Final sweep: stop any leftover node/tsc processes that were
-REM    started from THIS project folder (and nothing else).
-powershell -NoProfile -Command "$root=(Get-Location).Path; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ($_.Name -eq 'node.exe' -or $_.Name -eq 'tsc.exe') -and $_.CommandLine -like ('*'+$root+'*') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1
-
-REM 4) If a port is STILL held, the server was likely started by the boot-time
-REM    autostart task, which runs as SYSTEM - a normal window can't kill those
-REM    (every attempt above fails silently with "access denied"). Re-run this
-REM    script once as administrator so the kills actually succeed.
+REM ---------- ELEVATION: handle SYSTEM-owned processes from autostart task ----------
+REM If a port is STILL held, the server was likely started by the boot-time
+REM autostart task, which runs as SYSTEM - a normal window can't kill those
+REM (every attempt above fails silently with "access denied"). Re-run this
+REM script once as administrator so the kills actually succeed.
 netstat -aon | findstr /C:":4000 " /C:":6173 " /C:":5173 " | findstr "LISTENING" >nul 2>&1
 if not errorlevel 1 (
     net session >nul 2>&1

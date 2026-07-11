@@ -40,10 +40,15 @@ echo   Starting OMS production servers...
 echo ============================================================
 echo.
 
-REM If a server is already running, skip straight to a no-op notice - its
-REM files are locked and a live server can't be re-synced out from under it.
-netstat -aon | findstr /C:":6173 " | findstr /C:"LISTENING" >nul 2>&1
-if not errorlevel 1 (
+REM If BOTH ports are already listening, the server is fully running - skip.
+set "_P4=0"
+set "_P6=0"
+netstat -aon | findstr /C:":4000 " | findstr "LISTENING" >nul 2>&1
+if not errorlevel 1 set "_P4=1"
+netstat -aon | findstr /C:":6173 " | findstr "LISTENING" >nul 2>&1
+if not errorlevel 1 set "_P6=1"
+
+if "%_P4%%_P6%"=="11" (
     echo Servers already appear to be running on http://localhost:6173.
     echo To apply code changes or new migrations, run restart.bat instead.
     echo.
@@ -51,18 +56,17 @@ if not errorlevel 1 (
     exit /b
 )
 
-REM A stale or half-started instance (e.g. the boot autostart task) holding
-REM only the API port locks node_modules files (EPERM during db push) and
-REM makes the new API die with "port in use" - fail fast with a clear fix
-REM instead of silently waiting out the 45-second readiness timeout.
-netstat -aon | findstr /C:":4000 " | findstr /C:"LISTENING" >nul 2>&1
-if not errorlevel 1 (
-    echo The API port 4000 is already in use by a previous server instance
-    echo that did not fully start. Run stop.bat first ^(it asks for
-    echo administrator rights when needed^), or restart.bat to do both.
+REM If one or both ports are held by a stale/half-started instance, clean
+REM them up automatically instead of asking the user to run stop.bat.
+if "%_P4%%_P6%" NEQ "00" (
+    echo Cleaning up stale server processes before starting fresh...
+    powershell -NoProfile -Command "$root=(Get-Location).Path; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ($_.Name -eq 'node.exe' -or $_.Name -eq 'cmd.exe') -and $_.CommandLine -like ('*'+$root+'*') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1
+    REM Also free the ports by PID as a fallback
+    for /f "tokens=5" %%P in ('netstat -aon ^| findstr /C:":4000 " /C:":6173 " ^| findstr "LISTENING"') do (
+        taskkill /F /PID %%P >nul 2>&1
+    )
+    powershell -NoProfile -Command "Start-Sleep -Seconds 2" >nul
     echo.
-    pause
-    exit /b 1
 )
 
 REM First-run guard: the DB sync commands below need the Prisma CLI, which
@@ -185,6 +189,15 @@ echo Build complete - launching servers.
 echo.
 
 :launch
+REM Clear the "stopped on purpose" marker so the auto-start watchdog resumes
+REM keeping the servers alive (stop.bat sets it).
+if exist ".oms-stopped" del ".oms-stopped" >nul 2>&1
+
+REM Dynamically update the local SSL certificates based on active network interfaces.
+REM Suppress error so that boot-time autostart (running as SYSTEM) can still start
+REM even if mkcert fails due to permissions/profile restrictions.
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\update-certs.ps1 >nul 2>&1
+
 REM Keep a project-local copy of the HTTPS certs. The boot-time autostart task
 REM runs as SYSTEM, which has no user profile and can't run mkcert - the web
 REM server then reads these files instead (see apps\web\vite.config.ts).
@@ -202,9 +215,17 @@ powershell -NoProfile -Command "$ip=(Get-NetIPConfiguration | Where-Object { $_.
 if exist "%_ipf%" set /p LANIP=<"%_ipf%"
 if exist "%_ipf%" del "%_ipf%" >nul 2>&1
 
-REM Launch the production servers HIDDEN (no console window). Output -> oms-dev.log.
+REM Launch the production servers fully hidden (no console window to close by
+REM accident). run-prod-hidden.vbs writes output to a timestamped log under
+REM logs\ - the same launcher the auto-start watchdog uses, so there is exactly
+REM ONE launch path. View output any time with logs.bat.
 echo Starting servers in the background...
-wscript "%~dp0run-prod-hidden.vbs"
+wscript.exe "%~dp0run-prod-hidden.vbs"
+
+REM Make sure the self-healing watchdog is running (it exits on its own if
+REM another copy already is). It relaunches the servers within a minute if
+REM they ever die, until stop.bat is used.
+wscript.exe "%~dp0oms-watchdog.vbs"
 
 REM Wait until both ports are listening so we can confirm a real startup.
 set "READY=1"
@@ -223,7 +244,7 @@ if defined READY (
     echo   API: http://localhost:4000/api     Docs: http://localhost:4000/api/docs
 ) else (
     echo Servers are taking longer than usual to start.
-    echo Open logs.bat to see what is happening ^(or check oms-dev.log^).
+    echo Open logs.bat to see what is happening ^(newest file under logs\^).
 )
 echo.
 echo   Phone and PC must be on the SAME Wi-Fi. First time only, run
