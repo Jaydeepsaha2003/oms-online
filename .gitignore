@@ -51,3 +51,9 @@ Thumbs.db
 
 # Local DB backups (START-OMS / scripts/backup-db)
 backups/
+
+# Local HTTPS certs copied from ~/.vite-plugin-mkcert (private key - never commit)
+certs/
+
+# start.bat's "DB already synced" stamp (per-machine)
+.db-sync-stamp*

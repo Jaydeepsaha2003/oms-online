@@ -1,10 +1,31 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
 import mkcert from 'vite-plugin-mkcert';
+
+// The boot-time autostart task runs this server as SYSTEM, whose home dir is
+// C:\Windows\system32\config\systemprofile. In that context vite-plugin-mkcert
+// finds no cached cert and tries `mkcert -install`, which SYSTEM cannot do
+// ("The request is not supported") - killing the whole preview server at boot.
+// So when running as SYSTEM, skip the plugin entirely and serve HTTPS from a
+// project-local copy of the certs (start.bat refreshes certs\ from the user's
+// ~/.vite-plugin-mkcert on every user-run start).
+const runningAsSystem = homedir().toLowerCase().includes('systemprofile');
+const certsDir = path.resolve(import.meta.dirname, '..', '..', 'certs');
+let projectHttps: { cert: Buffer; key: Buffer } | undefined;
+if (runningAsSystem) {
+  try {
+    projectHttps = {
+      cert: readFileSync(path.join(certsDir, 'cert.pem')),
+      key: readFileSync(path.join(certsDir, 'dev.pem')),
+    };
+  } catch {
+    // No project certs yet - run start.bat once as the user to create them.
+  }
+}
 
 // iOS only offers the "Install profile" flow when a downloaded CA arrives with
 // a certificate MIME type. Vite's static server sends .crt files with no
@@ -14,14 +35,20 @@ import mkcert from 'vite-plugin-mkcert';
 // (~/.vite-plugin-mkcert/rootCA.pem) so it also can't go stale if the CA is
 // ever regenerated. Mirrors the same route on the Nest server (main.ts).
 const sendRootCa = (_req: unknown, res: { setHeader: (k: string, v: string) => void; end: (body: string | Buffer) => void; statusCode: number }) => {
-  try {
-    const ca = readFileSync(path.join(homedir(), '.vite-plugin-mkcert', 'rootCA.pem'));
-    res.setHeader('Content-Type', 'application/x-x509-ca-cert');
-    res.end(ca);
-  } catch {
-    res.statusCode = 404;
-    res.end('root CA not found on this machine');
+  // Try the live plugin CA first, then the project-local copy (the only one
+  // available when running as SYSTEM via the boot-time autostart task).
+  for (const caPath of [path.join(homedir(), '.vite-plugin-mkcert', 'rootCA.pem'), path.join(certsDir, 'rootCA.pem')]) {
+    try {
+      const ca = readFileSync(caPath);
+      res.setHeader('Content-Type', 'application/x-x509-ca-cert');
+      res.end(ca);
+      return;
+    } catch {
+      // fall through to the next candidate
+    }
   }
+  res.statusCode = 404;
+  res.end('root CA not found on this machine');
 };
 
 const serveRootCa: Plugin = {
@@ -64,7 +91,9 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
-    mkcert({ hosts: ['localhost', '127.0.0.1', '192.168.31.19', '192.168.0.236', '26.142.63.68'] }),
+    // As SYSTEM (boot autostart) the plugin would crash on `mkcert -install`;
+    // the explicit `https` config below serves the project-local certs instead.
+    ...(runningAsSystem ? [] : [mkcert({ hosts: ['localhost', '127.0.0.1', '192.168.31.19', '192.168.0.236', '26.142.63.68'] })]),
     serveRootCa,
   ],
   resolve: {
@@ -91,7 +120,7 @@ export default defineConfig({
   preview: {
     host: true,
     port: 6173,
-    https: {},
+    https: projectHttps ?? {},
     proxy: apiProxy,
   },
 });
