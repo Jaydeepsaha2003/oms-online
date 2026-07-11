@@ -156,7 +156,17 @@ export function DataTable<T>({
   }, [rows, sort, columns]);
 
   return (
-    <div className="overflow-hidden rounded-[5px] border bg-card shadow-sm">
+    <div
+      className={cn(
+        'rounded-[5px]',
+        // On phones the table is replaced by a stack of individually-carded rows
+        // (see below) — the table's own bordered/shadowed wrapper would just double
+        // up as an outer box around them, so it's dropped below `sm`.
+        mobileCard
+          ? 'overflow-visible border-0 bg-transparent shadow-none sm:overflow-hidden sm:border sm:bg-card sm:shadow-sm'
+          : 'overflow-hidden border bg-card shadow-sm',
+      )}
+    >
       <Table
         width="auto"
         containerClassName={cn(maxBodyHeight, maxBodyHeight && 'overflow-y-auto', mobileCard && 'hidden sm:block')}
@@ -249,14 +259,14 @@ export function DataTable<T>({
                       <StickyCell
                         key={col.id}
                         bg={pinBg}
-                        className={cn(col.align === 'right' && 'text-right tabular-nums', pinCellPos(col.pin))}
+                        className={cn(col.align === 'right' && 'text-right tabular-nums font-semibold', pinCellPos(col.pin))}
                       >
                         {col.cell(row)}
                       </StickyCell>
                     ) : (
                       <TableCell
                         key={col.id}
-                        className={cn('whitespace-nowrap', col.align === 'right' && 'text-right tabular-nums')}
+                        className={cn('whitespace-nowrap', col.align === 'right' && 'text-right tabular-nums font-semibold')}
                       >
                         {col.cell(row)}
                       </TableCell>
@@ -291,23 +301,28 @@ export function DataTable<T>({
       </Table>
 
       {mobileCard && (
-        <div className="divide-y sm:hidden">
+        <div className="sm:hidden">
           {isLoading ? (
-            <div className="text-muted-foreground flex h-24 items-center justify-center">
+            <div className="text-muted-foreground flex h-24 items-center justify-center rounded-lg border bg-card">
               <Loader2 className="size-5 animate-spin" />
             </div>
           ) : rows.length === 0 ? (
-            <div className="text-muted-foreground px-4 py-10 text-center text-sm">{emptyText}</div>
+            <div className="text-muted-foreground rounded-lg border bg-card px-4 py-10 text-center text-sm">{emptyText}</div>
           ) : (
-            sortedRows.map((row) => (
-              <div
-                key={rowKey(row)}
-                className={cn('p-3', onRowClick && 'active:bg-muted cursor-pointer')}
-                onClick={onRowClick ? () => onRowClick(row) : undefined}
-              >
-                {mobileCard(row)}
-              </div>
-            ))
+            <div className="space-y-3">
+              {sortedRows.map((row) => (
+                <div
+                  key={rowKey(row)}
+                  className={cn(
+                    'bg-card rounded-lg border p-3 shadow-sm transition-colors',
+                    onRowClick && 'active:bg-muted cursor-pointer',
+                  )}
+                  onClick={onRowClick ? () => onRowClick(row) : undefined}
+                >
+                  {mobileCard(row)}
+                </div>
+              ))}
+            </div>
           )}
         </div>
       )}

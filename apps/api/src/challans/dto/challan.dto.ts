@@ -1,7 +1,9 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { ArrayNotEmpty, IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, ValidateNested } from 'class-validator';
 import { CHALLAN_STATUSES } from '@oms/shared';
 import { PaginationDto } from '../../common/dto/pagination.dto';
+
+const toBool = ({ value }: { value: unknown }) => value === true || value === 'true' || value === 1 || value === '1';
 
 export class PendingChallanQueryDto extends PaginationDto {
   /** Inclusive dispatch-date range (yyyy-mm-dd). */
@@ -30,6 +32,20 @@ export class SavePrefixSettingsDto {
 
 export class ItemHistoryQueryDto extends PaginationDto {
   @IsOptional() @IsString() product?: string;
+}
+
+export class MissingChallanQueryDto {
+  @IsString() prefix!: string;
+  @IsString() fy!: string;
+  @IsOptional() @Transform(toBool) @IsBoolean() deletedOnly?: boolean;
+}
+
+export class DismissMissingChallanDto {
+  @IsString() prefix!: string;
+  @IsString() fy!: string;
+  @IsInt() invNo!: number;
+  /** Required to dismiss (checked in the service); ignored on restore. */
+  @IsOptional() @IsString() reason?: string;
 }
 
 export class DraftChallanDto {

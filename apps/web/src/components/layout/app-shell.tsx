@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { armAudioUnlock } from '@/lib/chime';
 import { connectNotificationsSocket } from '@/lib/notifications-socket';
@@ -12,6 +12,12 @@ const PIN_KEY = 'oms:sidebar-pinned';
 /** Pinning the sidebar open is only allowed on large desktops; below this width
  *  (13" laptops, tablets) it always behaves as the hover expand/collapse rail. */
 const PIN_MQ = '(min-width: 1600px)';
+
+/** New Order and Create/Edit Challan are full-bleed invoice-style editors with
+ *  their own compact in-page header (back arrow + title) — the global topbar
+ *  above it is a redundant second header, so it's hidden on these routes. */
+const HEADERLESS_ROUTES = [/^\/orders\/new$/, /^\/orders\/[^/]+\/edit$/, /^\/challans\/new$/, /^\/challans\/[^/]+\/edit$/];
+const isHeaderless = (pathname: string) => HEADERLESS_ROUTES.some((re) => re.test(pathname));
 
 /**
  * Authenticated layout. The desktop sidebar is a collapsed icon rail by default
@@ -43,6 +49,8 @@ export function AppShell() {
   const [hovered, setHovered] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const { can } = usePermissions();
+  const location = useLocation();
+  const hideTopbar = isHeaderless(location.pathname);
 
   // Unlock the reminder chime on the first interaction (autoplay policy), and
   // open the live connection used for broadcast test notifications.
@@ -124,10 +132,12 @@ export function AppShell() {
       )}
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <Topbar
-          onToggleMobile={() => setMobileOpen(true)}
-          onToggleCollapse={() => setPinned((v) => !v)}
-        />
+        {!hideTopbar && (
+          <Topbar
+            onToggleMobile={() => setMobileOpen(true)}
+            onToggleCollapse={() => setPinned((v) => !v)}
+          />
+        )}
         <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
           <Outlet />
         </main>

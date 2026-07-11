@@ -44,7 +44,7 @@ const COLUMNS: DataColumn<ProductDto>[] = [
   { id: 'size', label: 'Size', align: 'right', cell: (p) => num(p.size) },
   { id: 'weight', label: 'Weight', align: 'right', cell: (p) => num(p.weight) },
   { id: 'pcs', label: 'PCS', align: 'right', cell: (p) => num(p.pcs) },
-  { id: 'rate', label: 'Rate', align: 'right', cell: (p) => money(p.rate) },
+  { id: 'rate', label: 'Rate', align: 'right', cell: (p) => <span className="text-[15px] font-bold">{money(p.rate)}</span> },
   {
     id: 'updated',
     label: 'Last updated',
@@ -184,19 +184,19 @@ export function ProductsPage() {
       <div className="grid grid-cols-4 gap-2 text-xs">
         <div>
           <p className="text-muted-foreground">Size</p>
-          <p className="font-medium tabular-nums">{num(p.size)}</p>
+          <p className="text-sm font-semibold tabular-nums">{num(p.size)}</p>
         </div>
         <div>
           <p className="text-muted-foreground">Weight</p>
-          <p className="font-medium tabular-nums">{num(p.weight)}</p>
+          <p className="text-sm font-semibold tabular-nums">{num(p.weight)}</p>
         </div>
         <div>
           <p className="text-muted-foreground">PCS</p>
-          <p className="font-medium tabular-nums">{num(p.pcs)}</p>
+          <p className="text-sm font-semibold tabular-nums">{num(p.pcs)}</p>
         </div>
         <div>
           <p className="text-muted-foreground">Rate</p>
-          <p className="font-medium tabular-nums">{money(p.rate)}</p>
+          <p className="text-base font-bold tabular-nums">{money(p.rate)}</p>
         </div>
       </div>
       <div className="flex items-center justify-between border-t pt-2.5" onClick={(e) => e.stopPropagation()}>

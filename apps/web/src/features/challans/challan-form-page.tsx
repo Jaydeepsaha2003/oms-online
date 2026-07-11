@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Check, History, Loader2, Lock, LockOpen, Plus, Printer, RotateCcw, ScrollText, Trash2, UserSearch } from 'lucide-react';
+import { ArrowLeft, Check, History, ListX, Loader2, Lock, LockOpen, Pencil, Plus, Printer, RotateCcw, ScrollText, Trash2, UserSearch } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   CHALLAN_STATUSES,
@@ -16,8 +16,17 @@ import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useAllChallanCustomers, useChallanDraft, useChallanEdit, useChallanNextCode, useCreateChallan, useUpdateChallan } from './use-challans';
+import {
+  useAllChallanCustomers,
+  useChallanDraft,
+  useChallanEdit,
+  useChallanNextCode,
+  useChallanPrefixSettings,
+  useCreateChallan,
+  useUpdateChallan,
+} from './use-challans';
 import { clearChallanDraft, loadChallanDraft, saveChallanDraft, type ChallanDraftData } from './challan-draft';
+import { MissingChallanDialog } from './missing-challan-dialog';
 
 type NavState = { customerName?: string; lines?: PendingChallanLine[] };
 type Row = ChallanDraftItem & { key: string };
@@ -47,6 +56,7 @@ export function ChallanFormPage() {
 
   const [customer, setCustomer] = useState(navCustomer);
   const { data: customers = [], isLoading: custLoading } = useAllChallanCustomers();
+  const { data: prefixSettings } = useChallanPrefixSettings();
   const createDraftQ = useChallanDraft(!isEdit && customer ? { customerName: customer } : null);
   const editQ = useChallanEdit(isEdit ? editId : null);
 
@@ -64,6 +74,8 @@ export function ChallanFormPage() {
   const [addSel, setAddSel] = useState('');
   const [invDate, setInvDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [prefix, setPrefix] = useState('');
+  const [manualCode, setManualCode] = useState(''); // '' = auto (server-assigned) invoice number
+  const [missingChallanOpen, setMissingChallanOpen] = useState(false);
   const [status, setStatus] = useState<string>('CONFIRMED');
   const [freight, setFreight] = useState('0');
   const [packing, setPacking] = useState('0');
@@ -75,6 +87,7 @@ export function ChallanFormPage() {
   const [manualTax, setManualTax] = useState(''); // '' = auto
   const [manualB, setManualB] = useState(''); // '' = auto
   const [manualC, setManualC] = useState(''); // '' = auto
+  const [shippingAddress, setShippingAddress] = useState('');
   const [remarks, setRemarks] = useState('');
   const [locked, setLocked] = useState({ freight: true, packing: true, pouch: true });
   // Manual line entry.
@@ -90,9 +103,13 @@ export function ChallanFormPage() {
   const restoreRef = useRef<ChallanDraftData | null>(null); // saved rows/fields awaiting the draft fetch
   const [restoredDraft, setRestoredDraft] = useState(false);
 
-  // Live invoice-no preview for the chosen prefix + date (server assigns the final one on save).
+  // Live invoice-no preview for the chosen prefix + date (server assigns this
+  // unless overridden — see manualCode below).
   const nextCodeQ = useChallanNextCode(!isEdit ? prefix || undefined : undefined, invDate, !isEdit);
   const previewCode = isEdit ? savedChallan?.code ?? '—' : nextCodeQ.data?.code ?? draft?.code ?? '—';
+  // Invoice No stays a free-editable textbox (Form14 InvNo) — typing a number
+  // overrides the auto-assigned one; clearing it reverts to auto.
+  const effectiveCode = manualCode.trim() || previewCode;
 
   const recalc = (rs: Row[], d = draft) => {
     if (!d) return;
@@ -146,6 +163,7 @@ export function ChallanFormPage() {
       setGstPct(String(c.gst ?? 0));
       setNoBill(!!c.noBill);
       setNoBillRemoveGst(!!c.noBill && n(c.tax) === 0);
+      setShippingAddress(c.shippingAddress || c.billingAddress || draft.billingAddress || '');
       setRemarks(c.remarks ?? '');
       if (draft.isScrap) setM((x) => ({ ...x, product: 'S.S. SCRAP', unit: 'KGS' }));
     } else if (!isEdit) {
@@ -156,6 +174,7 @@ export function ChallanFormPage() {
         setRows((restore.rows as Row[]).map((it, i) => ({ ...it, key: `${it.dispatchId ?? 'm'}-${i}` })));
         setInvDate(restore.invDate || invDate);
         setPrefix(restore.prefix || draft.prefix);
+        setManualCode(restore.manualCode || '');
         setStatus(restore.status || 'CONFIRMED');
         setFreight(restore.freight);
         setPacking(restore.packing);
@@ -167,6 +186,7 @@ export function ChallanFormPage() {
         setManualTax(restore.manualTax || '');
         setManualB(restore.manualB || '');
         setManualC(restore.manualC || '');
+        setShippingAddress(restore.shippingAddress || draft.billingAddress || '');
         setRemarks(restore.remarks || '');
         if (draft.isScrap) setM((x) => ({ ...x, product: 'S.S. SCRAP', unit: 'KGS' }));
         draftReady.current = true;
@@ -176,6 +196,7 @@ export function ChallanFormPage() {
       const next = preset.map((it, i) => ({ ...it, key: `${it.dispatchId ?? 'm'}-${i}` }));
       setRows(next);
       setBillingRate(String(draft.billingRate ?? 0));
+      setShippingAddress(draft.billingAddress ?? '');
       recalc(next, draft);
       if (draft.isScrap) setM((x) => ({ ...x, product: 'S.S. SCRAP', unit: 'KGS' }));
       draftReady.current = true;
@@ -193,14 +214,14 @@ export function ChallanFormPage() {
     if (!draftEnabled || !draftReady.current) return;
     const t = setTimeout(() => {
       if (customer && rows.length) {
-        saveChallanDraft({ customer, invDate, prefix, status, freight, packing, pouch, billingRate, gstPct, noBill, noBillRemoveGst, manualTax, manualB, manualC, remarks, rows });
+        saveChallanDraft({ customer, invDate, prefix, manualCode, status, freight, packing, pouch, billingRate, gstPct, noBill, noBillRemoveGst, manualTax, manualB, manualC, shippingAddress, remarks, rows });
       } else {
         clearChallanDraft();
       }
     }, 800);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftEnabled, customer, invDate, prefix, status, freight, packing, pouch, billingRate, gstPct, noBill, noBillRemoveGst, manualTax, manualB, manualC, remarks, rows]);
+  }, [draftEnabled, customer, invDate, prefix, manualCode, status, freight, packing, pouch, billingRate, gstPct, noBill, noBillRemoveGst, manualTax, manualB, manualC, shippingAddress, remarks, rows]);
 
   // Throw away the restored draft and start blank.
   const discardDraft = () => {
@@ -322,9 +343,11 @@ export function ChallanFormPage() {
     setSavedCode('');
     setNoBill(false);
     setNoBillRemoveGst(false);
+    setManualCode('');
     setManualTax('');
     setManualB('');
     setManualC('');
+    setShippingAddress('');
     setRemarks('');
     setStatus('CONFIRMED');
   };
@@ -354,6 +377,7 @@ export function ChallanFormPage() {
       if (!ok) return;
     }
     if (isEdit) {
+      setManualCode('');
       initedRef.current = ''; // re-run the load effect against the saved challan
     } else {
       resetForm();
@@ -371,13 +395,17 @@ export function ChallanFormPage() {
       if (!ok) return;
     }
     const cust = isEdit ? savedChallan?.customerName ?? draft.customerName : draft.customerName;
+    // Omit to let the server keep auto-numbering (new) / leave the number
+    // unchanged (edit); a typed override is sent as-is (uppercased).
+    const codeOverride = manualCode.trim() ? manualCode.trim().toUpperCase() : undefined;
     const payload: CreateChallanInput = {
-      code: isEdit ? savedChallan?.code : draft.code,
+      code: codeOverride,
       prefix: prefix || draft.prefix,
       invDate: new Date(invDate).toISOString(),
       customerId: draft.customerId,
       customerName: cust,
       billingAddress: isEdit ? savedChallan?.billingAddress ?? draft.billingAddress : draft.billingAddress,
+      shippingAddress: shippingAddress.trim() || null,
       category: isEdit ? savedChallan?.category ?? draft.category : draft.category,
       paymentTerm: isEdit ? savedChallan?.paymentTerm ?? draft.paymentTerm : draft.paymentTerm,
       dueDate: dueDate ? dueDate.toISOString() : null,
@@ -477,37 +505,49 @@ export function ChallanFormPage() {
   const halfBill = numOr(billingRate) > 0 && !noBill;
 
   return (
-    // Fill the available viewport so ONLY the item list scrolls internally — the
-    // bill-to header, charges and totals (and the page header/action bar) stay put
-    // instead of the whole page scrolling under the sticky header (which overlapped).
-    <div className="flex h-full min-h-0 w-full flex-col gap-3">
+    // Desktop: fill the viewport so ONLY the item list scrolls internally — the
+    // bill-to header, charges and totals stay put. Phones: that fixed-viewport/
+    // internal-scroll layout fights mobile browser chrome (address bar show/hide,
+    // on-screen keyboard) — instead the whole page scrolls naturally, same as
+    // every other form in the app (New Order included).
+    <div className="flex w-full flex-col gap-3 sm:h-full sm:min-h-0">
       {/* Header — pick / show the customer here; Save / Cancel / Reset sit at the
           bottom of the form (sticky). */}
-      <div className="bg-background/85 z-20 -mt-1 flex shrink-0 items-center gap-2 rounded-md py-1 backdrop-blur">
+      {/* Phones: the customer picker wraps to its own full-width row (order-last);
+          desktop keeps the single-row title · picker · Missing-Challan layout. */}
+      <div className="bg-background/85 z-20 -mt-1 flex shrink-0 flex-wrap items-center gap-2 rounded-md py-1 backdrop-blur">
         <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(isEdit ? '/challans' : '/challans/pending')} title="Back">
           <ArrowLeft className="size-4" />
         </Button>
         <div className="bg-gradient-brand flex size-8 items-center justify-center rounded-md text-white shadow-sm ring-1 ring-white/20">
           <ScrollText className="size-4" />
         </div>
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <span className="text-muted-foreground shrink-0 text-sm font-semibold whitespace-nowrap">
-            {isEdit ? 'Edit Challan' : 'Create Challan'} <span className="text-muted-foreground/60">—</span>
-          </span>
-          {isEdit ? (
-            <span className="truncate text-base font-bold tracking-tight">{savedChallan?.customerName ?? ''}</span>
-          ) : (
-            <div className="min-w-0 max-w-md flex-1">
-              <NativeSelect
-                value={customer}
-                onChange={setCustomer}
-                options={customers}
-                placeholder={custLoading ? 'Loading…' : 'Select a customer…'}
-                className="bg-background h-9 w-full rounded-md text-base font-semibold"
-              />
-            </div>
-          )}
-        </div>
+        <span className="text-muted-foreground shrink-0 text-sm font-semibold whitespace-nowrap">
+          {isEdit ? 'Edit Challan' : 'Create Challan'} <span className="text-muted-foreground/60 hidden sm:inline">—</span>
+        </span>
+        {isEdit ? (
+          <span className="min-w-0 flex-1 truncate text-base font-bold tracking-tight">{savedChallan?.customerName ?? ''}</span>
+        ) : (
+          <div className="order-last w-full min-w-0 sm:order-none sm:w-auto sm:max-w-md sm:flex-1">
+            <NativeSelect
+              value={customer}
+              onChange={setCustomer}
+              options={customers}
+              placeholder={custLoading ? 'Loading…' : 'Select a customer…'}
+              className="bg-background h-9 w-full rounded-md text-base font-semibold"
+            />
+          </div>
+        )}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="ml-auto shrink-0"
+          onClick={() => setMissingChallanOpen(true)}
+          title="Find skipped invoice numbers in a prefix's series"
+        >
+          <ListX /> <span className="hidden sm:inline">Missing Challan</span><span className="sm:hidden">Missing</span>
+        </Button>
       </div>
 
       {/* Restored work-in-progress notice */}
@@ -525,9 +565,10 @@ export function ChallanFormPage() {
       <div className="bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border shadow-sm">
         {/* Header: Bill-to + invoice meta (compact colourful banner) */}
         <div className="from-primary/[0.08] shrink-0 border-b bg-gradient-to-r via-sky-50/50 to-transparent px-4 py-2.5">
-          <div className="grid items-start gap-x-6 gap-y-2.5 sm:grid-cols-2 lg:grid-cols-6">
-            {/* Bill To — spans two columns; the four meta fields align in the same row */}
-            <div className="min-w-[240px] space-y-1 sm:col-span-2">
+          <div className="grid grid-cols-2 items-start gap-x-4 gap-y-2.5 sm:gap-x-6 lg:grid-cols-6">
+            {/* Bill To — spans two columns; the four meta fields align in the same row.
+                Phones run the same 2-col grid so the meta fields pair up neatly. */}
+            <div className="col-span-2 min-w-0 space-y-1">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-primary/70 flex items-center gap-1.5 text-sm font-semibold tracking-wide uppercase">
                   <UserSearch className="size-4" /> Bill To
@@ -542,7 +583,7 @@ export function ChallanFormPage() {
               {draft && <p className="text-muted-foreground max-w-md truncate text-sm">{(isEdit ? savedChallan?.billingAddress : draft.billingAddress) || '—'}</p>}
             </div>
 
-            <MetaCell label="Invoice No">
+            <MetaCell label="Invoice No" className="col-span-2 sm:col-span-1">
               <div className="flex items-center gap-1.5">
                 {!isEdit && (draft?.prefixes.length ?? 0) > 1 && (
                   <select
@@ -558,11 +599,24 @@ export function ChallanFormPage() {
                     ))}
                   </select>
                 )}
-                <span className="text-primary font-mono text-base font-bold">{previewCode}</span>
+                <Input
+                  value={effectiveCode === '—' ? '' : effectiveCode}
+                  onChange={(e) => setManualCode(e.target.value.toUpperCase())}
+                  placeholder={previewCode}
+                  title="Editable — clear to go back to the auto-assigned number"
+                  className="bg-background h-8 w-full max-w-[10.5rem] font-mono text-sm font-bold"
+                />
               </div>
             </MetaCell>
             <MetaCell label="Invoice Date"><Input type="date" value={invDate} onChange={(e) => setInvDate(e.target.value)} className="bg-background h-8 w-full max-w-[9.75rem] text-sm" /></MetaCell>
-            <MetaCell label="Due Date"><span className="text-base tabular-nums">{dueDate ? dueDate.toLocaleDateString('en-GB') : '—'}</span></MetaCell>
+            <MetaCell label="Due Date">
+              <Input
+                readOnly
+                value={dueDate ? dueDate.toLocaleDateString('en-GB') : ''}
+                placeholder="—"
+                className="bg-muted/40 h-8 w-full max-w-[9.75rem] cursor-default text-sm tabular-nums"
+              />
+            </MetaCell>
             <MetaCell label="Status">
               {isEdit ? (
                 <NativeSelect value={status} onChange={setStatus} options={[...CHALLAN_STATUSES]} className="bg-background h-8 w-full max-w-[9rem]" />
@@ -573,6 +627,25 @@ export function ChallanFormPage() {
               )}
             </MetaCell>
           </div>
+
+          {/* Settlement — B/C Amount (click the pencil to override) + No Bill, right in the header. */}
+          {draft && (
+            <div className="border-primary/10 mt-2.5 flex flex-wrap items-end gap-x-5 gap-y-2 border-t pt-2.5 sm:gap-x-8">
+              <EditableAmount label="B Amount" computed={totals.b} manual={manualB} onManual={setManualB} />
+              <EditableAmount label="C Amount" computed={totals.c} manual={manualC} onManual={setManualC} />
+              <label
+                className={cn(
+                  'flex cursor-pointer items-center gap-1.5 rounded px-2 py-1 text-sm font-semibold transition-colors select-none',
+                  noBill ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted/60',
+                )}
+                title="Bill without a tax invoice"
+              >
+                <input type="checkbox" checked={noBill} onChange={(e) => onNoBill(e.target.checked)} className="size-3.5 accent-blue-600" />
+                No Bill
+                {noBill && <span className="text-[11px] font-medium text-amber-600">{noBillRemoveGst ? '(GST removed)' : '(GST kept)'}</span>}
+              </label>
+            </div>
+          )}
         </div>
 
         {!isEdit && !customer && (
@@ -588,7 +661,8 @@ export function ChallanFormPage() {
             {/* Add-line toolbar */}
             <div className="bg-muted/30 shrink-0 space-y-2 border-y px-4 py-2.5">
               <div className="flex flex-wrap items-center gap-2">
-                <div className="min-w-0 flex-1">
+                {/* Phones: the picker takes its own row; Add / Manual split the next one. */}
+                <div className="w-full min-w-0 sm:w-auto sm:flex-1">
                   <NativeSelect
                     value={addSel}
                     onChange={setAddSel}
@@ -617,23 +691,24 @@ export function ChallanFormPage() {
                     }}
                   />
                 </div>
-                <Button onClick={addItem} disabled={!addSel}><Plus /> Add</Button>
-                <Button variant="outline" onClick={() => setShowManual((v) => !v)}>{showManual ? 'Hide manual' : 'Manual'}</Button>
+                <Button onClick={addItem} disabled={!addSel} className="flex-1 sm:flex-none"><Plus /> Add</Button>
+                <Button variant="outline" onClick={() => setShowManual((v) => !v)} className="flex-1 sm:flex-none">{showManual ? 'Hide manual' : 'Manual'}</Button>
               </div>
               {showManual && (
-                <div className="grid items-end gap-2 sm:grid-cols-6">
-                  <div className="space-y-1 sm:col-span-2"><Label className="text-base">Product</Label><Input value={m.product} onChange={(e) => setM({ ...m, product: e.target.value })} placeholder="e.g. S.S. SCRAP" className="h-9 text-base" /></div>
+                <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-6">
+                  <div className="col-span-2 space-y-1"><Label className="text-base">Product</Label><Input value={m.product} onChange={(e) => setM({ ...m, product: e.target.value })} placeholder="e.g. S.S. SCRAP" className="h-9 text-base" /></div>
                   <div className="space-y-1"><Label className="text-base">Design</Label><Input value={m.design} onChange={(e) => setM({ ...m, design: e.target.value })} disabled={draft.isScrap} title={draft.isScrap ? 'Scrap items carry no design' : undefined} className={cn('h-9 text-base', draft.isScrap && 'bg-muted/40 cursor-not-allowed')} /></div>
                   <div className="space-y-1"><Label className="text-base">Unit</Label><NativeSelect value={m.unit} onChange={(v) => setM({ ...m, unit: v })} options={['KGS', 'PCS']} className="h-9 text-base" /></div>
                   <div className="space-y-1"><Label className="text-base">Qty</Label><Input value={m.qty} onChange={(e) => setM({ ...m, qty: e.target.value })} className="h-9 text-right text-base tabular-nums" /></div>
                   <div className="space-y-1"><Label className="text-base">Price</Label><Input value={m.price} onChange={(e) => setM({ ...m, price: e.target.value })} className="h-9 text-right text-base tabular-nums" /></div>
-                  <div className="sm:col-span-6"><Button size="sm" variant="secondary" onClick={addManual}><Plus /> Add manual line</Button></div>
+                  <div className="col-span-2 sm:col-span-6"><Button size="sm" variant="secondary" onClick={addManual} className="w-full sm:w-auto"><Plus /> Add manual line</Button></div>
                 </div>
               )}
             </div>
 
-            {/* Line items — fills the remaining space and scrolls internally when long */}
-            <div className="min-h-[120px] flex-1 overflow-auto">
+            {/* Line items — fills the remaining space and scrolls internally when long.
+                Desktop/tablet only: phones get the card list below instead. */}
+            <div className="hidden min-h-[120px] flex-1 overflow-auto sm:block">
               <table className="w-full text-[15px] [&_td]:border-r [&_td]:border-border/60 [&_td:last-child]:border-r-0 [&_th]:border-r [&_th]:border-border/40 [&_th:last-child]:border-r-0">
                 <thead className="bg-muted sticky top-0 z-10">
                   <tr className="text-muted-foreground border-b text-left [&>th]:px-3 [&>th]:py-2 [&>th]:text-sm [&>th]:font-semibold [&>th]:tracking-wide [&>th]:uppercase">
@@ -700,6 +775,73 @@ export function ChallanFormPage() {
               </table>
             </div>
 
+            {/* Phones: one card per line item (mirrors Order Modify's mobile list). */}
+            <div className="sm:hidden">
+              {rows.length === 0 ? (
+                <div className="text-muted-foreground flex flex-col items-center gap-1.5 px-3 py-10 text-center text-sm">
+                  <Plus className="size-5 opacity-40" />
+                  No items yet — pick a dispatched product above, or add a manual line.
+                </div>
+              ) : (
+                <>
+                  <div className="divide-y">
+                    {rows.map((r, idx) => (
+                      <div key={r.key} className="px-3 py-2.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium">
+                              <span className="text-muted-foreground mr-1 tabular-nums">{idx + 1}.</span>
+                              {r.productName || '—'}
+                              {r.dispatchId == null && <span className="bg-muted text-muted-foreground ml-1.5 rounded px-1 text-[10px]">manual</span>}
+                            </p>
+                            <p className="text-muted-foreground truncate text-xs">
+                              {r.design || '—'} · {r.unit || '—'} · ₹{(r.price ?? 0).toLocaleString('en-IN')}
+                              {r.gstRate ? ` · GST ${r.gstRate}%` : ''}
+                            </p>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <span className="font-semibold tabular-nums text-emerald-700">₹{(r.amount ?? 0).toLocaleString('en-IN')}</span>
+                            <button onClick={() => removeRow(r.key)} className="text-muted-foreground hover:text-destructive p-1" title="Remove line">
+                              <Trash2 className="size-4" />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="mt-1.5 grid grid-cols-4 gap-2 text-xs">
+                          <div><p className="text-muted-foreground">Bags</p><p className="font-medium tabular-nums">{r.bags ?? '—'}</p></div>
+                          <div><p className="text-muted-foreground">Pcs</p><p className="font-medium tabular-nums">{r.pcs ?? '—'}</p></div>
+                          <div><p className="text-muted-foreground">Kgs</p><p className="font-medium tabular-nums">{r.kgs ?? '—'}</p></div>
+                          <div><p className="text-muted-foreground">Box</p><p className="font-medium tabular-nums">{r.box ?? '—'}</p></div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="bg-muted/60 flex items-center justify-between border-t-2 px-3 py-2 text-sm font-semibold">
+                    <span className="text-muted-foreground tracking-wide uppercase">Total · {rows.length} item(s)</span>
+                    <span className="text-primary tabular-nums">{totals.tAmt.toLocaleString('en-IN')}</span>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Item totals — always visible (even with 0 items), right after the item list */}
+            <div className="bg-muted/40 flex shrink-0 flex-wrap items-center gap-x-6 gap-y-1 border-t px-4 py-2 text-sm">
+              <span className="font-semibold">
+                {rows.length} item{rows.length === 1 ? '' : 's'}
+              </span>
+              <span className="text-muted-foreground">
+                Bags <span className="text-foreground font-semibold tabular-nums">{totals.tBags || 0}</span>
+              </span>
+              <span className="text-muted-foreground">
+                Pcs <span className="text-foreground font-semibold tabular-nums">{totals.tPcs || 0}</span>
+              </span>
+              <span className="text-muted-foreground">
+                Kgs <span className="text-foreground font-semibold tabular-nums">{totals.tKgs || 0}</span>
+              </span>
+              <span className="text-muted-foreground">
+                Box <span className="text-foreground font-semibold tabular-nums">{totals.tBox || 0}</span>
+              </span>
+            </div>
+
             {/* Footer: charges + totals */}
             <div className="grid shrink-0 gap-4 border-t p-4 lg:grid-cols-[1fr_320px]">
               <div className="space-y-2.5">
@@ -712,23 +854,14 @@ export function ChallanFormPage() {
                       rate (applied automatically) and is shown in the totals panel below. */}
                   <div className="space-y-1"><Label className="text-base">{`Billing Rate${halfBill ? ' · half' : ''}`}</Label><Input value={billingRate} onChange={(e) => setBillingRate(e.target.value)} className="h-9 text-right text-base tabular-nums" /></div>
                 </div>
-                {/* Settlement — B Amount & C Amount, with the No Bill toggle beside B */}
-                <div className="grid items-stretch gap-2.5 sm:grid-cols-[1fr_auto_1fr]">
-                  <EditRow label="B AMOUNT" computed={totals.b} manual={manualB} onManual={setManualB} prominent />
-                  <label
-                    className={cn(
-                      'flex cursor-pointer flex-col justify-center gap-1 rounded-md border px-4 py-2 transition-colors select-none',
-                      noBill ? 'border-primary/50 bg-primary/5' : 'bg-card hover:bg-muted/40',
-                    )}
-                    title="Bill without a tax invoice"
-                  >
-                    <span className="text-muted-foreground flex items-center gap-2 text-sm font-semibold tracking-wide uppercase">
-                      <input type="checkbox" checked={noBill} onChange={(e) => onNoBill(e.target.checked)} className="size-4 accent-blue-600" />
-                      No Bill
-                    </span>
-                    {noBill && <span className="text-[11px] font-medium text-amber-600">{noBillRemoveGst ? 'GST removed' : 'GST kept'}</span>}
-                  </label>
-                  <EditRow label="C AMOUNT" computed={totals.c} manual={manualC} onManual={setManualC} prominent />
+                <div className="space-y-1">
+                  <Label className="text-base">Shipping Address</Label>
+                  <textarea
+                    className="border-input bg-background min-h-12 w-full rounded-md border px-3 py-2 text-base"
+                    placeholder="Shipping address…"
+                    value={shippingAddress}
+                    onChange={(e) => setShippingAddress(e.target.value)}
+                  />
                 </div>
                 <textarea className="border-input bg-background min-h-12 w-full rounded-md border px-3 py-2 text-base" placeholder="Remarks…" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
               </div>
@@ -771,28 +904,37 @@ export function ChallanFormPage() {
             </>
           )}
         </p>
-        <div className="ml-auto flex flex-wrap justify-end gap-2">
-          <Button type="button" variant="destructive" onClick={handleCancel} title="Cancel (Esc)">
+        {/* Phones: the three actions share one full-width row (Create grows widest). */}
+        <div className="ml-auto flex w-full flex-wrap justify-end gap-2 sm:w-auto">
+          <Button type="button" variant="destructive" onClick={handleCancel} title="Cancel (Esc)" className="flex-1 sm:flex-none">
             Cancel
           </Button>
-          <Button type="button" variant="outline" onClick={handleReset} title={isEdit ? 'Revert unsaved changes' : 'Clear the form'}>
+          <Button type="button" variant="outline" onClick={handleReset} title={isEdit ? 'Revert unsaved changes' : 'Clear the form'} className="flex-1 sm:flex-none">
             <RotateCcw /> Reset
           </Button>
           {draft && (
-            <Button onClick={save} disabled={saving || rows.length === 0} title={`${isEdit ? 'Update' : 'Create'} challan (Ctrl+S)`}>
+            <Button onClick={save} disabled={saving || rows.length === 0} title={`${isEdit ? 'Update' : 'Create'} challan (Ctrl+S)`} className="flex-[2] sm:flex-none">
               {saving ? <Loader2 className="animate-spin" /> : <Check />} {isEdit ? 'Update Challan' : 'Create Challan'}
-              <kbd className="ml-1 rounded bg-white/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold">Ctrl+S</kbd>
+              <kbd className="ml-1 hidden rounded bg-white/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold sm:inline">Ctrl+S</kbd>
             </Button>
           )}
         </div>
       </div>
+
+      {missingChallanOpen && (
+        <MissingChallanDialog
+          prefixes={prefixSettings?.prefixes.length ? prefixSettings.prefixes : prefix ? [prefix] : []}
+          defaultPrefix={prefix || draft?.prefix || prefixSettings?.default || ''}
+          onClose={() => setMissingChallanOpen(false)}
+        />
+      )}
     </div>
   );
 }
 
-function MetaCell({ label, children }: { label: string; children: React.ReactNode }) {
+function MetaCell({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
   return (
-    <div className="space-y-0.5">
+    <div className={cn('space-y-0.5', className)}>
       <div className="text-muted-foreground text-sm font-semibold tracking-wide uppercase">{label}</div>
       <div className="text-base leading-tight font-medium">{children}</div>
     </div>
@@ -819,63 +961,54 @@ function LockField({ label, value, locked, onUnlock, onChange, onBlur }: { label
   );
 }
 
-/** A totals row whose amount is directly editable (Form14 Tax/B/C). Shows the live
- *  computed value; typing overrides it; the ↺ reverts to auto. `prominent` renders
- *  it as a bigger stacked card (used for B/C at the top of the totals panel). */
-function EditRow({
+/** A header meta cell whose amount is directly editable (Form14 B/C Amount). Shows
+ *  the live computed value by default; the pencil opens an inline input to override
+ *  it, and a small revert arrow appears once overridden. */
+function EditableAmount({
   label,
   computed,
   manual,
   onManual,
-  prominent,
 }: {
   label: string;
   computed: number;
   manual: string;
   onManual: (v: string) => void;
-  prominent?: boolean;
 }) {
+  const [editing, setEditing] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
   const isManual = manual.trim() !== '';
-  if (prominent) {
-    return (
-      <div className="bg-card rounded-md border px-3 py-2">
-        <div className="flex items-center justify-between gap-1">
-          <span className="text-muted-foreground text-sm font-semibold tracking-wide uppercase">{label}</span>
-          {isManual ? (
-            <button onClick={() => onManual('')} title="Reset to auto" className="text-amber-600 hover:text-amber-700" type="button">
-              <RotateCcw className="size-3.5" />
+  const display = isManual ? manual : String(Math.round(computed));
+
+  useEffect(() => {
+    if (editing) inputRef.current?.focus();
+  }, [editing]);
+
+  return (
+    <div className="space-y-0.5">
+      <div className="text-muted-foreground text-sm font-semibold tracking-wide uppercase">{label}</div>
+      {editing ? (
+        <input
+          ref={inputRef}
+          value={display}
+          onChange={(e) => onManual(e.target.value)}
+          onBlur={() => setEditing(false)}
+          onKeyDown={(e) => e.key === 'Enter' && setEditing(false)}
+          className="border-input bg-background h-8 w-28 rounded border px-2 text-right text-base font-bold tabular-nums focus:ring-1"
+        />
+      ) : (
+        <div className="flex items-center gap-1.5">
+          <span className="text-base leading-tight font-bold tabular-nums">₹{Number(display || 0).toLocaleString('en-IN')}</span>
+          <button type="button" onClick={() => setEditing(true)} title={`Edit ${label}`} className="text-muted-foreground hover:text-primary">
+            <Pencil className="size-3.5" />
+          </button>
+          {isManual && (
+            <button type="button" onClick={() => onManual('')} title="Reset to auto" className="text-amber-600 hover:text-amber-700">
+              <RotateCcw className="size-3" />
             </button>
-          ) : (
-            <span className="w-3.5" />
           )}
         </div>
-        <input
-          value={isManual ? manual : String(Math.round(computed))}
-          onChange={(e) => onManual(e.target.value)}
-          className="border-input bg-background mt-1 h-10 w-full rounded border px-2 text-right text-xl font-bold tabular-nums focus:ring-1"
-        />
-        {isManual && <span className="text-[11px] font-medium text-amber-600">manual override</span>}
-      </div>
-    );
-  }
-  return (
-    <div className="flex items-center justify-between gap-2 text-base">
-      <span className="text-muted-foreground">
-        {label}
-        {isManual && <span className="ml-1 text-[11px] font-medium text-amber-600">manual</span>}
-      </span>
-      <div className="flex items-center gap-1">
-        <input
-          value={isManual ? manual : String(Math.round(computed))}
-          onChange={(e) => onManual(e.target.value)}
-          className="border-input bg-background h-8 w-32 rounded border px-2 text-right text-base tabular-nums focus:ring-1"
-        />
-        {isManual && (
-          <button onClick={() => onManual('')} title="Reset to auto" className="text-muted-foreground hover:text-foreground">
-            <RotateCcw className="size-3.5" />
-          </button>
-        )}
-      </div>
+      )}
     </div>
   );
 }

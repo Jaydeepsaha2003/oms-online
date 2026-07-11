@@ -277,6 +277,44 @@ export interface ChallanEditContext {
   rows: ChallanDraftItem[];
 }
 
+/* ── Missing Challan (legacy MissingChallanForm): gaps in a prefix/FY invoice-
+   number series, e.g. #45 never issued between #44 and #46. An operator can
+   "dismiss" a gap (acknowledge it's intentionally skipped, e.g. voided by hand)
+   or "restore" a dismissed one back onto the missing list. ── */
+export interface MissingChallanFysDto {
+  /** Every FY that has at least one challan for this prefix, newest first. */
+  fys: string[];
+  /** The current calendar fiscal year (always included, even with zero challans yet). */
+  current: string;
+  /** FY of the most recently created ("last built") invoice for this prefix — the
+   *  sensible default series to check, since right after a fiscal-year rollover
+   *  `current` can still be empty while the prior year's series has real gaps. */
+  lastBuilt: string;
+}
+
+export interface MissingChallanEntry {
+  /** Full display invoice number, e.g. "SSS/26-27/45". */
+  code: string;
+  /** Just the numeric serial within the prefix/FY series. */
+  invNo: number;
+  /** Why this number was dismissed (only set in "Show Deleted Only" mode). */
+  reason?: string | null;
+}
+
+export type MissingChallanQuery = {
+  prefix: string;
+  fy: string;
+  deletedOnly?: boolean;
+};
+
+export interface DismissMissingChallanInput {
+  prefix: string;
+  fy: string;
+  invNo: number;
+  /** Required when dismissing — kept on record for future reference. */
+  reason?: string;
+}
+
 /* ── Totals engine (Form14 CalculateTotal) — shared by the form + the server ──── */
 export interface ChallanTotalsInput {
   items: { bags?: number | null; pcs?: number | null; kgs?: number | null; box?: number | null; amount?: number | null; gstRate?: number | null }[];
