@@ -7,31 +7,31 @@ REM  load fast on phones/other devices over the LAN, not just
 REM  on this PC. For active coding with fast edit+refresh, use
 REM  dev.bat instead.
 REM
-REM  DATABASE SYNC (migrate deploy -> db push -> seed) ALWAYS RUNS,
-REM  every single launch, no matter what. This is what guarantees a
-REM  client's database is fully up to date the moment you hand them
-REM  a build - even if you shipped it with dist/ already built, which
-REM  would otherwise make this look like a "nothing changed" restart.
-REM  These three are near-instant no-ops when nothing is pending, so
-REM  they don't meaningfully slow down day-to-day restarts.
+REM  EVERY expensive step is skipped automatically when nothing it depends
+REM  on has changed, so an unchanged relaunch takes seconds:
+REM    - DB SYNC (migrate deploy -> db push -> seed) runs whenever the
+REM      schema, migrations, seed script or .env changed since the last
+REM      SUCCESSFUL sync (stamp file .db-sync-stamp), or when the database
+REM      or generated Prisma client is missing. Handing a client a build
+REM      still syncs their DB on first launch - their machine has no stamp.
+REM    - npm install runs when node_modules is missing or any package.json /
+REM      package-lock.json is newer than npm's own install marker.
+REM    - npm run build runs when anything under apps/*/src,
+REM      packages/shared/src, vite.config.ts, schema.prisma or any
+REM      package.json is newer than the existing build outputs.
+REM  Any real change (or a fresh git pull) is detected automatically, so you
+REM  never run stale code - and deleting .db-sync-stamp forces a full DB
+REM  re-sync if you ever need one.
 REM
-REM  Only the expensive part - npm install + npm run build - is ever
-REM  skipped, and only when nothing under apps/*/src, packages/shared/src,
-REM  prisma/schema.prisma, or any package.json has changed since the
-REM  last build. Any real change (or a fresh git pull) is detected
-REM  automatically and triggers a full rebuild, so you never run stale code.
-REM
-REM  On every launch:
-REM    [1] npm install            (ONLY if node_modules is missing - first run)
+REM  Launch order when things did change:
+REM    [1] npm install            (first run / changed packages)
 REM    [2] prisma migrate deploy  (apply tracked DB migrations)
 REM    [3] prisma db push         (sync schema - also refreshes the Prisma client;
 REM                                 this project's migrations/ history is known to
 REM                                 be incomplete, so this is the step that actually
 REM                                 guarantees the schema is correct)
 REM    [4] prisma db seed         (roles, permissions, admin user)
-REM  Then, only if source changed since the last build:
-REM    [5] npm install            (new / changed packages)
-REM    [6] npm run build          (build shared -> api -> web, bundled+minified)
+REM    [5] npm run build          (build shared -> api -> web, bundled+minified)
 REM ============================================================
 cd /d "%~dp0"
 
@@ -51,6 +51,20 @@ if not errorlevel 1 (
     exit /b
 )
 
+REM A stale or half-started instance (e.g. the boot autostart task) holding
+REM only the API port locks node_modules files (EPERM during db push) and
+REM makes the new API die with "port in use" - fail fast with a clear fix
+REM instead of silently waiting out the 45-second readiness timeout.
+netstat -aon | findstr /C:":4000 " | findstr /C:"LISTENING" >nul 2>&1
+if not errorlevel 1 (
+    echo The API port 4000 is already in use by a previous server instance
+    echo that did not fully start. Run stop.bat first ^(it asks for
+    echo administrator rights when needed^), or restart.bat to do both.
+    echo.
+    pause
+    exit /b 1
+)
+
 REM First-run guard: the DB sync commands below need the Prisma CLI, which
 REM lives in node_modules - if this is a brand-new machine (no node_modules
 REM at all), install dependencies first so those commands can even run.
@@ -67,9 +81,27 @@ if not exist "node_modules" (
     echo.
 )
 
+REM Fast path for the DB sync too: all three prisma steps are no-ops unless
+REM the schema, migrations, seed script or .env changed - but each still costs
+REM seconds of npm+prisma startup. Compare the newest of those files against
+REM the stamp saved after the last successful sync and skip the whole trio
+REM when nothing changed. The stamp is only written when all three steps
+REM succeed, so a failed sync is always retried on the next launch. Deleting
+REM the database (or .db-sync-stamp) also forces a full re-sync.
+powershell -NoProfile -Command "$paths=@('apps\api\prisma\schema.prisma','apps\api\prisma\migrations','apps\api\prisma\seed.ts','apps\api\.env'); $newest=[datetime]::MinValue; foreach($p in $paths){ if(Test-Path $p){ $items=@(Get-Item $p -EA SilentlyContinue | Where-Object { -not $_.PSIsContainer }) + @(Get-ChildItem $p -Recurse -File -EA SilentlyContinue); foreach($i in $items){ if($i -and $i.LastWriteTimeUtc -gt $newest){ $newest=$i.LastWriteTimeUtc } } } }; $tag=$newest.Ticks.ToString(); if((Test-Path 'apps\api\prisma\dev.db') -and (Test-Path 'node_modules\.prisma\client') -and (Test-Path '.db-sync-stamp') -and ((Get-Content '.db-sync-stamp' -EA SilentlyContinue) -eq $tag)){ exit 0 }; Set-Content '.db-sync-stamp.next' $tag; exit 1"
+if not errorlevel 1 (
+    echo Database already in sync ^(schema/migrations/seed unchanged^) - skipping DB sync.
+    echo.
+    goto dbsync_done
+)
+
+set "SYNCOK=1"
 echo [1/3] Applying tracked migrations (prisma migrate deploy)...
 call npm run db:deploy
-if errorlevel 1 echo    [warning] Migration step reported an error - check the output above.
+if errorlevel 1 (
+    echo    [warning] Migration step reported an error - check the output above.
+    set "SYNCOK="
+)
 
 echo.
 echo [2/3] Syncing the schema / new tables (prisma db push)...
@@ -81,25 +113,49 @@ REM Piping a plain "n" used to be tried here, but Prisma refuses non-interactive
 REM input outright and demands this flag instead - so that trick never actually
 REM protected anything; it just made every push with a flagged column fail silently.
 REM db push also refreshes the Prisma client itself - no separate generate step needed.
-call npm run db:push
-if errorlevel 1 echo    [warning] Schema sync reported an error - check the output above.
+echo n | call npm run db:push
+if errorlevel 1 (
+    echo    [warning] Schema sync reported an error - check the output above.
+    set "SYNCOK="
+)
 
 echo.
 echo [3/3] Seeding database (roles, permissions, admin user)...
 call npm run db:seed -w @oms/api
-if errorlevel 1 echo    [warning] Seed step reported an error - check the output above.
+if errorlevel 1 (
+    echo    [warning] Seed step reported an error - check the output above.
+    set "SYNCOK="
+)
 echo.
+
+REM Remember this sync so unchanged launches can skip it - but only if every
+REM step succeeded; otherwise it is retried in full on the next launch.
+if defined SYNCOK (
+    if exist ".db-sync-stamp.next" move /y ".db-sync-stamp.next" ".db-sync-stamp" >nul 2>&1
+) else (
+    if exist ".db-sync-stamp.next" del ".db-sync-stamp.next" >nul 2>&1
+)
+
+:dbsync_done
 
 REM Fast path: skip npm install + the build entirely if nothing has changed
 REM since the last build (compares the newest source file's timestamp against
 REM the existing build outputs' timestamps). The database sync above already
 REM ran unconditionally, so this only ever skips the code-rebuild step.
-powershell -NoProfile -Command "$srcPaths=@('apps\api\src','apps\web\src','packages\shared\src','apps\api\prisma\schema.prisma','package.json','apps\api\package.json','apps\web\package.json','packages\shared\package.json'); $newestSrc=$null; foreach($p in $srcPaths){ if(Test-Path $p){ $items=Get-ChildItem -Path $p -Recurse -File -EA SilentlyContinue; if(-not $items){ $items=Get-Item $p -EA SilentlyContinue }; foreach($i in $items){ if(-not $newestSrc -or $i.LastWriteTime -gt $newestSrc){ $newestSrc=$i.LastWriteTime } } } }; $markers=@('packages\shared\dist\esm\index.js','apps\api\dist\src\main.js','apps\web\dist\index.html'); $allExist=$true; $oldestMarker=$null; foreach($m in $markers){ if(-not (Test-Path $m)){ $allExist=$false; break }; $mt=(Get-Item $m).LastWriteTime; if(-not $oldestMarker -or $mt -lt $oldestMarker){ $oldestMarker=$mt } }; if($allExist -and $newestSrc -and $oldestMarker -gt $newestSrc){ exit 0 } else { exit 1 }"
+powershell -NoProfile -Command "$srcPaths=@('apps\api\src','apps\web\src','packages\shared\src','apps\api\prisma\schema.prisma','apps\web\vite.config.ts','package.json','apps\api\package.json','apps\web\package.json','packages\shared\package.json'); $newestSrc=$null; foreach($p in $srcPaths){ if(Test-Path $p -PathType Container){ $items=Get-ChildItem -Path $p -Recurse -File -EA SilentlyContinue } elseif(Test-Path $p){ $items=Get-Item $p -EA SilentlyContinue } else { $items=@() }; foreach($i in $items){ if(-not $newestSrc -or $i.LastWriteTime -gt $newestSrc){ $newestSrc=$i.LastWriteTime } } }; $markers=@('packages\shared\dist\esm\index.js','apps\api\dist\src\main.js','apps\web\dist\index.html'); $allExist=$true; $oldestMarker=$null; foreach($m in $markers){ if(-not (Test-Path $m)){ $allExist=$false; break }; $mt=(Get-Item $m).LastWriteTime; if(-not $oldestMarker -or $mt -lt $oldestMarker){ $oldestMarker=$mt } }; if($allExist -and $newestSrc -and $oldestMarker -gt $newestSrc){ exit 0 } else { exit 1 }"
 if not errorlevel 1 (
     echo Nothing has changed since the last build - skipping the rebuild.
-    echo ^(Database is already synced above, every launch, regardless.^)
     echo.
     goto launch
+)
+
+REM Skip npm install when no package.json / lockfile changed since the last
+REM install (npm's own marker file node_modules\.package-lock.json is the
+REM reference) - a no-op install still costs several seconds.
+powershell -NoProfile -Command "$m='node_modules\.package-lock.json'; if(-not (Test-Path $m)){ exit 1 }; $mt=(Get-Item $m).LastWriteTimeUtc; foreach($p in @('package-lock.json','package.json','apps\api\package.json','apps\web\package.json','packages\shared\package.json')){ if((Test-Path $p) -and ((Get-Item $p).LastWriteTimeUtc -gt $mt)){ exit 1 } }; exit 0"
+if not errorlevel 1 (
+    echo [1/2] Dependencies unchanged - skipping npm install.
+    goto build
 )
 
 echo [1/2] Syncing dependencies (npm install)...
@@ -112,6 +168,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:build
 echo.
 echo [2/2] Building production bundles (npm run build)...
 call npm run build
@@ -128,6 +185,16 @@ echo Build complete - launching servers.
 echo.
 
 :launch
+REM Keep a project-local copy of the HTTPS certs. The boot-time autostart task
+REM runs as SYSTEM, which has no user profile and can't run mkcert - the web
+REM server then reads these files instead (see apps\web\vite.config.ts).
+if exist "%USERPROFILE%\.vite-plugin-mkcert\cert.pem" (
+    if not exist "certs" mkdir "certs"
+    copy /y "%USERPROFILE%\.vite-plugin-mkcert\cert.pem"   "certs\" >nul 2>&1
+    copy /y "%USERPROFILE%\.vite-plugin-mkcert\dev.pem"    "certs\" >nul 2>&1
+    copy /y "%USERPROFILE%\.vite-plugin-mkcert\rootCA.pem" "certs\" >nul 2>&1
+)
+
 REM Detect this PC's LAN IPv4 (active adapter with a default gateway) via a temp file.
 set "LANIP="
 set "_ipf=%TEMP%\_oms_lanip.txt"
@@ -156,7 +223,7 @@ if defined READY (
     echo   API: http://localhost:4000/api     Docs: http://localhost:4000/api/docs
 ) else (
     echo Servers are taking longer than usual to start.
-    echo Open logs.bat to see what is happening (or check oms-dev.log).
+    echo Open logs.bat to see what is happening ^(or check oms-dev.log^).
 )
 echo.
 echo   Phone and PC must be on the SAME Wi-Fi. First time only, run
