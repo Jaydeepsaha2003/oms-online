@@ -15,7 +15,10 @@ logFile = dir & "\oms-dev.log"
 sh.CurrentDirectory = dir
 
 ' Build the command using Chr(34) for double-quotes (avoids VBS escape confusion).
-' Window style 6 = minimised (keeps a taskbar button so stop.bat can find the title).
+' Window style 0 = fully hidden - no console window, no taskbar button (on
+' Windows 11 the old "minimised" style popped up as a blank cmd window, since
+' all output goes to the log). stop.bat finds these servers by port and by
+' command line, so no visible window is needed.
 ' False = return immediately (servers keep running in background).
 cmdStr = "cmd /d /c title OMS Dev Server && npm run dev >> " & Chr(34) & logFile & Chr(34) & " 2>&1"
-sh.Run cmdStr, 6, False
+sh.Run cmdStr, 0, False
