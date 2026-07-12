@@ -58,6 +58,48 @@ export function RolesPage() {
   const [editing, setEditing] = useState<RoleDto | null>(null);
   const [creating, setCreating] = useState(false);
 
+  // Phones: one card per role (mirrors the rest of the app's mobile lists).
+  const roleMobileCard = (r: RoleDto) => (
+    <div className="space-y-1.5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="flex flex-wrap items-center gap-1.5 font-medium">
+            <span className="truncate">{r.label}</span>
+            {r.isSystem && (
+              <span className="bg-muted text-muted-foreground inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium">
+                <Lock className="size-2.5" /> system
+              </span>
+            )}
+          </p>
+          <p className="text-muted-foreground truncate font-mono text-xs">{r.name}</p>
+        </div>
+        {can('role:delete') && !r.isSystem && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0 text-destructive hover:text-destructive"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleDelete(r);
+            }}
+            aria-label="Delete"
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        )}
+      </div>
+      {r.description && <p className="text-muted-foreground truncate text-xs">{r.description}</p>}
+      <div className="flex items-center gap-3 text-xs">
+        <span className="text-muted-foreground">
+          Permissions <span className="text-foreground font-semibold tabular-nums">{r.permissions.includes('*') ? 'All' : r.permissions.length}</span>
+        </span>
+        <span className="text-muted-foreground">
+          Users <span className="text-foreground font-semibold tabular-nums">{r.userCount ?? 0}</span>
+        </span>
+      </div>
+    </div>
+  );
+
   const handleDelete = async (r: RoleDto) => {
     const ok = await confirm({
       title: 'Delete role?',
@@ -93,6 +135,7 @@ export function RolesPage() {
         isLoading={isLoading}
         emptyText="No roles yet."
         onRowClick={(r) => can('role:update') && setEditing(r)}
+        mobileCard={roleMobileCard}
         actions={(r) => (
           <div className="flex justify-end gap-1">
             {can('role:delete') && !r.isSystem && (
@@ -160,12 +203,12 @@ function RoleDialog({ role, onClose }: { role: RoleDto | null; onClose: () => vo
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="flex max-h-[90vh] flex-col sm:max-w-3xl">
+      <DialogContent className="flex max-h-[90vh] w-[calc(100vw-2rem)] flex-col sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{isEdit ? `Edit role — ${role!.label}` : 'New role'}</DialogTitle>
         </DialogHeader>
 
-        <div className="grid gap-4 overflow-y-auto pr-1">
+        <div className="grid gap-3 overflow-y-auto pr-1 sm:gap-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Machine name *</Label>
@@ -189,14 +232,16 @@ function RoleDialog({ role, onClose }: { role: RoleDto | null; onClose: () => vo
           </div>
 
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
+            {/* Phones: the count wraps to its own row above Select all/Clear instead
+                of the two sharing one row with no guaranteed gap between them. */}
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <Label className="text-sm">Permissions <span className="text-muted-foreground font-normal">({selectedCount} selected)</span></Label>
               {!isWildcard && (
                 <div className="flex gap-2">
-                  <Button type="button" variant="outline" size="sm" onClick={() => setPerms(new Set(ALL_KEYS))}>
+                  <Button type="button" variant="outline" size="sm" className="flex-1 sm:flex-none" onClick={() => setPerms(new Set(ALL_KEYS))}>
                     Select all
                   </Button>
-                  <Button type="button" variant="ghost" size="sm" onClick={() => setPerms(new Set())}>
+                  <Button type="button" variant="ghost" size="sm" className="flex-1 sm:flex-none" onClick={() => setPerms(new Set())}>
                     Clear
                   </Button>
                 </div>
@@ -209,22 +254,22 @@ function RoleDialog({ role, onClose }: { role: RoleDto | null; onClose: () => vo
               </p>
             )}
 
-            <div className={cn('space-y-4 rounded-lg border p-3', isWildcard && 'opacity-60')}>
+            <div className={cn('space-y-3 rounded-lg border p-3 sm:space-y-4', isWildcard && 'opacity-60')}>
               {GROUPS.map(([group, defs]) => (
                 <div key={group} className="space-y-1.5">
                   <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">{group}</p>
                   <div className="space-y-1">
                     {defs.map((d) => (
-                      <div key={d.resource} className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b py-1.5 last:border-0">
-                        <span className="w-44 shrink-0 text-sm font-medium">{d.label}</span>
-                        <div className="flex flex-wrap gap-x-4 gap-y-1">
+                      <div key={d.resource} className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b py-1.5 last:border-0">
+                        <span className="w-full text-sm font-medium sm:w-44 sm:shrink-0">{d.label}</span>
+                        <div className="flex flex-wrap gap-x-4 gap-y-1.5">
                           {d.actions.map((a) => {
                             const key = perm(d.resource, a);
                             return (
-                              <label key={key} className={cn('flex items-center gap-1.5 text-sm', !isWildcard && 'cursor-pointer')}>
+                              <label key={key} className={cn('flex items-center gap-1.5 py-0.5 text-sm', !isWildcard && 'cursor-pointer')}>
                                 <input
                                   type="checkbox"
-                                  className="accent-indigo-600"
+                                  className="accent-indigo-600 size-3.5"
                                   checked={has(key)}
                                   disabled={isWildcard}
                                   onChange={() => toggle(key)}

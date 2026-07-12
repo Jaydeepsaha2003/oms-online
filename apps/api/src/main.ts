@@ -26,6 +26,13 @@ async function bootstrap(): Promise<void> {
   const apiPrefix = config.get<string>('apiPrefix') ?? 'api';
   const corsOrigins = config.get<string[]>('corsOrigins') ?? ['http://localhost:5173'];
   const isProduction = config.get<boolean>('isProduction') ?? false;
+  // This project's on-prem deployment (start.bat) runs the packaged server
+  // without ever setting NODE_ENV=production, so `isProduction` alone can't be
+  // trusted to detect "this is the real deployment" — use the same signal the
+  // web-app static handler below already relies on instead.
+  const webDist = join(__dirname, '..', '..', '..', 'web', 'dist');
+  const webIndex = join(webDist, 'index.html');
+  const isPackagedBuild = existsSync(webIndex);
 
   // Same-origin policy shared with the WebSocket gateway — see cors-origin.util.ts.
   const corsOrigin = buildCorsOrigin({ isProduction, corsOrigins });
@@ -64,33 +71,53 @@ async function bootstrap(): Promise<void> {
     }),
   );
 
-  // OpenAPI / Swagger docs at /<prefix>/docs
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('OMS API')
-    .setDescription('Production & Order Management System API')
-    .setVersion('0.1.0')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup(`${apiPrefix}/docs`, app, document, {
-    swaggerOptions: { persistAuthorization: true },
-  });
+  // OpenAPI / Swagger docs at /<prefix>/docs. SwaggerModule mounts its routes
+  // directly on the underlying Express instance, bypassing Nest's guard
+  // pipeline entirely — so unlike every real endpoint, this page and its raw
+  // JSON schema are NOT covered by the global JwtAuthGuard. That's fine for
+  // local development, but on a real deployment it would hand any visitor the
+  // full API surface (every route, DTO shape, param name) with zero auth —
+  // pure reconnaissance value for an attacker, so it's dev-only.
+  if (!isProduction && !isPackagedBuild) {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('OMS API')
+      .setDescription('Production & Order Management System API')
+      .setVersion('0.1.0')
+      .addBearerAuth()
+      .build();
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup(`${apiPrefix}/docs`, app, document, {
+      swaggerOptions: { persistAuthorization: true },
+    });
+  }
 
   // Serve user-uploaded files (order-line photos) from the project's /uploads
   // folder at `${prefix}/uploads`. Served as plain static assets — no Nest guard
   // runs, so <img> tags load them without a bearer token. The path sits under
   // `/api` so the Vite dev proxy routes it here unchanged.
+  //
+  // Defense in depth: the upload endpoint already validates real image bytes
+  // (see uploads.controller.ts) so nothing except a genuine image should ever
+  // land here, but user-generated content is still the classic stored-XSS
+  // vector — `Content-Security-Policy: sandbox` strips scripting/origin
+  // privileges from anything served under this path (harmless to real images,
+  // neutralises a maliciously uploaded HTML/SVG file even if one slipped
+  // through) and `nosniff` stops the browser from guessing a different type.
   const uploadsDir = ensureUploadDir();
-  app.useStaticAssets(uploadsDir, { prefix: UPLOADS_URL_PREFIX });
+  app.useStaticAssets(uploadsDir, {
+    prefix: UPLOADS_URL_PREFIX,
+    setHeaders: (res) => {
+      res.setHeader('Content-Security-Policy', 'sandbox');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+    },
+  });
   Logger.log(`Uploads served from ${uploadsDir} at ${UPLOADS_URL_PREFIX}`, 'Bootstrap');
 
   // Serve the built web app from this same server when a production build exists,
   // so the whole OMS runs from ONE process on ONE URL (offline-friendly). Real
   // files (JS/CSS/images) are served directly; every other non-API GET falls back
   // to index.html for the SPA's client-side routing.
-  const webDist = join(__dirname, '..', '..', '..', 'web', 'dist');
-  const webIndex = join(webDist, 'index.html');
-  if (existsSync(webIndex)) {
+  if (isPackagedBuild) {
     // Serve the local mkcert root CA with the proper certificate MIME so a phone
     // opening /oms-rootCA.crt is offered "Install profile" (tap → Install →
     // trust) instead of just downloading an unrecognised file. Installing it
@@ -124,9 +151,9 @@ async function bootstrap(): Promise<void> {
   const httpServer = app.getHttpServer() as { keepAliveTimeout: number; headersTimeout: number };
   httpServer.keepAliveTimeout = 65_000;
   httpServer.headersTimeout = 66_000;
-  const webNote = existsSync(webIndex) ? ` · Web app at http://localhost:${port}/` : '';
+  const webNote = isPackagedBuild ? ` · Web app at http://localhost:${port}/` : '';
   Logger.log(`API ready on http://localhost:${port}/${apiPrefix} (and this machine's LAN IP)${webNote}`, 'Bootstrap');
-  Logger.log(`Swagger docs at http://localhost:${port}/${apiPrefix}/docs`, 'Bootstrap');
+  if (!isProduction && !isPackagedBuild) Logger.log(`Swagger docs at http://localhost:${port}/${apiPrefix}/docs`, 'Bootstrap');
 }
 
 void bootstrap();

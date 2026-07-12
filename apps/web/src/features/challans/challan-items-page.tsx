@@ -6,6 +6,8 @@ import { formatDate } from '@/lib/date-format';
 import { openPdf } from '@/lib/pdf';
 import { usePermissions } from '@/hooks/use-permissions';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
+import { NativeSelect } from '@/components/common/combo';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useChallanItemNames, useChallanItemHistory } from './use-challans';
 
@@ -49,6 +51,37 @@ export function ChallanItemsPage() {
       : []),
   ];
 
+  // Phones: one card per challan line (mirrors the rest of the Challans mobile lists).
+  const itemMobileCard = (r: ChallanItemHistoryRow) => (
+    <div className="space-y-1.5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-muted-foreground font-mono text-xs font-semibold">{r.code}</p>
+          <p className="truncate leading-tight font-medium">{r.customerName}</p>
+          <p className="text-muted-foreground truncate text-xs">{formatDate(r.invDate)}{r.design ? ` · ${r.design}` : ''}</p>
+        </div>
+        {canPrint && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0"
+            onClick={(e) => {
+              e.stopPropagation();
+              openPdf(`/challans/${r.challanId}/challan.pdf`);
+            }}
+            aria-label="Print challan"
+          >
+            <Printer className="size-4" />
+          </Button>
+        )}
+      </div>
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-muted-foreground">{num(r.qty)} {r.unit || ''} @ {money(r.price)}</span>
+        <span className="font-semibold tabular-nums text-emerald-700">{money(r.amount)}</span>
+      </div>
+    </div>
+  );
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
@@ -62,8 +95,8 @@ export function ChallanItemsPage() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
-        {/* Product sidebar */}
-        <div className="bg-card flex max-h-[70vh] flex-col rounded-md border shadow-sm">
+        {/* Product sidebar — desktop/tablet: an always-visible searchable list panel. */}
+        <div className="bg-card hidden max-h-[70vh] flex-col rounded-md border shadow-sm sm:flex">
           <div className="relative border-b p-2">
             <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-4 size-4 -translate-y-1/2" />
             <Input className="pl-9" placeholder="Search products…" value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -87,6 +120,19 @@ export function ChallanItemsPage() {
           </div>
         </div>
 
+        {/* Phones: pick the product from a searchable dropdown instead of a
+            separate scrolling list panel — type to filter, tap to pick. */}
+        <div className="sm:hidden">
+          <NativeSelect
+            value={selected ?? ''}
+            onChange={setSelected}
+            onType={setSearch}
+            options={names}
+            placeholder={namesLoading ? 'Loading…' : 'Search products…'}
+            className="h-10 text-base"
+          />
+        </div>
+
         {/* Detail */}
         <div className="space-y-3">
           {selected ? (
@@ -97,10 +143,19 @@ export function ChallanItemsPage() {
                   {rows.length} line(s) · Qty {num(totals.qty)} · Amount {money(totals.amt)}
                 </p>
               </div>
-              <DataTable columns={columns} rows={rows} rowKey={(r) => r.id} isLoading={histLoading} dense hideRowView emptyText="No challan lines for this product." />
+              <DataTable
+                columns={columns}
+                rows={rows}
+                rowKey={(r) => r.id}
+                isLoading={histLoading}
+                dense
+                hideRowView
+                mobileCard={itemMobileCard}
+                emptyText="No challan lines for this product."
+              />
             </>
           ) : (
-            <div className="bg-card text-muted-foreground flex h-64 items-center justify-center rounded-md border text-sm">Select a product from the left.</div>
+            <div className="bg-card text-muted-foreground flex h-64 items-center justify-center rounded-md border text-sm">Select a product to see its history.</div>
           )}
         </div>
       </div>

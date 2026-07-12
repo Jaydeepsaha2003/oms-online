@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BarChart3, CheckCircle2, ChevronLeft, ChevronRight, FileSpreadsheet, Layers, Pencil, Printer, ScrollText, Search, Trash2, X, XCircle } from 'lucide-react';
+import { BarChart3, CheckCircle2, ChevronLeft, ChevronRight, FileSpreadsheet, Filter, Layers, Pencil, Printer, ScrollText, Search, Trash2, X, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ChallanDto } from '@oms/shared';
 import { cn } from '@/lib/utils';
@@ -15,6 +15,7 @@ import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { fetchAllChallans, useChallans, useDeleteChallan, useUpdateChallanStatus } from './use-challans';
 import { PRESETS, presetRange } from './date-presets';
 import { ChallanAnalyticsDialog } from './challan-analytics-dialog';
@@ -73,6 +74,9 @@ export function ChallansListPage() {
   const [preset, setPreset] = useState(() => loadFilters().preset ?? '');
   const [status, setStatus] = useState(() => loadFilters().status ?? '');
   const [page, setPage] = useState(() => loadFilters().page ?? 1);
+  // Phones: From/To/Quick range/Status live behind this Filter icon (see the sheet below).
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const activeFilterCount = (dateFrom || dateTo ? 1 : 0) + (status ? 1 : 0);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -250,23 +254,97 @@ export function ChallansListPage() {
     </div>
   );
 
+  // Phones: one card per challan (mirrors the Quotations/Bookings mobile list).
+  const challanMobileCard = (r: ChallanDto) => {
+    const di = dueInfo(r.dueDate);
+    return (
+      <div className="space-y-2">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-muted-foreground font-mono text-xs font-semibold">{r.code}</p>
+            <p className="truncate leading-tight font-medium">{r.customerName}</p>
+            <p className="text-muted-foreground text-xs">{formatDate(r.invDate)}</p>
+          </div>
+          <span
+            className={cn(
+              'shrink-0 rounded px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset',
+              r.challanStatus === 'CONFIRMED' ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-rose-50 text-rose-700 ring-rose-200',
+            )}
+          >
+            {r.challanStatus}
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <div>
+            <p className="text-muted-foreground">Total</p>
+            <p className="text-[15px] font-bold tabular-nums">{money(r.total)}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">Due</p>
+            <p className={cn('font-medium', di.over && 'font-semibold text-red-600')}>{di.text}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">B / C</p>
+            <p className="font-medium tabular-nums">{money(r.b)} / {money(r.c)}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">GST{r.tds ? ' / TDS' : ''}</p>
+            <p className="font-medium tabular-nums">
+              {money(r.tax)}
+              {r.tds ? <span className="text-amber-700"> / {money(r.tds)}</span> : ''}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-1 border-t pt-2" onClick={(e) => e.stopPropagation()}>
+          {canPrint && (
+            <Button variant="ghost" size="icon" className="size-8" onClick={() => openPdf(`/challans/${r.id}/challan.pdf`)} aria-label="Print / PDF">
+              <Printer className="size-4" />
+            </Button>
+          )}
+          {canUpdate && (
+            <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(`/challans/${r.id}/edit`)} aria-label="Edit">
+              <Pencil className="size-4" />
+            </Button>
+          )}
+          {canUpdate &&
+            (r.challanStatus === 'CONFIRMED' ? (
+              <Button variant="ghost" size="icon" className="size-8 text-rose-600 hover:bg-rose-50 hover:text-rose-700" onClick={() => setRowStatus(r, 'CANCELLED')} aria-label="Mark Cancelled">
+                <XCircle className="size-4" />
+              </Button>
+            ) : (
+              <Button variant="ghost" size="icon" className="size-8 text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700" onClick={() => setRowStatus(r, 'CONFIRMED')} aria-label="Mark Confirmed">
+                <CheckCircle2 className="size-4" />
+              </Button>
+            ))}
+          {canDelete && (
+            <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => remove(r)} aria-label="Delete">
+              <Trash2 className="size-4" />
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
-          <ScrollText className="size-5" />
+    <div className="space-y-3 sm:space-y-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
+        <div className="flex items-center gap-3">
+          <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
+            <ScrollText className="size-5" />
+          </div>
+          <div>
+            <h2 className="text-2xl font-semibold tracking-tight">Challans</h2>
+            <p className="text-muted-foreground text-sm">{data?.total ?? 0} saved challan(s) · view, print, change status or delete</p>
+          </div>
         </div>
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Challans</h2>
-          <p className="text-muted-foreground text-sm">{data?.total ?? 0} saved challan(s) · view, print, change status or delete</p>
-        </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
           <span className="text-muted-foreground mr-1 hidden text-xs font-semibold tracking-wide uppercase sm:inline">Get Report by</span>
           <Button variant="outline" size="sm" disabled={!!report} onClick={() => runReport('detailed')} title="Export the filtered challan list to Excel">
-            <FileSpreadsheet className="text-emerald-600" /> Detailed View
+            <FileSpreadsheet className="text-emerald-600" /> <span className="hidden sm:inline">Detailed View</span><span className="sm:hidden">Detailed</span>
           </Button>
           <Button variant="outline" size="sm" disabled={!!report} onClick={() => runReport('summary')} title="Export challans plus their line items to Excel">
-            <Layers className="text-sky-600" /> Challan Summary
+            <Layers className="text-sky-600" /> <span className="hidden sm:inline">Challan Summary</span><span className="sm:hidden">Summary</span>
           </Button>
           <Button size="sm" className="bg-gradient-brand text-white shadow-sm hover:opacity-95" onClick={() => setKpiOpen(true)} title="Open analytics dashboard">
             <BarChart3 /> Show KPI
@@ -283,40 +361,103 @@ export function ChallansListPage() {
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="bg-card flex flex-wrap items-end gap-2 rounded-md border p-3 shadow-sm">
+      {/* Filters — Search stays visible; From/To/Quick range/Status collapse behind
+          the Filter icon on phones (see the sheet below) so the bar never wraps
+          into a cramped multi-row stack of half-width fields. */}
+      <div className="bg-card flex flex-wrap items-end gap-2 rounded-md border p-2.5 shadow-sm sm:p-3">
         <div className="relative w-full sm:w-56">
           <Label className="text-xs">Search</Label>
           <Search className="text-muted-foreground pointer-events-none absolute top-[30px] left-3 size-4" />
           <Input className="pl-9" placeholder="Challan no or party…" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
         </div>
-        <div className="space-y-1">
-          <Label className="text-xs">From</Label>
-          <Input type="date" className="w-40" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} />
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs">To</Label>
-          <Input type="date" className="w-40" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} />
-        </div>
-        <div className="w-40 space-y-1">
-          <Label className="text-xs">Quick range</Label>
-          <NativeSelect value={preset} onChange={applyPreset} options={['', ...PRESETS]} placeholder="Range…" />
-        </div>
-        <div className="w-44 space-y-1">
-          <Label className="text-xs">Status</Label>
-          <NativeSelect value={status} onChange={(v) => { setStatus(v); setPage(1); }} options={['', 'CONFIRMED', 'CANCELLED']} placeholder="All statuses" />
-        </div>
         <Button
           variant="outline"
-          size="sm"
-          className="text-muted-foreground"
-          onClick={clearAll}
-          disabled={!hasFilters}
-          title={hasFilters ? 'Clear all filters' : 'No filters applied'}
+          size="icon"
+          className="relative shrink-0 sm:hidden"
+          onClick={() => setMobileFiltersOpen(true)}
+          aria-label="Filters"
         >
-          <X /> Reset filters
+          <Filter className="size-4" />
+          {activeFilterCount > 0 && (
+            <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-medium">
+              {activeFilterCount}
+            </span>
+          )}
         </Button>
+        <div className="hidden items-end gap-2 sm:flex sm:flex-wrap">
+          <div className="space-y-1">
+            <Label className="text-xs">From</Label>
+            <Input type="date" className="w-40" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">To</Label>
+            <Input type="date" className="w-40" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} />
+          </div>
+          <div className="w-40 space-y-1">
+            <Label className="text-xs">Quick range</Label>
+            <NativeSelect value={preset} onChange={applyPreset} options={['', ...PRESETS]} placeholder="Range…" />
+          </div>
+          <div className="w-44 space-y-1">
+            <Label className="text-xs">Status</Label>
+            <NativeSelect value={status} onChange={(v) => { setStatus(v); setPage(1); }} options={['', 'CONFIRMED', 'CANCELLED']} placeholder="All statuses" />
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-muted-foreground"
+            onClick={clearAll}
+            disabled={!hasFilters}
+            title={hasFilters ? 'Clear all filters' : 'No filters applied'}
+          >
+            <X /> Reset filters
+          </Button>
+        </div>
       </div>
+
+      {/* Phones only: From/To/Quick range/Status live behind the Filter icon above. */}
+      <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
+        <SheetContent side="bottom" className="sm:hidden">
+          <SheetHeader>
+            <div className="flex items-center justify-between">
+              <SheetTitle>Filters</SheetTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground -mr-2 gap-1.5"
+                onClick={clearAll}
+                disabled={!hasFilters}
+              >
+                <X className="size-3.5" /> Reset
+              </Button>
+            </div>
+          </SheetHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1.5">
+                <Label className="text-muted-foreground text-xs font-medium uppercase">From</Label>
+                <Input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-muted-foreground text-xs font-medium uppercase">To</Label>
+                <Input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Quick range</Label>
+              <NativeSelect value={preset} onChange={applyPreset} options={['', ...PRESETS]} placeholder="Range…" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Status</Label>
+              <NativeSelect value={status} onChange={(v) => { setStatus(v); setPage(1); }} options={['', 'CONFIRMED', 'CANCELLED']} placeholder="All statuses" />
+            </div>
+          </div>
+          <SheetFooter>
+            <Button className="w-full" onClick={() => setMobileFiltersOpen(false)}>
+              Show {(data?.total ?? 0).toLocaleString('en-IN')} challans
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
 
       <DataTable
         columns={cols.visibleColumns}
@@ -326,6 +467,7 @@ export function ChallansListPage() {
         dense
         className="text-[16px] [&_thead_th]:text-[14px] [&_td]:py-1.5 [&_th]:py-2 [&_tbody_button]:size-8"
         actions={rowActions}
+        mobileCard={challanMobileCard}
         emptyText="No challans yet — create one from Pending Challan."
       />
 

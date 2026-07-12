@@ -172,9 +172,9 @@ const FOCUSABLE = 'input, select, textarea, button, [role="combobox"]';
 const focusField = (root: HTMLElement | null, key: string) =>
   root?.querySelector<HTMLElement>(`[data-tabfield="${key}"]`)?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
 
-function Kbd({ children }: { children: ReactNode }) {
+function Kbd({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <kbd className="bg-muted text-muted-foreground inline-flex h-5 min-w-5 items-center justify-center rounded border px-1.5 font-mono text-[10px] font-semibold">
+    <kbd className={cn('bg-muted text-muted-foreground inline-flex h-5 min-w-5 items-center justify-center rounded border px-1.5 font-mono text-[10px] font-semibold', className)}>
       {children}
     </kbd>
   );
@@ -1064,7 +1064,7 @@ export function OrderFormPage() {
 
       {/* Card 1 — order header in one row */}
       <Card className="border-l-4 border-l-primary py-0">
-        <CardContent className="grid grid-cols-2 gap-2 px-4 py-3 sm:grid-cols-3 lg:grid-cols-12">
+        <CardContent className="grid grid-cols-2 gap-2 px-3 py-2 sm:grid-cols-3 sm:px-4 sm:py-3 lg:grid-cols-12">
           <div className="col-span-2 space-y-1.5 sm:col-span-1 lg:col-span-4" data-tabfield="customer">
             <Label className="text-base">Customer <span className="text-rose-500">*</span></Label>
             <NativeSelect
@@ -1109,7 +1109,7 @@ export function OrderFormPage() {
 
       {/* Card 2 — item entry (2 rows) + grid */}
       <Card className="border-border border-l-4 border-l-slate-400 bg-slate-50/70 py-0">
-        <CardContent className="space-y-2 px-4 py-3">
+        <CardContent className="space-y-2 px-3 py-2 sm:px-4 sm:py-3">
           {/* Prompt to choose a customer before any item can be entered. */}
           {noCustomer && (
             <div className="animate-in fade-in flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 duration-200">
@@ -1239,8 +1239,9 @@ export function OrderFormPage() {
               {items.some((i) => i.bookingId) ? ` · ${items.filter((i) => i.bookingId).length} from a booking` : ''}
             </span>
             <div className="flex items-center gap-2">
-              {/* How many item rows stay visible before the panel scrolls. */}
-              <label className="text-muted-foreground flex items-center gap-1.5 text-xs">
+              {/* How many item rows stay visible before the panel scrolls — only
+                  meaningful for the desktop table; the phone card list is unbounded. */}
+              <label className="text-muted-foreground hidden items-center gap-1.5 text-xs sm:flex">
                 Show
                 <select
                   value={rowsToShow}
@@ -1271,8 +1272,9 @@ export function OrderFormPage() {
           </div>
 
           {/* Added items — grid auto-fits to the desktop width; height follows the
-              chosen "Show N rows" preference (unbounded when set to All). */}
-          <div className="overflow-auto rounded-lg border" style={{ maxHeight: gridMaxHeight }}>
+              chosen "Show N rows" preference (unbounded when set to All). Desktop/
+              tablet only: phones get the card list below instead. */}
+          <div className="hidden overflow-auto rounded-lg border sm:block" style={{ maxHeight: gridMaxHeight }}>
             {/* Prod ₹ / Dsgn ₹ are saved with the order but hidden from this list. */}
             <table className="w-full text-sm [&_td]:border-r [&_td]:border-border/60 [&_td:last-child]:border-r-0 [&_th]:border-r [&_th]:border-border/40 [&_th:last-child]:border-r-0">
               <thead className="[&_th]:sticky [&_th]:top-0 [&_th]:bg-gradient-to-b [&_th]:from-sky-50 [&_th]:to-indigo-100 [&_th]:px-3 [&_th]:py-2.5 [&_th]:text-left [&_th]:text-[15px] [&_th]:font-semibold [&_th]:text-slate-900">
@@ -1382,13 +1384,83 @@ export function OrderFormPage() {
               )}
             </table>
           </div>
+
+          {/* Phones: one card per line item (mirrors the Challan form's mobile list). */}
+          <div className="sm:hidden">
+            {items.length === 0 ? (
+              <div className="text-muted-foreground flex flex-col items-center gap-1.5 px-3 py-8 text-center text-sm">
+                No items yet — fill the fields above and tap “Add”.
+              </div>
+            ) : (
+              <>
+                <div className="divide-y rounded-lg border">
+                  {items.map((i, idx) => (
+                    <div key={i.key} className="px-2.5 py-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">
+                            <span className="text-muted-foreground mr-1 tabular-nums">{idx + 1}.</span>
+                            {i.itemName || i.product || '—'}
+                          </p>
+                          {(i.special || i.bookingId) && (
+                            <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                              {i.special && (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700" title={`Special rate applied — ${i.special}`}>
+                                  <BadgePercent className="size-3" /> special
+                                </span>
+                              )}
+                              {i.bookingId && (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700" title={`Drawn from booking ${i.bookingCode ?? ''} — rate frozen to the booking date`}>
+                                  <PackageOpen className="size-3" /> {i.bookingCode ?? 'Booking'}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          <p className="text-muted-foreground truncate text-xs">
+                            {i.designName || '—'} · {i.ordType || '—'}
+                            {i.priority === 'URGENT' ? <span className="ml-1 font-semibold text-rose-600">· URGENT</span> : i.priority ? ` · ${i.priority}` : ''}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-0.5">
+                          {docKind === 'order' && <LinePhotoButton photos={i.photos ?? []} onChange={(photos) => setItemPhotos(i.key, photos)} />}
+                          {i.id != null ? (
+                            <span className="text-slate-400 inline-flex size-7 items-center justify-center" title="Existing order line — delete it from the Order Modify page">
+                              <Lock className="size-3.5" />
+                            </span>
+                          ) : (
+                            <Button variant="ghost" size="icon" className="size-7 text-destructive hover:text-destructive" onClick={() => removeItem(i.key)} aria-label="Remove">
+                              <Trash2 className="size-4" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="mt-1.5 flex items-end justify-between gap-2">
+                        <div className="grid grid-cols-4 gap-2 text-xs">
+                          <div><p className="text-muted-foreground">Bags</p><p className="font-medium tabular-nums">{i.bags || '—'}</p></div>
+                          <div><p className="text-muted-foreground">Pcs</p><p className="font-medium tabular-nums">{i.pcs || '—'}</p></div>
+                          <div><p className="text-muted-foreground">Kgs</p><p className="font-medium tabular-nums">{i.gram || '—'}</p></div>
+                          <div><p className="text-muted-foreground">Box</p><p className="font-medium tabular-nums">{i.box || '—'}</p></div>
+                        </div>
+                        <span className="shrink-0 font-semibold tabular-nums text-emerald-700">₹{lineAmount(i).toLocaleString('en-IN')}</span>
+                      </div>
+                      {i.comment && <p className="text-muted-foreground mt-1 truncate text-xs">{i.comment}</p>}
+                    </div>
+                  ))}
+                </div>
+                <div className="bg-muted/60 mt-1 flex items-center justify-between rounded-md border-t-2 px-2.5 py-1.5 text-sm font-semibold">
+                  <span className="text-muted-foreground tracking-wide uppercase">Total · {items.length} item(s)</span>
+                  <span className="text-primary tabular-nums">₹{totals.amount.toLocaleString('en-IN')}</span>
+                </div>
+              </>
+            )}
+          </div>
         </CardContent>
       </Card>
 
       {/* Action bar flows at the end of the form (not pinned) — it appears right
           after the content, so with many line items you reach it at the bottom.
           Wraps so the buttons are never cut off when zoomed in. */}
-      <div className="-mx-1 mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t px-2 py-3">
+      <div className="-mx-1 mt-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 border-t px-2 py-2 sm:mt-2 sm:gap-y-2 sm:py-3">
         <p className="text-sm">
           {items.length} item(s) · total{' '}
           <span className="text-lg font-bold tabular-nums text-emerald-600">₹{total.toLocaleString('en-IN')}</span>
@@ -1422,7 +1494,7 @@ export function OrderFormPage() {
               title="Save as a quotation (Alt+Q)"
             >
               <FileText /> Create Quotation
-              <Kbd>Alt+Q</Kbd>
+              <Kbd className="hidden sm:inline-flex">Alt+Q</Kbd>
             </Button>
           )}
           {/* Edit a quotation → also offer "Save & Convert" straight to an order. */}
@@ -1440,7 +1512,7 @@ export function OrderFormPage() {
           <Button onClick={submit} disabled={saving} title={`${primaryLabel} (Ctrl+S)`}>
             {saving ? <Loader2 className="animate-spin" /> : <Save />}
             {primaryLabel}
-            <Kbd>Ctrl+S</Kbd>
+            <Kbd className="hidden sm:inline-flex">Ctrl+S</Kbd>
           </Button>
         </div>
       </div>
