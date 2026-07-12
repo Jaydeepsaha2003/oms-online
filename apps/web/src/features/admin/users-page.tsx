@@ -131,6 +131,53 @@ export function UsersPage() {
     { id: 'created', label: 'Created', cell: (u) => dt(u.createdAt) },
   ];
 
+  // Phones: one card per user (mirrors the rest of the app's mobile lists).
+  const userMobileCard = (u: UserDto) => (
+    <div className="space-y-2">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className={cn('bg-gradient-to-br flex size-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white shadow-sm', toneFor(u.id))}>
+            {initials(u.name)}
+          </span>
+          <div className="min-w-0">
+            <p className="truncate leading-tight font-medium">{u.name}</p>
+            <p className="text-muted-foreground truncate text-xs">{u.email}</p>
+          </div>
+        </div>
+        <StatusBadge status={u.status} />
+      </div>
+      {u.roles.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {u.roles.map((r) => (
+            <span key={r.id} className="bg-primary/5 text-primary/90 ring-primary/15 inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset">
+              {r.label}
+            </span>
+          ))}
+        </div>
+      )}
+      <p className="text-muted-foreground text-xs">
+        Last login {u.lastLoginAt ? formatDateShort(u.lastLoginAt) : '—'} · Created {formatDateShort(u.createdAt)}
+      </p>
+      <div className="flex items-center justify-end gap-1 border-t pt-2" onClick={(e) => e.stopPropagation()}>
+        {can('user:view') && (
+          <Button variant="ghost" size="icon" className="size-8" onClick={() => setSessionsUser(u)} aria-label="Devices & sessions">
+            <MonitorSmartphone className="size-4" />
+          </Button>
+        )}
+        {can('user:update') && (
+          <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(u)} aria-label="Edit">
+            <Pencil className="size-4" />
+          </Button>
+        )}
+        {can('user:delete') && (
+          <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => handleDelete(u)} aria-label="Delete">
+            <Trash2 className="size-4" />
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+
   const handleDelete = async (u: UserDto) => {
     const ok = await confirm({
       title: 'Delete user?',
@@ -173,11 +220,11 @@ export function UsersPage() {
       </div>
 
       <div className="flex flex-wrap items-end gap-2">
-        <div className="relative w-full max-w-sm">
+        <div className="relative w-full sm:max-w-sm">
           <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
           <Input placeholder="Search name or email…" className="pl-9" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
         </div>
-        <div className="w-40">
+        <div className="w-40 max-w-full">
           <NativeSelect value={status} onChange={(v) => { setStatus(v); setPage(1); }} options={['', ...STATUSES]} placeholder="All statuses" />
         </div>
       </div>
@@ -189,6 +236,7 @@ export function UsersPage() {
         isLoading={isLoading}
         emptyText="No users match your filters."
         onRowClick={(u) => can('user:update') && setEditing(u)}
+        mobileCard={userMobileCard}
         actions={(u) => (
           <div className="flex justify-end gap-1">
             {can('user:view') && (
@@ -279,7 +327,7 @@ function UserDialog({ user, onClose }: { user: UserDto | null; onClose: () => vo
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{isEdit ? `Edit ${user!.name}` : 'New user'}</DialogTitle>
         </DialogHeader>
@@ -290,7 +338,7 @@ function UserDialog({ user, onClose }: { user: UserDto | null; onClose: () => vo
             submit();
           }}
         >
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Email {!isEdit && '*'}</Label>
               <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={isEdit} placeholder="name@company.com" />
@@ -301,7 +349,7 @@ function UserDialog({ user, onClose }: { user: UserDto | null; onClose: () => vo
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {!isEdit && (
               <div className="space-y-1.5">
                 <Label>Password *</Label>

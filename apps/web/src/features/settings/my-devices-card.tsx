@@ -31,7 +31,7 @@ export function MyDevicesCard() {
 
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between gap-2 pb-3">
+      <CardHeader className="flex-col items-start gap-2 pb-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <CardTitle className="flex items-center gap-2 text-base">
             <MonitorSmartphone className="size-4 text-primary" /> My devices
@@ -42,7 +42,7 @@ export function MyDevicesCard() {
           <Button
             variant="outline"
             size="sm"
-            className="text-rose-600 hover:bg-rose-50"
+            className="w-full text-rose-600 hover:bg-rose-50 sm:w-auto"
             disabled={revokeOthers.isPending}
             onClick={() =>
               revokeOthers.mutate(undefined, {

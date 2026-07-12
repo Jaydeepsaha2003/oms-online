@@ -510,12 +510,12 @@ export function ChallanFormPage() {
     // internal-scroll layout fights mobile browser chrome (address bar show/hide,
     // on-screen keyboard) — instead the whole page scrolls naturally, same as
     // every other form in the app (New Order included).
-    <div className="flex w-full flex-col gap-3 sm:h-full sm:min-h-0">
+    <div className="flex w-full flex-col gap-2 sm:h-full sm:min-h-0 sm:gap-3">
       {/* Header — pick / show the customer here; Save / Cancel / Reset sit at the
           bottom of the form (sticky). */}
       {/* Phones: the customer picker wraps to its own full-width row (order-last);
           desktop keeps the single-row title · picker · Missing-Challan layout. */}
-      <div className="bg-background/85 z-20 -mt-1 flex shrink-0 flex-wrap items-center gap-2 rounded-md py-1 backdrop-blur">
+      <div className="bg-background/85 z-20 -mt-1 flex shrink-0 flex-wrap items-center gap-1.5 rounded-md py-1 backdrop-blur sm:gap-2">
         <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(isEdit ? '/challans' : '/challans/pending')} title="Back">
           <ArrowLeft className="size-4" />
         </Button>
@@ -564,8 +564,8 @@ export function ChallanFormPage() {
           only part that scrolls (header / charges / totals stay pinned). */}
       <div className="bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border shadow-sm">
         {/* Header: Bill-to + invoice meta (compact colourful banner) */}
-        <div className="from-primary/[0.08] shrink-0 border-b bg-gradient-to-r via-sky-50/50 to-transparent px-4 py-2.5">
-          <div className="grid grid-cols-2 items-start gap-x-4 gap-y-2.5 sm:gap-x-6 lg:grid-cols-6">
+        <div className="from-primary/[0.08] shrink-0 border-b bg-gradient-to-r via-sky-50/50 to-transparent px-3 py-2 sm:px-4 sm:py-2.5">
+          <div className="grid grid-cols-2 items-start gap-x-3 gap-y-2 sm:gap-x-6 sm:gap-y-2.5 lg:grid-cols-6">
             {/* Bill To — spans two columns; the four meta fields align in the same row.
                 Phones run the same 2-col grid so the meta fields pair up neatly. */}
             <div className="col-span-2 min-w-0 space-y-1">
@@ -630,7 +630,7 @@ export function ChallanFormPage() {
 
           {/* Settlement — B/C Amount (click the pencil to override) + No Bill, right in the header. */}
           {draft && (
-            <div className="border-primary/10 mt-2.5 flex flex-wrap items-end gap-x-5 gap-y-2 border-t pt-2.5 sm:gap-x-8">
+            <div className="border-primary/10 mt-2 flex flex-wrap items-end gap-x-4 gap-y-1.5 border-t pt-2 sm:mt-2.5 sm:gap-x-8 sm:pt-2.5">
               <EditableAmount label="B Amount" computed={totals.b} manual={manualB} onManual={setManualB} />
               <EditableAmount label="C Amount" computed={totals.c} manual={manualC} onManual={setManualC} />
               <label
@@ -649,7 +649,7 @@ export function ChallanFormPage() {
         </div>
 
         {!isEdit && !customer && (
-          <div className="text-muted-foreground border-t p-8 text-center text-sm">Choose a customer to begin.</div>
+          <div className="text-muted-foreground border-t p-6 text-center text-sm sm:p-8">Choose a customer to begin.</div>
         )}
         {isLoading && (
           <div className="text-muted-foreground flex items-center justify-center gap-2 border-t p-6 text-sm"><Loader2 className="size-4 animate-spin" /> Loading…</div>
@@ -659,7 +659,7 @@ export function ChallanFormPage() {
         {draft && (
           <>
             {/* Add-line toolbar */}
-            <div className="bg-muted/30 shrink-0 space-y-2 border-y px-4 py-2.5">
+            <div className="bg-muted/30 shrink-0 space-y-2 border-y px-3 py-2 sm:px-4 sm:py-2.5">
               <div className="flex flex-wrap items-center gap-2">
                 {/* Phones: the picker takes its own row; Add / Manual split the next one. */}
                 <div className="w-full min-w-0 sm:w-auto sm:flex-1">
@@ -786,7 +786,7 @@ export function ChallanFormPage() {
                 <>
                   <div className="divide-y">
                     {rows.map((r, idx) => (
-                      <div key={r.key} className="px-3 py-2.5">
+                      <div key={r.key} className="px-2.5 py-2">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <p className="truncate text-sm font-medium">
@@ -815,7 +815,7 @@ export function ChallanFormPage() {
                       </div>
                     ))}
                   </div>
-                  <div className="bg-muted/60 flex items-center justify-between border-t-2 px-3 py-2 text-sm font-semibold">
+                  <div className="bg-muted/60 flex items-center justify-between border-t-2 px-2.5 py-1.5 text-sm font-semibold">
                     <span className="text-muted-foreground tracking-wide uppercase">Total · {rows.length} item(s)</span>
                     <span className="text-primary tabular-nums">{totals.tAmt.toLocaleString('en-IN')}</span>
                   </div>
@@ -824,7 +824,7 @@ export function ChallanFormPage() {
             </div>
 
             {/* Item totals — always visible (even with 0 items), right after the item list */}
-            <div className="bg-muted/40 flex shrink-0 flex-wrap items-center gap-x-6 gap-y-1 border-t px-4 py-2 text-sm">
+            <div className="bg-muted/40 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-t px-3 py-1.5 text-sm sm:gap-x-6 sm:px-4 sm:py-2">
               <span className="font-semibold">
                 {rows.length} item{rows.length === 1 ? '' : 's'}
               </span>
@@ -843,7 +843,7 @@ export function ChallanFormPage() {
             </div>
 
             {/* Footer: charges + totals */}
-            <div className="grid shrink-0 gap-4 border-t p-4 lg:grid-cols-[1fr_320px]">
+            <div className="grid shrink-0 gap-3 border-t p-3 sm:gap-4 sm:p-4 lg:grid-cols-[1fr_320px]">
               <div className="space-y-2.5">
                 <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-6">
                   <div className="space-y-1 xl:col-span-1"><Label className="text-base">Transporter</Label><Input value={(isEdit ? savedChallan?.transName : draft.transName) || '—'} readOnly className="bg-muted/40 h-9 text-base" /></div>
@@ -875,7 +875,7 @@ export function ChallanFormPage() {
                   <Row2 label={`GST${totals.gstRatePct ? ` @ ${totals.gstRatePct}%` : ''}`} value={inr(totals.tax)} />
                   {(draft.isScrap || totals.tcs > 0) && <Row2 label="TCS @ 1%" value={inr(totals.tcs)} />}
                 </div>
-                <div className="bg-gradient-brand flex items-center justify-between px-3 py-2.5 text-lg font-bold text-white">
+                <div className="bg-gradient-brand flex items-center justify-between px-3 py-2 text-lg font-bold text-white sm:py-2.5">
                   <span>TOTAL</span>
                   <span className="tabular-nums">{inr(totals.total)}</span>
                 </div>
@@ -895,7 +895,7 @@ export function ChallanFormPage() {
       </div>
 
       {/* Bottom action bar — always at the foot of the form; Cancel / Reset / Save. */}
-      <div className="bg-background/95 z-30 -mx-1 mt-1 flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t px-2 py-3 backdrop-blur">
+      <div className="bg-background/95 z-30 -mx-1 mt-0.5 flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1.5 border-t px-2 py-2 backdrop-blur sm:mt-1 sm:gap-y-2 sm:py-3">
         <p className="text-sm">
           {rows.length} item(s)
           {draft && (

@@ -91,7 +91,7 @@ export function UserSessionsDialog({ user, onClose }: { user: UserDto; onClose: 
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Globe className="size-5 text-primary" /> Devices &amp; sessions · {user.name}
@@ -116,13 +116,13 @@ export function UserSessionsDialog({ user, onClose }: { user: UserDto; onClose: 
           <p className="text-muted-foreground text-xs">
             {sessions.length} active {sessions.length === 1 ? 'device' : 'devices'} · signs out on the device's next action.
           </p>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {sessions.length > 0 && (
-              <Button variant="outline" className="text-rose-600 hover:bg-rose-50" disabled={revokeAll.isPending} onClick={handleRevokeAll}>
+              <Button variant="outline" className="flex-1 text-rose-600 hover:bg-rose-50 sm:flex-none" disabled={revokeAll.isPending} onClick={handleRevokeAll}>
                 {revokeAll.isPending ? <Loader2 className="animate-spin" /> : <ShieldOff />} Log out everywhere
               </Button>
             )}
-            <Button variant="ghost" onClick={onClose}>Close</Button>
+            <Button variant="ghost" className="flex-1 sm:flex-none" onClick={onClose}>Close</Button>
           </div>
         </DialogFooter>
       </DialogContent>
