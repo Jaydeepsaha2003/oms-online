@@ -21,16 +21,18 @@
     <div id="root"></div>
 
     <script>
-      // Recovery: if React never mounted anything into #root after a generous
-      // wait AND a service worker is actively controlling this page, the most
-      // likely cause is a stuck OLD service worker serving a stale cached page
-      // from a previous deploy (its cached HTML can point at JS paths that no
-      // longer exist). Unregister it, clear its caches, and reload once —
-      // guarded by sessionStorage so a genuinely broken deploy doesn't
-      // reload-loop forever. Only runs when a controller is actually present,
-      // so a plain slow load (e.g. a weak mobile connection on a first visit,
-      // with no service worker involved yet) is never mistaken for this and
-      // reloaded mid-fetch.
+      // Recovery: if React never mounted anything into #root long after load
+      // AND a service worker is actively controlling this page, the most
+      // likely cause is a stuck OLD service worker serving a broken cached
+      // shell. Unregister it and reload once (guarded by sessionStorage so a
+      // genuinely broken deploy doesn't reload-loop forever). The caches are
+      // deliberately left alone: assets are content-hashed so stale entries
+      // are harmless, and deleting them here used to wipe every prefetched
+      // chunk whenever a slow VPN link made a legitimate load take longer
+      // than the timer — turning one slow start into a catastrophically
+      // slower fully-uncached second load. 30s is a pure backstop: the shell
+      // is served from cache instantly now, so a healthy app mounts long
+      // before this fires even on a dead-slow connection.
       window.setTimeout(function () {
         var root = document.getElementById('root');
         if (root && root.childElementCount > 0) return;
@@ -39,15 +41,10 @@
         sessionStorage.setItem('oms-sw-recovery-done', '1');
         navigator.serviceWorker.getRegistrations().then(function (regs) {
           return Promise.all(regs.map(function (r) { return r.unregister(); }));
-        }).then(function () {
-          if (!('caches' in window)) return;
-          return caches.keys().then(function (names) {
-            return Promise.all(names.map(function (n) { return caches.delete(n); }));
-          });
         }).finally(function () {
           location.reload();
         });
-      }, 12000);
+      }, 30000);
     </script>
 
     <script type="module" src="/src/main.tsx"></script>

@@ -1,10 +1,12 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { Route, Routes } from 'react-router-dom';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { ProtectedRoute } from '@/components/auth/protected-route';
 import { RequirePermission } from '@/components/auth/require-permission';
 import { AppShell } from '@/components/layout/app-shell';
 import { FullScreenLoader } from '@/components/common/full-screen-loader';
+import { useAuthStore } from '@/stores/auth-store';
+import { queryClient } from '@/lib/query';
 
 // Every screen loads on demand instead of all being bundled into one giant
 // upfront chunk — first paint only pulls in the page you're actually on
@@ -53,8 +55,48 @@ const RolesPage = lazy(() => import('@/features/admin/roles-page').then((m) => (
 const ForbiddenPage = lazy(() => import('@/features/errors/forbidden-page').then((m) => ({ default: m.ForbiddenPage })));
 const NotFoundPage = lazy(() => import('@/features/errors/not-found-page').then((m) => ({ default: m.NotFoundPage })));
 
+// Warm every page chunk in the background shortly after the app opens. The
+// glob resolves to the SAME modules (and therefore the same content-hashed
+// chunks) as the lazy() imports above, and the service worker caches /assets/
+// forever - so once this finishes, the FIRST click on any screen serves its
+// code from cache instead of downloading it, which used to take seconds per
+// screen on slow links (phone over the router's OpenVPN). Chunks load one at
+// a time with a gap so the prefetch never hogs bandwidth the user's current
+// screen is using.
+const pageChunks = import.meta.glob('../features/**/*-page.tsx');
+let prefetchStarted = false;
+function prefetchAllPages() {
+  if (prefetchStarted) return;
+  prefetchStarted = true;
+  const loaders = Object.values(pageChunks);
+  const loadNext = (i: number) => {
+    if (i >= loaders.length) return;
+    // Yield to live traffic: while any query is fetching (the user just opened
+    // a screen and is waiting on its data), hold the prefetch instead of
+    // competing for a slow link's bandwidth. Re-check every second.
+    if (queryClient.isFetching() > 0) {
+      setTimeout(() => loadNext(i), 1000);
+      return;
+    }
+    void loaders[i]()
+      .catch(() => { /* offline or flaky link - that page just lazy-loads on demand */ })
+      .then(() => setTimeout(() => loadNext(i + 1), 300));
+  };
+  loadNext(0);
+}
+
 /** Explicit route table. We add a route per screen as it's built. */
 export function AppRoutes() {
+  // Warm the page chunks only after the session bootstrap has finished, so the
+  // prefetch never competes with the login-critical /auth call (or the first
+  // screen's data) for a slow link's bandwidth.
+  const isBootstrapping = useAuthStore((s) => s.isBootstrapping);
+  useEffect(() => {
+    if (isBootstrapping) return;
+    const t = setTimeout(prefetchAllPages, 6000);
+    return () => clearTimeout(t);
+  }, [isBootstrapping]);
+
   return (
     <Suspense fallback={<FullScreenLoader />}>
     <Routes>

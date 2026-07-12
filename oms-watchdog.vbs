@@ -31,16 +31,20 @@ For Each p In procs
 Next
 If count > 1 Then WScript.Quit
 
-' Is this port LISTENING?
+' Is this port LISTENING? Runs netstat via sh.Run with window style 0 (fully
+' hidden) and reads the result from a temp file. WshShell.Exec is NOT used
+' because Exec has no hidden-window option - it flashed a visible console
+' window on the user's screen at every check.
 Function PortUp(port)
-  Dim exec, output
-  Set exec = sh.Exec("cmd /c netstat -aon | findstr "":" & port & " "" | findstr LISTENING")
-  Do While exec.Status = 0
-    WScript.Sleep 50
-  Loop
+  Dim tmp, f, output
+  tmp = sh.ExpandEnvironmentStrings("%TEMP%") & "\oms-portcheck-" & port & ".txt"
+  sh.Run "cmd /c netstat -aon | findstr "":" & port & " "" | findstr LISTENING > """ & tmp & """", 0, True
   output = ""
   On Error Resume Next
-  output = exec.StdOut.ReadAll
+  Set f = fso.OpenTextFile(tmp, 1)
+  If Not f.AtEndOfStream Then output = f.ReadAll
+  f.Close
+  fso.DeleteFile tmp
   On Error Goto 0
   PortUp = Len(Trim(output)) > 0
 End Function

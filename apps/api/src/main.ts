@@ -6,6 +6,7 @@ import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
@@ -37,6 +38,20 @@ async function bootstrap(): Promise<void> {
   // (single-origin, offline-friendly). The strict default CSP would block the
   // SPA's own assets; everything is local so this is safe here.
   app.use(helmet({ contentSecurityPolicy: false }));
+  // Gzip every compressible response (JSON lists, served web assets). Big
+  // payloads shrink ~4-10x, which is what makes the app usable over slow
+  // links (phone via the router's OpenVPN) instead of taking seconds per screen.
+  app.use(compression());
+  // Let browsers STORE GET responses but always revalidate them. Express already
+  // sends ETags, so an unchanged payload revalidates as a 0-byte 304 — over a
+  // slow link (phone on OpenVPN) that turns repeat fetches of big lookup lists
+  // from full downloads into a single round-trip. `private` keeps any shared
+  // proxy from caching per-user data. Static handlers below set their own
+  // Cache-Control, overriding this for files.
+  app.use((req: { method: string }, res: { setHeader: (k: string, v: string) => void }, next: () => void) => {
+    if (req.method === 'GET') res.setHeader('Cache-Control', 'private, no-cache');
+    next();
+  });
   app.use(cookieParser());
   app.enableCors({ origin: corsOrigin, credentials: true });
   app.enableShutdownHooks();
@@ -103,6 +118,12 @@ async function bootstrap(): Promise<void> {
 
   // Listen on all interfaces so the API is reachable on this machine's LAN IP.
   await app.listen(port, '0.0.0.0');
+  // Keep idle connections open well past Node's 5s default. Over the router's
+  // OpenVPN a new TCP+TLS setup costs whole seconds, so letting the proxy (and
+  // direct clients) reuse connections between a user's clicks matters.
+  const httpServer = app.getHttpServer() as { keepAliveTimeout: number; headersTimeout: number };
+  httpServer.keepAliveTimeout = 65_000;
+  httpServer.headersTimeout = 66_000;
   const webNote = existsSync(webIndex) ? ` · Web app at http://localhost:${port}/` : '';
   Logger.log(`API ready on http://localhost:${port}/${apiPrefix} (and this machine's LAN IP)${webNote}`, 'Bootstrap');
   Logger.log(`Swagger docs at http://localhost:${port}/${apiPrefix}/docs`, 'Bootstrap');

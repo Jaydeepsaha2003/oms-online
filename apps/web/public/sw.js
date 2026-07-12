@@ -27,6 +27,32 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
   if (NEVER_CACHE.some((re) => re.test(url.pathname))) return;
 
+  // App navigations (the SPA shell): serve the cached shell INSTANTLY and
+  // refresh it in the background (stale-while-revalidate). Network-first here
+  // blocked first paint on a full network round-trip even though the shell was
+  // already cached — the long black screen on every cold app open over a slow
+  // link (phone on the router's OpenVPN). A deploy is picked up one open later,
+  // which is fine because /assets/ are content-hashed and stay cached, so the
+  // one-open-stale shell still runs its matching chunks. Navigations to real
+  // files (e.g. /oms-rootCA.crt) keep the default handling below.
+  if (req.mode === 'navigate' && !/\.[a-z0-9]+$/i.test(url.pathname)) {
+    event.respondWith(
+      caches.match('/').then((hit) => {
+        const refresh = fetch('/').then((res) => {
+          if (res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE).then((c) => c.put('/', copy)).catch(() => {});
+          }
+          return res;
+        });
+        if (!hit) return refresh; // first-ever open: nothing cached yet
+        event.waitUntil(refresh.catch(() => {})); // offline: cached shell already served
+        return hit;
+      }),
+    );
+    return;
+  }
+
   if (IMMUTABLE.some((re) => re.test(url.pathname))) {
     event.respondWith(
       caches.match(req).then((hit) => {

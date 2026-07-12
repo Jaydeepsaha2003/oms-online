@@ -22,10 +22,12 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Single-flight refresh: concurrent 401s share one refresh call.
+// Single-flight refresh: concurrent 401s share one refresh call. Exported so
+// the session bootstrap reuses it instead of racing a second refresh (refresh
+// tokens may be single-use, so two parallel calls could kill a valid session).
 let refreshing: Promise<string | null> | null = null;
 
-async function refreshAccessToken(): Promise<string | null> {
+export async function refreshAccessToken(): Promise<string | null> {
   if (!refreshing) {
     refreshing = axios
       .post<{ success?: boolean; data?: AuthResult } | AuthResult>(
@@ -42,8 +44,12 @@ async function refreshAccessToken(): Promise<string | null> {
         }
         return null;
       })
-      .catch(() => {
-        useAuthStore.getState().clear();
+      .catch((err) => {
+        // Log out only when the server actually rejected the refresh token.
+        // A network error/timeout (slow VPN, brief outage) keeps the session;
+        // the request that triggered this simply fails and can be retried.
+        const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+        if (status === 401 || status === 403) useAuthStore.getState().clear();
         return null;
       })
       .finally(() => {

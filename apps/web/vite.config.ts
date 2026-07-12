@@ -1,8 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { Agent } from 'node:http';
 import { homedir, networkInterfaces } from 'node:os';
 import path from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import compression from 'compression';
 import { defineConfig, type Plugin } from 'vite';
 import mkcert from 'vite-plugin-mkcert';
 
@@ -85,20 +87,73 @@ const serveRootCa: Plugin = {
   },
 };
 
+// Gzip the preview server's responses (the built JS/CSS chunks are 50-570 KB
+// each uncompressed). Registered in configurePreviewServer so it wraps the
+// static file serving; /api responses proxied from Nest arrive already
+// compressed (Content-Encoding set), which this middleware detects and skips.
+// This is what makes first-time page loads fast over slow links (OpenVPN).
+const gzipPreview: Plugin = {
+  name: 'oms-gzip-preview',
+  configurePreviewServer(server) {
+    server.middlewares.use(compression() as never);
+  },
+};
+
+// Keep idle client connections open well past Node's 5s default. The phone
+// talks to THIS server over the router's OpenVPN, where every new TCP+TLS
+// setup costs whole seconds — letting the connection survive the gaps between
+// a user's clicks avoids paying that handshake on every screen.
+const tuneKeepAlive = (s: { keepAliveTimeout: number; headersTimeout: number } | null) => {
+  if (!s) return;
+  s.keepAliveTimeout = 65_000;
+  s.headersTimeout = 66_000;
+};
+const keepAlive: Plugin = {
+  name: 'oms-keep-alive',
+  configureServer(server) {
+    tuneKeepAlive(server.httpServer as never);
+  },
+  configurePreviewServer(server) {
+    tuneKeepAlive(server.httpServer as never);
+  },
+};
+
 // All /api calls are proxied to the Nest server so the browser only ever talks
 // to this origin — this keeps HTTPS pages working (no mixed content / no TLS
 // mismatch with the plain-HTTP API) both on localhost and from LAN devices.
+// Reuse upstream sockets to the Nest API instead of opening one per request.
+const apiAgent = new Agent({ keepAlive: true, maxSockets: 64 });
+
 const apiProxy = {
   '/api': {
-    target: 'http://localhost:4000',
+    target: 'http://127.0.0.1:4000',
     changeOrigin: true,
+    agent: apiAgent,
+    configure: (proxy: any) => {
+      proxy.on('error', (err: any) => {
+        console.warn('[vite proxy error /api]:', err.message);
+      });
+      // http-proxy stamps its hop-by-hop `connection: close` onto the response;
+      // browsers honor that and drop their connection to THIS server after
+      // every /api call — which over the router's OpenVPN means a fresh
+      // TCP+TLS handshake per request. Rewrite it so clients keep the
+      // connection open (the server-side keep-alive timeout is 65s).
+      proxy.on('proxyRes', (proxyRes: any) => {
+        proxyRes.headers.connection = 'keep-alive';
+      });
+    },
   },
   // Test-notification WebSocket (Socket.IO's default path) — same single-origin
   // reasoning as /api above, extended with `ws: true` for the upgrade.
   '/socket.io': {
-    target: 'http://localhost:4000',
+    target: 'http://127.0.0.1:4000',
     changeOrigin: true,
     ws: true,
+    configure: (proxy: any) => {
+      proxy.on('error', (err: any) => {
+        console.warn('[vite proxy error /socket.io]:', err.message);
+      });
+    },
   },
 };
 
@@ -120,6 +175,8 @@ export default defineConfig({
     // Hosts list is auto-detected from all active network interfaces (LAN, VPN, etc.)
     ...(runningAsSystem ? [] : [mkcert({ hosts: getAllLocalIPs() })]),
     serveRootCa,
+    gzipPreview,
+    keepAlive,
   ],
   resolve: {
     alias: {

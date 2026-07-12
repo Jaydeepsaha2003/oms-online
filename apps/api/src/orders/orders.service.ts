@@ -2,7 +2,7 @@ import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { type OrderDto, type OrderFilterOptions, type OrderItemPhotoDto, type OrderLookups, type OrderTimeline, type OrderTimelineChallanRef, type Paginated } from '@oms/shared';
+import { type OrderDto, type OrderFilterOptions, type OrderItemPhotoDto, type OrderLookupsWire, type OrderTimeline, type OrderTimelineChallanRef, type Paginated } from '@oms/shared';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import { PrismaService } from '../prisma/prisma.service';
 import { PdfService } from '../pdf/pdf.service';
@@ -301,7 +301,7 @@ export class OrdersService {
     return { products: sorted(products), designs: sorted(designs) };
   }
 
-  async lookups(): Promise<OrderLookups> {
+  async lookups(): Promise<OrderLookupsWire> {
     const [customers, prodCats, subCats, products, designs, allProducts, designNames] = await Promise.all([
       this.prisma.customer.findMany({
         where: { partyName: { not: null }, active: true },
@@ -347,32 +347,18 @@ export class OrdersService {
     }
     const nameOf = (designType: string) => nameByCode.get(designType.toUpperCase()) ?? designType;
 
-    // Build the legacy-style item list: each product on its own, plus the product
-    // paired with every design type available in its category + sub-category.
-    const key = (c: string, s: string) => `${c.toUpperCase()}|${s.toUpperCase()}`;
-    const designsByKey = new Map<string, { designType: string; rate: number | null }[]>();
-    for (const d of designs) {
-      const k = key(d.category, d.subCategory);
-      const bucket = designsByKey.get(k) ?? [];
-      bucket.push({ designType: d.designType, rate: d.rate });
-      if (!designsByKey.has(k)) designsByKey.set(k, bucket);
-    }
-    const items: OrderLookups['items'] = [];
-    for (const p of allProducts) {
-      const base = { product: p.product, category: p.category, subCategory: p.subCategory, size: p.size, pcs: p.pcs, weight: p.weight, productRate: p.rate };
-      items.push({ ...base, designType: null, designName: null, designRate: null });
-      for (const d of designsByKey.get(key(p.category, p.subCategory)) ?? []) {
-        items.push({ ...base, designType: d.designType, designName: nameOf(d.designType), designRate: d.rate });
-      }
-    }
-
+    // The legacy-style item list (each product on its own, plus the product
+    // paired with every design type in its category + sub-category) is NOT
+    // composed here anymore: multiplied out it was ~6,600 rows / 94% of a
+    // 1.3 MB payload. The client rebuilds it from the raw rows below
+    // (composeOrderLookups in apps/web/src/features/orders/use-orders.ts).
     return {
       customers: custList,
       categories: prodCats.map((c) => c.category).filter(Boolean),
       subCategories: subCats.map((c) => c.subCategory).filter(Boolean),
       products: products.map((p) => ({ product: p.product, category: p.category, subCategory: p.subCategory, rate: p.rate })),
       designs: designs.map((d) => ({ category: d.category, subCategory: d.subCategory, designType: d.designType, designName: nameOf(d.designType), rate: d.rate })),
-      items,
+      productRows: allProducts.map((p) => ({ product: p.product, category: p.category, subCategory: p.subCategory, size: p.size, pcs: p.pcs, weight: p.weight, rate: p.rate })),
       designNames: designNames.map((dn) => ({ designType: dn.designType, designName: dn.designName })),
       categoryFields: await readCategoryFields(this.prisma),
     };

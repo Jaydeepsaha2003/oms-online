@@ -24,16 +24,20 @@ If fso.FileExists(dir & "\.oms-stopped") Then
 End If
 
 ' Is this port LISTENING? Uses netstat since Get-NetTCPConnection
-' is not available from a SYSTEM cmd/wscript context.
+' is not available from a SYSTEM cmd/wscript context. Runs it via sh.Run with
+' window style 0 (fully hidden) + a temp file instead of WshShell.Exec -
+' Exec has no hidden-window option and flashes a console window when this
+' script ever runs in a logged-in user's session.
 Function PortUp(port)
-  Dim exec, output
-  Set exec = sh.Exec("cmd /c netstat -aon | findstr "":" & port & " "" | findstr LISTENING")
-  Do While exec.Status = 0
-    WScript.Sleep 50
-  Loop
+  Dim tmp, f, output
+  tmp = sh.ExpandEnvironmentStrings("%TEMP%") & "\oms-portcheck-" & port & ".txt"
+  sh.Run "cmd /c netstat -aon | findstr "":" & port & " "" | findstr LISTENING > """ & tmp & """", 0, True
   output = ""
   On Error Resume Next
-  output = exec.StdOut.ReadAll
+  Set f = fso.OpenTextFile(tmp, 1)
+  If Not f.AtEndOfStream Then output = f.ReadAll
+  f.Close
+  fso.DeleteFile tmp
   On Error Goto 0
   PortUp = Len(Trim(output)) > 0
 End Function

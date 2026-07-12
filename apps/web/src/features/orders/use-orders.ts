@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { OrderDto, OrderFilterOptions, OrderInput, OrderItemPhotoDto, OrderList, OrderLookups, OrderQuery, OrderTimeline, UploadedFileDto } from '@oms/shared';
+import type { OrderDto, OrderFilterOptions, OrderInput, OrderItemOption, OrderItemPhotoDto, OrderList, OrderLookups, OrderLookupsWire, OrderQuery, OrderTimeline, UploadedFileDto } from '@oms/shared';
 import { http } from '@/lib/api';
 
 const KEY = ['orders'] as const;
@@ -39,10 +39,37 @@ export function useOrderTimeline(id?: number) {
   });
 }
 
+/** Rebuild the legacy-style composite item list (each product on its own, plus
+ *  the product × every design type in its category + sub-category) from the
+ *  compact wire payload. Composing on the client keeps ~1.2 MB of multiplied
+ *  rows off the network AND out of the persisted query cache — react-query
+ *  caches the raw wire shape and memoizes this transform per fetch. */
+function composeOrderLookups(wire: OrderLookupsWire): OrderLookups {
+  const key = (c: string, s: string) => `${c.toUpperCase()}|${s.toUpperCase()}`;
+  const designsByKey = new Map<string, { designType: string; designName: string; rate: number | null }[]>();
+  for (const d of wire.designs) {
+    const k = key(d.category, d.subCategory);
+    const bucket = designsByKey.get(k) ?? [];
+    bucket.push({ designType: d.designType, designName: d.designName, rate: d.rate });
+    if (!designsByKey.has(k)) designsByKey.set(k, bucket);
+  }
+  const items: OrderItemOption[] = [];
+  for (const p of wire.productRows) {
+    const base = { product: p.product, category: p.category, subCategory: p.subCategory, size: p.size, pcs: p.pcs, weight: p.weight, productRate: p.rate };
+    items.push({ ...base, designType: null, designName: null, designRate: null });
+    for (const d of designsByKey.get(key(p.category, p.subCategory)) ?? []) {
+      items.push({ ...base, designType: d.designType, designName: d.designName, designRate: d.rate });
+    }
+  }
+  const { productRows: _rows, ...rest } = wire;
+  return { ...rest, items };
+}
+
 export function useOrderLookups() {
   return useQuery({
     queryKey: [...KEY, 'lookups'],
-    queryFn: () => http.get<OrderLookups>('/orders/lookups'),
+    queryFn: () => http.get<OrderLookupsWire>('/orders/lookups'),
+    select: composeOrderLookups,
     staleTime: 60_000,
   });
 }

@@ -218,6 +218,25 @@ export interface OrderLookups {
   categoryFields: CategoryFieldDto[];
 }
 
+/** One raw active product row (incl. size variants) — the ingredient the
+ *  client uses to compose `OrderLookups.items` locally. */
+export interface OrderProductRow {
+  product: string;
+  category: string;
+  subCategory: string;
+  size: number | null;
+  pcs: number | null;
+  weight: number | null;
+  rate: number | null;
+}
+
+/** Wire shape of GET /orders/lookups. The composed `items` list (product ×
+ *  design pairings) was ~6,600 rows and 94% of a 1.3 MB payload, so it is NOT
+ *  sent — the client rebuilds it from productRows + designs + designNames. */
+export interface OrderLookupsWire extends Omit<OrderLookups, 'items'> {
+  productRows: OrderProductRow[];
+}
+
 /** The pricing/calculation unit for an order line. */
 export type CalcField = 'KGS' | 'PCS';
 
