@@ -12,6 +12,9 @@ export interface QuotationDto {
   poNumber: string | null;
   customerId: number | null;
   customerName: string;
+  /** Customer's city/state/region, joined for display on the printable bill.
+   *  Only populated on the single-quotation fetch, not list views. */
+  billingAddress?: string | null;
   agentName: string | null;
   category: string | null;
   /** Quotation date — named `orderDate` so the shared order form maps 1:1. */

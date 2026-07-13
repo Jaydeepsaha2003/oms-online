@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { CompanyProfileDto, CompanyProfileInput, OrderOptionDto, OrderOptionInput } from '@oms/shared';
+import type { CompanyProfileDto, CompanyProfileInput, OrderOptionDto, OrderOptionInput, OrderTermsDto, OrderTermsInput } from '@oms/shared';
 import { http } from '@/lib/api';
 
 const KEY = ['settings'] as const;
 const COMPANY_KEY = ['company'] as const;
+const ORDER_TERMS_KEY = ['order-terms'] as const;
 
 export function useCompany() {
   return useQuery({
@@ -18,6 +19,23 @@ export function useUpdateCompany() {
   return useMutation({
     mutationFn: (input: CompanyProfileInput) => http.put<CompanyProfileDto>('/settings/company', input),
     onSuccess: () => qc.invalidateQueries({ queryKey: COMPANY_KEY }),
+  });
+}
+
+/** Sales Order / Quotation bill's "Terms & Conditions" list. */
+export function useOrderTerms() {
+  return useQuery({
+    queryKey: ORDER_TERMS_KEY,
+    queryFn: () => http.get<OrderTermsDto>('/settings/order-terms'),
+    staleTime: 60_000,
+  });
+}
+
+export function useUpdateOrderTerms() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: OrderTermsInput) => http.put<OrderTermsDto>('/settings/order-terms', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ORDER_TERMS_KEY }),
   });
 }
 

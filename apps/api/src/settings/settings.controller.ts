@@ -6,6 +6,7 @@ import { Permissions } from '../common/decorators/permissions.decorator';
 import { SettingsService } from './settings.service';
 import { CreateOrderOptionDto } from './dto/order-option.dto';
 import { UpdateCompanyDto } from './dto/company.dto';
+import { UpdateOrderTermsDto } from './dto/order-terms.dto';
 
 const R = RESOURCES.SETTING;
 
@@ -32,6 +33,20 @@ export class SettingsController {
   @Audit({ action: ACTIONS.UPDATE, resource: R })
   updateCompany(@Body() dto: UpdateCompanyDto) {
     return this.settings.updateCompany(dto);
+  }
+
+  // Order terms — readable by any authenticated user (printed on the Sales
+  // Order / Quotation bill), editable only with setting:update.
+  @Get('order-terms')
+  getOrderTerms() {
+    return this.settings.getOrderTerms();
+  }
+
+  @Put('order-terms')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  updateOrderTerms(@Body() dto: UpdateOrderTermsDto) {
+    return this.settings.updateOrderTerms(dto);
   }
 
   @Post()

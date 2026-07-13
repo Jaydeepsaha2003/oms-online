@@ -22,6 +22,15 @@ export interface CompanyProfileInput {
   logo?: string | null;
 }
 
+/** Sales Order / Quotation bill's "Terms & Conditions" list — editable in Settings. */
+export interface OrderTermsDto {
+  terms: string[];
+}
+
+export interface OrderTermsInput {
+  terms: string[];
+}
+
 export interface OrderOptionInput {
   group: string;
   value: string;
