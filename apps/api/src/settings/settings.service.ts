@@ -1,15 +1,24 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { type CompanyProfileDto, type OrderOptionDto } from '@oms/shared';
+import { type CompanyProfileDto, type OrderOptionDto, type OrderTermsDto } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { uc } from '../common/coerce';
 import { CreateOrderOptionDto } from './dto/order-option.dto';
 import { UpdateCompanyDto } from './dto/company.dto';
+import { UpdateOrderTermsDto } from './dto/order-terms.dto';
 
 type Row = Prisma.OrderOptionGetPayload<object>;
 
 const COMPANY_NAME = 'COMPANY_NAME';
 const COMPANY_LOGO = 'COMPANY_LOGO';
+const ORDER_TERMS = 'ORDER_TERMS';
+// Shown until the business saves their own list from Settings.
+const DEFAULT_ORDER_TERMS = [
+  'Payment Should Be Made Within 30 Days',
+  'If Payment Defaulted 18% Interest Will Be Applicable',
+  'Order Cannot Be Cancelled Once Placed/Confirmed',
+  'Any Type Of Defect/Design Issue Should Be Reported Within 15 days After Goods Recived.',
+];
 
 @Injectable()
 export class SettingsService {
@@ -71,5 +80,30 @@ export class SettingsService {
     await setKey(COMPANY_NAME, dto.name);
     await setKey(COMPANY_LOGO, dto.logo);
     return this.getCompany();
+  }
+
+  /* ── Sales Order / Quotation "Terms & Conditions" ────────────────────────── */
+
+  async getOrderTerms(): Promise<OrderTermsDto> {
+    const row = await this.prisma.appConfig.findUnique({ where: { key: ORDER_TERMS } });
+    if (row?.value) {
+      try {
+        const parsed = JSON.parse(row.value);
+        if (Array.isArray(parsed) && parsed.length) {
+          return { terms: parsed.map((t) => String(t)) };
+        }
+      } catch {
+        /* fall through to default */
+      }
+    }
+    return { terms: DEFAULT_ORDER_TERMS };
+  }
+
+  async updateOrderTerms(dto: UpdateOrderTermsDto): Promise<OrderTermsDto> {
+    const terms = dto.terms.map((t) => t.trim()).filter(Boolean);
+    if (!terms.length) throw new BadRequestException('Add at least one term.');
+    const value = JSON.stringify(terms);
+    await this.prisma.appConfig.upsert({ where: { key: ORDER_TERMS }, update: { value }, create: { key: ORDER_TERMS, value } });
+    return { terms };
   }
 }

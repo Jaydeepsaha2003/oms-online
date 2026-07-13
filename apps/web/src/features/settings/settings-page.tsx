@@ -16,7 +16,7 @@ import { AccessImportCard } from './access-import-card'; // MS Access connector 
 import { CrmReminderCard } from '@/features/crm/crm-settings-card';
 import { MyDevicesCard } from './my-devices-card';
 import { TestNotificationCard } from './test-notification-card';
-import { useCompany, useCreateOrderOption, useDeleteOrderOption, useSettings, useUpdateCompany } from './use-settings';
+import { useCompany, useCreateOrderOption, useDeleteOrderOption, useOrderTerms, useSettings, useUpdateCompany, useUpdateOrderTerms } from './use-settings';
 
 export function SettingsPage() {
   const { data: all, isLoading } = useSettings();
@@ -40,6 +40,8 @@ export function SettingsPage() {
       <TestNotificationCard />
 
       <CompanyCard canEdit={canEdit} />
+
+      <OrderTermsCard canEdit={canEdit} />
 
       {canEdit && <AccessImportCard />}
 
@@ -210,6 +212,78 @@ function ChallanPrefixCard({ canEdit }: { canEdit: boolean }) {
   );
 }
 
+/** The Sales Order / Quotation bill's "Terms & Conditions" list — each line is
+ *  shown with a small square bullet, above the Authorised Signatory. */
+function OrderTermsCard({ canEdit }: { canEdit: boolean }) {
+  const { data } = useOrderTerms();
+  const save = useUpdateOrderTerms();
+  const [terms, setTerms] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (data) setTerms(data.terms);
+  }, [data]);
+
+  const setTerm = (i: number, value: string) => setTerms((t) => t.map((x, idx) => (idx === i ? value : x)));
+  const remove = (i: number) => setTerms((t) => t.filter((_, idx) => idx !== i));
+  const add = () => setTerms((t) => [...t, '']);
+
+  const onSave = () => {
+    const cleaned = terms.map((t) => t.trim()).filter(Boolean);
+    if (!cleaned.length) return toast.error('Add at least one term.');
+    save.mutate(
+      { terms: cleaned },
+      { onSuccess: () => { setTerms(cleaned); toast.success('Terms & Conditions saved'); }, onError: (e) => toast.error(getApiErrorMessage(e, 'Save failed')) },
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Sales Order Terms &amp; Conditions</CardTitle>
+        <p className="text-muted-foreground text-xs">Shown on the printed Sales Order bill, above the Authorised Signatory line.</p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="space-y-2">
+          {terms.length === 0 && <span className="text-muted-foreground text-sm">No terms yet.</span>}
+          {terms.map((t, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <span className="bg-foreground/70 size-2 shrink-0 rounded-[2px]" />
+              <Input
+                value={t}
+                onChange={(e) => setTerm(i, e.target.value)}
+                placeholder="e.g. Payment Should Be Made Within 30 Days"
+                disabled={!canEdit}
+                maxLength={300}
+              />
+              {canEdit && (
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive flex size-8 shrink-0 items-center justify-center rounded-full transition-colors"
+                  onClick={() => remove(i)}
+                  aria-label={`Remove term ${i + 1}`}
+                >
+                  <Trash2 className="size-4" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {canEdit && (
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" onClick={add}>
+              <Plus /> Add term
+            </Button>
+            <Button onClick={onSave} disabled={save.isPending}>
+              {save.isPending ? <Loader2 className="animate-spin" /> : null} Save terms
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 /** Read a file as a data URL. */
 const fileToDataUrl = (file: File) =>
   new Promise<string>((resolve, reject) => {
@@ -237,7 +311,8 @@ const downscale = (dataUrl: string, maxW = 360) =>
     img.src = dataUrl;
   });
 
-/** Company branding — the logo is printed on order bills, invoices and quotations. */
+/** Company branding — stored for use on printable documents. The Sales Order /
+ *  Quotation bill uses a fixed Kavish letterhead template instead of this logo. */
 function CompanyCard({ canEdit }: { canEdit: boolean }) {
   const { data: company } = useCompany();
   const update = useUpdateCompany();
@@ -279,7 +354,7 @@ function CompanyCard({ canEdit }: { canEdit: boolean }) {
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Company branding</CardTitle>
-        <p className="text-muted-foreground text-xs">Your logo &amp; name printed on the order bill, invoice and quotations.</p>
+        <p className="text-muted-foreground text-xs">Your logo &amp; name, stored for future printable documents. (The Sales Order / Quotation bill uses the fixed Kavish letterhead, not this logo.)</p>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex items-center gap-4">

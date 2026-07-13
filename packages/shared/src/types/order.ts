@@ -80,6 +80,9 @@ export interface OrderDto {
   poNumber: string | null;
   customerId: number | null;
   customerName: string;
+  /** Customer's city/state/region, joined for display on the printable bill.
+   *  Only populated on the single-order fetch (GET /orders/:id), not list views. */
+  billingAddress?: string | null;
   agentName: string | null;
   category: string | null;
   orderDate: string;

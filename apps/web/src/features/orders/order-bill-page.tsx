@@ -6,17 +6,29 @@ import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
 import { Button } from '@/components/ui/button';
 import { shortOrderCode } from '@/lib/utils';
+import kavishLogo from '@/assets/kavish-logo-order.png';
+import { useOrderTerms } from '@/features/settings/use-settings';
 import { useOrder } from './use-orders';
 import { useQuotation } from '../quotations/use-quotations';
-import { useCompany } from '@/features/settings/use-settings';
 
-// Exact brand colours for the Sales Order bill.
-const BLUE = '#156082';
-const ORANGE = '#F99A0F';
-const AMBER = '#F59E0B';
+// Kavish brand colours (sampled from the official letterhead template).
+const NAVY = '#163e64';
+const BANNER_ORANGE_FROM = '#f2914a';
+const BANNER_ORANGE_TO = '#e3601b';
+const ORANGE = '#F99A0F'; // table header / total row
 const BLACK = '#111111';
+const FONT = 'Calibri, Carlito, "Segoe UI", Arial, sans-serif';
 
-const numf = (v: number | null) => (v == null || v === 0 ? '' : v.toLocaleString('en-IN'));
+// Shown until the Settings → "Sales Order Terms & Conditions" list loads.
+const FALLBACK_TERMS = [
+  'Payment Should Be Made Within 30 Days',
+  'If Payment Defaulted 18% Interest Will Be Applicable',
+  'Order Cannot Be Cancelled Once Placed/Confirmed',
+  'Any Type Of Defect/Design Issue Should Be Reported Within 15 days After Goods Recived.',
+];
+
+// The reference template always prints the raw number (including 0), never blanks it.
+const numf = (v: number | null) => (v ?? 0).toLocaleString('en-IN');
 const fmtDate = (d?: string | null) => (d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 
 const PRINT_CSS = `
@@ -38,7 +50,10 @@ export function OrderBillPage() {
   const quotationQ = useQuotation(isQuotation ? orderId : undefined);
   const order = isQuotation ? quotationQ.data : orderQ.data;
   const isLoading = isQuotation ? quotationQ.isLoading : orderQ.isLoading;
-  const { data: company } = useCompany();
+  // Editable from Settings → "Sales Order Terms & Conditions"; falls back to the
+  // built-in default text until that loads (or if it's never been customised).
+  const { data: termsData } = useOrderTerms();
+  const terms = termsData?.terms.length ? termsData.terms : FALLBACK_TERMS;
   const docTitle = isQuotation ? 'QUOTATION' : 'SALES ORDER';
   const pageTitle = isQuotation ? 'Quotation' : 'Sales Order';
   const fileSuffix = isQuotation ? 'quotation' : 'sales-order';
@@ -138,8 +153,8 @@ export function OrderBillPage() {
   }
 
   const BORDER = '#C9D2DC';
-  const th: CSSProperties = { background: ORANGE, color: BLACK, border: `1px solid ${BORDER}`, padding: '7px 9px', fontWeight: 700 };
-  const td: CSSProperties = { border: `1px solid ${BORDER}`, padding: '6px 9px' };
+  const th: CSSProperties = { background: ORANGE, color: BLACK, border: `0.5px solid ${BORDER}`, padding: '9px 11px', fontWeight: 800 };
+  const td: CSSProperties = { border: `0.5px solid ${BORDER}`, padding: '8px 11px' };
 
   return (
     <div className="flex w-full flex-col gap-4">
@@ -162,7 +177,7 @@ export function OrderBillPage() {
         </div>
       </div>
 
-      {/* ── Printable Sales Order ───────────────────────────────────────── */}
+      {/* ── Printable Sales Order (Kavish letterhead format) ────────────── */}
       <div
         id="sales-order"
         style={{
@@ -170,50 +185,66 @@ export function OrderBillPage() {
           color: BLACK,
           border: 'none',
           overflow: 'hidden',
-          fontSize: 13,
+          fontSize: 14,
+          fontFamily: FONT,
           fontVariantNumeric: 'tabular-nums',
         }}
       >
-        {/* Company branding band — logo + name (shown when configured in Settings) */}
-        {(company?.logo || company?.name) && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px' }}>
-            {company?.logo && <img src={company.logo} alt="Company logo" style={{ maxHeight: 56, maxWidth: 220, objectFit: 'contain' }} />}
-            {company?.name && <span style={{ fontSize: 18, fontWeight: 800, color: BLACK }}>{company.name}</span>}
-          </div>
-        )}
-
-        {/* Title bar — blue with amber accent */}
-        <div style={{ background: BLUE, color: '#fff', borderBottom: `4px solid ${AMBER}`, padding: '10px 16px', display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, letterSpacing: 1 }}>{docTitle}</h1>
-          <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 16 }}>{shortOrderCode(order.code, order.id)}</span>
+        {/* Decorative curved banner — a close visual match to the letterhead's
+            hand-drawn shape (not a vector trace of it): an orange gradient bar
+            with a navy rounded panel overlaid on the left. */}
+        <div style={{ position: 'relative', height: 40, width: '100%', overflow: 'hidden' }}>
+          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(100deg, ${BANNER_ORANGE_FROM} 0%, ${BANNER_ORANGE_TO} 100%)` }} />
+          <div
+            style={{
+              position: 'absolute',
+              top: 0,
+              bottom: 0,
+              left: 0,
+              width: '56%',
+              background: NAVY,
+              borderTopRightRadius: '100% 120%',
+              borderBottomRightRadius: '100% 120%',
+            }}
+          />
         </div>
 
-        {/* Bill-to + order meta */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, padding: '12px 16px' }}>
-          <div>
-            <div style={{ color: BLUE, fontWeight: 700, textTransform: 'uppercase', fontSize: 11, letterSpacing: 0.5 }}>Bill To,</div>
-            <div style={{ fontSize: 16, fontWeight: 800 }}>{order.customerName}</div>
+        <h1 style={{ textAlign: 'center', fontSize: 26, fontWeight: 700, fontFamily: FONT, letterSpacing: 1, margin: '16px 0 14px' }}>{docTitle}</h1>
+
+        {/* Bill-to (left) · Kavish logo (center) · Order meta (right) */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'flex-start', gap: 12, padding: '0 24px 16px' }}>
+          <div style={{ fontSize: 17, lineHeight: 1.5 }}>
+            <div style={{ fontWeight: 700, textTransform: 'uppercase' }}>Bill To,</div>
+            <div style={{ fontWeight: 700, textTransform: 'uppercase' }}>{order.customerName}</div>
+            {order.billingAddress && <div>{order.billingAddress}</div>}
           </div>
-          <table style={{ borderCollapse: 'collapse', fontSize: 13 }}>
-            <tbody>
-              {([
-                ['Order No', shortOrderCode(order.code, order.id)],
-                ['Order Date', fmtDate(order.orderDate)],
-                ['Due Date', fmtDate(order.completionDate)],
-              ] as const).map(([label, value]) => (
-                <tr key={label}>
-                  <td style={{ color: BLUE, fontWeight: 700, padding: '1px 12px 1px 0', whiteSpace: 'nowrap' }}>{label} :</td>
-                  <td style={{ color: BLACK, fontWeight: 600, textAlign: 'right', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>{value}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
+            <img src={kavishLogo} alt="KAVISH — The Unique" style={{ width: 130, height: 'auto' }} />
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <table style={{ borderCollapse: 'collapse', fontSize: 17, fontWeight: 700, lineHeight: 1.6 }}>
+              <tbody>
+                {([
+                  ['Order ID:', `#${shortOrderCode(order.code, order.id)}`],
+                  ['Order Date :', fmtDate(order.orderDate)],
+                  ['Due Date :', fmtDate(order.completionDate)],
+                ] as const).map(([label, value]) => (
+                  <tr key={label}>
+                    <td style={{ textAlign: 'left', paddingRight: 10, whiteSpace: 'nowrap' }}>{label}</td>
+                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{value}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {/* Items */}
-        <div style={{ padding: '0 16px 16px' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
-            <thead>
+        <div style={{ padding: '0 24px 16px' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 17, fontWeight: 500, fontFamily: FONT }}>
+            <thead style={{ textTransform: 'uppercase' }}>
               <tr>
                 <th style={{ ...th, width: 34, textAlign: 'center' }}>#</th>
                 <th style={{ ...th, textAlign: 'left' }}>Item Name</th>
@@ -222,19 +253,19 @@ export function OrderBillPage() {
                 <th style={{ ...th, textAlign: 'right' }}>KGs</th>
                 <th style={{ ...th, textAlign: 'right' }}>Box</th>
                 <th style={{ ...th, textAlign: 'right' }}>Rate</th>
-                <th style={{ ...th, textAlign: 'left' }}>Comment</th>
+                <th style={{ ...th, textAlign: 'left' }}>Comments</th>
               </tr>
             </thead>
             <tbody>
               {order.items.filter((it) => it.status !== 'CANCELLED').map((it, idx) => (
                 <tr key={it.id} style={{ background: idx % 2 === 1 ? '#F5F7FA' : '#fff' }}>
                   <td style={{ ...td, textAlign: 'center' }}>{idx + 1}</td>
-                  <td style={{ ...td, fontWeight: 600 }}>{it.productName || it.product || '—'}</td>
+                  <td style={td}>{it.productName || it.product || '—'}</td>
                   <td style={{ ...td, textAlign: 'right' }}>{numf(it.bags)}</td>
                   <td style={{ ...td, textAlign: 'right' }}>{numf(it.pcs)}</td>
                   <td style={{ ...td, textAlign: 'right' }}>{numf(it.gram)}</td>
                   <td style={{ ...td, textAlign: 'right' }}>{numf(it.box)}</td>
-                  <td style={{ ...td, textAlign: 'right', color: BLACK, fontWeight: 700 }}>{numf(it.rate)}</td>
+                  <td style={{ ...td, textAlign: 'right' }}>{numf(it.rate)}</td>
                   <td style={td}>{it.comment || ''}</td>
                 </tr>
               ))}
@@ -251,9 +282,27 @@ export function OrderBillPage() {
           </table>
         </div>
 
-        <div style={{ borderTop: `1px solid ${AMBER}`, padding: '6px 16px', display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#666' }}>
-          <span>{new Date().toLocaleString('en-GB')}</span>
-          <span>**This is a computer-generated {pageTitle.toLowerCase()}**</span>
+        {/* Terms & Conditions — a Sales Order is a confirmed commitment, so this
+            doesn't apply to quotations (nothing's been placed/confirmed yet). */}
+        {!isQuotation && (
+          <div style={{ padding: '0 24px', display: 'flex', justifyContent: 'space-between', gap: 16 }}>
+            <div style={{ fontSize: 15 }}>
+              <div style={{ color: '#ff8c01', fontWeight: 700, fontSize: 17, marginBottom: 6 }}>Terms &amp; Conditions</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {terms.map((t, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                    <span style={{ width: 6, height: 6, marginTop: 5, flexShrink: 0, background: BLACK }} />
+                    <span>{t}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div style={{ fontSize: 15, fontStyle: 'italic', fontWeight: 700, whiteSpace: 'nowrap', alignSelf: 'flex-end' }}>Authorised Signatory</div>
+          </div>
+        )}
+
+        <div style={{ textAlign: 'center', fontSize: 13, fontWeight: 700, marginTop: 18, padding: '0 24px' }}>
+          ***THIS IS COMPUTER GENRATED {docTitle}***
         </div>
       </div>
     </div>

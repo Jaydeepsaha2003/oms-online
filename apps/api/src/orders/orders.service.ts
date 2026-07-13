@@ -89,7 +89,17 @@ export class OrdersService {
   async findOne(id: number): Promise<OrderDto> {
     const row = await this.prisma.order.findUnique({ where: { id }, include: INCLUDE });
     if (!row) throw new NotFoundException('Order not found.');
-    return this.toDto(row);
+    const dto = this.toDto(row);
+    // Only the single-order fetch needs this (the printable bill's "Bill To"
+    // address line) — skipped in findMany's list rows to avoid an extra join per row.
+    const customer = row.customerId
+      ? await this.prisma.customer.findUnique({ where: { id: row.customerId } })
+      : await this.prisma.customer.findFirst({ where: { partyName: row.customerName } });
+    dto.billingAddress = [customer?.city, customer?.state, customer?.region]
+      .map((s) => (s ?? '').trim())
+      .filter(Boolean)
+      .join(', ');
+    return dto;
   }
 
   async create(dto: CreateOrderDto): Promise<OrderDto> {

@@ -53,7 +53,15 @@ export class QuotationsService {
   async findOne(id: number): Promise<QuotationDto> {
     const row = await this.prisma.quotation.findUnique({ where: { id }, include: INCLUDE });
     if (!row) throw new NotFoundException('Quotation not found.');
-    return this.toDto(row);
+    const dto = this.toDto(row);
+    const customer = row.customerId
+      ? await this.prisma.customer.findUnique({ where: { id: row.customerId } })
+      : await this.prisma.customer.findFirst({ where: { partyName: row.customerName } });
+    dto.billingAddress = [customer?.city, customer?.state, customer?.region]
+      .map((s) => (s ?? '').trim())
+      .filter(Boolean)
+      .join(', ');
+    return dto;
   }
 
   async create(dto: CreateQuotationDto): Promise<QuotationDto> {
