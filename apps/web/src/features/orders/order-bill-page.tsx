@@ -153,7 +153,7 @@ export function OrderBillPage() {
   }
 
   const BORDER = '#C9D2DC';
-  const th: CSSProperties = { background: ORANGE, color: BLACK, border: `0.5px solid ${BORDER}`, padding: '9px 11px', fontWeight: 800 };
+  const th: CSSProperties = { background: ORANGE, color: BLACK, border: `0.5px solid ${BORDER}`, padding: '9px 11px', fontWeight: 800, fontSize: 18.5 };
   const td: CSSProperties = { border: `0.5px solid ${BORDER}`, padding: '8px 11px' };
 
   return (
@@ -190,21 +190,28 @@ export function OrderBillPage() {
           fontVariantNumeric: 'tabular-nums',
         }}
       >
-        {/* Decorative curved banner — a close visual match to the letterhead's
-            hand-drawn shape (not a vector trace of it): an orange gradient bar
-            with a navy rounded panel overlaid on the left. */}
-        <div style={{ position: 'relative', height: 40, width: '100%', overflow: 'hidden' }}>
-          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(100deg, ${BANNER_ORANGE_FROM} 0%, ${BANNER_ORANGE_TO} 100%)` }} />
+        {/* Decorative banner — a close visual match to the letterhead's artwork
+            (not a vector trace of it): navy fills the whole bar edge to edge,
+            with an orange gradient block covering the right 65% at full
+            height — square corners throughout except the one soft rounded
+            notch at its bottom-left, where the two colours meet. */}
+        <div style={{ position: 'relative', height: 56, width: '100%' }}>
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              background: NAVY,
+            }}
+          />
           <div
             style={{
               position: 'absolute',
               top: 0,
               bottom: 0,
-              left: 0,
-              width: '56%',
-              background: NAVY,
-              borderTopRightRadius: '100% 120%',
-              borderBottomRightRadius: '100% 120%',
+              right: 0,
+              width: '65%',
+              background: `linear-gradient(90deg, ${BANNER_ORANGE_FROM} 0%, ${BANNER_ORANGE_TO} 100%)`,
+              borderBottomLeftRadius: 28,
             }}
           />
         </div>
@@ -213,7 +220,7 @@ export function OrderBillPage() {
 
         {/* Bill-to (left) · Kavish logo (center) · Order meta (right) */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'flex-start', gap: 12, padding: '0 24px 16px' }}>
-          <div style={{ fontSize: 17, lineHeight: 1.5 }}>
+          <div style={{ fontSize: 19, lineHeight: 1.5 }}>
             <div style={{ fontWeight: 700, textTransform: 'uppercase' }}>Bill To,</div>
             <div style={{ fontWeight: 700, textTransform: 'uppercase' }}>{order.customerName}</div>
             {order.billingAddress && <div>{order.billingAddress}</div>}
@@ -224,7 +231,7 @@ export function OrderBillPage() {
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <table style={{ borderCollapse: 'collapse', fontSize: 17, fontWeight: 700, lineHeight: 1.6 }}>
+            <table style={{ borderCollapse: 'collapse', fontSize: 19, fontWeight: 700, lineHeight: 1.6 }}>
               <tbody>
                 {([
                   ['Order ID:', `#${shortOrderCode(order.code, order.id)}`],
@@ -243,7 +250,7 @@ export function OrderBillPage() {
 
         {/* Items */}
         <div style={{ padding: '0 24px 16px' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 17, fontWeight: 500, fontFamily: FONT }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 18, fontWeight: 600, fontFamily: FONT }}>
             <thead style={{ textTransform: 'uppercase' }}>
               <tr>
                 <th style={{ ...th, width: 34, textAlign: 'center' }}>#</th>
@@ -282,24 +289,22 @@ export function OrderBillPage() {
           </table>
         </div>
 
-        {/* Terms & Conditions — a Sales Order is a confirmed commitment, so this
-            doesn't apply to quotations (nothing's been placed/confirmed yet). */}
-        {!isQuotation && (
-          <div style={{ padding: '0 24px', display: 'flex', justifyContent: 'space-between', gap: 16 }}>
-            <div style={{ fontSize: 15 }}>
-              <div style={{ color: '#ff8c01', fontWeight: 700, fontSize: 17, marginBottom: 6 }}>Terms &amp; Conditions</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {terms.map((t, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                    <span style={{ width: 6, height: 6, marginTop: 5, flexShrink: 0, background: BLACK }} />
-                    <span>{t}</span>
-                  </div>
-                ))}
-              </div>
+        {/* Terms & Conditions — shown on both the Sales Order and the Quotation,
+            so the two documents share the exact same printed format. */}
+        <div style={{ padding: '0 24px', display: 'flex', justifyContent: 'space-between', gap: 16 }}>
+          <div style={{ fontSize: 17 }}>
+            <div style={{ color: '#ff8c01', fontWeight: 700, fontSize: 19, marginBottom: 6 }}>Terms &amp; Conditions</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {terms.map((t, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                  <span style={{ width: 6, height: 6, marginTop: 5, flexShrink: 0, background: BLACK }} />
+                  <span>{t}</span>
+                </div>
+              ))}
             </div>
-            <div style={{ fontSize: 15, fontStyle: 'italic', fontWeight: 700, whiteSpace: 'nowrap', alignSelf: 'flex-end' }}>Authorised Signatory</div>
           </div>
-        )}
+          <div style={{ fontSize: 15, fontStyle: 'italic', fontWeight: 700, whiteSpace: 'nowrap', alignSelf: 'flex-end' }}>Authorised Signatory</div>
+        </div>
 
         <div style={{ textAlign: 'center', fontSize: 13, fontWeight: 700, marginTop: 18, padding: '0 24px' }}>
           ***THIS IS COMPUTER GENRATED {docTitle}***

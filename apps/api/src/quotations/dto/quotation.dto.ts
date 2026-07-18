@@ -1,5 +1,6 @@
 import { PartialType } from '@nestjs/swagger';
 import { IsArray, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { QUOTATION_STATUSES } from '@oms/shared';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 export class CreateQuotationDto {
@@ -14,7 +15,9 @@ export class CreateQuotationDto {
   @IsOptional() @IsString() orderDate?: string;
   @IsOptional() @IsString() completionDate?: string;
   @IsOptional() @IsString() priority?: string;
-  @IsOptional() @IsString() status?: string;
+  /** A quotation's own status vocabulary — never an ORDER_STATUSES value
+   *  (e.g. "CONFIRMED" means nothing on a quotation and must be rejected). */
+  @IsOptional() @IsIn(QUOTATION_STATUSES) status?: string;
   @IsOptional() @IsString() comment?: string;
 
   /** Line items — fields coerced in the service. */

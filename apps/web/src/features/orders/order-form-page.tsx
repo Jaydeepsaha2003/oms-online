@@ -264,7 +264,10 @@ export function OrderFormPage() {
   const [category, setCategory] = useState('SALES');
   const [orderDate, setOrderDate] = useState(today());
   const [completionDay, setCompletionDay] = useState('');
-  const [status, setStatus] = useState('CONFIRMED'); // new orders default to confirmed
+  // New orders default to confirmed; new quotations default to draft — they're
+  // different status vocabularies (ORDER_STATUSES vs QUOTATION_STATUSES) and
+  // must never cross over (a quotation showing "CONFIRMED" is meaningless).
+  const [status, setStatus] = useState(docKind === 'quotation' ? 'DRAFT' : 'CONFIRMED');
   const [showBy, setShowBy] = useState<'PCS' | 'SIZE'>('SIZE');
   const { autoSizePcs } = useAutoSizePcs();
 

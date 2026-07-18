@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Eye,
   Filter,
   Loader2,
   Pencil,
@@ -182,14 +183,18 @@ export function QuotationsPage() {
       ) : q.status === 'SENT' ? (
         <p className="text-xs text-sky-700">Sent {q.sentAt ? formatDate(q.sentAt) : ''}</p>
       ) : null}
-      <div className="flex items-center justify-end gap-1 border-t pt-2.5" onClick={(e) => e.stopPropagation()}>
-        {isOpen(q.status) && (can('quotation:convert') || can('quotation:cancel') || can('quotation:update')) && (
-          <Button variant="outline" size="sm" className="h-8" onClick={() => setActing(q)}>
-            Action <ChevronDown className="size-3.5" />
-          </Button>
+      <div className="flex items-center justify-end gap-1.5 border-t pt-2.5" onClick={(e) => e.stopPropagation()}>
+        {((isOpen(q.status) && (can('quotation:convert') || can('quotation:cancel') || can('quotation:update'))) ||
+          (q.status === 'CONVERTED' && q.convertedOrderId != null && can('order:view'))) && (
+          <>
+            <Button variant="outline" size="sm" className="h-8" onClick={() => setActing(q)}>
+              Action <ChevronDown className="size-3.5" />
+            </Button>
+            {(can('quotation:view') || can('quotation:delete')) && <div className="bg-border mx-0.5 h-5 w-px shrink-0" aria-hidden="true" />}
+          </>
         )}
-        {q.status === 'CONVERTED' && can('quotation:view') && (
-          <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(`/quotations/${q.id}/bill`)} aria-label="Print">
+        {can('quotation:view') && (
+          <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-primary size-8" onClick={() => navigate(`/quotations/${q.id}/bill`)} aria-label="Print" title="Print / view quotation">
             <Printer className="size-4" />
           </Button>
         )}
@@ -278,17 +283,21 @@ export function QuotationsPage() {
         rowKey={(q) => q.id}
         isLoading={isLoading}
         emptyText="No quotations yet."
-        onRowClick={(q) => { if (isOpen(q.status)) setActing(q); }}
+        onRowClick={(q) => { if (isOpen(q.status) || q.status === 'CONVERTED') setActing(q); }}
         mobileCard={quotationMobileCard}
         actions={(q) => (
-          <div className="flex justify-end gap-1">
-            {isOpen(q.status) && (can('quotation:convert') || can('quotation:cancel') || can('quotation:update')) && (
-              <Button variant="outline" size="sm" className="h-8" onClick={() => setActing(q)} title="Choose an action">
-                Action <ChevronDown className="size-3.5" />
-              </Button>
+          <div className="flex items-center justify-end gap-1.5">
+            {((isOpen(q.status) && (can('quotation:convert') || can('quotation:cancel') || can('quotation:update'))) ||
+              (q.status === 'CONVERTED' && q.convertedOrderId != null && can('order:view'))) && (
+              <>
+                <Button variant="outline" size="sm" className="h-8" onClick={() => setActing(q)} title="Choose an action">
+                  Action <ChevronDown className="size-3.5" />
+                </Button>
+                {(can('quotation:view') || can('quotation:delete')) && <div className="bg-border mx-0.5 h-5 w-px shrink-0" aria-hidden="true" />}
+              </>
             )}
-            {q.status === 'CONVERTED' && can('quotation:view') && (
-              <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(`/quotations/${q.id}/bill`)} aria-label="Print" title="Print quotation">
+            {can('quotation:view') && (
+              <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-primary size-8" onClick={() => navigate(`/quotations/${q.id}/bill`)} aria-label="Print" title="Print / view quotation">
                 <Printer className="size-4" />
               </Button>
             )}
@@ -331,6 +340,11 @@ export function QuotationsPage() {
             setCancelling(acting);
             setActing(null);
           }}
+          onViewOrder={() => {
+            const orderId = acting.convertedOrderId;
+            setActing(null);
+            if (orderId != null) navigate(`/orders/${orderId}/edit`);
+          }}
           onClose={() => setActing(null)}
         />
       )}
@@ -348,6 +362,7 @@ function ActionDialog({
   onEditConvert,
   onSent,
   onCancel,
+  onViewOrder,
   onClose,
 }: {
   quotation: QuotationDto;
@@ -357,6 +372,7 @@ function ActionDialog({
   onEditConvert: () => void;
   onSent: () => void;
   onCancel: () => void;
+  onViewOrder: () => void;
   onClose: () => void;
 }) {
   const q = quotation;
@@ -400,7 +416,15 @@ function ActionDialog({
         </DialogHeader>
         <div className="grid gap-2">
           <Option
-            show={can('quotation:convert')}
+            show={q.status === 'CONVERTED' && q.convertedOrderId != null && can('order:view')}
+            icon={Eye}
+            color="bg-emerald-100 text-emerald-700"
+            title="View the order"
+            desc={`Open ${q.convertedOrderCode ?? 'the resulting order'} — this quotation has already been converted.`}
+            onClick={onViewOrder}
+          />
+          <Option
+            show={isOpen(q.status) && can('quotation:convert')}
             icon={ArrowRightLeft}
             color="bg-emerald-100 text-emerald-700"
             title="Convert to order directly"
@@ -408,7 +432,7 @@ function ActionDialog({
             onClick={onConvertDirect}
           />
           <Option
-            show={can('quotation:update')}
+            show={isOpen(q.status) && can('quotation:update')}
             icon={Pencil}
             color="bg-indigo-100 text-indigo-700"
             title="Edit & convert"
@@ -416,7 +440,7 @@ function ActionDialog({
             onClick={onEditConvert}
           />
           <Option
-            show={can('quotation:update') && q.status !== 'SENT'}
+            show={isOpen(q.status) && can('quotation:update') && q.status !== 'SENT'}
             icon={Send}
             color="bg-sky-100 text-sky-700"
             title="Mark as sent to customer"
@@ -424,7 +448,7 @@ function ActionDialog({
             onClick={onSent}
           />
           <Option
-            show={can('quotation:cancel')}
+            show={isOpen(q.status) && can('quotation:cancel')}
             icon={Ban}
             color="bg-rose-100 text-rose-700"
             title="Cancel with reason"
