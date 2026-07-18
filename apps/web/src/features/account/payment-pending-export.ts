@@ -8,7 +8,7 @@ import type { PendingInvoiceRow } from '@oms/shared';
 import { dateStamp } from '@/lib/utils';
 
 const MONEY_FMT = '#,##0';
-const DATE_FMT = 'd-mmm-yy';
+const DATE_FMT = 'dd/mm/yyyy';
 
 type Cell = XLSX.CellObject;
 const txt = (v: string): Cell => ({ t: 's', v });

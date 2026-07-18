@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Download,
   HandCoins,
+  Info,
   Landmark,
   Loader2,
   RotateCcw,
@@ -21,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { NativeSelect } from '@/components/common/combo';
 import { useCustomers } from '@/features/customers/use-customers';
 import { useAgents } from '@/features/agents/use-agents';
@@ -29,7 +31,7 @@ import { exportPendingInvoices } from './payment-pending-export';
 
 const money = (v: number | null | undefined) => `₹ ${(v ?? 0).toLocaleString('en-IN')}`;
 const n2 = (v: number) => v.toLocaleString('en-IN');
-const prettyDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
+const prettyDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—');
 
 function ymd(d: Date): string {
   const y = d.getFullYear();
@@ -276,9 +278,24 @@ export function PaymentPage() {
         <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
           <HandCoins className="size-5" />
         </div>
-        <div>
-          <h2 className="text-3xl font-semibold tracking-tight">Receive Payment</h2>
-          <p className="text-muted-foreground text-base">Receive money from a party or an agent — openings clear first, then invoices oldest-first, the rest parks on account.</p>
+        <div className="flex items-center gap-1.5">
+          <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">Receive Payment</h2>
+          {/* The old inline strap-line ate a whole row on 13" screens — it now
+              lives behind this info tip so the form starts higher up. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label="How a receipt is applied"
+                className="text-muted-foreground hover:text-foreground hover:bg-muted inline-flex size-6 shrink-0 items-center justify-center rounded-full transition-colors"
+              >
+                <Info className="size-4" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="max-w-xs text-sm leading-relaxed">
+              Receive money from a party or an agent — openings clear first, then invoices oldest-first, the rest parks on account.
+            </TooltipContent>
+          </Tooltip>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button
@@ -296,33 +313,36 @@ export function PaymentPage() {
 
       {/* Receipt form */}
       <div className="bg-card space-y-3 rounded-md border p-4 shadow-sm">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {/* Fluid auto-fit grid: every field is at least 210px and grows to share
+            the row, so the form reflows to as many columns as fit — 4–6 on a
+            wide monitor, fewer on a 13" laptop — without ever overflowing. */}
+        <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(210px,1fr))] [&_input]:text-base">
           <div className="space-y-1">
-            <Label className="text-sm">Receipt Date *</Label>
+            <Label className="text-base">Receipt Date *</Label>
             <Input type="date" max={TODAY()} value={recDate} onChange={(e) => setRecDate(e.target.value)} />
           </div>
           <div className="space-y-1">
-            <Label className="text-sm">Party Name</Label>
+            <Label className="text-base">Party Name</Label>
             <NativeSelect value={party} onChange={(v) => { setParty(v); if (v) setAgent(''); setSelected([]); }} options={['', ...partyOptions]} placeholder="Select party…" disabled={!!agent} />
           </div>
           <div className="space-y-1">
-            <Label className="text-sm">Agent Name</Label>
+            <Label className="text-base">Agent Name</Label>
             <NativeSelect value={agent} onChange={(v) => { setAgent(v); if (v) setParty(''); setSelected([]); }} options={['', ...agentOptions]} placeholder="…or select agent" disabled={!!party} />
           </div>
           <div className="space-y-1">
-            <Label className="text-sm">Payment Mode *</Label>
+            <Label className="text-base">Payment Mode *</Label>
             <NativeSelect value={payMode} onChange={(v) => { setPayMode(v); setChequeNo(''); setSelected([]); }} options={['', 'BANK', 'CHEQUE', 'CASH']} placeholder="BANK / CHEQUE / CASH" />
           </div>
 
           {(payMode === 'BANK' || payMode === 'CHEQUE') && (
             <div className="space-y-1">
-              <Label className="text-sm">Bank Name *</Label>
+              <Label className="text-base">Bank Name *</Label>
               <NativeSelect value={bankName} onChange={setBankName} options={bankOptions} placeholder="Our receiving account…" />
             </div>
           )}
           {payMode === 'CHEQUE' && (
             <div className="space-y-1">
-              <Label className="text-sm">Cheque No * <span className="text-muted-foreground">(cleared)</span></Label>
+              <Label className="text-base">Cheque No * <span className="text-muted-foreground">(cleared)</span></Label>
               <NativeSelect
                 value={chequeNo}
                 onChange={pickCheque}
@@ -335,26 +355,26 @@ export function PaymentPage() {
           {payMode === 'CASH' && (
             <>
               <div className="space-y-1">
-                <Label className="text-sm">Cash Transfer Location *</Label>
+                <Label className="text-base">Cash Transfer Location *</Label>
                 <Input value={cashLoc} onChange={(e) => setCashLoc(e.target.value)} className="uppercase" placeholder="e.g. SHOP" />
               </div>
               <div className="space-y-1">
-                <Label className="text-sm">Cash Received By *</Label>
+                <Label className="text-base">Cash Received By *</Label>
                 <Input value={cashBy} onChange={(e) => setCashBy(e.target.value)} className="uppercase" placeholder="Who collected" />
               </div>
             </>
           )}
 
           <div className="space-y-1">
-            <Label className="text-sm">Mode of Adj *</Label>
+            <Label className="text-base">Mode of Adj *</Label>
             <NativeSelect value={adjMode} onChange={(v) => { setAdjMode(v); setSelected([]); }} options={['AUTOMATIC', 'ADVANCE', 'AGST REF']} />
           </div>
           <div className="space-y-1">
-            <Label className="text-sm">Receipt Amount *</Label>
+            <Label className="text-base">Receipt Amount *</Label>
             <Input value={receiptStr} onChange={(e) => setReceiptStr(e.target.value)} inputMode="decimal" placeholder="0" className="text-right text-base font-semibold tabular-nums" />
           </div>
           <div className="space-y-1 sm:col-span-2">
-            <Label className="text-sm">Remarks</Label>
+            <Label className="text-base">Remarks</Label>
             <Input value={remarks} onChange={(e) => setRemarks(e.target.value)} className="uppercase" placeholder="Optional" />
           </div>
         </div>
@@ -368,21 +388,25 @@ export function PaymentPage() {
           </p>
         )}
 
-        <div className="flex flex-wrap items-center gap-2 border-t pt-3">
-          {canCreate && (
-            <Button className="bg-emerald-600 text-white hover:bg-emerald-700" onClick={submit} disabled={save.isPending}>
-              {save.isPending ? <Loader2 className="animate-spin" /> : <Save />} SUBMIT
+        <div className="flex flex-col gap-3 border-t pt-3 lg:flex-row lg:items-center">
+          <div className="flex flex-wrap items-center gap-2">
+            {canCreate && (
+              <Button className="bg-emerald-600 text-white hover:bg-emerald-700" onClick={submit} disabled={save.isPending}>
+                {save.isPending ? <Loader2 className="animate-spin" /> : <Save />} SUBMIT
+              </Button>
+            )}
+            <Button variant="outline" className="border-rose-200 text-rose-600 hover:bg-rose-50" onClick={clearAll}>
+              <RotateCcw /> CLEAR
             </Button>
-          )}
-          <Button variant="outline" className="border-rose-200 text-rose-600 hover:bg-rose-50" onClick={clearAll}>
-            <RotateCcw /> CLEAR
-          </Button>
-          <div className="text-muted-foreground ml-auto flex flex-wrap gap-x-5 gap-y-1 text-base">
-            <span>Opening: <b className="text-foreground tabular-nums">{money(openingLabel)}</b></span>
-            <span>Invoices ({bucket.toLowerCase()}): <b className="text-foreground tabular-nums">{money(invoiceOutstanding)}</b></span>
-            <span>Advance available: <b className="text-foreground tabular-nums">{money(advanceAvail)}</b></span>
-            <span>To allocate: <b className="tabular-nums text-blue-700">{money(preview.openingUse + preview.adjTotal)}</b></span>
-            <span>Advance to save: <b className={cn('tabular-nums', preview.advanceToSave > 0 ? 'text-amber-700' : 'text-foreground')}>{money(preview.advanceToSave)}</b></span>
+          </div>
+          {/* Compact stat tiles instead of one long text line — they wrap onto a
+              second row on narrow screens rather than colliding with the buttons. */}
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:ml-auto lg:flex lg:flex-wrap">
+            <Stat label="Opening" value={money(openingLabel)} />
+            <Stat label={`Invoices (${bucket.toLowerCase()})`} value={money(invoiceOutstanding)} />
+            <Stat label="Advance available" value={money(advanceAvail)} />
+            <Stat label="To allocate" value={money(preview.openingUse + preview.adjTotal)} valueClass="text-blue-700" />
+            <Stat label="Advance to save" value={money(preview.advanceToSave)} valueClass={preview.advanceToSave > 0 ? 'text-amber-700' : undefined} />
           </div>
         </div>
       </div>
@@ -396,8 +420,8 @@ export function PaymentPage() {
             const tone = k === 'NORMAL' ? 'emerald' : k === 'PAST DUE' ? 'amber' : 'rose';
             return (
               <div key={k} className={cn('rounded-lg border p-3 shadow-sm transition-opacity', `border-${tone}-200 bg-${tone}-50/60`, !active && 'opacity-70')}>
-                <p className="text-muted-foreground text-sm font-semibold tracking-wide uppercase">{k} DUE'S ({v.count})</p>
-                <div className="mt-1 flex gap-5 text-base tabular-nums">
+                <p className="text-muted-foreground text-base font-semibold tracking-wide uppercase">{k} DUE'S ({v.count})</p>
+                <div className="mt-1 flex gap-5 text-lg tabular-nums">
                   <span className={cn(payMode && bucket === 'BANK' && 'font-bold')}>Bank: {money(v.bank)}</span>
                   <span className={cn(payMode && bucket === 'CASH' && 'font-bold')}>Cash: {money(v.cash)}</span>
                 </div>
@@ -407,12 +431,12 @@ export function PaymentPage() {
         </div>
       )}
 
-      {/* Pending invoices grid */}
-      <div className="bg-card overflow-hidden rounded-md border shadow-sm">
+      {/* Pending invoices — wide table on ≥sm, stacked cards on phones */}
+      <div className="bg-card hidden overflow-hidden rounded-md border shadow-sm sm:block">
         <div className="overflow-x-auto">
-          <table className="w-full text-base [&_td]:border-r [&_td]:border-border/60 [&_td:last-child]:border-r-0">
+          <table className="w-full text-lg [&_td]:border-r [&_td]:border-border/60 [&_td:last-child]:border-r-0">
             <thead>
-              <tr className="bg-gradient-to-b from-blue-800 to-indigo-800 text-white [&_th]:border-r [&_th]:border-white/25 [&_th:last-child]:border-r-0 [&_th]:px-3 [&_th]:py-2.5 [&_th]:text-left [&_th]:text-sm [&_th]:font-bold [&_th]:tracking-wider [&_th]:uppercase [&_th]:whitespace-nowrap">
+              <tr className="bg-gradient-to-b from-blue-800 to-indigo-800 text-white [&_th]:border-r [&_th]:border-white/25 [&_th:last-child]:border-r-0 [&_th]:px-3 [&_th]:py-2.5 [&_th]:text-left [&_th]:text-base [&_th]:font-bold [&_th]:tracking-wider [&_th]:uppercase [&_th]:whitespace-nowrap">
                 {adjMode === 'AGST REF' && <th className="w-10">Sel</th>}
                 <th>Inv Date</th>
                 <th>Inv No</th>
@@ -453,12 +477,12 @@ export function PaymentPage() {
                       <td>{r.transaction}</td>
                       <td>{prettyDate(r.dueDate)}</td>
                       <td>
-                        <span className={cn('rounded px-1.5 py-0.5 text-sm font-semibold ring-1 ring-inset', style.badge)}>{r.dueType}</span>
+                        <span className={cn('rounded px-1.5 py-0.5 text-base font-semibold ring-1 ring-inset', style.badge)}>{r.dueType}</span>
                       </td>
                       <td className="text-right font-semibold tabular-nums">{n2(amt)}</td>
                       <td className={cn('text-right tabular-nums', adj > 0 && 'font-bold text-blue-700')}>{adj ? n2(adj) : '—'}</td>
                       <td className="text-right tabular-nums">{n2(bal)}</td>
-                      <td className={cn('text-sm font-semibold', r.dueType === 'OVERDUE' ? 'text-rose-600' : 'text-muted-foreground')}>{r.dueDays}</td>
+                      <td className={cn('text-base font-semibold', r.dueType === 'OVERDUE' ? 'text-rose-600' : 'text-muted-foreground')}>{r.dueDays}</td>
                     </tr>
                   );
                 })
@@ -466,6 +490,63 @@ export function PaymentPage() {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* Phones: one card per pending invoice instead of an 11-column table. */}
+      <div className="space-y-2.5 sm:hidden">
+        {!ownerChosen ? (
+          <div className="text-muted-foreground bg-card rounded-md border px-4 py-10 text-center">Select a Party or an Agent to load pending invoices.</div>
+        ) : ctxLoading && !ctx ? (
+          <div className="bg-card flex h-24 items-center justify-center rounded-md border"><Loader2 className="text-muted-foreground size-5 animate-spin" /></div>
+        ) : invoices.length === 0 ? (
+          <div className="text-muted-foreground bg-card rounded-md border px-4 py-10 text-center">No pending invoices — everything is settled. 🎉</div>
+        ) : (
+          invoices.map((r) => {
+            const amt = bucketAmt(r);
+            const adj = preview.adjByInv.get(r.invNo) ?? 0;
+            const bal = Math.max(0, Math.round((amt - adj) * 100) / 100);
+            const ticked = selected.includes(r.invNo);
+            const style = DUE_STYLE[r.dueType] ?? DUE_STYLE.NORMAL;
+            const selectable = adjMode === 'AGST REF';
+            return (
+              <div
+                key={r.invNo}
+                className={cn('rounded-lg border p-3 shadow-sm', ticked ? 'bg-slate-200/70' : style.row, selectable && 'active:bg-slate-200/60 cursor-pointer')}
+                onClick={selectable ? () => toggleSel(r.invNo) : undefined}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex min-w-0 items-start gap-2">
+                    {selectable && <input type="checkbox" readOnly checked={ticked} className="pointer-events-none mt-1 size-4 shrink-0" />}
+                    <div className="min-w-0">
+                      <p className="font-mono font-semibold">{r.invNo}</p>
+                      <p className="text-muted-foreground text-sm">{r.transaction} · {prettyDate(r.invDate)}</p>
+                      {isAgent && <p className="truncate text-sm font-medium">{r.customerName}</p>}
+                    </div>
+                  </div>
+                  <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-sm font-semibold ring-1 ring-inset', style.badge)}>{r.dueType}</span>
+                </div>
+                <div className="mt-2.5 grid grid-cols-3 gap-2 text-sm">
+                  <div>
+                    <p className="text-muted-foreground text-xs uppercase">{payMode ? `${bucket} Amt` : 'Amt'}</p>
+                    <p className="font-semibold tabular-nums">{n2(amt)}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground text-xs uppercase">Adj</p>
+                    <p className={cn('tabular-nums', adj > 0 && 'font-bold text-blue-700')}>{adj ? n2(adj) : '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground text-xs uppercase">Bal</p>
+                    <p className="font-semibold tabular-nums">{n2(bal)}</p>
+                  </div>
+                </div>
+                <div className="text-muted-foreground mt-2 flex items-center justify-between border-t pt-2 text-sm">
+                  <span>Due {prettyDate(r.dueDate)}</span>
+                  <span className={cn('font-semibold', r.dueType === 'OVERDUE' ? 'text-rose-600' : 'text-muted-foreground')}>{r.dueDays}</span>
+                </div>
+              </div>
+            );
+          })
+        )}
       </div>
 
       {/* Save result */}
@@ -512,6 +593,16 @@ export function PaymentPage() {
       </Dialog>
 
       {ledgerOpen && <LedgerModal ownerKind={isAgent ? 'Agent' : 'Party'} owner={ownerLabel} customerId={isAgent ? undefined : customerId} agentName={isAgent ? agent : undefined} onClose={() => setLedgerOpen(false)} />}
+    </div>
+  );
+}
+
+/** A compact labelled figure used in the receipt-form summary strip. */
+function Stat({ label, value, valueClass }: { label: string; value: string; valueClass?: string }) {
+  return (
+    <div className="bg-muted/40 rounded-md border px-3 py-1.5">
+      <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">{label}</p>
+      <p className={cn('text-foreground text-lg font-semibold tabular-nums', valueClass)}>{value}</p>
     </div>
   );
 }

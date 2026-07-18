@@ -210,7 +210,14 @@ export function OrderModifyPage() {
       {/* No page title here — the topbar already shows "Order Modify". Search
           and column settings share one sticky row so the list starts right
           below it instead of losing a whole row to a redundant heading. */}
-      <div className="bg-background/85 sticky top-0 z-20 -mx-1 flex flex-wrap items-center gap-2 rounded-md px-1 py-1.5 backdrop-blur">
+      {/* Full-bleed opaque sticky bar. The key is the NEGATIVE sticky inset
+          (-top-4/-top-6): a sticky child docks against main's *content* box,
+          which sits below main's p-4/p-6 padding — so a plain `top-0` would
+          stick 16/24px down and let rows peek in that gap. Offsetting top by
+          exactly that padding docks the bar flush at the scrollport, while the
+          side-bleed (-mx + px) covers full width and z-40 keeps it above the
+          table's own sticky cells (z-30) so the View column can't poke over. */}
+      <div className="bg-background sticky -top-4 z-40 -mx-4 flex flex-wrap items-center gap-2 px-4 py-1.5 md:-top-6 md:-mx-6 md:px-6">
         <div className="relative w-full flex-1 sm:max-w-xs sm:flex-none">
           <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
           <Input
@@ -270,9 +277,9 @@ export function OrderModifyPage() {
           rowKey={(r) => `${r.order.id}-${r.line.id}`}
           isLoading={isLoading}
           dense
-          // Freezes the column header and scrolls the rows in their own region
-          // (desktop only — phones use the grouped card list below instead).
-          maxBodyHeight="max-h-[calc(100vh-14.5rem)]"
+          // No height cap — every row renders in the page's own natural scroll
+          // (same as the View Orders list), so pagination sits right after the
+          // last row instead of behind a second, nested scrollbar.
           // Larger, easy-to-read data font (columns still auto-fit their content).
           className="text-[16px] [&_thead_th]:text-[14px] [&_td]:py-1.5 [&_th]:py-2 [&_tbody_button]:size-8"
           emptyText="No order lines found."
