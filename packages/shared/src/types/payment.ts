@@ -64,6 +64,25 @@ export interface PendingAdvanceRow {
   takeAccOn: string | null;
 }
 
+/** One party's (or agent's) total outstanding advance across every open advance
+ *  voucher they have — the "who's sitting on an advance right now" view. */
+export interface PartyAdvanceSummary {
+  /** Null for an AGENT-level advance (not tied to one customer). */
+  customerId: number | null;
+  /** Party name, or the agent's name when takeAccOn === 'AGENT'. */
+  customerName: string;
+  agentName: string | null;
+  /** 'PARTY' | 'AGENT' — who the advance is parked against. */
+  takeAccOn: string | null;
+  bankBal: number;
+  cashBal: number;
+  total: number;
+  /** Receipt date of the oldest still-outstanding advance voucher (ISO). */
+  oldestDate: string;
+  /** How many separate advance vouchers are still open. */
+  refCount: number;
+}
+
 /** A customer's opening pending (OpeningBalSummary row). */
 export interface OpeningPendingRow {
   customerId: number;
