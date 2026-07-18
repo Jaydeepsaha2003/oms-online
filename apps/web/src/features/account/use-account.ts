@@ -20,12 +20,14 @@ import type {
   OpeningBalanceInput,
   OpeningBalanceList,
   OpeningBalanceQuery,
+  PartyAdvanceSummary,
   PaymentContext,
   SaveDiscountInput,
   SaveDiscountResult,
   SavePaymentInput,
   SavePaymentResult,
   SettleChequeInput,
+  UpdateChequeInput,
 } from '@oms/shared';
 import { http } from '@/lib/api';
 
@@ -126,6 +128,15 @@ export function useCreateCheque() {
   });
 }
 
+/** Edit a still-PENDING cheque (server rejects once deposited/settled). */
+export function useUpdateCheque(id: number) {
+  const invalidate = useInvalidateCheques();
+  return useMutation({
+    mutationFn: (input: UpdateChequeInput) => http.patch<ChequeDto>(`/cheques/${id}`, input),
+    onSuccess: invalidate,
+  });
+}
+
 export function useDepositCheque() {
   const invalidate = useInvalidateCheques();
   return useMutation({
@@ -198,6 +209,16 @@ export function usePaymentContext(q: { customerId?: number; agentName?: string; 
     enabled: enabled && (q.customerId != null || !!q.agentName),
     placeholderData: (prev) => prev,
     retry: false,
+  });
+}
+
+/** Every party/agent currently sitting on an outstanding advance (whole book) —
+ *  the quick-glance "who's paid me in advance" list. */
+export function useAllAdvances() {
+  return useQuery({
+    queryKey: [...PAYMENT_KEY, 'advances'],
+    queryFn: () => http.get<PartyAdvanceSummary[]>('/payments/advances'),
+    placeholderData: (prev) => prev,
   });
 }
 

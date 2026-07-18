@@ -22,6 +22,13 @@ export class PaymentsController {
     return this.payments.context(query);
   }
 
+  /** Every party/agent currently sitting on an outstanding advance (whole book). */
+  @Get('advances')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  advances() {
+    return this.payments.allAdvances();
+  }
+
   /** CLEARED cheques of the party with un-received balance (CHEQUE mode picker). */
   @Get('cheque-options')
   @Permissions(perm(R, ACTIONS.VIEW))

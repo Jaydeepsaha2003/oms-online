@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Landmark,
   Loader2,
+  Pencil,
   Plus,
   ReceiptIndianRupee,
   RotateCcw,
@@ -37,7 +38,9 @@ import {
   useDeleteCheque,
   useDepositCheque,
   useDepositedCheques,
+  usePaymentContext,
   useSettleCheque,
+  useUpdateCheque,
 } from './use-account';
 
 const PAGE_SIZE = 50;
@@ -61,6 +64,16 @@ function daysToDue(dueIso: string): number {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   return Math.round((due.getTime() - today.getTime()) / 86_400_000);
+}
+
+/** Whole days from `a` to `b` (positive = b is later). Accepts an ISO string or
+ *  a plain 'yyyy-mm-dd' (date-only input value). */
+function daysBetween(a: string, b: string): number {
+  const da = new Date(a);
+  da.setHours(0, 0, 0, 0);
+  const db = new Date(b);
+  db.setHours(0, 0, 0, 0);
+  return Math.round((db.getTime() - da.getTime()) / 86_400_000);
 }
 
 const STATUS_META: Record<ChequeStatus, { label: string; cls: string }> = {
@@ -87,7 +100,7 @@ export function ManageChequesPage() {
   const totalPages = gridData?.totalPages ?? 1;
 
   // modals
-  const [addOpen, setAddOpen] = useState(false);
+  const [formModal, setFormModal] = useState<'new' | ChequeDto | null>(null);
   const [settleOpen, setSettleOpen] = useState(false);
   const [settleId, setSettleId] = useState<number | ''>('');
   const [depositCheque, setDepositCheque] = useState<ChequeDto | null>(null);
@@ -135,6 +148,18 @@ export function ManageChequesPage() {
         },
       },
       { id: 'dueDate', label: 'Due Date', sortValue: (c) => c.dueDate, cell: (c) => <span className="whitespace-nowrap">{prettyDate(c.dueDate)}</span> },
+      {
+        id: 'invoiceNos',
+        label: 'For Invoice(s)',
+        cell: (c) =>
+          c.invoiceNos.length ? (
+            <span className="font-mono text-xs" title={c.invoiceNos.join(', ')}>
+              {c.invoiceNos.join(', ')}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          ),
+      },
       { id: 'depDate', label: 'Deposit Date', cell: (c) => <span className="whitespace-nowrap">{prettyDate(c.depositDate)}</span> },
       { id: 'transDate', label: 'Clear/Bounce Date', cell: (c) => <span className="whitespace-nowrap">{prettyDate(c.acctTransDate)}</span> },
       { id: 'bounce', label: 'Bounce Chg', align: 'right', cell: (c) => (c.bounceCharges != null ? <span className="tabular-nums text-rose-700">{money(c.bounceCharges)}</span> : <span className="text-muted-foreground">—</span>) },
@@ -148,6 +173,11 @@ export function ManageChequesPage() {
 
   const rowActions = (c: ChequeDto) => (
     <div className="flex items-center justify-end gap-1.5">
+      {canUpdate && c.status === 'PENDING' && (
+        <button onClick={() => setFormModal(c)} className="text-muted-foreground hover:text-primary" title="Edit (due date, remarks, invoices)">
+          <Pencil className="size-4" />
+        </button>
+      )}
       {canUpdate && c.status === 'PENDING' && (
         <button onClick={() => setDepositCheque(c)} className="text-muted-foreground hover:text-blue-600" title="Deposit">
           <Banknote className="size-4" />
@@ -184,7 +214,7 @@ export function ManageChequesPage() {
             </Button>
           )}
           {canCreate && (
-            <Button className="bg-gradient-brand text-white shadow-sm hover:opacity-95" onClick={() => setAddOpen(true)}>
+            <Button className="bg-gradient-brand text-white shadow-sm hover:opacity-95" onClick={() => setFormModal('new')}>
               <Plus /> Add Cheque
             </Button>
           )}
@@ -246,7 +276,7 @@ export function ManageChequesPage() {
         <ReminderColumn onOpen={setDepositCheque} />
       </div>
 
-      {addOpen && <AddChequeModal onClose={() => setAddOpen(false)} />}
+      {formModal && <ChequeFormModal cheque={formModal === 'new' ? null : formModal} onClose={() => setFormModal(null)} />}
       {settleOpen && <SettleModal initialId={settleId} onClose={() => { setSettleOpen(false); setSettleId(''); }} />}
       {depositCheque && <DepositModal cheque={depositCheque} onClose={() => setDepositCheque(null)} />}
     </div>
@@ -272,10 +302,18 @@ function Kpi({ label, count, amount, tone }: { label: string; count?: number; am
   );
 }
 
-/* ── Add Cheque modal ─────────────────────────────────────────────────────── */
+/* ── Add / Edit Cheque modal ──────────────────────────────────────────────── */
 
-function AddChequeModal({ onClose }: { onClose: () => void }) {
+/** Add a new cheque, or edit a still-PENDING one (due date, remarks, linked
+ *  invoices). Lets you tag which open invoice(s) this cheque is meant to clear
+ *  and, if the cheque's due date lands after those invoices' due dates, warns
+ *  about the delay and asks you to confirm with the party before saving. */
+function ChequeFormModal({ cheque, onClose }: { cheque: ChequeDto | null; onClose: () => void }) {
+  const isEdit = !!cheque;
   const create = useCreateCheque();
+  const update = useUpdateCheque(cheque?.id ?? 0);
+  const saving = create.isPending || update.isPending;
+  const confirm = useConfirm();
   const { data: customerData } = useCustomers({ page: 1, pageSize: 1000 });
   const { data: banks } = useActiveBankAccounts();
 
@@ -287,16 +325,65 @@ function AddChequeModal({ onClose }: { onClose: () => void }) {
   const partyOptions = useMemo(() => [...byLabel.keys()].sort((a, b) => a.localeCompare(b)), [byLabel]);
   const bankOptions = useMemo(() => (banks ?? []).map((b) => b.display), [banks]);
 
-  const [party, setParty] = useState('');
-  const [chequeNo, setChequeNo] = useState('');
-  const [chequeAmt, setChequeAmt] = useState('');
-  const [payeeBank, setPayeeBank] = useState('');
-  const [drawerBank, setDrawerBank] = useState('');
-  const [recDate, setRecDate] = useState(TODAY);
-  const [dueDate, setDueDate] = useState(TODAY);
-  const [comments, setComments] = useState('');
+  const [party, setParty] = useState(cheque?.partyName ?? '');
+  const [chequeNo, setChequeNo] = useState(cheque?.chequeNo ?? '');
+  const [chequeAmt, setChequeAmt] = useState(cheque ? String(cheque.chequeAmt) : '');
+  const [payeeBank, setPayeeBank] = useState(cheque?.payeeBank ?? '');
+  const [drawerBank, setDrawerBank] = useState(cheque?.drawerBank ?? '');
+  const [recDate, setRecDate] = useState(cheque ? ymdOf(cheque.recDate) : TODAY());
+  const [dueDate, setDueDate] = useState(cheque ? ymdOf(cheque.dueDate) : TODAY());
+  const [comments, setComments] = useState(cheque?.comments ?? '');
+  const [selectedInvoices, setSelectedInvoices] = useState<string[]>(cheque?.invoiceNos ?? []);
 
-  const customerId = byLabel.get(party);
+  const customerId = byLabel.get(party) ?? cheque?.customerId ?? undefined;
+
+  // Open invoices for the chosen party, so the user can tag which one(s) this
+  // cheque is meant to clear — and so we can compare due dates for the delay check.
+  const { data: ctx } = usePaymentContext({ customerId, recDate: TODAY() }, customerId != null);
+  const invoiceOptions = useMemo(() => {
+    const rows = ctx?.invoices ?? [];
+    // Keep any already-tagged invoice visible even if it's no longer "pending"
+    // (e.g. settled since) — editing shouldn't silently drop it from the list.
+    const missing = selectedInvoices.filter((no) => !rows.some((r) => r.invNo === no)).map((no) => ({ invNo: no, dueDate: null as string | null, bankBal: 0, cashBal: 0 }));
+    return [...rows, ...missing];
+  }, [ctx, selectedInvoices]);
+  const invBalance = (inv: { bankBal: number; cashBal: number }) => (inv.bankBal ?? 0) + (inv.cashBal ?? 0);
+
+  const toggleInvoice = (invNo: string) =>
+    setSelectedInvoices((s) => (s.includes(invNo) ? s.filter((x) => x !== invNo) : [...s, invNo]));
+
+  // Only offer invoices this cheque can actually clear — its amount, minus
+  // whatever's already tagged, must cover the invoice's outstanding balance.
+  // Ticked invoices always stay visible (so you can untick them) even if a
+  // smaller/edited cheque amount no longer covers them.
+  const chequeAmtNum = Number(chequeAmt) || 0;
+  const selectedTotal = useMemo(
+    () =>
+      selectedInvoices.reduce((sum, no) => {
+        const inv = invoiceOptions.find((i) => i.invNo === no);
+        return sum + (inv ? invBalance(inv) : 0);
+      }, 0),
+    [selectedInvoices, invoiceOptions],
+  );
+  const remainingToAllocate = chequeAmtNum - selectedTotal;
+  const clearableInvoices = useMemo(
+    () => invoiceOptions.filter((inv) => selectedInvoices.includes(inv.invNo) || invBalance(inv) <= remainingToAllocate + 0.01),
+    [invoiceOptions, selectedInvoices, remainingToAllocate],
+  );
+
+  // Delay check: cheque due date vs. each tagged invoice's due date.
+  const delays = useMemo(() => {
+    if (!dueDate) return [];
+    return selectedInvoices
+      .map((invNo) => {
+        const inv = invoiceOptions.find((i) => i.invNo === invNo);
+        if (!inv?.dueDate) return null;
+        return { invNo, invDueDate: inv.dueDate, days: daysBetween(inv.dueDate, dueDate) };
+      })
+      .filter((d): d is { invNo: string; invDueDate: string; days: number } => d != null);
+  }, [selectedInvoices, invoiceOptions, dueDate]);
+  const lateDelays = delays.filter((d) => d.days > 0);
+  const avgDelayDays = lateDelays.length ? lateDelays.reduce((a, d) => a + d.days, 0) / lateDelays.length : 0;
 
   const clear = () => {
     setParty('');
@@ -307,9 +394,10 @@ function AddChequeModal({ onClose }: { onClose: () => void }) {
     setRecDate(TODAY());
     setDueDate(TODAY());
     setComments('');
+    setSelectedInvoices([]);
   };
 
-  const submit = () => {
+  const submit = async () => {
     // Validation mirrors the legacy "ADD CHEQUE" guards, in order.
     if (!party.trim()) return toast.error('Please select Party Name.');
     if (customerId == null) return toast.error('Customer ID is missing. Please re-select Party Name.');
@@ -318,26 +406,53 @@ function AddChequeModal({ onClose }: { onClose: () => void }) {
     if (!chequeAmt.trim() || !Number.isFinite(amt) || amt <= 0) return toast.error('Please enter a valid Cheque Amount.');
     if (!drawerBank.trim()) return toast.error('Please select Drawer (deposit) Bank.');
 
-    create.mutate(
-      {
-        partyName: party.trim(),
-        customerId,
-        chequeNo: chequeNo.trim().toUpperCase(),
-        chequeAmt: amt,
-        payeeBank: payeeBank.trim().toUpperCase() || null,
-        drawerBank: drawerBank.trim(),
-        recDate,
-        dueDate,
-        comments: comments.trim().toUpperCase() || null,
+    if (lateDelays.length > 0) {
+      const ok = await confirm({
+        title: 'This cheque is due after the tagged invoice(s)',
+        description: (
+          <>
+            <p>The tagged invoice(s) fall due before this cheque — this is a reference note only, not a payment allocation:</p>
+            <ul className="mt-1.5 list-disc space-y-0.5 pl-4">
+              {lateDelays.map((d) => (
+                <li key={d.invNo}>
+                  <span className="font-semibold">{d.invNo}</span> — due {prettyDate(d.invDueDate)}, cheque due {prettyDate(new Date(dueDate).toISOString())} ({d.days} day{d.days === 1 ? '' : 's'} late)
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 font-semibold">
+              Average delay: {avgDelayDays % 1 === 0 ? avgDelayDays : avgDelayDays.toFixed(1)} day{avgDelayDays === 1 ? '' : 's'}.
+            </p>
+            <p className="mt-2">Please contact the party to confirm before continuing.</p>
+          </>
+        ),
+        confirmText: 'Confirmed with party — continue',
+        cancelText: 'Cancel',
+        destructive: true,
+      });
+      if (!ok) return;
+    }
+
+    const payload = {
+      partyName: party.trim(),
+      customerId,
+      chequeNo: chequeNo.trim().toUpperCase(),
+      chequeAmt: amt,
+      payeeBank: payeeBank.trim().toUpperCase() || null,
+      drawerBank: drawerBank.trim(),
+      recDate,
+      dueDate,
+      comments: comments.trim().toUpperCase() || null,
+      invoiceNos: selectedInvoices,
+    };
+    const opts = {
+      onSuccess: () => {
+        toast.success(isEdit ? 'Cheque updated successfully.' : 'Cheque saved successfully.');
+        onClose();
       },
-      {
-        onSuccess: () => {
-          toast.success('Cheque saved successfully.');
-          onClose();
-        },
-        onError: (e) => toast.error(getApiErrorMessage(e, 'Error saving cheque')),
-      },
-    );
+      onError: (e: unknown) => toast.error(getApiErrorMessage(e, 'Error saving cheque')),
+    };
+    if (isEdit) update.mutate(payload, opts);
+    else create.mutate(payload, opts);
   };
 
   return (
@@ -346,11 +461,13 @@ function AddChequeModal({ onClose }: { onClose: () => void }) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-xl">
             <span className="bg-gradient-brand flex size-8 items-center justify-center rounded-lg text-white shadow-sm ring-1 ring-white/20">
-              <Plus className="size-4" />
+              {isEdit ? <Pencil className="size-4" /> : <Plus className="size-4" />}
             </span>
-            Add Cheque
+            {isEdit ? `Edit Cheque ${cheque.chequeNo}` : 'Add Cheque'}
           </DialogTitle>
-          <DialogDescription className="text-base">Record a cheque received from a party.</DialogDescription>
+          <DialogDescription className="text-base">
+            {isEdit ? 'Update the due date, remarks, or which invoice(s) this cheque is tagged for.' : 'Record a cheque received from a party.'}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-3.5 sm:grid-cols-2">
@@ -375,10 +492,6 @@ function AddChequeModal({ onClose }: { onClose: () => void }) {
             <NativeSelect value={drawerBank} onChange={setDrawerBank} options={bankOptions} placeholder="Our deposit account…" className="h-10 text-base" />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-sm">Comments</Label>
-            <Input value={comments} onChange={(e) => setComments(e.target.value)} className="h-10 text-base uppercase" placeholder="Optional" />
-          </div>
-          <div className="space-y-1.5">
             <Label className="text-sm">Rec Date *</Label>
             <Input type="date" value={recDate} onChange={(e) => setRecDate(e.target.value)} className="h-10 text-base" />
           </div>
@@ -388,6 +501,71 @@ function AddChequeModal({ onClose }: { onClose: () => void }) {
           </div>
         </div>
 
+        {/* Tag which invoice(s) this cheque is FOR — a reference note only. It does
+            NOT allocate the payment or touch the party ledger in any way; that
+            still only happens when the cheque is actually receipted through
+            Account → Payment. Multiple invoices can be tagged at once. Only
+            invoices whose balance still fits the cheque amount (minus whatever's
+            already tagged) are offered, so the reference stays sensible — not
+            every pending invoice for the party. */}
+        <div className="space-y-1.5">
+          <div className="flex items-baseline justify-between">
+            <Label className="text-sm">For Invoice(s) — reference only</Label>
+            {selectedInvoices.length > 0 && (
+              <span className={cn('text-xs font-medium tabular-nums', remainingToAllocate < -0.01 ? 'text-rose-600' : 'text-muted-foreground')}>
+                {money(selectedTotal)} of {money(chequeAmtNum)} tagged
+              </span>
+            )}
+          </div>
+          {customerId == null ? (
+            <p className="text-muted-foreground rounded-md border border-dashed px-3 py-2 text-sm">Select a party to see its open invoices.</p>
+          ) : chequeAmtNum <= 0 ? (
+            <p className="text-muted-foreground rounded-md border border-dashed px-3 py-2 text-sm">Enter the Cheque Amt above to see which open invoices fit this cheque.</p>
+          ) : clearableInvoices.length === 0 ? (
+            <p className="text-muted-foreground rounded-md border border-dashed px-3 py-2 text-sm">
+              No open invoice for this party has a balance this cheque's amount can cover.
+            </p>
+          ) : (
+            <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border p-2">
+              {clearableInvoices.map((inv) => (
+                <label key={inv.invNo} className="hover:bg-muted/60 flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm">
+                  <input type="checkbox" checked={selectedInvoices.includes(inv.invNo)} onChange={() => toggleInvoice(inv.invNo)} className="size-4 accent-blue-600" />
+                  <span className="min-w-0 flex-1 truncate font-mono">{inv.invNo}</span>
+                  <span className="text-muted-foreground shrink-0">{inv.dueDate ? `due ${prettyDate(inv.dueDate)}` : '—'}</span>
+                  {invBalance(inv) > 0 && <span className="shrink-0 tabular-nums">{money(invBalance(inv))}</span>}
+                </label>
+              ))}
+            </div>
+          )}
+          <p className="text-muted-foreground text-xs">
+            You can tag more than one invoice — this only records what the cheque is <em>for</em>. It doesn't allocate the payment or update the party
+            ledger; that still happens separately when you receipt this cheque through Account → Payment.
+          </p>
+        </div>
+
+        {lateDelays.length > 0 && (
+          <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+            <div>
+              <p className="font-semibold">
+                This cheque is due {avgDelayDays % 1 === 0 ? avgDelayDays : avgDelayDays.toFixed(1)} day{avgDelayDays === 1 ? '' : 's'} after the tagged invoice(s) on average — contact the party to confirm.
+              </p>
+              <ul className="mt-1 space-y-0.5">
+                {lateDelays.map((d) => (
+                  <li key={d.invNo}>
+                    {d.invNo}: due {prettyDate(d.invDueDate)} · {d.days} day{d.days === 1 ? '' : 's'} late
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
+
+        <div className="space-y-1.5">
+          <Label className="text-sm">Remarks</Label>
+          <Input value={comments} onChange={(e) => setComments(e.target.value)} className="h-10 text-base uppercase" placeholder="Optional" />
+        </div>
+
         {bankOptions.length === 0 && (
           <p className="flex items-center gap-1.5 text-sm text-amber-600">
             <Landmark className="size-4" /> No active bank accounts yet — add one under Account → Bank Accounts to populate the deposit-bank picker.
@@ -395,11 +573,18 @@ function AddChequeModal({ onClose }: { onClose: () => void }) {
         )}
 
         <DialogFooter className="gap-2">
-          <Button type="button" variant="outline" className="h-10" onClick={clear}>
-            <RotateCcw /> Clear
-          </Button>
-          <Button className="h-10" onClick={submit} disabled={create.isPending}>
-            {create.isPending ? <Loader2 className="animate-spin" /> : <Plus />} Add Cheque
+          {!isEdit && (
+            <Button type="button" variant="outline" className="h-10" onClick={clear}>
+              <RotateCcw /> Clear
+            </Button>
+          )}
+          {isEdit && (
+            <Button type="button" variant="outline" className="h-10" onClick={onClose}>
+              Cancel
+            </Button>
+          )}
+          <Button className="h-10" onClick={submit} disabled={saving}>
+            {saving ? <Loader2 className="animate-spin" /> : isEdit ? <Pencil /> : <Plus />} {isEdit ? 'Save Changes' : 'Add Cheque'}
           </Button>
         </DialogFooter>
       </DialogContent>

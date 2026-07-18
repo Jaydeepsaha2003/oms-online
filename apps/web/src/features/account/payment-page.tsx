@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   BookOpenCheck,
   CheckCircle2,
@@ -55,11 +56,14 @@ const DUE_STYLE: Record<string, { row: string; badge: string }> = {
 export function PaymentPage() {
   const { can } = usePermissions();
   const canCreate = can('payment:create');
+  // Arriving from Party Advances (or anywhere else) can hand over a party or
+  // agent name to preselect, so the user lands straight on that pending context.
+  const { state } = useLocation() as { state?: { party?: string; agent?: string } | null };
 
   /* ── form state ─────────────────────────────────────────────────────────── */
   const [recDate, setRecDate] = useState(TODAY);
-  const [party, setParty] = useState('');
-  const [agent, setAgent] = useState('');
+  const [party, setParty] = useState(state?.party ?? '');
+  const [agent, setAgent] = useState(state?.agent ?? '');
   const [payMode, setPayMode] = useState('');
   const [bankName, setBankName] = useState('');
   const [chequeNo, setChequeNo] = useState('');

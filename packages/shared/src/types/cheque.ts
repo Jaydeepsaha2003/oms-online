@@ -45,6 +45,9 @@ export interface ChequeDto {
   /** Whether a bounced cheque is being re-deposited (represented). */
   isRepresent: boolean;
   comments: string | null;
+  /** Invoice/challan codes this cheque is meant to clear (optional, informational —
+   *  not a financial allocation; those still go through Payment/AGST REF). */
+  invoiceNos: string[];
   status: ChequeStatus;
   createdAt: string;
   updatedAt: string;
@@ -61,6 +64,21 @@ export interface CreateChequeInput {
   recDate: string;
   dueDate: string;
   comments?: string | null;
+  invoiceNos?: string[];
+}
+
+/** Edit a still-PENDING cheque — every field optional (only send what changed). */
+export interface UpdateChequeInput {
+  partyName?: string;
+  customerId?: number | null;
+  chequeNo?: string;
+  chequeAmt?: number;
+  payeeBank?: string | null;
+  drawerBank?: string;
+  recDate?: string;
+  dueDate?: string;
+  comments?: string | null;
+  invoiceNos?: string[];
 }
 
 /** Deposit a PENDING cheque (sets deposit date + status = DEPOSITED). */

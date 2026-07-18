@@ -5,6 +5,7 @@ import {
   type DueType,
   type LedgerEntryDto,
   type Paginated,
+  type PartyAdvanceSummary,
   type PaymentAllocation,
   type PaymentContext,
   type PendingAdvanceRow,
@@ -72,6 +73,61 @@ export class PaymentsService {
         openingCash: r2(openings.reduce((a, i) => a + i.pendingCash, 0)),
       },
     };
+  }
+
+  /**
+   * Every party (or agent) currently sitting on an outstanding advance —
+   * across the whole book, not scoped to one customer/agent like `context()`.
+   * The "who's paid in advance" quick-glance view.
+   */
+  async allAdvances(): Promise<PartyAdvanceSummary[]> {
+    const advs = await this.prisma.acctPartyAdvance.findMany({ orderBy: [{ recDate: 'asc' }, { refId: 'asc' }] });
+    if (!advs.length) return [];
+    const used = await this.prisma.acctPaymentReceipt.groupBy({
+      by: ['refRecId', 'payMode'],
+      where: { refRecId: { in: advs.map((a) => a.refId) } },
+      _sum: { recAmt: true },
+    });
+    const usedBank = new Map<string, number>();
+    const usedCash = new Map<string, number>();
+    for (const u of used) {
+      const m = BANK_MODES.includes(u.payMode) ? usedBank : usedCash;
+      m.set(u.refRecId ?? '', r2((m.get(u.refRecId ?? '') ?? 0) + (u._sum.recAmt ?? 0)));
+    }
+
+    // Group by party (custId) or, for AGENT-level advances, by agent name —
+    // AGENT advances all share custId = 0, so grouping on that alone would
+    // wrongly merge every agent's advances together.
+    const byKey = new Map<string, PartyAdvanceSummary>();
+    for (const a of advs) {
+      const bankBal = Math.max(0, r2(a.bankAmt - (usedBank.get(a.refId) ?? 0)));
+      const cashBal = Math.max(0, r2(a.cashAmt - (usedCash.get(a.refId) ?? 0)));
+      if (bankBal <= EPS && cashBal <= EPS) continue;
+      const isAgent = a.takeAccOn === 'AGENT';
+      const key = isAgent ? `agent:${a.customerName}` : `party:${a.custId}`;
+      const recIso = a.recDate.toISOString();
+      const cur = byKey.get(key);
+      if (cur) {
+        cur.bankBal = r2(cur.bankBal + bankBal);
+        cur.cashBal = r2(cur.cashBal + cashBal);
+        cur.total = r2(cur.total + bankBal + cashBal);
+        cur.refCount += 1;
+        if (recIso < cur.oldestDate) cur.oldestDate = recIso;
+      } else {
+        byKey.set(key, {
+          customerId: isAgent ? null : a.custId,
+          customerName: a.customerName,
+          agentName: a.agentName,
+          takeAccOn: a.takeAccOn,
+          bankBal,
+          cashBal,
+          total: r2(bankBal + cashBal),
+          oldestDate: recIso,
+          refCount: 1,
+        });
+      }
+    }
+    return [...byKey.values()].sort((x, y) => y.total - x.total);
   }
 
   /** CLEARED cheques of the party with un-received balance (CHEQUE mode picker). */

@@ -248,6 +248,13 @@ export const MENU: MenuNode[] = [
         permission: perm(RESOURCES.PAYMENT, ACTIONS.VIEW),
       },
       {
+        id: 'party-advances',
+        label: 'Party Advances',
+        to: '/account/advances',
+        icon: 'Wallet',
+        permission: perm(RESOURCES.PAYMENT, ACTIONS.VIEW),
+      },
+      {
         id: 'sales-discount',
         label: 'Sales Discount',
         to: '/account/discount',
