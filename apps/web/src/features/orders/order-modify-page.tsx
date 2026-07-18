@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, ExternalLink, Loader2, Save, Search, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ExternalLink, Loader2, RotateCcw, Save, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { OrderDto, OrderInput, OrderItemDto } from '@oms/shared';
 import { ORDER_PRIORITIES } from '@oms/shared';
@@ -18,7 +18,7 @@ import { NativeSelect } from '@/components/common/combo';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { settingValues, useSettings } from '@/features/settings/use-settings';
 import { usePermissions } from '@/hooks/use-permissions';
-import { useOrderLookups, useOrders, useSaveOrder } from './use-orders';
+import { useOrderFilterOptions, useOrderLookups, useOrders, useSaveOrder } from './use-orders';
 import { LiveLinePhotos } from './line-photos';
 
 const PAGE_SIZE = 50;
@@ -115,8 +115,18 @@ export function OrderModifyPage() {
   const navigate = useNavigate();
   const confirm = useConfirm();
   const [search, setSearch] = useState('');
+  const [product, setProduct] = useState('');
+  const [design, setDesign] = useState('');
+  const [priority, setPriority] = useState('');
   const [page, setPage] = useState(1);
-  const { data, isLoading } = useOrders({ page, pageSize: PAGE_SIZE, search: search || undefined });
+  const { data, isLoading } = useOrders({
+    page,
+    pageSize: PAGE_SIZE,
+    search: search || undefined,
+    product: product || undefined,
+    design: design || undefined,
+  });
+  const { data: filterOptions } = useOrderFilterOptions();
   const save = useSaveOrder();
   const { data: settings } = useSettings();
   const orderTypeOptions = useMemo(() => settingValues(settings, 'ORDER_TYPE'), [settings]);
@@ -124,13 +134,26 @@ export function OrderModifyPage() {
   const { format, setFormat } = useDateFormat();
 
   const [edit, setEdit] = useState<Row | null>(null);
+  const hasFilters = !!search || !!product || !!design || !!priority;
+  const resetFilters = () => {
+    setSearch('');
+    setProduct('');
+    setDesign('');
+    setPriority('');
+    setPage(1);
+  };
 
   // Draft orders are work-in-progress and stay hidden from Order Modify.
   const orders = useMemo(() => (data?.items ?? []).filter((o) => o.status !== 'DRAFT'), [data]);
   const totalPages = data?.totalPages ?? 1;
 
   // Flatten every order's lines into a single list (order info repeats per line).
-  const rows = useMemo<Row[]>(() => orders.flatMap((order) => order.items.map((line) => ({ order, line }))), [orders]);
+  // Priority has no server-side filter (a tiny fixed NORMAL/URGENT enum), so it's
+  // applied here, after flattening — product/design are already narrowed server-side.
+  const rows = useMemo<Row[]>(() => {
+    const flat = orders.flatMap((order) => order.items.map((line) => ({ order, line })));
+    return priority ? flat.filter((r) => r.line.priority === priority) : flat;
+  }, [orders, priority]);
 
   // Phones: group lines by their parent order — one card per order, its lines
   // nested underneath, instead of repeating the order/customer on every line.
@@ -184,33 +207,60 @@ export function OrderModifyPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Order Modify</h2>
-          <p className="text-muted-foreground text-sm">Every order line in one place — click a row to edit it.</p>
+      {/* No page title here — the topbar already shows "Order Modify". Search
+          and column settings share one sticky row so the list starts right
+          below it instead of losing a whole row to a redundant heading. */}
+      <div className="bg-background/85 sticky top-0 z-20 -mx-1 flex flex-wrap items-center gap-2 rounded-md px-1 py-1.5 backdrop-blur">
+        <div className="relative w-full flex-1 sm:max-w-xs sm:flex-none">
+          <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
+          <Input
+            placeholder="Search order #, customer or agent…"
+            className="pl-9"
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value.trim());
+              setPage(1);
+            }}
+          />
         </div>
-        <ColumnSettings
-          columns={cols.orderedReorderable}
-          hidden={cols.hidden}
-          onReorder={cols.moveBefore}
-          onMove={cols.move}
-          onToggle={cols.toggle}
-          onReset={cols.reset}
-          dateFormat={{ value: format, options: DATE_FORMATS, onChange: setFormat }}
-        />
-      </div>
-
-      <div className="relative max-w-sm">
-        <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
-        <Input
-          placeholder="Search order #, customer or agent…"
-          className="pl-9"
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value.trim());
-            setPage(1);
-          }}
-        />
+        <div className="w-44">
+          <NativeSelect
+            value={product}
+            onChange={(v) => { setProduct(v); setPage(1); }}
+            options={['', ...(filterOptions?.products ?? [])]}
+            placeholder="All products"
+          />
+        </div>
+        <div className="w-40">
+          <NativeSelect
+            value={design}
+            onChange={(v) => { setDesign(v); setPage(1); }}
+            options={['', ...(filterOptions?.designs ?? [])]}
+            placeholder="All designs"
+          />
+        </div>
+        <div className="w-36">
+          <NativeSelect
+            value={priority}
+            onChange={(v) => { setPriority(v); setPage(1); }}
+            options={['', ...ORDER_PRIORITIES]}
+            placeholder="All priorities"
+          />
+        </div>
+        <Button variant="outline" size="sm" onClick={resetFilters} disabled={!hasFilters} className="shrink-0">
+          <RotateCcw /> Reset
+        </Button>
+        <div className="ml-auto shrink-0">
+          <ColumnSettings
+            columns={cols.orderedReorderable}
+            hidden={cols.hidden}
+            onReorder={cols.moveBefore}
+            onMove={cols.move}
+            onToggle={cols.toggle}
+            onReset={cols.reset}
+            dateFormat={{ value: format, options: DATE_FORMATS, onChange: setFormat }}
+          />
+        </div>
       </div>
 
       <div className="hidden sm:block">
@@ -220,6 +270,9 @@ export function OrderModifyPage() {
           rowKey={(r) => `${r.order.id}-${r.line.id}`}
           isLoading={isLoading}
           dense
+          // Freezes the column header and scrolls the rows in their own region
+          // (desktop only — phones use the grouped card list below instead).
+          maxBodyHeight="max-h-[calc(100vh-14.5rem)]"
           // Larger, easy-to-read data font (columns still auto-fit their content).
           className="text-[16px] [&_thead_th]:text-[14px] [&_td]:py-1.5 [&_th]:py-2 [&_tbody_button]:size-8"
           emptyText="No order lines found."
@@ -301,7 +354,7 @@ export function OrderModifyPage() {
 
       <div className="flex items-center justify-between">
         <p className="text-muted-foreground text-sm">
-          {rows.length} line(s) across {orders.length} order(s) · page {data?.page ?? page} of {totalPages}
+          {rows.length} line(s) across {new Set(rows.map((r) => r.order.id)).size} order(s) · page {data?.page ?? page} of {totalPages}
         </p>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>

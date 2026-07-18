@@ -251,7 +251,41 @@ function DispatchSheet({ line, onClose, onDispatched }: { line: PendingLineDto; 
     if (cf === 'PCS' && pcs <= 0) return toast.error('Pcs is required — this item is priced by PCS.');
     if (cf === 'KGS' && gram <= 0) return toast.error('Kgs is required to dispatch this item.');
     if (cf !== 'PCS' && cf !== 'KGS' && bags <= 0 && pcs <= 0 && gram <= 0 && box <= 0) return toast.error('Enter at least one quantity to dispatch');
-    if (form.dispatchStatus === 'FULLY DISPATCH') {
+
+    // Over-dispatch is allowed (packing/weighing variance is normal) but never
+    // silently — flag exactly which unit(s) go past what's left and make the
+    // user explicitly confirm before it's saved.
+    const n = (v: number) => v.toLocaleString('en-IN');
+    const over = ([
+      ['Bags', bags, line.remBags],
+      ['Pcs', pcs, line.remPcs],
+      ['Kgs', gram, line.remKgs],
+      ['Box', box, line.remBox],
+    ] as const).filter(([, v, rem]) => v > (rem ?? 0));
+
+    let status = form.dispatchStatus;
+    if (over.length) {
+      const ok = await confirm({
+        title: 'Dispatch more than what remains?',
+        description: (
+          <>
+            This goes past what's left on this order line:
+            <ul className="mt-1.5 list-disc space-y-0.5 pl-4">
+              {over.map(([label, v, rem]) => (
+                <li key={label}>
+                  <span className="font-semibold">{label}</span>: dispatching {n(v)}, only {n(rem ?? 0)} remaining.
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2">The line will be marked Fully Dispatched. Continue anyway?</p>
+          </>
+        ),
+        confirmText: 'Dispatch anyway',
+        destructive: true,
+      });
+      if (!ok) return;
+      status = 'FULLY DISPATCH'; // nothing is left pending once you go over
+    } else if (form.dispatchStatus === 'FULLY DISPATCH') {
       const ok = await confirm({
         title: 'Fully dispatch this line?',
         description: `${line.productName || line.product} for ${line.customerName} will be closed (no longer pending).`,
@@ -260,7 +294,7 @@ function DispatchSheet({ line, onClose, onDispatched }: { line: PendingLineDto; 
       if (!ok) return;
     }
     create.mutate(
-      { orderItemId: line.orderItemId, bags, pcs, gram, box, dispatchStatus: form.dispatchStatus, comment: form.comment.trim() || null },
+      { orderItemId: line.orderItemId, bags, pcs, gram, box, dispatchStatus: status, comment: form.comment.trim() || null },
       {
         onSuccess: (d) => onDispatched(d.code ?? ''),
         onError: (e) => toast.error(getApiErrorMessage(e, 'Dispatch failed')),

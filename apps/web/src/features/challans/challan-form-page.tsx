@@ -35,6 +35,7 @@ import { openPdf } from '@/lib/pdf';
 import { useConfirm } from '@/components/common/confirm';
 import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -673,7 +674,9 @@ export function ChallanFormPage() {
                 />
               </div>
             </MetaCell>
-            <MetaCell label="Invoice Date" icon={CalendarDays}><Input type="date" value={invDate} onChange={(e) => setInvDate(e.target.value)} className="bg-background h-8 w-full max-w-[9.75rem] text-sm" /></MetaCell>
+            <MetaCell label="Invoice Date" icon={CalendarDays}>
+              <DatePicker value={invDate} onChange={setInvDate} clearable={false} className="bg-background h-8 w-full max-w-[9.75rem] text-sm" />
+            </MetaCell>
             <MetaCell label="Due Date" icon={CalendarCheck2}>
               <Input
                 readOnly
@@ -973,10 +976,11 @@ export function ChallanFormPage() {
         )}
       </div>
 
-      {/* Bottom action bar — pinned to the bottom of the viewport on phones (so the
-          primary Create/Update action is always one thumb-reach away, no scrolling
-          to the foot of a long form); flows inline as before on desktop/tablet. */}
-      <div className="bg-background/95 sticky bottom-0 z-30 -mx-1 mt-0.5 flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1.5 border-t px-2 py-2 shadow-[0_-4px_16px_-4px_rgba(0,0,0,0.12)] backdrop-blur sm:static sm:mt-1 sm:gap-y-2 sm:py-3 sm:shadow-none">
+      {/* Bottom action bar — flows at the end of the form (not pinned), same as the
+          New Order form: it appears right after the content, so it's reached only
+          once you've actually scrolled to the bottom instead of floating over the
+          last item's row. */}
+      <div className="bg-background/95 z-30 -mx-1 mt-0.5 flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1.5 border-t px-2 py-2 backdrop-blur sm:mt-1 sm:gap-y-2 sm:py-3">
         <p className="text-sm">
           {rows.length} item(s)
           {draft && (

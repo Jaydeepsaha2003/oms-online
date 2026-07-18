@@ -207,33 +207,12 @@ export function OrdersPage() {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Orders</h2>
-          <p className="text-muted-foreground text-sm">View, modify and track sales orders.</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <ColumnSettings
-            columns={cols.orderedReorderable}
-            hidden={cols.hidden}
-            onReorder={cols.moveBefore}
-            onMove={cols.move}
-            onToggle={cols.toggle}
-            onReset={cols.reset}
-            dateFormat={{ value: format, options: DATE_FORMATS, onChange: setFormat }}
-          />
-          {can('order:create') && (
-            <Button size="sm" onClick={() => navigate('/orders/new')}>
-              <Plus /> New order
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {/* Sticky so the search + filters stay reachable while scrolling the list. */}
+    <div className="space-y-3">
+      {/* No page title here — the topbar already shows "View Orders". Search,
+          filters and actions share one row (sticky) so the list starts right
+          below it instead of losing a whole row to a redundant heading. */}
       <div className="bg-background/85 sticky top-0 z-20 -mx-1 flex flex-wrap items-center gap-2 rounded-md px-1 py-1.5 backdrop-blur">
-        <div className="relative w-full flex-1 sm:w-80 sm:flex-none">
+        <div className="relative w-full flex-1 sm:w-72 sm:flex-none">
           <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
           <Input
             placeholder="Search order #, customer or agent…"
@@ -262,11 +241,27 @@ export function OrdersPage() {
           )}
         </Button>
         {/* Keep orders whose lines contain the picked product / design. */}
-        <div className="hidden w-64 lg:block">
+        <div className="hidden w-56 lg:block">
           <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...(filterOptions?.products ?? [])]} placeholder="All products" />
         </div>
-        <div className="hidden w-48 lg:block">
+        <div className="hidden w-44 lg:block">
           <NativeSelect value={design} onChange={(v) => { setDesign(v); setPage(1); }} options={['', ...(filterOptions?.designs ?? [])]} placeholder="All designs" />
+        </div>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <ColumnSettings
+            columns={cols.orderedReorderable}
+            hidden={cols.hidden}
+            onReorder={cols.moveBefore}
+            onMove={cols.move}
+            onToggle={cols.toggle}
+            onReset={cols.reset}
+            dateFormat={{ value: format, options: DATE_FORMATS, onChange: setFormat }}
+          />
+          {can('order:create') && (
+            <Button size="sm" onClick={() => navigate('/orders/new')}>
+              <Plus /> New order
+            </Button>
+          )}
         </div>
       </div>
 
@@ -321,6 +316,9 @@ export function OrdersPage() {
         rowKey={(o) => o.id}
         isLoading={isLoading}
         dense
+        // No height cap — every row renders in the page's own natural scroll
+        // (same as every other list page), so pagination sits right after the
+        // last row instead of behind a second, nested scrollbar.
         // Larger, easy-to-read data font (columns still auto-fit their content).
         className="text-[16px] [&_thead_th]:text-[14px] [&_td]:py-1.5 [&_th]:py-2 [&_tbody_button]:size-8"
         emptyText="No orders yet — create one."

@@ -325,9 +325,10 @@ export class DispatchService {
     } else if (q.bags <= EPS && q.pcs <= EPS && q.gram <= EPS && q.box <= EPS) {
       throw new BadRequestException('Enter at least one quantity to dispatch.');
     }
-    if (q.bags > rem.bags + EPS || q.pcs > rem.pcs + EPS || q.gram > rem.gram + EPS || q.box > rem.box + EPS) {
-      throw new BadRequestException('Dispatch quantity exceeds the remaining quantity for this line.');
-    }
+    // Dispatching more than what's left on the line is allowed (real-world
+    // packing/weighing variance means the shipped qty doesn't always match the
+    // order exactly) — the web app gates it behind an explicit confirmation
+    // before it ever reaches here; this endpoint itself no longer blocks it.
     const consumesAll =
       rem.bags - q.bags <= EPS && rem.pcs - q.pcs <= EPS && rem.gram - q.gram <= EPS && rem.box - q.box <= EPS;
     if (consumesAll && status !== 'FULLY DISPATCH') {
