@@ -174,6 +174,14 @@ export function OrderModifyPage() {
     setEdit(null);
   };
 
+  // A dispatched line's quantity/rate/product details are frozen (the backend
+  // rejects that edit outright) — this appends the edited details as a brand
+  // new line instead, leaving the original dispatched line untouched.
+  const addLineAsNew = (order: OrderDto, newItem: OrderItemDto) => {
+    saveItems(order, [...order.items, { ...newItem, id: 0 }], 'Added as a new item');
+    setEdit(null);
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-3">
@@ -312,6 +320,7 @@ export function OrderModifyPage() {
             orderTypes={orderTypeOptions}
             saving={save.isPending}
             onSave={(updated) => saveLine(edit.order, updated)}
+            onAddAsNew={(newItem) => addLineAsNew(edit.order, newItem)}
             onDelete={() => deleteLine(edit.order, edit.line)}
             onViewFull={() => navigate(`/orders/${edit.order.id}/edit`)}
             onClose={() => setEdit(null)}
@@ -328,6 +337,7 @@ function LineEditor({
   orderTypes,
   saving,
   onSave,
+  onAddAsNew,
   onDelete,
   onViewFull,
   onClose,
@@ -336,13 +346,21 @@ function LineEditor({
   orderTypes: string[];
   saving: boolean;
   onSave: (updated: OrderItemDto) => void;
+  /** Dispatched-line detour: append the edited details as a brand new line
+   *  instead of touching the original (which the backend won't allow anyway). */
+  onAddAsNew: (newItem: OrderItemDto) => void;
   onDelete: () => void;
   onViewFull: () => void;
   onClose: () => void;
 }) {
   const { order, line } = row;
   const { can } = usePermissions();
+  const confirm = useConfirm();
   const { data: lookups } = useOrderLookups();
+  // Once the user has confirmed "add as a new item" (see submit()), the form
+  // keeps whatever they typed but Save now creates a fresh line instead of
+  // touching the dispatched original — it does NOT auto-submit on its own.
+  const [addNewMode, setAddNewMode] = useState(false);
   const s = (v: number | null) => (v == null ? '' : String(v));
   const [form, setForm] = useState({
     itemName: line.productName ?? [line.product, line.designType].filter(Boolean).join(' '),
@@ -365,6 +383,10 @@ function LineEditor({
   // Snapshot of the untouched form — Save stays disabled until something differs.
   const baseline = useRef(form);
   const dirty = JSON.stringify(form) !== JSON.stringify(baseline.current);
+  // Quantity/rate/product fields — the exact set the backend freezes once a line
+  // has been dispatched (status/priority/order-type/comment stay editable there).
+  const MATERIAL_KEYS = ['itemName', 'product', 'designType', 'bags', 'pcs', 'gram', 'box', 'productRate', 'designRate'] as const;
+  const materialDirty = MATERIAL_KEYS.some((k) => form[k] !== baseline.current[k]);
 
   // Composite "item name" choices — same dropdown as the New Order page:
   // each label is "{size} {product} {designType}".
@@ -434,35 +456,61 @@ function LineEditor({
     e.preventDefault();
   };
 
-  const submit = () => {
-    onSave({
-      ...line,
-      product: form.product.trim() || null,
-      designType: form.designType.trim() || null,
-      productName: form.itemName.trim() || [form.product.trim(), form.designType.trim()].filter(Boolean).join(' ') || null,
-      ordType: form.ordType || null,
-      priority: form.priority || null,
-      bags: num(form.bags),
-      pcs: num(form.pcs),
-      gram: num(form.gram),
-      box: num(form.box),
-      productRate: num(form.productRate),
-      designRate: num(form.designRate),
-      rate,
-      comment: form.comment.trim() || null,
-    });
+  const buildUpdated = (): OrderItemDto => ({
+    ...line,
+    product: form.product.trim() || null,
+    designType: form.designType.trim() || null,
+    productName: form.itemName.trim() || [form.product.trim(), form.designType.trim()].filter(Boolean).join(' ') || null,
+    ordType: form.ordType || null,
+    priority: form.priority || null,
+    bags: num(form.bags),
+    pcs: num(form.pcs),
+    gram: num(form.gram),
+    box: num(form.box),
+    productRate: num(form.productRate),
+    designRate: num(form.designRate),
+    rate,
+    comment: form.comment.trim() || null,
+  });
+
+  const submit = async () => {
+    // Already agreed to add-as-new — just do it (this click never auto-fires on
+    // its own; the confirm below only pre-fills and waits for this explicit click).
+    if (addNewMode) return onAddAsNew(buildUpdated());
+
+    // A dispatched line's quantity/rate/product details are frozen server-side —
+    // don't even attempt the save; offer to add the edit as a new line instead.
+    if (line.dispatched && materialDirty) {
+      const ok = await confirm({
+        title: 'This item has already been dispatched',
+        description:
+          'Its quantity, rate and product details can\'t be changed directly — the dispatch already reflects what was shipped. Add these changes as a NEW item with the same details instead? The original dispatched line stays untouched.',
+        confirmText: 'Add as new item',
+        cancelText: 'Cancel',
+      });
+      if (ok) setAddNewMode(true); // fills in below — waits for an explicit Save/Add click
+      return;
+    }
+
+    onSave(buildUpdated());
   };
 
   return (
     <SheetContent className="flex w-full max-w-md flex-col" onOpenAutoFocus={(e) => e.preventDefault()}>
       <SheetHeader>
-        <SheetTitle>Edit item line</SheetTitle>
+        <SheetTitle>{addNewMode ? 'Add as a new item' : 'Edit item line'}</SheetTitle>
         <p className="text-muted-foreground truncate text-sm">
           {order.code ?? `#${order.id}`} · {order.customerName}
         </p>
       </SheetHeader>
 
       <div className="flex-1 space-y-3 overflow-y-auto pr-1">
+        {addNewMode && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            The original dispatched line stays untouched — review the details below and click{' '}
+            <span className="font-semibold">Add as New Item</span> to save this as a separate line.
+          </div>
+        )}
         <Field label="Item name">
           <NativeSelect
             value={form.itemName}
@@ -529,15 +577,15 @@ function LineEditor({
       </div>
 
       <SheetFooter className="justify-between">
-        <Button variant="ghost" className="text-destructive hover:text-destructive" onClick={onDelete} disabled={saving}>
+        <Button variant="ghost" className="text-destructive hover:text-destructive" onClick={onDelete} disabled={saving || addNewMode}>
           <Trash2 /> Delete
         </Button>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={onClose} disabled={saving}>
-            Cancel
+          <Button variant="outline" onClick={addNewMode ? () => setAddNewMode(false) : onClose} disabled={saving}>
+            {addNewMode ? 'Back to editing' : 'Cancel'}
           </Button>
-          <Button onClick={submit} disabled={saving || !dirty}>
-            {saving ? <Loader2 className="animate-spin" /> : <Save />} Save
+          <Button onClick={submit} disabled={saving || (!addNewMode && !dirty)}>
+            {saving ? <Loader2 className="animate-spin" /> : <Save />} {addNewMode ? 'Add as New Item' : 'Save'}
           </Button>
         </div>
       </SheetFooter>

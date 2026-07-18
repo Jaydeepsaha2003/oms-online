@@ -48,7 +48,12 @@ export class DesignNamesService {
   async create(dto: CreateDesignNameDto): Promise<DesignNameDto> {
     try {
       const row = await this.prisma.designName.create({
-        data: { designType: uc(dto.designType)!, designName: uc(dto.designName)! },
+        data: {
+          designType: uc(dto.designType)!,
+          designName: uc(dto.designName)!,
+          photoPath: dto.photoPath ?? null,
+          photoUrl: dto.photoUrl ?? null,
+        },
       });
       return this.toDto(row);
     } catch (err) {
@@ -64,6 +69,8 @@ export class DesignNamesService {
         data: {
           ...(dto.designType !== undefined ? { designType: uc(dto.designType)! } : {}),
           ...(dto.designName !== undefined ? { designName: uc(dto.designName)! } : {}),
+          ...(dto.photoPath !== undefined ? { photoPath: dto.photoPath } : {}),
+          ...(dto.photoUrl !== undefined ? { photoUrl: dto.photoUrl } : {}),
         },
       });
       return this.toDto(row);
@@ -136,6 +143,8 @@ export class DesignNamesService {
       id: r.id,
       designType: r.designType,
       designName: r.designName,
+      photoPath: r.photoPath,
+      photoUrl: r.photoUrl,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     };

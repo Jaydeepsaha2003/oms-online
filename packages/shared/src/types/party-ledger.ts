@@ -23,6 +23,9 @@ export interface PartyLedgerRow {
   customerName: string;
   voucherType: string; // SALES INVOICE | DEBIT NOTE | CREDIT NOTE | RECEIPT | SALES DISCOUNT
   voucherNo: string;
+  /** The underlying Challan's id — set for SALES INVOICE / DEBIT NOTE rows (both are
+   *  backed by a Challan record), so the UI can open/view the actual document. */
+  challanId?: number | null;
   /** "12 Left" / "3 Over" / "Due Today" / "5 Early" / "On Time" / "2 Late" / "". */
   dueFrom: string;
   status: LedgerRowStatus;

@@ -2,6 +2,7 @@ import * as React from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { XIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { scrollFocusedFieldIntoView, useVisualViewportInsets } from '@/hooks/use-visual-viewport';
 
 const Dialog = DialogPrimitive.Root;
 const DialogTrigger = DialogPrimitive.Trigger;
@@ -20,17 +21,31 @@ function DialogOverlay({ className, ...props }: React.ComponentProps<typeof Dial
 function DialogContent({
   className,
   children,
+  style,
+  onFocusCapture,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content>) {
+  // Recenter within the actually-visible viewport (excludes the on-screen
+  // keyboard on mobile) instead of the full layout viewport, and cap the
+  // height so a tall form scrolls internally rather than spilling off-screen
+  // or behind the keyboard. `top` is set here (not as a `top-[50%]` class) —
+  // this project's Tailwind utilities are `!important`, so a class would win
+  // over this inline style instead of the other way around.
+  const { height, offsetTop } = useVisualViewportInsets();
   return (
     <DialogPrimitive.Portal>
       <DialogOverlay />
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          'bg-background fixed top-[50%] left-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 rounded-xl border p-6 shadow-lg',
+          'bg-background fixed left-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 overflow-y-auto rounded-xl border p-6 shadow-lg',
           className,
         )}
+        style={{ top: offsetTop + height / 2, maxHeight: Math.max(height - 32, 200), ...style }}
+        onFocusCapture={(e) => {
+          scrollFocusedFieldIntoView(e);
+          onFocusCapture?.(e);
+        }}
         {...props}
       >
         {children}

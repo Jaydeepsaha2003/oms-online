@@ -2,6 +2,7 @@ import * as React from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { XIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { scrollFocusedFieldIntoView, useVisualViewportInsets } from '@/hooks/use-visual-viewport';
 
 const Sheet = DialogPrimitive.Root;
 const SheetTrigger = DialogPrimitive.Trigger;
@@ -13,8 +14,20 @@ function SheetContent({
   className,
   children,
   side = 'right',
+  style,
+  onFocusCapture,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & { side?: 'right' | 'left' | 'bottom' }) {
+  // Anchor to the actually-visible viewport (excludes the on-screen keyboard on
+  // mobile) instead of the full layout viewport — a `bottom-0`/`inset-y-0` sheet
+  // otherwise stays pinned to the bottom of the *full* screen, ending up hidden
+  // behind the keyboard once it opens. Set via inline `style`, not a class: this
+  // project's Tailwind utilities are `!important` and would win over it.
+  const { height, offsetTop } = useVisualViewportInsets();
+  const keyboardGap = Math.max(window.innerHeight - (offsetTop + height), 0);
+  const positionStyle: React.CSSProperties =
+    side === 'bottom' ? { bottom: keyboardGap, maxHeight: Math.min(height * 0.85, height) } : { top: offsetTop, height };
+
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay
@@ -24,16 +37,21 @@ function SheetContent({
       <DialogPrimitive.Content
         data-slot="sheet-content"
         className={cn(
-          'bg-background fixed z-50 flex flex-col gap-4 p-5 shadow-xl outline-none',
+          'bg-background fixed z-50 flex flex-col gap-4 p-5 shadow-xl outline-none overflow-y-auto',
           'data-[state=open]:animate-in data-[state=closed]:animate-out duration-300',
           side === 'right' &&
-            'inset-y-0 right-0 h-full w-full max-w-md border-l data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right',
+            'right-0 w-full max-w-md border-l data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right',
           side === 'left' &&
-            'inset-y-0 left-0 h-full w-full max-w-md border-r data-[state=open]:slide-in-from-left data-[state=closed]:slide-out-to-left',
+            'left-0 w-full max-w-md border-r data-[state=open]:slide-in-from-left data-[state=closed]:slide-out-to-left',
           side === 'bottom' &&
-            'inset-x-0 bottom-0 max-h-[85vh] w-full rounded-t-xl border-t data-[state=open]:slide-in-from-bottom data-[state=closed]:slide-out-to-bottom',
+            'inset-x-0 w-full rounded-t-xl border-t data-[state=open]:slide-in-from-bottom data-[state=closed]:slide-out-to-bottom',
           className,
         )}
+        style={{ ...positionStyle, ...style }}
+        onFocusCapture={(e) => {
+          scrollFocusedFieldIntoView(e);
+          onFocusCapture?.(e);
+        }}
         {...props}
       >
         {children}

@@ -66,6 +66,10 @@ export interface OrderItemDto {
   /** CONFIRMED (active) or CANCELLED (kept for the record, excluded from totals). */
   status: string;
   comment: string | null;
+  /** True once at least one Dispatch record exists against this line — its
+   *  quantity/rate/product details are then frozen server-side; only status
+   *  (e.g. Cancel) and comment may still change. Add further changes as a new line. */
+  dispatched?: boolean;
   /** Set when this line was drawn from a bag Booking (rates frozen at that booking's date). */
   bookingId: number | null;
   /** The source booking's code (e.g. BKG-00001), when bookingId is set. */

@@ -21,6 +21,9 @@ export const UPLOADS_DIR = (() => {
 /** Sub-folder (under UPLOADS_DIR) for order-line photos. */
 export const ORDER_ITEM_PHOTOS_SUBDIR = 'order-items';
 
+/** Sub-folder (under UPLOADS_DIR) for design-name reference photos. */
+export const DESIGN_NAME_PHOTOS_SUBDIR = 'design-names';
+
 /** URL prefix the web app loads uploads from. Sits under `/api` so the Vite dev
  *  proxy (and the single-port prod server) route it to this API unchanged. */
 export const UPLOADS_URL_PREFIX = '/api/uploads';

@@ -448,6 +448,11 @@ model DesignName {
   id         Int      @id @default(autoincrement())
   designType String
   designName String
+  /// Path relative to the /uploads root, e.g. "design-names/<uuid>.jpg" — a
+  /// reference photo so the right design is recognisable at a glance.
+  photoPath  String?
+  /// Same-origin URL the web app loads, e.g. "/api/uploads/design-names/<uuid>.jpg".
+  photoUrl   String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 

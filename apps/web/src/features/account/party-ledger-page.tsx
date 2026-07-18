@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { BookText, CalendarClock, FileSpreadsheet, Loader2, Printer, Search, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { BookText, CalendarClock, Eye, FileSpreadsheet, Loader2, Printer, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { LedgerReceiptLine, PartyLedgerQuery, PartyLedgerRow } from '@oms/shared';
 import { downloadFile, getApiErrorMessage } from '@/lib/api';
 import { openPdf } from '@/lib/pdf';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
@@ -18,6 +20,26 @@ const inr = (v: number) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDig
 const money = (v: number) => (v ? inr(v) : '');
 const prettyDate = (iso: string) => new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' });
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+// Persist the last search so navigating away to view a challan (and coming back
+// via its Back/Cancel) restores the exact same search instead of resetting.
+const FILTER_KEY = 'oms:party-ledger-filters';
+interface SavedFilters {
+  party: string;
+  agent: string;
+  from: string;
+  to: string;
+  mode: 'BOTH' | 'B' | 'C';
+  voucherType: string;
+  applied: PartyLedgerQuery | null;
+}
+const loadFilters = (): Partial<SavedFilters> => {
+  try {
+    return JSON.parse(sessionStorage.getItem(FILTER_KEY) || '{}') as Partial<SavedFilters>;
+  } catch {
+    return {};
+  }
+};
 
 const FY_START_MONTH = 3; // April (0-based)
 function fyStart(d: Date): Date {
@@ -58,16 +80,20 @@ function presetRange(p: Preset): { from: Date; to: Date } {
 }
 
 export function PartyLedgerPage() {
+  const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const { can } = usePermissions();
   const { data: lookups } = usePartyLedgerLookups();
 
-  const [party, setParty] = useState('');
-  const [agent, setAgent] = useState('');
-  const [from, setFrom] = useState(ymd(fyStart(new Date())));
-  const [to, setTo] = useState(ymd(new Date()));
-  const [mode, setMode] = useState<'BOTH' | 'B' | 'C'>('BOTH');
-  const [voucherType, setVoucherType] = useState('');
-  const [applied, setApplied] = useState<PartyLedgerQuery | null>(null);
+  // Restore the last-used search (kept in sessionStorage) so it survives a
+  // round-trip into "View challan" and back.
+  const [party, setParty] = useState(() => loadFilters().party ?? '');
+  const [agent, setAgent] = useState(() => loadFilters().agent ?? '');
+  const [from, setFrom] = useState(() => loadFilters().from ?? ymd(fyStart(new Date())));
+  const [to, setTo] = useState(() => loadFilters().to ?? ymd(new Date()));
+  const [mode, setMode] = useState<'BOTH' | 'B' | 'C'>(() => loadFilters().mode ?? 'BOTH');
+  const [voucherType, setVoucherType] = useState(() => loadFilters().voucherType ?? '');
+  const [applied, setApplied] = useState<PartyLedgerQuery | null>(() => loadFilters().applied ?? null);
   const [receiptFor, setReceiptFor] = useState<PartyLedgerRow | null>(null);
 
   const custByName = useMemo(() => new Map((lookups?.customers ?? []).map((c) => [c.name, c.id])), [lookups]);
@@ -83,11 +109,17 @@ export function PartyLedgerPage() {
     voucherType: voucherType || undefined,
   });
 
-  // Auto-load on first mount (ALL, this FY) — mirrors the legacy form.
+  // Auto-load on first mount (ALL, this FY) — mirrors the legacy form. Skipped
+  // when a saved search was restored from sessionStorage.
   useEffect(() => {
-    setApplied({ from: ymd(fyStart(new Date())), to: ymd(new Date()), mode: 'BOTH' });
+    if (!applied) setApplied({ from: ymd(fyStart(new Date())), to: ymd(new Date()), mode: 'BOTH' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Keep the saved search in sync so it's ready if the user navigates away.
+  useEffect(() => {
+    sessionStorage.setItem(FILTER_KEY, JSON.stringify({ party, agent, from, to, mode, voucherType, applied }));
+  }, [party, agent, from, to, mode, voucherType, applied]);
 
   const { data, isFetching } = usePartyLedger(applied);
   const rows = data?.rows ?? [];
@@ -103,6 +135,7 @@ export function PartyLedgerPage() {
     setFrom(ymd(fyStart(new Date())));
     setTo(ymd(new Date()));
     setApplied({ from: ymd(fyStart(new Date())), to: ymd(new Date()), mode: 'BOTH' });
+    sessionStorage.removeItem(FILTER_KEY);
   };
   const applyPreset = (p: string) => {
     if (!RANGE_PRESETS.includes(p as Preset)) return;
@@ -163,6 +196,20 @@ export function PartyLedgerPage() {
   const isInvoiceRow = (r: PartyLedgerRow) => {
     const vt = r.voucherType.toUpperCase();
     return vt === 'SALES INVOICE' || vt === 'DEBIT NOTE';
+  };
+
+  // Desktop: the challan PDF opens in a new tab (openPdf already does this).
+  // Phones: a new tab is awkward for a rasterised PDF, so open the challan's own
+  // form page in-app instead — its Back/Cancel returns here via `returnTo`,
+  // landing back on this exact search (persisted to sessionStorage above).
+  const canViewChallan = isMobile ? can('challan:update') : can('challan:print');
+  const viewChallan = (r: PartyLedgerRow) => {
+    if (!r.challanId) return;
+    if (isMobile) {
+      navigate(`/challans/${r.challanId}/edit`, { state: { returnTo: '/account/party-ledger' } });
+    } else {
+      openPdf(`/challans/${r.challanId}/challan.pdf`).catch(() => toast.error('Could not open the challan.'));
+    }
   };
 
   const columns: DataColumn<PartyLedgerRow>[] = [
@@ -282,6 +329,24 @@ export function PartyLedgerPage() {
         isLoading={isFetching && !data}
         emptyText="No ledger entries for these filters."
         onRowClick={(r) => isInvoiceRow(r) && setReceiptFor(r)}
+        actions={
+          canViewChallan
+            ? (r) =>
+                isInvoiceRow(r) && r.challanId ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      viewChallan(r);
+                    }}
+                    className="text-muted-foreground hover:text-foreground"
+                    title={isMobile ? 'View challan' : 'View challan (opens in a new tab)'}
+                  >
+                    <Eye className="size-4" />
+                  </button>
+                ) : null
+            : undefined
+        }
       />
 
       {/* Footer totals */}

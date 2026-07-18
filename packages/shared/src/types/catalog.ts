@@ -69,6 +69,9 @@ export interface DesignNameDto {
   id: number;
   designType: string;
   designName: string;
+  /** Reference photo so the right design is recognisable at a glance. */
+  photoPath?: string | null;
+  photoUrl?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -76,6 +79,8 @@ export interface DesignNameDto {
 export interface DesignNameInput {
   designType: string;
   designName: string;
+  photoPath?: string | null;
+  photoUrl?: string | null;
 }
 
 /** A design that is part of a combination (with its own cost/rate). */

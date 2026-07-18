@@ -100,7 +100,7 @@ export function AppShell() {
       <aside
         className={cn(
           'hidden shrink-0 transition-[width] duration-200 md:block',
-          isPinned ? 'w-64' : 'w-16',
+          isPinned ? 'w-72' : 'w-20',
         )}
       >
         <div
@@ -109,7 +109,7 @@ export function AppShell() {
           onPointerLeave={() => setHovered(false)}
           className={cn(
             'fixed top-0 left-0 z-40 h-screen border-r bg-sidebar transition-[width] duration-200',
-            expanded ? 'w-64' : 'w-16',
+            expanded ? 'w-72' : 'w-20',
             hovered && !isPinned && 'shadow-2xl shadow-blue-950/25',
           )}
         >
@@ -125,7 +125,7 @@ export function AppShell() {
             onClick={() => setMobileOpen(false)}
             aria-hidden
           />
-          <div className="absolute left-0 top-0 h-full w-64 border-r shadow-lg">
+          <div className="absolute left-0 top-0 h-full w-72 border-r shadow-lg">
             <Sidebar collapsed={false} onNavigate={() => setMobileOpen(false)} />
           </div>
         </div>

@@ -5,6 +5,7 @@ import {
   BadRequestException,
   Controller,
   Post,
+  Query,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
@@ -15,12 +16,20 @@ import type { UploadedFileDto } from '@oms/shared';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import {
+  DESIGN_NAME_PHOTOS_SUBDIR,
   ORDER_ITEM_PHOTOS_SUBDIR,
   UPLOADS_URL_PREFIX,
   ensureUploadDir,
 } from './uploads.constants';
 
 const MAX_BYTES = 8 * 1024 * 1024; // 8 MB per image
+
+// Allow-listed destination folders, keyed by the `folder` query param the
+// caller passes — never derived from free-form client input (path traversal).
+const FOLDERS: Record<string, string> = {
+  'order-items': ORDER_ITEM_PHOTOS_SUBDIR,
+  'design-names': DESIGN_NAME_PHOTOS_SUBDIR,
+};
 
 /**
  * Identify the real image format from its magic bytes. The client-supplied
@@ -69,15 +78,17 @@ export class UploadsController {
   upload(
     @UploadedFile() file: Express.Multer.File | undefined,
     @CurrentUser() user: AuthenticatedUser | undefined,
+    @Query('folder') folder?: string,
   ): UploadedFileDto {
     if (!file) throw new BadRequestException('No file was uploaded.');
     const ext = sniffImageExt(file.buffer);
     if (!ext) throw new BadRequestException('Only image files are allowed.');
 
+    const subdir = (folder && FOLDERS[folder]) || ORDER_ITEM_PHOTOS_SUBDIR;
     const filename = `${randomUUID()}${ext}`;
-    writeFileSync(join(ensureUploadDir(ORDER_ITEM_PHOTOS_SUBDIR), filename), file.buffer);
+    writeFileSync(join(ensureUploadDir(subdir), filename), file.buffer);
 
-    const path = `${ORDER_ITEM_PHOTOS_SUBDIR}/${filename}`;
+    const path = `${subdir}/${filename}`;
     return {
       path,
       url: `${UPLOADS_URL_PREFIX}/${path}`,

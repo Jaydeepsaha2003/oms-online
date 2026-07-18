@@ -98,15 +98,18 @@ export const http = {
     api.delete<T>(url, config).then((r) => r.data),
 };
 
-/** Upload a single file (multipart) and get back its stored path + served URL. */
+/** Upload a single file (multipart) and get back its stored path + served URL.
+ *  `folder` routes it into a destination bucket (e.g. "design-names"); omit for
+ *  the default order-line-photos bucket. */
 export async function uploadFile(
   file: File,
   onProgress?: (percent: number) => void,
+  folder?: string,
 ): Promise<UploadedFileDto> {
   const body = new FormData();
   body.append('file', file);
   const res = await api.post<{ success?: boolean; data?: UploadedFileDto } | UploadedFileDto>(
-    '/files/upload',
+    `/files/upload${folder ? `?folder=${encodeURIComponent(folder)}` : ''}`,
     body,
     {
       onUploadProgress: (e) => {

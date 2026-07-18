@@ -1,6 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Check, History, ListX, Loader2, Lock, LockOpen, Pencil, Plus, Printer, RotateCcw, ScrollText, Trash2, UserSearch } from 'lucide-react';
+import {
+  ArrowLeft,
+  ArrowLeftRight,
+  CalendarCheck2,
+  CalendarDays,
+  Check,
+  ChevronDown,
+  Hash,
+  History,
+  ListX,
+  Loader2,
+  Lock,
+  LockOpen,
+  Pencil,
+  Plus,
+  Printer,
+  RotateCcw,
+  ScrollText,
+  SlidersHorizontal,
+  Trash2,
+  UserSearch,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import {
   CHALLAN_STATUSES,
@@ -28,7 +49,7 @@ import {
 import { clearChallanDraft, loadChallanDraft, saveChallanDraft, type ChallanDraftData } from './challan-draft';
 import { MissingChallanDialog } from './missing-challan-dialog';
 
-type NavState = { customerName?: string; lines?: PendingChallanLine[] };
+type NavState = { customerName?: string; lines?: PendingChallanLine[]; returnTo?: string };
 type Row = ChallanDraftItem & { key: string };
 
 const inr = (v: number) => `₹ ${(v ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -53,6 +74,9 @@ export function ChallanFormPage() {
   const { state } = useLocation() as { state: NavState | null };
   const navCustomer = state?.customerName ?? '';
   const navIds = useMemo(() => new Set((state?.lines ?? []).map((l) => l.dispatchId)), [state]);
+  // Callers (e.g. Party Ledger's "view challan") can override where Back/Cancel
+  // return to, so closing this form lands back on the exact view the user came from.
+  const backTo = state?.returnTo ?? (isEdit ? '/challans' : '/challans/pending');
 
   const [customer, setCustomer] = useState(navCustomer);
   const { data: customers = [], isLoading: custLoading } = useAllChallanCustomers();
@@ -90,6 +114,9 @@ export function ChallanFormPage() {
   const [shippingAddress, setShippingAddress] = useState('');
   const [remarks, setRemarks] = useState('');
   const [locked, setLocked] = useState({ freight: true, packing: true, pouch: true });
+  // Phones: charges/shipping are secondary — tucked behind a "More details" toggle
+  // so the totals card is reachable without scrolling past a wall of inputs.
+  const [showDetails, setShowDetails] = useState(false);
   // Manual line entry.
   const [showManual, setShowManual] = useState(false);
   const [m, setM] = useState({ product: '', design: 'NA', unit: 'KGS', qty: '', price: '' });
@@ -244,6 +271,35 @@ export function ChallanFormPage() {
     recalc(next);
     setAddSel('');
   };
+  // Bulk-add every remaining pending/dispatched item for this party in one go —
+  // triggered by the mobile swipe gesture on the Bill To card (see touchStartRef below).
+  const addAllPending = () => {
+    if (!available.length) return;
+    const next = [
+      ...rows,
+      ...available.map((it, i) => ({ ...it, key: `${it.dispatchId ?? 'm'}-${rows.length + i}-${performance.now() | 0}-${i}` })),
+    ];
+    setRows(next);
+    recalc(next);
+    toast.success(`Added ${available.length} pending item${available.length === 1 ? '' : 's'}`);
+  };
+  // Swipe-to-add-all: a horizontal swipe on the Bill To card loads every pending
+  // dispatched item for the selected party straight into the list (mobile shortcut
+  // for what the "Add" dropdown does one line at a time).
+  const billToTouchRef = useRef<{ x: number; y: number } | null>(null);
+  const onBillToTouchStart = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    billToTouchRef.current = { x: t.clientX, y: t.clientY };
+  };
+  const onBillToTouchEnd = (e: React.TouchEvent) => {
+    const start = billToTouchRef.current;
+    billToTouchRef.current = null;
+    if (!start) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    if (Math.abs(dx) > 56 && Math.abs(dx) > Math.abs(dy) * 1.5) addAllPending();
+  };
   const addManual = () => {
     if (!draft) return;
     const qty = numOr(m.qty);
@@ -358,7 +414,7 @@ export function ChallanFormPage() {
     clearChallanDraft();
     setRestoredDraft(false);
     restoreRef.current = null;
-    navigate(isEdit ? '/challans' : '/challans/pending');
+    navigate(backTo);
   };
 
   // Reset button: clear back to blank (new) or reload the saved challan (edit),
@@ -516,7 +572,7 @@ export function ChallanFormPage() {
       {/* Phones: the customer picker wraps to its own full-width row (order-last);
           desktop keeps the single-row title · picker · Missing-Challan layout. */}
       <div className="bg-background/85 z-20 -mt-1 flex shrink-0 flex-wrap items-center gap-1.5 rounded-md py-1 backdrop-blur sm:gap-2">
-        <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(isEdit ? '/challans' : '/challans/pending')} title="Back">
+        <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(backTo)} title="Back">
           <ArrowLeft className="size-4" />
         </Button>
         <div className="bg-gradient-brand flex size-8 items-center justify-center rounded-md text-white shadow-sm ring-1 ring-white/20">
@@ -568,7 +624,11 @@ export function ChallanFormPage() {
           <div className="grid grid-cols-2 items-start gap-x-3 gap-y-2 sm:gap-x-6 sm:gap-y-2.5 lg:grid-cols-6">
             {/* Bill To — spans two columns; the four meta fields align in the same row.
                 Phones run the same 2-col grid so the meta fields pair up neatly. */}
-            <div className="col-span-2 min-w-0 space-y-1">
+            <div
+              className="bg-background/60 col-span-2 min-w-0 touch-pan-y space-y-1 rounded-lg border border-border/50 px-2.5 py-2 sm:border-0 sm:bg-transparent sm:p-0"
+              onTouchStart={onBillToTouchStart}
+              onTouchEnd={onBillToTouchEnd}
+            >
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-primary/70 flex items-center gap-1.5 text-sm font-semibold tracking-wide uppercase">
                   <UserSearch className="size-4" /> Bill To
@@ -581,9 +641,14 @@ export function ChallanFormPage() {
                   the invoice still reads its bill-to. */}
               {draft && <div className="text-xl font-bold tracking-tight">{isEdit ? savedChallan?.customerName : draft.customerName}</div>}
               {draft && <p className="text-muted-foreground max-w-md truncate text-sm">{(isEdit ? savedChallan?.billingAddress : draft.billingAddress) || '—'}</p>}
+              {draft && available.length > 0 && (
+                <div className="text-primary bg-primary/10 mt-1 inline-flex animate-pulse items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium sm:hidden">
+                  <ArrowLeftRight className="size-3" /> Swipe here to add all {available.length} pending item{available.length === 1 ? '' : 's'}
+                </div>
+              )}
             </div>
 
-            <MetaCell label="Invoice No" className="col-span-2 sm:col-span-1">
+            <MetaCell label="Invoice No" icon={Hash} className="col-span-2 sm:col-span-1">
               <div className="flex items-center gap-1.5">
                 {!isEdit && (draft?.prefixes.length ?? 0) > 1 && (
                   <select
@@ -608,8 +673,8 @@ export function ChallanFormPage() {
                 />
               </div>
             </MetaCell>
-            <MetaCell label="Invoice Date"><Input type="date" value={invDate} onChange={(e) => setInvDate(e.target.value)} className="bg-background h-8 w-full max-w-[9.75rem] text-sm" /></MetaCell>
-            <MetaCell label="Due Date">
+            <MetaCell label="Invoice Date" icon={CalendarDays}><Input type="date" value={invDate} onChange={(e) => setInvDate(e.target.value)} className="bg-background h-8 w-full max-w-[9.75rem] text-sm" /></MetaCell>
+            <MetaCell label="Due Date" icon={CalendarCheck2}>
               <Input
                 readOnly
                 value={dueDate ? dueDate.toLocaleDateString('en-GB') : ''}
@@ -630,7 +695,7 @@ export function ChallanFormPage() {
 
           {/* Settlement — B/C Amount (click the pencil to override) + No Bill, right in the header. */}
           {draft && (
-            <div className="border-primary/10 mt-2 flex flex-wrap items-end gap-x-4 gap-y-1.5 border-t pt-2 sm:mt-2.5 sm:gap-x-8 sm:pt-2.5">
+            <div className="bg-background/60 border-primary/10 mt-2 flex flex-wrap items-end gap-x-4 gap-y-1.5 rounded-lg border px-2.5 py-2 sm:mt-2.5 sm:gap-x-8 sm:rounded-none sm:border-0 sm:border-t sm:bg-transparent sm:px-0 sm:py-0 sm:pt-2.5">
               <EditableAmount label="B Amount" computed={totals.b} manual={manualB} onManual={setManualB} />
               <EditableAmount label="C Amount" computed={totals.c} manual={manualC} onManual={setManualC} />
               <label
@@ -778,15 +843,17 @@ export function ChallanFormPage() {
             {/* Phones: one card per line item (mirrors Order Modify's mobile list). */}
             <div className="sm:hidden">
               {rows.length === 0 ? (
-                <div className="text-muted-foreground flex flex-col items-center gap-1.5 px-3 py-10 text-center text-sm">
-                  <Plus className="size-5 opacity-40" />
+                <div className="text-muted-foreground flex flex-col items-center gap-2 px-3 py-10 text-center text-sm">
+                  <div className="bg-muted flex size-10 items-center justify-center rounded-full">
+                    <Plus className="size-5 opacity-50" />
+                  </div>
                   No items yet — pick a dispatched product above, or add a manual line.
                 </div>
               ) : (
                 <>
                   <div className="divide-y">
                     {rows.map((r, idx) => (
-                      <div key={r.key} className="px-2.5 py-2">
+                      <div key={r.key} className="odd:bg-muted/20 px-2.5 py-2">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <p className="truncate text-sm font-medium">
@@ -842,31 +909,43 @@ export function ChallanFormPage() {
               </span>
             </div>
 
-            {/* Footer: charges + totals */}
+            {/* Footer: charges + totals. Phones: totals surface first (order-1) since
+                that's what matters most; charges/shipping sit behind a "More details"
+                toggle (order-2) so you don't have to scroll past a wall of inputs. */}
             <div className="grid shrink-0 gap-3 border-t p-3 sm:gap-4 sm:p-4 lg:grid-cols-[1fr_320px]">
-              <div className="space-y-2.5">
-                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-6">
-                  <div className="space-y-1 xl:col-span-1"><Label className="text-base">Transporter</Label><Input value={(isEdit ? savedChallan?.transName : draft.transName) || '—'} readOnly className="bg-muted/40 h-9 text-base" /></div>
-                  <LockField label="Freight" value={freight} locked={locked.freight} onUnlock={() => unlock('freight')} onChange={setFreight} onBlur={() => setLocked((l) => ({ ...l, freight: true }))} />
-                  <LockField label="Packing" value={packing} locked={locked.packing} onUnlock={() => unlock('packing')} onChange={setPacking} onBlur={() => setLocked((l) => ({ ...l, packing: true }))} />
-                  <LockField label="Box / Pouch" value={pouch} locked={locked.pouch} onUnlock={() => unlock('pouch')} onChange={setPouch} onBlur={() => setLocked((l) => ({ ...l, pouch: true }))} />
-                  {/* GST % field removed — GST is not editable; it follows the customer's configured
-                      rate (applied automatically) and is shown in the totals panel below. */}
-                  <div className="space-y-1"><Label className="text-base">{`Billing Rate${halfBill ? ' · half' : ''}`}</Label><Input value={billingRate} onChange={(e) => setBillingRate(e.target.value)} className="h-9 text-right text-base tabular-nums" /></div>
+              <div className="order-2 space-y-2.5 lg:order-1">
+                <button
+                  type="button"
+                  onClick={() => setShowDetails((v) => !v)}
+                  className="text-muted-foreground hover:bg-muted/60 flex w-full items-center gap-1.5 rounded-md border px-3 py-2 text-sm font-semibold sm:hidden"
+                >
+                  <SlidersHorizontal className="size-3.5" /> Charges &amp; shipping details
+                  <ChevronDown className={cn('ml-auto size-4 transition-transform', showDetails && 'rotate-180')} />
+                </button>
+                <div className={cn(showDetails ? 'block' : 'hidden', 'sm:block space-y-2.5')}>
+                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-6">
+                    <div className="space-y-1 xl:col-span-1"><Label className="text-base">Transporter</Label><Input value={(isEdit ? savedChallan?.transName : draft.transName) || '—'} readOnly className="bg-muted/40 h-9 text-base" /></div>
+                    <LockField label="Freight" value={freight} locked={locked.freight} onUnlock={() => unlock('freight')} onChange={setFreight} onBlur={() => setLocked((l) => ({ ...l, freight: true }))} />
+                    <LockField label="Packing" value={packing} locked={locked.packing} onUnlock={() => unlock('packing')} onChange={setPacking} onBlur={() => setLocked((l) => ({ ...l, packing: true }))} />
+                    <LockField label="Box / Pouch" value={pouch} locked={locked.pouch} onUnlock={() => unlock('pouch')} onChange={setPouch} onBlur={() => setLocked((l) => ({ ...l, pouch: true }))} />
+                    {/* GST % field removed — GST is not editable; it follows the customer's configured
+                        rate (applied automatically) and is shown in the totals panel below. */}
+                    <div className="space-y-1"><Label className="text-base">{`Billing Rate${halfBill ? ' · half' : ''}`}</Label><Input value={billingRate} onChange={(e) => setBillingRate(e.target.value)} className="h-9 text-right text-base tabular-nums" /></div>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-base">Shipping Address</Label>
+                    <textarea
+                      className="border-input bg-background min-h-12 w-full rounded-md border px-3 py-2 text-base"
+                      placeholder="Shipping address…"
+                      value={shippingAddress}
+                      onChange={(e) => setShippingAddress(e.target.value)}
+                    />
+                  </div>
+                  <textarea className="border-input bg-background min-h-12 w-full rounded-md border px-3 py-2 text-base" placeholder="Remarks…" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
                 </div>
-                <div className="space-y-1">
-                  <Label className="text-base">Shipping Address</Label>
-                  <textarea
-                    className="border-input bg-background min-h-12 w-full rounded-md border px-3 py-2 text-base"
-                    placeholder="Shipping address…"
-                    value={shippingAddress}
-                    onChange={(e) => setShippingAddress(e.target.value)}
-                  />
-                </div>
-                <textarea className="border-input bg-background min-h-12 w-full rounded-md border px-3 py-2 text-base" placeholder="Remarks…" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
               </div>
 
-              <div className="self-start overflow-hidden rounded-md border shadow-sm">
+              <div className="order-1 self-start overflow-hidden rounded-md border shadow-sm lg:order-2">
                 <div className="bg-card space-y-1 p-3">
                   <Row2 label="Taxable" value={inr(totals.tAmt)} />
                   <Row2 label="Freight" value={inr(numOr(freight))} />
@@ -894,8 +973,10 @@ export function ChallanFormPage() {
         )}
       </div>
 
-      {/* Bottom action bar — always at the foot of the form; Cancel / Reset / Save. */}
-      <div className="bg-background/95 z-30 -mx-1 mt-0.5 flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1.5 border-t px-2 py-2 backdrop-blur sm:mt-1 sm:gap-y-2 sm:py-3">
+      {/* Bottom action bar — pinned to the bottom of the viewport on phones (so the
+          primary Create/Update action is always one thumb-reach away, no scrolling
+          to the foot of a long form); flows inline as before on desktop/tablet. */}
+      <div className="bg-background/95 sticky bottom-0 z-30 -mx-1 mt-0.5 flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1.5 border-t px-2 py-2 shadow-[0_-4px_16px_-4px_rgba(0,0,0,0.12)] backdrop-blur sm:static sm:mt-1 sm:gap-y-2 sm:py-3 sm:shadow-none">
         <p className="text-sm">
           {rows.length} item(s)
           {draft && (
@@ -932,10 +1013,22 @@ export function ChallanFormPage() {
   );
 }
 
-function MetaCell({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
+function MetaCell({
+  label,
+  children,
+  className,
+  icon: Icon,
+}: {
+  label: string;
+  children: React.ReactNode;
+  className?: string;
+  icon?: React.ComponentType<{ className?: string }>;
+}) {
   return (
-    <div className={cn('space-y-0.5', className)}>
-      <div className="text-muted-foreground text-sm font-semibold tracking-wide uppercase">{label}</div>
+    <div className={cn('bg-background/60 rounded-lg border border-border/50 px-2 py-1.5 sm:border-0 sm:bg-transparent sm:p-0', 'space-y-0.5', className)}>
+      <div className="text-muted-foreground flex items-center gap-1 text-sm font-semibold tracking-wide uppercase">
+        {Icon && <Icon className="size-3.5 opacity-70" />} {label}
+      </div>
       <div className="text-base leading-tight font-medium">{children}</div>
     </div>
   );

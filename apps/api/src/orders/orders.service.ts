@@ -78,7 +78,7 @@ export class OrdersService {
     };
 
     return {
-      items: rows.map((r) => this.toDto(r, stateOf(r))),
+      items: rows.map((r) => this.toDto(r, stateOf(r), hasDispatch)),
       total,
       page: query.page,
       pageSize: query.pageSize,
@@ -89,7 +89,10 @@ export class OrdersService {
   async findOne(id: number): Promise<OrderDto> {
     const row = await this.prisma.order.findUnique({ where: { id }, include: INCLUDE });
     if (!row) throw new NotFoundException('Order not found.');
-    const dto = this.toDto(row);
+    const dispatched = row.items.length
+      ? await this.prisma.dispatch.findMany({ where: { orderItemId: { in: row.items.map((it) => it.id) } }, select: { orderItemId: true } })
+      : [];
+    const dto = this.toDto(row, null, new Set(dispatched.map((d) => d.orderItemId)));
     // Only the single-order fetch needs this (the printable bill's "Bill To"
     // address line) — skipped in findMany's list rows to avoid an extra join per row.
     const customer = row.customerId
@@ -143,8 +146,24 @@ export class OrdersService {
       // is onDelete: Cascade), making already-dispatched lines reappear as pending.
       const existing = await this.prisma.orderItem.findMany({
         where: { orderId: id },
-        select: { id: true, _count: { select: { dispatches: true } } },
+        select: {
+          id: true,
+          product: true,
+          productName: true,
+          designType: true,
+          psize: true,
+          bags: true,
+          pcs: true,
+          gram: true,
+          box: true,
+          productRate: true,
+          designRate: true,
+          rate: true,
+          calField: true,
+          _count: { select: { dispatches: true } },
+        },
       });
+      const existingById = new Map(existing.map((e) => [e.id, e]));
       const existingIds = new Set(existing.map((e) => e.id));
       const kept = new Set<number>();
       const toUpdate: { where: { id: number }; data: Prisma.OrderItemUpdateWithoutOrderInput }[] = [];
@@ -153,6 +172,31 @@ export class OrdersService {
         const itemId = toNum(it.id);
         if (itemId && existingIds.has(itemId)) {
           kept.add(itemId);
+          const current = existingById.get(itemId)!;
+          const incoming = this.toItemData(it);
+          // A dispatched line's quantity/rate/product details are frozen — the
+          // dispatch already reflects what shipped. Only status (e.g. Cancel) and
+          // comment may still change; anything else must become a new line instead
+          // (see OrdersController's client-side "add as new item" recommendation).
+          if (current._count.dispatches > 0) {
+            const changed =
+              current.product !== incoming.product ||
+              current.designType !== incoming.designType ||
+              current.psize !== incoming.psize ||
+              current.bags !== incoming.bags ||
+              current.pcs !== incoming.pcs ||
+              current.gram !== incoming.gram ||
+              current.box !== incoming.box ||
+              current.productRate !== incoming.productRate ||
+              current.designRate !== incoming.designRate ||
+              current.rate !== incoming.rate ||
+              current.calField !== incoming.calField;
+            if (changed) {
+              throw new BadRequestException(
+                `"${current.productName || current.product || 'This item'}" has already been dispatched — its details can't be edited. Add the change as a new line instead.`,
+              );
+            }
+          }
           toUpdate.push({ where: { id: itemId }, data: { ...this.toItemData(it), ...this.photoUpdateNested(it) } });
         } else {
           toCreate.push({ ...this.toItemData(it), ...this.photoCreateNested(it) });
@@ -712,7 +756,7 @@ export class OrdersService {
     if (!c) throw new NotFoundException('Order not found.');
   }
 
-  private toDto(r: Row, dispatchState: OrderDto['dispatchState'] = null): OrderDto {
+  private toDto(r: Row, dispatchState: OrderDto['dispatchState'] = null, dispatchedItemIds?: Set<number>): OrderDto {
     const items = r.items.map((it) => ({
       id: it.id,
       pCategory: it.pCategory,
@@ -734,6 +778,7 @@ export class OrdersService {
       ordType: it.ordType,
       status: it.status ?? 'CONFIRMED',
       comment: it.comment,
+      dispatched: dispatchedItemIds?.has(it.id) ?? false,
       bookingId: it.bookingId ?? null,
       // Booking codes use the fixed BKG-##### format (see BookingsService), so the
       // source code can be derived without another query.

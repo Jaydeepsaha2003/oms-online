@@ -40,6 +40,8 @@ interface RawRow {
   cashCr: number;
   dueDate: Date | null;
   sortRank: number; // invoices before ledger on the same date
+  /** Resolved after the initial pass — see collectRows(). */
+  challanId?: number | null;
 }
 
 @Injectable()
@@ -232,6 +234,17 @@ export class PartyLedgerService {
       });
     }
     raw.sort((a, b) => a.txnDate.getTime() - b.txnDate.getTime() || a.sortRank - b.sortRank || a.voucherNo.localeCompare(b.voucherNo));
+
+    // SALES INVOICE / DEBIT NOTE rows are both backed by a real Challan record (Debit
+    // Notes arrive here via AcctLedger, so their challan id isn't already in hand) —
+    // resolve voucherNo (= Challan.code) → id in one batched lookup so the UI can link
+    // to the actual document.
+    const invoiceCodes = [...new Set(raw.filter((r) => ['SALES INVOICE', 'DEBIT NOTE'].includes(r.voucherType.toUpperCase())).map((r) => r.voucherNo))];
+    if (invoiceCodes.length) {
+      const matches = await this.prisma.challan.findMany({ where: { code: { in: invoiceCodes } }, select: { id: true, code: true } });
+      const idByCode = new Map(matches.map((m) => [m.code, m.id]));
+      for (const r of raw) r.challanId = idByCode.get(r.voucherNo) ?? null;
+    }
     return raw;
   }
 
@@ -251,6 +264,7 @@ export class PartyLedgerService {
       customerName: rr.customerName,
       voucherType: rr.voucherType,
       voucherNo: rr.voucherNo,
+      challanId: rr.challanId ?? null,
       dueFrom: '',
       status: '',
       bankDr: rr.bankDr,
