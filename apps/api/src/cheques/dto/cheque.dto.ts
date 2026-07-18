@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
 import { CHARGES_PAID_BY } from '@oms/shared';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
@@ -23,6 +23,8 @@ export class CreateChequeDto {
   @IsString() recDate!: string;
   @IsString() dueDate!: string;
   @IsOptional() @IsString() @MaxLength(1000) comments?: string | null;
+  /** Invoice/challan codes this cheque is meant to clear (optional, informational). */
+  @IsOptional() @IsArray() @IsString({ each: true }) invoiceNos?: string[];
 }
 
 /** Edit an as-yet-undeposited (PENDING) cheque. */
@@ -36,6 +38,7 @@ export class UpdateChequeDto {
   @IsOptional() @IsString() recDate?: string;
   @IsOptional() @IsString() dueDate?: string;
   @IsOptional() @IsString() @MaxLength(1000) comments?: string | null;
+  @IsOptional() @IsArray() @IsString({ each: true }) invoiceNos?: string[];
 }
 
 /** Deposit a PENDING cheque (must be on/after the due date). */

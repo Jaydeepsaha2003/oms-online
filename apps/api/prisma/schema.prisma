@@ -1142,6 +1142,9 @@ model Cheque {
   // Bounced cheque being re-deposited (legacy IS CHEQUE REPRESENT).
   isRepresent   Boolean   @default(false)
   comments      String?
+  // JSON-encoded array of invoice/challan codes this cheque is meant to clear
+  // (e.g. '["SSS/26-27/362","SSS/26-27/365"]'), null when none were tagged.
+  invoiceNos    String?
   // PENDING | DEPOSITED | CLEARED | BOUNCED.
   status        String    @default("PENDING")
   userName      String?

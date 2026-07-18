@@ -26,6 +26,7 @@ import type {
   SavePaymentInput,
   SavePaymentResult,
   SettleChequeInput,
+  UpdateChequeInput,
 } from '@oms/shared';
 import { http } from '@/lib/api';
 
@@ -122,6 +123,15 @@ export function useCreateCheque() {
   const invalidate = useInvalidateCheques();
   return useMutation({
     mutationFn: (input: CreateChequeInput) => http.post<ChequeDto>('/cheques', input),
+    onSuccess: invalidate,
+  });
+}
+
+/** Edit a still-PENDING cheque (server rejects once deposited/settled). */
+export function useUpdateCheque(id: number) {
+  const invalidate = useInvalidateCheques();
+  return useMutation({
+    mutationFn: (input: UpdateChequeInput) => http.patch<ChequeDto>(`/cheques/${id}`, input),
     onSuccess: invalidate,
   });
 }
