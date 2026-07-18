@@ -18,12 +18,23 @@ echo stopped>".oms-stopped"
 REM ---------- PRIMARY METHOD: kill every node/npm/cmd in THIS project ----------
 REM This works regardless of window titles, hidden windows, or how the server
 REM was launched (start.bat, autostart task, manual npm run start, etc.).
+REM CRITICAL: the cmd.exe hosting THIS script also has the project path in its
+REM command line (double-click = cmd /c "...\stop.bat"), so the filter used to
+REM kill the script's own console mid-run - the port fallback below then never
+REM ran, leaving orphaned npm chains holding port 4000. Excluding this
+REM process's own ancestor chain ($keep) keeps the script alive to the end.
 powershell -NoProfile -Command ^
   "$root = (Get-Location).Path;"^
+  "$keep = @(); $p = $PID;"^
+  "for($i = 0; $i -lt 10 -and $p; $i++) {"^
+  "  $keep += $p;"^
+  "  $p = (Get-CimInstance Win32_Process -Filter ('ProcessId=' + $p) -ErrorAction SilentlyContinue).ParentProcessId"^
+  "};"^
   "Get-CimInstance Win32_Process | Where-Object {"^
   "  $_.CommandLine -and"^
   "  ($_.Name -eq 'node.exe' -or $_.Name -eq 'cmd.exe') -and"^
-  "  $_.CommandLine -like ('*' + $root + '*')"^
+  "  $_.CommandLine -like ('*' + $root + '*') -and"^
+  "  ($keep -notcontains $_.ProcessId)"^
   "} | ForEach-Object {"^
   "  Write-Host ('  - Stopping ' + $_.Name + ' [PID ' + $_.ProcessId + ']');"^
   "  Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue"^

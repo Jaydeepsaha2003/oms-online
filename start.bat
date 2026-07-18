@@ -49,6 +49,11 @@ netstat -aon | findstr /C:":6173 " | findstr "LISTENING" >nul 2>&1
 if not errorlevel 1 set "_P6=1"
 
 if "%_P4%%_P6%"=="11" (
+    REM Re-arm auto-start even on this early exit: a stop.bat that died
+    REM mid-run can leave .oms-stopped behind, which keeps the watchdog
+    REM from ever healing or auto-starting the servers again.
+    if exist ".oms-stopped" del ".oms-stopped" >nul 2>&1
+    wscript.exe "%~dp0oms-watchdog.vbs"
     echo Servers already appear to be running on http://localhost:6173.
     echo To apply code changes or new migrations, run restart.bat instead.
     echo.
@@ -58,9 +63,12 @@ if "%_P4%%_P6%"=="11" (
 
 REM If one or both ports are held by a stale/half-started instance, clean
 REM them up automatically instead of asking the user to run stop.bat.
+REM The kill excludes this script's own ancestor processes ($keep): the cmd
+REM hosting this script has the project path in its command line too, and
+REM killing it aborted start.bat right here - servers never launched.
 if "%_P4%%_P6%" NEQ "00" (
     echo Cleaning up stale server processes before starting fresh...
-    powershell -NoProfile -Command "$root=(Get-Location).Path; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ($_.Name -eq 'node.exe' -or $_.Name -eq 'cmd.exe') -and $_.CommandLine -like ('*'+$root+'*') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1
+    powershell -NoProfile -Command "$root=(Get-Location).Path; $keep=@(); $p=$PID; for($i=0; $i -lt 10 -and $p; $i++){ $keep+=$p; $p=(Get-CimInstance Win32_Process -Filter ('ProcessId='+$p) -ErrorAction SilentlyContinue).ParentProcessId }; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ($_.Name -eq 'node.exe' -or $_.Name -eq 'cmd.exe') -and $_.CommandLine -like ('*'+$root+'*') -and ($keep -notcontains $_.ProcessId) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1
     REM Also free the ports by PID as a fallback
     for /f "tokens=5" %%P in ('netstat -aon ^| findstr /C:":4000 " /C:":6173 " ^| findstr "LISTENING"') do (
         taskkill /F /PID %%P >nul 2>&1
