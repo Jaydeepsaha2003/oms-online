@@ -5,7 +5,6 @@ import { toast } from 'sonner';
 import type { ChallanDto } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
-import { openPdf } from '@/lib/pdf';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useColumnOrder } from '@/hooks/use-column-order';
 import { useConfirm } from '@/components/common/confirm';
@@ -198,7 +197,7 @@ export function ChallansListPage() {
         label: 'Due',
         cell: (r) => {
           const di = dueInfo(r.dueDate);
-          return <span className={cn('text-xs', di.over && 'font-semibold text-red-600')}>{di.text}</span>;
+          return <span className={cn('text-sm', di.over && 'font-semibold text-red-600')}>{di.text}</span>;
         },
       },
       {
@@ -208,7 +207,7 @@ export function ChallansListPage() {
         cell: (r) => (
           <span
             className={cn(
-              'rounded px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset',
+              'rounded px-1.5 py-0.5 text-sm font-medium ring-1 ring-inset',
               r.challanStatus === 'CONFIRMED' ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-rose-50 text-rose-700 ring-rose-200',
             )}
           >
@@ -227,32 +226,33 @@ export function ChallansListPage() {
   const rowActions = (r: ChallanDto) => (
     <div className="flex items-center justify-end gap-1.5">
       {canPrint && (
-        <button onClick={() => openPdf(`/challans/${r.id}/challan.pdf`)} className="text-muted-foreground hover:text-foreground" title="Print / PDF">
-          <Printer className="size-4" />
+        <button onClick={() => navigate(`/challans/${r.id}/bill`)} className="cursor-pointer rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="Print / PDF">
+          <Printer className="size-5" />
         </button>
       )}
       {canUpdate && (
-        <button onClick={() => navigate(`/challans/${r.id}/edit`)} className="text-muted-foreground hover:text-foreground" title="Edit">
-          <Pencil className="size-4" />
+        <button onClick={() => navigate(`/challans/${r.id}/edit`)} className="cursor-pointer rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="Edit">
+          <Pencil className="size-5" />
         </button>
       )}
       {canUpdate &&
         (r.challanStatus === 'CONFIRMED' ? (
-          <button onClick={() => setRowStatus(r, 'CANCELLED')} className="text-muted-foreground hover:text-rose-600" title="Mark Cancelled">
-            <XCircle className="size-4" />
+          <button onClick={() => setRowStatus(r, 'CANCELLED')} className="cursor-pointer rounded p-1 text-muted-foreground transition-colors hover:bg-rose-50 hover:text-rose-600" title="Mark Cancelled">
+            <XCircle className="size-5" />
           </button>
         ) : (
-          <button onClick={() => setRowStatus(r, 'CONFIRMED')} className="text-muted-foreground hover:text-emerald-600" title="Mark Confirmed">
-            <CheckCircle2 className="size-4" />
+          <button onClick={() => setRowStatus(r, 'CONFIRMED')} className="cursor-pointer rounded p-1 text-muted-foreground transition-colors hover:bg-emerald-50 hover:text-emerald-600" title="Mark Confirmed">
+            <CheckCircle2 className="size-5" />
           </button>
         ))}
       {canDelete && (
-        <button onClick={() => remove(r)} className="text-muted-foreground hover:text-destructive" title="Delete">
-          <Trash2 className="size-4" />
+        <button onClick={() => remove(r)} className="cursor-pointer rounded p-1 text-muted-foreground transition-colors hover:bg-red-50 hover:text-destructive" title="Delete">
+          <Trash2 className="size-5" />
         </button>
       )}
     </div>
   );
+
 
   // Phones: one card per challan (mirrors the Quotations/Bookings mobile list).
   const challanMobileCard = (r: ChallanDto) => {
@@ -297,7 +297,7 @@ export function ChallansListPage() {
         </div>
         <div className="flex items-center justify-end gap-1 border-t pt-2" onClick={(e) => e.stopPropagation()}>
           {canPrint && (
-            <Button variant="ghost" size="icon" className="size-8" onClick={() => openPdf(`/challans/${r.id}/challan.pdf`)} aria-label="Print / PDF">
+            <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(`/challans/${r.id}/bill`)} aria-label="Print / PDF">
               <Printer className="size-4" />
             </Button>
           )}
@@ -465,7 +465,7 @@ export function ChallansListPage() {
         rowKey={(r) => r.id}
         isLoading={isLoading}
         dense
-        className="text-[16px] [&_thead_th]:text-[14px] [&_td]:py-1.5 [&_th]:py-2 [&_tbody_button]:size-8"
+        className="text-[15px] [&_thead_th]:text-[13px] [&_td]:py-1.5 [&_th]:py-2 [&_tbody_button]:size-8"
         actions={rowActions}
         mobileCard={challanMobileCard}
         emptyText="No challans yet — create one from Pending Challan."

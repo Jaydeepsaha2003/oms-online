@@ -425,6 +425,237 @@ export class OrdersService {
     return { buffer, filename: `${order.code ?? `order-${id}`}-sales-order.pdf` };
   }
 
+  async generateOrderBillPdf(id: number, isQuotation: boolean): Promise<{ buffer: Buffer; filename: string }> {
+    const order = await this.findOne(id);
+    let companyName = 'KAVISH';
+    let terms: string[] = [];
+    let footerLines: string[] = [];
+    const docType = isQuotation ? 'QUOTATION' : 'SALES ORDER';
+
+    try {
+      const companyRow = await this.prisma.appConfig.findUnique({ where: { key: 'COMPANY_PROFILE' } });
+      if (companyRow?.value) {
+        const parsed = JSON.parse(companyRow.value);
+        companyName = parsed.name || 'KAVISH';
+      }
+    } catch (e) {
+      // Silently use default
+    }
+
+    try {
+      const termsRow = await this.prisma.appConfig.findUnique({ where: { key: 'ORDER_TERMS' } });
+      if (termsRow?.value) {
+        const parsed = JSON.parse(termsRow.value);
+        terms = parsed.terms || [];
+      }
+    } catch (e) {
+      // Silently use default
+    }
+
+    try {
+      const footerRow = await this.prisma.appConfig.findUnique({ where: { key: 'ORDER_FOOTER' } });
+      if (footerRow?.value) {
+        const parsed = JSON.parse(footerRow.value);
+        const lines = parsed.lines || [];
+        footerLines = lines.map((l: string) => l.replaceAll('{DOC_TYPE}', docType));
+      }
+    } catch (e) {
+      // Silently use default
+    }
+
+    const buffer = await this.pdf.render(this.buildOrderBillDoc(order, companyName, terms, footerLines, isQuotation));
+    const stamp = new Date().toISOString().slice(0, 10);
+    const prefix = isQuotation ? 'Quotation' : 'Order';
+    return { buffer, filename: `${prefix}_${(order.code || `${prefix.toLowerCase()}-${id}`).replace(/[\\/:*?"<>|]/g, '-')}_${stamp}.pdf` };
+  }
+
+  private buildOrderBillDoc(order: OrderDto, companyName: string, terms: string[], footerLines: string[], isQuotation: boolean): TDocumentDefinitions {
+    // Simplified version for testing
+    const docType = isQuotation ? 'QUOTATION' : 'SALES ORDER';
+    return {
+      pageSize: 'A4',
+      pageMargins: [40, 40, 40, 40],
+      defaultStyle: { font: 'Helvetica', fontSize: 12 },
+      content: [
+        { text: docType, bold: true, fontSize: 20 },
+        { text: companyName, fontSize: 14, margin: [0, 10, 0, 0] },
+        { text: `Order: ${order.code}`, margin: [0, 20, 0, 0] },
+        { text: `Customer: ${order.customerName}`, margin: [0, 10, 0, 0] },
+        { text: `Items: ${order.items.filter(it => it.status !== 'CANCELLED').length}`, margin: [0, 10, 0, 0] },
+      ],
+    } as TDocumentDefinitions;
+  }
+
+  private buildOrderBillDocFull(order: OrderDto, companyName: string, terms: string[], footerLines: string[], isQuotation: boolean): TDocumentDefinitions {
+    const NAVY = '#163E64';
+    const ORANGE = '#E8A33D';
+    const BLACK = '#111111';
+    const BORDER = '#C9D2DC';
+    const GREY = '#555555';
+    const q = (v?: number | null) => (v ? v.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '-');
+    const money = (v?: number | null) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+    const d = (s?: string | null) => (s ? new Date(s).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
+
+    const docTitle = isQuotation ? 'QUOTATION' : 'SALES ORDER';
+    const printItems = order.items.filter((it) => it.status !== 'CANCELLED');
+    // Orders don't have pre-calculated amounts like challans do
+    const subTotal = 0;
+
+    // Items table header
+    const head = [
+      { text: '#', bold: true, color: BLACK, alignment: 'center' as const, fontSize: 11 },
+      { text: 'ITEM NAME', bold: true, color: BLACK, alignment: 'left' as const, fontSize: 11 },
+      { text: 'BAGS', bold: true, color: BLACK, alignment: 'right' as const, fontSize: 11 },
+      { text: 'PCS', bold: true, color: BLACK, alignment: 'right' as const, fontSize: 11 },
+      { text: 'KGS', bold: true, color: BLACK, alignment: 'right' as const, fontSize: 11 },
+      { text: 'BOX', bold: true, color: BLACK, alignment: 'right' as const, fontSize: 11 },
+      { text: 'RATE', bold: true, color: BLACK, alignment: 'right' as const, fontSize: 11 },
+      { text: 'COMMENTS', bold: true, color: BLACK, alignment: 'left' as const, fontSize: 11 },
+    ];
+
+    const rows = printItems.map((it, idx) => [
+      { text: String(idx + 1), alignment: 'center' as const, fontSize: 11 },
+      { text: it.productName || '—', fontSize: 11 },
+      { text: q(it.bags), alignment: 'right' as const, fontSize: 11 },
+      { text: q(it.pcs), alignment: 'right' as const, fontSize: 11 },
+      { text: q(it.gram), alignment: 'right' as const, fontSize: 11 },
+      { text: q(it.box), alignment: 'right' as const, fontSize: 11 },
+      { text: q(it.rate), alignment: 'right' as const, fontSize: 11 },
+      { text: it.comment || '', fontSize: 11 },
+    ]);
+
+    const itemsTable = {
+      table: {
+        headerRows: 1,
+        widths: ['5%', '24%', '9%', '9%', '9%', '9%', '10%', '25%'],
+        body: [head, ...rows],
+      },
+      layout: {
+        fillColor: (rowIndex: number) => (rowIndex === 0 ? ORANGE : null),
+        hLineColor: () => BORDER,
+        vLineColor: () => BORDER,
+        hLineWidth: () => 0.5,
+        vLineWidth: () => 0.5,
+        paddingLeft: () => 5,
+        paddingRight: () => 5,
+        paddingTop: () => 4,
+        paddingBottom: () => 4,
+      },
+      margin: [24, 0, 24, 16],
+    };
+
+    // Charges section (70%/30% split)
+    const chargesTable = {
+      columns: [
+        {
+          width: '*',
+          stack: [],
+        },
+        {
+          width: 220,
+          table: {
+            widths: [130, 90],
+            body: [
+              [
+                { text: 'SUBTOTAL', bold: true, fillColor: ORANGE, color: BLACK, fontSize: 11 },
+                { text: money(subTotal), bold: true, fillColor: ORANGE, alignment: 'right' as const, fontSize: 11 },
+              ],
+              [
+                { text: 'TOTAL', bold: true, fillColor: ORANGE, color: BLACK, fontSize: 11 },
+                { text: money(subTotal), bold: true, fillColor: ORANGE, alignment: 'right' as const, fontSize: 11 },
+              ],
+            ],
+          },
+          layout: {
+            hLineColor: () => BORDER,
+            vLineColor: () => BORDER,
+            hLineWidth: () => 0.5,
+            vLineWidth: () => 0.5,
+            paddingLeft: () => 6,
+            paddingRight: () => 6,
+            paddingTop: () => 4,
+            paddingBottom: () => 4,
+          },
+        },
+      ],
+      margin: [24, 0, 24, 16],
+    };
+
+    // Terms section
+    const termsContent = terms.length
+      ? [
+          { text: 'TERMS & CONDITIONS', bold: true, color: GREY, fontSize: 11, margin: [24, 16, 24, 8] },
+          ...terms.map((term, i) => ({ text: `${i + 1}. ${term}`, fontSize: 10, margin: [24, 2, 24, 2], color: GREY })),
+        ]
+      : [];
+
+    // Footer content
+    const footerContent = footerLines.length
+      ? [{ text: footerLines.join('\n'), alignment: 'center' as const, fontSize: 11, bold: true, margin: [24, 16, 24, 0] }]
+      : [];
+
+    return {
+      pageSize: 'A4',
+      pageMargins: [0, 0, 0, 40],
+      defaultStyle: { font: 'Helvetica', fontSize: 10, color: BLACK },
+      content: [
+        // Header
+        {
+          columns: [
+            {
+              width: '*',
+              stack: [
+                { text: docTitle, bold: true, fontSize: 24, color: BLACK, margin: [0, 0, 0, 8] },
+                { text: companyName, bold: true, fontSize: 14, color: BLACK },
+              ],
+            },
+          ],
+          fillColor: '#F8F9FA',
+          margin: [24, 16, 24, 16],
+        },
+        // Meta information grid
+        {
+          table: {
+            widths: ['15%', '35%', '15%', '35%'],
+            body: [
+              [
+                { text: isQuotation ? 'QUOTATION ID' : 'ORDER ID', bold: true, color: GREY, fontSize: 11 },
+                { text: `#${order.code || order.id}`, bold: true, fontSize: 11 },
+                { text: isQuotation ? 'QUOTATION DATE' : 'ORDER DATE', bold: true, color: GREY, fontSize: 11 },
+                { text: d(order.orderDate), bold: true, fontSize: 11 },
+              ],
+              [
+                { text: 'DUE DATE', bold: true, color: GREY, fontSize: 11 },
+                { text: d(order.completionDate), bold: true, fontSize: 11 },
+                { text: isQuotation ? 'QUOTE TO' : 'BILL TO', bold: true, color: GREY, fontSize: 11 },
+                { text: order.customerName || '—', bold: true, fontSize: 11 },
+              ],
+              [
+                { text: 'ADDRESS', bold: true, color: GREY, fontSize: 11 },
+                { text: order.billingAddress || '—', fontSize: 11 },
+                { text: '', fontSize: 11 },
+                { text: '', fontSize: 11 },
+              ],
+            ],
+          },
+          layout: 'noBorders',
+          margin: [24, 0, 24, 16],
+        },
+        itemsTable,
+        chargesTable,
+        ...termsContent,
+        ...footerContent,
+      ],
+      footer: (currentPage: number) => ({
+        text: `Page ${currentPage}`,
+        alignment: 'center' as const,
+        fontSize: 9,
+        color: '#999999',
+        margin: [0, 16, 0, 0],
+      }),
+    } as unknown as TDocumentDefinitions;
+  }
+
   private buildSalesOrderDoc(order: OrderDto): TDocumentDefinitions {
     const BLUE = '#156082';
     const ORANGE = '#F99A0F';

@@ -224,6 +224,28 @@ export function BookingConvertPage() {
         </CardContent>
       </Card>
 
+      {/* Booked-by-category breakdown — each product category was reserved and
+          is drawn down independently, so a conversion tagged with that category
+          can't exceed that category's own remaining even if the booking's
+          overall total still has room. */}
+      {booking.items.length > 0 && (
+        <Card className="border-border border-l-4 border-l-indigo-300 py-0">
+          <CardContent className="px-4 py-3">
+            <p className="text-muted-foreground mb-2 text-xs font-semibold tracking-wide uppercase">Booked by category</p>
+            <div className="flex flex-wrap gap-2">
+              {booking.items.map((it) => (
+                <div key={it.id} className="rounded-md border bg-white px-2.5 py-1.5 text-xs">
+                  <span className="font-semibold">{it.pCategory}</span>{' '}
+                  <span className="text-muted-foreground">
+                    {money(it.remainingBags)} bag / {money(it.remainingKgs)} kg remaining (of {money(it.bags)}/{money(it.kgs)})
+                  </span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Item entry */}
       <Card className="border-border border-l-4 border-l-slate-400 bg-slate-50/70 py-0">
         <CardContent className="space-y-2 px-4 py-3">

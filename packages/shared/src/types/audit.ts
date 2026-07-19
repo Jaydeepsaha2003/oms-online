@@ -23,6 +23,8 @@ export interface AuditLogDto {
   /** Who — null for anonymous/unauthenticated events (e.g. failed login). */
   userId?: string | null;
   userEmail?: string | null;
+  /** The user's display name at query time (joined from User; not a snapshot). */
+  userName?: string | null;
   /** What — e.g. 'update'. */
   action: AuditActionType;
   /** On which resource — e.g. 'order'. */
@@ -46,8 +48,24 @@ export interface AuditLogQuery extends PaginationQuery {
   userId?: string;
   action?: string;
   resource?: string;
+  /** Exact record id — pairs with `resource` to show one record's own history. */
+  resourceId?: string;
   from?: string; // ISO date
   to?: string; // ISO date
 }
 
 export type AuditLogList = Paginated<AuditLogDto>;
+
+/** The distinct resource/action values actually present in the log — used to
+ *  populate filter dropdowns with only options that will return results. */
+export interface AuditLogFacets {
+  resources: string[];
+  actions: string[];
+}
+
+/** A user who has at least one audit log entry — for the "User" filter dropdown. */
+export interface AuditActorDto {
+  id: string;
+  name: string | null;
+  email: string | null;
+}

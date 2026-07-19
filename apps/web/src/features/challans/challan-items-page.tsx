@@ -1,9 +1,9 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Boxes, Printer, Search } from 'lucide-react';
 import type { ChallanItemHistoryRow } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
-import { openPdf } from '@/lib/pdf';
 import { usePermissions } from '@/hooks/use-permissions';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { NativeSelect } from '@/components/common/combo';
@@ -15,6 +15,7 @@ const num = (v: number | null) => (v ? v.toLocaleString('en-IN') : '—');
 const money = (v: number | null) => (v ? `₹ ${v.toLocaleString('en-IN')}` : '—');
 
 export function ChallanItemsPage() {
+  const navigate = useNavigate();
   const { can } = usePermissions();
   const canPrint = can('challan:print');
   const [search, setSearch] = useState('');
@@ -42,7 +43,7 @@ export function ChallanItemsPage() {
             label: '',
             fixed: true,
             cell: (r: ChallanItemHistoryRow) => (
-              <button onClick={() => openPdf(`/challans/${r.challanId}/challan.pdf`)} className="text-muted-foreground hover:text-foreground" title="Print challan">
+              <button onClick={() => navigate(`/challans/${r.challanId}/bill`)} className="text-muted-foreground hover:text-foreground" title="Print challan">
                 <Printer className="size-4" />
               </button>
             ),
@@ -67,7 +68,7 @@ export function ChallanItemsPage() {
             className="size-8 shrink-0"
             onClick={(e) => {
               e.stopPropagation();
-              openPdf(`/challans/${r.challanId}/challan.pdf`);
+              navigate(`/challans/${r.challanId}/bill`);
             }}
             aria-label="Print challan"
           >

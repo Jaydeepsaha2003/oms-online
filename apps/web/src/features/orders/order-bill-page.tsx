@@ -5,9 +5,10 @@ import { toast } from 'sonner';
 import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
 import { Button } from '@/components/ui/button';
+import { buildBillFilename } from '@/lib/pdf';
 import { shortOrderCode } from '@/lib/utils';
 import kavishLogo from '@/assets/kavish-logo-order.png';
-import { useOrderTerms } from '@/features/settings/use-settings';
+import { useCompany, useOrderFooter, useOrderTerms } from '@/features/settings/use-settings';
 import { useOrder } from './use-orders';
 import { useQuotation } from '../quotations/use-quotations';
 
@@ -26,6 +27,9 @@ const FALLBACK_TERMS = [
   'Order Cannot Be Cancelled Once Placed/Confirmed',
   'Any Type Of Defect/Design Issue Should Be Reported Within 15 days After Goods Recived.',
 ];
+
+// Shown until the Settings → "Sales Order footer text" list loads.
+const FALLBACK_FOOTER = ['***THIS IS COMPUTER GENRATED {DOC_TYPE}***'];
 
 // The reference template always prints the raw number (including 0), never blanks it.
 const numf = (v: number | null) => (v ?? 0).toLocaleString('en-IN');
@@ -55,6 +59,13 @@ export function OrderBillPage() {
   const { data: termsData } = useOrderTerms();
   const terms = termsData?.terms.length ? termsData.terms : FALLBACK_TERMS;
   const docTitle = isQuotation ? 'QUOTATION' : 'SALES ORDER';
+  // Editable from Settings → "Sales Order footer text"; {DOC_TYPE} is swapped for docTitle.
+  const { data: footerData } = useOrderFooter();
+  const footerLines = (footerData?.lines.length ? footerData.lines : FALLBACK_FOOTER).map((l) => l.replaceAll('{DOC_TYPE}', docTitle));
+  // Uploaded via Settings → "Company branding"; falls back to the built-in Kavish
+  // logo until one's been uploaded.
+  const { data: company } = useCompany();
+  const logoSrc = company?.logo || kavishLogo;
   const pageTitle = isQuotation ? 'Quotation' : 'Sales Order';
   const fileSuffix = isQuotation ? 'quotation' : 'sales-order';
   const [busy, setBusy] = useState(false);
@@ -72,12 +83,17 @@ export function OrderBillPage() {
   const captureImage = async (): Promise<{ dataURL: string; ratio: number } | null> => {
     const src = document.getElementById('sales-order');
     if (!src) return null;
-    const A4_W = 794; // px ≈ 210mm @ 96dpi
+    // Cap the render width at 960 px.  On a wide monitor the element may be
+    // 1 300–1 500 px wide; capturing at that full width and squeezing into A4
+    // (~595 pt) makes everything look tiny.  960 px gives a comfortable scale
+    // factor of ~0.62 so fonts and cells appear noticeably larger in the PDF
+    // while still being wide enough that content doesn't over-wrap.
+    const PDF_RENDER_W = 960;
     const clone = src.cloneNode(true) as HTMLElement;
-    clone.style.width = `${A4_W}px`;
+    clone.style.width = `${PDF_RENDER_W}px`;
     clone.style.borderRadius = '0';
     const holder = document.createElement('div');
-    holder.style.cssText = `position:fixed;left:-10000px;top:0;width:${A4_W}px;background:#ffffff`;
+    holder.style.cssText = `position:fixed;left:-10000px;top:0;width:${PDF_RENDER_W}px;background:#ffffff`;
     holder.appendChild(clone);
     document.body.appendChild(holder);
     const canvas = await html2canvas(clone, { scale: 3, backgroundColor: '#ffffff' });
@@ -92,24 +108,33 @@ export function OrderBillPage() {
       const cap = await captureImage();
       if (!cap) return;
       const pdf = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
-      const margin = 24;
+      // Very thin margin — just enough to avoid printer clip zones.
+      const margin = 4;
       const pageW = pdf.internal.pageSize.getWidth();
       const pageH = pdf.internal.pageSize.getHeight();
+      // Image fills the full usable width between the thin margins.
       const imgW = pageW - margin * 2;
+      // Total rendered image height (scaled proportionally to imgW).
       const imgH = cap.ratio * imgW;
-      if (imgH <= pageH - margin * 2) {
+      // Height of the content area on each page.
+      const contentH = pageH - margin * 2;
+      if (imgH <= contentH) {
+        // Single page — image fits without slicing.
         pdf.addImage(cap.dataURL, 'JPEG', margin, margin, imgW, imgH);
       } else {
-        let heightLeft = imgH;
-        pdf.addImage(cap.dataURL, 'JPEG', margin, margin, imgW, imgH);
-        heightLeft -= pageH - margin * 2;
-        while (heightLeft > 0) {
-          pdf.addPage();
-          pdf.addImage(cap.dataURL, 'JPEG', margin, margin - (imgH - heightLeft), imgW, imgH);
-          heightLeft -= pageH - margin * 2;
+        // Multi-page: slice the image by shifting its Y offset each page.
+        let yOffset = 0; // how many pts of the image have already been printed
+        let firstPage = true;
+        while (yOffset < imgH) {
+          if (!firstPage) pdf.addPage();
+          // Shift the image up by yOffset so the correct slice appears in the
+          // content area of this page.
+          pdf.addImage(cap.dataURL, 'JPEG', margin, margin - yOffset, imgW, imgH);
+          yOffset += contentH;
+          firstPage = false;
         }
       }
-      pdf.save(`${order.code ?? `${fileSuffix}-${orderId}`}-${fileSuffix}.pdf`);
+      pdf.save(buildBillFilename(isQuotation ? 'Quotation' : 'Order', order.code, `${fileSuffix}-${orderId}`));
     } catch {
       toast.error('Could not generate the PDF');
     } finally {
@@ -153,8 +178,11 @@ export function OrderBillPage() {
   }
 
   const BORDER = '#C9D2DC';
-  const th: CSSProperties = { background: ORANGE, color: BLACK, border: `0.5px solid ${BORDER}`, padding: '9px 11px', fontWeight: 800, fontSize: 18.5 };
-  const td: CSSProperties = { border: `0.5px solid ${BORDER}`, padding: '8px 11px' };
+  // wordBreak + whiteSpace let long item names/comments wrap onto extra lines
+  // instead of overflowing or stretching the column — the row then grows to fit
+  // (verticalAlign: top keeps wrapped text starting at the top of the row).
+  const th: CSSProperties = { background: ORANGE, color: BLACK, border: `0.2px solid ${BORDER}`, padding: '9px 11px', fontWeight: 800, fontSize: 18.5, whiteSpace: 'normal', wordBreak: 'break-word' };
+  const td: CSSProperties = { border: `0.2px solid ${BORDER}`, padding: '8px 11px', whiteSpace: 'normal', wordBreak: 'break-word', verticalAlign: 'top' };
 
   return (
     <div className="flex w-full flex-col gap-4">
@@ -181,6 +209,7 @@ export function OrderBillPage() {
       <div
         id="sales-order"
         style={{
+          position: 'relative',
           background: '#fff',
           color: BLACK,
           border: 'none',
@@ -190,6 +219,23 @@ export function OrderBillPage() {
           fontVariantNumeric: 'tabular-nums',
         }}
       >
+        {/* Very-light logo watermark — sits behind all content */}
+        <img
+          src={logoSrc}
+          alt=""
+          aria-hidden
+          style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            width: '55%',
+            opacity: 0.03,
+            pointerEvents: 'none',
+            zIndex: 0,
+            userSelect: 'none',
+          }}
+        />
         {/* Decorative banner — a close visual match to the letterhead's artwork
             (not a vector trace of it): navy fills the whole bar edge to edge,
             with an orange gradient block covering the right 65% at full
@@ -221,26 +267,29 @@ export function OrderBillPage() {
         {/* Bill-to (left) · Kavish logo (center) · Order meta (right) */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'flex-start', gap: 12, padding: '0 24px 16px' }}>
           <div style={{ fontSize: 19, lineHeight: 1.5 }}>
-            <div style={{ fontWeight: 700, textTransform: 'uppercase' }}>Bill To,</div>
+            <div style={{ fontWeight: 700, textTransform: 'uppercase' }}>{isQuotation ? 'Quote To,' : 'Bill To,'}</div>
             <div style={{ fontWeight: 700, textTransform: 'uppercase' }}>{order.customerName}</div>
             {order.billingAddress && <div>{order.billingAddress}</div>}
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'center' }}>
-            <img src={kavishLogo} alt="KAVISH — The Unique" style={{ width: 130, height: 'auto' }} />
+            <img src={logoSrc} alt={company?.name || 'Company logo'} style={{ width: 130, height: 'auto' }} />
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <table style={{ borderCollapse: 'collapse', fontSize: 19, fontWeight: 700, lineHeight: 1.6 }}>
               <tbody>
                 {([
-                  ['Order ID:', `#${shortOrderCode(order.code, order.id)}`],
-                  ['Order Date :', fmtDate(order.orderDate)],
-                  ['Due Date :', fmtDate(order.completionDate)],
+                  [isQuotation ? 'Quotation ID' : 'Order ID', `#${shortOrderCode(order.code, order.id)}`],
+                  [isQuotation ? 'Quotation Date' : 'Order Date', fmtDate(order.orderDate)],
+                  ['Due Date', fmtDate(order.completionDate)],
                 ] as const).map(([label, value]) => (
                   <tr key={label}>
-                    <td style={{ textAlign: 'left', paddingRight: 10, whiteSpace: 'nowrap' }}>{label}</td>
-                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{value}</td>
+                    {/* Label — right-aligned so the colon column always lines up */}
+                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{label}</td>
+                    {/* Dedicated colon column — gives perfect vertical alignment */}
+                    <td style={{ textAlign: 'center', padding: '0 4px', whiteSpace: 'nowrap' }}>:</td>
+                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap', paddingLeft: 6 }}>{value}</td>
                   </tr>
                 ))}
               </tbody>
@@ -250,16 +299,18 @@ export function OrderBillPage() {
 
         {/* Items */}
         <div style={{ padding: '0 24px 16px' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 18, fontWeight: 600, fontFamily: FONT }}>
+          {/* table-layout: auto lets each column shrink/grow to fit its content
+              (autofit).  minWidth guards against very narrow numeric columns. */}
+          <table style={{ width: '100%', tableLayout: 'auto', borderCollapse: 'collapse', fontSize: 18, fontWeight: 600, fontFamily: FONT }}>
             <thead style={{ textTransform: 'uppercase' }}>
               <tr>
-                <th style={{ ...th, width: 34, textAlign: 'center' }}>#</th>
+                <th style={{ ...th, textAlign: 'center', whiteSpace: 'nowrap' }}>#</th>
                 <th style={{ ...th, textAlign: 'left' }}>Item Name</th>
-                <th style={{ ...th, textAlign: 'right' }}>Bags</th>
-                <th style={{ ...th, textAlign: 'right' }}>PCs</th>
-                <th style={{ ...th, textAlign: 'right' }}>KGs</th>
-                <th style={{ ...th, textAlign: 'right' }}>Box</th>
-                <th style={{ ...th, textAlign: 'right' }}>Rate</th>
+                <th style={{ ...th, textAlign: 'right', whiteSpace: 'nowrap' }}>Bags</th>
+                <th style={{ ...th, textAlign: 'right', whiteSpace: 'nowrap' }}>PCs</th>
+                <th style={{ ...th, textAlign: 'right', whiteSpace: 'nowrap' }}>KGs</th>
+                <th style={{ ...th, textAlign: 'right', whiteSpace: 'nowrap' }}>Box</th>
+                <th style={{ ...th, textAlign: 'right', whiteSpace: 'nowrap' }}>Rate</th>
                 <th style={{ ...th, textAlign: 'left' }}>Comments</th>
               </tr>
             </thead>
@@ -307,7 +358,9 @@ export function OrderBillPage() {
         </div>
 
         <div style={{ textAlign: 'center', fontSize: 13, fontWeight: 700, marginTop: 18, padding: '0 24px' }}>
-          ***THIS IS COMPUTER GENRATED {docTitle}***
+          {footerLines.map((line, i) => (
+            <div key={i}>{line}</div>
+          ))}
         </div>
       </div>
     </div>

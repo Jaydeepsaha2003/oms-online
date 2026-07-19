@@ -24,7 +24,9 @@ export interface BookingDto {
   category: string | null;
   /** The rate-basis date — converted items are priced as of this date. */
   bookingDate: string;
+  /** Rollup sum of `items[].bags`. */
   bags: number;
+  /** Rollup sum of `items[].kgs`. */
   kgs: number;
   convertedBags: number;
   convertedKgs: number;
@@ -38,7 +40,26 @@ export interface BookingDto {
   /** Code of the order holding the converted lines, once one exists. */
   orderCode: string | null;
   userName: string | null;
+  /** The product-category lines reserved on this booking (e.g. 1 bag GLASS, 1 bag CUP). */
+  items: BookingItemDto[];
   conversions: BookingConversionDto[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** One product-category line reserved on a booking. */
+export interface BookingItemDto {
+  id: number;
+  bookingId: number;
+  pCategory: string;
+  bags: number;
+  kgs: number;
+  convertedBags: number;
+  convertedKgs: number;
+  /** bags - convertedBags (never below 0). */
+  remainingBags: number;
+  /** kgs - convertedKgs (never below 0). */
+  remainingKgs: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -59,15 +80,21 @@ export interface BookingConversionDto {
   convertedAt: string;
 }
 
-/** Create a booking (no items yet — just reserved bags/kgs). */
+/** One product-category line to reserve, e.g. { pCategory: 'GLASS', bags: 1 }. */
+export interface CreateBookingItemInput {
+  pCategory: string;
+  bags?: number;
+  kgs?: number;
+}
+
+/** Create a booking — one or more product-category lines (multi-line allowed). */
 export interface CreateBookingInput {
   customerName: string;
   agentName?: string | null;
   category?: string | null;
   /** Defaults to today on the server; this is the rate-basis date. */
   bookingDate?: string | null;
-  bags: number;
-  kgs: number;
+  items: CreateBookingItemInput[];
   comment?: string | null;
 }
 
@@ -76,8 +103,7 @@ export interface UpdateBookingInput {
   agentName?: string | null;
   category?: string | null;
   bookingDate?: string | null;
-  bags?: number;
-  kgs?: number;
+  items?: CreateBookingItemInput[];
   comment?: string | null;
 }
 

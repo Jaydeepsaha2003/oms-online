@@ -54,7 +54,7 @@ export class ChequesController {
 
   @Patch(':id')
   @Permissions(perm(R, ACTIONS.UPDATE))
-  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Edited a cheque' })
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateChequeDto) {
     return this.cheques.update(id, dto);
   }
@@ -75,7 +75,7 @@ export class ChequesController {
 
   @Delete(':id')
   @Permissions(perm(R, ACTIONS.DELETE))
-  @Audit({ action: ACTIONS.DELETE, resource: R })
+  @Audit({ action: ACTIONS.DELETE, resource: R, description: 'Deleted a cheque' })
   async remove(@Param('id', ParseIntPipe) id: number) {
     await this.cheques.remove(id);
     return { ok: true };

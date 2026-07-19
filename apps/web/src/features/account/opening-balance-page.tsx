@@ -17,7 +17,7 @@ import { useCreateOpeningBalance, useDeleteOpeningBalance, useOpeningBalances, u
 
 const PAGE_SIZE = 50;
 const money = (v: number) => `₹ ${(v ?? 0).toLocaleString('en-IN')}`;
-const prettyDate = (iso: string) => new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+const prettyDate = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
 function ymd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }

@@ -13,12 +13,13 @@ import {
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRightLeft, BadgePercent, Camera, Check, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Lock, PackageOpen, Plus, RotateCcw, Save, Settings2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { ORDER_PRIORITIES, resolveSpecialRates, type OrderInput } from '@oms/shared';
+import { ORDER_PRIORITIES, RESOURCES, resolveSpecialRates, type OrderInput } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useAutoSizePcs } from '@/lib/auto-size-pcs';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/common/confirm';
+import { RecordHistory } from '@/components/common/record-history';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -110,12 +111,13 @@ const addDays = (dateStr: string, days: number) => {
   return d.toISOString().slice(0, 10);
 };
 
-/** Render a 'YYYY-MM-DD' string the same way the DatePicker field shows it. */
+/** Render a 'YYYY-MM-DD' string the same way the DatePicker field shows it (dd/mm/yyyy). */
 const niceDate = (iso: string) => {
   if (!iso) return '';
   const [y, m, d] = iso.split('-').map(Number);
   if (!y) return iso;
-  return new Date(y, m - 1, d).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d)}/${pad(m)}/${y}`;
 };
 
 // The form's focusable controls, in entry order — used by the Tab-access panel.
@@ -276,12 +278,13 @@ export function OrderFormPage() {
   const [items, setItems] = useState<Item[]>([]);
 
   // How many item rows to keep visible in the panel before it scrolls — a saved
-  // per-user preference. 0 = show all (the panel grows and the page scrolls).
+  // per-user preference. 0 = show all (the panel grows and the page scrolls);
+  // that's also the default until someone picks a smaller number themselves.
   const [rowsToShow, setRowsToShow] = useState<number>(() => {
     const stored = localStorage.getItem(ROWS_PREF_KEY);
-    if (stored == null) return 8; // Number(null) is 0 (= "All"), so guard the empty case.
+    if (stored == null) return 0;
     const raw = Number(stored);
-    return ROWS_OPTIONS.includes(raw) ? raw : 8;
+    return ROWS_OPTIONS.includes(raw) ? raw : 0;
   });
   useEffect(() => {
     try {
@@ -290,8 +293,10 @@ export function OrderFormPage() {
       /* ignore */
     }
   }, [rowsToShow]);
-  // Cap the grid's height to the chosen number of rows (row ≈ 2.5rem + header).
-  const gridMaxHeight = rowsToShow === 0 ? undefined : `${rowsToShow * 2.5 + 2.9}rem`;
+  // Cap the grid's height to the chosen number of rows (row ≈ 2.5rem + header) —
+  // capped again by the actual item count so a handful of lines doesn't leave a
+  // tall blank strip reserved for rows that don't exist yet.
+  const gridMaxHeight = rowsToShow === 0 ? undefined : `${Math.min(rowsToShow, Math.max(items.length, 1)) * 2.5 + 2.9}rem`;
 
   // Bag-booking draw-down: pull a customer's reserved bags into this order. The
   // button only shows when the customer actually has a drawable booking.
@@ -1049,6 +1054,13 @@ export function OrderFormPage() {
               {existing.code}
             </span>
           )}
+          {isEdit && id && (
+            <RecordHistory
+              resource={docKind === 'quotation' ? RESOURCES.QUOTATION : RESOURCES.ORDER}
+              resourceId={id}
+              label={existing?.code}
+            />
+          )}
           <SettingsPanel tabOrder={tabOrder} setTabOrder={setTabOrder} />
         </div>
       </div>
@@ -1065,10 +1077,14 @@ export function OrderFormPage() {
         </div>
       )}
 
-      {/* Card 1 — order header in one row */}
+      {/* Card 1 — order header. Fits all 7 fields on one row at full desktop width
+          (lg, ≥1024px); on a narrower/unmaximized desktop window (sm, ≥640px) it
+          settles into a clean two-row split (4 + 3) instead of the old lopsided
+          wrap. `min-w-0` on every cell lets the field shrink to its grid track
+          instead of overflowing past it. */}
       <Card className="border-l-4 border-l-primary py-0">
-        <CardContent className="grid grid-cols-2 gap-2 px-3 py-2 sm:grid-cols-3 sm:px-4 sm:py-3 lg:grid-cols-12">
-          <div className="col-span-2 space-y-1.5 sm:col-span-1 lg:col-span-4" data-tabfield="customer">
+        <CardContent className="grid grid-cols-2 gap-2 px-3 py-2 sm:grid-cols-4 sm:px-4 sm:py-3 lg:grid-cols-8">
+          <div className="col-span-2 min-w-0 space-y-1.5 sm:col-span-2 lg:col-span-2" data-tabfield="customer">
             <Label className="text-base">Customer <span className="text-rose-500">*</span></Label>
             <NativeSelect
               value={customer}
@@ -1078,23 +1094,23 @@ export function OrderFormPage() {
               onInvalidEntry={() => toast.error('Please select a correct customer')}
             />
           </div>
-          <div className="space-y-1.5 lg:col-span-2" data-tabfield="poNumber">
+          <div className="min-w-0 space-y-1.5" data-tabfield="poNumber">
             <Label className="text-base whitespace-nowrap">PO Number</Label>
             <Input value={poNumber} onChange={(e) => setPoNumber(e.target.value)} placeholder="PO number…" />
           </div>
-          <div className="space-y-1.5 lg:col-span-2">
+          <div className="min-w-0 space-y-1.5">
             <Label className="text-base">Agent (auto)</Label>
             <Input value={agentName} readOnly tabIndex={-1} className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700" />
           </div>
-          <div className="space-y-1.5 lg:col-span-2">
+          <div className="min-w-0 space-y-1.5">
             <Label className="text-base whitespace-nowrap">Category (auto)</Label>
             <Input value={category} readOnly tabIndex={-1} className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700" />
           </div>
-          <div className="space-y-1.5 lg:col-span-2" data-tabfield="orderDate">
+          <div className="min-w-0 space-y-1.5" data-tabfield="orderDate">
             <Label className="text-base">Order date <span className="text-rose-500">*</span></Label>
             <DatePicker value={orderDate} onChange={setOrderDate} clearable={false} />
           </div>
-          <div className="space-y-1.5 lg:col-span-2" data-tabfield="completionDay">
+          <div className="min-w-0 space-y-1.5" data-tabfield="completionDay">
             <Label className="text-base">Com. days</Label>
             <NativeSelect
               value={completionDay}
@@ -1103,7 +1119,7 @@ export function OrderFormPage() {
               placeholder="Days…"
             />
           </div>
-          <div className="space-y-1.5 lg:col-span-3">
+          <div className="min-w-0 space-y-1.5">
             <Label className="text-base whitespace-nowrap">Completion date (auto)</Label>
             <Input value={niceDate(completionDate)} readOnly tabIndex={-1} className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700" />
           </div>
@@ -1300,7 +1316,7 @@ export function OrderFormPage() {
               <tbody className="[&_td]:border-t [&_td]:px-3 [&_td]:py-2">
                 {items.length === 0 ? (
                   <tr>
-                    <td colSpan={13} className="text-muted-foreground h-14 text-center">
+                    <td colSpan={13} className="text-muted-foreground py-4 text-center">
                       No items yet — fill the fields above and click “Add”.
                     </td>
                   </tr>
@@ -1348,8 +1364,8 @@ export function OrderFormPage() {
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <span className="inline-flex cursor-help text-slate-400">
-                                <span className="inline-flex size-7 items-center justify-center">
-                                  <Lock className="size-3.5" />
+                                <span className="inline-flex size-8 items-center justify-center">
+                                  <Lock className="size-4" />
                                 </span>
                               </span>
                             </TooltipTrigger>
@@ -1359,8 +1375,8 @@ export function OrderFormPage() {
                             </TooltipContent>
                           </Tooltip>
                           ) : (
-                            <Button variant="ghost" size="icon" className="size-7 text-destructive hover:text-destructive" onClick={() => removeItem(i.key)} aria-label="Remove">
-                              <Trash2 className="size-4" />
+                            <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => removeItem(i.key)} aria-label="Remove">
+                              <Trash2 className="size-5" />
                             </Button>
                           )}
                         </div>
@@ -1427,12 +1443,12 @@ export function OrderFormPage() {
                         <div className="flex shrink-0 items-center gap-0.5">
                           {docKind === 'order' && <LinePhotoButton photos={i.photos ?? []} onChange={(photos) => setItemPhotos(i.key, photos)} />}
                           {i.id != null ? (
-                            <span className="text-slate-400 inline-flex size-7 items-center justify-center" title="Existing order line — delete it from the Order Modify page">
-                              <Lock className="size-3.5" />
+                            <span className="text-slate-400 inline-flex size-8 items-center justify-center" title="Existing order line — delete it from the Order Modify page">
+                              <Lock className="size-4" />
                             </span>
                           ) : (
-                            <Button variant="ghost" size="icon" className="size-7 text-destructive hover:text-destructive" onClick={() => removeItem(i.key)} aria-label="Remove">
-                              <Trash2 className="size-4" />
+                            <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => removeItem(i.key)} aria-label="Remove">
+                              <Trash2 className="size-5" />
                             </Button>
                           )}
                         </div>
@@ -1548,11 +1564,11 @@ function LinePhotoButton({ photos, onChange }: { photos: LinePhoto[]; onChange: 
           type="button"
           variant="ghost"
           size="icon"
-          className={cn('relative size-7', count ? 'text-indigo-600' : 'text-slate-400 hover:text-indigo-600')}
+          className="relative size-8 text-indigo-600 hover:text-indigo-800"
           aria-label="Line photos"
           title={count ? `${count} photo${count === 1 ? '' : 's'}` : 'Add photos'}
         >
-          <Camera className="size-4" />
+          <Camera className="size-5" />
           {count > 0 && (
             <span className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-indigo-600 px-0.5 text-[9px] font-bold text-white tabular-nums">
               {count}

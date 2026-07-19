@@ -36,14 +36,14 @@ export class OpeningBalancesController {
 
   @Patch(':id')
   @Permissions(perm(R, ACTIONS.UPDATE))
-  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Edited an opening balance' })
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateOpeningBalanceDto) {
     return this.opening.update(id, dto);
   }
 
   @Delete(':id')
   @Permissions(perm(R, ACTIONS.DELETE))
-  @Audit({ action: ACTIONS.DELETE, resource: R })
+  @Audit({ action: ACTIONS.DELETE, resource: R, description: 'Deleted an opening balance' })
   async remove(@Param('id', ParseIntPipe) id: number) {
     await this.opening.remove(id);
     return { ok: true };

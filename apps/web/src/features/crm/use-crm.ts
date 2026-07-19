@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   AddFollowupLogInput,
-  AiConfigStatus,
   CrmReminderSettings,
   FollowupDto,
   FollowupList,
@@ -9,7 +8,6 @@ import type {
   FollowupQuery,
   FollowupSummary,
   SaveFollowupInput,
-  VoiceChecklistResult,
 } from '@oms/shared';
 import { http } from '@/lib/api';
 
@@ -89,6 +87,35 @@ export function useOrderSuggest(q: string, party?: string) {
   });
 }
 
+export interface OpenOrderItemHit {
+  orderItemId: number;
+  orderId: number;
+  orderCode: string;
+  orderDate: string;
+  productName: string | null;
+  design: string | null;
+  pCategory: string | null;
+  remBags: number;
+  remPcs: number;
+  remGram: number;
+  remBox: number;
+}
+
+/** A party's OPEN order LINE ITEMS — lets the follow-up form link to a specific
+ *  product/quantity instead of free-typed item text. Prefers `customerId`
+ *  (exact); falls back to matching `party` by name for off-system parties. */
+export function useOrderItemSuggest(customerId: number | null, party: string) {
+  return useQuery({
+    queryKey: [...KEY, 'order-items-suggest', customerId, party],
+    queryFn: () =>
+      http.get<OpenOrderItemHit[]>('/crm/followups/order-items-suggest', {
+        params: { ...(customerId ? { customerId } : {}), ...(party ? { party } : {}) },
+      }),
+    enabled: !!customerId || !!party.trim(),
+    staleTime: 15_000,
+  });
+}
+
 /* ── Mutations ───────────────────────────────────────────────────────────────── */
 
 const invalidate = (qc: ReturnType<typeof useQueryClient>) => qc.invalidateQueries({ queryKey: KEY });
@@ -138,16 +165,4 @@ export function useUpdateChecklistItem() {
 export function useDeleteChecklistItem() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (itemId: number) => http.delete(`/crm/followups/checklist/${itemId}`), onSuccess: () => invalidate(qc) });
-}
-
-/* ── AI (Gemini voice → checklist) ───────────────────────────────────────────── */
-export function useAiStatus() {
-  return useQuery({ queryKey: [...KEY, 'ai-status'], queryFn: () => http.get<AiConfigStatus>('/crm/followups/ai/status'), staleTime: 30_000 });
-}
-export function useSaveAiConfig() {
-  const qc = useQueryClient();
-  return useMutation({ mutationFn: (input: { apiKey?: string; model?: string }) => http.put<AiConfigStatus>('/crm/followups/ai/config', input), onSuccess: () => qc.invalidateQueries({ queryKey: [...KEY, 'ai-status'] }) });
-}
-export function useVoiceChecklist() {
-  return useMutation({ mutationFn: (input: { audio: string; mimeType: string }) => http.post<VoiceChecklistResult>('/crm/followups/ai/voice-checklist', input) });
 }

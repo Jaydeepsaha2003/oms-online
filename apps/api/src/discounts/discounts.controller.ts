@@ -39,14 +39,14 @@ export class DiscountsController {
 
   @Put(':id')
   @Permissions(perm(R, ACTIONS.UPDATE))
-  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Edited a sales discount' })
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: SaveDiscountDto, @CurrentUser('name') userName?: string) {
     return this.discounts.update(id, dto, userName);
   }
 
   @Delete(':id')
   @Permissions(perm(R, ACTIONS.DELETE))
-  @Audit({ action: ACTIONS.DELETE, resource: R })
+  @Audit({ action: ACTIONS.DELETE, resource: R, description: 'Deleted a sales discount' })
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.discounts.remove(id);
   }

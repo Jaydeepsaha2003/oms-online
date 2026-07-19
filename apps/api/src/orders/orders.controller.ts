@@ -44,7 +44,7 @@ export class OrdersController {
 
   @Post('items/:itemId/photos')
   @Permissions(perm(R, ACTIONS.UPDATE))
-  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Added an order line photo' })
   addPhoto(
     @Param('itemId', ParseIntPipe) itemId: number,
     @Body() dto: AddOrderItemPhotoDto,
@@ -55,7 +55,7 @@ export class OrdersController {
 
   @Delete('photos/:photoId')
   @Permissions(perm(R, ACTIONS.UPDATE))
-  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Removed an order line photo' })
   async deletePhoto(@Param('photoId', ParseIntPipe) photoId: number) {
     await this.orders.deletePhoto(photoId);
     return { ok: true };
@@ -76,35 +76,40 @@ export class OrdersController {
   @Get(':id/bill.pdf')
   @Permissions(perm(R, ACTIONS.PRINT))
   async bill(@Param('id', ParseIntPipe) id: number, @Res() res: Response) {
-    const { buffer, filename } = await this.orders.salesOrderPdf(id);
-    res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${filename}"` });
-    res.send(buffer);
+    try {
+      const { buffer, filename } = await this.orders.generateOrderBillPdf(id, false);
+      res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${filename}"` });
+      res.send(buffer);
+    } catch (error) {
+      console.error('Order PDF generation error:', error);
+      res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
+    }
   }
 
   @Post()
   @Permissions(perm(R, ACTIONS.CREATE))
-  @Audit({ action: ACTIONS.CREATE, resource: R })
+  @Audit({ action: ACTIONS.CREATE, resource: R, description: 'Created a sales order' })
   create(@Body() dto: CreateOrderDto) {
     return this.orders.create(dto);
   }
 
   @Patch(':id/status')
   @Permissions(perm(R, ACTIONS.UPDATE))
-  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Changed a sales order status' })
   updateStatus(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateOrderStatusDto) {
     return this.orders.updateStatus(id, dto.status);
   }
 
   @Patch(':id')
   @Permissions(perm(R, ACTIONS.UPDATE))
-  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Edited a sales order' })
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateOrderDto) {
     return this.orders.update(id, dto);
   }
 
   @Delete(':id')
   @Permissions(perm(R, ACTIONS.DELETE))
-  @Audit({ action: ACTIONS.DELETE, resource: R })
+  @Audit({ action: ACTIONS.DELETE, resource: R, description: 'Deleted a sales order' })
   async remove(@Param('id', ParseIntPipe) id: number) {
     await this.orders.remove(id);
     return { ok: true };

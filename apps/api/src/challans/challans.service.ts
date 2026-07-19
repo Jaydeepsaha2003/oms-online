@@ -591,8 +591,47 @@ export class ChallansService {
 
   async challanPdf(id: number): Promise<{ buffer: Buffer; filename: string }> {
     const challan = await this.findOne(id);
-    const buffer = await this.pdf.render(this.buildChallanDoc(challan));
+    const logoRow = await this.prisma.appConfig.findUnique({ where: { key: 'COMPANY_LOGO' } });
+    const buffer = await this.pdf.render(this.buildChallanDoc(challan, logoRow?.value ?? null));
     return { buffer, filename: `${(challan.code || `challan-${id}`).replace(/[\\/:*?"<>|]/g, '-')}.pdf` };
+  }
+
+  async generateChallanBillPdf(id: number): Promise<{ buffer: Buffer; filename: string }> {
+    const challan = await this.findOne(id);
+    let companyName = 'KAVISH';
+    let terms: string[] = [];
+    let logo: string | null = null;
+
+    try {
+      const companyRow = await this.prisma.appConfig.findUnique({ where: { key: 'COMPANY_PROFILE' } });
+      if (companyRow?.value) {
+        const parsed = JSON.parse(companyRow.value);
+        companyName = parsed.name || 'KAVISH';
+      }
+    } catch (e) {
+      // Silently use default
+    }
+
+    try {
+      const termsRow = await this.prisma.appConfig.findUnique({ where: { key: 'CHALLAN_TERMS' } });
+      if (termsRow?.value) {
+        const parsed = JSON.parse(termsRow.value);
+        terms = parsed.terms || [];
+      }
+    } catch (e) {
+      // Silently use default
+    }
+
+    try {
+      const logoRow = await this.prisma.appConfig.findUnique({ where: { key: 'COMPANY_LOGO' } });
+      logo = logoRow?.value ?? null;
+    } catch (e) {
+      // Silently use default
+    }
+
+    const buffer = await this.pdf.render(this.buildChallanBillDoc(challan, logo, companyName, terms));
+    const stamp = new Date().toISOString().slice(0, 10);
+    return { buffer, filename: `Challan_${(challan.code || `challan-${id}`).replace(/[\\/:*?"<>|]/g, '-')}_${stamp}.pdf` };
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────────
@@ -815,13 +854,32 @@ export class ChallansService {
     };
   }
 
-  private buildChallanDoc(c: ChallanDto): TDocumentDefinitions {
-    const BLUE = '#1F4E78';
-    const ORANGE = '#F99A0F';
-    const AMBER = '#F59E0B';
+  /** `logo` is the uploaded Settings → "Company branding" image as a base64 data
+   *  URL, or null if none has been uploaded yet. */
+  private buildChallanBillDoc(c: ChallanDto, logo: string | null, companyName: string, terms: string[]): TDocumentDefinitions {
+    // Simplified version for testing
+    return {
+      pageSize: 'A4',
+      pageMargins: [40, 40, 40, 40],
+      defaultStyle: { font: 'Helvetica', fontSize: 12 },
+      content: [
+        { text: 'SALES CHALLAN', bold: true, fontSize: 20 },
+        { text: companyName, fontSize: 14, margin: [0, 10, 0, 0] },
+        { text: `Challan: ${c.code}`, margin: [0, 20, 0, 0] },
+        { text: `Customer: ${c.customerName}`, margin: [0, 10, 0, 0] },
+        { text: `Items: ${c.items.length}`, margin: [0, 10, 0, 0] },
+      ],
+    } as TDocumentDefinitions;
+  }
+
+  private buildChallanBillDocFull(c: ChallanDto, logo: string | null, companyName: string, terms: string[]): TDocumentDefinitions {
+    const NAVY = '#163E64';
+    const ORANGE = '#E8A33D';
     const BLACK = '#111111';
-    const q = (v?: number | null) => (v ? v.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '');
-    const money = (v?: number | null) => `${(v ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const BORDER = '#C9D2DC';
+    const GREY = '#555555';
+    const q = (v?: number | null) => (v ? v.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '-');
+    const money = (v?: number | null) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
     const d = (s?: string | null) => (s ? new Date(s).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 
     const tcs = n(c.tcs);
@@ -829,89 +887,319 @@ export class ChallansService {
     const tax = n(c.tax);
     const total = n(c.total);
     const items = c.items;
-    const tAmt = items.reduce((a, it) => a + n(it.amount), 0);
-    const isScrap = (c.category ?? '').toUpperCase() === 'SCRAP';
+    const subTotal = items.reduce((a, it) => a + n(it.amount), 0);
 
-    const head = ['#', 'Product', 'Design', 'Bags', 'PCs', 'KGs', 'Box', 'Unit', 'Price', 'Amount'].map((text, i) => ({
-      text,
-      bold: true,
-      color: BLACK,
-      alignment: i === 0 ? 'center' : i >= 3 ? 'right' : 'left',
-    }));
+    // Normalize shipping address for comparison
+    const norm = (s: string | null | undefined) => (s ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+    const hasDifferentShippingAddress = !!c.shippingAddress?.trim() && norm(c.shippingAddress) !== norm(c.billingAddress);
+
+    // Header with navy and orange sections
+    const header = {
+      columns: [
+        {
+          width: '*',
+          stack: [
+            { text: 'SALES CHALLAN', bold: true, fontSize: 24, color: BLACK, margin: [0, 0, 0, 8] },
+            { text: companyName, bold: true, fontSize: 14, color: BLACK },
+          ],
+        },
+        {
+          width: 'auto',
+          stack: [
+            ...(logo ? [{ image: logo, fit: [80, 80] as [number, number], width: 80 }] : []),
+          ],
+        },
+      ],
+      fillColor: '#F8F9FA',
+      margin: [24, 16, 24, 16],
+    };
+
+    // Meta information grid (6 columns: label, value, label, value, label, value)
+    const metaBlocks = [
+      { label: 'Challan No:', value: c.code || '—' },
+      { label: 'Challan Date:', value: d(c.invDate) },
+      { label: 'Due Date:', value: d(c.dueDate) },
+      { label: 'Bill To:', value: c.customerName || '—' },
+      { label: 'Address:', value: c.billingAddress || '—' },
+      { label: 'Transporter:', value: c.transName || '—' },
+    ];
+
+    const metaTable = {
+      table: {
+        widths: ['15%', '35%', '15%', '35%'],
+        body: [
+          [
+            { text: 'CHALLAN NO', bold: true, color: GREY, fontSize: 11 },
+            { text: c.code || '—', bold: true, fontSize: 11 },
+            { text: 'CHALLAN DATE', bold: true, color: GREY, fontSize: 11 },
+            { text: d(c.invDate), bold: true, fontSize: 11 },
+          ],
+          [
+            { text: 'DUE DATE', bold: true, color: GREY, fontSize: 11 },
+            { text: d(c.dueDate), bold: true, fontSize: 11 },
+            { text: 'BILL TO', bold: true, color: GREY, fontSize: 11 },
+            { text: c.customerName || '—', bold: true, fontSize: 11 },
+          ],
+          [
+            { text: 'ADDRESS', bold: true, color: GREY, fontSize: 11 },
+            { text: c.billingAddress || '—', fontSize: 11 },
+            { text: 'TRANSPORTER', bold: true, color: GREY, fontSize: 11 },
+            { text: c.transName || '—', fontSize: 11 },
+          ],
+        ],
+      },
+      layout: 'noBorders',
+      margin: [24, 0, 24, 16],
+    };
+
+    // Items table header
+    const head = [
+      { text: '#', bold: true, color: BLACK, alignment: 'center' as const, fontSize: 11 },
+      { text: 'ITEM NAME', bold: true, color: BLACK, alignment: 'left' as const, fontSize: 11 },
+      { text: 'BAGS', bold: true, color: BLACK, alignment: 'right' as const, fontSize: 11 },
+      { text: 'PCS', bold: true, color: BLACK, alignment: 'right' as const, fontSize: 11 },
+      { text: 'KGS', bold: true, color: BLACK, alignment: 'right' as const, fontSize: 11 },
+      { text: 'BOX', bold: true, color: BLACK, alignment: 'right' as const, fontSize: 11 },
+      { text: 'RATE', bold: true, color: BLACK, alignment: 'right' as const, fontSize: 11 },
+      { text: 'COMMENTS', bold: true, color: BLACK, alignment: 'left' as const, fontSize: 11 },
+    ];
+
     const rows = items.map((it, idx) => [
-      { text: String(idx + 1), alignment: 'center' },
-      { text: it.productName || '', bold: true },
-      { text: it.design || '' },
-      { text: q(it.bags), alignment: 'right' },
-      { text: q(it.pcs), alignment: 'right' },
-      { text: q(it.kgs), alignment: 'right' },
-      { text: q(it.box), alignment: 'right' },
-      { text: it.unit || '', alignment: 'right' },
-      { text: q(it.price), alignment: 'right' },
-      { text: q(it.amount), alignment: 'right', bold: true },
+      { text: String(idx + 1), alignment: 'center' as const, fontSize: 11 },
+      { text: it.productName || '—', fontSize: 11 },
+      { text: q(it.bags), alignment: 'right' as const, fontSize: 11 },
+      { text: q(it.pcs), alignment: 'right' as const, fontSize: 11 },
+      { text: q(it.kgs), alignment: 'right' as const, fontSize: 11 },
+      { text: q(it.box), alignment: 'right' as const, fontSize: 11 },
+      { text: q(it.price), alignment: 'right' as const, fontSize: 11 },
+      { text: it.design || '', fontSize: 11 },
     ]);
 
-    const line = (label: string, value: string, opts: { bold?: boolean; color?: string } = {}) => [
-      { text: label, alignment: 'right', bold: opts.bold, color: opts.color },
-      { text: value, alignment: 'right', bold: opts.bold, color: opts.color },
-    ];
-    const totalsBody: unknown[][] = [
-      line('Taxable Amount', money(tAmt)),
-      line('Freight', money(c.freight)),
-      line('Packing', money(c.packing)),
-      line('Box / Pouch', money(c.pouch)),
-      line(`GST${c.gst ? ` @ ${c.gst}%` : ''}`, money(tax)),
-    ];
-    if (isScrap || tcs) totalsBody.push(line('TCS @ 1%', money(tcs)));
-    totalsBody.push(line('TOTAL', money(total), { bold: true, color: BLUE }));
-    if (tds) {
-      totalsBody.push(line(`Less: TDS${c.tdsPercent ? ` @ ${c.tdsPercent}%` : ''}`, `- ${money(tds)}`, { color: '#B45309' }));
-      totalsBody.push(line('Net Receivable', money(total - tds), { bold: true, color: '#15803D' }));
-    }
+    const itemsTable = {
+      table: {
+        headerRows: 1,
+        widths: ['5%', '24%', '9%', '9%', '9%', '9%', '10%', '25%'],
+        body: [head, ...rows],
+      },
+      layout: {
+        fillColor: (rowIndex: number) => (rowIndex === 0 ? ORANGE : null),
+        hLineColor: () => BORDER,
+        vLineColor: () => BORDER,
+        hLineWidth: () => 0.5,
+        vLineWidth: () => 0.5,
+        paddingLeft: () => 5,
+        paddingRight: () => 5,
+        paddingTop: () => 4,
+        paddingBottom: () => 4,
+      },
+      margin: [24, 0, 24, 16],
+    };
+
+    // Charges section (70%/30% split)
+    const chargesTable = {
+      columns: [
+        {
+          width: '*',
+          stack: [],
+        },
+        {
+          width: 220,
+          table: {
+            widths: [130, 90],
+            body: [
+              [
+                { text: 'SUBTOTAL', bold: true, fillColor: ORANGE, color: BLACK, fontSize: 11 },
+                { text: money(subTotal), bold: true, fillColor: ORANGE, alignment: 'right' as const, fontSize: 11 },
+              ],
+              [
+                { text: 'Packing', fontSize: 11 },
+                { text: money(c.packing), alignment: 'right' as const, fontSize: 11 },
+              ],
+              [
+                { text: 'Freight', fontSize: 11 },
+                { text: c.freight ? money(c.freight) : '-', alignment: 'right' as const, fontSize: 11 },
+              ],
+              [
+                { text: 'Box/Pouch', fontSize: 11 },
+                { text: money(c.pouch), alignment: 'right' as const, fontSize: 11 },
+              ],
+              [
+                { text: 'Tax', fontSize: 11 },
+                { text: money(tax), alignment: 'right' as const, fontSize: 11 },
+              ],
+              [
+                { text: 'TOTAL', bold: true, fillColor: ORANGE, color: BLACK, fontSize: 11 },
+                { text: money(total), bold: true, fillColor: ORANGE, alignment: 'right' as const, fontSize: 11 },
+              ],
+            ],
+          },
+          layout: {
+            hLineColor: () => BORDER,
+            vLineColor: () => BORDER,
+            hLineWidth: () => 0.5,
+            vLineWidth: () => 0.5,
+            paddingLeft: () => 6,
+            paddingRight: () => 6,
+            paddingTop: () => 4,
+            paddingBottom: () => 4,
+          },
+        },
+      ],
+      margin: [24, 0, 24, 16],
+    };
+
+    // Terms section
+    const termsContent = terms.length
+      ? [
+          { text: 'TERMS & CONDITIONS', bold: true, color: GREY, fontSize: 11, margin: [24, 16, 24, 8] },
+          ...terms.map((term, i) => ({ text: `${i + 1}. ${term}`, fontSize: 10, margin: [24, 2, 24, 2], color: GREY })),
+        ]
+      : [];
+
+    // Shipping address (if different)
+    const shippingContent = hasDifferentShippingAddress
+      ? [{ text: `SHIPPING ADDRESS: ${c.shippingAddress}`, fontSize: 10, color: GREY, margin: [24, 16, 24, 0] }]
+      : [];
 
     return {
       pageSize: 'A4',
-      pageMargins: [28, 28, 28, 36],
+      pageMargins: [0, 0, 0, 40],
       defaultStyle: { font: 'Helvetica', fontSize: 10, color: BLACK },
       content: [
+        header,
+        metaTable,
+        itemsTable,
+        chargesTable,
+        ...shippingContent,
+        ...termsContent,
+      ],
+      footer: (currentPage: number) => ({
+        text: `Page ${currentPage}`,
+        alignment: 'center' as const,
+        fontSize: 9,
+        color: '#999999',
+        margin: [0, 16, 0, 0],
+      }),
+    } as unknown as TDocumentDefinitions;
+  }
+
+  private buildChallanDoc(c: ChallanDto, logo: string | null): TDocumentDefinitions {
+    const NAVY = '#163E64';
+    const ORANGE = '#E8A33D';
+    const BLACK = '#111111';
+    // "-" for a blank/zero per-line quantity (matches the reference format); the
+    // Total row uses the plain form below so a genuine zero total still shows "0".
+    const q = (v?: number | null) => (v ? v.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '-');
+    const qTotal = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+    const money = (v?: number | null) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+    const d = (s?: string | null) => (s ? new Date(s).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\//g, '-') : '—');
+
+    const tcs = n(c.tcs);
+    const tds = n(c.tds);
+    const tax = n(c.tax);
+    const total = n(c.total);
+    const items = c.items;
+    const subTotal = items.reduce((a, it) => a + n(it.amount), 0);
+    const isScrap = (c.category ?? '').toUpperCase() === 'SCRAP';
+
+    const head = ['#', 'Item Name', 'BAGS', 'BOX', 'PCS', 'KGS', 'UNIT', 'RATE', 'AMOUNT'].map((text, i) => ({
+      text,
+      bold: true,
+      color: BLACK,
+      alignment: i === 0 ? 'center' : i === 1 ? 'left' : i === 6 ? 'center' : 'right',
+    }));
+    const rows = items.map((it, idx) => {
+      // The item name combines size + product (e.g. "5.5 BREZZA CUP") — append the
+      // design too when it's set and meaningful, mirroring how the reference lists
+      // one combined "Item Name" rather than separate Product / Design columns.
+      const name = [it.productName, it.design && it.design.toUpperCase() !== 'NA' ? it.design : null].filter(Boolean).join(' ');
+      return [
+        { text: String(idx + 1), alignment: 'center' },
+        { text: name || '—' },
+        { text: q(it.bags), alignment: 'right' },
+        { text: q(it.box), alignment: 'right' },
+        { text: q(it.pcs), alignment: 'right' },
+        { text: q(it.kgs), alignment: 'right' },
+        { text: it.unit || '-', alignment: 'center' },
+        { text: q(it.price), alignment: 'right' },
+        { text: money(it.amount), alignment: 'right', bold: true },
+      ];
+    });
+    const colTotal = (key: 'bags' | 'box' | 'pcs' | 'kgs') => items.reduce((a, it) => a + n(it[key]), 0);
+
+    const line = (label: string, value: string, opts: { emphasize?: boolean } = {}) => [
+      { text: label, bold: true, color: BLACK, fillColor: ORANGE },
+      { text: value, bold: true, alignment: 'right', fontSize: opts.emphasize ? 11 : 10 },
+    ];
+    const totalsBody: unknown[][] = [
+      line('Sub Total Amount', money(subTotal)),
+      line('Packing Charges', money(c.packing)),
+      line('Freight Charges', c.freight ? money(c.freight) : '-'),
+      line('Box/Pouch', money(c.pouch)),
+      line('Tax Amount', money(tax)),
+    ];
+    if (isScrap || tcs) totalsBody.push(line('TCS @ 1%', money(tcs)));
+    if (tds) totalsBody.push(line(`Less: TDS${c.tdsPercent ? ` @ ${c.tdsPercent}%` : ''}`, `-${money(tds)}`));
+    totalsBody.push(line(tds ? 'Net Receivable' : 'Grand Total Amount', money(tds ? total - tds : total), { emphasize: true }));
+
+    // label/value pairs for a single 4-column [label, value, label, value] row —
+    // keeps the invoice-no/date/pay-term/due-date grid from squeezing into two
+    // separately-sized mini tables (which clipped the longer invoice-no value).
+    const metaRow = (l1: string, v1: string, l2: string, v2: string) => [
+      { text: l1, bold: true, color: NAVY, fontSize: 9 },
+      { text: v1, bold: true, alignment: 'right' as const, fontSize: 9 },
+      { text: l2, bold: true, color: NAVY, fontSize: 9 },
+      { text: v2, bold: true, alignment: 'right' as const, fontSize: 9 },
+    ];
+
+    return {
+      pageSize: 'A4',
+      pageMargins: [28, 34, 28, 40],
+      defaultStyle: { font: 'Helvetica', fontSize: 10, color: BLACK },
+      content: [
+        // Navy header bar with a small orange accent block — the letterhead strip.
         {
-          table: {
-            widths: ['*', 'auto'],
-            body: [[
-              { text: 'TAX INVOICE / CHALLAN', color: '#ffffff', bold: true, fontSize: 18 },
-              { text: c.code, color: '#ffffff', bold: true, fontSize: 13, alignment: 'right', margin: [0, 4, 0, 0] },
-            ]],
-          },
-          layout: { fillColor: () => BLUE, hLineWidth: () => 0, vLineWidth: () => 0, paddingLeft: () => 10, paddingRight: () => 10, paddingTop: () => 8, paddingBottom: () => 8 },
+          canvas: [
+            { type: 'rect', x: 0, y: 0, w: 539, h: 22, color: NAVY },
+            { type: 'rect', x: 419, y: 0, w: 120, h: 22, color: ORANGE, r: 6 },
+          ],
+          margin: [0, 0, 0, 16],
         },
-        { canvas: [{ type: 'rect', x: 0, y: 0, w: 539, h: 4, color: AMBER }], margin: [0, 0, 0, 16] },
         {
           columns: [
             {
               width: '*',
-              stack: [
-                { text: 'BILL TO,', color: BLUE, bold: true, fontSize: 8 },
-                { text: c.customerName, bold: true, fontSize: 14, margin: [0, 1, 0, 0] },
-                { text: c.billingAddress || '', fontSize: 9, color: '#555555', margin: [0, 1, 0, 0] },
+              columns: [
+                ...(logo ? [{ image: logo, fit: [42, 42] as [number, number], width: 42, margin: [0, 0, 8, 0] }] : []),
+                {
+                  width: '*',
+                  stack: [
+                    { text: 'SALES RECEIPT', bold: true, fontSize: 16 },
+                    { text: 'Bill To', color: ORANGE, bold: true, fontSize: 10, margin: [0, 10, 0, 0] },
+                    { text: c.customerName, bold: true, fontSize: 12, margin: [0, 1, 0, 0] },
+                    { text: c.billingAddress || '', fontSize: 9, color: '#555555', margin: [0, 1, 0, 0] },
+                  ],
+                },
               ],
             },
             {
-              width: 'auto',
+              width: 270,
               table: {
+                widths: [48, 82, 60, 80],
                 body: [
-                  [{ text: 'Invoice No :', color: BLUE, bold: true }, { text: c.code, bold: true, alignment: 'right' }],
-                  [{ text: 'Invoice Date :', color: BLUE, bold: true }, { text: d(c.invDate), bold: true, alignment: 'right' }],
-                  [{ text: 'Due Date :', color: BLUE, bold: true }, { text: d(c.dueDate), bold: true, alignment: 'right' }],
-                  [{ text: 'Status :', color: BLUE, bold: true }, { text: c.challanStatus, bold: true, alignment: 'right' }],
+                  metaRow('INV NO :', c.code, 'INV DATE :', d(c.invDate)),
+                  metaRow('B (Rs) :', money(c.b), 'PAY TERM :', c.paymentTerm ? `${c.paymentTerm} DAYS` : '—'),
+                  metaRow('C (Rs) :', money(c.c), 'DUE DATE :', d(c.dueDate)),
                 ],
               },
               layout: 'noBorders',
             },
           ],
-          margin: [0, 0, 0, 14],
+          margin: [0, 0, 0, 10],
         },
+        ...(c.transName ? [{ text: [{ text: 'TRANSPORTER : ', color: ORANGE, bold: true }, { text: c.transName, bold: true }], alignment: 'center' as const, fontSize: 10, margin: [0, 0, 0, 10] }] : []),
         {
-          table: { headerRows: 1, widths: [16, '*', 60, 32, 32, 38, 30, 34, 44, 56], body: [head, ...rows] },
+          table: { headerRows: 1, widths: [16, '*', 40, 38, 40, 36, 36, 40, 56], body: [head, ...rows] },
           layout: {
             fillColor: (rowIndex: number) => (rowIndex === 0 ? ORANGE : rowIndex % 2 === 0 ? '#F5F7FA' : null),
             hLineColor: () => '#C9D2DC',
@@ -923,52 +1211,72 @@ export class ChallansService {
             paddingTop: () => 5,
             paddingBottom: () => 5,
           },
-          margin: [0, 0, 0, 12],
+        },
+        // Quantity-total footer row for the item table, styled like the header.
+        {
+          table: {
+            widths: [16, '*', 40, 38, 40, 36, 36, 40, 56],
+            body: [[
+              { text: '', fillColor: ORANGE },
+              { text: 'Total', bold: true, fillColor: ORANGE },
+              { text: qTotal(colTotal('bags')), alignment: 'right', bold: true, fillColor: ORANGE },
+              { text: qTotal(colTotal('box')), alignment: 'right', bold: true, fillColor: ORANGE },
+              { text: qTotal(colTotal('pcs')), alignment: 'right', bold: true, fillColor: ORANGE },
+              { text: qTotal(colTotal('kgs')), alignment: 'right', bold: true, fillColor: ORANGE },
+              { text: '', fillColor: ORANGE },
+              { text: '', fillColor: ORANGE },
+              { text: money(subTotal), alignment: 'right', bold: true, fillColor: ORANGE },
+            ]],
+          },
+          layout: { hLineColor: () => '#C9D2DC', vLineColor: () => '#C9D2DC', hLineWidth: () => 0.5, vLineWidth: () => 0.5, paddingLeft: () => 5, paddingRight: () => 5, paddingTop: () => 5, paddingBottom: () => 5 },
+          margin: [0, 0, 0, 14],
         },
         {
           columns: [
             {
               width: '*',
               stack: [
-                { text: 'Amount in words:', color: BLUE, bold: true, fontSize: 8 },
-                { text: amountInWordsIndian(total), italics: true, fontSize: 10, margin: [0, 1, 0, 0] },
+                { text: 'TOTAL IN WORDS', color: ORANGE, bold: true, fontSize: 9 },
+                { text: amountInWordsIndian(total), bold: true, fontSize: 10, margin: [0, 3, 12, 0] },
+                { text: 'REMARKS', color: ORANGE, bold: true, fontSize: 9, margin: [0, 14, 0, 0] },
+                { text: c.remarks || '—', fontSize: 9, color: '#555555', margin: [0, 3, 12, 0] },
               ],
             },
             {
-              width: 'auto',
-              table: { widths: [130, 80], body: totalsBody },
+              width: 220,
+              table: { widths: [130, 90], body: totalsBody },
               layout: {
-                hLineColor: () => '#E2E8F0',
-                vLineColor: () => '#E2E8F0',
-                hLineWidth: (i: number, node: { table: { body: unknown[] } }) => (i === 0 || i === node.table.body.length ? 0 : 0.5),
-                vLineWidth: () => 0,
-                paddingTop: () => 3,
-                paddingBottom: () => 3,
-                paddingLeft: () => 8,
-                paddingRight: () => 4,
+                hLineColor: () => '#C9D2DC',
+                vLineColor: () => '#C9D2DC',
+                hLineWidth: () => 0.5,
+                vLineWidth: () => 0.5,
+                paddingLeft: () => 6,
+                paddingRight: () => 6,
+                paddingTop: () => 4,
+                paddingBottom: () => 4,
               },
             },
           ],
         },
-        ...(c.remarks ? [{ text: `Remarks: ${c.remarks}`, fontSize: 9, color: '#555555', margin: [0, 14, 0, 0] }] : []),
       ],
-      footer: () => ({
+      footer: (currentPage: number) => ({
         columns: [
           { text: new Date().toLocaleString('en-GB'), fontSize: 7, color: '#888888', margin: [28, 0, 0, 0] },
-          { text: '**This is a computer-generated tax invoice**', fontSize: 7, color: '#888888', alignment: 'right', margin: [0, 0, 28, 0] },
+          { text: String(currentPage), fontSize: 8, color: '#888888', alignment: 'right', margin: [0, 0, 28, 0] },
         ],
       }),
     } as unknown as TDocumentDefinitions;
   }
 }
 
-/** Indian numbering amount-in-words (e.g. 1,23,456 → "One Lakh Twenty Three Thousand …"). */
+/** Indian numbering amount-in-words (e.g. 1,05,588 → "RUPEES ONE LAKH FIVE THOUSAND FIVE HUNDRED AND EIGHTY EIGHT ONLY"). */
 function amountInWordsIndian(amount: number): string {
   const rupees = Math.floor(Math.abs(amount));
   const paise = Math.round((Math.abs(amount) - rupees) * 100);
   const words = rupees === 0 ? 'Zero' : numToWords(rupees);
-  const main = `${words} Rupees`;
-  return paise > 0 ? `${main} and ${numToWords(paise)} Paise Only` : `${main} Only`;
+  const main = `Rupees ${words}`;
+  const out = paise > 0 ? `${main} And ${numToWords(paise)} Paise Only` : `${main} Only`;
+  return out.toUpperCase();
 }
 
 function numToWords(num: number): string {
@@ -979,7 +1287,7 @@ function numToWords(num: number): string {
     if (x >= 100) {
       s += `${ones[Math.floor(x / 100)]} Hundred`;
       x %= 100;
-      if (x) s += ' ';
+      if (x) s += ' And ';
     }
     if (x >= 20) {
       s += tens[Math.floor(x / 10)];

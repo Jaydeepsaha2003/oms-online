@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { useAllAdvances } from './use-account';
 
 const money = (v: number | null | undefined) => `₹ ${(v ?? 0).toLocaleString('en-IN')}`;
-const prettyDate = (iso: string) => new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+const prettyDate = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
 /** Days between an ISO date and today (always ≥ 0 for a past date). */
 function daysSince(iso: string): number {

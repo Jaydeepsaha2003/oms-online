@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
 import { ChevronLeft, ChevronRight, Loader2, Pencil, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { DISPATCH_STATUSES, type DispatchDto } from '@oms/shared';
+import { DISPATCH_STATUSES, RESOURCES, type DispatchDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
-import { cn, formatDateShort, shortOrderCode } from '@/lib/utils';
+import { cn, shortOrderCode } from '@/lib/utils';
+import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useColumnOrder } from '@/hooks/use-column-order';
 import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
+import { RecordHistory } from '@/components/common/record-history';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
@@ -30,7 +32,7 @@ const StatusBadge = ({ s }: { s: string }) => (
 
 const COLUMNS: DataColumn<DispatchDto>[] = [
   { id: 'code', label: 'Dispatch #', pin: 'left0', fixed: true, cell: (d) => <span className="font-mono text-xs font-medium">{d.code ?? `#${d.id}`}</span> },
-  { id: 'date', label: 'Date', cell: (d) => <span className="whitespace-nowrap">{formatDateShort(d.dispatchDate)}</span> },
+  { id: 'date', label: 'Date', cell: (d) => <span className="whitespace-nowrap">{formatDate(d.dispatchDate)}</span> },
   { id: 'order', label: 'Order #', cell: (d) => <span className="font-mono text-xs">{shortOrderCode(d.orderCode, d.orderId)}</span> },
   { id: 'customer', label: 'Customer', cell: (d) => <span className="font-medium">{d.customerName}</span> },
   { id: 'product', label: 'Product', cell: (d) => <span className="font-medium">{d.productName || d.product || '—'}</span> },
@@ -55,6 +57,7 @@ export function ModifyDispatchPage() {
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<DispatchDto | null>(null);
   const cols = useColumnOrder('dispatch-modify', COLUMNS);
+  const { format, setFormat } = useDateFormat();
   const { data: options } = useDispatchFilterOptions();
 
   useEffect(() => {
@@ -107,6 +110,7 @@ export function ModifyDispatchPage() {
           onMove={cols.move}
           onToggle={cols.toggle}
           onReset={cols.reset}
+          dateFormat={{ value: format, options: DATE_FORMATS, onChange: setFormat }}
         />
       </div>
 
@@ -139,6 +143,7 @@ export function ModifyDispatchPage() {
         onRowClick={(d) => can('dispatch:update') && setEditing(d)}
         actions={(d) => (
           <div className="flex justify-end gap-1">
+            <RecordHistory resource={RESOURCES.DISPATCH} resourceId={d.id} label={d.code ?? `#${d.id}`} />
             {can('dispatch:update') && (
               <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(d)} aria-label="Edit" title="Edit">
                 <Pencil className="size-4" />

@@ -1,15 +1,22 @@
 import { PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsIn, IsNumber, IsOptional, IsString, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsNumber, IsOptional, IsString, MaxLength, Min, ValidateNested } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
+
+export class CreateBookingItemDto {
+  @IsString() @MaxLength(64) pCategory!: string;
+  @IsOptional() @IsNumber() @Min(0) bags?: number;
+  @IsOptional() @IsNumber() @Min(0) kgs?: number;
+}
 
 export class CreateBookingDto {
   @IsString() @MaxLength(255) customerName!: string;
   @IsOptional() @IsString() @MaxLength(255) agentName?: string | null;
   @IsOptional() @IsString() @MaxLength(64) category?: string | null;
   @IsOptional() @IsString() bookingDate?: string | null;
-  @IsNumber() @Min(0) bags!: number;
-  @IsNumber() @Min(0) kgs!: number;
+  /** One or more product-category lines — e.g. 1 bag GLASS + 1 bag CUP. */
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(50) @ValidateNested({ each: true }) @Type(() => CreateBookingItemDto)
+  items!: CreateBookingItemDto[];
   @IsOptional() @IsString() @MaxLength(1000) comment?: string | null;
 }
 

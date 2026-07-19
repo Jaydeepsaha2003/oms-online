@@ -40,6 +40,7 @@ const PendingChallanPage = lazy(() => import('@/features/challans/pending-challa
 const ChallanFormPage = lazy(() => import('@/features/challans/challan-form-page').then((m) => ({ default: m.ChallanFormPage })));
 const ChallansListPage = lazy(() => import('@/features/challans/challans-list-page').then((m) => ({ default: m.ChallansListPage })));
 const ChallanItemsPage = lazy(() => import('@/features/challans/challan-items-page').then((m) => ({ default: m.ChallanItemsPage })));
+const ChallanBillPage = lazy(() => import('@/features/challans/challan-bill-page').then((m) => ({ default: m.ChallanBillPage })));
 const FollowupsPage = lazy(() => import('@/features/crm/followups-page').then((m) => ({ default: m.FollowupsPage })));
 const PaymentsFollowupsPage = lazy(() => import('@/features/crm/followups-page').then((m) => ({ default: m.PaymentsFollowupsPage })));
 const ManageChequesPage = lazy(() => import('@/features/account/manage-cheques-page').then((m) => ({ default: m.ManageChequesPage })));
@@ -53,6 +54,7 @@ const PartyLedgerPage = lazy(() => import('@/features/account/party-ledger-page'
 const SettingsPage = lazy(() => import('@/features/settings/settings-page').then((m) => ({ default: m.SettingsPage })));
 const UsersPage = lazy(() => import('@/features/admin/users-page').then((m) => ({ default: m.UsersPage })));
 const RolesPage = lazy(() => import('@/features/admin/roles-page').then((m) => ({ default: m.RolesPage })));
+const AuditLogPage = lazy(() => import('@/features/audit-log/audit-log-page').then((m) => ({ default: m.AuditLogPage })));
 const ForbiddenPage = lazy(() => import('@/features/errors/forbidden-page').then((m) => ({ default: m.ForbiddenPage })));
 const NotFoundPage = lazy(() => import('@/features/errors/not-found-page').then((m) => ({ default: m.NotFoundPage })));
 
@@ -338,6 +340,14 @@ export function AppRoutes() {
             }
           />
           <Route
+            path="/challans/:id/bill"
+            element={
+              <RequirePermission permission={perm(RESOURCES.CHALLAN, ACTIONS.PRINT)}>
+                <ChallanBillPage />
+              </RequirePermission>
+            }
+          />
+          <Route
             path="/challans/:id/edit"
             element={
               <RequirePermission permission={perm(RESOURCES.CHALLAN, ACTIONS.UPDATE)}>
@@ -462,6 +472,14 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.ROLE, ACTIONS.VIEW)}>
                 <RolesPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/audit-logs"
+            element={
+              <RequirePermission permission={perm(RESOURCES.AUDIT_LOG, ACTIONS.VIEW)}>
+                <AuditLogPage />
               </RequirePermission>
             }
           />

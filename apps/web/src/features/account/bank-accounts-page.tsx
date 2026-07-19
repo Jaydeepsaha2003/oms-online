@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import { ChevronLeft, ChevronRight, Landmark, Loader2, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { BankAccountDto } from '@oms/shared';
+import { RESOURCES } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { formatDateShort, formatDateTime } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/common/confirm';
+import { RecordHistory } from '@/components/common/record-history';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -109,6 +111,7 @@ export function BankAccountsPage() {
         onRowClick={(b) => can('bankaccount:update') && setEditing(b)}
         actions={(b) => (
           <div className="flex justify-end gap-1">
+            <RecordHistory resource={RESOURCES.BANK_ACCOUNT} resourceId={b.id} label={b.display} />
             {can('bankaccount:update') && (
               <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(b)} aria-label="Edit">
                 <Pencil className="size-4" />

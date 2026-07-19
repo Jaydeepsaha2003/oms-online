@@ -32,7 +32,8 @@ export interface FollowupLogDto {
   createdAt: string;
 }
 
-/** A tick-off task on a follow-up (typed or spoken via Gemini). */
+/** A tick-off task on a follow-up. `source: 'VOICE'` only appears on rows
+ *  created before the voice-input feature was removed — new items are always 'MANUAL'. */
 export interface FollowupChecklistItemDto {
   id: number;
   followupId: number;
@@ -189,28 +190,6 @@ export interface SaveFollowupInput {
   maxRemindersPerDay?: number | null;
   /** Checklist tasks to create with the follow-up. */
   checklist?: { text: string; source?: 'MANUAL' | 'VOICE' }[];
-}
-
-/* ── AI voice → checklist (Gemini) ───────────────────────────────────────────── */
-
-/** Result of turning a spoken note into checklist items. */
-export interface VoiceChecklistResult {
-  /** What Gemini heard (the language spoken — Hindi/English/mixed). */
-  transcript: string;
-  /** One-line gist. */
-  summary: string;
-  /** Short, clear action items extracted from the note. */
-  items: string[];
-  /** Optional customer name detected in the note. */
-  detectedCustomer?: string;
-  /** Optional item name/details detected in the note. */
-  detectedItem?: string;
-}
-
-/** AI (Gemini) config — the key is never returned, only whether it's set. */
-export interface AiConfigStatus {
-  configured: boolean;
-  model: string;
 }
 
 export interface AddFollowupLogInput {

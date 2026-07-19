@@ -51,6 +51,23 @@ const COLUMNS: DataColumn<BookingDto>[] = [
   { id: 'code', label: 'Booking #', fixed: true, cell: (b) => <span className="font-mono text-xs font-medium">{b.code}</span> },
   { id: 'customer', label: 'Customer', cell: (b) => <span className="font-medium">{b.customerName}</span> },
   { id: 'agent', label: 'Agent', cell: (b) => b.agentName ?? '—' },
+  {
+    id: 'categories',
+    label: 'Categories',
+    noSort: true,
+    cell: (b) =>
+      b.items.length ? (
+        <div className="flex flex-wrap gap-1">
+          {b.items.map((it) => (
+            <span key={it.id} className="bg-sky-50 text-sky-700 ring-sky-200 rounded px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-inset whitespace-nowrap">
+              {it.pCategory} {it.bags || it.kgs ? `· ${it.bags || 0}b/${it.kgs || 0}k` : ''}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <span className="text-muted-foreground">—</span>
+      ),
+  },
   { id: 'bookingDate', label: 'Booking date', cell: (b) => <span className="whitespace-nowrap">{formatDate(b.bookingDate)}</span> },
   { id: 'bags', label: 'Bags', align: 'right', cell: (b) => <span className="tabular-nums">{num(b.convertedBags)} / {num(b.bags)}</span> },
   { id: 'kgs', label: 'Kgs', align: 'right', cell: (b) => <span className="tabular-nums">{num(b.convertedKgs)} / {num(b.kgs)}</span> },
@@ -133,6 +150,15 @@ export function BookingsPage() {
           </div>
           <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-xs font-medium ring-1', STATUS_STYLE[b.status])}>{STATUS_LABEL[b.status]}</span>
         </div>
+        {b.items.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {b.items.map((it) => (
+              <span key={it.id} className="bg-sky-50 text-sky-700 ring-sky-200 rounded px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-inset">
+                {it.pCategory} · {it.bags || 0}b/{it.kgs || 0}k
+              </span>
+            ))}
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-2 text-xs">
           <div>
             <p className="text-muted-foreground">Bags</p>

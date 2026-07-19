@@ -109,11 +109,13 @@ export type DispatchQuery = PaginationQuery & {
   product?: string;
   design?: string;
 };
-/** Distinct values present in dispatch records, for the Modify Dispatch filters. */
+/** Distinct values present in dispatch records, for the Modify Dispatch filters.
+ *  `subCategories` is only populated for the pending pool (Dispatch Order page). */
 export interface DispatchFilterOptions {
   customers: string[];
   products: string[];
   designs: string[];
+  subCategories?: string[];
 }
 export type DispatchList = Paginated<DispatchDto>;
 export type PendingQuery = PaginationQuery & {
@@ -123,5 +125,6 @@ export type PendingQuery = PaginationQuery & {
   customer?: string;
   product?: string;
   design?: string;
+  subCategory?: string;
 };
 export type PendingList = Paginated<PendingLineDto>;

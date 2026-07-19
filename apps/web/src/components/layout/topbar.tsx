@@ -1,10 +1,11 @@
 import { useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { LogOut, Menu, PanelLeft, UserRound } from 'lucide-react';
+import { LogOut, Menu, UserRound } from 'lucide-react';
 import { menuRoutes } from '@oms/shared';
 import { useAuthStore } from '@/stores/auth-store';
 import { useLogout } from '@/hooks/use-auth';
 import { usePermissions } from '@/hooks/use-permissions';
+import { getMenuIcon } from '@/lib/icons';
 import { NotificationsBell } from '@/features/crm/notifications-bell';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -40,13 +41,14 @@ export function Topbar({
   const logout = useLogout();
   const { can } = usePermissions();
 
-  const title = useMemo(() => {
+  const match = useMemo(() => {
     const routes = menuRoutes();
-    const match = routes
+    return routes
       .filter((r) => location.pathname === r.to || location.pathname.startsWith(`${r.to}/`))
       .sort((a, b) => b.to.length - a.to.length)[0];
-    return match?.label ?? '';
   }, [location.pathname]);
+  const title = match?.label ?? '';
+  const PageIcon = getMenuIcon(match?.icon);
 
   const handleLogout = () => {
     logout.mutate(undefined, { onSettled: () => navigate('/login', { replace: true }) });
@@ -58,16 +60,16 @@ export function Topbar({
         <Menu />
       </Button>
       {/* Pin/unpin is only meaningful on large desktops — smaller screens always
-          use the hover expand/collapse rail, so the button is hidden there. */}
-      <Button
-        variant="ghost"
-        size="icon"
-        className="hidden min-[1600px]:inline-flex"
+          use the hover expand/collapse rail, so the button is hidden there. Styled
+          as the current page's gradient icon badge rather than a generic toggle glyph. */}
+      <button
+        type="button"
         onClick={onToggleCollapse}
         aria-label="Toggle sidebar"
+        className="bg-gradient-brand ring-white/20 hidden size-9 shrink-0 items-center justify-center rounded-lg text-white shadow-md ring-1 transition-opacity hover:opacity-90 min-[1600px]:inline-flex"
       >
-        <PanelLeft />
-      </Button>
+        <PageIcon className="size-4.5" />
+      </button>
 
       <h1 className="truncate text-base font-bold tracking-tight">{title}</h1>
 

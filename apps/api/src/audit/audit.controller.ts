@@ -23,6 +23,18 @@ export class AuditController {
     return this.audit.findMany(query);
   }
 
+  @Get('facets')
+  @Permissions(perm(RESOURCES.AUDIT_LOG, ACTIONS.VIEW))
+  facets() {
+    return this.audit.getFacets();
+  }
+
+  @Get('actors')
+  @Permissions(perm(RESOURCES.AUDIT_LOG, ACTIONS.VIEW))
+  actors() {
+    return this.audit.listActors();
+  }
+
   @Get('export')
   @Permissions(perm(RESOURCES.AUDIT_LOG, ACTIONS.EXPORT))
   @Audit({ action: 'export', resource: RESOURCES.AUDIT_LOG, description: 'Exported audit log' })
@@ -33,7 +45,8 @@ export class AuditController {
     const result = await this.audit.findMany({ ...query, page: 1, pageSize: MAX_PAGE_SIZE });
     const buffer = this.excel.export(result.items, [
       { header: 'When', key: 'createdAt' },
-      { header: 'User', key: 'userEmail' },
+      { header: 'User', key: 'userName' },
+      { header: 'Email', key: 'userEmail' },
       { header: 'Action', key: 'action' },
       { header: 'Resource', key: 'resource' },
       { header: 'Record', key: 'resourceId' },

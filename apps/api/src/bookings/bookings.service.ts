@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import {
   type BookingConversionDto,
   type BookingDto,
+  type BookingItemDto,
   type BookingQuoteLine,
   type BookingQuoteResult,
   type BookingStatus,
@@ -21,11 +22,12 @@ import {
   ConvertBookingDto,
   ConvertBookingLineDto,
   CreateBookingDto,
+  CreateBookingItemDto,
   PriceHistoryQueryDto,
   UpdateBookingDto,
 } from './dto/booking.dto';
 
-const INCLUDE = { conversions: { orderBy: { convertedAt: 'asc' } } } as const;
+const INCLUDE = { conversions: { orderBy: { convertedAt: 'asc' } }, items: { orderBy: { id: 'asc' } } } as const;
 type Row = Prisma.BookingGetPayload<{ include: typeof INCLUDE }>;
 
 /** The customer special-rate rows snapshotted onto a booking at creation. */
@@ -80,9 +82,9 @@ export class BookingsService {
     const bookingDate = dto.bookingDate ? new Date(dto.bookingDate) : new Date();
     if (Number.isNaN(bookingDate.getTime())) throw new BadRequestException('Invalid booking date.');
 
-    const bags = toNum(dto.bags) ?? 0;
-    const kgs = toNum(dto.kgs) ?? 0;
-    if (bags <= 0 && kgs <= 0) throw new BadRequestException('Enter the booked bags and/or kgs.');
+    const items = this.normalizeItems(dto.items);
+    const bags = round2(items.reduce((s, it) => s + it.bags, 0));
+    const kgs = round2(items.reduce((s, it) => s + it.kgs, 0));
 
     // Snapshot the customer's special-rate rows so the exact cascade can be
     // reproduced at conversion, even if the overrides change afterwards.
@@ -101,6 +103,7 @@ export class BookingsService {
         comment: toStr(dto.comment),
         rateSnapshot: JSON.stringify(snapshot),
         userName: userName ?? null,
+        items: { create: items.map((it) => ({ pCategory: it.pCategory, bags: it.bags, kgs: it.kgs })) },
       },
       include: INCLUDE,
     });
@@ -108,7 +111,7 @@ export class BookingsService {
   }
 
   async update(id: number, dto: UpdateBookingDto): Promise<BookingDto> {
-    const existing = await this.prisma.booking.findUnique({ where: { id } });
+    const existing = await this.prisma.booking.findUnique({ where: { id }, include: { items: true } });
     if (!existing) throw new NotFoundException('Booking not found.');
     if (existing.status === 'CANCELLED') throw new BadRequestException('A cancelled booking cannot be edited.');
 
@@ -122,19 +125,29 @@ export class BookingsService {
       if (Number.isNaN(d.getTime())) throw new BadRequestException('Invalid booking date.');
       data.bookingDate = d;
     }
-    // Booked quantities can only grow to at least what has already been converted.
-    if (dto.bags !== undefined) {
-      const bags = toNum(dto.bags) ?? 0;
-      if (bags < existing.convertedBags) throw new BadRequestException(`Bags cannot be less than the ${existing.convertedBags} already converted.`);
-      data.bags = bags;
-    }
-    if (dto.kgs !== undefined) {
-      const kgs = toNum(dto.kgs) ?? 0;
-      if (kgs < existing.convertedKgs) throw new BadRequestException(`Kgs cannot be less than the ${existing.convertedKgs} already converted.`);
-      data.kgs = kgs;
+
+    let itemsChanged = false;
+    if (dto.items !== undefined) {
+      const items = this.normalizeItems(dto.items);
+      // A category line can't shrink below what's already converted for it.
+      for (const existingItem of existing.items) {
+        const match = items.find((it) => it.pCategory === existingItem.pCategory);
+        if ((match?.bags ?? 0) < existingItem.convertedBags) {
+          throw new BadRequestException(`${existingItem.pCategory}: bags cannot be less than the ${existingItem.convertedBags} already converted.`);
+        }
+        if ((match?.kgs ?? 0) < existingItem.convertedKgs) {
+          throw new BadRequestException(`${existingItem.pCategory}: kgs cannot be less than the ${existingItem.convertedKgs} already converted.`);
+        }
+      }
+      data.bags = round2(items.reduce((s, it) => s + it.bags, 0));
+      data.kgs = round2(items.reduce((s, it) => s + it.kgs, 0));
+      data.items = { deleteMany: {}, create: items.map((it) => ({ pCategory: it.pCategory, bags: it.bags, kgs: it.kgs })) };
+      itemsChanged = true;
     }
 
     await this.prisma.booking.update({ where: { id }, data });
+    // Repopulate the fresh items' convertedBags/Kgs (deleteMany+create above reset them to 0).
+    if (itemsChanged) await this.recompute(id);
     return this.findOne(id);
   }
 
@@ -178,7 +191,7 @@ export class BookingsService {
   /* ── Convert (draw down bags/kgs into real order lines) ──────────────────── */
 
   async convert(id: number, dto: ConvertBookingDto, userName?: string | null): Promise<BookingDto> {
-    const booking = await this.prisma.booking.findUnique({ where: { id } });
+    const booking = await this.prisma.booking.findUnique({ where: { id }, include: { items: true } });
     if (!booking) throw new NotFoundException('Booking not found.');
     if (booking.status === 'CANCELLED') throw new BadRequestException('A cancelled booking cannot be converted.');
 
@@ -191,6 +204,27 @@ export class BookingsService {
     const remKgs = round2(booking.kgs - booking.convertedKgs);
     if (addBags - remBags > 0.001) throw new BadRequestException(`Converting ${addBags} bags exceeds the ${remBags} remaining on this booking.`);
     if (addKgs - remKgs > 0.001) throw new BadRequestException(`Converting ${addKgs} kgs exceeds the ${remKgs} remaining on this booking.`);
+
+    // Per-category remaining check — best-effort: only enforced for a line whose
+    // pCategory matches a category actually booked. A line with no match (or no
+    // pCategory) is still bound by the overall remaining check above.
+    const addByCategory = new Map<string, { bags: number; kgs: number }>();
+    for (const l of lines) {
+      const cat = uc(l.pCategory);
+      if (!cat) continue;
+      const acc = addByCategory.get(cat) ?? { bags: 0, kgs: 0 };
+      acc.bags += toNum(l.bags) ?? 0;
+      acc.kgs += toNum(l.gram) ?? 0;
+      addByCategory.set(cat, acc);
+    }
+    for (const [cat, add] of addByCategory) {
+      const item = booking.items.find((it) => it.pCategory === cat);
+      if (!item) continue;
+      const remBagsCat = round2(item.bags - item.convertedBags);
+      const remKgsCat = round2(item.kgs - item.convertedKgs);
+      if (add.bags - remBagsCat > 0.001) throw new BadRequestException(`Converting ${add.bags} bags of ${cat} exceeds the ${remBagsCat} remaining booked for ${cat}.`);
+      if (add.kgs - remKgsCat > 0.001) throw new BadRequestException(`Converting ${add.kgs} kgs of ${cat} exceeds the ${remKgsCat} remaining booked for ${cat}.`);
+    }
 
     const snapshot = this.parseSnapshot(booking.rateSnapshot);
 
@@ -239,7 +273,7 @@ export class BookingsService {
    * rows are rebuilt to mirror them. Idempotent — safe to call after any change.
    */
   async recompute(bookingId: number): Promise<void> {
-    const booking = await this.prisma.booking.findUnique({ where: { id: bookingId } });
+    const booking = await this.prisma.booking.findUnique({ where: { id: bookingId }, include: { items: true } });
     if (!booking) return;
     const items = await this.prisma.orderItem.findMany({
       where: { bookingId, status: { not: 'CANCELLED' }, order: { status: { not: 'CANCELLED' } } },
@@ -253,6 +287,18 @@ export class BookingsService {
     const convertedBags = round2(items.reduce((s, it) => s + (it.bags ?? 0), 0));
     const convertedKgs = round2(items.reduce((s, it) => s + (it.gram ?? 0), 0));
     const status = booking.status === 'CANCELLED' ? 'CANCELLED' : this.statusFor(booking.bags, booking.kgs, convertedBags, convertedKgs);
+
+    // Per-category draw-down — matched by pCategory against the real order lines
+    // that reference this booking, so each booked line's own remaining tracks
+    // independently of the others (e.g. GLASS's 1 bag vs CUP's 1 bag).
+    for (const bookingItem of booking.items) {
+      const matching = items.filter((it) => (uc(it.pCategory) ?? '') === bookingItem.pCategory);
+      const itemConvertedBags = round2(matching.reduce((s, it) => s + (it.bags ?? 0), 0));
+      const itemConvertedKgs = round2(matching.reduce((s, it) => s + (it.gram ?? 0), 0));
+      if (itemConvertedBags !== bookingItem.convertedBags || itemConvertedKgs !== bookingItem.convertedKgs) {
+        await this.prisma.bookingItem.update({ where: { id: bookingItem.id }, data: { convertedBags: itemConvertedBags, convertedKgs: itemConvertedKgs } });
+      }
+    }
 
     await this.prisma.bookingConversion.deleteMany({ where: { bookingId } });
     if (items.length) {
@@ -569,10 +615,42 @@ export class BookingsService {
       orderId: r.orderId,
       orderCode: r.orderId ? orderCodes.get(r.orderId) ?? null : null,
       userName: r.userName,
+      items: r.items.map((it) => this.toItemDto(it)),
       conversions: r.conversions.map((c) => this.toConversionDto(c)),
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     };
+  }
+
+  private toItemDto(it: Row['items'][number]): BookingItemDto {
+    return {
+      id: it.id,
+      bookingId: it.bookingId,
+      pCategory: it.pCategory,
+      bags: it.bags,
+      kgs: it.kgs,
+      convertedBags: it.convertedBags,
+      convertedKgs: it.convertedKgs,
+      remainingBags: Math.max(0, round2(it.bags - it.convertedBags)),
+      remainingKgs: Math.max(0, round2(it.kgs - it.convertedKgs)),
+      createdAt: it.createdAt.toISOString(),
+      updatedAt: it.updatedAt.toISOString(),
+    };
+  }
+
+  /** Clean + validate the create/update item lines: uppercase category, coerce
+   *  numbers, drop blank rows, require at least one usable line. */
+  private normalizeItems(items: CreateBookingItemDto[]): { pCategory: string; bags: number; kgs: number }[] {
+    const cleaned = (items ?? [])
+      .map((it) => ({ pCategory: (uc(it.pCategory) ?? '') as string, bags: toNum(it.bags) ?? 0, kgs: toNum(it.kgs) ?? 0 }))
+      .filter((it) => it.pCategory && (it.bags > 0 || it.kgs > 0));
+    if (!cleaned.length) throw new BadRequestException('Add at least one category line with bags and/or kgs.');
+    const seen = new Set<string>();
+    for (const it of cleaned) {
+      if (seen.has(it.pCategory)) throw new BadRequestException(`${it.pCategory} is listed more than once — combine it into one line.`);
+      seen.add(it.pCategory);
+    }
+    return cleaned;
   }
 
   private toConversionDto(c: Row['conversions'][number]): BookingConversionDto {

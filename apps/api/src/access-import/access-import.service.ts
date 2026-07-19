@@ -400,6 +400,12 @@ export class AccessImportService implements OnApplicationBootstrap {
   private async importOrders(J: (n: string) => any[], dry: boolean): Promise<Counts> {
     const cmap = await this.customerMap(J);
     const existingIds = new Set((await this.prisma.order.findMany({ select: { id: true } })).map((o) => o.id));
+    // A legacy ORDERTBL.ID can collide with an id already taken by another
+    // OrderItem — typically a natively-created row whose Prisma autoincrement id
+    // happened to land on the same number a later Access sync also wants. Track
+    // every id in use (existing + reserved-within-this-run) so a collision is
+    // caught before it hits the database as a P2002 and aborts the whole import.
+    const takenItemIds = new Set((await this.prisma.orderItem.findMany({ select: { id: true } })).map((o) => o.id));
     const groups = new Map<number, any[]>();
     for (const r of J('ORDERTBL')) {
       const oid = int(r['ORDER ID']);
@@ -410,6 +416,7 @@ export class AccessImportService implements OnApplicationBootstrap {
     let orders = 0;
     let items = 0;
     let skippedExisting = 0;
+    let remapped = 0;
     for (const [oid, gr] of groups) {
       if (existingIds.has(oid)) {
         skippedExisting++;
@@ -420,40 +427,86 @@ export class AccessImportService implements OnApplicationBootstrap {
         id: oid, code: `ORD-${String(oid).padStart(5, '0')}`, customerId: cmap.get(int(h['CUST ID']) ?? -1) ?? null,
         customerName: s(h['CUSTOMER NAME']) ?? '', agentName: up(h['AGENT NAME']), category: up(h.CATEGORY),
         orderDate: dt(h['ORDER DATE']) ?? new Date(0), completionDate: dt(h['COMPLETION DATE']), completionDay: int(h['COMPLETION DAY']),
-        priority: up(h.PRIORITY), status: up(h.STATUS) ?? 'CONFIRMED', ordType: s(h.ORDTYPE) ?? 'SALES ORDER', userName: s(h['USER NAME']),
+        // ORDERTBL has no real order-level status — STATUS is per-line only (see `base.status`
+        // below). Every imported order was, by definition, placed/confirmed in the legacy
+        // system, so the header always starts CONFIRMED; using `h.STATUS` (an arbitrary first
+        // row's per-line value) here used to wrongly cancel the whole order whenever that
+        // first line happened to be cancelled, even with 6 other active lines underneath it.
+        priority: up(h.PRIORITY), status: 'CONFIRMED', ordType: s(h.ORDTYPE) ?? 'SALES ORDER', userName: s(h['USER NAME']),
       };
       if (!dry) await this.prisma.order.create({ data: header });
       orders++;
-      const itemData = gr.map((r) => {
+      const clean: any[] = [];
+      const colliding: any[] = [];
+      for (const r of gr) {
         const iid = int(r.ID);
-        if (!iid) return null;
-        return {
-          id: iid, orderId: oid, pCategory: up(r.PCATEGORY), subCategory: s(r['SUB CATEGORY']), product: s(r.PRODUCT), design: s(r.DESIGN),
+        if (!iid) continue;
+        const base = {
+          orderId: oid, pCategory: up(r.PCATEGORY), subCategory: s(r['SUB CATEGORY']), product: s(r.PRODUCT), design: s(r.DESIGN),
           productName: s(r['PRODUCT NAME']), designType: s(r['DESIGN TYPE']), psize: num(r.PSIZE), bags: num(r.BAGS), pcs: num(r.PCS),
           gram: num(r.GRAM), box: num(r.BOX), productRate: num(r['PRODUCT RATE']), designRate: num(r['DESIGN RATE']), rate: num(r.RATE),
           calField: up(r['CAL FIELD']), priority: up(r.PRIORITY), ordType: s(r.ORDTYPE),
           status: up(r.STATUS) === 'CANCELLED' ? 'CANCELLED' : 'CONFIRMED', comment: s(r.COMMENT),
         };
-      }).filter(Boolean) as any[];
-      if (!dry && itemData.length) await this.prisma.orderItem.createMany({ data: itemData });
-      items += itemData.length;
+        if (takenItemIds.has(iid)) {
+          colliding.push({ ...base, legacyItemId: iid }); // id omitted — Prisma assigns a fresh one
+        } else {
+          takenItemIds.add(iid);
+          clean.push({ ...base, id: iid });
+        }
+      }
+      if (!dry) {
+        if (clean.length) await this.prisma.orderItem.createMany({ data: clean });
+        // Colliding rows need individual create() calls (not createMany) so each
+        // gets back its freshly-assigned id — createMany can't return generated ids.
+        for (const row of colliding) {
+          const created = await this.prisma.orderItem.create({ data: row });
+          takenItemIds.add(created.id);
+        }
+      }
+      items += clean.length + colliding.length;
+      remapped += colliding.length;
     }
-    return { orders, 'order items': items, 'already imported (skipped)': skippedExisting };
+    const counts: Counts = { orders, 'order items': items, 'already imported (skipped)': skippedExisting };
+    if (remapped) counts['items remapped (id collision)'] = remapped;
+    return counts;
   }
 
   private async importDispatch(J: (n: string) => any[], dry: boolean): Promise<Counts> {
     const cmap = await this.customerMap(J);
-    const itemIds = new Set((await this.prisma.orderItem.findMany({ select: { id: true } })).map((x) => x.id));
+    const allItems = await this.prisma.orderItem.findMany({ select: { id: true, orderId: true, legacyItemId: true } });
     const orderIds = new Set((await this.prisma.order.findMany({ select: { id: true } })).map((x) => x.id));
     const existingDispatchIds = new Set((await this.prisma.dispatch.findMany({ select: { id: true } })).map((x) => x.id));
+    // Resolve a legacy (orderId, OrdTrans) pair to the item's REAL id. Usually
+    // OrdTrans already IS the real id — but for a row that had to be remapped due
+    // to an id collision (see importOrders), OrdTrans still carries the original
+    // legacy id, so fall back to matching legacyItemId. Both lookups are scoped to
+    // the dispatch's own orderId so a collision with an unrelated order's item
+    // (the exact scenario that caused the remap) can never resolve to the wrong line.
+    const byOrderAndId = new Map<string, number>();
+    const byOrderAndLegacyId = new Map<string, number>();
+    for (const it of allItems) {
+      byOrderAndId.set(`${it.orderId}|${it.id}`, it.id);
+      if (it.legacyItemId != null) byOrderAndLegacyId.set(`${it.orderId}|${it.legacyItemId}`, it.id);
+    }
     const batch: any[] = [];
     let skipped = 0;
     let skippedExisting = 0;
+    let remapped = 0;
     for (const r of J('DispatchTbl')) {
       const id = int(r.DispatchID);
       const oid = int(r['ORDER ID']);
       const oitem = int(r.OrdTrans);
-      if (!id || !oid || !oitem || !orderIds.has(oid) || !itemIds.has(oitem)) {
+      if (!id || !oid || !oitem || !orderIds.has(oid)) {
+        skipped++;
+        continue;
+      }
+      let realItemId = byOrderAndId.get(`${oid}|${oitem}`);
+      if (realItemId == null) {
+        realItemId = byOrderAndLegacyId.get(`${oid}|${oitem}`);
+        if (realItemId != null) remapped++;
+      }
+      if (realItemId == null) {
         skipped++;
         continue;
       }
@@ -463,7 +516,7 @@ export class AccessImportService implements OnApplicationBootstrap {
       }
       const st = up(r.DispatchStatus) ?? '';
       batch.push({
-        id, code: `DSP-${String(id).padStart(5, '0')}`, orderItemId: oitem, orderId: oid, orderCode: `ORD-${String(oid).padStart(5, '0')}`,
+        id, code: `DSP-${String(id).padStart(5, '0')}`, orderItemId: realItemId, orderId: oid, orderCode: `ORD-${String(oid).padStart(5, '0')}`,
         customerId: cmap.get(int(r['CUST ID']) ?? -1) ?? null, customerName: s(r['CUSTOMER NAME']) ?? '', agentName: up(r['AGENT NAME']),
         category: up(r.CATEGORY), pCategory: up(r.PCATEGORY), subCategory: s(r['SUB CATEGORY']), product: s(r.PRODUCT), productName: s(r['PRODUCT NAME']),
         designType: s(r['DESIGN TYPE']), psize: num(r.PSIZE), priority: up(r.PRIORITY), calField: up(r['CAL FIELD']), ordType: s(r.ORDTYPE),
@@ -473,7 +526,9 @@ export class AccessImportService implements OnApplicationBootstrap {
       });
     }
     if (!dry) for (let i = 0; i < batch.length; i += 500) await this.prisma.dispatch.createMany({ data: batch.slice(i, i + 500) });
-    return { dispatches: batch.length, 'skipped (no matching order/item)': skipped, 'already imported (skipped)': skippedExisting };
+    const counts: Counts = { dispatches: batch.length, 'skipped (no matching order/item)': skipped, 'already imported (skipped)': skippedExisting };
+    if (remapped) counts['resolved via remapped item id'] = remapped;
+    return counts;
   }
 
   /** InvTbl (header) + ChallanTbl (lines) → challans / challan_items. Upsert by

@@ -338,7 +338,7 @@ export const MENU: MenuNode[] = [
     id: 'administration',
     label: 'Administration',
     icon: 'ShieldCheck',
-    anyPermission: [perm(RESOURCES.USER, ACTIONS.VIEW), perm(RESOURCES.ROLE, ACTIONS.VIEW)],
+    anyPermission: [perm(RESOURCES.USER, ACTIONS.VIEW), perm(RESOURCES.ROLE, ACTIONS.VIEW), perm(RESOURCES.AUDIT_LOG, ACTIONS.VIEW)],
     children: [
       {
         id: 'users',
@@ -353,6 +353,13 @@ export const MENU: MenuNode[] = [
         to: '/admin/roles',
         icon: 'KeyRound',
         permission: perm(RESOURCES.ROLE, ACTIONS.VIEW),
+      },
+      {
+        id: 'audit-log',
+        label: 'Activity Log',
+        to: '/audit-logs',
+        icon: 'History',
+        permission: perm(RESOURCES.AUDIT_LOG, ACTIONS.VIEW),
       },
     ],
   },
@@ -403,11 +410,11 @@ export function filterMenu(granted: Iterable<string>, menu: MenuNode[] = MENU): 
 }
 
 /** Flatten the menu to its leaf routes (handy for building the router / breadcrumbs). */
-export function menuRoutes(menu: MenuNode[] = MENU): { to: string; permission?: string; label: string }[] {
-  const out: { to: string; permission?: string; label: string }[] = [];
+export function menuRoutes(menu: MenuNode[] = MENU): { to: string; permission?: string; label: string; icon?: string }[] {
+  const out: { to: string; permission?: string; label: string; icon?: string }[] = [];
   const walk = (nodes: MenuNode[]) => {
     for (const n of nodes) {
-      if (n.to) out.push({ to: n.to, permission: n.permission, label: n.label });
+      if (n.to) out.push({ to: n.to, permission: n.permission, label: n.label, icon: n.icon });
       if (n.children) walk(n.children);
     }
   };

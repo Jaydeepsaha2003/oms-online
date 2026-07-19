@@ -31,7 +31,7 @@ export interface ComboboxProps {
 
 // Looks exactly like our <Input>; the field itself is the search box.
 const FIELD =
-  'border-input flex h-9 w-full rounded-md border bg-transparent px-3 py-1 pr-8 text-sm shadow-xs outline-none transition-[color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50';
+  'border-input flex h-9 w-full rounded-sm border bg-transparent px-3 py-1 pr-8 text-sm shadow-xs outline-none transition-[color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50';
 
 // Cap how many rows are mounted at once — huge lists (thousands) would freeze.
 const RENDER_LIMIT = 100;

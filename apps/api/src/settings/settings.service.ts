@@ -1,17 +1,21 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { type CompanyProfileDto, type OrderOptionDto, type OrderTermsDto } from '@oms/shared';
+import { type ChallanTermsDto, type CompanyProfileDto, type OrderFooterDto, type OrderOptionDto, type OrderTermsDto } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { uc } from '../common/coerce';
 import { CreateOrderOptionDto } from './dto/order-option.dto';
 import { UpdateCompanyDto } from './dto/company.dto';
 import { UpdateOrderTermsDto } from './dto/order-terms.dto';
+import { UpdateOrderFooterDto } from './dto/order-footer.dto';
+import { UpdateChallanTermsDto } from './dto/challan-terms.dto';
 
 type Row = Prisma.OrderOptionGetPayload<object>;
 
 const COMPANY_NAME = 'COMPANY_NAME';
 const COMPANY_LOGO = 'COMPANY_LOGO';
 const ORDER_TERMS = 'ORDER_TERMS';
+const ORDER_FOOTER = 'ORDER_FOOTER';
+const CHALLAN_TERMS = 'CHALLAN_TERMS';
 // Shown until the business saves their own list from Settings.
 const DEFAULT_ORDER_TERMS = [
   'Payment Should Be Made Within 30 Days',
@@ -19,6 +23,11 @@ const DEFAULT_ORDER_TERMS = [
   'Order Cannot Be Cancelled Once Placed/Confirmed',
   'Any Type Of Defect/Design Issue Should Be Reported Within 15 days After Goods Recived.',
 ];
+// "{DOC_TYPE}" is replaced with "SALES ORDER" or "QUOTATION" at print time.
+const DEFAULT_ORDER_FOOTER = ['***THIS IS COMPUTER GENRATED {DOC_TYPE}***'];
+// Unlike Order Terms, the Challan bill prints no Terms & Conditions until the
+// business explicitly adds some from Settings.
+const DEFAULT_CHALLAN_TERMS: string[] = [];
 
 @Injectable()
 export class SettingsService {
@@ -104,6 +113,53 @@ export class SettingsService {
     if (!terms.length) throw new BadRequestException('Add at least one term.');
     const value = JSON.stringify(terms);
     await this.prisma.appConfig.upsert({ where: { key: ORDER_TERMS }, update: { value }, create: { key: ORDER_TERMS, value } });
+    return { terms };
+  }
+
+  /* ── Sales Order / Quotation bill footer ─────────────────────────────────── */
+
+  async getOrderFooter(): Promise<OrderFooterDto> {
+    const row = await this.prisma.appConfig.findUnique({ where: { key: ORDER_FOOTER } });
+    if (row?.value) {
+      try {
+        const parsed = JSON.parse(row.value);
+        if (Array.isArray(parsed) && parsed.length) {
+          return { lines: parsed.map((t) => String(t)) };
+        }
+      } catch {
+        /* fall through to default */
+      }
+    }
+    return { lines: DEFAULT_ORDER_FOOTER };
+  }
+
+  async updateOrderFooter(dto: UpdateOrderFooterDto): Promise<OrderFooterDto> {
+    const lines = dto.lines.map((t) => t.trim()).filter(Boolean);
+    if (!lines.length) throw new BadRequestException('Add at least one footer line.');
+    const value = JSON.stringify(lines);
+    await this.prisma.appConfig.upsert({ where: { key: ORDER_FOOTER }, update: { value }, create: { key: ORDER_FOOTER, value } });
+    return { lines };
+  }
+
+  /* ── Challan / Tax Invoice "Terms & Conditions" ──────────────────────────── */
+
+  async getChallanTerms(): Promise<ChallanTermsDto> {
+    const row = await this.prisma.appConfig.findUnique({ where: { key: CHALLAN_TERMS } });
+    if (row?.value) {
+      try {
+        const parsed = JSON.parse(row.value);
+        if (Array.isArray(parsed)) return { terms: parsed.map((t) => String(t)) };
+      } catch {
+        /* fall through to default */
+      }
+    }
+    return { terms: DEFAULT_CHALLAN_TERMS };
+  }
+
+  async updateChallanTerms(dto: UpdateChallanTermsDto): Promise<ChallanTermsDto> {
+    const terms = dto.terms.map((t) => t.trim()).filter(Boolean);
+    const value = JSON.stringify(terms);
+    await this.prisma.appConfig.upsert({ where: { key: CHALLAN_TERMS }, update: { value }, create: { key: CHALLAN_TERMS, value } });
     return { terms };
   }
 }

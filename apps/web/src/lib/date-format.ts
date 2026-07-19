@@ -8,6 +8,7 @@ export interface DateFormatOption {
 
 /** The date formats a user can choose from (label = a sample date). */
 export const DATE_FORMATS: DateFormatOption[] = [
+  { id: 'dmy2', label: '21/06/26' },
   { id: 'dmmmy', label: '21 Jun 2026' },
   { id: 'dmmy', label: '21 Jun 26' },
   { id: 'dmyDash', label: '21-06-2026' },
@@ -17,7 +18,9 @@ export const DATE_FORMATS: DateFormatOption[] = [
 ];
 
 const KEY = 'oms:date-format';
-const DEFAULT = 'dmmmy';
+// dd/mm/yyyy — the default across every list-view table (Orders, Quotations,
+// Order Modify, Dispatch, and anywhere else that reads the shared preference).
+const DEFAULT = 'dmy';
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 let current = (() => {
@@ -54,6 +57,8 @@ export function formatDate(value: string | Date | null | undefined, fmt: string 
   const dd = String(day).padStart(2, '0');
   const mm = String(month + 1).padStart(2, '0');
   switch (fmt) {
+    case 'dmy2':
+      return `${dd}/${mm}/${String(year).slice(2)}`;
     case 'dmmy':
       return `${day} ${MONTHS[month]} ${String(year).slice(2)}`;
     case 'dmyDash':

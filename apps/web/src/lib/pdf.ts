@@ -18,3 +18,15 @@ export async function openPdf(url: string): Promise<void> {
   // Revoke a little later so the new tab has time to load it.
   setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
 }
+
+/** Consistent client-generated (jsPDF) download filename across Challan / Order /
+ *  Quotation: "{Prefix}_{code}_{yyyy-MM-dd_HHmm}.pdf", e.g.
+ *  "Challan_SSS-26-27-427_2026-07-19_1830.pdf". `code` falls back to `fallback`
+ *  (e.g. "challan-42") when the record has no code yet. */
+export function buildBillFilename(prefix: string, code: string | null | undefined, fallback: string): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const d = new Date();
+  const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}`;
+  const safeCode = (code || fallback).replace(/[\\/:*?"<>|]/g, '-');
+  return `${prefix}_${safeCode}_${stamp}.pdf`;
+}

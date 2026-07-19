@@ -20,6 +20,9 @@ export interface DataColumn<T> {
   /** Freeze this column to the left: 'left0' is the first frozen column, 'left1'
    *  the next (offset by the first column's 7rem min-width). */
   pin?: 'left0' | 'left1';
+  /** Override the pinned column's default 7rem width (e.g. `'sm:w-16 sm:min-w-16'`)
+   *  for short content like a numeric id — only meaningful with `pin: 'left0'`. */
+  pinWidthClass?: string;
   /** When true the column is always shown and excluded from the arrange panel. */
   fixed?: boolean;
   /** Custom sort key. When omitted the column still sorts — the table falls back to
@@ -45,14 +48,14 @@ const SHADOW_R = 'shadow-[-6px_0_12px_-6px_rgba(2,6,23,0.18)]';
 
 // Frozen-left columns only stick from `sm:` up — on phones they scroll like any
 // other column so every column is reachable.
-function pinHead(pin: 'left0' | 'left1' | undefined, stickyTop: boolean): string {
+function pinHead(pin: 'left0' | 'left1' | undefined, stickyTop: boolean, widthClass?: string): string {
   const top = stickyTop ? 'top-0 ' : '';
-  if (pin === 'left0') return `${top}z-30 sm:sticky sm:left-0 sm:w-28 sm:min-w-28`;
+  if (pin === 'left0') return `${top}z-30 sm:sticky sm:left-0 ${widthClass ?? 'sm:w-28 sm:min-w-28'}`;
   if (pin === 'left1') return `${top}z-30 sm:sticky sm:left-28 sm:${SHADOW_L}`;
   return '';
 }
-function pinCellPos(pin?: 'left0' | 'left1'): string {
-  if (pin === 'left0') return 'z-10 sm:sticky sm:left-0 sm:w-28 sm:min-w-28';
+function pinCellPos(pin?: 'left0' | 'left1', widthClass?: string): string {
+  if (pin === 'left0') return `z-10 sm:sticky sm:left-0 ${widthClass ?? 'sm:w-28 sm:min-w-28'}`;
   if (pin === 'left1') return `z-10 sm:sticky sm:left-28 sm:${SHADOW_L}`;
   return '';
 }
@@ -196,7 +199,7 @@ export function DataTable<T>({
                   'whitespace-nowrap',
                   col.align === 'right' && 'text-right',
                   stickyTop && !col.pin && 'sticky top-0 z-20',
-                  pinHead(col.pin, stickyTop),
+                  pinHead(col.pin, stickyTop, col.pinWidthClass),
                 )}
               >
                 {col.noSort ? (
@@ -259,7 +262,7 @@ export function DataTable<T>({
                       <StickyCell
                         key={col.id}
                         bg={pinBg}
-                        className={cn(col.align === 'right' && 'text-right tabular-nums font-semibold', pinCellPos(col.pin))}
+                        className={cn(col.align === 'right' && 'text-right tabular-nums font-semibold', pinCellPos(col.pin, col.pinWidthClass))}
                       >
                         {col.cell(row)}
                       </StickyCell>

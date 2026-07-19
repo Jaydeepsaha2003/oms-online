@@ -2,7 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import type { RefreshToken } from '@prisma/client';
 import type { SessionDto } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
-import { toSessionDto } from './session-util';
+import { normaliseIp, parseUserAgent, toSessionDto } from './session-util';
 
 /**
  * Active sign-in sessions = a user's non-revoked, unexpired refresh tokens (one
@@ -23,21 +23,25 @@ export class SessionsService {
     return this.dedupeByDevice(rows, currentSid).map((r) => toSessionDto(r, currentSid));
   }
 
-  /** Repeated logins from the same browser/device (identical userAgent) collapse to
-   *  one row — the caller's own current session if it's among them, otherwise the
-   *  most recently created. Rows with no userAgent are never merged (no reliable
-   *  way to say they're "the same device"). */
+  /** Repeated logins from the same browser + OS on the same IP collapse to one row
+   *  — the caller's own current session if it's among them, otherwise the most
+   *  recently created. Keyed on the *parsed* browser/OS label rather than the raw
+   *  user-agent string, since a browser point-release (e.g. a Chrome auto-update)
+   *  changes the exact UA on every visit and would otherwise look like a "new"
+   *  device each time. Rows with no userAgent are never merged (no reliable way
+   *  to say they're "the same device"). */
   private dedupeByDevice(rows: RefreshToken[], currentSid?: string): RefreshToken[] {
     const kept: RefreshToken[] = [];
-    const indexByAgent = new Map<string, number>();
+    const indexByDevice = new Map<string, number>();
     for (const row of rows) {
       if (!row.userAgent) {
         kept.push(row);
         continue;
       }
-      const existingIndex = indexByAgent.get(row.userAgent);
+      const key = `${parseUserAgent(row.userAgent).label}|${normaliseIp(row.ip) ?? ''}`;
+      const existingIndex = indexByDevice.get(key);
       if (existingIndex === undefined) {
-        indexByAgent.set(row.userAgent, kept.length);
+        indexByDevice.set(key, kept.length);
         kept.push(row);
       } else if (row.id === currentSid) {
         kept[existingIndex] = row;

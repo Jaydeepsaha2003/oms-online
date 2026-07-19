@@ -10,8 +10,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { PinPad } from '@/components/auth/pin-pad';
-import { PandaMascot } from '@/components/auth/panda-mascot';
 import { IntroVideo } from '@/features/auth/intro-video';
+import { useCompany } from '@/features/settings/use-settings';
+import kavishLogo from '@/assets/kavish-logo-order.png';
 
 type Mode = 'password' | 'pin';
 const LAST_EMAIL_KEY = 'oms:last-email';
@@ -32,9 +33,8 @@ export function LoginPage() {
   const [password, setPassword] = useState('');
   const [pin, setPin] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [pwFocused, setPwFocused] = useState(false);
-  const [emailFocused, setEmailFocused] = useState(false);
   const [showIntro, setShowIntro] = useState(true);
+  const { data: company } = useCompany();
 
   // The account PIN sign-in applies to — the last account used on this device.
   // PIN mode never shows an email field; it signs in as this remembered account.
@@ -122,12 +122,9 @@ export function LoginPage() {
           />
 
           <div className="relative flex flex-col items-center text-center">
-            <PandaMascot
-              covering={pwFocused && !showPassword}
-              peeking={pwFocused && showPassword}
-              looking={emailFocused ? 'down' : 'center'}
-              className="mb-1 size-28 drop-shadow"
-            />
+            <div className="mb-1 flex size-28 items-center justify-center overflow-hidden rounded-full bg-white shadow-lg ring-4 ring-white/60 drop-shadow">
+              <img src={company?.logo || kavishLogo} alt={company?.name || APP_NAME} className="size-full object-contain p-3" />
+            </div>
             <h1 className="text-2xl font-bold tracking-tight">
               Welcome to <span className="text-gradient-brand">{APP_NAME}</span>
             </h1>
@@ -174,8 +171,6 @@ export function LoginPage() {
                       className="pl-9"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      onFocus={() => setEmailFocused(true)}
-                      onBlur={() => setEmailFocused(false)}
                       onKeyDown={(e) => e.key === 'Enter' && submitPassword()}
                     />
                   </div>
@@ -192,8 +187,6 @@ export function LoginPage() {
                       className="px-9"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      onFocus={() => setPwFocused(true)}
-                      onBlur={() => setPwFocused(false)}
                       onKeyDown={(e) => e.key === 'Enter' && submitPassword()}
                     />
                     <button

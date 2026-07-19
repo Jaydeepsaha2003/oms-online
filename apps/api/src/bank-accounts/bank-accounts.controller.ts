@@ -34,21 +34,21 @@ export class BankAccountsController {
 
   @Post()
   @Permissions(perm(R, ACTIONS.CREATE))
-  @Audit({ action: ACTIONS.CREATE, resource: R })
+  @Audit({ action: ACTIONS.CREATE, resource: R, description: 'Added a bank account' })
   create(@Body() dto: CreateBankAccountDto) {
     return this.banks.create(dto);
   }
 
   @Patch(':id')
   @Permissions(perm(R, ACTIONS.UPDATE))
-  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Edited a bank account' })
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateBankAccountDto) {
     return this.banks.update(id, dto);
   }
 
   @Delete(':id')
   @Permissions(perm(R, ACTIONS.DELETE))
-  @Audit({ action: ACTIONS.DELETE, resource: R })
+  @Audit({ action: ACTIONS.DELETE, resource: R, description: 'Deleted a bank account' })
   async remove(@Param('id', ParseIntPipe) id: number) {
     await this.banks.remove(id);
     return { ok: true };

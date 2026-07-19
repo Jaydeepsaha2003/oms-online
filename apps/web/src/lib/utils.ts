@@ -25,30 +25,23 @@ export function shortOrderCode(code: string | null | undefined, id?: number | st
   return id != null && id !== '' ? `#${id}` : '—';
 }
 
-/** Human-readable date + time, e.g. "20 Jun 2026, 09:10 PM". Returns "—" if empty/invalid. */
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/** Human-readable date + time, dd/mm/yyyy — e.g. "20/06/2026, 09:10 PM". Returns "—" if empty/invalid. */
 export function formatDateTime(value: string | Date | null | undefined): string {
   if (!value) return '—';
   const d = typeof value === 'string' ? new Date(value) : value;
   if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleString(undefined, {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}, ${time}`;
 }
 
-/** Compact date + time without the year, e.g. "20 Jun, 09:10 PM". For table cells;
+/** Compact date + time without the year, dd/mm — e.g. "20/06, 09:10 PM". For table cells;
  *  pair with {@link formatDateTime} in a tooltip/form to show the full date. */
 export function formatDateShort(value: string | Date | null | undefined): string {
   if (!value) return '—';
   const d = typeof value === 'string' ? new Date(value) : value;
   if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleString(undefined, {
-    day: '2-digit',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}, ${time}`;
 }

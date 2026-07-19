@@ -42,7 +42,7 @@ export interface DatePickerProps {
 }
 
 const TRIGGER =
-  'border-input flex h-9 w-full items-center gap-2 rounded-md border bg-transparent px-3 py-1 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50';
+  'border-input flex h-9 w-full items-center gap-2 rounded-sm border bg-transparent px-3 py-1 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50';
 
 const NAV_BTN = 'text-muted-foreground hover:bg-accent hover:text-foreground flex size-8 items-center justify-center rounded-md transition-colors';
 const SELECT =
@@ -92,9 +92,8 @@ export function DatePicker({
     setOpen(false);
   };
 
-  const display = selected
-    ? selected.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })
-    : '';
+  // dd/mm/yyyy — every date-picker field in the app shows dates this way.
+  const display = selected ? `${pad(selected.getDate())}/${pad(selected.getMonth() + 1)}/${selected.getFullYear()}` : '';
 
   return (
     <Popover

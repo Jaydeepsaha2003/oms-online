@@ -98,6 +98,15 @@ export function useCreateChallan() {
   });
 }
 
+/** A single saved challan (Print / PDF bill page). */
+export function useChallan(id?: number) {
+  return useQuery({
+    queryKey: [...KEY, id],
+    queryFn: () => http.get<ChallanDto>(`/challans/${id}`),
+    enabled: id != null,
+  });
+}
+
 /** Load a saved challan for editing (stored header + lines + the customer's add-more pool). */
 export function useChallanEdit(id: number | null) {
   return useQuery({

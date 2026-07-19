@@ -22,80 +22,6 @@ const SETTINGS_KEY = 'CRM_REMINDER_DEFAULTS';
 const INCLUDE = { logs: { orderBy: { createdAt: 'asc' } }, checklist: { orderBy: { sortOrder: 'asc' } } } as const;
 type Row = Prisma.FollowupGetPayload<{ include: typeof INCLUDE }>;
 
-/* ── Fuzzy name matching (voice → customer list) ──────────────────────────────
- * Spoken names arrive with honorifics ("Ratna ji") and transliteration wobble
- * ("Raatna" vs "Ratna"), so a plain substring search misses them. These helpers
- * fold spelling variants and compare token-by-token with a small edit-distance
- * tolerance. Used only by the voice matcher, not the typeahead. */
-
-// Words to drop from a spoken party name — honorifics + generic company suffixes.
-const NAME_STOPWORDS = new Set([
-  'ji', 'jee', 'sahab', 'saheb', 'sahib', 'bhai', 'seth', 'shri', 'sri', 'shree',
-  'mr', 'mrs', 'ms', 'and', 'the', 'ka', 'ki', 'ko', 'ke',
-]);
-
-/** Lowercase, strip punctuation, and fold common transliteration variants so
- *  "Raatna", "Ratnaa" and "Ratna" all collapse to the same key. */
-function foldName(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/ph/g, 'f')
-    .replace(/w/g, 'v')
-    .replace(/(.)\1+/g, '$1') // collapse doubled letters: raatna → ratna
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function nameTokens(s: string): string[] {
-  return foldName(s)
-    .split(' ')
-    .filter((t) => t.length >= 2 && !NAME_STOPWORDS.has(t));
-}
-
-/** Levenshtein edit distance (small strings, so the simple DP is plenty fast). */
-function editDistance(a: string, b: string): number {
-  const m = a.length;
-  const n = b.length;
-  if (!m) return n;
-  if (!n) return m;
-  let prev = Array.from({ length: n + 1 }, (_, j) => j);
-  let cur = new Array<number>(n + 1);
-  for (let i = 1; i <= m; i++) {
-    cur[0] = i;
-    for (let j = 1; j <= n; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
-    }
-    [prev, cur] = [cur, prev];
-  }
-  return prev[n];
-}
-
-/** How well a spoken name matches a candidate party name (higher = better, 0 = no match). */
-function nameMatchScore(spoken: string, candidate: string): number {
-  const sTokens = nameTokens(spoken);
-  const cTokens = nameTokens(candidate);
-  if (!sTokens.length || !cTokens.length) return 0;
-  let score = 0;
-  for (const st of sTokens) {
-    let best = 0;
-    for (const ct of cTokens) {
-      if (st === ct) best = Math.max(best, 3);
-      else if (ct.startsWith(st) || st.startsWith(ct)) best = Math.max(best, 2);
-      else {
-        const dist = editDistance(st, ct);
-        const tol = Math.max(st.length, ct.length) <= 4 ? 1 : 2;
-        if (dist <= tol) best = Math.max(best, 1.5);
-      }
-    }
-    score += best;
-  }
-  // Small bonus when the whole spoken phrase is a substring of the candidate.
-  if (foldName(candidate).includes(foldName(spoken))) score += 1;
-  return score;
-}
-
 @Injectable()
 export class CrmService {
   constructor(private readonly prisma: PrismaService) {}
@@ -362,25 +288,6 @@ export class CrmService {
     return customers.filter((c) => c.partyName).map((c) => ({ id: c.id, partyName: c.partyName! }));
   }
 
-  /** Loose voice-name matcher: given a spoken party name (with honorifics /
-   *  spelling wobble), rank the whole customer list by fuzzy score. Only strong
-   *  enough matches are returned so a mishear yields an empty list (→ treated as
-   *  a new party) rather than a wrong auto-select. */
-  async partyMatch(qStr?: string): Promise<{ id: number | null; partyName: string }[]> {
-    const s = qStr?.trim();
-    if (!s) return [];
-    const customers = await this.prisma.customer.findMany({
-      where: { partyName: { not: null }, active: true },
-      select: { id: true, partyName: true },
-    });
-    return customers
-      .map((c) => ({ id: c.id, partyName: c.partyName!, score: nameMatchScore(s, c.partyName!) }))
-      .filter((x) => x.score >= 1.5)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 8)
-      .map(({ id, partyName }) => ({ id, partyName }));
-  }
-
   /** OPEN orders to link a follow-up to: CONFIRMED and with at least one active
    *  line not yet fully dispatched. With `party` set it lists that party's open
    *  orders straight away (no typing needed in the form). */
@@ -420,38 +327,73 @@ export class CrmService {
       .slice(0, 25);
   }
 
-  /** Item-catalog lookup for the voice form: match a spoken item ("royal glass",
-   *  "50 steel thali") against the Product catalog so we can offer the real
-   *  catalogue name. De-duplicated by product+category (sizes make duplicates). */
-  async productSuggest(qStr?: string): Promise<{ id: number; name: string; category: string; subCategory: string }[]> {
-    const s = qStr?.trim();
-    if (!s) return [];
-    // Drop a leading quantity/units the model may include ("50 ", "10 pcs").
-    const core = s.replace(/^\s*\d+\s*(pcs|pc|pieces|nos|no|x|\*)?\s*/i, '').trim() || s;
-    const tokens = core.split(/\s+/).filter((t) => t.length >= 2);
-    const rows = await this.prisma.product.findMany({
+  /** A party's OPEN order line items — the item-level version of orderSuggest(),
+   *  so the follow-up form can link to a specific product/quantity instead of
+   *  free-typed item text. Prefers `customerId` (exact); falls back to matching
+   *  `party` against the order's snapshotted customerName for off-system parties. */
+  async orderItemSuggest(
+    customerId?: number,
+    party?: string,
+  ): Promise<
+    {
+      orderItemId: number;
+      orderId: number;
+      orderCode: string;
+      orderDate: string;
+      productName: string | null;
+      design: string | null;
+      pCategory: string | null;
+      remBags: number;
+      remPcs: number;
+      remGram: number;
+      remBox: number;
+    }[]
+  > {
+    const p = party?.trim();
+    if (!customerId && !p) return [];
+    const items = await this.prisma.orderItem.findMany({
       where: {
-        OR: [
-          { product: { contains: core } },
-          { category: { contains: core } },
-          ...tokens.map((t) => ({ product: { contains: t } })),
-          ...tokens.map((t) => ({ category: { contains: t } })),
-        ],
+        status: { not: 'CANCELLED' },
+        order: {
+          status: 'CONFIRMED',
+          ...(customerId ? { customerId } : { customerName: p }),
+        },
       },
-      select: { id: true, product: true, category: true, subCategory: true },
-      orderBy: [{ category: 'asc' }, { product: 'asc' }],
-      take: 20,
+      select: {
+        id: true,
+        orderId: true,
+        productName: true,
+        design: true,
+        pCategory: true,
+        bags: true,
+        pcs: true,
+        gram: true,
+        box: true,
+        order: { select: { code: true, orderDate: true } },
+        dispatches: { select: { bags: true, pcs: true, gram: true, box: true } },
+      },
+      orderBy: { id: 'desc' },
+      take: 100,
     });
-    const seen = new Set<string>();
-    const out: { id: number; name: string; category: string; subCategory: string }[] = [];
-    for (const r of rows) {
-      const key = `${r.product}|${r.category}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push({ id: r.id, name: r.product, category: r.category, subCategory: r.subCategory });
-      if (out.length >= 8) break;
-    }
-    return out;
+    return items
+      .map((it) => {
+        const sum = (k: 'bags' | 'pcs' | 'gram' | 'box') => it.dispatches.reduce((s, d) => s + (d[k] ?? 0), 0);
+        return {
+          orderItemId: it.id,
+          orderId: it.orderId,
+          orderCode: it.order.code ?? `ORD-${String(it.orderId).padStart(5, '0')}`,
+          orderDate: it.order.orderDate.toISOString(),
+          productName: it.productName,
+          design: it.design,
+          pCategory: it.pCategory,
+          remBags: Math.max(0, (it.bags ?? 0) - sum('bags')),
+          remPcs: Math.max(0, (it.pcs ?? 0) - sum('pcs')),
+          remGram: Math.max(0, (it.gram ?? 0) - sum('gram')),
+          remBox: Math.max(0, (it.box ?? 0) - sum('box')),
+        };
+      })
+      .filter((it) => it.remBags > 0 || it.remPcs > 0 || it.remGram > 0 || it.remBox > 0)
+      .slice(0, 40);
   }
 
   /* ── helpers ────────────────────────────────────────────────────────────── */

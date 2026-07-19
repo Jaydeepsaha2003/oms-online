@@ -33,16 +33,6 @@ export class UpdateChecklistItemDto {
   @IsOptional() @IsString() @MaxLength(500) text?: string;
 }
 
-export class AiConfigInputDto {
-  @IsOptional() @IsString() @MaxLength(200) apiKey?: string;
-  @IsOptional() @IsString() @MaxLength(80) model?: string;
-}
-
-export class VoiceChecklistDto {
-  @IsString() audio!: string; // base64 (no data: prefix)
-  @IsOptional() @IsString() @MaxLength(60) mimeType?: string;
-}
-
 export class AddFollowupLogDto {
   @IsOptional() @IsString() @MaxLength(2000) note?: string | null;
   @IsOptional() @IsString() @MaxLength(64) stage?: string | null;

@@ -26,13 +26,14 @@ import { toast } from 'sonner';
 import {
   CHALLAN_STATUSES,
   computeChallanTotals,
+  RESOURCES,
   type ChallanDraftItem,
   type CreateChallanInput,
   type PendingChallanLine,
 } from '@oms/shared';
 import { cn } from '@/lib/utils';
-import { openPdf } from '@/lib/pdf';
 import { useConfirm } from '@/components/common/confirm';
+import { RecordHistory } from '@/components/common/record-history';
 import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -542,7 +543,7 @@ export function ChallanFormPage() {
           <h2 className="mt-3 text-xl font-semibold">Challan {savedCode} {isEdit ? 'updated' : 'saved'}</h2>
           <p className="text-muted-foreground mt-1 text-sm">Total {inr(totals.total)}{totals.tdsAmount ? ` · Net after TDS ${inr(totals.netReceivable)}` : ''}</p>
           <div className="mt-5 flex flex-wrap justify-center gap-2">
-            <Button onClick={() => openPdf(`/challans/${savedId}/challan.pdf`)}>
+            <Button onClick={() => navigate(`/challans/${savedId}/bill`)}>
               <Printer /> Print / PDF
             </Button>
             <Button variant="outline" onClick={() => navigate('/challans')}>
@@ -595,11 +596,12 @@ export function ChallanFormPage() {
             />
           </div>
         )}
+        {isEdit && editId && <RecordHistory resource={RESOURCES.CHALLAN} resourceId={editId} label={savedChallan?.code} className="ml-auto shrink-0" />}
         <Button
           type="button"
           variant="outline"
           size="sm"
-          className="ml-auto shrink-0"
+          className={cn('shrink-0', !isEdit && 'ml-auto')}
           onClick={() => setMissingChallanOpen(true)}
           title="Find skipped invoice numbers in a prefix's series"
         >

@@ -7,7 +7,6 @@ import { downloadFile, getApiErrorMessage } from '@/lib/api';
 import { openPdf } from '@/lib/pdf';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
-import { useIsMobile } from '@/hooks/use-is-mobile';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
@@ -18,7 +17,7 @@ import { fetchLedgerReceipts, usePartyLedger, usePartyLedgerLookups } from './us
 
 const inr = (v: number) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 const money = (v: number) => (v ? inr(v) : '');
-const prettyDate = (iso: string) => new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' });
+const prettyDate = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 // Persist the last search so navigating away to view a challan (and coming back
@@ -81,7 +80,6 @@ function presetRange(p: Preset): { from: Date; to: Date } {
 
 export function PartyLedgerPage() {
   const navigate = useNavigate();
-  const isMobile = useIsMobile();
   const { can } = usePermissions();
   const { data: lookups } = usePartyLedgerLookups();
 
@@ -198,18 +196,12 @@ export function PartyLedgerPage() {
     return vt === 'SALES INVOICE' || vt === 'DEBIT NOTE';
   };
 
-  // Desktop: the challan PDF opens in a new tab (openPdf already does this).
-  // Phones: a new tab is awkward for a rasterised PDF, so open the challan's own
-  // form page in-app instead — its Back/Cancel returns here via `returnTo`,
-  // landing back on this exact search (persisted to sessionStorage above).
-  const canViewChallan = isMobile ? can('challan:update') : can('challan:print');
+  // Both desktop and mobile now navigate to the in-app Challan bill page
+  // (matches the Sales Order / Quotation "Print / PDF" pattern).
+  const canViewChallan = can('challan:print');
   const viewChallan = (r: PartyLedgerRow) => {
     if (!r.challanId) return;
-    if (isMobile) {
-      navigate(`/challans/${r.challanId}/edit`, { state: { returnTo: '/account/party-ledger' } });
-    } else {
-      openPdf(`/challans/${r.challanId}/challan.pdf`).catch(() => toast.error('Could not open the challan.'));
-    }
+    navigate(`/challans/${r.challanId}/bill`);
   };
 
   const columns: DataColumn<PartyLedgerRow>[] = [
@@ -340,7 +332,7 @@ export function PartyLedgerPage() {
                       viewChallan(r);
                     }}
                     className="text-muted-foreground hover:text-foreground"
-                    title={isMobile ? 'View challan' : 'View challan (opens in a new tab)'}
+                    title="View challan"
                   >
                     <Eye className="size-4" />
                   </button>

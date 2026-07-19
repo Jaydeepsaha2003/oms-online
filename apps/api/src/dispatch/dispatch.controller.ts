@@ -47,21 +47,21 @@ export class DispatchController {
 
   @Post()
   @Permissions(perm(R, ACTIONS.CREATE))
-  @Audit({ action: ACTIONS.CREATE, resource: R })
+  @Audit({ action: ACTIONS.CREATE, resource: R, description: 'Created a dispatch' })
   create(@Body() dto: CreateDispatchDto, @CurrentUser('name') userName: string) {
     return this.dispatch.create(dto, userName);
   }
 
   @Patch(':id')
   @Permissions(perm(R, ACTIONS.UPDATE))
-  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Edited a dispatch' })
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateDispatchDto) {
     return this.dispatch.update(id, dto);
   }
 
   @Delete(':id')
   @Permissions(perm(R, ACTIONS.DELETE))
-  @Audit({ action: ACTIONS.DELETE, resource: R })
+  @Audit({ action: ACTIONS.DELETE, resource: R, description: 'Deleted a dispatch' })
   async remove(@Param('id', ParseIntPipe) id: number) {
     await this.dispatch.remove(id);
     return { ok: true };

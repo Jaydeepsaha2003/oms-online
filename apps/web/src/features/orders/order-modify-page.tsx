@@ -23,6 +23,23 @@ import { LiveLinePhotos } from './line-photos';
 
 const PAGE_SIZE = 50;
 
+// Persist the list's filters so they survive a page refresh or navigating away and back.
+const FILTER_KEY = 'oms:order-modify-filters';
+interface OrderModifyFilters {
+  search: string;
+  product: string;
+  design: string;
+  priority: string;
+  page: number;
+}
+const loadFilters = (): Partial<OrderModifyFilters> => {
+  try {
+    return JSON.parse(sessionStorage.getItem(FILTER_KEY) || '{}') as Partial<OrderModifyFilters>;
+  } catch {
+    return {};
+  }
+};
+
 const STATUS_STYLE: Record<string, string> = {
   CONFIRMED: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
   PENDING: 'bg-amber-50 text-amber-700 ring-amber-200',
@@ -114,11 +131,17 @@ const COLUMNS: DataColumn<Row>[] = [
 export function OrderModifyPage() {
   const navigate = useNavigate();
   const confirm = useConfirm();
-  const [search, setSearch] = useState('');
-  const [product, setProduct] = useState('');
-  const [design, setDesign] = useState('');
-  const [priority, setPriority] = useState('');
-  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState(() => loadFilters().search ?? '');
+  const [product, setProduct] = useState(() => loadFilters().product ?? '');
+  const [design, setDesign] = useState(() => loadFilters().design ?? '');
+  const [priority, setPriority] = useState(() => loadFilters().priority ?? '');
+  const [page, setPage] = useState(() => loadFilters().page ?? 1);
+
+  // Persist the current filters whenever they change.
+  useEffect(() => {
+    sessionStorage.setItem(FILTER_KEY, JSON.stringify({ search, product, design, priority, page }));
+  }, [search, product, design, priority, page]);
+
   const { data, isLoading } = useOrders({
     page,
     pageSize: PAGE_SIZE,
@@ -141,6 +164,7 @@ export function OrderModifyPage() {
     setDesign('');
     setPriority('');
     setPage(1);
+    sessionStorage.removeItem(FILTER_KEY);
   };
 
   // Draft orders are work-in-progress and stay hidden from Order Modify.
@@ -280,8 +304,8 @@ export function OrderModifyPage() {
           // No height cap — every row renders in the page's own natural scroll
           // (same as the View Orders list), so pagination sits right after the
           // last row instead of behind a second, nested scrollbar.
-          // Larger, easy-to-read data font (columns still auto-fit their content).
-          className="text-[16px] [&_thead_th]:text-[14px] [&_td]:py-1.5 [&_th]:py-2 [&_tbody_button]:size-8"
+          // Compact data font + tight padding so more columns fit on screen at once.
+          className="text-[14px] [&_thead_th]:text-[12px] [&_td]:px-2.5 [&_td]:py-1.5 [&_th]:px-2.5 [&_th]:py-2 [&_tbody_button]:size-7"
           emptyText="No order lines found."
           onRowClick={(r) => setEdit(r)}
         />

@@ -3,10 +3,13 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
+import { Public } from '../common/decorators/public.decorator';
 import { SettingsService } from './settings.service';
 import { CreateOrderOptionDto } from './dto/order-option.dto';
 import { UpdateCompanyDto } from './dto/company.dto';
 import { UpdateOrderTermsDto } from './dto/order-terms.dto';
+import { UpdateOrderFooterDto } from './dto/order-footer.dto';
+import { UpdateChallanTermsDto } from './dto/challan-terms.dto';
 
 const R = RESOURCES.SETTING;
 
@@ -22,7 +25,9 @@ export class SettingsController {
     return this.settings.findAll();
   }
 
-  // Company branding — readable by any authenticated user (printed on documents).
+  // Company branding — public (printed on documents, and shown on the login
+  // page before anyone is authenticated).
+  @Public()
   @Get('company')
   company() {
     return this.settings.getCompany();
@@ -47,6 +52,34 @@ export class SettingsController {
   @Audit({ action: ACTIONS.UPDATE, resource: R })
   updateOrderTerms(@Body() dto: UpdateOrderTermsDto) {
     return this.settings.updateOrderTerms(dto);
+  }
+
+  // Order footer — readable by any authenticated user (printed on the Sales
+  // Order / Quotation bill), editable only with setting:update.
+  @Get('order-footer')
+  getOrderFooter() {
+    return this.settings.getOrderFooter();
+  }
+
+  @Put('order-footer')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  updateOrderFooter(@Body() dto: UpdateOrderFooterDto) {
+    return this.settings.updateOrderFooter(dto);
+  }
+
+  // Challan terms — readable by any authenticated user (printed on the Challan
+  // / Tax Invoice bill), editable only with setting:update.
+  @Get('challan-terms')
+  getChallanTerms() {
+    return this.settings.getChallanTerms();
+  }
+
+  @Put('challan-terms')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  updateChallanTerms(@Body() dto: UpdateChallanTermsDto) {
+    return this.settings.updateChallanTerms(dto);
   }
 
   @Post()

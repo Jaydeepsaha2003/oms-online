@@ -22,9 +22,9 @@ interface ImportResult {
 const GROUPS = [
   { key: 'masters', label: 'Masters', detail: 'Customers, products, designs, transporters, GST & transport rates, price-calc, agents', sections: ['masters', 'pricecal', 'agents'] },
   { key: 'special', label: 'Special rates', detail: 'Customer rate overrides + logo restrictions', sections: ['special'] },
-  { key: 'txn', label: 'Orders & Dispatch', detail: 'Order history + dispatch records (replaces existing orders)', sections: ['orders', 'dispatch'] },
+  { key: 'txn', label: 'Orders & Dispatch', detail: 'Order history + dispatch records — adds new ones only, never touches an order/dispatch already in OMS', sections: ['orders', 'dispatch'] },
   { key: 'challans', label: 'Challans', detail: 'Saved tax invoices / challans (InvTbl + ChallanTbl); upserts by challan no. Debit Notes (prefix DN) load here too', sections: ['challans'] },
-  { key: 'accounts', label: 'Accounts', detail: 'Receipts, ledger, party advances, sales discounts, opening balances & credit notes — replaces all existing accounting rows', sections: ['accounts'] },
+  { key: 'accounts', label: 'Accounts', detail: 'Receipts, ledger, party advances, sales discounts, opening balances & credit notes — adds new rows only (matched by voucher/reference no.)', sections: ['accounts'] },
 ] as const;
 
 export function AccessImportCard() {
@@ -51,7 +51,7 @@ export function AccessImportCard() {
       const ok = await confirm({
         title: 'Import data into the database?',
         description:
-          'This writes to the live database. Masters are merged (matched by name/key); Orders & Dispatch REPLACE the existing order history.',
+          'This writes to the live database. Every section only adds rows that aren\'t already in OMS — masters are merged by name/key, orders/dispatch/accounts are matched by their legacy id — nothing existing is ever overwritten or deleted.',
         confirmText: 'Import now',
       });
       if (!ok) return;
@@ -130,7 +130,7 @@ export function AccessImportCard() {
 
             <p className="text-xs text-amber-700">
               <TriangleAlert className="mr-1 inline size-3.5 align-[-2px]" />
-              Masters are merged (matched by name/key). <b>Orders &amp; Dispatch replace</b> the existing order history.
+              Every section is <b>additive only</b> — matched by name/key or legacy id, nothing already in OMS is ever overwritten or removed.
             </p>
 
             {/* Results */}

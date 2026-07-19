@@ -630,6 +630,14 @@ model OrderItem {
   comment     String?
   // Soft link to the bag Booking this line was converted from (null for normal lines).
   bookingId   Int?
+  // Set only when the MS Access import couldn't use the legacy ORDERTBL.ID as this
+  // row's id (another row — usually a natively-created OrderItem whose Prisma
+  // autoincrement id happened to land on the same number — already owns it).
+  // importDispatch falls back to matching legacy DispatchTbl.OrdTrans against this
+  // column when it doesn't match any row's real id, so those dispatches still
+  // resolve to the correct (remapped) line instead of silently landing on whichever
+  // unrelated item now owns the original legacy id.
+  legacyItemId Int?
   createdAt   DateTime @default(now())
 
   order      Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
@@ -638,6 +646,7 @@ model OrderItem {
 
   @@index([orderId])
   @@index([bookingId])
+  @@index([legacyItemId])
   @@map("order_items")
 }
 
@@ -1014,11 +1023,33 @@ model Booking {
   updatedAt     DateTime @updatedAt
 
   conversions BookingConversion[]
+  items       BookingItem[]
 
   @@index([customerId])
   @@index([status])
   @@index([bookingDate])
   @@map("bookings")
+}
+
+/// One product-category line reserved on a booking (e.g. "1 bag GLASS"). A
+/// booking's own bags/kgs are the rollup sum of its items. Matched against real
+/// OrderItem.pCategory at conversion time to draw down per-category, not just
+/// the booking's overall total.
+model BookingItem {
+  id            Int      @id @default(autoincrement())
+  bookingId     Int
+  pCategory     String
+  bags          Float    @default(0)
+  kgs           Float    @default(0)
+  convertedBags Float    @default(0)
+  convertedKgs  Float    @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@map("booking_items")
 }
 
 /// Audit of one conversion step: which items were pulled from a booking, the

@@ -108,7 +108,7 @@ export function AppShell() {
           onPointerEnter={() => setHovered(true)}
           onPointerLeave={() => setHovered(false)}
           className={cn(
-            'fixed top-0 left-0 z-40 h-screen border-r bg-sidebar transition-[width] duration-200',
+            'fixed top-0 left-0 z-50 h-screen border-r bg-sidebar transition-[width] duration-200',
             expanded ? 'w-72' : 'w-20',
             hovered && !isPinned && 'shadow-2xl shadow-blue-950/25',
           )}

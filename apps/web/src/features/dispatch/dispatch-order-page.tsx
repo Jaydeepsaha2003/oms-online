@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Loader2, Package, PackageCheck, Search, Truck } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2, Package, PackageCheck, Search, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { DISPATCH_STATUSES, type DispatchStatus, type PendingLineDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -23,15 +23,15 @@ const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? 0 : Num
 const qty = (v: number | null) => (v ? v.toLocaleString('en-IN') : '—');
 
 const DueBadge = ({ t }: { t: string }) => (
-  <span className={cn('inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset', t === 'Over Due' ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200')}>
+  <span className={cn('inline-flex rounded-full px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset', t === 'Over Due' ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200')}>
     {t}
   </span>
 );
 
 const COLUMNS: DataColumn<PendingLineDto>[] = [
-  { id: 'order', label: 'Order #', pin: 'left0', fixed: true, cell: (r) => <span className="font-mono text-xs font-medium">{shortOrderCode(r.orderCode, r.orderId)}</span> },
+  { id: 'order', label: 'Order #', pin: 'left0', pinWidthClass: 'sm:w-16 sm:min-w-16', fixed: true, cell: (r) => <span className="font-mono text-xs font-medium">{shortOrderCode(r.orderCode, r.orderId)}</span> },
   { id: 'orderDate', label: 'Order date', cell: (r) => <span className="whitespace-nowrap">{formatDate(r.orderDate)}</span> },
-  { id: 'due', label: 'Due', cell: (r) => <span className="flex items-center gap-2 whitespace-nowrap">{formatDate(r.dueDate)} <DueBadge t={r.dueType} /></span> },
+  { id: 'due', label: 'Due', cell: (r) => <span className="flex items-center gap-1.5 whitespace-nowrap">{formatDate(r.dueDate)} <DueBadge t={r.dueType} /></span> },
   { id: 'customer', label: 'Customer', cell: (r) => <span className="font-medium">{r.customerName}</span> },
   { id: 'product', label: 'Product', cell: (r) => <span className="font-medium">{r.productName || r.product || '—'}</span> },
   { id: 'design', label: 'Design', cell: (r) => r.designType || '—' },
@@ -50,6 +50,7 @@ export function DispatchOrderPage() {
   const [customer, setCustomer] = useState('');
   const [product, setProduct] = useState('');
   const [design, setDesign] = useState('');
+  const [subCategory, setSubCategory] = useState('');
   const [page, setPage] = useState(1);
   const [active, setActive] = useState<PendingLineDto | null>(null);
   const [shipped, setShipped] = useState<string | null>(null); // dispatch code → plays the truck animation
@@ -71,25 +72,27 @@ export function DispatchOrderPage() {
     customer: customer || undefined,
     product: product || undefined,
     design: design || undefined,
+    subCategory: subCategory || undefined,
   };
   const { data, isLoading } = usePendingOrders(query);
+  const hasFilters = !!searchInput || !!dueType || !!customer || !!product || !!design || !!subCategory;
+  const resetFilters = () => {
+    setSearchInput('');
+    setSearch('');
+    setDueType('');
+    setCustomer('');
+    setProduct('');
+    setDesign('');
+    setSubCategory('');
+    setPage(1);
+  };
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
   const cols = useColumnOrder('dispatch-pending', COLUMNS);
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex items-center gap-3">
-          <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
-            <Truck className="size-5" />
-          </div>
-          <div>
-            <h2 className="text-2xl font-semibold tracking-tight">Dispatch Order</h2>
-            <p className="text-muted-foreground text-sm">{data?.total ?? 0} pending line(s) · click a row to dispatch</p>
-          </div>
-        </div>
-
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-end">
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
           <div className="relative w-full sm:w-64">
             <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
@@ -107,6 +110,19 @@ export function DispatchOrderPage() {
           <div className="w-40">
             <NativeSelect value={design} onChange={(v) => { setDesign(v); setPage(1); }} options={['', ...(options?.designs ?? [])]} placeholder="All designs" />
           </div>
+          <div className="w-44">
+            <NativeSelect value={subCategory} onChange={(v) => { setSubCategory(v); setPage(1); }} options={['', ...(options?.subCategories ?? [])]} placeholder="All sub categories" />
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-muted-foreground"
+            onClick={resetFilters}
+            disabled={!hasFilters}
+            title={hasFilters ? 'Clear all filters' : 'No filters applied'}
+          >
+            <X /> Reset
+          </Button>
           <ColumnSettings
             columns={cols.orderedReorderable}
             hidden={cols.hidden}
@@ -125,7 +141,7 @@ export function DispatchOrderPage() {
         isLoading={isLoading}
         dense
         // Compact, readable data font; columns still auto-fit their content.
-        className="text-[13px] [&_thead_th]:h-9 [&_thead_th]:text-[12px] [&_td]:px-3 [&_td]:py-1.5 [&_th]:px-3 [&_tbody_button]:size-7"
+        className="text-[15px] [&_thead_th]:h-9 [&_thead_th]:text-[13px] [&_td]:px-3 [&_td]:py-1.5 [&_th]:px-3 [&_tbody_button]:size-7"
         emptyText="No pending order lines — everything is dispatched."
         onRowClick={(r) => setActive(r)}
       />

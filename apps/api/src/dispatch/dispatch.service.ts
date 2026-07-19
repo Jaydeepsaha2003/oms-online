@@ -88,14 +88,16 @@ export class DispatchService {
     const customers = new Set<string>();
     const products = new Set<string>();
     const designs = new Set<string>();
+    const subCategories = new Set<string>();
     for (const l of lines) {
       if (l.customerName) customers.add(l.customerName);
       const p = l.productName || l.product;
       if (p) products.add(p);
       if (l.designType && l.designType.toUpperCase() !== 'NA') designs.add(l.designType);
+      if (l.subCategory) subCategories.add(l.subCategory);
     }
     const sorted = (s: Set<string>) => [...s].sort((a, b) => a.localeCompare(b));
-    return { customers: sorted(customers), products: sorted(products), designs: sorted(designs) };
+    return { customers: sorted(customers), products: sorted(products), designs: sorted(designs), subCategories: sorted(subCategories) };
   }
 
   async pending(query: PendingQueryDto): Promise<Paginated<PendingLineDto>> {
@@ -111,6 +113,7 @@ export class DispatchService {
     if (query.customer) lines = lines.filter((l) => l.customerName === query.customer);
     if (query.product) lines = lines.filter((l) => (l.productName || l.product) === query.product);
     if (query.design) lines = lines.filter((l) => l.designType === query.design);
+    if (query.subCategory) lines = lines.filter((l) => l.subCategory === query.subCategory);
     if (query.unit) {
       const u = query.unit.toUpperCase();
       lines = lines.filter((l) =>

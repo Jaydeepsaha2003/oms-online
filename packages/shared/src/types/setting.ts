@@ -31,6 +31,26 @@ export interface OrderTermsInput {
   terms: string[];
 }
 
+/** Sales Order / Quotation bill's footer text lines — editable in Settings.
+ *  A line containing the token "{DOC_TYPE}" has it replaced with "SALES ORDER" or "QUOTATION" when printed. */
+export interface OrderFooterDto {
+  lines: string[];
+}
+
+export interface OrderFooterInput {
+  lines: string[];
+}
+
+/** Challan / Tax Invoice bill's "Terms & Conditions" list — editable in Settings.
+ *  Empty by default (no terms printed) until the business saves its own list. */
+export interface ChallanTermsDto {
+  terms: string[];
+}
+
+export interface ChallanTermsInput {
+  terms: string[];
+}
+
 export interface OrderOptionInput {
   group: string;
   value: string;

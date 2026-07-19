@@ -5,17 +5,14 @@ import { Audit } from '../common/decorators/audit.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CrmService } from './crm.service';
-import { GeminiService } from './gemini.service';
 import {
   AddFollowupLogDto,
-  AiConfigInputDto,
   ChecklistItemInputDto,
   CreateFollowupDto,
   CrmSettingsDto,
   FollowupQueryDto,
   UpdateChecklistItemDto,
   UpdateFollowupDto,
-  VoiceChecklistDto,
 } from './dto/crm.dto';
 
 const R = RESOURCES.CRM;
@@ -24,31 +21,7 @@ const R = RESOURCES.CRM;
 @ApiBearerAuth()
 @Controller('crm/followups')
 export class CrmController {
-  constructor(
-    private readonly crm: CrmService,
-    private readonly gemini: GeminiService,
-  ) {}
-
-  /* ── AI (Gemini voice → checklist) ──────────────────────────────────────── */
-
-  @Get('ai/status')
-  @Permissions(perm(R, ACTIONS.VIEW))
-  aiStatus() {
-    return this.gemini.status();
-  }
-
-  @Put('ai/config')
-  @Permissions(perm(R, ACTIONS.UPDATE))
-  @Audit({ action: ACTIONS.UPDATE, resource: R })
-  aiConfig(@Body() dto: AiConfigInputDto) {
-    return this.gemini.saveConfig(dto);
-  }
-
-  @Post('ai/voice-checklist')
-  @Permissions(perm(R, ACTIONS.CREATE))
-  voiceChecklist(@Body() dto: VoiceChecklistDto) {
-    return this.gemini.voiceToChecklist(dto.audio, dto.mimeType ?? 'audio/wav');
-  }
+  constructor(private readonly crm: CrmService) {}
 
   @Get('settings')
   @Permissions(perm(R, ACTIONS.VIEW))
@@ -93,16 +66,12 @@ export class CrmController {
     return this.crm.orderSuggest(q, party);
   }
 
-  @Get('product-suggest')
+  /** A party's open order LINE ITEMS (not just orders) — lets the follow-up form
+   *  link to a specific product/quantity instead of free-typed item text. */
+  @Get('order-items-suggest')
   @Permissions(perm(R, ACTIONS.VIEW))
-  productSuggest(@Query('q') q?: string) {
-    return this.crm.productSuggest(q);
-  }
-
-  @Get('party-match')
-  @Permissions(perm(R, ACTIONS.VIEW))
-  partyMatch(@Query('q') q?: string) {
-    return this.crm.partyMatch(q);
+  orderItemsSuggest(@Query('customerId') customerId?: string, @Query('party') party?: string) {
+    return this.crm.orderItemSuggest(customerId ? Number(customerId) : undefined, party);
   }
 
   @Get()

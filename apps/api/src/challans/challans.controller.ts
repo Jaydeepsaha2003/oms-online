@@ -93,7 +93,7 @@ export class ChallansController {
 
   @Put('settings')
   @Permissions(perm(RESOURCES.SETTING, ACTIONS.UPDATE))
-  @Audit({ action: ACTIONS.UPDATE, resource: RESOURCES.SETTING })
+  @Audit({ action: ACTIONS.UPDATE, resource: RESOURCES.SETTING, description: 'Saved challan prefix settings' })
   savePrefixSettings(@Body() dto: SavePrefixSettingsDto) {
     return this.challans.savePrefixSettings(dto);
   }
@@ -118,7 +118,7 @@ export class ChallansController {
 
   @Post('missing/dismiss')
   @Permissions(perm(R, ACTIONS.UPDATE))
-  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Dismissed a missing challan number' })
   async dismissMissing(@Body() dto: DismissMissingChallanDto) {
     await this.challans.dismissMissingChallan(dto.prefix, dto.fy, dto.invNo, dto.reason);
     return { ok: true };
@@ -126,7 +126,7 @@ export class ChallansController {
 
   @Post('missing/restore')
   @Permissions(perm(R, ACTIONS.UPDATE))
-  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Restored a missing challan number' })
   async restoreMissing(@Body() dto: DismissMissingChallanDto) {
     await this.challans.restoreMissingChallan(dto.prefix, dto.fy, dto.invNo);
     return { ok: true };
@@ -146,21 +146,21 @@ export class ChallansController {
 
   @Put(':id')
   @Permissions(perm(R, ACTIONS.UPDATE))
-  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Edited a challan' })
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: CreateChallanDto) {
     return this.challans.update(id, dto);
   }
 
   @Patch(':id/status')
   @Permissions(perm(R, ACTIONS.UPDATE))
-  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Changed a challan status' })
   updateStatus(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateChallanStatusDto) {
     return this.challans.updateStatus(id, dto.challanStatus);
   }
 
   @Delete(':id')
   @Permissions(perm(R, ACTIONS.DELETE))
-  @Audit({ action: ACTIONS.DELETE, resource: R })
+  @Audit({ action: ACTIONS.DELETE, resource: R, description: 'Deleted a challan' })
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.challans.remove(id);
   }
@@ -173,9 +173,22 @@ export class ChallansController {
     res.send(buffer);
   }
 
+  @Get(':id/bill.pdf')
+  @Permissions(perm(R, ACTIONS.PRINT))
+  async billPdf(@Param('id', ParseIntPipe) id: number, @Res() res: Response) {
+    try {
+      const { buffer, filename } = await this.challans.generateChallanBillPdf(id);
+      res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${filename}"` });
+      res.send(buffer);
+    } catch (error) {
+      console.error('Challan PDF generation error:', error);
+      res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
+    }
+  }
+
   @Post()
   @Permissions(perm(R, ACTIONS.CREATE))
-  @Audit({ action: ACTIONS.CREATE, resource: R })
+  @Audit({ action: ACTIONS.CREATE, resource: R, description: 'Created a challan' })
   create(@Body() dto: CreateChallanDto) {
     return this.challans.create(dto);
   }

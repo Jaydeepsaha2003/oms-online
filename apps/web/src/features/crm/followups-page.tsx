@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AlarmClock, Bell, CalendarClock, Check, ChevronDown, CircleCheck, Clock, Loader2, Mic, Pencil, Plus, Search, Trash2, TriangleAlert } from 'lucide-react';
+import { AlarmClock, Bell, CalendarClock, Check, ChevronDown, CircleCheck, Clock, Info, Loader2, Mic, Pencil, Plus, Search, Trash2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { type FollowupDto, type FollowupKind, type FollowupPartyGroup } from '@oms/shared';
-import { getApiErrorMessage, http } from '@/lib/api';
+import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -16,26 +16,23 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
+  useAddChecklist,
   useAddFollowupLog,
   useCreateFollowup,
   useDeleteFollowup,
   useFollowupBoard,
   useFollowupSummary,
+  useOrderItemSuggest,
   useOrderSuggest,
   usePartySuggest,
   useResolveFollowup,
   useSnoozeFollowup,
   useUpdateChecklistItem,
   useUpdateFollowup,
+  type OpenOrderItemHit,
 } from './use-crm';
 import { Chip, initials, itemLine, UrgencyChip } from './crm-shared';
-import { VoiceCapture } from './voice-capture';
-import { VoiceResolveDialog, type ResolveAnswer, type ResolveField } from './voice-resolve';
-
-type PartyHit = { id: number | null; partyName: string };
-type ProductHit = { id: number; name: string; category: string; subCategory: string };
-/** A catalogue item shown as "ROYAL · GLASS" so the category disambiguates. */
-const itemLabel = (p: ProductHit) => (p.category ? `${p.name} · ${p.category}` : p.name);
+import { ChecklistInput, type ChecklistDraftItem } from './checklist-input';
 
 const STAGES = ['POLISHING', 'SUPPLIER', 'DISPATCH', 'READY'];
 const BUCKETS = [
@@ -79,9 +76,9 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
         <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
           {isPay ? <CalendarClock className="size-5" /> : <Bell className="size-5" />}
         </div>
-        <div className="mr-auto">
+        <div className="mr-auto flex items-center gap-1.5">
           <h2 className="text-2xl font-semibold tracking-tight">{isPay ? 'Payment Follow-ups' : 'Follow-ups'}</h2>
-          <p className="text-muted-foreground text-sm">Every promise to a party, tracked until it's done — the system keeps nudging.</p>
+          <HelpTip text="Every promise to a party, tracked until it's done — the system keeps nudging." />
         </div>
         {canEdit && (
           <Button onClick={() => openForm(null)}>
@@ -356,15 +353,29 @@ const dayName = (days: number) => {
   return d.toLocaleDateString(undefined, { weekday: 'short' });
 };
 
+/** Small info-icon that shows help text on hover/tap, instead of always-visible hint text. */
+function HelpTip({ text }: { text: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button type="button" className="text-muted-foreground hover:text-foreground inline-flex size-4 shrink-0 items-center justify-center rounded-full" aria-label="Help">
+          <Info className="size-3.5" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-56">{text}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 /** One question-block of the form: a big icon + heading, then the control. */
 function Block({ emoji, title, hint, children }: { emoji: string; title: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="rounded-xl border bg-slate-50/60 p-3.5 sm:p-4">
       <div className="mb-2.5 flex items-center gap-2.5">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-white text-lg shadow-sm ring-1 ring-slate-200">{emoji}</span>
-        <div>
+        <div className="flex items-center gap-1.5">
           <div className="text-[15px] font-semibold leading-tight">{title}</div>
-          {hint && <div className="text-muted-foreground text-xs">{hint}</div>}
+          {hint && <HelpTip text={hint} />}
         </div>
       </div>
       {children}
@@ -374,15 +385,29 @@ function Block({ emoji, title, hint, children }: { emoji: string; title: string;
 
 const BIG_FIELD = 'h-12 text-base';
 
+/** Formats the still-open quantity of an order line, e.g. "5 bags, 40 kg". */
+const remLabel = (it: OpenOrderItemHit) => {
+  const parts: string[] = [];
+  if (it.remBags) parts.push(`${it.remBags} bag${it.remBags === 1 ? '' : 's'}`);
+  if (it.remPcs) parts.push(`${it.remPcs} pcs`);
+  if (it.remGram) parts.push(`${it.remGram} kg`);
+  if (it.remBox) parts.push(`${it.remBox} box`);
+  return parts.join(', ') || 'open';
+};
+const openItemLabel = (it: OpenOrderItemHit) =>
+  `${it.productName || it.design || 'Item'}${it.pCategory ? ` · ${it.pCategory}` : ''} — ${remLabel(it)} (${it.orderCode})`;
+
 function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing: FollowupDto | null; onClose: () => void }) {
   const create = useCreateFollowup();
   const update = useUpdateFollowup();
+  const addChecklist = useAddChecklist();
   const [party, setParty] = useState(editing?.partyName ?? '');
   const [customerId, setCustomerId] = useState<number | null>(editing?.customerId ?? null);
   const [partyQuery, setPartyQuery] = useState('');
   const [orderQuery, setOrderQuery] = useState('');
   const [orderId, setOrderId] = useState<number | null>(editing?.orderId ?? null);
   const [orderCode, setOrderCode] = useState(editing?.orderCode ?? '');
+  const [orderItemId, setOrderItemId] = useState<number | null>(editing?.orderItemId ?? null);
   const [itemText, setItemText] = useState(editing?.itemText ?? '');
   const [title, setTitle] = useState(editing?.title ?? '');
   const [stage, setStage] = useState(editing?.stage ?? '');
@@ -391,12 +416,14 @@ function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing:
   const [interval, setIntervalMins] = useState(editing?.reminderIntervalMins ? String(editing.reminderIntervalMins) : '');
   const [maxPerDay, setMaxPerDay] = useState(editing?.maxRemindersPerDay != null ? String(editing.maxRemindersPerDay) : '');
   const [showAdvanced, setShowAdvanced] = useState(false);
-  // Description / notes — a 1-line or multi-line message; the mic summarises speech into it.
   const [description, setDescription] = useState(editing?.detail ?? '');
+  const [checklist, setChecklist] = useState<ChecklistDraftItem[]>([]);
 
   const { data: parties = [] } = usePartySuggest(partyQuery);
   // With a party picked, this lists THEIR open orders (pending lines > 0) directly.
   const { data: orders = [] } = useOrderSuggest(orderQuery, party || undefined);
+  // …and this lists their actual open order LINE ITEMS, so a delivery can be linked precisely.
+  const { data: openItems = [] } = useOrderItemSuggest(customerId, party);
 
   const onPickParty = (v: string) => {
     setParty(v);
@@ -420,54 +447,17 @@ function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing:
     if (o && !party) { setParty(o.customerName); setCustomerId(o.customerId ?? null); }
   };
 
-  // Voice fields (customer/item) that matched >1 list entry → ask the user.
-  const [resolve, setResolve] = useState<ResolveField[] | null>(null);
-
-  const applyCustomer = (name: string, id: number | null) => { setParty(name); setCustomerId(id); };
-
-  /**
-   * Match a spoken customer against the customer list and a spoken item against
-   * the product catalogue. Exact or single match → fill it silently; several
-   * matches → collect a question; none → keep what was said. Any collected
-   * questions open the "Just to be sure…" dialog.
-   */
-  const handleVoiceResult = async (result: { detectedCustomer?: string; detectedItem?: string }) => {
-    const customer = result.detectedCustomer?.trim();
-    const item = result.detectedItem?.trim();
-    const questions: ResolveField[] = [];
-
-    if (customer) {
-      const hits = await http
-        .get<PartyHit[]>('/crm/followups/party-match', { params: { q: customer } })
-        .catch(() => [] as PartyHit[]);
-      const exact = hits.find((h) => h.partyName.toLowerCase() === customer.toLowerCase());
-      if (exact) { applyCustomer(exact.partyName, exact.id); toast.success(`Party matched: ${exact.partyName}`); }
-      else if (hits.length === 1) { applyCustomer(hits[0].partyName, hits[0].id); toast.success(`Party matched: ${hits[0].partyName}`); }
-      else if (hits.length > 1) { questions.push({ kind: 'customer', spoken: customer, candidates: hits.map((h) => ({ id: h.id, label: h.partyName })) }); }
-      else { applyCustomer(customer, null); toast.info(`New party noted: ${customer}`); }
+  const itemOptions = useMemo(() => openItems.map(openItemLabel), [openItems]);
+  const onPickItem = (label: string) => {
+    setItemText(label);
+    const match = openItems.find((it) => openItemLabel(it) === label);
+    if (match) {
+      setOrderItemId(match.orderItemId);
+      setOrderId(match.orderId);
+      setOrderCode(match.orderCode);
+    } else {
+      setOrderItemId(null);
     }
-
-    if (item) {
-      const hits = await http
-        .get<ProductHit[]>('/crm/followups/product-suggest', { params: { q: item } })
-        .catch(() => [] as ProductHit[]);
-      const exact = hits.find((h) => h.name.toLowerCase() === item.toLowerCase());
-      if (exact) { setItemText(itemLabel(exact)); toast.success(`Item matched: ${exact.name}`); }
-      else if (hits.length === 1) { setItemText(itemLabel(hits[0])); toast.success(`Item matched: ${hits[0].name}`); }
-      else if (hits.length > 1) { questions.push({ kind: 'item', spoken: item, candidates: hits.map((h) => ({ id: h.id, label: itemLabel(h) })) }); }
-      else { setItemText(item); toast.info(`Item noted: ${item}`); }
-    }
-
-    if (questions.length > 0) setResolve(questions);
-  };
-
-  const applyResolved = (answers: ResolveAnswer[]) => {
-    for (const a of answers) {
-      if (a.kind === 'customer') applyCustomer(a.label, a.id);
-      else setItemText(a.label);
-    }
-    setResolve(null);
-    toast.success('Updated from your voice');
   };
 
   const isPay = kind === 'PAYMENT';
@@ -480,15 +470,29 @@ function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing:
       (orderCode ? `${isPay ? 'Payment for' : 'Deliver'} ${orderCode}` : '') ||
       (isPay ? 'Payment follow-up' : 'Delivery follow-up');
     const input = {
-      kind, customerId, partyName: party.trim(), orderId, orderCode: orderCode || null, itemText: itemText.trim() || null,
+      kind, customerId, partyName: party.trim(), orderId, orderCode: orderCode || null, orderItemId, itemText: itemText.trim() || null,
       title: autoTitle, detail: description.trim() || null, stage: stage.trim() || null, priority: priority as 'NORMAL' | 'URGENT',
       promisedAt: promisedAt || null,
       reminderIntervalMins: interval.trim() ? Number(interval) : null,
       maxRemindersPerDay: maxPerDay.trim() ? Number(maxPerDay) : null,
+      ...(editing ? {} : { checklist: checklist.map((c) => ({ text: c.text, source: 'MANUAL' as const })) }),
     };
-    const opts = { onSuccess: () => { toast.success(editing ? 'Follow-up updated' : 'Follow-up added'); onClose(); }, onError: (e: unknown) => toast.error(getApiErrorMessage(e, 'Failed')) };
-    if (editing) update.mutate({ id: editing.id, input }, opts);
-    else create.mutate(input, opts);
+    const onDone = () => { toast.success(editing ? 'Follow-up updated' : 'Follow-up added'); onClose(); };
+    const onFail = (e: unknown) => toast.error(getApiErrorMessage(e, 'Failed'));
+    if (editing) {
+      update.mutate(
+        { id: editing.id, input },
+        {
+          onSuccess: () => {
+            if (checklist.length > 0) addChecklist.mutate({ id: editing.id, items: checklist.map((c) => ({ text: c.text, source: 'MANUAL' })) });
+            onDone();
+          },
+          onError: onFail,
+        },
+      );
+    } else {
+      create.mutate(input, { onSuccess: onDone, onError: onFail });
+    }
   };
 
   const saving = create.isPending || update.isPending;
@@ -503,10 +507,11 @@ function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing:
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[92vh] w-[calc(100vw-2rem)] sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle className="text-xl">{editing ? 'Edit follow-up' : isPay ? 'New payment follow-up' : 'New follow-up'}</DialogTitle>
-          <DialogDescription className="text-sm">
-            Fill what you know — only the <b>party</b> is a must. The system will remember and remind.
-          </DialogDescription>
+          <div className="flex items-center gap-1.5">
+            <DialogTitle className="text-xl">{editing ? 'Edit follow-up' : isPay ? 'New payment follow-up' : 'New follow-up'}</DialogTitle>
+            <HelpTip text="Fill what you know — only the party is a must. The system will remember and remind." />
+          </div>
+          <DialogDescription className="sr-only">Fill what you know — only the party is a must. The system will remember and remind.</DialogDescription>
         </DialogHeader>
 
         <div className="-mx-1 max-h-[64vh] space-y-3 overflow-y-auto px-1 pb-1">
@@ -518,28 +523,47 @@ function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing:
             </div>
           </Block>
 
-          {/* 2 · WHAT — item + a description you can type OR speak (one mic) */}
-          <Block emoji={isPay ? '💰' : '📦'} title={isPay ? 'What payment & notes' : 'What they asked for & notes'} hint="Type it, or tap the mic and just talk — it summarises into the note.">
+          {/* 2 · WHAT — item + a typed description */}
+          <Block
+            emoji={isPay ? '💰' : '📦'}
+            title={isPay ? 'What payment & notes' : 'What they asked for & notes'}
+            hint={isPay ? 'Type what the payment is for.' : 'Pick one of their open order items, or just type it.'}
+          >
             <div className="space-y-4">
               <div>
                 <div className="text-muted-foreground mb-1 text-xs font-semibold tracking-wide uppercase">{isPay ? 'Payment' : 'Item'}</div>
-                <Input className={BIG_FIELD} value={itemText} onChange={(e) => setItemText(e.target.value)} placeholder={isPay ? 'e.g. ₹1,20,000 balance for challan 210' : 'e.g. 10 MALBORO — 5 bags'} autoFocus={!editing} />
+                {isPay ? (
+                  <Input className={BIG_FIELD} value={itemText} onChange={(e) => setItemText(e.target.value)} placeholder="e.g. ₹1,20,000 balance for challan 210" autoFocus={!editing} />
+                ) : (
+                  <Combobox
+                    value={itemText}
+                    onChange={onPickItem}
+                    options={itemOptions}
+                    creatable
+                    placeholder={party ? (itemOptions.length ? 'Pick an open item, or type your own…' : 'No open items for this party — type freely') : 'Pick a party first, or type freely'}
+                    className={BIG_FIELD}
+                  />
+                )}
               </div>
 
               <div>
                 <div className="mb-1.5 flex items-center justify-between gap-2">
                   <span className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">💬 Description / notes</span>
                 </div>
-                <VoiceCapture onConfirm={(t) => setDescription((d) => (d.trim() ? `${d.trim()}\n${t}` : t))} onVoiceResult={handleVoiceResult} />
                 <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   rows={Math.min(8, Math.max(2, description.split('\n').length + 1))}
-                  placeholder="Type the note here — one line or many. Or use the mic above."
-                  className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 mt-2 w-full rounded-md border px-3 py-2 text-base outline-none placeholder:text-muted-foreground focus-visible:ring-[3px]"
+                  placeholder="Type the note here — one line or many."
+                  className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 w-full rounded-md border px-3 py-2 text-base outline-none placeholder:text-muted-foreground focus-visible:ring-[3px]"
                 />
               </div>
             </div>
+          </Block>
+
+          {/* 2b · Checklist — optional sub-tasks */}
+          <Block emoji="✅" title="Checklist" hint={editing ? 'Add new tasks — existing ones stay editable on the board.' : 'Optional — break the promise into sub-tasks.'}>
+            <ChecklistInput items={checklist} onChange={setChecklist} />
           </Block>
 
           {/* 3 · WHEN */}
@@ -638,10 +662,6 @@ function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing:
           </Button>
         </DialogFooter>
       </DialogContent>
-
-      {resolve && (
-        <VoiceResolveDialog fields={resolve} onCancel={() => setResolve(null)} onResolve={applyResolved} />
-      )}
     </Dialog>
   );
 }

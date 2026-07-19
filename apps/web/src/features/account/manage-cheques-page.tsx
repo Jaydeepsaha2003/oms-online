@@ -17,11 +17,12 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ChequeDto, ChequeStatus } from '@oms/shared';
-import { CHARGES_PAID_BY } from '@oms/shared';
+import { CHARGES_PAID_BY, RESOURCES } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { getApiErrorMessage } from '@/lib/api';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/common/confirm';
+import { RecordHistory } from '@/components/common/record-history';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
@@ -54,7 +55,7 @@ function ymd(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 const ymdOf = (iso: string) => ymd(new Date(iso));
-const prettyDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
+const prettyDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—');
 const TODAY = () => ymd(new Date());
 
 /** Days from today to a due date (negative = overdue). */
@@ -173,6 +174,7 @@ export function ManageChequesPage() {
 
   const rowActions = (c: ChequeDto) => (
     <div className="flex items-center justify-end gap-1.5">
+      <RecordHistory resource={RESOURCES.CHEQUE} resourceId={c.id} label={c.chequeNo} />
       {canUpdate && c.status === 'PENDING' && (
         <button onClick={() => setFormModal(c)} className="text-muted-foreground hover:text-primary" title="Edit (due date, remarks, invoices)">
           <Pencil className="size-4" />

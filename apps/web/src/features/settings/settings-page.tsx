@@ -16,7 +16,19 @@ import { AccessImportCard } from './access-import-card'; // MS Access connector 
 import { CrmReminderCard } from '@/features/crm/crm-settings-card';
 import { MyDevicesCard } from './my-devices-card';
 import { TestNotificationCard } from './test-notification-card';
-import { useCompany, useCreateOrderOption, useDeleteOrderOption, useOrderTerms, useSettings, useUpdateCompany, useUpdateOrderTerms } from './use-settings';
+import {
+  useChallanTerms,
+  useCompany,
+  useCreateOrderOption,
+  useDeleteOrderOption,
+  useOrderFooter,
+  useOrderTerms,
+  useSettings,
+  useUpdateChallanTerms,
+  useUpdateCompany,
+  useUpdateOrderFooter,
+  useUpdateOrderTerms,
+} from './use-settings';
 
 export function SettingsPage() {
   const { data: all, isLoading } = useSettings();
@@ -42,6 +54,10 @@ export function SettingsPage() {
       <CompanyCard canEdit={canEdit} />
 
       <OrderTermsCard canEdit={canEdit} />
+
+      <OrderFooterCard canEdit={canEdit} />
+
+      <ChallanTermsCard canEdit={canEdit} />
 
       {canEdit && <AccessImportCard />}
 
@@ -276,6 +292,153 @@ function OrderTermsCard({ canEdit }: { canEdit: boolean }) {
             </Button>
             <Button onClick={onSave} disabled={save.isPending}>
               {save.isPending ? <Loader2 className="animate-spin" /> : null} Save terms
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** The Challan / Tax Invoice bill's "Terms & Conditions" list — same layout as the
+ *  Sales Order card above, but its own list and empty by default (nothing is
+ *  printed until the business adds terms here). */
+function ChallanTermsCard({ canEdit }: { canEdit: boolean }) {
+  const { data } = useChallanTerms();
+  const save = useUpdateChallanTerms();
+  const [terms, setTerms] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (data) setTerms(data.terms);
+  }, [data]);
+
+  const setTerm = (i: number, value: string) => setTerms((t) => t.map((x, idx) => (idx === i ? value : x)));
+  const remove = (i: number) => setTerms((t) => t.filter((_, idx) => idx !== i));
+  const add = () => setTerms((t) => [...t, '']);
+
+  const onSave = () => {
+    const cleaned = terms.map((t) => t.trim()).filter(Boolean);
+    save.mutate(
+      { terms: cleaned },
+      { onSuccess: () => { setTerms(cleaned); toast.success('Terms & Conditions saved'); }, onError: (e) => toast.error(getApiErrorMessage(e, 'Save failed')) },
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Challan Terms &amp; Conditions</CardTitle>
+        <p className="text-muted-foreground text-xs">Shown on the printed Challan / Tax Invoice, above the Authorised Signatory line. Empty until you add some here.</p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="space-y-2">
+          {terms.length === 0 && <span className="text-muted-foreground text-sm">No terms yet — nothing is printed on the Challan.</span>}
+          {terms.map((t, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <span className="bg-foreground/70 size-2 shrink-0 rounded-[2px]" />
+              <Input
+                value={t}
+                onChange={(e) => setTerm(i, e.target.value)}
+                placeholder="e.g. Goods Once Sold Will Not Be Taken Back"
+                disabled={!canEdit}
+                maxLength={300}
+              />
+              {canEdit && (
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive flex size-8 shrink-0 items-center justify-center rounded-full transition-colors"
+                  onClick={() => remove(i)}
+                  aria-label={`Remove term ${i + 1}`}
+                >
+                  <Trash2 className="size-4" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {canEdit && (
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" onClick={add}>
+              <Plus /> Add term
+            </Button>
+            <Button onClick={onSave} disabled={save.isPending}>
+              {save.isPending ? <Loader2 className="animate-spin" /> : null} Save terms
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** The Sales Order / Quotation bill's footer text, printed centered at the very
+ *  bottom of the document. Use the token {DOC_TYPE} in a line to have it replaced
+ *  with "SALES ORDER" or "QUOTATION" depending on which document is printed. */
+function OrderFooterCard({ canEdit }: { canEdit: boolean }) {
+  const { data } = useOrderFooter();
+  const save = useUpdateOrderFooter();
+  const [lines, setLines] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (data) setLines(data.lines);
+  }, [data]);
+
+  const setLine = (i: number, value: string) => setLines((l) => l.map((x, idx) => (idx === i ? value : x)));
+  const remove = (i: number) => setLines((l) => l.filter((_, idx) => idx !== i));
+  const add = () => setLines((l) => [...l, '']);
+
+  const onSave = () => {
+    const cleaned = lines.map((l) => l.trim()).filter(Boolean);
+    if (!cleaned.length) return toast.error('Add at least one footer line.');
+    save.mutate(
+      { lines: cleaned },
+      { onSuccess: () => { setLines(cleaned); toast.success('Footer text saved'); }, onError: (e) => toast.error(getApiErrorMessage(e, 'Save failed')) },
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Sales Order footer text</CardTitle>
+        <p className="text-muted-foreground text-xs">
+          Printed centered at the bottom of the Sales Order / Quotation bill. Use{' '}
+          <span className="font-mono">{'{DOC_TYPE}'}</span> in a line to show "SALES ORDER" or "QUOTATION" automatically.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="space-y-2">
+          {lines.length === 0 && <span className="text-muted-foreground text-sm">No footer lines yet.</span>}
+          {lines.map((l, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <Input
+                value={l}
+                onChange={(e) => setLine(i, e.target.value)}
+                placeholder="e.g. ***THIS IS COMPUTER GENRATED {DOC_TYPE}***"
+                disabled={!canEdit}
+                maxLength={300}
+              />
+              {canEdit && (
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive flex size-8 shrink-0 items-center justify-center rounded-full transition-colors"
+                  onClick={() => remove(i)}
+                  aria-label={`Remove footer line ${i + 1}`}
+                >
+                  <Trash2 className="size-4" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {canEdit && (
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" onClick={add}>
+              <Plus /> Add line
+            </Button>
+            <Button onClick={onSave} disabled={save.isPending}>
+              {save.isPending ? <Loader2 className="animate-spin" /> : null} Save footer
             </Button>
           </div>
         )}
