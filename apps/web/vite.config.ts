@@ -12,7 +12,20 @@ import mkcert from 'vite-plugin-mkcert';
 // so the mkcert HTTPS certificate is always valid for any IP, even if the network
 // changes or a VPN adapter is added/removed. No more stale hardcoded IPs.
 function getAllLocalIPs(): string[] {
-  const ips = new Set<string>(['localhost', '127.0.0.1']);
+  // Always pin the PC's RESERVED shop-router IP (same list as scripts/update-certs.ps1):
+  // if the server starts while the PC is on another network (e.g. a phone hotspot),
+  // auto-detection alone would regenerate the cert WITHOUT 192.168.0.236, and phones
+  // on the shop Wi-Fi then fail TLS ("can't establish a secure connection") until the
+  // next manual start.bat. Pinning keeps the home URL valid no matter where the cert
+  // was last regenerated.
+  const ips = new Set<string>([
+    'localhost',
+    '127.0.0.1',
+    '192.168.0.236',
+    // iPhone Personal Hotspot client pool — pre-pinned so a cert generated at
+    // home is already valid when the PC hops onto the hotspot (no restart needed).
+    ...Array.from({ length: 13 }, (_, i) => `172.20.10.${i + 2}`),
+  ]);
   const ifaces = networkInterfaces();
   for (const adapters of Object.values(ifaces)) {
     if (!adapters) continue;
