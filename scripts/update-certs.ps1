@@ -23,6 +23,13 @@ if (-not (Test-Path $mkcertExe)) {
 # after a detour onto another network. Add more fixed IPs here if the PC ever
 # gets a second reserved address.
 $reservedLanIps = @("192.168.0.236")
+# ALSO pre-pin the entire iPhone Personal Hotspot client range (172.20.10.2-14 -
+# iOS always assigns from this fixed pool). With these baked into the cert, the
+# ALREADY-RUNNING server stays TLS-valid the moment the PC hops onto the hotspot:
+# no cert regen, no restart - just open https://<hotspot-ip>:6173 on the phone
+# (run phone-url.bat to see the current address). Keep this list in sync with
+# getAllLocalIPs() in apps/web/vite.config.ts.
+$reservedLanIps += 2..14 | ForEach-Object { "172.20.10.$_" }
 $activeIps = @("localhost", "127.0.0.1", "::1") + $reservedLanIps
 $adapters = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -ne "127.0.0.1" -and $_.IPAddress -notlike "169.254.*" }
 foreach ($a in $adapters) {
