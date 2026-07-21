@@ -1,9 +1,10 @@
-import { Fragment, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Download, Loader2, Printer } from 'lucide-react';
 import { toast } from 'sonner';
 import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 import { Button } from '@/components/ui/button';
 import { buildBillFilename, preOpenPdfTab, savePdfBlob } from '@/lib/pdf';
 import kavishLogo from '@/assets/kavish-logo-order.png';
@@ -79,6 +80,51 @@ const PRINT_CSS = `
   .no-print { display: none !important; }
 }`;
 
+// A4 design width the challan is laid out at — matches the PDF capture width
+// (PDF_RENDER_W) so the on-screen preview mirrors the printed page exactly.
+const CHALLAN_DESIGN_W = 960;
+
+/**
+ * "Fit to width" preview scaling for phones. The challan is a fixed-width,
+ * large-font A4 document that badly overflows a phone screen. When `enabled`
+ * (mobile only) we render it at its full design width and CSS-scale the whole
+ * thing down to fit the available width — a faithful shrunk-to-fit page, like a
+ * PDF viewer. Desktop is left completely untouched (scale stays 1, no wrapper
+ * styling). The print/PDF path is unaffected: it re-clones #challan-invoice at
+ * its own width, independent of this on-screen transform.
+ */
+function useFitToWidth(designWidth: number, enabled: boolean) {
+  const outerRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(1);
+  const [height, setHeight] = useState<number | undefined>(undefined);
+
+  useLayoutEffect(() => {
+    if (!enabled) {
+      setScale(1);
+      setHeight(undefined);
+      return;
+    }
+    const outer = outerRef.current;
+    const inner = innerRef.current;
+    if (!outer || !inner) return;
+    const measure = () => {
+      const s = Math.min(1, outer.clientWidth / designWidth);
+      setScale(s);
+      // offsetHeight is the UNSCALED height (CSS transforms don't affect it), so
+      // the wrapper must reserve height*scale or a large empty gap appears below.
+      setHeight(inner.offsetHeight * s);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(outer);
+    ro.observe(inner);
+    return () => ro.disconnect();
+  }, [designWidth, enabled]);
+
+  return { outerRef, innerRef, scale, height };
+}
+
 export function ChallanBillPage() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
@@ -90,6 +136,9 @@ export function ChallanBillPage() {
   const logoSrc = company?.logo || kavishLogo;
   const [busy, setBusy] = useState(false);
   const [printImg, setPrintImg] = useState<string | null>(null);
+  // On phones, shrink the fixed-width A4 challan to fit the screen (see hook).
+  const isMobile = useIsMobile();
+  const fit = useFitToWidth(CHALLAN_DESIGN_W, isMobile);
 
   // Clear the print image once the print dialog closes.
   useEffect(() => {
@@ -226,6 +275,18 @@ export function ChallanBillPage() {
       </div>
 
       {/* ── Printable Challan (matches the Sales Order / Quotation letterhead format) ── */}
+      {/* Mobile: outer measures the available width + reserves the scaled height;
+          inner holds the full-width page and scales it down. Desktop: both are
+          transparent pass-throughs (no width/transform), so nothing changes. */}
+      <div
+        ref={fit.outerRef}
+        className={isMobile ? 'overflow-hidden rounded-lg border shadow-sm' : undefined}
+        style={isMobile ? { height: fit.height } : undefined}
+      >
+      <div
+        ref={fit.innerRef}
+        style={isMobile ? { width: CHALLAN_DESIGN_W, transformOrigin: 'top left', transform: `scale(${fit.scale})` } : undefined}
+      >
       <div
         id="challan-invoice"
         style={{
@@ -449,6 +510,8 @@ export function ChallanBillPage() {
             </div>
           )}
         </div>
+      </div>
+      </div>
       </div>
     </div>
   );

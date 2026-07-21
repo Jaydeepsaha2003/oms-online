@@ -167,7 +167,15 @@ export function Combobox({
   // never matches, so browsing the dropdown with the wheel keeps it open.
   React.useEffect(() => {
     if (!open) return;
+    // Opening the field on a phone makes the browser scroll it up above the
+    // virtual keyboard. That programmatic scroll must NOT count as "the user
+    // scrolled the page away" — otherwise the dropdown slams shut the instant it
+    // opens (so on mobile it looks like it never opens at all). Ignore scrolls in
+    // the short settling window right after opening; genuine user scrolls later
+    // still close it so the portaled list never floats detached from the field.
+    const openedAt = Date.now();
     const onScroll = (e: Event) => {
+      if (Date.now() - openedAt < 700) return;
       const t = e.target;
       const anchor = anchorRef.current;
       if (!anchor || !(t instanceof Node) || !t.contains(anchor)) return;

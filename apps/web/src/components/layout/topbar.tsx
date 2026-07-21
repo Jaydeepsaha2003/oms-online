@@ -7,6 +7,7 @@ import { useLogout } from '@/hooks/use-auth';
 import { usePermissions } from '@/hooks/use-permissions';
 import { getMenuIcon } from '@/lib/icons';
 import { NotificationsBell } from '@/features/crm/notifications-bell';
+import { SystemStatus } from '@/components/common/system-status';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
@@ -74,6 +75,7 @@ export function Topbar({
       <h1 className="truncate text-base font-bold tracking-tight">{title}</h1>
 
       <div className="ml-auto flex items-center gap-2">
+        <SystemStatus variant="compact" />
         {can('crm:view') && <NotificationsBell />}
         {user && (
           <DropdownMenu>

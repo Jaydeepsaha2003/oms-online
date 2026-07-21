@@ -61,23 +61,23 @@ function DispatchCard({ line, index, onClick }: { line: PendingLineDto; index: n
     >
       {/* Urgency rail — rose when overdue/urgent, navy otherwise. */}
       <span className={cn('absolute inset-y-0 left-0 w-1.5', overdue || urgent ? 'bg-rose-500' : 'bg-blue-900')} aria-hidden />
-      <div className="dispatch-card-in space-y-2 py-2.5 pr-3 pl-4 text-[11px]" style={{ animationDelay: `${Math.min(index, 10) * 45}ms` }}>
+      <div className="dispatch-card-in space-y-2.5 py-3.5 pr-3.5 pl-5 text-[13px]" style={{ animationDelay: `${Math.min(index, 10) * 45}ms` }}>
         <div className="flex items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <span className="bg-primary/10 text-primary rounded-md px-1.5 py-0.5 font-mono text-[11px] font-bold">{shortOrderCode(line.orderCode, line.orderId)}</span>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="bg-primary/10 text-primary rounded-md px-2 py-0.5 font-mono text-[13px] font-bold">{shortOrderCode(line.orderCode, line.orderId)}</span>
             <PriorityBadge p={line.priority} />
           </div>
           <DueBadge t={line.dueType} />
         </div>
 
         <div>
-          <p className="truncate text-[13px] font-semibold leading-tight">{line.customerName}</p>
-          <p className="text-muted-foreground mt-0.5 text-[10.5px]">Due {formatDate(line.dueDate)} · ordered {formatDate(line.orderDate)}</p>
+          <p className="truncate text-[16px] font-semibold leading-tight">{line.customerName}</p>
+          <p className="text-muted-foreground mt-1 text-[12px]">Due {formatDate(line.dueDate)} · ordered {formatDate(line.orderDate)}</p>
         </div>
 
-        <div className="bg-muted/50 rounded-lg px-2.5 py-1">
-          <p className="text-[12px] leading-snug font-semibold">{line.productName || line.product || '—'}</p>
-          {line.designType && line.designType.toUpperCase() !== 'NA' && <p className="text-muted-foreground text-[10.5px]">{line.designType}</p>}
+        <div className="bg-muted/50 rounded-lg px-3 py-1.5">
+          <p className="text-[14.5px] leading-snug font-semibold">{line.productName || line.product || '—'}</p>
+          {line.designType && line.designType.toUpperCase() !== 'NA' && <p className="text-muted-foreground text-[12px]">{line.designType}</p>}
         </div>
 
         {/* Remaining-quantity pills (non-zero units only) + the tap-to-dispatch truck. */}
@@ -85,24 +85,24 @@ function DispatchCard({ line, index, onClick }: { line: PendingLineDto; index: n
           <div className="flex min-w-0 flex-wrap gap-1.5">
             {qtys.length ? (
               qtys.map(([label, v]) => (
-                <span key={label} className="border-primary/15 bg-primary/5 text-primary inline-flex items-baseline gap-1 rounded-full border px-2 py-0.5">
-                  <span className="text-[9.5px] font-semibold uppercase opacity-70">{label}</span>
-                  <span className="text-[12px] font-bold tabular-nums">{qty(v)}</span>
+                <span key={label} className="border-primary/15 bg-primary/5 text-primary inline-flex items-baseline gap-1 rounded-full border px-2.5 py-1">
+                  <span className="text-[11px] font-semibold uppercase opacity-70">{label}</span>
+                  <span className="text-[14px] font-bold tabular-nums">{qty(v)}</span>
                 </span>
               ))
             ) : (
-              <span className="text-muted-foreground text-[11px]">Nothing pending</span>
+              <span className="text-muted-foreground text-[13px]">Nothing pending</span>
             )}
           </div>
-          <span className="bg-primary/10 text-primary flex size-7 shrink-0 items-center justify-center rounded-full transition-transform group-active:translate-x-0.5" aria-hidden>
-            <Truck className="size-3.5" />
+          <span className="bg-primary/10 text-primary flex size-9 shrink-0 items-center justify-center rounded-full transition-transform group-active:translate-x-0.5" aria-hidden>
+            <Truck className="size-4.5" />
           </span>
         </div>
 
         {line.comment && (
-          <div className="flex items-start gap-1.5 rounded-lg bg-rose-50 px-2 py-1.5 ring-1 ring-rose-100">
-            <TriangleAlert className="mt-[1px] size-3 shrink-0 text-rose-600" />
-            <p className="line-clamp-5 text-[12px] leading-snug font-bold text-rose-600">{line.comment}</p>
+          <div className="flex items-start gap-1.5 rounded-lg bg-rose-50 px-2.5 py-2 ring-1 ring-rose-100">
+            <TriangleAlert className="mt-[1px] size-3.5 shrink-0 text-rose-600" />
+            <p className="line-clamp-5 text-[13.5px] leading-snug font-bold text-rose-600">{line.comment}</p>
           </div>
         )}
       </div>
@@ -139,6 +139,12 @@ export function DispatchOrderPage() {
   // Phones: the dropdown filters live behind a Filter icon (in the sheet below) so the
   // list starts right under a single compact search+icon row instead of a tall stack.
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  // The sheet edits DRAFT values only — nothing filters the list until the user
+  // taps "Show". (Previously the sheet's selects wrote straight to the applied
+  // filter state, so picking any option auto-applied it before "Show" was pressed.)
+  const [draftDue, setDraftDue] = useState('');
+  const [draftDesign, setDraftDesign] = useState('');
+  const [draftSubCategory, setDraftSubCategory] = useState('');
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -171,6 +177,34 @@ export function DispatchOrderPage() {
     setSubCategory('');
     setPage(1);
   };
+  // Open the mobile sheet with its drafts seeded from what's currently applied.
+  const openMobileFilters = () => {
+    setDraftDue(dueType);
+    setDraftDesign(design);
+    setDraftSubCategory(subCategory);
+    setMobileFiltersOpen(true);
+  };
+  // "Show": commit the drafts to the real filter state, then close.
+  const applyDraftFilters = () => {
+    setDueType(draftDue);
+    setDesign(draftDesign);
+    setSubCategory(draftSubCategory);
+    setPage(1);
+    setMobileFiltersOpen(false);
+  };
+  // Sheet "Reset": clear only the sheet's own three filters (Due/Design/Sub
+  // category) — both the drafts and what's applied — immediately. The Customer
+  // and Product quick-selects sit outside the sheet and keep their own values.
+  const draftDirty = !!(draftDue || draftDesign || draftSubCategory || dueType || design || subCategory);
+  const resetSheetFilters = () => {
+    setDraftDue('');
+    setDraftDesign('');
+    setDraftSubCategory('');
+    setDueType('');
+    setDesign('');
+    setSubCategory('');
+    setPage(1);
+  };
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
   // Customer + Product are their own search boxes on mobile now, so the filter-icon
@@ -196,7 +230,7 @@ export function DispatchOrderPage() {
           <div className="min-w-0 flex-1">
             <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...(options?.products ?? [])]} placeholder="Product" />
           </div>
-          <Button variant="outline" size="icon" className="relative shrink-0" onClick={() => setMobileFiltersOpen(true)} aria-label="More filters">
+          <Button variant="outline" size="icon" className="relative shrink-0" onClick={openMobileFilters} aria-label="More filters">
             <Filter className="size-4" />
             {sheetFilterCount > 0 && (
               <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-medium">
@@ -226,7 +260,7 @@ export function DispatchOrderPage() {
           <Button
             variant="outline"
             size="sm"
-            className="text-muted-foreground"
+            className="border-rose-200 font-bold text-rose-600 hover:bg-rose-50 hover:text-rose-700 disabled:border-input disabled:text-rose-600/40"
             onClick={resetFilters}
             disabled={!hasFilters}
             title={hasFilters ? 'Clear all filters' : 'No filters applied'}
@@ -250,7 +284,7 @@ export function DispatchOrderPage() {
           <SheetHeader>
             <div className="flex items-center justify-between">
               <SheetTitle>Filters</SheetTitle>
-              <Button variant="ghost" size="sm" className="text-muted-foreground -mr-2 gap-1.5" onClick={resetFilters} disabled={!hasFilters}>
+              <Button variant="ghost" size="sm" className="-mr-2 gap-1.5 font-bold text-rose-600 hover:bg-rose-50 hover:text-rose-700 disabled:text-rose-600/40" onClick={resetSheetFilters} disabled={!draftDirty}>
                 <X className="size-3.5" /> Reset
               </Button>
             </div>
@@ -258,20 +292,20 @@ export function DispatchOrderPage() {
           <div className="space-y-4">
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-xs font-medium uppercase">Due</Label>
-              <NativeSelect value={dueType} onChange={(v) => { setDueType(v); setPage(1); }} options={['', 'Due', 'Over Due']} placeholder="All due" />
+              <NativeSelect value={draftDue} onChange={setDraftDue} options={['', 'Due', 'Over Due']} placeholder="All due" />
             </div>
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-xs font-medium uppercase">Design</Label>
-              <NativeSelect value={design} onChange={(v) => { setDesign(v); setPage(1); }} options={['', ...(options?.designs ?? [])]} placeholder="All designs" />
+              <NativeSelect value={draftDesign} onChange={setDraftDesign} options={['', ...(options?.designs ?? [])]} placeholder="All designs" />
             </div>
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-xs font-medium uppercase">Sub category</Label>
-              <NativeSelect value={subCategory} onChange={(v) => { setSubCategory(v); setPage(1); }} options={['', ...(options?.subCategories ?? [])]} placeholder="All sub categories" />
+              <NativeSelect value={draftSubCategory} onChange={setDraftSubCategory} options={['', ...(options?.subCategories ?? [])]} placeholder="All sub categories" />
             </div>
           </div>
           <SheetFooter>
-            <Button className="w-full" onClick={() => setMobileFiltersOpen(false)}>
-              Show {(data?.total ?? 0).toLocaleString('en-IN')} pending
+            <Button className="h-11 w-full text-base font-semibold" onClick={applyDraftFilters}>
+              Show results
             </Button>
           </SheetFooter>
         </SheetContent>
