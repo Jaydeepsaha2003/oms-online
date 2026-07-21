@@ -24,11 +24,21 @@ const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? 0 : Num
 const qty = (v: number | null) => (v ? v.toLocaleString('en-IN') : '—');
 
 const DueBadge = ({ t }: { t: string }) => (
-  <span className={cn('inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset', t === 'Over Due' ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200')}>
+  <span className={cn('inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset', t === 'Over Due' ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-blue-50 text-blue-800 ring-blue-200')}>
     <CalendarClock className="size-3" />
     {t}
   </span>
 );
+
+/** Priority is always shown — URGENT stands out in rose, NORMAL as a quiet slate chip. */
+const PriorityBadge = ({ p }: { p: string | null }) =>
+  p === 'URGENT' ? (
+    <span className="inline-flex items-center gap-0.5 rounded-full bg-rose-100 px-1.5 py-[1px] text-[10px] font-bold text-rose-700">
+      <Flame className="size-2.5" /> URGENT
+    </span>
+  ) : (
+    <span className="rounded-full bg-slate-100 px-1.5 py-[1px] text-[10px] font-semibold text-slate-500">{p || 'NORMAL'}</span>
+  );
 
 // Staggered fade+rise for the mobile cards; press-scale lives on the card button
 // itself (separate element) so the two transforms never fight. Reduced-motion safe.
@@ -49,17 +59,13 @@ function DispatchCard({ line, index, onClick }: { line: PendingLineDto; index: n
       onClick={onClick}
       className="group bg-card relative block w-full overflow-hidden rounded-2xl border text-left shadow-sm transition-transform duration-150 ease-out active:scale-[0.98] [touch-action:manipulation]"
     >
-      {/* Urgency rail — rose when overdue/urgent, emerald otherwise. */}
-      <span className={cn('absolute inset-y-0 left-0 w-1.5', overdue || urgent ? 'bg-rose-500' : 'bg-emerald-500')} aria-hidden />
-      <div className="dispatch-card-in space-y-2.5 py-3 pr-3 pl-4 text-[11px]" style={{ animationDelay: `${Math.min(index, 10) * 45}ms` }}>
+      {/* Urgency rail — rose when overdue/urgent, navy otherwise. */}
+      <span className={cn('absolute inset-y-0 left-0 w-1.5', overdue || urgent ? 'bg-rose-500' : 'bg-blue-900')} aria-hidden />
+      <div className="dispatch-card-in space-y-2 py-2.5 pr-3 pl-4 text-[11px]" style={{ animationDelay: `${Math.min(index, 10) * 45}ms` }}>
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1.5">
             <span className="bg-primary/10 text-primary rounded-md px-1.5 py-0.5 font-mono text-[11px] font-bold">{shortOrderCode(line.orderCode, line.orderId)}</span>
-            {urgent && (
-              <span className="inline-flex items-center gap-0.5 rounded-full bg-rose-100 px-1.5 py-[1px] text-[10px] font-bold text-rose-700">
-                <Flame className="size-2.5" /> URGENT
-              </span>
-            )}
+            <PriorityBadge p={line.priority} />
           </div>
           <DueBadge t={line.dueType} />
         </div>
@@ -69,22 +75,28 @@ function DispatchCard({ line, index, onClick }: { line: PendingLineDto; index: n
           <p className="text-muted-foreground mt-0.5 text-[10.5px]">Due {formatDate(line.dueDate)} · ordered {formatDate(line.orderDate)}</p>
         </div>
 
-        <div className="bg-muted/50 rounded-lg px-2.5 py-1.5">
+        <div className="bg-muted/50 rounded-lg px-2.5 py-1">
           <p className="text-[12px] leading-snug font-semibold">{line.productName || line.product || '—'}</p>
           {line.designType && line.designType.toUpperCase() !== 'NA' && <p className="text-muted-foreground text-[10.5px]">{line.designType}</p>}
         </div>
 
-        <div className="flex flex-wrap gap-1.5">
-          {qtys.length ? (
-            qtys.map(([label, v]) => (
-              <span key={label} className="border-primary/15 bg-primary/5 text-primary inline-flex items-baseline gap-1 rounded-full border px-2 py-0.5">
-                <span className="text-[9.5px] font-semibold uppercase opacity-70">{label}</span>
-                <span className="text-[12px] font-bold tabular-nums">{qty(v)}</span>
-              </span>
-            ))
-          ) : (
-            <span className="text-muted-foreground text-[11px]">Nothing pending</span>
-          )}
+        {/* Remaining-quantity pills (non-zero units only) + the tap-to-dispatch truck. */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-wrap gap-1.5">
+            {qtys.length ? (
+              qtys.map(([label, v]) => (
+                <span key={label} className="border-primary/15 bg-primary/5 text-primary inline-flex items-baseline gap-1 rounded-full border px-2 py-0.5">
+                  <span className="text-[9.5px] font-semibold uppercase opacity-70">{label}</span>
+                  <span className="text-[12px] font-bold tabular-nums">{qty(v)}</span>
+                </span>
+              ))
+            ) : (
+              <span className="text-muted-foreground text-[11px]">Nothing pending</span>
+            )}
+          </div>
+          <span className="bg-primary/10 text-primary flex size-7 shrink-0 items-center justify-center rounded-full transition-transform group-active:translate-x-0.5" aria-hidden>
+            <Truck className="size-3.5" />
+          </span>
         </div>
 
         {line.comment && (
@@ -93,13 +105,6 @@ function DispatchCard({ line, index, onClick }: { line: PendingLineDto; index: n
             <p className="line-clamp-5 text-[12px] leading-snug font-bold text-rose-600">{line.comment}</p>
           </div>
         )}
-
-        <div className="flex items-center justify-between border-t border-dashed pt-2">
-          <span className="text-muted-foreground text-[10.5px] font-medium">Tap to dispatch</span>
-          <span className="bg-primary/10 text-primary flex size-6 items-center justify-center rounded-full transition-transform group-active:translate-x-0.5">
-            <Truck className="size-3.5" />
-          </span>
-        </div>
       </div>
     </button>
   );
@@ -168,27 +173,38 @@ export function DispatchOrderPage() {
   };
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
-  const activeFilterCount = (dueType ? 1 : 0) + (customer ? 1 : 0) + (product ? 1 : 0) + (design ? 1 : 0) + (subCategory ? 1 : 0);
+  // Customer + Product are their own search boxes on mobile now, so the filter-icon
+  // badge counts only what still lives behind it (Due / Design / Sub category).
+  const sheetFilterCount = (dueType ? 1 : 0) + (design ? 1 : 0) + (subCategory ? 1 : 0);
   const cols = useColumnOrder('dispatch-pending', COLUMNS);
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        {/* Search stays visible; on phones it shares one row with the Filter icon. */}
-        <div className="relative w-full flex-1 sm:w-64 sm:flex-none">
+        {/* Desktop: general search box. */}
+        <div className="relative hidden w-64 sm:block">
           <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
           <Input placeholder="Search order #, customer or product…" className="pl-9" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
         </div>
 
-        {/* Phones: all the dropdown filters collapse behind this icon (see the sheet below). */}
-        <Button variant="outline" size="icon" className="relative shrink-0 sm:hidden" onClick={() => setMobileFiltersOpen(true)} aria-label="Filters">
-          <Filter className="size-4" />
-          {activeFilterCount > 0 && (
-            <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-medium">
-              {activeFilterCount}
-            </span>
-          )}
-        </Button>
+        {/* Phones: Customer + Product are the two primary quick-search boxes; the rest
+            (Due / Design / Sub category) live behind the filter icon. */}
+        <div className="flex w-full items-center gap-2 sm:hidden">
+          <div className="min-w-0 flex-1">
+            <NativeSelect value={customer} onChange={(v) => { setCustomer(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="Customer" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...(options?.products ?? [])]} placeholder="Product" />
+          </div>
+          <Button variant="outline" size="icon" className="relative shrink-0" onClick={() => setMobileFiltersOpen(true)} aria-label="More filters">
+            <Filter className="size-4" />
+            {sheetFilterCount > 0 && (
+              <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-medium">
+                {sheetFilterCount}
+              </span>
+            )}
+          </Button>
+        </div>
 
         {/* Desktop: filters inline. */}
         <div className="hidden flex-wrap items-center gap-2 sm:flex">
@@ -245,14 +261,6 @@ export function DispatchOrderPage() {
               <NativeSelect value={dueType} onChange={(v) => { setDueType(v); setPage(1); }} options={['', 'Due', 'Over Due']} placeholder="All due" />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-muted-foreground text-xs font-medium uppercase">Customer</Label>
-              <NativeSelect value={customer} onChange={(v) => { setCustomer(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="All customers" />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-muted-foreground text-xs font-medium uppercase">Product</Label>
-              <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...(options?.products ?? [])]} placeholder="All products" />
-            </div>
-            <div className="space-y-1.5">
               <Label className="text-muted-foreground text-xs font-medium uppercase">Design</Label>
               <NativeSelect value={design} onChange={(v) => { setDesign(v); setPage(1); }} options={['', ...(options?.designs ?? [])]} placeholder="All designs" />
             </div>
@@ -291,7 +299,7 @@ export function DispatchOrderPage() {
           [0, 1, 2, 3].map((i) => <div key={i} className="bg-muted/40 h-40 animate-pulse rounded-2xl border" />)
         ) : items.length === 0 ? (
           <div className="text-muted-foreground flex flex-col items-center gap-2 rounded-2xl border border-dashed bg-card px-4 py-12 text-center text-sm">
-            <PackageCheck className="text-emerald-400 size-9" />
+            <PackageCheck className="size-9 text-blue-500" />
             No pending order lines — everything is dispatched.
           </div>
         ) : (
