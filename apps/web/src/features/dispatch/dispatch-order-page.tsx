@@ -92,8 +92,8 @@ export function DispatchOrderPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-end">
-        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+        <div className="flex flex-wrap items-center gap-2">
           <div className="relative w-full sm:w-64">
             <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
             <Input placeholder="Search order #, customer or product…" className="pl-9" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />

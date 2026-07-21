@@ -72,7 +72,7 @@ export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
       <Separator className="bg-sidebar-border" />
 
       <ScrollArea className="flex-1 px-2 py-3">
-        <nav className="flex flex-col gap-0.5">
+        <nav className={cn('flex flex-col', collapsed ? 'gap-0' : 'gap-0.5')}>
           {items.map((node) =>
             node.children?.length ? (
               <MenuGroup
@@ -121,7 +121,7 @@ function MenuLeaf({
           'hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
           isActive &&
             'bg-sidebar-accent font-semibold text-sidebar-accent-foreground shadow-sm before:absolute before:inset-y-1.5 before:left-0 before:w-1 before:rounded-full before:bg-brand-amber',
-          collapsed && 'justify-center px-0',
+          collapsed && 'justify-center px-0 py-1.5',
         )
       }
     >
@@ -166,7 +166,7 @@ function MenuGroup({
   // Collapsed rail: render the group's children as icon links with tooltips.
   if (collapsed) {
     return (
-      <div className="flex flex-col gap-0.5 py-0.5">
+      <div className="flex flex-col gap-0">
         {(node.children ?? []).map((child) => (
           <MenuLeaf key={child.id} node={child} collapsed onNavigate={onNavigate} />
         ))}

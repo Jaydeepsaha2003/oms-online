@@ -106,7 +106,53 @@ export class AccessImportService implements OnApplicationBootstrap {
    *  purpose — a large Access file must never delay the server actually
    *  starting to listen for requests. */
   onApplicationBootstrap(): void {
+    // Self-heal the "RAMSON disappearing order" import artifact on every boot,
+    // independent of whether an Access file is available to re-sync — so a client's
+    // already-imported data corrects itself even without re-running the connector.
+    this.repairImportedOrderStatuses()
+      .then((n) => {
+        if (n) this.logger.log(`Order-status repair: un-cancelled ${n} order(s) wrongly marked cancelled by a legacy import.`);
+      })
+      .catch((err) => this.logger.warn(`Order-status repair failed: ${(err as Error).message}`));
     this.runStartupSync().catch((err) => this.logger.warn(`Startup Access sync failed: ${(err as Error).message}`));
+  }
+
+  /**
+   * Self-heals the "RAMSON disappearing order" import artifact so a client's
+   * already-imported data corrects itself on the next app start / resync — the
+   * connector is otherwise insert-only, so a plain re-sync would *skip* these
+   * existing orders (their ids are already present) and never fix them.
+   *
+   * Access has no order-level status — `STATUS` is per-line only — so an order
+   * header should never read CANCELLED unless the order was cancelled *inside OMS*.
+   * An older buggy build set the header from an arbitrary first line's per-line
+   * STATUS, so a single cancelled line dragged the whole order — and all its still
+   * active lines — into CANCELLED, making it vanish from every active view.
+   *
+   * The repair targets EXACTLY that signature — header CANCELLED **with both a
+   * cancelled line AND a still-active line**. A genuine in-app cancellation can
+   * never produce that (`OrdersService.updateStatus` flips only the header and never
+   * touches the lines, and is blocked once any line is dispatched), so this can
+   * never undo a deliberate user cancellation. Idempotent + safe to run every boot.
+   */
+  async repairImportedOrderStatuses(dry = false): Promise<number> {
+    const broken = await this.prisma.order.findMany({
+      where: {
+        status: 'CANCELLED',
+        AND: [
+          { items: { some: { status: 'CANCELLED' } } }, // header inherited a cancelled line…
+          { items: { some: { status: { not: 'CANCELLED' } } } }, // …but active lines remain
+        ],
+      },
+      select: { id: true },
+    });
+    if (!dry && broken.length) {
+      await this.prisma.order.updateMany({
+        where: { id: { in: broken.map((o) => o.id) } },
+        data: { status: 'CONFIRMED' },
+      });
+    }
+    return broken.length;
   }
 
   private async runStartupSync(): Promise<void> {
@@ -160,7 +206,13 @@ export class AccessImportService implements OnApplicationBootstrap {
       if (run('pricecal')) results.push({ section: 'Price-calc', counts: await this.importPriceCal(J, dry) });
       if (run('agents')) results.push({ section: 'Agents', counts: await this.importAgents(J, dry) });
       if (run('special')) results.push({ section: 'Special rates', counts: await this.importSpecial(J, dry) });
-      if (run('orders')) results.push({ section: 'Orders', counts: await this.importOrders(J, dry) });
+      if (run('orders')) {
+        results.push({ section: 'Orders', counts: await this.importOrders(J, dry) });
+        // Heal any order (new or previously imported) whose header wrongly reads
+        // CANCELLED while it still has active lines — see repairImportedOrderStatuses.
+        const repaired = await this.repairImportedOrderStatuses(dry);
+        if (repaired) results.push({ section: 'Repair', counts: { 'orders un-cancelled (legacy import fix)': repaired } });
+      }
       if (run('dispatch')) results.push({ section: 'Dispatch', counts: await this.importDispatch(J, dry) });
       if (run('challans')) results.push({ section: 'Challans', counts: await this.importChallans(J, dry) });
       if (run('accounts')) results.push({ section: 'Accounts', counts: await this.importAccounts(J, dry) });
