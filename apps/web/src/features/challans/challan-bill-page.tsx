@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
 import { Button } from '@/components/ui/button';
-import { buildBillFilename } from '@/lib/pdf';
+import { buildBillFilename, preOpenPdfTab, savePdfBlob } from '@/lib/pdf';
 import kavishLogo from '@/assets/kavish-logo-order.png';
 import { useChallanTerms, useCompany } from '@/features/settings/use-settings';
 import { useChallan } from './use-challans';
@@ -112,10 +112,13 @@ export function ChallanBillPage() {
 
   const download = async () => {
     if (!challan) return;
+    // iOS Safari blocks a download/window.open that fires after the async capture
+    // below — so reserve a tab NOW, inside the tap gesture (no-op off iOS).
+    const iosTab = preOpenPdfTab();
     setBusy(true);
     try {
       const cap = await captureImage();
-      if (!cap) return;
+      if (!cap) { iosTab?.close(); return; }
       const pdf = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
       // Very thin margin — just enough to avoid printer clip zones.
       const margin = 4;
@@ -136,8 +139,9 @@ export function ChallanBillPage() {
           firstPage = false;
         }
       }
-      pdf.save(buildBillFilename('Challan', challan.code, `challan-${challanId}`));
+      savePdfBlob(pdf.output('blob'), buildBillFilename('Challan', challan.code, `challan-${challanId}`), iosTab);
     } catch {
+      iosTab?.close();
       toast.error('Could not generate the PDF');
     } finally {
       setBusy(false);

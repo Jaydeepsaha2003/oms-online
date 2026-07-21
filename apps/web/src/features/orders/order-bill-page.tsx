@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
 import { Button } from '@/components/ui/button';
-import { buildBillFilename } from '@/lib/pdf';
+import { buildBillFilename, preOpenPdfTab, savePdfBlob } from '@/lib/pdf';
 import { shortOrderCode } from '@/lib/utils';
 import kavishLogo from '@/assets/kavish-logo-order.png';
 import { useCompany, useOrderFooter, useOrderTerms } from '@/features/settings/use-settings';
@@ -103,10 +103,13 @@ export function OrderBillPage() {
 
   const download = async () => {
     if (!order) return;
+    // Reserve a tab now (in the tap gesture) so iOS Safari doesn't block the
+    // download that fires after the async capture below. No-op off iOS.
+    const iosTab = preOpenPdfTab();
     setBusy(true);
     try {
       const cap = await captureImage();
-      if (!cap) return;
+      if (!cap) { iosTab?.close(); return; }
       const pdf = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
       // Very thin margin — just enough to avoid printer clip zones.
       const margin = 4;
@@ -134,8 +137,9 @@ export function OrderBillPage() {
           firstPage = false;
         }
       }
-      pdf.save(buildBillFilename(isQuotation ? 'Quotation' : 'Order', order.code, `${fileSuffix}-${orderId}`));
+      savePdfBlob(pdf.output('blob'), buildBillFilename(isQuotation ? 'Quotation' : 'Order', order.code, `${fileSuffix}-${orderId}`), iosTab);
     } catch {
+      iosTab?.close();
       toast.error('Could not generate the PDF');
     } finally {
       setBusy(false);

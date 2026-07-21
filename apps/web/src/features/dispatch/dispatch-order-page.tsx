@@ -425,6 +425,9 @@ function DispatchSheet({ line, onClose, onDispatched }: { line: PendingLineDto; 
     });
 
   const submit = async () => {
+    // Guard against a double-fire (fast double-tap, or the Ctrl+S shortcut pressed
+    // while a save is already in flight) creating two dispatch records.
+    if (create.isPending) return;
     const bags = num(form.bags), pcs = num(form.pcs), gram = num(form.gram), box = num(form.box);
     const cf = (line.calField ?? '').toUpperCase();
     if (cf === 'PCS' && pcs <= 0) return toast.error('Pcs is required — this item is priced by PCS.');

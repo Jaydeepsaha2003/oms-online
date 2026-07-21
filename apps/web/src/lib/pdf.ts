@@ -5,18 +5,72 @@
  */
 import { api, downloadFile } from './api';
 
+/**
+ * True on iPhone/iPad (incl. iPadOS, which reports as "MacIntel" with touch).
+ * iOS Safari blocks the usual "do async work, THEN download / window.open" flow
+ * because the download/popup lands outside the original tap gesture — so it shows
+ * "blocked". These helpers open the tab up-front (synchronously in the tap) instead.
+ */
+export function isIOS(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+/** Call this SYNCHRONOUSLY inside a click handler (before any await) to reserve a
+ *  tab iOS will trust for a PDF that's generated a moment later. Returns null off
+ *  iOS (not needed there) or if the popup was blocked. */
+export function preOpenPdfTab(): Window | null {
+  return isIOS() ? window.open('', '_blank') : null;
+}
+
+/**
+ * Save/show a client-generated PDF blob (e.g. a jsPDF export). On Android/desktop
+ * it triggers a normal file download; on iOS Safari — where a post-await download
+ * is blocked — it displays the PDF in `iosTab` (pre-opened via {@link preOpenPdfTab}
+ * inside the tap) so the user can Share → Save to Files.
+ */
+export function savePdfBlob(blob: Blob, filename: string, iosTab?: Window | null): void {
+  const url = URL.createObjectURL(blob);
+  if (isIOS()) {
+    if (iosTab && !iosTab.closed) {
+      iosTab.location.href = url;
+    } else {
+      const w = window.open(url, '_blank');
+      if (!w) window.location.href = url; // popup blocked entirely → same-tab view
+    }
+  } else {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
 /** Download a server-generated PDF as a file. */
 export function downloadPdf(url: string, fallbackName = 'document.pdf'): Promise<void> {
   return downloadFile(url, fallbackName);
 }
 
-/** Open a server-generated PDF in a new browser tab. */
+/** Open a server-generated PDF in a new browser tab — iOS-safe. The tab is opened
+ *  up-front (synchronously in the tap gesture) and pointed at the blob once fetched,
+ *  so iOS Safari doesn't block it as a post-await popup. */
 export async function openPdf(url: string): Promise<void> {
-  const res = await api.get(url, { responseType: 'blob' });
-  const blobUrl = URL.createObjectURL(res.data as Blob);
-  window.open(blobUrl, '_blank', 'noopener,noreferrer');
-  // Revoke a little later so the new tab has time to load it.
-  setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+  // Opened blank now, inside the gesture; filled in after the fetch resolves.
+  const tab = window.open('', '_blank');
+  try {
+    const res = await api.get(url, { responseType: 'blob' });
+    const blobUrl = URL.createObjectURL(res.data as Blob);
+    if (tab && !tab.closed) tab.location.href = blobUrl;
+    else window.location.href = blobUrl; // popup blocked → fall back to same tab
+    // Revoke a little later so the tab has time to load it.
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+  } catch (e) {
+    tab?.close();
+    throw e;
+  }
 }
 
 /** Consistent client-generated (jsPDF) download filename across Challan / Order /

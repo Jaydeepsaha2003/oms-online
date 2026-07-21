@@ -13,6 +13,7 @@ import { jsPDF } from 'jspdf';
 import * as XLSX from 'xlsx';
 import type { CustomerRateList } from '@oms/shared';
 import { dateStamp } from '@/lib/utils';
+import { preOpenPdfTab, savePdfBlob } from '@/lib/pdf';
 import kavishLogo from '@/assets/kavish-logo.png';
 import { buildSections, type PivotTable } from './customer-rate-list-pivot';
 
@@ -334,6 +335,14 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
 }
 
 export async function exportRateListPdf(list: CustomerRateList): Promise<void> {
-  const doc = await buildRateListPdfDoc(list);
-  doc.save(`RateList-${sanitize(list.customerName)}-${dateStamp()}.pdf`);
+  // Reserve a tab now (in the tap gesture) so iOS Safari doesn't block the save
+  // that fires after the async doc build. No-op off iOS.
+  const iosTab = preOpenPdfTab();
+  try {
+    const doc = await buildRateListPdfDoc(list);
+    savePdfBlob(doc.output('blob'), `RateList-${sanitize(list.customerName)}-${dateStamp()}.pdf`, iosTab);
+  } catch (e) {
+    iosTab?.close();
+    throw e;
+  }
 }

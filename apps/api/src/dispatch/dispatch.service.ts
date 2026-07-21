@@ -13,6 +13,12 @@ import { CreateDispatchDto, DispatchQueryDto, PendingQueryDto, UpdateDispatchDto
 
 const EPS = 1e-6;
 
+// Two dispatches on the SAME order line with identical quantities + status inside
+// this window are treated as ONE — a double-tap, a client retry, or two users
+// saving the same shipment at once. Real repeat dispatches of a line are minutes
+// apart (goods have to be packed/weighed again), so this can't merge legitimate ones.
+const DISPATCH_DEDUPE_WINDOW_MS = 15_000;
+
 @Injectable()
 export class DispatchService {
   constructor(private readonly prisma: PrismaService) {}
@@ -189,59 +195,81 @@ export class DispatchService {
   }
 
   async create(dto: CreateDispatchDto, userName?: string): Promise<DispatchDto> {
-    const it = await this.prisma.orderItem.findUnique({
-      where: { id: dto.orderItemId },
-      include: { order: true, dispatches: true },
-    });
-    if (!it) throw new NotFoundException('Order line not found.');
-    if (it.order.status === 'CANCELLED' || it.order.status === 'DRAFT') {
-      throw new BadRequestException('This order is not available for dispatch.');
-    }
-    if (it.status === 'CANCELLED') {
-      throw new BadRequestException('This line has been cancelled and cannot be dispatched.');
-    }
-    if (it.dispatches.some((d) => d.dispatchStatus === 'FULLY DISPATCH')) {
-      throw new BadRequestException('This line has already been fully dispatched.');
-    }
-
-    const rem = this.remaining(it, it.dispatches);
     const bags = toNum(dto.bags) ?? 0;
     const pcs = toNum(dto.pcs) ?? 0;
     const gram = toNum(dto.gram) ?? 0;
     const box = toNum(dto.box) ?? 0;
-    this.validateQty({ bags, pcs, gram, box }, rem, dto.dispatchStatus, it.calField);
 
-    const row = await this.prisma.dispatch.create({
-      data: {
-        orderItemId: it.id,
-        orderId: it.orderId,
-        orderCode: it.order.code ?? this.orderCodeFor(it.orderId),
-        customerId: it.order.customerId,
-        customerName: it.order.customerName,
-        agentName: it.order.agentName,
-        category: it.order.category,
-        pCategory: it.pCategory,
-        subCategory: it.subCategory,
-        product: it.product,
-        productName: it.productName,
-        designType: it.designType,
-        psize: it.psize,
-        priority: it.priority,
-        calField: it.calField,
-        ordType: it.ordType,
-        productRate: it.productRate,
-        designRate: it.designRate,
-        rate: it.rate,
-        bags,
-        pcs,
-        gram,
-        box,
-        dispatchStatus: dto.dispatchStatus,
-        dispatchDate: dto.dispatchDate ? new Date(dto.dispatchDate) : new Date(),
-        comment: toStr(dto.comment),
-        supItem: toStr(dto.supItem),
-        userName: userName ?? null,
-      },
+    // The whole read → validate → insert runs in one transaction. SQLite serializes
+    // write transactions, so two concurrent dispatches on the same line can't
+    // interleave: the second only reads AFTER the first has committed, so it sees
+    // the first's row (both the "already fully dispatched" guard and the duplicate
+    // guard below then catch it) instead of silently inserting a copy.
+    const row = await this.prisma.$transaction(async (tx) => {
+      const it = await tx.orderItem.findUnique({
+        where: { id: dto.orderItemId },
+        include: { order: true, dispatches: true },
+      });
+      if (!it) throw new NotFoundException('Order line not found.');
+      if (it.order.status === 'CANCELLED' || it.order.status === 'DRAFT') {
+        throw new BadRequestException('This order is not available for dispatch.');
+      }
+      if (it.status === 'CANCELLED') {
+        throw new BadRequestException('This line has been cancelled and cannot be dispatched.');
+      }
+      if (it.dispatches.some((d) => d.dispatchStatus === 'FULLY DISPATCH')) {
+        throw new BadRequestException('This line has already been fully dispatched.');
+      }
+
+      // Idempotency guard against duplicate submissions (see DISPATCH_DEDUPE_WINDOW_MS):
+      // an identical dispatch on this line recorded moments ago is a duplicate, not a
+      // second real shipment — return the existing row instead of inserting a copy.
+      const dup = it.dispatches.find(
+        (d) =>
+          (d.bags ?? 0) === bags &&
+          (d.pcs ?? 0) === pcs &&
+          (d.gram ?? 0) === gram &&
+          (d.box ?? 0) === box &&
+          d.dispatchStatus === dto.dispatchStatus &&
+          Date.now() - d.createdAt.getTime() < DISPATCH_DEDUPE_WINDOW_MS,
+      );
+      if (dup) return dup;
+
+      const rem = this.remaining(it, it.dispatches);
+      this.validateQty({ bags, pcs, gram, box }, rem, dto.dispatchStatus, it.calField);
+
+      return tx.dispatch.create({
+        data: {
+          orderItemId: it.id,
+          orderId: it.orderId,
+          orderCode: it.order.code ?? this.orderCodeFor(it.orderId),
+          customerId: it.order.customerId,
+          customerName: it.order.customerName,
+          agentName: it.order.agentName,
+          category: it.order.category,
+          pCategory: it.pCategory,
+          subCategory: it.subCategory,
+          product: it.product,
+          productName: it.productName,
+          designType: it.designType,
+          psize: it.psize,
+          priority: it.priority,
+          calField: it.calField,
+          ordType: it.ordType,
+          productRate: it.productRate,
+          designRate: it.designRate,
+          rate: it.rate,
+          bags,
+          pcs,
+          gram,
+          box,
+          dispatchStatus: dto.dispatchStatus,
+          dispatchDate: dto.dispatchDate ? new Date(dto.dispatchDate) : new Date(),
+          comment: toStr(dto.comment),
+          supItem: toStr(dto.supItem),
+          userName: userName ?? null,
+        },
+      });
     });
     return this.toDto(await this.ensureCode(row));
   }
