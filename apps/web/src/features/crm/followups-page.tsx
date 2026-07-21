@@ -445,9 +445,19 @@ function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing:
     setOrderCode(code);
     setOrderId(o?.id ?? null);
     if (o && !party) { setParty(o.customerName); setCustomerId(o.customerId ?? null); }
+    // Drop a previously-picked item that isn't part of the newly linked order.
+    if (o && orderItemId != null) {
+      const cur = openItems.find((it) => it.orderItemId === orderItemId);
+      if (cur && cur.orderId !== o.id) { setItemText(''); setOrderItemId(null); }
+    }
   };
 
-  const itemOptions = useMemo(() => openItems.map(openItemLabel), [openItems]);
+  // Once an order is linked, the item picker narrows to JUST that order's open
+  // lines; with no order linked it lists all of the party's open lines.
+  const itemOptions = useMemo(() => {
+    const pool = orderId ? openItems.filter((it) => it.orderId === orderId) : openItems;
+    return pool.map(openItemLabel);
+  }, [openItems, orderId]);
   const onPickItem = (label: string) => {
     setItemText(label);
     const match = openItems.find((it) => openItemLabel(it) === label);

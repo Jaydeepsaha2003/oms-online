@@ -13,20 +13,26 @@ import { useChallan } from './use-challans';
 // Same Kavish brand colours + letterhead layout as the Sales Order / Quotation bill,
 // so all three printed documents look like one consistent family.
 const NAVY = '#163e64';
-const BANNER_ORANGE_FROM = '#f2914a';
-const BANNER_ORANGE_TO = '#e3601b';
-const ORANGE = '#F99A0F';
+const BANNER_ORANGE_FROM = '#EBC078';
+const BANNER_ORANGE_TO = '#E2A346';
+const ORANGE = '#E2A346';
 const BLACK = '#111111';
 const FONT = 'Montserrat, Carlito, Calibri, "Segoe UI", Arial, sans-serif';
 const BORDER = '#D5D5D5';
+// Crisp near-black hairline for the totals grid so it reads clean like the old receipt.
+const INK = '#1a1a1a';
 
 const docTitle = 'SALES RECEIPT';
 
 const numf = (v: number | null | undefined) => (v ?? 0).toLocaleString('en-IN');
-const money = (v: number | null | undefined) =>
-  (v ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fmtDate = (d?: string | null) =>
-  d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+// Whole rupees only — paise are dropped on the printed receipt.
+const money = (v: number | null | undefined) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+const fmtDate = (d?: string | null) => {
+  if (!d) return '—';
+  const x = new Date(d);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(x.getDate())}-${pad(x.getMonth() + 1)}-${x.getFullYear()}`;
+};
 
 /** Indian numbering amount-in-words (e.g. 1,05,588 → "RUPEES ONE LAKH FIVE THOUSAND FIVE HUNDRED AND EIGHTY EIGHT ONLY"). */
 function amountInWordsIndian(amount: number): string {
@@ -312,8 +318,8 @@ export function ChallanBillPage() {
             {(
               [
                 ['Invoice No', challan.code, 'Pay Term', challan.paymentTerm ? `${challan.paymentTerm} Days` : '—'],
-                ['Invoice Date', fmtDate(challan.invDate), 'B (Rs)', money(challan.b)],
-                ['Due Date', fmtDate(challan.dueDate), 'C (Rs)', money(challan.c)],
+                ['Invoice Date', fmtDate(challan.invDate), 'B', money(challan.b)],
+                ['Due Date', fmtDate(challan.dueDate), 'C', money(challan.c)],
               ] as [string, string, string, string][]
             ).map((row, ri) => (
               <Fragment key={ri}>
@@ -395,7 +401,7 @@ export function ChallanBillPage() {
             )}
           </div>
 
-          <div style={{ border: `0.2px solid ${BORDER}`, borderRadius: 2, overflow: 'hidden', minWidth: 220 }}>
+          <div style={{ border: `1.2px solid ${INK}`, borderRadius: 2, overflow: 'hidden', minWidth: 220 }}>
             <table style={{ borderCollapse: 'collapse', fontSize: 20, width: '100%', fontFamily: FONT, textTransform: 'uppercase' }}>
               <colgroup>
                 <col style={{ width: '70%' }} />
@@ -414,13 +420,13 @@ export function ChallanBillPage() {
                   ] as [string, string][]
                 ).map(([label, value]) => (
                   <tr key={label}>
-                    <td style={{ background: ORANGE, fontWeight: 700, borderBottom: `0.2px solid ${BORDER}`, borderRight: `0.2px solid ${BORDER}`, padding: '7px 10px', whiteSpace: 'nowrap', fontSize: 19 }}>{label}</td>
-                    <td style={{ textAlign: 'right', fontWeight: 700, borderBottom: `0.2px solid ${BORDER}`, padding: '7px 10px', fontSize: 19 }}>{value}</td>
+                    <td style={{ fontWeight: 700, borderBottom: `0.8px solid ${INK}`, borderRight: `0.8px solid ${INK}`, padding: '7px 10px', whiteSpace: 'nowrap', fontSize: 19 }}>{label}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 700, borderBottom: `0.8px solid ${INK}`, padding: '7px 10px', fontSize: 19 }}>{value}</td>
                   </tr>
                 ))}
                 <tr>
-                  <td style={{ background: ORANGE, fontWeight: 800, fontSize: 21, borderRight: `0.2px solid ${BORDER}`, padding: '8px 10px', whiteSpace: 'nowrap' }}>{tds ? 'Net Receivable' : 'Grand Total Amount'}</td>
-                  <td style={{ textAlign: 'right', fontWeight: 800, fontSize: 21, padding: '8px 10px' }}>{money(tds ? netReceivable : total)}</td>
+                  <td style={{ fontWeight: 800, fontSize: 21, borderRight: `0.8px solid ${INK}`, borderTop: `1.2px solid ${INK}`, padding: '8px 10px', whiteSpace: 'nowrap' }}>{tds ? 'Net Receivable' : 'Grand Total Amount'}</td>
+                  <td style={{ textAlign: 'right', fontWeight: 800, fontSize: 21, borderTop: `1.2px solid ${INK}`, padding: '8px 10px' }}>{money(tds ? netReceivable : total)}</td>
                 </tr>
               </tbody>
             </table>
