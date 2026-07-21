@@ -457,7 +457,18 @@ export class AccessImportService implements OnApplicationBootstrap {
     // happened to land on the same number a later Access sync also wants. Track
     // every id in use (existing + reserved-within-this-run) so a collision is
     // caught before it hits the database as a P2002 and aborts the whole import.
-    const takenItemIds = new Set((await this.prisma.orderItem.findMany({ select: { id: true } })).map((o) => o.id));
+    const existingItems = await this.prisma.orderItem.findMany({ select: { id: true, orderId: true, legacyItemId: true } });
+    const takenItemIds = new Set(existingItems.map((o) => o.id));
+    // Which legacy ORDERTBL.IDs are already imported, per order. A clean import
+    // keeps the legacy id as the row id; a collision-remapped row stores it in
+    // legacyItemId instead — so the legacy identity is (legacyItemId ?? id). Used
+    // to add ONLY new lines to an order that already exists in OMS (see below).
+    const importedLegacyByOrder = new Map<number, Set<number>>();
+    for (const it of existingItems) {
+      const legacyId = it.legacyItemId ?? it.id;
+      if (!importedLegacyByOrder.has(it.orderId)) importedLegacyByOrder.set(it.orderId, new Set());
+      importedLegacyByOrder.get(it.orderId)!.add(legacyId);
+    }
     const groups = new Map<number, any[]>();
     for (const r of J('ORDERTBL')) {
       const oid = int(r['ORDER ID']);
@@ -467,30 +478,17 @@ export class AccessImportService implements OnApplicationBootstrap {
     }
     let orders = 0;
     let items = 0;
+    let addedToExisting = 0;
     let skippedExisting = 0;
     let remapped = 0;
-    for (const [oid, gr] of groups) {
-      if (existingIds.has(oid)) {
-        skippedExisting++;
-        continue;
-      }
-      const h = gr[0];
-      const header = {
-        id: oid, code: `ORD-${String(oid).padStart(5, '0')}`, customerId: cmap.get(int(h['CUST ID']) ?? -1) ?? null,
-        customerName: s(h['CUSTOMER NAME']) ?? '', agentName: up(h['AGENT NAME']), category: up(h.CATEGORY),
-        orderDate: dt(h['ORDER DATE']) ?? new Date(0), completionDate: dt(h['COMPLETION DATE']), completionDay: int(h['COMPLETION DAY']),
-        // ORDERTBL has no real order-level status — STATUS is per-line only (see `base.status`
-        // below). Every imported order was, by definition, placed/confirmed in the legacy
-        // system, so the header always starts CONFIRMED; using `h.STATUS` (an arbitrary first
-        // row's per-line value) here used to wrongly cancel the whole order whenever that
-        // first line happened to be cancelled, even with 6 other active lines underneath it.
-        priority: up(h.PRIORITY), status: 'CONFIRMED', ordType: s(h.ORDTYPE) ?? 'SALES ORDER', userName: s(h['USER NAME']),
-      };
-      if (!dry) await this.prisma.order.create({ data: header });
-      orders++;
+
+    // Insert a set of ORDERTBL rows as order items, remapping any whose legacy id
+    // collides with an id already in use (see takenItemIds above). Returns how many
+    // rows were inserted and how many had to be remapped.
+    const insertItems = async (oid: number, rows: any[]): Promise<{ count: number; remapped: number }> => {
       const clean: any[] = [];
       const colliding: any[] = [];
-      for (const r of gr) {
+      for (const r of rows) {
         const iid = int(r.ID);
         if (!iid) continue;
         const base = {
@@ -516,10 +514,51 @@ export class AccessImportService implements OnApplicationBootstrap {
           takenItemIds.add(created.id);
         }
       }
-      items += clean.length + colliding.length;
-      remapped += colliding.length;
+      return { count: clean.length + colliding.length, remapped: colliding.length };
+    };
+
+    for (const [oid, gr] of groups) {
+      if (existingIds.has(oid)) {
+        // Order already imported — but new lines may have been added to it in Access
+        // since its first sync. The importer is otherwise insert-only, so without this
+        // an order that gained lines later would silently keep only its original lines
+        // (and any dispatch on the new lines would be dropped as "no matching item").
+        // Insert just the lines not already present, matched by legacy id.
+        const already = importedLegacyByOrder.get(oid) ?? new Set<number>();
+        const newRows = gr.filter((r) => {
+          const iid = int(r.ID);
+          return iid != null && !already.has(iid);
+        });
+        if (newRows.length === 0) {
+          skippedExisting++;
+          continue;
+        }
+        const res = await insertItems(oid, newRows);
+        addedToExisting += res.count;
+        items += res.count;
+        remapped += res.remapped;
+        continue;
+      }
+      const h = gr[0];
+      const header = {
+        id: oid, code: `ORD-${String(oid).padStart(5, '0')}`, customerId: cmap.get(int(h['CUST ID']) ?? -1) ?? null,
+        customerName: s(h['CUSTOMER NAME']) ?? '', agentName: up(h['AGENT NAME']), category: up(h.CATEGORY),
+        orderDate: dt(h['ORDER DATE']) ?? new Date(0), completionDate: dt(h['COMPLETION DATE']), completionDay: int(h['COMPLETION DAY']),
+        // ORDERTBL has no real order-level status — STATUS is per-line only (see `base.status`
+        // above). Every imported order was, by definition, placed/confirmed in the legacy
+        // system, so the header always starts CONFIRMED; using `h.STATUS` (an arbitrary first
+        // row's per-line value) here used to wrongly cancel the whole order whenever that
+        // first line happened to be cancelled, even with 6 other active lines underneath it.
+        priority: up(h.PRIORITY), status: 'CONFIRMED', ordType: s(h.ORDTYPE) ?? 'SALES ORDER', userName: s(h['USER NAME']),
+      };
+      if (!dry) await this.prisma.order.create({ data: header });
+      orders++;
+      const res = await insertItems(oid, gr);
+      items += res.count;
+      remapped += res.remapped;
     }
     const counts: Counts = { orders, 'order items': items, 'already imported (skipped)': skippedExisting };
+    if (addedToExisting) counts['lines added to existing orders'] = addedToExisting;
     if (remapped) counts['items remapped (id collision)'] = remapped;
     return counts;
   }
