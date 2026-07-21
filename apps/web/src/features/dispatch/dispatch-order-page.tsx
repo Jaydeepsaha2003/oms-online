@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Loader2, Package, PackageCheck, Search, Truck, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Filter, Loader2, Package, PackageCheck, Search, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { DISPATCH_STATUSES, type DispatchStatus, type PendingLineDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -40,7 +40,7 @@ const COLUMNS: DataColumn<PendingLineDto>[] = [
   { id: 'pcs', label: 'Pcs', align: 'right', cell: (r) => <span className="tabular-nums">{qty(r.remPcs)}</span> },
   { id: 'kgs', label: 'Kgs', align: 'right', cell: (r) => <span className="tabular-nums">{qty(r.remKgs)}</span> },
   { id: 'box', label: 'Box', align: 'right', cell: (r) => <span className="tabular-nums">{qty(r.remBox)}</span> },
-  { id: 'comment', label: 'Comment', cell: (r) => <span className="text-muted-foreground">{r.comment || '—'}</span> },
+  { id: 'comment', label: 'Comment', cell: (r) => (r.comment ? <span className="font-bold text-rose-600">{r.comment}</span> : <span className="text-muted-foreground">—</span>) },
 ];
 
 export function DispatchOrderPage() {
@@ -54,6 +54,9 @@ export function DispatchOrderPage() {
   const [page, setPage] = useState(1);
   const [active, setActive] = useState<PendingLineDto | null>(null);
   const [shipped, setShipped] = useState<string | null>(null); // dispatch code → plays the truck animation
+  // Phones: the dropdown filters live behind a Filter icon (in the sheet below) so the
+  // list starts right under a single compact search+icon row instead of a tall stack.
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -88,16 +91,64 @@ export function DispatchOrderPage() {
   };
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
+  const activeFilterCount = (dueType ? 1 : 0) + (customer ? 1 : 0) + (product ? 1 : 0) + (design ? 1 : 0) + (subCategory ? 1 : 0);
   const cols = useColumnOrder('dispatch-pending', COLUMNS);
+
+  // Phones: one tap-to-dispatch card per pending line (the table scrolls sideways otherwise).
+  const dispatchMobileCard = (r: PendingLineDto) => (
+    <div className="space-y-2 text-[11px]">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-muted-foreground font-mono font-semibold">{shortOrderCode(r.orderCode, r.orderId)}</p>
+          <p className="truncate text-[13px] font-semibold leading-tight">{r.customerName}</p>
+          <p className="text-muted-foreground">Ordered {formatDate(r.orderDate)}</p>
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <DueBadge t={r.dueType} />
+          <span className="text-muted-foreground whitespace-nowrap">Due {formatDate(r.dueDate)}</span>
+          {r.priority === 'URGENT' && <span className="font-semibold text-rose-600">URGENT</span>}
+        </div>
+      </div>
+
+      <div className="bg-muted/40 rounded-md px-2 py-1.5">
+        <p className="text-[12px] font-semibold">{r.productName || r.product || '—'}</p>
+        {r.designType && r.designType.toUpperCase() !== 'NA' && <p className="text-muted-foreground">{r.designType}</p>}
+      </div>
+
+      <div className="grid grid-cols-4 gap-1.5 text-center">
+        {([['Bags', r.remBags], ['Pcs', r.remPcs], ['Kgs', r.remKgs], ['Box', r.remBox]] as const).map(([label, v]) => (
+          <div key={label} className="rounded-md border py-1">
+            <p className="text-muted-foreground text-[10px] font-medium uppercase">{label}</p>
+            <p className="font-semibold tabular-nums">{qty(v)}</p>
+          </div>
+        ))}
+      </div>
+
+      {r.comment && <p className="text-[12px] leading-snug font-bold text-rose-600 line-clamp-5">{r.comment}</p>}
+    </div>
+  );
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative w-full sm:w-64">
-            <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
-            <Input placeholder="Search order #, customer or product…" className="pl-9" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
-          </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Search stays visible; on phones it shares one row with the Filter icon. */}
+        <div className="relative w-full flex-1 sm:w-64 sm:flex-none">
+          <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
+          <Input placeholder="Search order #, customer or product…" className="pl-9" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
+        </div>
+
+        {/* Phones: all the dropdown filters collapse behind this icon (see the sheet below). */}
+        <Button variant="outline" size="icon" className="relative shrink-0 sm:hidden" onClick={() => setMobileFiltersOpen(true)} aria-label="Filters">
+          <Filter className="size-4" />
+          {activeFilterCount > 0 && (
+            <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-medium">
+              {activeFilterCount}
+            </span>
+          )}
+        </Button>
+
+        {/* Desktop: filters inline. */}
+        <div className="hidden flex-wrap items-center gap-2 sm:flex">
           <div className="w-40">
             <NativeSelect value={dueType} onChange={(v) => { setDueType(v); setPage(1); }} options={['', 'Due', 'Over Due']} placeholder="All due" />
           </div>
@@ -134,6 +185,47 @@ export function DispatchOrderPage() {
         </div>
       </div>
 
+      {/* Phones only: every dropdown filter lives behind the Filter icon above. */}
+      <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
+        <SheetContent side="bottom" className="sm:hidden">
+          <SheetHeader>
+            <div className="flex items-center justify-between">
+              <SheetTitle>Filters</SheetTitle>
+              <Button variant="ghost" size="sm" className="text-muted-foreground -mr-2 gap-1.5" onClick={resetFilters} disabled={!hasFilters}>
+                <X className="size-3.5" /> Reset
+              </Button>
+            </div>
+          </SheetHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Due</Label>
+              <NativeSelect value={dueType} onChange={(v) => { setDueType(v); setPage(1); }} options={['', 'Due', 'Over Due']} placeholder="All due" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Customer</Label>
+              <NativeSelect value={customer} onChange={(v) => { setCustomer(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="All customers" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Product</Label>
+              <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...(options?.products ?? [])]} placeholder="All products" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Design</Label>
+              <NativeSelect value={design} onChange={(v) => { setDesign(v); setPage(1); }} options={['', ...(options?.designs ?? [])]} placeholder="All designs" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Sub category</Label>
+              <NativeSelect value={subCategory} onChange={(v) => { setSubCategory(v); setPage(1); }} options={['', ...(options?.subCategories ?? [])]} placeholder="All sub categories" />
+            </div>
+          </div>
+          <SheetFooter>
+            <Button className="w-full" onClick={() => setMobileFiltersOpen(false)}>
+              Show {(data?.total ?? 0).toLocaleString('en-IN')} pending
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
+
       <DataTable
         columns={cols.visibleColumns}
         rows={items}
@@ -143,6 +235,7 @@ export function DispatchOrderPage() {
         // Compact, readable data font; columns still auto-fit their content.
         className="text-[15px] [&_thead_th]:h-9 [&_thead_th]:text-[13px] [&_td]:px-3 [&_td]:py-1.5 [&_th]:px-3 [&_tbody_button]:size-7"
         emptyText="No pending order lines — everything is dispatched."
+        mobileCard={dispatchMobileCard}
         onRowClick={(r) => setActive(r)}
       />
 
