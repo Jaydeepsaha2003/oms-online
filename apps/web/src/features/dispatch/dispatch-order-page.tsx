@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Filter, Loader2, Package, PackageCheck, Search, Truck, X } from 'lucide-react';
+import { CalendarClock, ChevronLeft, ChevronRight, Filter, Flame, Loader2, Package, PackageCheck, Search, TriangleAlert, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { DISPATCH_STATUSES, type DispatchStatus, type PendingLineDto } from '@oms/shared';
+import { type DispatchStatus, type PendingLineDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn, shortOrderCode } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useColumnOrder } from '@/hooks/use-column-order';
 import { LiveLinePhotos } from '../orders/line-photos';
 import { useConfirm } from '@/components/common/confirm';
@@ -23,10 +24,86 @@ const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? 0 : Num
 const qty = (v: number | null) => (v ? v.toLocaleString('en-IN') : '—');
 
 const DueBadge = ({ t }: { t: string }) => (
-  <span className={cn('inline-flex rounded-full px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset', t === 'Over Due' ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200')}>
+  <span className={cn('inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset', t === 'Over Due' ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200')}>
+    <CalendarClock className="size-3" />
     {t}
   </span>
 );
+
+// Staggered fade+rise for the mobile cards; press-scale lives on the card button
+// itself (separate element) so the two transforms never fight. Reduced-motion safe.
+const DISPATCH_CARD_CSS = `
+.dispatch-card-in { animation: dispatchCardIn .34s cubic-bezier(.22,1,.36,1) both; }
+@keyframes dispatchCardIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .dispatch-card-in { animation: none; } }
+`;
+
+/** A tactile, native-feeling pending-line card for phones. Tap anywhere to dispatch. */
+function DispatchCard({ line, index, onClick }: { line: PendingLineDto; index: number; onClick: () => void }) {
+  const urgent = line.priority === 'URGENT';
+  const overdue = line.dueType === 'Over Due';
+  const qtys = ([['Bags', line.remBags], ['Pcs', line.remPcs], ['Kgs', line.remKgs], ['Box', line.remBox]] as const).filter(([, v]) => v > 0);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group bg-card relative block w-full overflow-hidden rounded-2xl border text-left shadow-sm transition-transform duration-150 ease-out active:scale-[0.98] [touch-action:manipulation]"
+    >
+      {/* Urgency rail — rose when overdue/urgent, emerald otherwise. */}
+      <span className={cn('absolute inset-y-0 left-0 w-1.5', overdue || urgent ? 'bg-rose-500' : 'bg-emerald-500')} aria-hidden />
+      <div className="dispatch-card-in space-y-2.5 py-3 pr-3 pl-4 text-[11px]" style={{ animationDelay: `${Math.min(index, 10) * 45}ms` }}>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="bg-primary/10 text-primary rounded-md px-1.5 py-0.5 font-mono text-[11px] font-bold">{shortOrderCode(line.orderCode, line.orderId)}</span>
+            {urgent && (
+              <span className="inline-flex items-center gap-0.5 rounded-full bg-rose-100 px-1.5 py-[1px] text-[10px] font-bold text-rose-700">
+                <Flame className="size-2.5" /> URGENT
+              </span>
+            )}
+          </div>
+          <DueBadge t={line.dueType} />
+        </div>
+
+        <div>
+          <p className="truncate text-[13px] font-semibold leading-tight">{line.customerName}</p>
+          <p className="text-muted-foreground mt-0.5 text-[10.5px]">Due {formatDate(line.dueDate)} · ordered {formatDate(line.orderDate)}</p>
+        </div>
+
+        <div className="bg-muted/50 rounded-lg px-2.5 py-1.5">
+          <p className="text-[12px] leading-snug font-semibold">{line.productName || line.product || '—'}</p>
+          {line.designType && line.designType.toUpperCase() !== 'NA' && <p className="text-muted-foreground text-[10.5px]">{line.designType}</p>}
+        </div>
+
+        <div className="flex flex-wrap gap-1.5">
+          {qtys.length ? (
+            qtys.map(([label, v]) => (
+              <span key={label} className="border-primary/15 bg-primary/5 text-primary inline-flex items-baseline gap-1 rounded-full border px-2 py-0.5">
+                <span className="text-[9.5px] font-semibold uppercase opacity-70">{label}</span>
+                <span className="text-[12px] font-bold tabular-nums">{qty(v)}</span>
+              </span>
+            ))
+          ) : (
+            <span className="text-muted-foreground text-[11px]">Nothing pending</span>
+          )}
+        </div>
+
+        {line.comment && (
+          <div className="flex items-start gap-1.5 rounded-lg bg-rose-50 px-2 py-1.5 ring-1 ring-rose-100">
+            <TriangleAlert className="mt-[1px] size-3 shrink-0 text-rose-600" />
+            <p className="line-clamp-5 text-[12px] leading-snug font-bold text-rose-600">{line.comment}</p>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between border-t border-dashed pt-2">
+          <span className="text-muted-foreground text-[10.5px] font-medium">Tap to dispatch</span>
+          <span className="bg-primary/10 text-primary flex size-6 items-center justify-center rounded-full transition-transform group-active:translate-x-0.5">
+            <Truck className="size-3.5" />
+          </span>
+        </div>
+      </div>
+    </button>
+  );
+}
 
 const COLUMNS: DataColumn<PendingLineDto>[] = [
   { id: 'order', label: 'Order #', pin: 'left0', pinWidthClass: 'sm:w-16 sm:min-w-16', fixed: true, cell: (r) => <span className="font-mono text-xs font-medium">{shortOrderCode(r.orderCode, r.orderId)}</span> },
@@ -93,40 +170,6 @@ export function DispatchOrderPage() {
   const totalPages = data?.totalPages ?? 1;
   const activeFilterCount = (dueType ? 1 : 0) + (customer ? 1 : 0) + (product ? 1 : 0) + (design ? 1 : 0) + (subCategory ? 1 : 0);
   const cols = useColumnOrder('dispatch-pending', COLUMNS);
-
-  // Phones: one tap-to-dispatch card per pending line (the table scrolls sideways otherwise).
-  const dispatchMobileCard = (r: PendingLineDto) => (
-    <div className="space-y-2 text-[11px]">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-muted-foreground font-mono font-semibold">{shortOrderCode(r.orderCode, r.orderId)}</p>
-          <p className="truncate text-[13px] font-semibold leading-tight">{r.customerName}</p>
-          <p className="text-muted-foreground">Ordered {formatDate(r.orderDate)}</p>
-        </div>
-        <div className="flex shrink-0 flex-col items-end gap-1">
-          <DueBadge t={r.dueType} />
-          <span className="text-muted-foreground whitespace-nowrap">Due {formatDate(r.dueDate)}</span>
-          {r.priority === 'URGENT' && <span className="font-semibold text-rose-600">URGENT</span>}
-        </div>
-      </div>
-
-      <div className="bg-muted/40 rounded-md px-2 py-1.5">
-        <p className="text-[12px] font-semibold">{r.productName || r.product || '—'}</p>
-        {r.designType && r.designType.toUpperCase() !== 'NA' && <p className="text-muted-foreground">{r.designType}</p>}
-      </div>
-
-      <div className="grid grid-cols-4 gap-1.5 text-center">
-        {([['Bags', r.remBags], ['Pcs', r.remPcs], ['Kgs', r.remKgs], ['Box', r.remBox]] as const).map(([label, v]) => (
-          <div key={label} className="rounded-md border py-1">
-            <p className="text-muted-foreground text-[10px] font-medium uppercase">{label}</p>
-            <p className="font-semibold tabular-nums">{qty(v)}</p>
-          </div>
-        ))}
-      </div>
-
-      {r.comment && <p className="text-[12px] leading-snug font-bold text-rose-600 line-clamp-5">{r.comment}</p>}
-    </div>
-  );
 
   return (
     <div className="space-y-4">
@@ -226,18 +269,35 @@ export function DispatchOrderPage() {
         </SheetContent>
       </Sheet>
 
-      <DataTable
-        columns={cols.visibleColumns}
-        rows={items}
-        rowKey={(r) => r.orderItemId}
-        isLoading={isLoading}
-        dense
-        // Compact, readable data font; columns still auto-fit their content.
-        className="text-[15px] [&_thead_th]:h-9 [&_thead_th]:text-[13px] [&_td]:px-3 [&_td]:py-1.5 [&_th]:px-3 [&_tbody_button]:size-7"
-        emptyText="No pending order lines — everything is dispatched."
-        mobileCard={dispatchMobileCard}
-        onRowClick={(r) => setActive(r)}
-      />
+      {/* Desktop: the data table. */}
+      <div className="hidden sm:block">
+        <DataTable
+          columns={cols.visibleColumns}
+          rows={items}
+          rowKey={(r) => r.orderItemId}
+          isLoading={isLoading}
+          dense
+          // Compact, readable data font; columns still auto-fit their content.
+          className="text-[15px] [&_thead_th]:h-9 [&_thead_th]:text-[13px] [&_td]:px-3 [&_td]:py-1.5 [&_th]:px-3 [&_tbody_button]:size-7"
+          emptyText="No pending order lines — everything is dispatched."
+          onRowClick={(r) => setActive(r)}
+        />
+      </div>
+
+      {/* Phones: engaging tap-to-dispatch cards with staggered entrance + press feedback. */}
+      <div className="space-y-3 sm:hidden">
+        <style>{DISPATCH_CARD_CSS}</style>
+        {isLoading ? (
+          [0, 1, 2, 3].map((i) => <div key={i} className="bg-muted/40 h-40 animate-pulse rounded-2xl border" />)
+        ) : items.length === 0 ? (
+          <div className="text-muted-foreground flex flex-col items-center gap-2 rounded-2xl border border-dashed bg-card px-4 py-12 text-center text-sm">
+            <PackageCheck className="text-emerald-400 size-9" />
+            No pending order lines — everything is dispatched.
+          </div>
+        ) : (
+          items.map((r, i) => <DispatchCard key={r.orderItemId} line={r} index={i} onClick={() => setActive(r)} />)
+        )}
+      </div>
 
       <div className="flex items-center justify-between">
         <p className="text-muted-foreground text-sm">Page {data?.page ?? page} of {totalPages}</p>
@@ -330,11 +390,13 @@ const QTY_FIELDS = [
   ['box', 'Box', 'remBox'],
 ] as const;
 
-/** Right slide-over to dispatch a pending order line. Qty fields start blank. */
+/** Slide-over to dispatch a pending order line — a native bottom sheet on phones,
+ *  a right side-panel on desktop. Qty fields start blank. */
 function DispatchSheet({ line, onClose, onDispatched }: { line: PendingLineDto; onClose: () => void; onDispatched: (code: string) => void }) {
   const create = useCreateDispatch();
   const confirm = useConfirm();
   const { can } = usePermissions();
+  const isMobile = useIsMobile();
   const [form, setForm] = useState({
     bags: '',
     pcs: '',
@@ -426,75 +488,109 @@ function DispatchSheet({ line, onClose, onDispatched }: { line: PendingLineDto; 
   }, []);
 
   return (
-    <SheetContent className="flex w-full max-w-lg flex-col">
+    <SheetContent side={isMobile ? 'bottom' : 'right'} className={cn('flex w-full flex-col', isMobile ? 'rounded-t-2xl' : 'max-w-lg')}>
+      {/* Native grabber handle on the phone bottom sheet. */}
+      {isMobile && <div className="bg-muted-foreground/25 mx-auto -mt-1 mb-1 h-1.5 w-10 shrink-0 rounded-full" aria-hidden />}
+
       <SheetHeader>
-        <SheetTitle>Dispatch — {shortOrderCode(line.orderCode, line.orderId)}</SheetTitle>
-        <p className="text-muted-foreground truncate text-sm">{line.customerName}</p>
+        <div className="flex items-center gap-2">
+          <span className="bg-primary/10 text-primary rounded-md px-1.5 py-0.5 font-mono text-sm font-bold">{shortOrderCode(line.orderCode, line.orderId)}</span>
+          {line.priority === 'URGENT' && (
+            <span className="inline-flex items-center gap-0.5 rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">
+              <Flame className="size-2.5" /> URGENT
+            </span>
+          )}
+        </div>
+        <SheetTitle className="truncate text-lg leading-tight">{line.customerName}</SheetTitle>
       </SheetHeader>
 
       {/* px + negative margin gives the inputs' focus ring room to paint into the
           sheet's padding instead of being clipped by overflow-y-auto. */}
-      <div className="-mx-1.5 flex-1 space-y-4 overflow-y-auto px-1.5 pt-2 pb-1.5">
-        <div className="bg-muted/40 rounded-lg border p-3 text-sm">
-          <div className="font-medium">
+      <div className="-mx-1.5 flex-1 space-y-4 overflow-y-auto px-1.5 pt-1 pb-1.5">
+        <div className="bg-muted/40 rounded-xl border p-3">
+          <div className="text-sm font-semibold">
             {line.productName || line.product}
-            {line.designType ? ` · ${line.designType}` : ''}
+            {line.designType && line.designType.toUpperCase() !== 'NA' ? ` · ${line.designType}` : ''}
           </div>
-          <div className="text-muted-foreground">{line.calField ? `Priced by ${line.calField}` : ''}</div>
+          {line.calField && <div className="text-muted-foreground mt-0.5 text-xs">Priced by {line.calField}</div>}
         </div>
 
-        <p className="text-muted-foreground text-xs">Enter the dispatched quantity — remaining is shown after the “/”.</p>
-
-        <div className="grid grid-cols-2 gap-3">
-          {QTY_FIELDS.map(([k, label, remKey], i) => (
-            <div key={k} className="space-y-1">
-              <Label className="flex items-baseline justify-between text-sm font-semibold">
-                <span>{label}</span>
-                <span className="text-base font-bold tabular-nums text-primary">/ {qty(line[remKey])}</span>
-              </Label>
-              <Input
-                autoFocus={i === 0}
-                type="number"
-                step="any"
-                placeholder="0"
-                className="text-right tabular-nums"
-                value={form[k]}
-                onChange={(e) => set({ [k]: e.target.value } as Partial<typeof form>)}
-              />
-            </div>
-          ))}
+        <div>
+          <p className="text-muted-foreground mb-2 text-xs">Enter what's going out — tap <span className="text-primary font-semibold">MAX</span> to fill the remaining amount.</p>
+          <div className="grid grid-cols-2 gap-2.5">
+            {QTY_FIELDS.map(([k, label, remKey], i) => {
+              const rem = line[remKey] ?? 0;
+              return (
+                <div key={k} className="bg-card space-y-1.5 rounded-xl border p-2.5">
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-sm font-semibold">{label}</span>
+                    {rem > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => set({ [k]: String(rem) } as Partial<typeof form>)}
+                        className="bg-primary/10 text-primary rounded-full px-2 py-0.5 text-[10px] font-bold tabular-nums transition-transform active:scale-95"
+                      >
+                        MAX {qty(rem)}
+                      </button>
+                    )}
+                  </div>
+                  <Input
+                    autoFocus={i === 0 && !isMobile}
+                    type="number"
+                    step="any"
+                    inputMode="decimal"
+                    placeholder="0"
+                    className="h-11 text-right text-base tabular-nums"
+                    value={form[k]}
+                    onChange={(e) => set({ [k]: e.target.value } as Partial<typeof form>)}
+                  />
+                </div>
+              );
+            })}
+          </div>
         </div>
 
-        <div className="space-y-1">
+        {/* Segmented Partial/Full toggle — more tactile than a dropdown on touch. */}
+        <div className="space-y-1.5">
           <Label className="text-xs">Dispatch status</Label>
-          <NativeSelect
-            value={form.dispatchStatus}
-            onChange={(v) => set({ dispatchStatus: v === 'FULLY DISPATCH' ? 'FULLY DISPATCH' : 'PARTIALLY DISPATCH' })}
-            options={[...DISPATCH_STATUSES]}
-          />
+          <div className="bg-muted grid grid-cols-2 gap-1 rounded-xl p-1">
+            {([['PARTIALLY DISPATCH', 'Partial'], ['FULLY DISPATCH', 'Full']] as const).map(([val, label]) => (
+              <button
+                key={val}
+                type="button"
+                onClick={() => set({ dispatchStatus: val })}
+                className={cn(
+                  'rounded-lg py-2 text-sm font-semibold transition-all active:scale-[0.97]',
+                  form.dispatchStatus === val ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="space-y-1">
+
+        <div className="space-y-1.5">
           <Label className="text-xs">Comment</Label>
           <Input value={form.comment} onChange={(e) => set({ comment: e.target.value })} placeholder="Dispatch remark…" />
         </div>
 
         {/* This order line's photos — view, and add more from the shop floor. */}
-        <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+        <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
           <LiveLinePhotos orderItemId={line.orderItemId} canEdit={can('order:update')} title="Order-line photos" />
         </div>
       </div>
 
-      <SheetFooter className="justify-between">
-        <Button type="button" variant="outline" onClick={dispatchAll} title="Fill the remaining quantities and mark Fully Dispatch">
+      <SheetFooter className="flex-col gap-2 pb-[max(env(safe-area-inset-bottom),0.25rem)] sm:flex-row sm:items-center sm:justify-between sm:pb-4">
+        <Button type="button" variant="outline" className="w-full transition-transform active:scale-[0.98] sm:w-auto" onClick={dispatchAll} title="Fill the remaining quantities and mark Fully Dispatch">
           <PackageCheck /> Dispatch Full
         </Button>
-        <div className="flex gap-2">
-          <Button type="button" variant="outline" onClick={onClose}>
+        <div className="flex w-full gap-2 sm:w-auto">
+          <Button type="button" variant="outline" className="flex-1 transition-transform active:scale-[0.98] sm:flex-none" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={create.isPending} title="Save dispatch (Ctrl+S)">
+          <Button onClick={submit} disabled={create.isPending} className="flex-1 transition-transform active:scale-[0.98] sm:flex-none" title="Save dispatch (Ctrl+S)">
             {create.isPending ? <Loader2 className="animate-spin" /> : <Truck />} Save dispatch
-            <kbd className="ml-1 rounded bg-white/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold">Ctrl+S</kbd>
           </Button>
         </div>
       </SheetFooter>
