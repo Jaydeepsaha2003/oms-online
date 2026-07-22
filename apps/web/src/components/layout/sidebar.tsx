@@ -8,6 +8,7 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { useNudgeCount } from '@/features/crm/followup-nudge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
+import { SystemStatus } from '@/components/common/system-status';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 const APP_NAME = import.meta.env.VITE_APP_NAME ?? 'OMS';
@@ -90,9 +91,14 @@ export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
         </nav>
       </ScrollArea>
 
-      {!collapsed && (
+      {collapsed ? (
+        <div className="flex justify-center px-0 py-3">
+          <SystemStatus variant="compact" />
+        </div>
+      ) : (
         <div className="px-4 py-3 text-xs text-sidebar-foreground/45">
           <Separator className="mb-3 bg-sidebar-border" />
+          <SystemStatus variant="full" className="mb-2" />
           {APP_NAME} · v0.1.0
         </div>
       )}
