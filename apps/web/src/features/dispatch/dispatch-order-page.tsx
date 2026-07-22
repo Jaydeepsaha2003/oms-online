@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { CalendarClock, ChevronLeft, ChevronRight, Filter, Flame, Loader2, Package, PackageCheck, Search, TriangleAlert, Truck, X } from 'lucide-react';
+import { CalendarClock, ChevronLeft, ChevronRight, FileSpreadsheet, Filter, Flame, Loader2, Package, PackageCheck, Search, TriangleAlert, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { type DispatchStatus, type PendingLineDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { useCreateDispatch, usePendingFilterOptions, usePendingOrders } from './use-dispatch';
+import { exportPendingDispatch, useCreateDispatch, usePendingFilterOptions, usePendingOrders } from './use-dispatch';
 
 const PAGE_SIZE = 50;
 const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? 0 : Number(s));

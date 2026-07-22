@@ -19,15 +19,31 @@ const EPS = 1e-6;
 // apart (goods have to be packed/weighed again), so this can't merge legitimate ones.
 const DISPATCH_DEDUPE_WINDOW_MS = 15_000;
 
+// The pending pool is a full scan of every order line + its dispatches, so
+// recomputing it on every filter/search keystroke is what made the Dispatch Order
+// page feel slow. Cache it briefly: back-to-back filter changes reuse the same
+// snapshot, and any dispatch write clears it immediately so a just-shipped line
+// vanishes at once (order edits/new orders still refresh within the TTL).
+const PENDING_CACHE_TTL_MS = 10_000;
+
 @Injectable()
 export class DispatchService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private pendingCache: { at: number; lines: PendingLineDto[] } | null = null;
+  private invalidatePendingCache(): void {
+    this.pendingCache = null;
+  }
+
   /* ── Pending order lines (ordered − dispatched) ─────────────────────────── */
 
   /** The full pool of order lines still awaiting dispatch (ordered − dispatched > 0),
-   *  before any dropdown/search filtering. Shared by the list and its filter options. */
+   *  before any dropdown/search filtering. Shared by the list and its filter options.
+   *  Cached for {@link PENDING_CACHE_TTL_MS} (see note above). */
   private async computePendingLines(): Promise<PendingLineDto[]> {
+    if (this.pendingCache && Date.now() - this.pendingCache.at < PENDING_CACHE_TTL_MS) {
+      return this.pendingCache.lines;
+    }
     const items = await this.prisma.orderItem.findMany({
       // Cancelled lines (and cancelled/draft orders) are not dispatchable.
       where: { status: { not: 'CANCELLED' }, order: { status: { notIn: ['CANCELLED', 'DRAFT'] } } },
@@ -84,6 +100,7 @@ export class DispatchService {
         remBox,
       });
     }
+    this.pendingCache = { at: Date.now(), lines };
     return lines;
   }
 
@@ -106,9 +123,8 @@ export class DispatchService {
     return { customers: sorted(customers), products: sorted(products), designs: sorted(designs), subCategories: sorted(subCategories) };
   }
 
-  async pending(query: PendingQueryDto): Promise<Paginated<PendingLineDto>> {
-    let lines = await this.computePendingLines();
-
+  /** Apply the Dispatch Order page's search + dropdown filters to the pending pool. */
+  private applyPendingFilters(lines: PendingLineDto[], query: PendingQueryDto): PendingLineDto[] {
     const search = query.search?.trim().toLowerCase();
     if (search) {
       lines = lines.filter((l) =>
@@ -126,10 +142,19 @@ export class DispatchService {
         u === 'BAGS' ? l.remBags > 0 : u === 'PCS' ? l.remPcs > 0 : u === 'KGS' ? l.remKgs > 0 : u === 'BOX' ? l.remBox > 0 : true,
       );
     }
+    return lines;
+  }
 
+  async pending(query: PendingQueryDto): Promise<Paginated<PendingLineDto>> {
+    const lines = this.applyPendingFilters(await this.computePendingLines(), query);
     const total = lines.length;
     const page = lines.slice(query.skip, query.skip + query.pageSize);
     return { items: page, total, page: query.page, pageSize: query.pageSize, totalPages: Math.max(1, Math.ceil(total / query.pageSize)) };
+  }
+
+  /** All pending lines matching the filters (no pagination) — for the Excel export. */
+  async pendingExport(query: PendingQueryDto): Promise<PendingLineDto[]> {
+    return this.applyPendingFilters(await this.computePendingLines(), query);
   }
 
   /* ── Dispatch records ───────────────────────────────────────────────────── */
@@ -271,6 +296,7 @@ export class DispatchService {
         },
       });
     });
+    this.invalidatePendingCache(); // a new dispatch changes what's still pending
     return this.toDto(await this.ensureCode(row));
   }
 
@@ -303,6 +329,7 @@ export class DispatchService {
         ...(dto.dispatchDate ? { dispatchDate: new Date(dto.dispatchDate) } : {}),
       },
     });
+    this.invalidatePendingCache(); // edited quantities change remaining-to-dispatch
     return this.toDto(row);
   }
 
@@ -310,6 +337,7 @@ export class DispatchService {
     const c = await this.prisma.dispatch.count({ where: { id } });
     if (!c) throw new NotFoundException('Dispatch not found.');
     await this.prisma.dispatch.delete({ where: { id } });
+    this.invalidatePendingCache(); // a deleted dispatch puts its qty back in the pool
   }
 
   /* ── helpers ─────────────────────────────────────────────────────────────── */

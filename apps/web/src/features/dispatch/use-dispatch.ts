@@ -9,15 +9,25 @@ import type {
   PendingQuery,
   UpdateDispatchInput,
 } from '@oms/shared';
-import { http } from '@/lib/api';
+import { downloadFile, http } from '@/lib/api';
 
 const KEY = ['dispatch'] as const;
+
+/** Download the current pending-dispatch list (with the active filters) as .xlsx. */
+export function exportPendingDispatch(query: Omit<PendingQuery, 'page' | 'pageSize'>): Promise<void> {
+  const entries = Object.entries(query).filter(([, v]) => v != null && v !== '') as [string, string][];
+  const qs = new URLSearchParams(entries).toString();
+  return downloadFile(`/dispatch/pending/export${qs ? `?${qs}` : ''}`, 'pending-dispatch.xlsx');
+}
 
 export function usePendingOrders(query: PendingQuery) {
   return useQuery({
     queryKey: [...KEY, 'pending', query],
     queryFn: () => http.get<PendingList>('/dispatch/pending', { params: query }),
+    // Keep the previous list on screen while a new filter loads (no flash), and
+    // treat results as fresh for a short window so re-selecting a filter is instant.
     placeholderData: (prev) => prev,
+    staleTime: 15_000,
   });
 }
 
