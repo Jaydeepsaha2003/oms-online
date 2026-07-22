@@ -131,8 +131,8 @@ export function ChallansListPage() {
       await new Promise((r) => setTimeout(r, 650));
       if (kind === 'detailed') exportDetailedReport(rows, meta);
       else exportSummaryReport(rows, meta);
+      // Stay open on "done" so the user can dismiss it themselves (X, Close, or backdrop).
       setReport({ kind, phase: 'done', count: rows.length });
-      setTimeout(() => setReport(null), 1200);
     } catch {
       toast.error('Failed to build the report.');
       setReport(null);
@@ -489,6 +489,7 @@ export function ChallansListPage() {
         title={report?.kind === 'summary' ? 'Challan Summary' : 'Detailed View'}
         phase={report?.phase ?? 'fetching'}
         count={report?.count}
+        onClose={() => setReport(null)}
       />
     </div>
   );

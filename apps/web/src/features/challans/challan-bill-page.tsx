@@ -1,10 +1,11 @@
-import { Fragment, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Download, Loader2, Printer } from 'lucide-react';
 import { toast } from 'sonner';
 import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
 import { Button } from '@/components/ui/button';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 import { buildBillFilename, preOpenPdfTab, savePdfBlob } from '@/lib/pdf';
 import kavishLogo from '@/assets/kavish-logo-order.png';
 import { useChallanTerms, useCompany } from '@/features/settings/use-settings';
@@ -91,12 +92,45 @@ export function ChallanBillPage() {
   const [busy, setBusy] = useState(false);
   const [printImg, setPrintImg] = useState<string | null>(null);
 
+  // The receipt is laid out at a fixed design width for print quality; on phones
+  // that overflows and reads badly, so we scale the on-screen preview down to fit
+  // the screen. The PDF/print capture is unaffected (it clones the node at 960 px).
+  const isMobile = useIsMobile();
+  const PREVIEW_DESIGN_W = 800;
+  const previewWrapRef = useRef<HTMLDivElement>(null);
+  const invoiceRef = useRef<HTMLDivElement>(null);
+  const [previewScale, setPreviewScale] = useState(1);
+  const [previewH, setPreviewH] = useState<number | undefined>(undefined);
+
   // Clear the print image once the print dialog closes.
   useEffect(() => {
     const clear = () => setPrintImg(null);
     window.addEventListener('afterprint', clear);
     return () => window.removeEventListener('afterprint', clear);
   }, []);
+
+  // Fit-to-width scaling for the phone preview (recomputed on resize + when the
+  // challan loads, since its height then changes).
+  useEffect(() => {
+    if (!isMobile) {
+      setPreviewScale(1);
+      setPreviewH(undefined);
+      return;
+    }
+    const wrap = previewWrapRef.current;
+    const inv = invoiceRef.current;
+    if (!wrap || !inv) return;
+    const compute = () => {
+      const s = Math.min(1, wrap.clientWidth / PREVIEW_DESIGN_W);
+      setPreviewScale(s);
+      setPreviewH(inv.offsetHeight * s);
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(wrap);
+    ro.observe(inv);
+    return () => ro.disconnect();
+  }, [isMobile, challan]);
 
   // Capture the challan at 960 px — wide enough to avoid over-wrapping but
   // narrow enough that fonts appear noticeably larger when scaled to A4.
@@ -225,9 +259,12 @@ export function ChallanBillPage() {
         </div>
       </div>
 
-      {/* ── Printable Challan (matches the Sales Order / Quotation letterhead format) ── */}
+      {/* ── Printable Challan — scaled to fit the screen on phones (see previewScale). ── */}
+      <div ref={previewWrapRef} className="w-full overflow-hidden" style={isMobile ? { height: previewH } : undefined}>
+      <div style={isMobile ? { width: PREVIEW_DESIGN_W, transform: `scale(${previewScale})`, transformOrigin: 'top left' } : undefined}>
       <div
         id="challan-invoice"
+        ref={invoiceRef}
         style={{
           position: 'relative',
           background: '#fff',
@@ -385,17 +422,17 @@ export function ChallanBillPage() {
         {/* Amount in words (left) + charges / totals breakdown (right) */}
         <div style={{ padding: '0 8px 10px', display: 'flex', justifyContent: 'space-between', gap: 15 }}>
           <div style={{ fontSize: 19, maxWidth: '52%', lineHeight: 1.4 }}>
-            <div style={{ color: '#ff8c01', fontWeight: 700, fontSize: 19 }}>Total In Words</div>
+            <div style={{ color: ORANGE, fontWeight: 700, fontSize: 19 }}>Total In Words</div>
             <div style={{ fontWeight: 700, marginTop: 3, fontSize: 18 }}>{amountInWordsIndian(tds ? netReceivable : total)}</div>
             {challan.transName && (
               <div style={{ fontFamily: FONT, fontSize: 18, fontWeight: 800, marginTop: 20 }}>
-                <span style={{ color: '#ff8c01' }}>TRANSPORTER : </span>
+                <span style={{ color: ORANGE }}>TRANSPORTER : </span>
                 {challan.transName}
               </div>
             )}
             {challan.remarks && (
               <>
-                <div style={{ color: '#ff8c01', fontWeight: 700, fontSize: 16, marginTop: 6 }}>Remarks</div>
+                <div style={{ color: ORANGE, fontWeight: 700, fontSize: 16, marginTop: 6 }}>Remarks</div>
                 <div style={{ marginTop: 3, color: '#555555', fontSize: 16 }}>{challan.remarks}</div>
               </>
             )}
@@ -437,7 +474,7 @@ export function ChallanBillPage() {
         <div style={{ padding: '0 8px 6px' }}>
           {terms.length > 0 && (
             <div style={{ fontSize: 17, lineHeight: 1.3 }}>
-              <div style={{ color: '#ff8c01', fontWeight: 700, fontSize: 19, marginBottom: 4 }}>Terms &amp; Conditions</div>
+              <div style={{ color: ORANGE, fontWeight: 700, fontSize: 19, marginBottom: 4 }}>Terms &amp; Conditions</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 {terms.map((t, i) => (
                   <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
@@ -449,6 +486,8 @@ export function ChallanBillPage() {
             </div>
           )}
         </div>
+      </div>
+      </div>
       </div>
     </div>
   );
