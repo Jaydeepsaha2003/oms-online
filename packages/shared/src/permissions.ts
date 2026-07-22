@@ -22,6 +22,9 @@ export const ACTIONS = {
   IMPORT: 'import',
   APPROVE: 'approve',
   PRINT: 'print',
+  /** See monetary rate / amount columns on a screen. Without it those columns are
+   *  hidden in the UI and the rate fields are stripped from the API response. */
+  VIEWRATES: 'viewrates',
   /** Convert a quotation into an order. */
   CONVERT: 'convert',
   /** Cancel a quotation (with a tracked reason). */
@@ -140,7 +143,7 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
     resource: RESOURCES.DISPATCH,
     label: 'Dispatch',
     group: 'Sales',
-    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.EXPORT, ACTIONS.MANAGE],
+    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.EXPORT, ACTIONS.VIEWRATES, ACTIONS.MANAGE],
   },
   {
     resource: RESOURCES.CHALLAN,

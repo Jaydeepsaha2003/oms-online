@@ -6,6 +6,10 @@ import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 export interface ComboboxOption {
   value: string;
   label?: string;
+  /** Extra text matched by the search but never displayed — e.g. an item's pcs
+   *  count and sub-category, so a size-labelled row is still found by typing its
+   *  pcs, and vice-versa. */
+  keywords?: string;
 }
 
 export interface ComboboxProps {
@@ -39,6 +43,7 @@ const RENDER_LIMIT = 100;
 interface Row {
   value: string;
   label: string;
+  keywords?: string;
   create?: boolean;
 }
 
@@ -66,7 +71,7 @@ export function Combobox({
   const opts = React.useMemo<Row[]>(
     () =>
       options.map((o) =>
-        typeof o === 'string' ? { value: o, label: o } : { value: o.value, label: o.label ?? o.value },
+        typeof o === 'string' ? { value: o, label: o } : { value: o.value, label: o.label ?? o.value, keywords: o.keywords },
       ),
     [options],
   );
@@ -95,17 +100,20 @@ export function Combobox({
 
   const q = text.trim();
   const ql = q.toLowerCase();
-  // Left-to-right (prefix) search: a value matches when the whole string OR any
-  // of its words starts with what was typed — so "amra" finds "7 AMRAPALI (APS)"
-  // but a mid-word substring like "rap" does not. Words split on spaces and the
-  // usual separators found in item names.
+  // Multi-term prefix search: split BOTH the query and each option into words,
+  // and keep an option only when EVERY typed word prefix-matches some word of its
+  // searchable text (visible label + value + hidden keywords). This is what makes
+  // "15 raj" find "5.5 RAJWADI" — "15" matches its pcs (a keyword) and "raj"
+  // matches the product name — while staying prefix-based, not substring ("rap"
+  // still won't match "AMRAPALI"). A single typed word behaves exactly as before.
+  const WORD_SEP = /[\s(),+/-]+/;
   const matches = React.useMemo(() => {
     if (!dirty || ql === '') return opts;
-    const prefixed = (s: string) => {
-      const t = s.toLowerCase();
-      return t.startsWith(ql) || t.split(/[\s(),+/-]+/).some((w) => w.startsWith(ql));
-    };
-    return opts.filter((o) => prefixed(o.label) || prefixed(o.value));
+    const terms = ql.split(WORD_SEP).filter(Boolean);
+    return opts.filter((o) => {
+      const words = `${o.label} ${o.value} ${o.keywords ?? ''}`.toLowerCase().split(WORD_SEP).filter(Boolean);
+      return terms.every((t) => words.some((w) => w.startsWith(t)));
+    });
   }, [opts, dirty, ql]);
   const visible = matches.slice(0, RENDER_LIMIT);
   const hiddenCount = matches.length - visible.length;

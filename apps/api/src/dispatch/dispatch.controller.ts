@@ -1,10 +1,11 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Res, StreamableFile } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
-import { ACTIONS, perm, RESOURCES } from '@oms/shared';
+import { ACTIONS, hasPermission, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { ExcelService } from '../excel/excel.service';
 import { DispatchService } from './dispatch.service';
 import { CreateDispatchDto, DispatchQueryDto, PendingQueryDto, UpdateDispatchDto } from './dto/dispatch.dto';
@@ -28,10 +29,21 @@ export class DispatchController {
     private readonly excel: ExcelService,
   ) {}
 
+  /** Strip rate/amount fields from rows for users without `dispatch:viewrates`,
+   *  so the values never reach the client (not just hidden columns). */
+  private redactRates<T extends { productRate: number | null; designRate: number | null; rate: number | null }>(
+    rows: T[],
+    user: AuthenticatedUser,
+  ): T[] {
+    if (hasPermission(user.permissions, perm(R, ACTIONS.VIEWRATES))) return rows;
+    return rows.map((r) => ({ ...r, productRate: null, designRate: null, rate: null }));
+  }
+
   @Get('pending')
   @Permissions(perm(R, ACTIONS.VIEW))
-  pending(@Query() query: PendingQueryDto) {
-    return this.dispatch.pending(query);
+  async pending(@Query() query: PendingQueryDto, @CurrentUser() user: AuthenticatedUser) {
+    const res = await this.dispatch.pending(query);
+    return { ...res, items: this.redactRates(res.items, user) };
   }
 
   @Get('pending/export')
@@ -78,8 +90,9 @@ export class DispatchController {
 
   @Get()
   @Permissions(perm(R, ACTIONS.VIEW))
-  list(@Query() query: DispatchQueryDto) {
-    return this.dispatch.findMany(query);
+  async list(@Query() query: DispatchQueryDto, @CurrentUser() user: AuthenticatedUser) {
+    const res = await this.dispatch.findMany(query);
+    return { ...res, items: this.redactRates(res.items, user) };
   }
 
   @Get(':id')

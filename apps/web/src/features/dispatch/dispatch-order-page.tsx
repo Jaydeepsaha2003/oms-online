@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { CalendarClock, ChevronLeft, ChevronRight, FileSpreadsheet, Filter, Flame, Loader2, Package, PackageCheck, Search, TriangleAlert, Truck, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { CalendarClock, ChevronLeft, ChevronRight, Filter, Flame, Loader2, Package, PackageCheck, Search, TriangleAlert, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { type DispatchStatus, type PendingLineDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -11,6 +11,7 @@ import { useColumnOrder } from '@/hooks/use-column-order';
 import { LiveLinePhotos } from '../orders/line-photos';
 import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
+import { ExportButton } from '@/components/common/excel-actions';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
@@ -49,10 +50,11 @@ const DISPATCH_CARD_CSS = `
 `;
 
 /** A tactile, native-feeling pending-line card for phones. Tap anywhere to dispatch. */
-function DispatchCard({ line, index, onClick }: { line: PendingLineDto; index: number; onClick: () => void }) {
+function DispatchCard({ line, index, showRates, onClick }: { line: PendingLineDto; index: number; showRates: boolean; onClick: () => void }) {
   const urgent = line.priority === 'URGENT';
   const overdue = line.dueType === 'Over Due';
   const qtys = ([['Bags', line.remBags], ['Pcs', line.remPcs], ['Kgs', line.remKgs], ['Box', line.remBox]] as const).filter(([, v]) => v > 0);
+  const pendingAmt = line.rate != null ? Math.round(line.rate * ((line.calField ?? '').toUpperCase() === 'PCS' ? line.remPcs : line.remKgs)) : null;
   return (
     <button
       type="button"
@@ -99,6 +101,13 @@ function DispatchCard({ line, index, onClick }: { line: PendingLineDto; index: n
           </span>
         </div>
 
+        {showRates && (
+          <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 border-t pt-2 text-[12px]">
+            <span>Rate <span className="text-foreground font-semibold tabular-nums">{money(line.rate)}</span></span>
+            <span>Pending <span className="text-foreground font-semibold tabular-nums">{money(pendingAmt)}</span></span>
+          </div>
+        )}
+
         {line.comment && (
           <div className="flex items-start gap-1.5 rounded-lg bg-rose-50 px-2.5 py-2 ring-1 ring-rose-100">
             <TriangleAlert className="mt-[1px] size-3.5 shrink-0 text-rose-600" />
@@ -124,6 +133,32 @@ const COLUMNS: DataColumn<PendingLineDto>[] = [
   { id: 'box', label: 'Box', align: 'right', cell: (r) => <span className="tabular-nums">{qty(r.remBox)}</span> },
   { id: 'comment', label: 'Comment', cell: (r) => (r.comment ? <span className="font-bold text-rose-600">{r.comment}</span> : <span className="text-muted-foreground">—</span>) },
 ];
+
+const money = (v: number | null) => (v == null ? '—' : `₹${v.toLocaleString('en-IN')}`);
+
+/** Rate columns, shown only to users with `dispatch:viewrates`. Amount is the
+ *  ₹ value of the still-pending quantity (rate × remaining pcs or kgs). */
+const RATE_COLUMNS: DataColumn<PendingLineDto>[] = [
+  { id: 'productRate', label: 'Product ₹', align: 'right', cell: (r) => <span className="tabular-nums">{money(r.productRate)}</span> },
+  { id: 'designRate', label: 'Design ₹', align: 'right', cell: (r) => <span className="tabular-nums">{money(r.designRate)}</span> },
+  { id: 'rate', label: 'Rate ₹', align: 'right', cell: (r) => <span className="font-semibold tabular-nums">{money(r.rate)}</span> },
+  {
+    id: 'amount',
+    label: 'Pending ₹',
+    align: 'right',
+    cell: (r) => {
+      const qtyLeft = (r.calField ?? '').toUpperCase() === 'PCS' ? r.remPcs : r.remKgs;
+      return <span className="tabular-nums">{money(r.rate != null ? Math.round(r.rate * qtyLeft) : null)}</span>;
+    },
+  },
+];
+
+/** Insert the rate columns just before the Comment column (their default slot). */
+const withRates = (cols: DataColumn<PendingLineDto>[]): DataColumn<PendingLineDto>[] => {
+  const at = cols.findIndex((c) => c.id === 'comment');
+  const i = at < 0 ? cols.length : at;
+  return [...cols.slice(0, i), ...RATE_COLUMNS, ...cols.slice(i)];
+};
 
 export function DispatchOrderPage() {
   const [searchInput, setSearchInput] = useState('');
@@ -210,7 +245,30 @@ export function DispatchOrderPage() {
   // Customer + Product are their own search boxes on mobile now, so the filter-icon
   // badge counts only what still lives behind it (Due / Design / Sub category).
   const sheetFilterCount = (dueType ? 1 : 0) + (design ? 1 : 0) + (subCategory ? 1 : 0);
-  const cols = useColumnOrder('dispatch-pending', COLUMNS);
+  const { can } = usePermissions();
+  const canViewRates = can('dispatch:viewrates');
+  const columns = useMemo(() => (canViewRates ? withRates(COLUMNS) : COLUMNS), [canViewRates]);
+  const cols = useColumnOrder('dispatch-pending', columns);
+  const [exporting, setExporting] = useState(false);
+  // Export the pending list under the CURRENTLY applied filters (the server
+  // re-runs the same query without paging, so you get every matching line).
+  const onExport = async () => {
+    setExporting(true);
+    try {
+      await exportPendingDispatch({
+        search: search || undefined,
+        dueType: dueType || undefined,
+        customer: customer || undefined,
+        product: product || undefined,
+        design: design || undefined,
+        subCategory: subCategory || undefined,
+      });
+    } catch (e) {
+      toast.error(getApiErrorMessage(e, 'Excel export failed'));
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -238,6 +296,7 @@ export function DispatchOrderPage() {
               </span>
             )}
           </Button>
+          {can('dispatch:export') && <ExportButton onClick={onExport} disabled={exporting} label="Export to Excel" />}
         </div>
 
         {/* Desktop: filters inline. */}
@@ -267,6 +326,7 @@ export function DispatchOrderPage() {
           >
             <X /> Reset
           </Button>
+          {can('dispatch:export') && <ExportButton onClick={onExport} disabled={exporting} label="Export pending list to Excel" />}
           <ColumnSettings
             columns={cols.orderedReorderable}
             hidden={cols.hidden}
@@ -337,7 +397,7 @@ export function DispatchOrderPage() {
             No pending order lines — everything is dispatched.
           </div>
         ) : (
-          items.map((r, i) => <DispatchCard key={r.orderItemId} line={r} index={i} onClick={() => setActive(r)} />)
+          items.map((r, i) => <DispatchCard key={r.orderItemId} line={r} index={i} showRates={canViewRates} onClick={() => setActive(r)} />)
         )}
       </div>
 

@@ -6,6 +6,8 @@ import {
   type CrmReminderSettings,
   type FollowupChecklistItemDto,
   type FollowupDto,
+  type FollowupItemDto,
+  type FollowupItemInput,
   type FollowupKind,
   type FollowupLogDto,
   type FollowupPartyGroup,
@@ -19,7 +21,11 @@ import { toNum, toStr, uc } from '../common/coerce';
 import { AddFollowupLogDto, CreateFollowupDto, CrmSettingsDto, FollowupQueryDto } from './dto/crm.dto';
 
 const SETTINGS_KEY = 'CRM_REMINDER_DEFAULTS';
-const INCLUDE = { logs: { orderBy: { createdAt: 'asc' } }, checklist: { orderBy: { sortOrder: 'asc' } } } as const;
+const INCLUDE = {
+  logs: { orderBy: { createdAt: 'asc' } },
+  checklist: { orderBy: { sortOrder: 'asc' } },
+  items: { orderBy: { sortOrder: 'asc' } },
+} as const;
 type Row = Prisma.FollowupGetPayload<{ include: typeof INCLUDE }>;
 
 @Injectable()
@@ -80,10 +86,26 @@ export class CrmService {
               },
             }
           : {}),
+        ...(dto.items?.length ? { items: { create: this.itemsCreate(dto.items) } } : {}),
       },
       include: INCLUDE,
     });
     return this.toDto(row);
+  }
+
+  /** Normalised nested-create rows for a follow-up's item lines (used by both
+   *  create and update — on update the existing set is deleted first). */
+  private itemsCreate(items?: FollowupItemInput[]) {
+    return (items ?? []).map((it, i) => ({
+      orderItemId: it.orderItemId ?? null,
+      orderCode: toStr(it.orderCode),
+      productName: toStr(it.productName),
+      bags: it.bags ?? null,
+      pcs: it.pcs ?? null,
+      kgs: it.kgs ?? null,
+      box: it.box ?? null,
+      sortOrder: i,
+    }));
   }
 
   async update(id: number, dto: CreateFollowupDto): Promise<FollowupDto> {
@@ -105,6 +127,9 @@ export class CrmService {
         ...(dto.promisedAt !== undefined ? { promisedAt: dto.promisedAt ? new Date(dto.promisedAt) : null } : {}),
         ...(dto.reminderIntervalMins !== undefined ? { reminderIntervalMins: dto.reminderIntervalMins ?? null } : {}),
         ...(dto.maxRemindersPerDay !== undefined ? { maxRemindersPerDay: dto.maxRemindersPerDay ?? null } : {}),
+        // Items are replace-on-save when the field is present: drop the old set,
+        // recreate from the payload (mirrors how the form always sends the full list).
+        ...(dto.items !== undefined ? { items: { deleteMany: {}, create: this.itemsCreate(dto.items) } } : {}),
       },
       include: INCLUDE,
     });
@@ -503,6 +528,17 @@ export class CrmService {
         sortOrder: c.sortOrder,
         source: (c.source as 'MANUAL' | 'VOICE') ?? 'MANUAL',
         createdAt: c.createdAt.toISOString(),
+      })),
+      items: (r.items ?? []).map((it): FollowupItemDto => ({
+        id: it.id,
+        followupId: it.followupId,
+        orderItemId: it.orderItemId,
+        orderCode: it.orderCode,
+        productName: it.productName,
+        bags: it.bags,
+        pcs: it.pcs,
+        kgs: it.kgs,
+        box: it.box,
       })),
     };
   }

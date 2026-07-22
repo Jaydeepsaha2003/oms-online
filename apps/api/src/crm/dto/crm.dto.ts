@@ -1,11 +1,21 @@
 import { PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, MaxLength, Min, ValidateNested } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 export class ChecklistItemInputDto {
   @IsString() @MaxLength(500) text!: string;
   @IsOptional() @IsIn(['MANUAL', 'VOICE']) source?: 'MANUAL' | 'VOICE';
+}
+
+export class FollowupItemInputDto {
+  @IsOptional() @IsInt() orderItemId?: number | null;
+  @IsOptional() @IsString() @MaxLength(64) orderCode?: string | null;
+  @IsOptional() @IsString() @MaxLength(500) productName?: string | null;
+  @IsOptional() @IsNumber() bags?: number | null;
+  @IsOptional() @IsNumber() pcs?: number | null;
+  @IsOptional() @IsNumber() kgs?: number | null;
+  @IsOptional() @IsNumber() box?: number | null;
 }
 
 export class CreateFollowupDto {
@@ -24,6 +34,7 @@ export class CreateFollowupDto {
   @IsOptional() @IsInt() @Min(1) reminderIntervalMins?: number | null;
   @IsOptional() @IsInt() @Min(0) maxRemindersPerDay?: number | null;
   @IsOptional() @IsArray() @ArrayMaxSize(50) @ValidateNested({ each: true }) @Type(() => ChecklistItemInputDto) checklist?: ChecklistItemInputDto[];
+  @IsOptional() @IsArray() @ArrayMaxSize(100) @ValidateNested({ each: true }) @Type(() => FollowupItemInputDto) items?: FollowupItemInputDto[];
 }
 
 export class UpdateFollowupDto extends PartialType(CreateFollowupDto) {}

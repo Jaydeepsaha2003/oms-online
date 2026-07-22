@@ -952,6 +952,7 @@ model Followup {
 
   logs      FollowupLog[]
   checklist FollowupChecklistItem[]
+  items     FollowupItem[]
 
   @@index([status])
   @@index([kind])
@@ -959,6 +960,28 @@ model Followup {
   @@index([promisedAt])
   @@index([customerId])
   @@map("followups")
+}
+
+/// One item (with quantities) covered by a follow-up — a follow-up can span
+/// several order lines, each with its own bags/pcs/kgs/box to deliver or collect.
+model FollowupItem {
+  id          Int      @id @default(autoincrement())
+  followupId  Int
+  /// Optional link to the actual order line (free-text-only when null).
+  orderItemId Int?
+  orderCode   String?
+  productName String?
+  bags        Float?
+  pcs         Float?
+  kgs         Float?
+  box         Float?
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  followup Followup @relation(fields: [followupId], references: [id], onDelete: Cascade)
+
+  @@index([followupId])
+  @@map("followup_items")
 }
 
 /// A tick-off task on a follow-up. Added by typing or by voice (Gemini turns

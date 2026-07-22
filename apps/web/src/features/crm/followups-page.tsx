@@ -199,6 +199,28 @@ function FollowupRow({ f, canEdit, onEdit }: { f: FollowupDto; canEdit: boolean;
         </button>
       </div>
 
+      {/* Items on this follow-up, each with its quantities */}
+      {(f.items ?? []).length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {f.items!.map((it) => {
+            const q = [
+              it.bags != null && `${it.bags} bags`,
+              it.pcs != null && `${it.pcs} pcs`,
+              it.kgs != null && `${it.kgs} kg`,
+              it.box != null && `${it.box} box`,
+            ]
+              .filter(Boolean)
+              .join(', ');
+            return (
+              <span key={it.id} className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] text-indigo-700">
+                <span className="font-medium">{it.productName || it.orderCode || 'Item'}</span>
+                {q && <span className="text-indigo-500">· {q}</span>}
+              </span>
+            );
+          })}
+        </div>
+      )}
+
       {/* Checklist — tick tasks off as they're finished */}
       {(f.checklist ?? []).length > 0 && <ChecklistProgress f={f} canEdit={canEdit} />}
 
@@ -397,6 +419,80 @@ const remLabel = (it: OpenOrderItemHit) => {
 const openItemLabel = (it: OpenOrderItemHit) =>
   `${it.productName || it.design || 'Item'}${it.pCategory ? ` · ${it.pCategory}` : ''} — ${remLabel(it)} (${it.orderCode})`;
 
+/** One editable item row on the follow-up form (quantities kept as strings while typing). */
+interface FollowupLineRow {
+  key: string;
+  productName: string;
+  orderItemId: number | null;
+  orderCode: string | null;
+  bags: string;
+  pcs: string;
+  kgs: string;
+  box: string;
+}
+const newLineRow = (): FollowupLineRow => ({
+  key: Math.random().toString(36).slice(2),
+  productName: '',
+  orderItemId: null,
+  orderCode: null,
+  bags: '',
+  pcs: '',
+  kgs: '',
+  box: '',
+});
+
+/** Repeatable "item + quantities" editor — a follow-up can cover several order
+ *  lines, each with its own bags/pcs/kgs/box to deliver or collect. */
+function ItemLinesEditor({
+  rows,
+  onChange,
+  openItems,
+}: {
+  rows: FollowupLineRow[];
+  onChange: (rows: FollowupLineRow[]) => void;
+  openItems: OpenOrderItemHit[];
+}) {
+  const options = openItems.map(openItemLabel);
+  const patch = (i: number, p: Partial<FollowupLineRow>) => onChange(rows.map((r, j) => (j === i ? { ...r, ...p } : r)));
+  const pick = (i: number, label: string) => {
+    const it = openItems.find((x) => openItemLabel(x) === label);
+    patch(i, it ? { productName: label, orderItemId: it.orderItemId, orderCode: it.orderCode } : { productName: label, orderItemId: null, orderCode: null });
+  };
+  return (
+    <div className="space-y-2.5">
+      {rows.length === 0 && (
+        <p className="text-muted-foreground rounded-lg border border-dashed bg-white/70 px-3 py-4 text-center text-xs">
+          No items yet — add each item with how much to deliver or collect.
+        </p>
+      )}
+      {rows.map((r, i) => (
+        <div key={r.key} className="space-y-2.5 rounded-xl border bg-white p-3 shadow-sm">
+          <div className="flex items-center gap-2">
+            <span className="bg-primary/10 text-primary flex size-6 shrink-0 items-center justify-center rounded-md text-[11px] font-bold tabular-nums">{i + 1}</span>
+            <div className="min-w-0 flex-1">
+              <Combobox value={r.productName} onChange={(v) => pick(i, v)} options={options} creatable placeholder="Pick an open item, or type…" />
+            </div>
+            <Button type="button" variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive hover:bg-rose-50 size-8 shrink-0" onClick={() => onChange(rows.filter((_, j) => j !== i))} aria-label="Remove item">
+              <Trash2 className="size-4" />
+            </Button>
+          </div>
+          <div className="grid grid-cols-4 gap-2">
+            {(['bags', 'pcs', 'kgs', 'box'] as const).map((k) => (
+              <div key={k}>
+                <Input inputMode="decimal" className="h-10 text-center text-sm font-medium tabular-nums" value={r[k]} onChange={(e) => patch(i, { [k]: e.target.value } as Partial<FollowupLineRow>)} placeholder="0" />
+                <span className="text-muted-foreground mt-1 block text-center text-[10px] font-semibold tracking-wide uppercase">{k}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+      <Button type="button" variant="outline" className="w-full gap-1.5 border-dashed text-slate-600 hover:border-solid hover:bg-white" onClick={() => onChange([...rows, newLineRow()])}>
+        <Plus className="size-4" /> Add item
+      </Button>
+    </div>
+  );
+}
+
 function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing: FollowupDto | null; onClose: () => void }) {
   const create = useCreateFollowup();
   const update = useUpdateFollowup();
@@ -418,6 +514,25 @@ function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing:
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [description, setDescription] = useState(editing?.detail ?? '');
   const [checklist, setChecklist] = useState<ChecklistDraftItem[]>([]);
+  const [lineItems, setLineItems] = useState<FollowupLineRow[]>(() => {
+    if (editing?.items?.length) {
+      return editing.items.map((it) => ({
+        key: `e${it.id}`,
+        productName: it.productName ?? '',
+        orderItemId: it.orderItemId,
+        orderCode: it.orderCode,
+        bags: it.bags != null ? String(it.bags) : '',
+        pcs: it.pcs != null ? String(it.pcs) : '',
+        kgs: it.kgs != null ? String(it.kgs) : '',
+        box: it.box != null ? String(it.box) : '',
+      }));
+    }
+    // Back-compat: an older delivery follow-up kept a single itemText — seed it as row 1.
+    if (editing && editing.kind !== 'PAYMENT' && (editing.itemText || editing.orderItemId != null)) {
+      return [{ ...newLineRow(), productName: editing.itemText ?? '', orderItemId: editing.orderItemId, orderCode: editing.orderCode }];
+    }
+    return [];
+  });
 
   const { data: parties = [] } = usePartySuggest(partyQuery);
   // With a party picked, this lists THEIR open orders (pending lines > 0) directly.
@@ -473,18 +588,39 @@ function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing:
   const isPay = kind === 'PAYMENT';
   const submit = () => {
     if (!party.trim()) return toast.error('Choose or type the party first.');
+    const numOrNull = (v: string) => {
+      const t = v.trim();
+      if (!t) return null;
+      const nx = Number(t);
+      return Number.isFinite(nx) ? nx : null;
+    };
+    const items = lineItems
+      .filter((r) => r.productName.trim() || r.bags || r.pcs || r.kgs || r.box)
+      .map((r) => ({
+        productName: r.productName.trim() || null,
+        orderItemId: r.orderItemId,
+        orderCode: r.orderCode,
+        bags: numOrNull(r.bags),
+        pcs: numOrNull(r.pcs),
+        kgs: numOrNull(r.kgs),
+        box: numOrNull(r.box),
+      }));
     // Less typing: when no title was written, build one from what we know.
+    const firstItem = items.find((it) => it.productName)?.productName ?? null;
     const autoTitle =
       title.trim() ||
-      (itemText.trim() ? `${isPay ? 'Collect' : 'Deliver'} ${itemText.trim()}` : '') ||
+      (isPay && itemText.trim() ? `Collect ${itemText.trim()}` : '') ||
+      (!isPay && firstItem ? `Deliver ${firstItem}${items.length > 1 ? ` +${items.length - 1} more` : ''}` : '') ||
       (orderCode ? `${isPay ? 'Payment for' : 'Deliver'} ${orderCode}` : '') ||
       (isPay ? 'Payment follow-up' : 'Delivery follow-up');
     const input = {
-      kind, customerId, partyName: party.trim(), orderId, orderCode: orderCode || null, orderItemId, itemText: itemText.trim() || null,
+      kind, customerId, partyName: party.trim(), orderId, orderCode: orderCode || null, orderItemId,
+      itemText: isPay ? itemText.trim() || null : null,
       title: autoTitle, detail: description.trim() || null, stage: stage.trim() || null, priority: priority as 'NORMAL' | 'URGENT',
       promisedAt: promisedAt || null,
       reminderIntervalMins: interval.trim() ? Number(interval) : null,
       maxRemindersPerDay: maxPerDay.trim() ? Number(maxPerDay) : null,
+      items,
       ...(editing ? {} : { checklist: checklist.map((c) => ({ text: c.text, source: 'MANUAL' as const })) }),
     };
     const onDone = () => { toast.success(editing ? 'Follow-up updated' : 'Follow-up added'); onClose(); };
@@ -533,28 +669,26 @@ function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing:
             </div>
           </Block>
 
-          {/* 2 · WHAT — item + a typed description */}
+          {/* 2 · Items & quantities (delivery) — several order lines on one follow-up */}
+          {!isPay && (
+            <Block emoji="📦" title="Items & quantities" hint="Add each item on this follow-up with how much to deliver.">
+              <ItemLinesEditor rows={lineItems} onChange={setLineItems} openItems={openItems} />
+            </Block>
+          )}
+
+          {/* 2b · Payment (payments only) + a typed description / notes */}
           <Block
-            emoji={isPay ? '💰' : '📦'}
-            title={isPay ? 'What payment & notes' : 'What they asked for & notes'}
-            hint={isPay ? 'Type what the payment is for.' : 'Pick one of their open order items, or just type it.'}
+            emoji={isPay ? '💰' : '💬'}
+            title={isPay ? 'Payment & notes' : 'Notes'}
+            hint={isPay ? 'Type what the payment is for.' : 'Any details or discussion — one line or many.'}
           >
             <div className="space-y-4">
-              <div>
-                <div className="text-muted-foreground mb-1 text-xs font-semibold tracking-wide uppercase">{isPay ? 'Payment' : 'Item'}</div>
-                {isPay ? (
+              {isPay && (
+                <div>
+                  <div className="text-muted-foreground mb-1 text-xs font-semibold tracking-wide uppercase">Payment</div>
                   <Input className={BIG_FIELD} value={itemText} onChange={(e) => setItemText(e.target.value)} placeholder="e.g. ₹1,20,000 balance for challan 210" autoFocus={!editing} />
-                ) : (
-                  <Combobox
-                    value={itemText}
-                    onChange={onPickItem}
-                    options={itemOptions}
-                    creatable
-                    placeholder={party ? (itemOptions.length ? 'Pick an open item, or type your own…' : 'No open items for this party — type freely') : 'Pick a party first, or type freely'}
-                    className={BIG_FIELD}
-                  />
-                )}
-              </div>
+                </div>
+              )}
 
               <div>
                 <div className="mb-1.5 flex items-center justify-between gap-2">
