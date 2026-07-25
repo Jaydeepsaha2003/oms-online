@@ -1,5 +1,6 @@
 import { PartialType } from '@nestjs/swagger';
-import { IsIn, IsInt, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 export class CreateDispatchDto {
@@ -34,4 +35,6 @@ export class PendingQueryDto extends PaginationDto {
   @IsOptional() @IsString() product?: string;
   @IsOptional() @IsString() design?: string;
   @IsOptional() @IsString() subCategory?: string;
+  /** "ALL" toggle → product matched as a base name (all design variants). */
+  @IsOptional() @Transform(({ value }) => value === true || value === 'true' || value === '1') @IsBoolean() all?: boolean;
 }

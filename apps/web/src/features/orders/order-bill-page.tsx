@@ -137,7 +137,7 @@ export function OrderBillPage() {
           firstPage = false;
         }
       }
-      savePdfBlob(pdf.output('blob'), buildBillFilename(isQuotation ? 'Quotation' : 'Order', order.code, `${fileSuffix}-${orderId}`), iosTab);
+      void savePdfBlob(pdf.output('blob'), buildBillFilename(isQuotation ? 'Quotation' : 'Order', order.code, `${fileSuffix}-${orderId}`), iosTab);
     } catch {
       iosTab?.close();
       toast.error('Could not generate the PDF');

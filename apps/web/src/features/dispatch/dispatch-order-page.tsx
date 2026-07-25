@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Switch } from '@/components/ui/switch';
 import { exportPendingDispatch, useCreateDispatch, usePendingFilterOptions, usePendingOrders } from './use-dispatch';
 
 const PAGE_SIZE = 50;
@@ -145,6 +146,10 @@ export function DispatchOrderPage() {
   const [draftDue, setDraftDue] = useState('');
   const [draftDesign, setDraftDesign] = useState('');
   const [draftSubCategory, setDraftSubCategory] = useState('');
+  const [exporting, setExporting] = useState(false);
+  // "ALL" toggle (legacy Form13 checkbox linked to SelectProduct): when on, the
+  // product picker lists base names and one pick matches every design variant.
+  const [all, setAll] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -155,6 +160,8 @@ export function DispatchOrderPage() {
   }, [searchInput]);
 
   const { data: options } = usePendingFilterOptions();
+  // ALL on → offer base product names (one pick = all its designs); off → full names.
+  const productOptions = all ? (options?.productBases ?? []) : (options?.products ?? []);
   const query = {
     page,
     pageSize: PAGE_SIZE,
@@ -164,9 +171,10 @@ export function DispatchOrderPage() {
     product: product || undefined,
     design: design || undefined,
     subCategory: subCategory || undefined,
+    all: all || undefined,
   };
   const { data, isLoading } = usePendingOrders(query);
-  const hasFilters = !!searchInput || !!dueType || !!customer || !!product || !!design || !!subCategory;
+  const hasFilters = !!searchInput || !!dueType || !!customer || !!product || !!design || !!subCategory || all;
   const resetFilters = () => {
     setSearchInput('');
     setSearch('');
@@ -175,6 +183,16 @@ export function DispatchOrderPage() {
     setProduct('');
     setDesign('');
     setSubCategory('');
+    setAll(false);
+    setPage(1);
+  };
+  // Flipping ALL swaps the product option set (base ↔ full), so the current pick is
+  // no longer valid — clear it. Design is a sub-attribute of a specific variant, so
+  // it doesn't apply while grouping by base; clear that too.
+  const toggleAll = (next: boolean) => {
+    setAll(next);
+    setProduct('');
+    if (next) setDesign('');
     setPage(1);
   };
   // Open the mobile sheet with its drafts seeded from what's currently applied.
@@ -211,6 +229,24 @@ export function DispatchOrderPage() {
   // badge counts only what still lives behind it (Due / Design / Sub category).
   const sheetFilterCount = (dueType ? 1 : 0) + (design ? 1 : 0) + (subCategory ? 1 : 0);
   const cols = useColumnOrder('dispatch-pending', COLUMNS);
+  const doExport = async () => {
+    setExporting(true);
+    try {
+      await exportPendingDispatch({
+        search: search || undefined,
+        dueType: dueType || undefined,
+        customer: customer || undefined,
+        product: product || undefined,
+        design: design || undefined,
+        subCategory: subCategory || undefined,
+        all: all || undefined,
+      });
+    } catch (e) {
+      toast.error(getApiErrorMessage(e, 'Could not download the Excel file'));
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -228,7 +264,7 @@ export function DispatchOrderPage() {
             <NativeSelect value={customer} onChange={(v) => { setCustomer(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="Customer" />
           </div>
           <div className="min-w-0 flex-1">
-            <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...(options?.products ?? [])]} placeholder="Product" />
+            <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...productOptions]} placeholder={all ? 'Product (any design)' : 'Product'} />
           </div>
           <Button variant="outline" size="icon" className="relative shrink-0" onClick={openMobileFilters} aria-label="More filters">
             <Filter className="size-4" />
@@ -237,6 +273,9 @@ export function DispatchOrderPage() {
                 {sheetFilterCount}
               </span>
             )}
+          </Button>
+          <Button variant="outline" size="icon" className="shrink-0 border-emerald-200 text-emerald-700" onClick={doExport} disabled={exporting} aria-label="Download Excel">
+            {exporting ? <Loader2 className="size-4 animate-spin" /> : <FileSpreadsheet className="size-4" />}
           </Button>
         </div>
 
@@ -249,10 +288,13 @@ export function DispatchOrderPage() {
             <NativeSelect value={customer} onChange={(v) => { setCustomer(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="All customers" />
           </div>
           <div className="w-64">
-            <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...(options?.products ?? [])]} placeholder="All products" />
+            <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...productOptions]} placeholder={all ? 'All (any design)' : 'All products'} />
           </div>
+          <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-sm font-medium select-none" title="ALL: one product pick matches every design variant">
+            <Switch checked={all} onCheckedChange={toggleAll} /> All
+          </label>
           <div className="w-40">
-            <NativeSelect value={design} onChange={(v) => { setDesign(v); setPage(1); }} options={['', ...(options?.designs ?? [])]} placeholder="All designs" />
+            <NativeSelect value={design} onChange={(v) => { setDesign(v); setPage(1); }} options={['', ...(options?.designs ?? [])]} placeholder="All designs" disabled={all} />
           </div>
           <div className="w-44">
             <NativeSelect value={subCategory} onChange={(v) => { setSubCategory(v); setPage(1); }} options={['', ...(options?.subCategories ?? [])]} placeholder="All sub categories" />
@@ -266,6 +308,16 @@ export function DispatchOrderPage() {
             title={hasFilters ? 'Clear all filters' : 'No filters applied'}
           >
             <X /> Reset
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="border-emerald-200 font-semibold text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+            onClick={doExport}
+            disabled={exporting}
+            title="Download the pending list as Excel"
+          >
+            {exporting ? <Loader2 className="animate-spin" /> : <FileSpreadsheet />} Excel
           </Button>
           <ColumnSettings
             columns={cols.orderedReorderable}
@@ -290,13 +342,20 @@ export function DispatchOrderPage() {
             </div>
           </SheetHeader>
           <div className="space-y-4">
+            <label className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5">
+              <span className="flex flex-col">
+                <span className="text-sm font-medium">All designs</span>
+                <span className="text-muted-foreground text-xs">One product pick matches every design variant</span>
+              </span>
+              <Switch checked={all} onCheckedChange={toggleAll} />
+            </label>
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-xs font-medium uppercase">Due</Label>
               <NativeSelect value={draftDue} onChange={setDraftDue} options={['', 'Due', 'Over Due']} placeholder="All due" />
             </div>
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-xs font-medium uppercase">Design</Label>
-              <NativeSelect value={draftDesign} onChange={setDraftDesign} options={['', ...(options?.designs ?? [])]} placeholder="All designs" />
+              <NativeSelect value={draftDesign} onChange={setDraftDesign} options={['', ...(options?.designs ?? [])]} placeholder={all ? 'Any (ALL on)' : 'All designs'} disabled={all} />
             </div>
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-xs font-medium uppercase">Sub category</Label>

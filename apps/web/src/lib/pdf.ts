@@ -16,6 +16,33 @@ export function isIOS(): boolean {
   return /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 }
 
+/** True on a phone/tablet (iOS or Android). Used to decide whether to route a
+ *  generated PDF through the native share sheet (which preserves the filename)
+ *  instead of a plain download / blob tab. */
+export function isMobile(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return isIOS() || /Android/i.test(navigator.userAgent);
+}
+
+/** Share a named PDF file through the OS share sheet, if the platform supports
+ *  sharing files. Returns true if the share sheet was shown (or the user handled
+ *  it), false if file-sharing isn't available so the caller should fall back to a
+ *  download/tab. A user-cancelled share still counts as handled (returns true) —
+ *  we must NOT then also open a tab. */
+async function tryShareFile(file: File, title: string): Promise<boolean> {
+  const nav = typeof navigator !== 'undefined' ? (navigator as Navigator & { canShare?: (d: ShareData) => boolean }) : undefined;
+  if (!nav?.canShare || !nav.share || !nav.canShare({ files: [file] })) return false;
+  try {
+    await nav.share({ files: [file], title });
+    return true;
+  } catch (err) {
+    // User dismissed the sheet → handled, don't fall back to a tab.
+    if (err instanceof DOMException && err.name === 'AbortError') return true;
+    // Anything else (transient activation lost, target failed) → let the caller fall back.
+    return false;
+  }
+}
+
 /** Call this SYNCHRONOUSLY inside a click handler (before any await) to reserve a
  *  tab iOS will trust for a PDF that's generated a moment later. Returns null off
  *  iOS (not needed there) or if the popup was blocked. */
@@ -24,12 +51,26 @@ export function preOpenPdfTab(): Window | null {
 }
 
 /**
- * Save/show a client-generated PDF blob (e.g. a jsPDF export). On Android/desktop
- * it triggers a normal file download; on iOS Safari — where a post-await download
- * is blocked — it displays the PDF in `iosTab` (pre-opened via {@link preOpenPdfTab}
- * inside the tap) so the user can Share → Save to Files.
+ * Save/show a client-generated PDF blob (e.g. a jsPDF export).
+ *
+ * On mobile (iOS/Android) it first tries the native share sheet with a properly
+ * NAMED file — this is what keeps the real filename instead of "Unknown", which
+ * is what you get when a bare `blob:` URL (no filename) is shared from a tab.
+ * If file-sharing isn't available it falls back to the previous behaviour:
+ * iOS shows the PDF in `iosTab` (reserved via {@link preOpenPdfTab} inside the
+ * tap); Android/desktop trigger a normal named download.
  */
-export function savePdfBlob(blob: Blob, filename: string, iosTab?: Window | null): void {
+export async function savePdfBlob(blob: Blob, filename: string, iosTab?: Window | null): Promise<void> {
+  const file = new File([blob], filename, { type: 'application/pdf' });
+
+  // Mobile: the share sheet carries the file's real name. Transient activation
+  // (the original tap) survives short async work (~5s), so a jsPDF/html2canvas
+  // capture that finished a moment ago is still allowed to call share().
+  if (isMobile() && (await tryShareFile(file, filename))) {
+    iosTab?.close(); // the reserved tab is no longer needed
+    return;
+  }
+
   const url = URL.createObjectURL(blob);
   if (isIOS()) {
     if (iosTab && !iosTab.closed) {
@@ -54,15 +95,35 @@ export function downloadPdf(url: string, fallbackName = 'document.pdf'): Promise
   return downloadFile(url, fallbackName);
 }
 
-/** Open a server-generated PDF in a new browser tab — iOS-safe. The tab is opened
- *  up-front (synchronously in the tap gesture) and pointed at the blob once fetched,
- *  so iOS Safari doesn't block it as a post-await popup. */
-export async function openPdf(url: string): Promise<void> {
-  // Opened blank now, inside the gesture; filled in after the fetch resolves.
+/** Pull a filename out of a Content-Disposition header, if present. */
+function filenameFromHeaders(headers: unknown): string | undefined {
+  const cd = (headers as Record<string, string> | undefined)?.['content-disposition'];
+  if (!cd) return undefined;
+  const star = /filename\*=(?:UTF-8'')?([^;]+)/i.exec(cd);
+  if (star?.[1]) return decodeURIComponent(star[1].trim().replace(/^"|"$/g, ''));
+  const plain = /filename="?([^";]+)"?/i.exec(cd);
+  return plain?.[1]?.trim();
+}
+
+/** Open a server-generated PDF — iOS-safe. On mobile it first offers the native
+ *  share sheet with a properly NAMED file (so a shared/saved copy isn't "Unknown");
+ *  otherwise it opens the PDF in a tab reserved up-front (synchronously in the tap
+ *  gesture) so iOS Safari doesn't block it as a post-await popup. Pass `filename`
+ *  for a friendly name; it falls back to the server's Content-Disposition. */
+export async function openPdf(url: string, filename?: string): Promise<void> {
+  // Reserve a tab now, inside the gesture; filled in (or closed) after the fetch.
   const tab = window.open('', '_blank');
   try {
     const res = await api.get(url, { responseType: 'blob' });
-    const blobUrl = URL.createObjectURL(res.data as Blob);
+    const blob = res.data as Blob;
+    if (isMobile()) {
+      const name = filename || filenameFromHeaders(res.headers) || 'document.pdf';
+      if (await tryShareFile(new File([blob], name, { type: 'application/pdf' }), name)) {
+        tab?.close();
+        return;
+      }
+    }
+    const blobUrl = URL.createObjectURL(blob);
     if (tab && !tab.closed) tab.location.href = blobUrl;
     else window.location.href = blobUrl; // popup blocked → fall back to same tab
     // Revoke a little later so the tab has time to load it.

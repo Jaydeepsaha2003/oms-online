@@ -721,6 +721,11 @@ model Dispatch {
   @@index([orderItemId])
   @@index([orderId])
   @@index([dispatchStatus])
+  // Speeds the Pending Challan list: default ordering is by dispatchDate, and the
+  // most common filter is by customer — without these the query full-scans + sorts
+  // every dispatch row on each request.
+  @@index([dispatchDate])
+  @@index([customerName, dispatchDate])
   @@map("dispatches")
 }
 
@@ -773,6 +778,8 @@ model Challan {
 
   @@index([customerName])
   @@index([invDate])
+  // Used by the "un-challaned dispatch" subquery behind the Pending Challan list.
+  @@index([challanStatus])
   @@map("challans")
 }
 

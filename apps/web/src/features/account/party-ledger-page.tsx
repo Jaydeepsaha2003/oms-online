@@ -158,7 +158,7 @@ export function PartyLedgerPage() {
   const onPdf = async () => {
     setPdfLoading(true);
     try {
-      await openPdf(exportUrl('pdf'));
+      await openPdf(exportUrl('pdf'), `${(data?.customerName || data?.agentName || 'party-ledger').replace(/[\\/:*?"<>|]/g, '-')}.pdf`);
     } catch (e) {
       toast.error(getApiErrorMessage(e, 'PDF failed'));
     } finally {

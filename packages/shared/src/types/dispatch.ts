@@ -114,6 +114,10 @@ export type DispatchQuery = PaginationQuery & {
 export interface DispatchFilterOptions {
   customers: string[];
   products: string[];
+  /** Base product names (design suffix stripped, e.g. "15 Rajwadi") — the option
+   *  set the Dispatch Order product picker shows when its "ALL" toggle is on, so a
+   *  single pick matches every design variant. Only populated for the pending pool. */
+  productBases?: string[];
   designs: string[];
   subCategories?: string[];
 }
@@ -126,5 +130,9 @@ export type PendingQuery = PaginationQuery & {
   product?: string;
   design?: string;
   subCategory?: string;
+  /** "ALL" toggle (mirrors the legacy Form13 checkbox linked to SelectProduct):
+   *  when true the `product` value is matched as a base-name prefix so every design
+   *  variant is included; when false/omitted it's an exact match. */
+  all?: boolean;
 };
 export type PendingList = Paginated<PendingLineDto>;

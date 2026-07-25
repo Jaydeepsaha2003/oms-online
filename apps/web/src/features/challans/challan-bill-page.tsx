@@ -194,7 +194,7 @@ export function ChallanBillPage() {
           firstPage = false;
         }
       }
-      savePdfBlob(pdf.output('blob'), buildBillFilename('Challan', challan.code, `challan-${challanId}`), iosTab);
+      void savePdfBlob(pdf.output('blob'), buildBillFilename('Challan', challan.code, `challan-${challanId}`), iosTab);
     } catch {
       iosTab?.close();
       toast.error('Could not generate the PDF');

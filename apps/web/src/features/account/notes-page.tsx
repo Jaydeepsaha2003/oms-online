@@ -563,7 +563,8 @@ function NoteDirectoryDialog({
             actions={(r) => (
               <div className="flex justify-end gap-1">
                 {canPrint && (
-                  <Button variant="ghost" size="icon" className="size-8" onClick={() => openPdf(`/notes/${r.mode}/${encodeURIComponent(r.code)}/print.pdf`)} aria-label="Print">
+                  <Button variant="ghost" size="icon" className="size-8" onClick={() => openPdf(`/notes/${r.mode}/${encodeURIComponent(r.code)}/print.pdf`, `${r.mode}-${r.code}.pdf`.replace(/[\\/:*?"<>|]/g, '-'))} aria-label="Print">
+
                     <Printer className="size-4" />
                   </Button>
                 )}

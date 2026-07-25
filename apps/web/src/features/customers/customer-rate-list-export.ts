@@ -340,7 +340,7 @@ export async function exportRateListPdf(list: CustomerRateList): Promise<void> {
   const iosTab = preOpenPdfTab();
   try {
     const doc = await buildRateListPdfDoc(list);
-    savePdfBlob(doc.output('blob'), `RateList-${sanitize(list.customerName)}-${dateStamp()}.pdf`, iosTab);
+    void savePdfBlob(doc.output('blob'), `RateList-${sanitize(list.customerName)}-${dateStamp()}.pdf`, iosTab);
   } catch (e) {
     iosTab?.close();
     throw e;

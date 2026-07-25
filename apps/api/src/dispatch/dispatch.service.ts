@@ -104,23 +104,39 @@ export class DispatchService {
     return lines;
   }
 
+  /** The product name with its trailing design token removed — e.g.
+   *  "15 Rajwadi Gold" (design "Gold") → "15 Rajwadi". This is the legacy Form13
+   *  SelectProduct value ("{size|pcs} {product}"); the "ALL" toggle groups every
+   *  design variant of a product by this base. */
+  private static baseProductName(full: string | null | undefined, design: string | null | undefined): string {
+    const name = (full ?? '').trim();
+    const d = (design ?? '').trim();
+    if (d && d.toUpperCase() !== 'NA' && name.toUpperCase().endsWith(' ' + d.toUpperCase())) {
+      return name.slice(0, name.length - d.length - 1).trim();
+    }
+    return name;
+  }
+
   /** Distinct customer / product / design values present in the *pending* pool,
    *  used to populate the Dispatch Order page's filter dropdowns. */
   async pendingFilterOptions(): Promise<DispatchFilterOptions> {
     const lines = await this.computePendingLines();
     const customers = new Set<string>();
     const products = new Set<string>();
+    const productBases = new Set<string>();
     const designs = new Set<string>();
     const subCategories = new Set<string>();
     for (const l of lines) {
       if (l.customerName) customers.add(l.customerName);
       const p = l.productName || l.product;
       if (p) products.add(p);
+      const base = DispatchService.baseProductName(l.productName || l.product, l.designType);
+      if (base) productBases.add(base);
       if (l.designType && l.designType.toUpperCase() !== 'NA') designs.add(l.designType);
       if (l.subCategory) subCategories.add(l.subCategory);
     }
     const sorted = (s: Set<string>) => [...s].sort((a, b) => a.localeCompare(b));
-    return { customers: sorted(customers), products: sorted(products), designs: sorted(designs), subCategories: sorted(subCategories) };
+    return { customers: sorted(customers), products: sorted(products), productBases: sorted(productBases), designs: sorted(designs), subCategories: sorted(subCategories) };
   }
 
   /** Apply the Dispatch Order page's search + dropdown filters to the pending pool. */
@@ -133,7 +149,13 @@ export class DispatchService {
     }
     if (query.dueType) lines = lines.filter((l) => l.dueType === query.dueType);
     if (query.customer) lines = lines.filter((l) => l.customerName === query.customer);
-    if (query.product) lines = lines.filter((l) => (l.productName || l.product) === query.product);
+    if (query.product) {
+      // "ALL" on → match every design variant sharing the selected base name;
+      // off → exact full-name match (legacy Form13 SelectProduct + ALL checkbox).
+      lines = query.all
+        ? lines.filter((l) => DispatchService.baseProductName(l.productName || l.product, l.designType) === query.product)
+        : lines.filter((l) => (l.productName || l.product) === query.product);
+    }
     if (query.design) lines = lines.filter((l) => l.designType === query.design);
     if (query.subCategory) lines = lines.filter((l) => l.subCategory === query.subCategory);
     if (query.unit) {
