@@ -138,7 +138,8 @@ export function AppShell() {
             onToggleCollapse={() => setPinned((v) => !v)}
           />
         )}
-        <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
+        {/* Tight padding on phones (more width for cards/tables), roomier on desktop. */}
+        <main className="min-h-0 flex-1 overflow-y-auto px-2.5 py-3 sm:p-4 md:p-6">
           <Outlet />
         </main>
       </div>

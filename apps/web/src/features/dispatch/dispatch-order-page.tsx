@@ -297,24 +297,25 @@ export function DispatchOrderPage() {
           <Input placeholder="Search order #, customer or product…" className="pl-9" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
         </div>
 
-        {/* Phones: Customer + Product are the two primary quick-search boxes; the rest
-            (Due / Design / Sub category) live behind the filter icon. */}
-        <div className="flex w-full items-center gap-2 sm:hidden">
-          <div className="min-w-0 flex-1">
-            <NativeSelect value={customer} onChange={(v) => { setCustomer(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="Customer" />
+        {/* Phones: Customer + Product each get their own full-width line so long
+            names fit; the rest (Due / Design / Sub category) live behind the filter
+            icon, which sits with the export button on the Product row. */}
+        <div className="flex w-full flex-col gap-2 sm:hidden">
+          <NativeSelect value={customer} onChange={(v) => { setCustomer(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="Customer" />
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...productOptions]} placeholder={all ? 'Product (any design)' : 'Product'} />
+            </div>
+            <Button variant="outline" size="icon" className="relative shrink-0" onClick={openMobileFilters} aria-label="More filters">
+              <Filter className="size-4" />
+              {sheetFilterCount > 0 && (
+                <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-medium">
+                  {sheetFilterCount}
+                </span>
+              )}
+            </Button>
+            {can('dispatch:export') && <ExportButton onClick={onExport} disabled={exporting} label="Export to Excel" />}
           </div>
-          <div className="min-w-0 flex-1">
-            <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...productOptions]} placeholder={all ? 'Product (any design)' : 'Product'} />
-          </div>
-          <Button variant="outline" size="icon" className="relative shrink-0" onClick={openMobileFilters} aria-label="More filters">
-            <Filter className="size-4" />
-            {sheetFilterCount > 0 && (
-              <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-medium">
-                {sheetFilterCount}
-              </span>
-            )}
-          </Button>
-          {can('dispatch:export') && <ExportButton onClick={onExport} disabled={exporting} label="Export to Excel" />}
         </div>
 
         {/* Desktop: filters inline. */}
