@@ -558,16 +558,22 @@ export function OrderFormPage() {
           (l.scope === 'SUBCATEGORY' && norm(l.category) === norm(category) && norm(l.subCategory) === norm(subCategory)),
       );
     const map = new Map<string, (typeof list)[number]>();
-    const labels: string[] = [];
+    const options: { value: string; label: string; keywords: string }[] = [];
     for (const it of list) {
       if (isLogoDesign(it.designType) && logoBlocked(it.category, it.subCategory)) continue;
       const prefix = showBy === 'PCS' ? fmtNum(it.pcs) : fmtNum(it.size);
       const label = [prefix, it.product, it.designType ?? ''].filter(Boolean).join(' ');
       if (!label || map.has(label)) continue; // first wins on duplicate labels
       map.set(label, it);
-      labels.push(label);
+      // Search-only tokens: BOTH size and pcs (whichever isn't the visible
+      // prefix) plus the sub-category — so a Size-view row like "5.5 RAJWADI" is
+      // still found by typing "15" (its pcs / "15-PCS" sub-category), and a
+      // Pcs-view row is found by its size. Matches the user's Size/Pcs setting
+      // for display while staying findable either way.
+      const keywords = [fmtNum(it.size), fmtNum(it.pcs), it.subCategory ?? ''].filter(Boolean).join(' ');
+      options.push({ value: label, label, keywords });
     }
-    return { labels, map };
+    return { options, map };
   }, [lookups, showBy, special]);
 
   // Picking an item fills product, category/sub, design type, rates + weight/box info.
@@ -628,19 +634,34 @@ export function OrderFormPage() {
   // auto-detect preference is on (otherwise the user picks Size/Pcs manually).
   const detectShowBy = (text: string) => {
     if (!autoSizePcs) return;
-    const lead = text.trim().match(/^(\d+(?:\.\d+)?)/)?.[1];
+    const t = text.trim();
+    const lead = t.match(/^(\d+(?:\.\d+)?)/)?.[1];
     if (!lead) return;
+    const SEP = /[\s(),+/-]+/;
     const list = lookups?.items ?? [];
-    const sizeExact = list.some((it) => it.size != null && String(it.size) === lead);
-    const pcsExact = list.some((it) => it.pcs != null && String(it.pcs) === lead);
-    if (sizeExact || pcsExact) {
-      setShowBy(sizeExact ? 'SIZE' : 'PCS'); // tie → Size
-      return;
-    }
-    // Still mid-number: fall back to a prefix match when only one side leads with it.
-    const sizePre = list.some((it) => it.size != null && String(it.size).startsWith(lead));
-    const pcsPre = list.some((it) => it.pcs != null && String(it.pcs).startsWith(lead));
-    if (sizePre || pcsPre) setShowBy(sizePre ? 'SIZE' : 'PCS'); // tie → Size
+    // Judge the leading number against ONLY the products whose name matches what's
+    // typed after it — so "15 RAJWADI" is decided by RAJWADI's own sizes
+    // (5.5/6.5/7) and pcs (15/12/10), NOT by the unrelated products that happen to
+    // be a 15-inch size. That's what makes it flip to Pcs and show "15 RAJWADI".
+    const nameTerms = t.slice(lead.length).trim().toLowerCase().split(SEP).filter(Boolean);
+    const named = nameTerms.length
+      ? list.filter((it) => {
+          const words = `${it.product} ${it.designType ?? ''}`.toLowerCase().split(SEP).filter(Boolean);
+          return nameTerms.every((q) => words.some((w) => w.startsWith(q)));
+        })
+      : list;
+    const pool = named.length ? named : list;
+    const some = (key: 'size' | 'pcs', test: (v: string) => boolean) => pool.some((it) => it[key] != null && test(String(it[key])));
+    const sizeExact = some('size', (v) => v === lead);
+    const pcsExact = some('pcs', (v) => v === lead);
+    if (pcsExact && !sizeExact) return setShowBy('PCS');
+    if (sizeExact && !pcsExact) return setShowBy('SIZE');
+    if (sizeExact || pcsExact) return setShowBy('SIZE'); // both/ambiguous → Size
+    // Mid-number: prefix match within the name-narrowed pool.
+    const sizePre = some('size', (v) => v.startsWith(lead));
+    const pcsPre = some('pcs', (v) => v.startsWith(lead));
+    if (pcsPre && !sizePre) return setShowBy('PCS');
+    if (sizePre) return setShowBy('SIZE');
   };
 
   // Auto-calc Kgs (= Bags × the customer's per-category bag weight) as bags are
@@ -1158,7 +1179,7 @@ export function OrderFormPage() {
                 value={entry.itemName}
                 onChange={onItemPick}
                 onType={detectShowBy}
-                options={itemOptions.labels}
+                options={itemOptions.options}
                 placeholder={noCustomer ? 'Select a customer first' : 'Item name'}
                 className="text-left"
                 disabled={noCustomer}

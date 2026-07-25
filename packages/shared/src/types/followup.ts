@@ -44,6 +44,20 @@ export interface FollowupChecklistItemDto {
   createdAt: string;
 }
 
+/** One item (with quantities) covered by a follow-up — a follow-up can span
+ *  several order lines, each with its own bags/pcs/kgs/box. */
+export interface FollowupItemDto {
+  id: number;
+  followupId: number;
+  orderItemId: number | null;
+  orderCode: string | null;
+  productName: string | null;
+  bags: number | null;
+  pcs: number | null;
+  kgs: number | null;
+  box: number | null;
+}
+
 export interface FollowupDto {
   id: number;
   kind: FollowupKind;
@@ -75,6 +89,7 @@ export interface FollowupDto {
   updatedAt: string;
   logs?: FollowupLogDto[];
   checklist?: FollowupChecklistItemDto[];
+  items?: FollowupItemDto[];
 }
 
 /* ── Reminder-state engine (shared by the dashboard, board + nudge modal) ────── */
@@ -190,6 +205,19 @@ export interface SaveFollowupInput {
   maxRemindersPerDay?: number | null;
   /** Checklist tasks to create with the follow-up. */
   checklist?: { text: string; source?: 'MANUAL' | 'VOICE' }[];
+  /** Item lines (each with optional quantities) covered by this follow-up. When
+   *  provided on update, they REPLACE the existing set. */
+  items?: FollowupItemInput[];
+}
+
+export interface FollowupItemInput {
+  orderItemId?: number | null;
+  orderCode?: string | null;
+  productName?: string | null;
+  bags?: number | null;
+  pcs?: number | null;
+  kgs?: number | null;
+  box?: number | null;
 }
 
 export interface AddFollowupLogInput {

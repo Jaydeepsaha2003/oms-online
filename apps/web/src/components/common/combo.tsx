@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Combobox } from '@/components/ui/combobox';
+import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 
 /** Creatable searchable dropdown — type to filter or add a new value. */
 export function Combo({
@@ -45,7 +45,7 @@ export function NativeSelect({
 }: {
   value: string;
   onChange: (v: string) => void;
-  options: string[];
+  options: (string | ComboboxOption)[];
   placeholder?: string;
   disabled?: boolean;
   className?: string;

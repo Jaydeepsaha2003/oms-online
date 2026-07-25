@@ -274,7 +274,7 @@ function RoleDialog({ role, onClose }: { role: RoleDto | null; onClose: () => vo
                                   disabled={isWildcard}
                                   onChange={() => toggle(key)}
                                 />
-                                {a === ACTIONS.MANAGE ? <span className="font-medium">manage (full)</span> : a}
+                                {a === ACTIONS.MANAGE ? <span className="font-medium">manage (full)</span> : a === ACTIONS.VIEWRATES ? 'view rates' : a}
                               </label>
                             );
                           })}

@@ -1,7 +1,7 @@
 /* OMS service worker — makes the app installable and adds a light offline layer.
  * Strategy: network-first with cache fallback for same-origin GET static assets
  * and navigations. NEVER caches /api (live data) or the Vite dev internals. */
-const CACHE = 'oms-v2';
+const CACHE = 'oms-v5';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
