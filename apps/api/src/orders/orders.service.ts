@@ -47,7 +47,8 @@ export class OrdersService {
       this.prisma.order.findMany({
         where,
         include: INCLUDE,
-        orderBy: [{ orderDate: 'desc' }, { id: 'desc' }],
+        // Newest order first, by Order # (id) rather than order date.
+        orderBy: [{ id: 'desc' }],
         skip: query.skip,
         take: query.pageSize,
       }),

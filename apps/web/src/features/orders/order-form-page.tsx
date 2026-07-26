@@ -11,7 +11,7 @@ import {
   type SetStateAction,
 } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRightLeft, BadgePercent, Camera, Check, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Lock, PackageOpen, Plus, RotateCcw, Save, Settings2, Trash2 } from 'lucide-react';
+import { ArrowLeft, ArrowRightLeft, BadgePercent, Camera, Check, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Lock, PackageOpen, Pencil, Plus, RotateCcw, Save, Settings2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ORDER_PRIORITIES, RESOURCES, resolveSpecialRates, type OrderInput } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -806,7 +806,9 @@ export function OrderFormPage() {
     }
     setItems((its) => [
       ...its,
-      { ...entry, key: `i${keyer.current++}`, calField, designName, photos: [] },
+      // Keep any photos carried on the entry (set when editing an existing line);
+      // a fresh entry has none, so new lines still start with an empty gallery.
+      { ...entry, key: `i${keyer.current++}`, calField, designName, photos: entry.photos ?? [] },
     ]);
     // Reset the item fields but keep order type / priority for the next line.
     setEntry((e) => ({ ...blankEntry(), ordType: e.ordType, priority: e.priority }));
@@ -815,6 +817,22 @@ export function OrderFormPage() {
   };
 
   const removeItem = (key: string) => setItems((its) => its.filter((i) => i.key !== key));
+
+  // Edit a just-added line: pull its values back into the entry row above and drop
+  // it from the list, so the user tweaks the fields and taps "Add" to put it back.
+  // Only new, manually-entered lines are editable here — saved lines (edit them on
+  // Order Modify) and booking-drawn lines (rate frozen) keep just the lock/remove.
+  const editItem = (item: Item) => {
+    if (item.id != null || item.bookingId != null) return;
+    const { key, ...rest } = item;
+    setEntry(rest);
+    setItems((its) => its.filter((i) => i.key !== key));
+    requestAnimationFrame(() => {
+      formRef.current?.querySelector<HTMLElement>('[data-tabfield="itemName"]')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      focusField(formRef.current, 'itemName');
+    });
+    toast.info('Editing item — change the fields above, then tap Add to update it.');
+  };
 
   const setItemPhotos = (key: string, photos: LinePhoto[]) =>
     setItems((its) => its.map((i) => (i.key === key ? { ...i, photos } : i)));
@@ -1132,7 +1150,7 @@ export function OrderFormPage() {
             <DatePicker value={orderDate} onChange={setOrderDate} clearable={false} />
           </div>
           <div className="min-w-0 space-y-1.5" data-tabfield="completionDay">
-            <Label className="text-base">Com. days</Label>
+            <Label className="text-base">Com. days <span className="text-rose-500">*</span></Label>
             <NativeSelect
               value={completionDay}
               onChange={setCompletionDay}
@@ -1141,7 +1159,7 @@ export function OrderFormPage() {
             />
           </div>
           <div className="min-w-0 space-y-1.5">
-            <Label className="text-base whitespace-nowrap">Completion date (auto)</Label>
+            <Label className="text-base whitespace-nowrap">Com. date (auto)</Label>
             <Input value={niceDate(completionDate)} readOnly tabIndex={-1} className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700" />
           </div>
         </CardContent>
@@ -1331,7 +1349,7 @@ export function OrderFormPage() {
                   <th className="text-right">Rate ₹</th>
                   <th className="text-right">Amount ₹</th>
                   <th>Remarks</th>
-                  <th className="w-16 text-center">Photos</th>
+                  <th className="w-24 text-center">Actions</th>
                 </tr>
               </thead>
               <tbody className="[&_td]:border-t [&_td]:px-3 [&_td]:py-2">
@@ -1396,9 +1414,16 @@ export function OrderFormPage() {
                             </TooltipContent>
                           </Tooltip>
                           ) : (
-                            <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => removeItem(i.key)} aria-label="Remove">
-                              <Trash2 className="size-5" />
-                            </Button>
+                            <>
+                              {i.bookingId == null && (
+                                <Button variant="ghost" size="icon" className="text-primary hover:text-primary size-8" onClick={() => editItem(i)} aria-label="Edit" title="Edit this item">
+                                  <Pencil className="size-4" />
+                                </Button>
+                              )}
+                              <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => removeItem(i.key)} aria-label="Remove">
+                                <Trash2 className="size-5" />
+                              </Button>
+                            </>
                           )}
                         </div>
                       </td>
@@ -1464,26 +1489,36 @@ export function OrderFormPage() {
                         <div className="flex shrink-0 items-center gap-0.5">
                           {docKind === 'order' && <LinePhotoButton photos={i.photos ?? []} onChange={(photos) => setItemPhotos(i.key, photos)} />}
                           {i.id != null ? (
-                            <span className="text-slate-400 inline-flex size-8 items-center justify-center" title="Existing order line — delete it from the Order Modify page">
+                            <span className="text-slate-400 inline-flex size-8 items-center justify-center" title="Existing order line — edit it on the Order Modify page">
                               <Lock className="size-4" />
                             </span>
                           ) : (
-                            <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => removeItem(i.key)} aria-label="Remove">
-                              <Trash2 className="size-5" />
-                            </Button>
+                            <>
+                              {i.bookingId == null && (
+                                <Button variant="ghost" size="icon" className="text-primary hover:text-primary size-8" onClick={() => editItem(i)} aria-label="Edit item">
+                                  <Pencil className="size-4.5" />
+                                </Button>
+                              )}
+                              <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => removeItem(i.key)} aria-label="Remove">
+                                <Trash2 className="size-5" />
+                              </Button>
+                            </>
                           )}
                         </div>
                       </div>
-                      <div className="mt-1.5 flex items-end justify-between gap-2">
-                        <div className="grid grid-cols-4 gap-2 text-xs">
+                      <div className="mt-2 flex items-end justify-between gap-3">
+                        <div className="grid grid-cols-4 gap-x-3 gap-y-0.5 text-xs">
                           <div><p className="text-muted-foreground">Bags</p><p className="font-medium tabular-nums">{i.bags || '—'}</p></div>
                           <div><p className="text-muted-foreground">Pcs</p><p className="font-medium tabular-nums">{i.pcs || '—'}</p></div>
                           <div><p className="text-muted-foreground">Kgs</p><p className="font-medium tabular-nums">{i.gram || '—'}</p></div>
                           <div><p className="text-muted-foreground">Box</p><p className="font-medium tabular-nums">{i.box || '—'}</p></div>
                         </div>
-                        <span className="shrink-0 font-semibold tabular-nums text-emerald-700">₹{lineAmount(i).toLocaleString('en-IN')}</span>
+                        <div className="shrink-0 text-right leading-tight">
+                          <p className="text-muted-foreground text-[11px]">Rate <span className="text-foreground font-medium tabular-nums">₹{itemRate(i).toLocaleString('en-IN')}</span></p>
+                          <p className="text-[15px] font-bold tabular-nums text-emerald-700">₹{lineAmount(i).toLocaleString('en-IN')}</p>
+                        </div>
                       </div>
-                      {i.comment && <p className="text-muted-foreground mt-1 truncate text-xs">{i.comment}</p>}
+                      {i.comment && <p className="text-muted-foreground mt-1.5 text-xs">📝 {i.comment}</p>}
                     </div>
                   ))}
                 </div>
@@ -1500,12 +1535,16 @@ export function OrderFormPage() {
       {/* Action bar flows at the end of the form (not pinned) — it appears right
           after the content, so with many line items you reach it at the bottom.
           Wraps so the buttons are never cut off when zoomed in. */}
-      <div className="-mx-1 mt-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 border-t px-2 py-2 sm:mt-2 sm:gap-y-2 sm:py-3">
-        <p className="text-sm">
+      {/* Action bar flows at the end of the form (not pinned). On phones the total
+          sits on its own line, the secondary actions form a compact 2-col grid,
+          and the primary action is a full-width, thumb-friendly button underneath;
+          desktop keeps the single inline row. */}
+      <div className="-mx-1 mt-1 border-t px-2 py-2.5 sm:mt-2 sm:flex sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-3 sm:gap-y-2 sm:py-3">
+        <p className="mb-2.5 text-center text-sm sm:mb-0 sm:text-left">
           {items.length} item(s) · total{' '}
           <span className="text-lg font-bold tabular-nums text-emerald-600">₹{total.toLocaleString('en-IN')}</span>
         </p>
-        <div className="ml-auto flex flex-wrap justify-end gap-2">
+        <div className="grid grid-cols-2 gap-2 sm:ml-auto sm:flex sm:flex-wrap sm:justify-end">
           <Button type="button" variant="destructive" onClick={() => navigate(listPath)} title="Cancel (Esc)">
             Cancel
           </Button>
@@ -1543,13 +1582,19 @@ export function OrderFormPage() {
               type="button"
               onClick={saveAndConvert}
               disabled={saving}
-              className="bg-emerald-600 text-white hover:bg-emerald-700"
+              className="col-span-2 bg-emerald-600 text-white hover:bg-emerald-700 sm:col-auto"
               title="Save changes and convert to an order"
             >
               <ArrowRightLeft /> Save &amp; Convert
             </Button>
           )}
-          <Button onClick={submit} disabled={saving} title={`${primaryLabel} (Ctrl+S)`}>
+          <Button
+            type="button"
+            onClick={submit}
+            disabled={saving}
+            title={`${primaryLabel} (Ctrl+S)`}
+            className="col-span-2 h-12 text-base font-semibold shadow-sm sm:col-auto sm:h-9 sm:text-sm sm:font-medium sm:shadow-none"
+          >
             {saving ? <Loader2 className="animate-spin" /> : <Save />}
             {primaryLabel}
             <Kbd className="hidden sm:inline-flex">Ctrl+S</Kbd>
