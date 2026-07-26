@@ -8,9 +8,15 @@ import { Button } from '@/components/ui/button';
 import { buildBillFilename, preOpenPdfTab, savePdfBlob } from '@/lib/pdf';
 import { shortOrderCode } from '@/lib/utils';
 import kavishLogo from '@/assets/kavish-logo-order.png';
+import { useIsMobile } from '@/hooks/use-is-mobile';
+import { useFitToWidth } from '@/hooks/use-fit-to-width';
 import { useCompany, useOrderFooter, useOrderTerms } from '@/features/settings/use-settings';
 import { useOrder } from './use-orders';
 import { useQuotation } from '../quotations/use-quotations';
+
+// A4 design width the sales order / quotation is laid out at — matches the PDF
+// capture width so the on-screen mobile preview mirrors the printed page.
+const ORDER_DESIGN_W = 960;
 
 // Kavish brand colours (sampled from the official letterhead template).
 const NAVY = '#163e64';
@@ -70,6 +76,9 @@ export function OrderBillPage() {
   const fileSuffix = isQuotation ? 'quotation' : 'sales-order';
   const [busy, setBusy] = useState(false);
   const [printImg, setPrintImg] = useState<string | null>(null);
+  // On phones, shrink the fixed-width A4 document to fit the screen (see hook).
+  const isMobile = useIsMobile();
+  const fit = useFitToWidth(ORDER_DESIGN_W, isMobile);
 
   // Clear the print image once the print dialog closes.
   useEffect(() => {
@@ -210,6 +219,18 @@ export function OrderBillPage() {
       </div>
 
       {/* ── Printable Sales Order (Kavish letterhead format) ────────────── */}
+      {/* Mobile: outer measures the available width + reserves the scaled height;
+          inner holds the full-width page and scales it down. Desktop: both are
+          transparent pass-throughs (no width/transform), so nothing changes. */}
+      <div
+        ref={fit.outerRef}
+        className={isMobile ? 'overflow-hidden rounded-lg border shadow-sm' : undefined}
+        style={isMobile ? { height: fit.height } : undefined}
+      >
+      <div
+        ref={fit.innerRef}
+        style={isMobile ? { width: ORDER_DESIGN_W, transformOrigin: 'top left', transform: `scale(${fit.scale})` } : undefined}
+      >
       <div
         id="sales-order"
         style={{
@@ -366,6 +387,8 @@ export function OrderBillPage() {
             <div key={i}>{line}</div>
           ))}
         </div>
+      </div>
+      </div>
       </div>
     </div>
   );
