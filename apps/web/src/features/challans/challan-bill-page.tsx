@@ -19,7 +19,6 @@ const BANNER_ORANGE_TO = '#E2A346';
 const ORANGE = '#E2A346';
 const BLACK = '#111111';
 const FONT = 'Montserrat, Carlito, Calibri, "Segoe UI", Arial, sans-serif';
-const BORDER = '#D5D5D5';
 // Crisp near-black hairline for the totals grid so it reads clean like the old receipt.
 const INK = '#1a1a1a';
 
@@ -250,8 +249,11 @@ export function ChallanBillPage() {
     !!challan.shippingAddress?.trim() && norm(challan.shippingAddress) !== norm(challan.billingAddress);
 
   // wordBreak + whiteSpace let long item names wrap within their column.
-  const th: CSSProperties = { background: ORANGE, color: BLACK, border: `0.2px solid ${BORDER}`, padding: '9px 11px', fontWeight: 800, fontSize: 18.5, whiteSpace: 'normal', wordBreak: 'break-word' };
-  const td: CSSProperties = { border: `0.2px solid ${BORDER}`, padding: '8px 11px', whiteSpace: 'normal', wordBreak: 'break-word', verticalAlign: 'top', fontSize: 18 };
+  // Single-draw borders (bottom + right only) — the wrapping div supplies the top
+  // + left edges. This avoids html2canvas double-painting collapsed borders, which
+  // made the inner grid lines look bolder than the outer edge.
+  const th: CSSProperties = { background: ORANGE, color: BLACK, borderBottom: `1.2px solid ${INK}`, borderRight: `1.2px solid ${INK}`, padding: '3px 11px', fontWeight: 800, fontSize: 18.5, whiteSpace: 'normal', wordBreak: 'break-word' };
+  const td: CSSProperties = { borderBottom: `1.2px solid ${INK}`, borderRight: `1.2px solid ${INK}`, padding: '3px 11px', whiteSpace: 'normal', wordBreak: 'break-word', verticalAlign: 'top', fontSize: 18 };
 
   return (
     <div className="flex w-full flex-col gap-4">
@@ -330,7 +332,7 @@ export function ChallanBillPage() {
               bottom: 0,
               right: 0,
               width: '65%',
-              background: `linear-gradient(90deg, ${BANNER_ORANGE_FROM} 0%, ${BANNER_ORANGE_TO} 100%)`,
+              background: `linear-gradient(180deg, rgba(138,82,10,0.34) 0%, rgba(138,82,10,0) 48%), linear-gradient(90deg, ${BANNER_ORANGE_FROM} 0%, ${BANNER_ORANGE_TO} 100%)`,
               borderBottomLeftRadius: 28,
             }}
           />
@@ -395,8 +397,11 @@ export function ChallanBillPage() {
           </div>
         </div>
 
-        {/* Items — table-layout: auto so each column autofits its content */}
+        {/* Items — table-layout: auto so each column autofits its content. The
+            wrapper draws the top + left edges (cells draw bottom + right), so every
+            grid line is painted exactly once and reads uniform after PDF capture. */}
         <div style={{ padding: '0 8px 10px' }}>
+          <div style={{ borderTop: `1.2px solid ${INK}`, borderLeft: `1.2px solid ${INK}` }}>
           <table style={{ width: '100%', tableLayout: 'auto', borderCollapse: 'collapse', fontSize: 18, fontWeight: 600, fontFamily: FONT }}>
             <thead style={{ textTransform: 'uppercase' }}>
               <tr>
@@ -441,6 +446,7 @@ export function ChallanBillPage() {
               </tr>
             </tbody>
           </table>
+          </div>
         </div>
 
         {/* Amount in words (left) + charges / totals breakdown (right) */}
@@ -462,32 +468,38 @@ export function ChallanBillPage() {
             )}
           </div>
 
-          <div style={{ border: `1.2px solid ${INK}`, borderRadius: 2, overflow: 'hidden', minWidth: 220 }}>
-            <table style={{ borderCollapse: 'collapse', fontSize: 20, width: '100%', fontFamily: FONT, textTransform: 'uppercase' }}>
+          {/* Charges / totals — Sub Total + Grand Total rows filled orange, the
+              charge rows white, all with black grid borders (matches the reference).
+              Freight always shows, "-" when zero. Sizes to content, min 260. */}
+          <div style={{ border: `1.4px solid ${INK}`, minWidth: 380, alignSelf: 'flex-start' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%', fontFamily: FONT }}>
               <colgroup>
-                <col style={{ width: '70%' }} />
-                <col style={{ width: '30%' }} />
+                <col style={{ width: '62%' }} />
+                <col style={{ width: '38%' }} />
               </colgroup>
               <tbody>
+                <tr style={{ background: ORANGE }}>
+                  <td style={{ fontWeight: 700, borderBottom: `1.2px solid ${INK}`, borderRight: `1.2px solid ${INK}`, padding: '3px 14px', whiteSpace: 'nowrap', fontSize: 19 }}>Sub Total Amount</td>
+                  <td style={{ textAlign: 'right', fontWeight: 700, borderBottom: `1.2px solid ${INK}`, padding: '3px 14px', whiteSpace: 'nowrap', fontSize: 19 }}>{money(totals.subTotal)}</td>
+                </tr>
                 {(
                   [
-                    ['Sub Total Amount', money(totals.subTotal)],
                     ['Packing Charges', money(challan.packing)],
-                    ...(challan.freight ? [['Freight Charges', money(challan.freight)]] : []),
-                    ['Box / Pouch', money(challan.pouch)],
+                    ['Freight Charges', challan.freight ? money(challan.freight) : '-'],
+                    ['Box/Pouch', money(challan.pouch)],
                     ['Tax Amount', money(challan.tax)],
                     ...(isScrap || tcs ? [['TCS @ 1%', money(tcs)]] : []),
                     ...(tds ? [[`Less: TDS${challan.tdsPercent ? ` @ ${challan.tdsPercent}%` : ''}`, `-${money(tds)}`]] : []),
                   ] as [string, string][]
                 ).map(([label, value]) => (
                   <tr key={label}>
-                    <td style={{ fontWeight: 700, borderBottom: `0.8px solid ${INK}`, borderRight: `0.8px solid ${INK}`, padding: '7px 10px', whiteSpace: 'nowrap', fontSize: 19 }}>{label}</td>
-                    <td style={{ textAlign: 'right', fontWeight: 700, borderBottom: `0.8px solid ${INK}`, padding: '7px 10px', fontSize: 19 }}>{value}</td>
+                    <td style={{ fontWeight: 700, borderBottom: `1.2px solid ${INK}`, borderRight: `1.2px solid ${INK}`, padding: '3px 14px', whiteSpace: 'nowrap', fontSize: 19 }}>{label}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 700, borderBottom: `1.2px solid ${INK}`, padding: '3px 14px', whiteSpace: 'nowrap', fontSize: 19 }}>{value}</td>
                   </tr>
                 ))}
-                <tr>
-                  <td style={{ fontWeight: 800, fontSize: 21, borderRight: `0.8px solid ${INK}`, borderTop: `1.2px solid ${INK}`, padding: '8px 10px', whiteSpace: 'nowrap' }}>{tds ? 'Net Receivable' : 'Grand Total Amount'}</td>
-                  <td style={{ textAlign: 'right', fontWeight: 800, fontSize: 21, borderTop: `1.2px solid ${INK}`, padding: '8px 10px' }}>{money(tds ? netReceivable : total)}</td>
+                <tr style={{ background: ORANGE }}>
+                  <td style={{ fontWeight: 800, fontSize: 21, borderRight: `1.2px solid ${INK}`, padding: '4px 14px', whiteSpace: 'nowrap' }}>{tds ? 'Net Receivable' : 'Grand Total Amount'}</td>
+                  <td style={{ textAlign: 'right', fontWeight: 800, fontSize: 21, padding: '4px 14px', whiteSpace: 'nowrap' }}>{money(tds ? netReceivable : total)}</td>
                 </tr>
               </tbody>
             </table>

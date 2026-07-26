@@ -195,8 +195,9 @@ export function DispatchOrderPage() {
   }, [searchInput]);
 
   const { data: options } = usePendingFilterOptions();
-  // ALL on → offer base product names (one pick = all its designs); off → full names.
-  const productOptions = all ? (options?.productBases ?? []) : (options?.products ?? []);
+  // Default → short base-name list (one pick = all its designs). ALL on → the full
+  // list with every design variant, so a pick targets that specific item.
+  const productOptions = all ? (options?.products ?? []) : (options?.productBases ?? []);
   const query = {
     page,
     pageSize: PAGE_SIZE,
@@ -415,8 +416,9 @@ export function DispatchOrderPage() {
         />
       </div>
 
-      {/* Phones: engaging tap-to-dispatch cards with staggered entrance + press feedback. */}
-      <div className="space-y-3 sm:hidden">
+      {/* Phones: engaging tap-to-dispatch cards with staggered entrance + press feedback.
+          A small horizontal inset keeps the cards clear of the screen edges. */}
+      <div className="space-y-3 px-2 sm:hidden sm:px-0">
         <style>{DISPATCH_CARD_CSS}</style>
         {isLoading ? (
           [0, 1, 2, 3].map((i) => <div key={i} className="bg-muted/40 h-40 animate-pulse rounded-2xl border" />)

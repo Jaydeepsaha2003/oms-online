@@ -150,11 +150,20 @@ export class DispatchService {
     if (query.dueType) lines = lines.filter((l) => l.dueType === query.dueType);
     if (query.customer) lines = lines.filter((l) => l.customerName === query.customer);
     if (query.product) {
-      // "ALL" on → match every design variant sharing the selected base name;
-      // off → exact full-name match (legacy Form13 SelectProduct + ALL checkbox).
-      lines = query.all
-        ? lines.filter((l) => DispatchService.baseProductName(l.productName || l.product, l.designType) === query.product)
-        : lines.filter((l) => (l.productName || l.product) === query.product);
+      const target = query.product;
+      if (query.all) {
+        // "ALL" on → the picker lists every design variant (full names); match the
+        // exact item picked.
+        lines = lines.filter((l) => (l.productName || l.product) === target);
+      } else {
+        // Default → the picker lists base names only (short list). A base pick
+        // matches the base itself and all its design variants: "10 RDX" brings in
+        // "10 RDX DL", "10 RDX LOGO", etc. via a whole-word prefix.
+        lines = lines.filter((l) => {
+          const full = l.productName || l.product || '';
+          return full === target || full.startsWith(`${target} `);
+        });
+      }
     }
     if (query.design) lines = lines.filter((l) => l.designType === query.design);
     if (query.subCategory) lines = lines.filter((l) => l.subCategory === query.subCategory);
