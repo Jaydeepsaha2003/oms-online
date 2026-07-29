@@ -44,6 +44,7 @@ import { DiscountsModule } from './discounts/discounts.module';
 import { NotesModule } from './notes/notes.module';
 import { PartyLedgerModule } from './party-ledger/party-ledger.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { ReportsModule } from './reports/reports.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { AccessImportModule } from './access-import/access-import.module'; // MS Access connector — Access stays a live parallel data source
 import { SettingsModule } from './settings/settings.module';
@@ -97,6 +98,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     NotesModule,
     PartyLedgerModule,
     AnalyticsModule,
+    ReportsModule,
     UploadsModule,
     AccessImportModule, // MS Access → OMS connector — Access stays a live parallel data source
 

@@ -55,6 +55,13 @@ const SettingsPage = lazy(() => import('@/features/settings/settings-page').then
 const UsersPage = lazy(() => import('@/features/admin/users-page').then((m) => ({ default: m.UsersPage })));
 const RolesPage = lazy(() => import('@/features/admin/roles-page').then((m) => ({ default: m.RolesPage })));
 const AuditLogPage = lazy(() => import('@/features/audit-log/audit-log-page').then((m) => ({ default: m.AuditLogPage })));
+const BusinessOverviewPage = lazy(() => import('@/features/reports/business-overview-page').then((m) => ({ default: m.BusinessOverviewPage })));
+const SalesReportPage = lazy(() => import('@/features/reports/sales-report-page').then((m) => ({ default: m.SalesReportPage })));
+const CollectionsReportPage = lazy(() => import('@/features/reports/collections-report-page').then((m) => ({ default: m.CollectionsReportPage })));
+const PartyIntelPage = lazy(() => import('@/features/reports/party-intel-page').then((m) => ({ default: m.PartyIntelPage })));
+const ProductReportPage = lazy(() => import('@/features/reports/product-report-page').then((m) => ({ default: m.ProductReportPage })));
+const PatternsReportPage = lazy(() => import('@/features/reports/patterns-report-page').then((m) => ({ default: m.PatternsReportPage })));
+const FulfilmentReportPage = lazy(() => import('@/features/reports/fulfilment-report-page').then((m) => ({ default: m.FulfilmentReportPage })));
 const ForbiddenPage = lazy(() => import('@/features/errors/forbidden-page').then((m) => ({ default: m.ForbiddenPage })));
 const NotFoundPage = lazy(() => import('@/features/errors/not-found-page').then((m) => ({ default: m.NotFoundPage })));
 
@@ -480,6 +487,62 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.AUDIT_LOG, ACTIONS.VIEW)}>
                 <AuditLogPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/reports/overview"
+            element={
+              <RequirePermission permission={perm(RESOURCES.REPORT, ACTIONS.VIEW)}>
+                <BusinessOverviewPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/reports/sales"
+            element={
+              <RequirePermission permission={perm(RESOURCES.REPORT, ACTIONS.VIEW)}>
+                <SalesReportPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/reports/collections"
+            element={
+              <RequirePermission permission={perm(RESOURCES.REPORT, ACTIONS.VIEW)}>
+                <CollectionsReportPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/reports/parties"
+            element={
+              <RequirePermission permission={perm(RESOURCES.REPORT, ACTIONS.VIEW)}>
+                <PartyIntelPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/reports/products"
+            element={
+              <RequirePermission permission={perm(RESOURCES.REPORT, ACTIONS.VIEW)}>
+                <ProductReportPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/reports/patterns"
+            element={
+              <RequirePermission permission={perm(RESOURCES.REPORT, ACTIONS.VIEW)}>
+                <PatternsReportPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/reports/fulfilment"
+            element={
+              <RequirePermission permission={perm(RESOURCES.REPORT, ACTIONS.VIEW)}>
+                <FulfilmentReportPage />
               </RequirePermission>
             }
           />

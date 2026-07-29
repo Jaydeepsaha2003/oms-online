@@ -32,6 +32,7 @@ export * from './types/payment';
 export * from './types/followup';
 export * from './types/setting';
 export * from './types/analytics';
+export * from './types/report';
 export * from './types/discount';
 export * from './types/note';
 export * from './types/notification';

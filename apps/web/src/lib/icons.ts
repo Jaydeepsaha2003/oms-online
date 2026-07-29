@@ -43,6 +43,8 @@ import {
   UserCog,
   Users,
   Warehouse,
+  Sparkles,
+  TrendingUp,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -74,6 +76,8 @@ const ICONS: Record<string, LucideIcon> = {
   Building2,
   Boxes,
   Warehouse,
+  Sparkles,
+  TrendingUp,
   BarChart3,
   Settings,
   UserCog,
