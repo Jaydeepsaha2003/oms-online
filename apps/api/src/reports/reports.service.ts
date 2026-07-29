@@ -665,7 +665,6 @@ export class ReportsService {
            LEFT JOIN (SELECT orderItemId, SUM(COALESCE(pcs,0)) AS dPcs, SUM(COALESCE(gram,0)) AS dGram FROM dispatches GROUP BY orderItemId) d ON d.orderItemId = oi.id
           WHERE oi.status = 'CONFIRMED' AND o.status <> 'CANCELLED'`,
       ),
-      this.prisma.$queryRawUnsafe<{ name: string; c: bigint }[]>("SELECT customerName AS name, COUNT(*) AS c FROM orders WHERE status = 'CANCELLED' GROUP BY customerName ORDER BY c DESC LIMIT 10"),
       // Value funnel: ordered → dispatched → billed.
       this.prisma.$queryRawUnsafe<{ ordered: number | null; dispatched: number | null; billed: number | null }[]>(
         `SELECT
