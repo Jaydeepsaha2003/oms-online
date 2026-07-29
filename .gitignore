@@ -60,3 +60,8 @@ certs/
 
 # stop.bat's "stopped on purpose" marker for the auto-start watchdog
 .oms-stopped
+
+# SQLite transient files
+*.db-journal
+*.db-wal
+*.db-shm
