@@ -41,8 +41,8 @@ export function PartyIntelPage() {
           <ReportSummary
             loading={isLoading}
             points={data ? [
-              { text: <><strong>{data.concentration.totalParties}</strong> revenue-earning parties; the top <strong>{data.concentration.topParties}</strong> drive <strong>{data.concentration.topShare != null ? Math.round(data.concentration.topShare * 100) : '—'}%</strong> of revenue.</>, tone: 'info' },
-              { text: <><strong>{seg('VIP')}</strong> VIPs contribute <strong>{inrCompact(data.segmentRevenue.find((s) => s.name === 'VIP')?.value ?? 0)}</strong> — protect these relationships.</>, tone: 'good' },
+              { text: <><strong>{data.concentration?.totalParties ?? 0}</strong> revenue-earning parties; the top <strong>{data.concentration?.topParties ?? 0}</strong> drive <strong>{data.concentration?.topShare != null ? Math.round(data.concentration.topShare * 100) : '—'}%</strong> of revenue.</>, tone: 'info' },
+              { text: <><strong>{seg('VIP')}</strong> VIPs contribute <strong>{inrCompact((data.segmentRevenue ?? []).find((s) => s.name === 'VIP')?.value ?? 0)}</strong> — protect these relationships.</>, tone: 'good' },
               { text: <><strong>{seg('At-risk') + seg('Dormant')}</strong> parties are slipping (at-risk or dormant) — worth re-engaging.</>, tone: seg('At-risk') + seg('Dormant') > 0 ? 'warn' : 'good' },
               { text: <><strong>{seg('Win-back')}</strong> high-value parties have gone quiet — prime win-back targets.</>, tone: seg('Win-back') > 0 ? 'bad' : 'good' },
             ] : []}

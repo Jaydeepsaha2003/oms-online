@@ -18,7 +18,7 @@ export function SalesReportPage() {
       <ReportSummary
         loading={isLoading}
         points={data ? [
-          { text: <>This FY-to-date billing is <strong>{inrCompact(data.yoyTotals.thisYear)}</strong>{data.yoyTotals.growthPct != null && <>, {data.yoyTotals.growthPct >= 0 ? 'up' : 'down'} <strong>{Math.abs(data.yoyTotals.growthPct).toFixed(0)}%</strong> vs the same months last year</>}.</>, tone: (data.yoyTotals.growthPct ?? 0) >= 0 ? 'good' : 'warn' },
+          { text: <>This FY-to-date billing is <strong>{inrCompact(data.yoyTotals?.thisYear ?? 0)}</strong>{data.yoyTotals?.growthPct != null && <>, {data.yoyTotals.growthPct >= 0 ? 'up' : 'down'} <strong>{Math.abs(data.yoyTotals.growthPct).toFixed(0)}%</strong> vs the same months last year</>}.</>, tone: (data.yoyTotals?.growthPct ?? 0) >= 0 ? 'good' : 'warn' },
           { text: <>Peak month was <strong>{peak?.label ?? '—'}</strong> at <strong>{peak ? inrCompact(peak.billed) : '—'}</strong>.</>, tone: 'info' },
           { text: <>Top agent is <strong>{data.byAgent[0]?.name ?? '—'}</strong> ({inrCompact(data.byAgent[0]?.value ?? 0)}); leading region <strong>{data.byRegion[0]?.name ?? '—'}</strong>.</>, tone: 'info' },
           { text: <>Strongest state is <strong>{data.byState[0]?.name ?? '—'}</strong> at <strong>{inrCompact(data.byState[0]?.value ?? 0)}</strong>.</>, tone: 'info' },
@@ -28,7 +28,7 @@ export function SalesReportPage() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi label="Billed (12 mo)" value={inrCompact(total12)} title={inrFull(total12)} hint="rolling 12 months" loading={isLoading} tone="blue" />
         <Kpi label="Peak month" value={peak ? inrCompact(peak.billed) : '—'} hint={peak?.label} loading={isLoading} tone="emerald" />
-        <Kpi label="YoY growth" value={data?.yoyTotals.growthPct != null ? `${data.yoyTotals.growthPct > 0 ? '+' : ''}${data.yoyTotals.growthPct.toFixed(1)}%` : '—'} hint="FY-to-date vs last FY (same months)" loading={isLoading} tone={data && (data.yoyTotals.growthPct ?? 0) >= 0 ? 'emerald' : 'rose'} />
+        <Kpi label="YoY growth" value={data?.yoyTotals?.growthPct != null ? `${data.yoyTotals.growthPct > 0 ? '+' : ''}${data.yoyTotals.growthPct.toFixed(1)}%` : '—'} hint="FY-to-date vs last FY (same months)" loading={isLoading} tone={data && (data.yoyTotals?.growthPct ?? 0) >= 0 ? 'emerald' : 'rose'} />
         <Kpi label="Regions" value={data ? String(data.byRegion.length) : '—'} hint="with revenue" loading={isLoading} tone="amber" />
       </div>
 

@@ -27,7 +27,7 @@ export function CollectionsReportPage() {
           { text: <>Total outstanding is <strong>{inrCompact(data.totalOutstanding)}</strong>, of which <strong>{inrCompact(data.overdue)}</strong>{data.totalOutstanding > 0 && <> ({Math.round((data.overdue / data.totalOutstanding) * 100)}%)</>} is overdue.</>, tone: data.overdue > 0 ? 'bad' : 'good' },
           { text: <><strong>{inrCompact(data.dueSoon)}</strong> falls due in the next 15 days — get ahead of it.</>, tone: 'warn' },
           { text: <><strong>{data.recovery.filter((r) => r.rank <= 3).length}</strong> parties need a call now; <strong>{data.recovery[0]?.party ?? '—'}</strong> tops the list at <strong>{inrCompact(data.recovery[0]?.outstanding ?? 0)}</strong>.</>, tone: 'bad' },
-          { text: <>Collections this FY are <strong>{Math.round(((data.collectedModes.find((m) => m.name === 'Cash')?.value ?? 0) / (data.collectedModes.reduce((s, m) => s + m.value, 0) || 1)) * 100)}%</strong> cash vs bank.</>, tone: 'info' },
+          { text: <>Collections this FY are <strong>{Math.round((((data.collectedModes ?? []).find((m) => m.name === 'Cash')?.value ?? 0) / ((data.collectedModes ?? []).reduce((s, m) => s + m.value, 0) || 1)) * 100)}%</strong> cash vs bank.</>, tone: 'info' },
           ...(data.advanceHeld > 0 ? [{ text: <><strong>{inrCompact(data.advanceHeld)}</strong> is held as advances — net these before chasing.</>, tone: 'info' as const }] : []),
         ] : []}
       />
