@@ -51,8 +51,9 @@ export class ReportsController {
   /** §8.8 — Product & Design. */
   @Get('products')
   @Permissions(perm(R, ACTIONS.VIEW))
-  products(@Query() f: ReportFilterDto) {
-    return this.reports.productReport(f);
+  products(@Query() f: ReportFilterDto, @Query('measure') measure?: string) {
+    const m = (['amount', 'bags', 'pcs', 'kgs', 'box'] as const).find((x) => x === measure) ?? 'amount';
+    return this.reports.productReport(f, m);
   }
 
   /** §8.9 — Patterns & Insights. */

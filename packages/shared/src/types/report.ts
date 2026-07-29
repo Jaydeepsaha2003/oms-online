@@ -101,30 +101,67 @@ export interface SalesReport {
   asOf: string;
 }
 
-/** §8.2 — Collections & Recovery. */
+/** Where a party sits in the recovery workflow (derived from their PAYMENT follow-ups). */
+export type RecoveryStage = 'Not contacted' | 'In progress' | 'Promised' | 'Promise broken' | 'Callback due' | 'Resolved';
+/** State of a party's latest promise-to-pay. */
+export type PromiseState = 'none' | 'upcoming' | 'due today' | 'broken';
+
+/** One party in the recovery queue, fusing money exposure with CRM contact state. */
+export interface RecoveryParty {
+  customerId: number | null;
+  party: string;
+  agent: string | null;
+  outstanding: number;
+  overdue: number;
+  oldestDays: number;
+  lastReceipt: string | null;
+  /** Priority flag + rank from the recovery brain (exposure × age). */
+  flag: string;
+  rank: number;
+  // ── CRM signals (from PAYMENT follow-ups) ──
+  stage: RecoveryStage;
+  /** Most recent contact (latest PAYMENT follow-up activity). */
+  lastContactAt: string | null;
+  /** Days since last contact; null if never contacted. */
+  daysSinceContact: number | null;
+  /** Soonest open promised-payment date. */
+  nextPromiseAt: string | null;
+  promiseState: PromiseState;
+  /** Open PAYMENT follow-ups for this party. */
+  openFollowups: number;
+}
+
+/** §8.2 — Collections & Recovery (Recovery Command Center). */
 export interface CollectionsReport {
   totalOutstanding: number;
   overdue: number;
   dueSoon: number;
   advanceHeld: number;
+  /** Collection efficiency this FY = collected ÷ billed (0–1). */
+  collectionRate: number | null;
+  /** Days Sales Outstanding. */
+  dsoDays: number | null;
   /** Receipts this FY split by mode (Bank / Cash / Cheque). */
   collectedModes: ReportSlice[];
   /** Parties with the most overdue exposure (capped). */
   topOverdueParties: ReportSlice[];
   /** Overdue value by ageing bucket. */
   aging: { key: string; label: string; value: number; parties: number }[];
-  /** Parties to chase, ranked by exposure × age. */
-  recovery: {
-    customerId: number | null;
-    party: string;
-    agent: string | null;
-    outstanding: number;
-    overdue: number;
-    oldestDays: number;
-    lastReceipt: string | null;
-    flag: string;
-    rank: number;
-  }[];
+  /** Monthly collected trend (last 12 months). */
+  collectionTrend: { month: string; label: string; collected: number }[];
+  /** Recovery KPIs from the CRM follow-up layer. */
+  recoveryKpis: {
+    promisesDueToday: number;
+    promisesOverdue: number;
+    neverContacted: number;
+    inProgress: number;
+    resolvedThisMonth: number;
+    promisedParties: number;
+  };
+  /** Outstanding + party count by recovery stage (pipeline). */
+  pipeline: { stage: RecoveryStage; parties: number; value: number }[];
+  /** Parties to chase, ranked, enriched with CRM contact state. */
+  recovery: RecoveryParty[];
   asOf: string;
 }
 
@@ -149,10 +186,16 @@ export interface PartyIntelReport {
   asOf: string;
 }
 
+/** How product/order volume is measured (spec §7.2). */
+export type ReportMeasure = 'amount' | 'bags' | 'pcs' | 'kgs' | 'box';
+export const REPORT_MEASURES: ReportMeasure[] = ['amount', 'bags', 'pcs', 'kgs', 'box'];
+
 /** §8.8 — Product & Design (top products + design margin). */
 export interface ProductReport {
+  /** Which measure the top-lists are expressed in. */
+  measure: ReportMeasure;
   topProducts: ReportSlice[];
-  /** Top designs by billed value (from challan lines). */
+  /** Top designs by the selected measure (from challan lines). */
   topDesigns: ReportSlice[];
   categoryMix: ReportSlice[];
   designMargin: {

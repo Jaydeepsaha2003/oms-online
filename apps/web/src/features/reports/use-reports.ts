@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import type { BusinessOverview, CollectionsReport, FulfilmentReport, PartyIntelReport, PatternsReport, ProductReport, ReportFilters, SalesReport } from '@oms/shared';
+import type { BusinessOverview, CollectionsReport, FulfilmentReport, PartyIntelReport, PatternsReport, ProductReport, ReportFilters, ReportMeasure, SalesReport } from '@oms/shared';
 import { http } from '@/lib/api';
 
 const KEY = ['reports'] as const;
@@ -29,8 +29,8 @@ export function usePartyIntel(f: ReportFilters = {}) {
   return useQuery({ queryKey: [...KEY, 'party-intel', f], queryFn: () => http.get<PartyIntelReport>('/reports/party-intel', { params: params(f) }), ...opts });
 }
 /** §8.8 — Product & Design. */
-export function useProductReport(f: ReportFilters = {}) {
-  return useQuery({ queryKey: [...KEY, 'products', f], queryFn: () => http.get<ProductReport>('/reports/products', { params: params(f) }), ...opts });
+export function useProductReport(f: ReportFilters = {}, measure: ReportMeasure = 'amount') {
+  return useQuery({ queryKey: [...KEY, 'products', f, measure], queryFn: () => http.get<ProductReport>('/reports/products', { params: params(f, { measure }) }), ...opts });
 }
 /** §8.9 — Patterns & Insights. */
 export function usePatterns(f: ReportFilters = {}) {

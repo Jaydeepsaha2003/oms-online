@@ -9,6 +9,7 @@ import type {
   ProductReport,
   ReportFilterOptions,
   ReportFilters,
+  ReportMeasure,
   ReportMonthPoint,
   ReportSlice,
   SalesReport,
@@ -339,12 +340,14 @@ export class ReportsService {
     const today = this.startOfDay(now);
     const DAY = 86_400_000;
     const fx = await this.resolveFilter(f);
-    const [challans, custRows, advances, recvByInv, lastRec] = await Promise.all([
-      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { code: true, total: true, dueDate: true, customerId: true, customerName: true, transaction: true } }),
+    const [challans, custRows, advances, recvByInv, lastRec, payFollowups] = await Promise.all([
+      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { code: true, total: true, invDate: true, dueDate: true, customerId: true, customerName: true, transaction: true } }),
       this.prisma.customer.findMany({ select: { id: true, agentName: true } }),
       this.prisma.acctPartyAdvance.findMany({ select: { bankAmt: true, cashAmt: true } }),
       this.receivedByInvoice(),
       this.prisma.acctPaymentReceipt.findMany({ select: { custId: true, recDate: true, recAmt: true, payMode: true } }),
+      // The live recovery CRM: payment follow-ups drive the contact/promise signals.
+      this.prisma.followup.findMany({ where: { kind: 'PAYMENT' }, select: { customerId: true, partyName: true, status: true, promisedAt: true, updatedAt: true, resolvedAt: true } }),
     ]);
     const custMap = new Map(custRows.map((c) => [c.id, c]));
     const fyStart = this.startOfFinYear(now);
@@ -401,6 +404,40 @@ export class ReportsService {
     aging.forEach((a, i) => { a.value = r0(a.value); a.parties = agingParties[i].size; });
     const advanceHeld = r0(advances.reduce((s, a) => s + n(a.bankAmt) + n(a.cashAmt), 0));
 
+    // ── CRM recovery signals (from PAYMENT follow-ups) ──
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    interface Crm { lastContact: Date | null; nextPromise: Date | null; open: number; broken: boolean; dueToday: boolean }
+    const crmByKey = new Map<string, Crm>();
+    const keyById = new Map<number, string>();
+    const nameKey = (name: string) => `n:${name.trim().toUpperCase()}`;
+    let resolvedThisMonth = 0;
+    for (const fu of payFollowups) {
+      if (fu.resolvedAt && fu.resolvedAt >= monthStart) resolvedThisMonth += 1;
+      const key = fu.customerId != null ? `c:${fu.customerId}` : nameKey(fu.partyName);
+      if (fu.customerId != null) keyById.set(fu.customerId, key);
+      let c = crmByKey.get(key);
+      if (!c) { c = { lastContact: null, nextPromise: null, open: 0, broken: false, dueToday: false }; crmByKey.set(key, c); }
+      if (!c.lastContact || fu.updatedAt > c.lastContact) c.lastContact = fu.updatedAt;
+      if (fu.status === 'OPEN') {
+        c.open += 1;
+        if (fu.promisedAt) {
+          if (!c.nextPromise || fu.promisedAt < c.nextPromise) c.nextPromise = fu.promisedAt;
+          const days = Math.floor((today.getTime() - this.startOfDay(fu.promisedAt).getTime()) / DAY);
+          if (days > 0) c.broken = true;
+          else if (days === 0) c.dueToday = true;
+        }
+      }
+    }
+    const crmFor = (custId: number | null, party: string): Crm | undefined => crmByKey.get(custId != null ? `c:${custId}` : nameKey(party)) ?? (custId != null ? crmByKey.get(nameKey(party)) : undefined);
+    const stageOf = (c: Crm | undefined): { stage: 'Not contacted' | 'In progress' | 'Promised' | 'Promise broken' | 'Callback due' | 'Resolved'; promiseState: 'none' | 'upcoming' | 'due today' | 'broken' } => {
+      if (!c || (c.open === 0 && !c.lastContact)) return { stage: 'Not contacted', promiseState: 'none' };
+      if (c.open === 0) return { stage: 'Resolved', promiseState: 'none' };
+      if (c.broken) return { stage: 'Promise broken', promiseState: 'broken' };
+      if (c.dueToday) return { stage: 'Callback due', promiseState: 'due today' };
+      if (c.nextPromise) return { stage: 'Promised', promiseState: 'upcoming' };
+      return { stage: 'In progress', promiseState: 'none' };
+    };
+
     const flagOf = (p: P): { flag: string; rank: number } => {
       if (p.overdue > 0 && p.oldestDays >= 60) return { flag: 'CALL NOW · 60+ days', rank: 1 };
       if (p.overdue > 0 && p.oldestDays >= 30) return { flag: 'CALL NOW · 30–59 days', rank: 2 };
@@ -411,13 +448,25 @@ export class ReportsService {
     const recovery = [...parties.values()]
       .map((p) => {
         const { flag, rank } = flagOf(p);
+        const c = crmFor(p.custId, p.party);
+        const { stage, promiseState } = stageOf(c);
+        // A broken promise or a due callback is the most urgent — it outranks age.
+        const crmBoost = stage === 'Promise broken' ? -0.5 : stage === 'Callback due' ? -0.25 : 0;
         const score = p.outstanding * (1 + p.oldestDays / 30);
         const lr = p.custId != null ? lastRecByCust.get(p.custId) : undefined;
-        return { customerId: p.custId, party: p.party, agent: p.agent, outstanding: r0(p.outstanding), overdue: r0(p.overdue), oldestDays: p.oldestDays, lastReceipt: lr ? lr.toISOString() : null, flag, rank, score };
+        const daysSince = c?.lastContact ? Math.floor((today.getTime() - this.startOfDay(c.lastContact).getTime()) / DAY) : null;
+        return {
+          customerId: p.custId, party: p.party, agent: p.agent,
+          outstanding: r0(p.outstanding), overdue: r0(p.overdue), oldestDays: p.oldestDays,
+          lastReceipt: lr ? lr.toISOString() : null, flag, rank: rank + crmBoost,
+          stage, lastContactAt: c?.lastContact ? c.lastContact.toISOString() : null, daysSinceContact: daysSince,
+          nextPromiseAt: c?.nextPromise ? c.nextPromise.toISOString() : null, promiseState, openFollowups: c?.open ?? 0,
+          score,
+        };
       })
       .sort((a, b) => a.rank - b.rank || b.score - a.score)
-      .slice(0, 100)
-      .map(({ score: _score, ...r }) => r);
+      .slice(0, 150)
+      .map(({ score: _score, rank, ...r }) => ({ ...r, rank: Math.round(rank) }));
 
     const topOverdueParties = [...parties.values()]
       .filter((p) => p.overdue > 0)
@@ -425,7 +474,50 @@ export class ReportsService {
       .sort((a, b) => b.value - a.value)
       .slice(0, 12);
 
-    return { totalOutstanding: r0(totalOutstanding), overdue: r0(overdue), dueSoon: r0(dueSoon), advanceHeld, collectedModes, topOverdueParties, aging, recovery, asOf: now.toISOString() };
+    // Recovery KPIs + pipeline over all owing parties.
+    const owing = [...parties.values()].filter((p) => p.outstanding > 0);
+    const stageVal = new Map<string, { parties: number; value: number }>();
+    let promisesDueToday = 0;
+    let promisesOverdue = 0;
+    let neverContacted = 0;
+    let inProgress = 0;
+    let promisedParties = 0;
+    for (const p of owing) {
+      const c = crmFor(p.custId, p.party);
+      const { stage } = stageOf(c);
+      const sv = stageVal.get(stage) ?? { parties: 0, value: 0 };
+      sv.parties += 1; sv.value += p.outstanding; stageVal.set(stage, sv);
+      if (stage === 'Not contacted') neverContacted += 1;
+      if (c && c.open > 0) inProgress += 1;
+      if (c?.dueToday) promisesDueToday += 1;
+      if (c?.broken) promisesOverdue += 1;
+      if (c?.nextPromise && !c.broken) promisedParties += 1;
+    }
+    const STAGE_ORDER = ['Promise broken', 'Callback due', 'Not contacted', 'In progress', 'Promised', 'Resolved'];
+    const pipeline = [...stageVal.entries()]
+      .map(([stage, v]) => ({ stage: stage as 'Not contacted' | 'In progress' | 'Promised' | 'Promise broken' | 'Callback due' | 'Resolved', parties: v.parties, value: r0(v.value) }))
+      .sort((a, b) => STAGE_ORDER.indexOf(a.stage) - STAGE_ORDER.indexOf(b.stage));
+
+    // Collection trend (last 12 months collected) + efficiency.
+    const trendStart = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+    const tb = new Map<string, { month: string; label: string; collected: number }>();
+    for (let i = 0; i < 12; i++) { const d = new Date(trendStart.getFullYear(), trendStart.getMonth() + i, 1); tb.set(this.monthKey(d), { month: this.monthKey(d), label: this.monthLabel(d), collected: 0 }); }
+    for (const r of lastRec) { if (!fx.custOk(r.custId)) continue; const b = tb.get(this.monthKey(r.recDate)); if (b) b.collected += n(r.recAmt); }
+    const collectionTrend = [...tb.values()].map((p) => ({ ...p, collected: r0(p.collected) }));
+
+    const fyStart2 = this.startOfFinYear(now);
+    const fyBilled = sales.filter((c) => c.invDate >= fyStart2).reduce((s, c) => s + n(c.total), 0);
+    const fyCollected = lastRec.filter((r) => fx.custOk(r.custId) && r.recDate >= fyStart2).reduce((s, r) => s + n(r.recAmt), 0);
+    const collectionRate = fyBilled > 0 ? fyCollected / fyBilled : null;
+    const elapsedFyDays = Math.max(1, Math.round((now.getTime() - fyStart2.getTime()) / DAY));
+    const dsoDays = fyBilled > 0 ? r0((totalOutstanding / fyBilled) * elapsedFyDays) : null;
+
+    return {
+      totalOutstanding: r0(totalOutstanding), overdue: r0(overdue), dueSoon: r0(dueSoon), advanceHeld,
+      collectionRate, dsoDays, collectedModes, topOverdueParties, aging, collectionTrend,
+      recoveryKpis: { promisesDueToday, promisesOverdue, neverContacted, inProgress, resolvedThisMonth, promisedParties },
+      pipeline, recovery, asOf: now.toISOString(),
+    };
   }
 
   // ── §8.7 Party Intelligence ─────────────────────────────────────────────────
@@ -509,20 +601,23 @@ export class ReportsService {
   }
 
   // ── §8.8 Product & Design ───────────────────────────────────────────────────
-  async productReport(f: ReportFilters = {}): Promise<ProductReport> {
+  async productReport(f: ReportFilters = {}, measure: ReportMeasure = 'amount'): Promise<ProductReport> {
     const now = new Date();
     const fx = await this.resolveFilter(f);
     const [rawItems, designs] = await Promise.all([
-      this.prisma.challanItem.findMany({ select: { productName: true, amount: true, pCategory: true, design: true, challan: { select: { invDate: true, customerId: true, challanStatus: true } } } }),
+      this.prisma.challanItem.findMany({ select: { productName: true, amount: true, bags: true, pcs: true, kgs: true, box: true, pCategory: true, design: true, challan: { select: { invDate: true, customerId: true, challanStatus: true } } } }),
       this.prisma.design.findMany({ where: { active: true }, select: { designType: true, category: true, cost: true, rate: true } }),
     ]);
     // Only lines from live challans, party + date scoped.
     const items = rawItems.filter((it) => it.challan && it.challan.challanStatus === 'CONFIRMED' && fx.custOk(it.challan.customerId) && fx.dateOk(it.challan.invDate));
+    // Slice by the chosen measure: money (amount) or a physical unit.
+    const measureOf = (it: (typeof items)[number]): number =>
+      measure === 'bags' ? n(it.bags) : measure === 'pcs' ? n(it.pcs) : measure === 'kgs' ? n(it.kgs) : measure === 'box' ? n(it.box) : n(it.amount);
     const prod = new Map<string, { value: number; count: number }>();
     const cat = new Map<string, { value: number; count: number }>();
     const dsg = new Map<string, { value: number; count: number }>();
     for (const it of items) {
-      const v = n(it.amount);
+      const v = measureOf(it);
       if (v <= 0) continue;
       const name = (it.productName ?? '').trim() || '—';
       const p = prod.get(name); if (p) { p.value += v; p.count += 1; } else prod.set(name, { value: v, count: 1 });
@@ -549,7 +644,7 @@ export class ReportsService {
 
     const marginByCategory = [...catMargin.entries()].map(([name, v]) => ({ name, value: Math.round((v.sum / v.count) * 10) / 10 })).sort((a, b) => b.value - a.value);
 
-    return { topProducts: this.topSlices(prod, 15), topDesigns: this.topSlices(dsg, 12), categoryMix: this.topSlices(cat, 10), designMargin, marginByCategory, asOf: now.toISOString() };
+    return { measure, topProducts: this.topSlices(prod, 15), topDesigns: this.topSlices(dsg, 12), categoryMix: this.topSlices(cat, 10), designMargin, marginByCategory, asOf: now.toISOString() };
   }
 
   // ── §8.9 Patterns & Insights ────────────────────────────────────────────────

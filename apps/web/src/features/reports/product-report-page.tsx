@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import { Package } from 'lucide-react';
+import type { ReportMeasure } from '@oms/shared';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { cn } from '@/lib/utils';
 import { RankedBars, ReportCard, ReportHeader, ReportSummary, REPORT_COLORS } from './report-kit';
@@ -9,11 +11,25 @@ import { useProductReport } from './use-reports';
 const marginTone = (flag: 'loss' | 'thin' | 'ok') =>
   flag === 'loss' ? 'bg-red-50 text-red-700 ring-red-600/20' : flag === 'thin' ? 'bg-amber-50 text-amber-700 ring-amber-600/20' : 'bg-emerald-50 text-emerald-700 ring-emerald-600/20';
 
+const MEASURES: { key: ReportMeasure; label: string }[] = [
+  { key: 'amount', label: 'Amount' },
+  { key: 'bags', label: 'Bags' },
+  { key: 'pcs', label: 'Pcs' },
+  { key: 'kgs', label: 'Kgs' },
+  { key: 'box', label: 'Box' },
+];
+
 export function ProductReportPage() {
   const filters = useReportFilters();
-  const { data, isLoading } = useProductReport(filters.query);
+  const [measure, setMeasure] = useState<ReportMeasure>('amount');
+  const { data, isLoading } = useProductReport(filters.query, measure);
   const cat = data?.categoryMix ?? [];
   const losses = data?.designMargin.filter((d) => d.flag !== 'ok').length ?? 0;
+  const isMoney = measure === 'amount';
+  const unit = isMoney ? '' : ` ${measure}`;
+  const fmt = (v: number) => (isMoney ? inrCompact(v) : `${Math.round(v).toLocaleString('en-IN')}${unit}`);
+  const fmtFull = (v: number) => (isMoney ? inrFull(v) : `${Math.round(v).toLocaleString('en-IN')}${unit}`);
+  const by = isMoney ? 'billed value' : MEASURES.find((m) => m.key === measure)?.label.toLowerCase();
 
   return (
     <div className="space-y-5">
@@ -21,22 +37,39 @@ export function ProductReportPage() {
 
       <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
 
+      {/* Measure slicer — analyse the same products by amount / bags / pcs / kgs / box. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-muted-foreground text-sm font-medium">Measure by</span>
+        <div className="bg-muted inline-flex rounded-lg p-0.5">
+          {MEASURES.map((m) => (
+            <button
+              key={m.key}
+              type="button"
+              onClick={() => setMeasure(m.key)}
+              className={cn('rounded-md px-3 py-1 text-sm font-medium transition-colors', measure === m.key ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <ReportSummary
         loading={isLoading}
         points={data ? [
-          { text: <>Best seller is <strong>{data.topProducts[0]?.name ?? '—'}</strong> at <strong>{inrCompact(data.topProducts[0]?.value ?? 0)}</strong>.</>, tone: 'good' },
-          { text: <>Top design is <strong>{data.topDesigns[0]?.name ?? '—'}</strong> ({inrCompact(data.topDesigns[0]?.value ?? 0)}).</>, tone: 'info' },
-          { text: <>Biggest category is <strong>{cat[0]?.name ?? '—'}</strong> with <strong>{inrCompact(cat[0]?.value ?? 0)}</strong>.</>, tone: 'info' },
+          { text: <>Top {by} is <strong>{data.topProducts[0]?.name ?? '—'}</strong> at <strong>{fmt(data.topProducts[0]?.value ?? 0)}</strong>.</>, tone: 'good' },
+          { text: <>Leading design is <strong>{data.topDesigns[0]?.name ?? '—'}</strong> ({fmt(data.topDesigns[0]?.value ?? 0)}).</>, tone: 'info' },
+          { text: <>Biggest category is <strong>{cat[0]?.name ?? '—'}</strong> with <strong>{fmt(cat[0]?.value ?? 0)}</strong>.</>, tone: 'info' },
           { text: <><strong>{losses}</strong> designs are priced at a loss or thin margin — review their pricing.</>, tone: losses > 0 ? 'bad' : 'good' },
         ] : []}
       />
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <ReportCard title="Top products (by billed value)">{isLoading ? <div className="bg-muted h-64 animate-pulse rounded-lg" /> : <RankedBars data={data?.topProducts ?? []} />}</ReportCard>
-        <ReportCard title="Top designs (by billed value)">{isLoading ? <div className="bg-muted h-64 animate-pulse rounded-lg" /> : <RankedBars data={data?.topDesigns ?? []} emptyText="No design breakdown." />}</ReportCard>
+        <ReportCard title={`Top products (by ${by})`}>{isLoading ? <div className="bg-muted h-64 animate-pulse rounded-lg" /> : <RankedBars data={data?.topProducts ?? []} money={isMoney} />}</ReportCard>
+        <ReportCard title={`Top designs (by ${by})`}>{isLoading ? <div className="bg-muted h-64 animate-pulse rounded-lg" /> : <RankedBars data={data?.topDesigns ?? []} money={isMoney} emptyText="No design breakdown." />}</ReportCard>
       </div>
 
-      <ReportCard title="Revenue by category">
+      <ReportCard title={`${isMoney ? 'Revenue' : MEASURES.find((m) => m.key === measure)?.label} by category`}>
         {isLoading ? <div className="bg-muted h-64 animate-pulse rounded-lg" /> : (
           <div className="flex flex-col items-center gap-4 sm:flex-row">
             <div className="h-[220px] w-full sm:w-1/2">
@@ -45,11 +78,11 @@ export function ProductReportPage() {
                   <Pie data={cat} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={52} outerRadius={88} paddingAngle={2}>
                     {cat.map((_, i) => <Cell key={i} fill={REPORT_COLORS[i % REPORT_COLORS.length]} />)}
                   </Pie>
-                  <Tooltip formatter={(v: number) => inrFull(v)} />
+                  <Tooltip formatter={(v: number) => fmtFull(v)} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
-            <div className="w-full sm:w-1/2"><RankedBars data={cat.slice(0, 6)} /></div>
+            <div className="w-full sm:w-1/2"><RankedBars data={cat.slice(0, 6)} money={isMoney} /></div>
           </div>
         )}
       </ReportCard>
