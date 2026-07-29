@@ -57,15 +57,15 @@ export function BusinessOverviewPage() {
 
       {/* Operational + efficiency KPIs */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Kpi label="Orders (FY)" value={data ? Math.round(data.orders.current).toLocaleString('en-IN') : '—'} hint="vs last FY" icon={ReceiptText} tone="blue" metric={data?.orders} loading={isLoading} />
-        <Kpi label="Challans (FY)" value={data ? Math.round(data.challans.current).toLocaleString('en-IN') : '—'} hint="vs last FY" icon={ScrollText} tone="amber" metric={data?.challans} loading={isLoading} />
+        <Kpi label="Orders (FY)" value={data ? Math.round(data.orders?.current ?? 0).toLocaleString('en-IN') : '—'} hint="vs last FY" icon={ReceiptText} tone="blue" metric={data?.orders} loading={isLoading} />
+        <Kpi label="Challans (FY)" value={data ? Math.round(data.challans?.current ?? 0).toLocaleString('en-IN') : '—'} hint="vs last FY" icon={ScrollText} tone="amber" metric={data?.challans} loading={isLoading} />
         <Kpi label="Collection rate" value={data?.collectionRate != null ? `${Math.round(data.collectionRate * 100)}%` : '—'} hint="collected ÷ billed (FY)" icon={Banknote} tone="emerald" loading={isLoading} />
         <Kpi label="DSO" value={data?.dsoDays != null ? `${data.dsoDays} days` : '—'} hint="days sales outstanding" icon={Timer} tone="slate" loading={isLoading} />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi label="Avg invoice value" value={money(data?.avgInvoiceValue)} title={data ? inrFull(data.avgInvoiceValue) : undefined} hint="per challan (FY)" icon={ReceiptText} tone="blue" loading={isLoading} />
-        <Kpi label="Active parties" value={data ? data.activeParties.toLocaleString('en-IN') : '—'} hint="billed this FY" icon={Users} tone="violet" loading={isLoading} />
+        <Kpi label="Active parties" value={data ? (data.activeParties ?? 0).toLocaleString('en-IN') : '—'} hint="billed this FY" icon={Users} tone="violet" loading={isLoading} />
         <div className="sm:col-span-2">
           <ReportCard title="Collections by mode (FY)">
             {isLoading ? <div className="bg-muted h-16 animate-pulse rounded" /> : <RankedBars data={data?.collectionModes ?? []} emptyText="No receipts this FY." />}
