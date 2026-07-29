@@ -4,6 +4,7 @@ import { Banknote, HandCoins, LayoutDashboard, Package, PieChart as PieIcon, Rec
 import type { ReportMonthPoint } from '@oms/shared';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { Kpi, RankedBars, ReportCard, ReportHeader, ReportSummary, REPORT_COLORS } from './report-kit';
+import { ReportFilterBar, useReportFilters } from './report-filters';
 import { useBusinessOverview } from './use-reports';
 
 function TrendTooltip({ active, payload, label }: { active?: boolean; payload?: { payload: ReportMonthPoint }[]; label?: string }) {
@@ -21,7 +22,8 @@ function TrendTooltip({ active, payload, label }: { active?: boolean; payload?: 
 }
 
 export function BusinessOverviewPage() {
-  const { data, isLoading } = useBusinessOverview();
+  const filters = useReportFilters();
+  const { data, isLoading } = useBusinessOverview(filters.query);
   const trend = useMemo(() => data?.trend ?? [], [data]);
   const catMix = useMemo(() => data?.categoryMix ?? [], [data]);
   const money = (v?: number) => (v == null ? '—' : inrCompact(v));
@@ -34,6 +36,8 @@ export function BusinessOverviewPage() {
         icon={LayoutDashboard}
         asOf={data?.asOf}
       />
+
+      <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
 
       <ReportSummary
         loading={isLoading}

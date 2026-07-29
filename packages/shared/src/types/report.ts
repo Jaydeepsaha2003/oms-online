@@ -12,6 +12,24 @@
 
 import type { PeriodMetric } from './analytics';
 
+/** Filters every report accepts. All optional — omitted means "no restriction".
+ *  `from`/`to` scope the natural date column (invoice date, receipt date, order
+ *  date); `customerId`/`agent`/`region` scope the party population. */
+export interface ReportFilters {
+  from?: string | null; // YYYY-MM-DD inclusive
+  to?: string | null; // YYYY-MM-DD inclusive
+  customerId?: number | null;
+  agent?: string | null;
+  region?: string | null;
+}
+
+/** Options for the report filter bar. */
+export interface ReportFilterOptions {
+  agents: string[];
+  regions: string[];
+  customers: { id: number; name: string }[];
+}
+
 /** A labelled money/quantity slice — the row shape for every ranked list & pie. */
 export interface ReportSlice {
   name: string;

@@ -3,10 +3,12 @@ import { Bar, BarChart, CartesianGrid, Cell, Legend, ResponsiveContainer, Toolti
 import { TrendingUp } from 'lucide-react';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { Kpi, RankedBars, ReportCard, ReportHeader, ReportSummary } from './report-kit';
+import { ReportFilterBar, useReportFilters } from './report-filters';
 import { useSalesReport } from './use-reports';
 
 export function SalesReportPage() {
-  const { data, isLoading } = useSalesReport(12);
+  const filters = useReportFilters();
+  const { data, isLoading } = useSalesReport(12, filters.query);
   const monthly = useMemo(() => data?.monthly ?? [], [data]);
   const total12 = monthly.reduce((s, m) => s + m.billed, 0);
   const peak = monthly.reduce<{ label: string; billed: number } | null>((best, m) => (!best || m.billed > best.billed ? m : best), null);
@@ -14,6 +16,8 @@ export function SalesReportPage() {
   return (
     <div className="space-y-5">
       <ReportHeader title="Sales & Revenue" subtitle="The seasonal rhythm of your billing and where revenue comes from." icon={TrendingUp} asOf={data?.asOf} />
+
+      <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
 
       <ReportSummary
         loading={isLoading}

@@ -7,6 +7,8 @@ import type {
   PatternsReport,
   PeriodMetric,
   ProductReport,
+  ReportFilterOptions,
+  ReportFilters,
   ReportMonthPoint,
   ReportSlice,
   SalesReport,
@@ -40,6 +42,76 @@ export class ReportsService {
 
   private static readonly NOT_CHALLANED =
     "d.id NOT IN (SELECT ci.dispatchId FROM challan_items ci JOIN challans c ON c.id = ci.challanId WHERE ci.dispatchId IS NOT NULL AND c.challanStatus <> 'CANCELLED')";
+
+  // ── filter helpers ──────────────────────────────────────────────────────────
+  /** Distinct agents / regions / customers for the report filter bar. */
+  async filterOptions(): Promise<ReportFilterOptions> {
+    const custs = await this.prisma.customer.findMany({ where: { active: true }, select: { id: true, partyName: true, agentName: true, region: true } });
+    const agents = new Set<string>();
+    const regions = new Set<string>();
+    const customers: { id: number; name: string }[] = [];
+    for (const c of custs) {
+      if (c.agentName && c.agentName.trim()) agents.add(c.agentName.trim());
+      const rg = (c.region ?? '').trim();
+      if (rg) regions.add(rg.toUpperCase());
+      if (c.partyName && c.partyName.trim()) customers.push({ id: c.id, name: c.partyName.trim() });
+    }
+    const sorted = (s: Set<string>) => [...s].sort((a, b) => a.localeCompare(b));
+    customers.sort((a, b) => a.name.localeCompare(b.name));
+    return { agents: sorted(agents), regions: sorted(regions), customers };
+  }
+
+  /** Resolve a filter into party + date predicates. When any party filter is set,
+   *  builds the allowed customer-id set once; date predicate is inclusive. */
+  private async resolveFilter(f: ReportFilters): Promise<{ custOk: (id: number | null | undefined) => boolean; dateOk: (d: Date) => boolean; from: Date | null; to: Date | null }> {
+    const from = f.from ? this.startOfDay(new Date(f.from)) : null;
+    const to = f.to ? this.endOfDay(new Date(f.to)) : null;
+    const ag = (f.agent ?? '').trim().toUpperCase();
+    const rg = (f.region ?? '').trim().toUpperCase();
+    let allowed: Set<number> | null = null;
+    if (f.customerId != null || ag || rg) {
+      const custs = await this.prisma.customer.findMany({ select: { id: true, agentName: true, region: true } });
+      allowed = new Set(
+        custs
+          .filter((c) => {
+            if (f.customerId != null && c.id !== f.customerId) return false;
+            if (ag && ((c.agentName ?? '').trim().toUpperCase() || 'SELF') !== ag) return false;
+            if (rg && ((c.region ?? '').trim().toUpperCase() || 'UNKNOWN') !== rg) return false;
+            return true;
+          })
+          .map((c) => c.id),
+      );
+    }
+    return {
+      custOk: (id) => allowed == null || (id != null && allowed.has(id)),
+      dateOk: (d) => (!from || d >= from) && (!to || d <= to),
+      from,
+      to,
+    };
+  }
+
+  /** Current + previous comparison window. A custom from/to → that window vs the
+   *  equal-length window immediately before; otherwise this FY-to-date vs last FY. */
+  private resolveWindow(f: ReportFilters, now: Date): { curStart: Date; curEnd: Date; prevStart: Date; prevEnd: Date } {
+    if (f.from || f.to) {
+      const curStart = f.from ? this.startOfDay(new Date(f.from)) : new Date(2000, 0, 1);
+      const curEnd = f.to ? this.endOfDay(new Date(f.to)) : now;
+      const len = Math.max(1, curEnd.getTime() - curStart.getTime());
+      return { curStart, curEnd, prevStart: new Date(curStart.getTime() - len), prevEnd: curStart };
+    }
+    const fyStart = this.startOfFinYear(now);
+    const lastFyStart = new Date(fyStart.getFullYear() - 1, 3, 1);
+    const elapsed = now.getTime() - fyStart.getTime();
+    return { curStart: fyStart, curEnd: now, prevStart: lastFyStart, prevEnd: new Date(lastFyStart.getTime() + elapsed) };
+  }
+  private windowMetric(rows: DatedAmount[], w: { curStart: Date; curEnd: Date; prevStart: Date; prevEnd: Date }): PeriodMetric {
+    const current = this.sumBetween(rows, w.curStart, new Date(w.curEnd.getTime() + 1));
+    const previous = this.sumBetween(rows, w.prevStart, w.prevEnd);
+    return this.toMetric(current, previous);
+  }
+  private endOfDay(d: Date) {
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+  }
 
   // ── period helpers ─────────────────────────────────────────────────────────
   private startOfFinYear(d: Date) {
@@ -82,34 +154,17 @@ export class ReportsService {
       .slice(0, cap);
   }
 
-  async businessOverview(): Promise<BusinessOverview> {
+  async businessOverview(f: ReportFilters = {}): Promise<BusinessOverview> {
     const now = new Date();
-    const fyStart = this.startOfFinYear(now);
-    const lastFyStart = new Date(fyStart.getFullYear() - 1, 3, 1);
+    const win = this.resolveWindow(f, now);
     const trendStart = new Date(now.getFullYear(), now.getMonth() - 11, 1); // 12 months incl. current
+    const fx = await this.resolveFilter(f);
 
-    // Widest window we read: from last FY start (covers FY-vs-lastFY and the 12-mo trend).
-    const rangeStart = lastFyStart < trendStart ? lastFyStart : trendStart;
-
-    const [challans, receipts, orders, custRows, billedAgg, receiptAgg, backlog] = await Promise.all([
-      this.prisma.challan.findMany({
-        where: { challanStatus: 'CONFIRMED', invDate: { gte: rangeStart } },
-        select: { invDate: true, total: true, category: true, customerName: true, customerId: true, transaction: true },
-      }),
-      this.prisma.acctPaymentReceipt.findMany({
-        where: { recDate: { gte: rangeStart } },
-        select: { recDate: true, recAmt: true, payMode: true },
-      }),
-      this.prisma.order.findMany({
-        where: { status: { not: 'CANCELLED' }, orderDate: { gte: rangeStart } },
-        select: { orderDate: true },
-      }),
+    const [challans, receipts, orders, custRows, backlog] = await Promise.all([
+      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { invDate: true, total: true, category: true, customerName: true, customerId: true, transaction: true } }),
+      this.prisma.acctPaymentReceipt.findMany({ select: { recDate: true, recAmt: true, payMode: true, custId: true } }),
+      this.prisma.order.findMany({ where: { status: { not: 'CANCELLED' } }, select: { orderDate: true, customerId: true } }),
       this.prisma.customer.findMany({ select: { id: true, region: true, agentName: true } }),
-      // All-time billed (sales/debit only) and all-time receipts → net outstanding.
-      this.prisma.$queryRawUnsafe<{ t: number | null }[]>(
-        `SELECT SUM(COALESCE(total,0)) AS t FROM challans WHERE challanStatus = 'CONFIRMED' AND UPPER(TRIM(COALESCE("transaction",''))) IN ('SALES INVOICE','DEBIT NOTE')`,
-      ),
-      this.prisma.$queryRawUnsafe<{ t: number | null }[]>('SELECT SUM(COALESCE(recAmt,0)) AS t FROM acct_payment_receipt'),
       this.prisma.$queryRawUnsafe<{ amt: number | null }[]>(
         `SELECT SUM(COALESCE(d.rate,0) * (CASE WHEN UPPER(COALESCE(d.calField,'')) = 'PCS' THEN COALESCE(d.pcs,0) ELSE COALESCE(d.gram,0) END)) AS amt
            FROM dispatches d WHERE ${ReportsService.NOT_CHALLANED}`,
@@ -117,47 +172,39 @@ export class ReportsService {
     ]);
 
     const custMap = new Map(custRows.map((c) => [c.id, c]));
-    const sales = challans.filter((c) => SALES_TX.has((c.transaction ?? '').trim().toUpperCase()));
+    // Party-scope every source set (date is applied per-metric via the window).
+    const sales = challans.filter((c) => SALES_TX.has((c.transaction ?? '').trim().toUpperCase()) && fx.custOk(c.customerId));
+    const recs = receipts.filter((r) => fx.custOk(r.custId));
+    const ords = orders.filter((o) => fx.custOk(o.customerId));
 
-    // Dated rows for the FY-vs-lastFY period metrics.
-    const revRows: DatedAmount[] = sales.map((c) => ({ date: c.invDate, amount: n(c.total) }));
-    const colRows: DatedAmount[] = receipts.map((c) => ({ date: c.recDate, amount: n(c.recAmt) }));
-    const orderRows: DatedAmount[] = orders.map((o) => ({ date: o.orderDate, amount: 1 }));
-    const challanRows: DatedAmount[] = sales.map((c) => ({ date: c.invDate, amount: 1 }));
+    const revenue = this.windowMetric(sales.map((c) => ({ date: c.invDate, amount: n(c.total) })), win);
+    const collections = this.windowMetric(recs.map((r) => ({ date: r.recDate, amount: n(r.recAmt) })), win);
+    const ordersMetric = this.windowMetric(ords.map((o) => ({ date: o.orderDate, amount: 1 })), win);
+    const challansMetric = this.windowMetric(sales.map((c) => ({ date: c.invDate, amount: 1 })), win);
 
-    const revenue = this.fyMetric(revRows, now, fyStart, lastFyStart);
-    const collections = this.fyMetric(colRows, now, fyStart, lastFyStart);
-    const ordersMetric = this.fyMetric(orderRows, now, fyStart, lastFyStart);
-    const challansMetric = this.fyMetric(challanRows, now, fyStart, lastFyStart);
-
-    // 12-month billed vs collected trend (seeded so gaps render as zero).
+    // 12-month billed vs collected trend (party-scoped).
     const buckets = new Map<string, ReportMonthPoint>();
     for (let i = 0; i < 12; i++) {
       const d = new Date(trendStart.getFullYear(), trendStart.getMonth() + i, 1);
       buckets.set(this.monthKey(d), { month: this.monthKey(d), label: this.monthLabel(d), billed: 0, collected: 0 });
     }
-    for (const c of sales) {
-      const b = buckets.get(this.monthKey(c.invDate));
-      if (b) b.billed += n(c.total);
-    }
-    for (const rc of receipts) {
-      const b = buckets.get(this.monthKey(rc.recDate));
-      if (b) b.collected += n(rc.recAmt);
-    }
+    for (const c of sales) { const b = buckets.get(this.monthKey(c.invDate)); if (b) b.billed += n(c.total); }
+    for (const rc of recs) { const b = buckets.get(this.monthKey(rc.recDate)); if (b) b.collected += n(rc.recAmt); }
     const trend = [...buckets.values()].map((p) => ({ ...p, billed: r0(p.billed), collected: r0(p.collected) }));
 
-    // This-FY-only slices (category / party / region / agent).
-    const fyStartMs = fyStart.getTime();
+    // In-window slices (category / party / region / agent) + collection modes.
+    const inWin = (d: Date) => d >= win.curStart && d <= win.curEnd;
     const cat = new Map<string, { value: number; count: number }>();
     const party = new Map<string, { value: number; count: number }>();
     const region = new Map<string, { value: number; count: number }>();
     const agent = new Map<string, { value: number; count: number }>();
+    const modeMap = new Map<string, { value: number; count: number }>();
     const add = (m: Map<string, { value: number; count: number }>, key: string, v: number) => {
       const cur = m.get(key);
       if (cur) { cur.value += v; cur.count += 1; } else m.set(key, { value: v, count: 1 });
     };
     for (const c of sales) {
-      if (c.invDate.getTime() < fyStartMs) continue;
+      if (!inWin(c.invDate)) continue;
       const v = n(c.total);
       add(cat, (c.category ?? '').trim() || 'Uncategorised', v);
       add(party, c.customerName || '—', v);
@@ -165,20 +212,15 @@ export class ReportsService {
       add(region, ((cust?.region ?? '').trim().toUpperCase()) || 'UNKNOWN', v);
       add(agent, ((cust?.agentName ?? '').trim()) || 'SELF', v);
     }
-
-    // Collections this FY split by mode.
-    const modeMap = new Map<string, { value: number; count: number }>();
-    for (const rc of receipts) {
-      if (rc.recDate.getTime() < fyStartMs) continue;
-      add(modeMap, payModeOf(rc.payMode), n(rc.recAmt));
-    }
+    for (const rc of recs) { if (inWin(rc.recDate)) add(modeMap, payModeOf(rc.payMode), n(rc.recAmt)); }
     const collectionModes = ['Bank', 'Cash', 'Cheque'].map((name) => ({ name, value: r0(modeMap.get(name)?.value ?? 0) })).filter((s) => s.value > 0);
 
-    const billed = n(billedAgg[0]?.t);
-    const collected = n(receiptAgg[0]?.t);
-    const outstanding = Math.max(0, billed - collected);
-    const elapsedFyDays = Math.max(1, Math.round((now.getTime() - fyStart.getTime()) / 86_400_000));
-    const dsoDays = revenue.current > 0 ? r0((outstanding / revenue.current) * elapsedFyDays) : null;
+    // Outstanding is a balance view: party-scoped, all-time (never date-scoped).
+    const billed = sales.reduce((s, c) => s + n(c.total), 0);
+    const collected = recs.reduce((s, r) => s + n(r.recAmt), 0);
+    const outstanding = Math.max(0, r0(billed) - r0(collected));
+    const winDays = Math.max(1, Math.round((win.curEnd.getTime() - win.curStart.getTime()) / 86_400_000));
+    const dsoDays = revenue.current > 0 ? r0((outstanding / revenue.current) * winDays) : null;
     const collectionRate = revenue.current > 0 ? collections.current / revenue.current : null;
 
     return {
@@ -215,16 +257,17 @@ export class ReportsService {
   }
 
   // ── §8.6 Sales & Revenue ────────────────────────────────────────────────────
-  async salesReport(months = 12): Promise<SalesReport> {
+  async salesReport(months = 12, f: ReportFilters = {}): Promise<SalesReport> {
     const now = new Date();
     const span = Math.min(Math.max(Math.trunc(months) || 12, 1), 36);
     const first = new Date(now.getFullYear(), now.getMonth() - (span - 1), 1);
+    const fx = await this.resolveFilter(f);
     const [challans, custRows] = await Promise.all([
       this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { invDate: true, total: true, category: true, customerName: true, customerId: true, transaction: true } }),
       this.prisma.customer.findMany({ select: { id: true, region: true, agentName: true, state: true } }),
     ]);
     const custMap = new Map(custRows.map((c) => [c.id, c]));
-    const sales = challans.filter((c) => SALES_TX.has((c.transaction ?? '').trim().toUpperCase()));
+    const sales = challans.filter((c) => SALES_TX.has((c.transaction ?? '').trim().toUpperCase()) && fx.custOk(c.customerId) && fx.dateOk(c.invDate));
 
     const buckets = new Map<string, ReportMonthPoint>();
     for (let i = 0; i < span; i++) {
@@ -291,10 +334,11 @@ export class ReportsService {
   }
 
   // ── §8.2 Collections & Recovery ─────────────────────────────────────────────
-  async collectionsReport(): Promise<CollectionsReport> {
+  async collectionsReport(f: ReportFilters = {}): Promise<CollectionsReport> {
     const now = new Date();
     const today = this.startOfDay(now);
     const DAY = 86_400_000;
+    const fx = await this.resolveFilter(f);
     const [challans, custRows, advances, recvByInv, lastRec] = await Promise.all([
       this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { code: true, total: true, dueDate: true, customerId: true, customerName: true, transaction: true } }),
       this.prisma.customer.findMany({ select: { id: true, agentName: true } }),
@@ -307,13 +351,17 @@ export class ReportsService {
     const lastRecByCust = new Map<number, Date>();
     const modeMap = new Map<string, { value: number; count: number }>();
     const addMode = (k: string, v: number) => { const cur = modeMap.get(k); if (cur) { cur.value += v; cur.count += 1; } else modeMap.set(k, { value: v, count: 1 }); };
+    // Mode split honours party + date; the FY floor still applies when no range set.
+    const modeFrom = fx.from ?? fyStart;
     for (const r of lastRec) {
       const cur = lastRecByCust.get(r.custId);
       if (!cur || r.recDate > cur) lastRecByCust.set(r.custId, r.recDate);
-      if (r.recDate >= fyStart) addMode(payModeOf(r.payMode), n(r.recAmt));
+      if (fx.custOk(r.custId) && r.recDate >= modeFrom && (!fx.to || r.recDate <= fx.to)) addMode(payModeOf(r.payMode), n(r.recAmt));
     }
     const collectedModes = ['Bank', 'Cash', 'Cheque'].map((name) => ({ name, value: r0(modeMap.get(name)?.value ?? 0) })).filter((s) => s.value > 0);
-    const sales = challans.filter((c) => SALES_TX.has((c.transaction ?? '').trim().toUpperCase()));
+    // Balance views are party-scoped but never date-scoped (an open invoice is open
+    // regardless of the window).
+    const sales = challans.filter((c) => SALES_TX.has((c.transaction ?? '').trim().toUpperCase()) && fx.custOk(c.customerId));
 
     const AGING = [
       { key: '1-30', label: '1–30 days', lo: 1, hi: 30 },
@@ -381,16 +429,17 @@ export class ReportsService {
   }
 
   // ── §8.7 Party Intelligence ─────────────────────────────────────────────────
-  async partyIntel(): Promise<PartyIntelReport> {
+  async partyIntel(f: ReportFilters = {}): Promise<PartyIntelReport> {
     const now = new Date();
     const DAY = 86_400_000;
+    const fx = await this.resolveFilter(f);
     const [custs, challans, orders, recvByInv] = await Promise.all([
       this.prisma.customer.findMany({ where: { active: true }, select: { id: true, partyName: true, agentName: true } }),
       this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { customerId: true, customerName: true, total: true, code: true, transaction: true } }),
       this.prisma.order.findMany({ where: { status: { not: 'CANCELLED' } }, select: { customerId: true, customerName: true, orderDate: true } }),
       this.receivedByInvoice(),
     ]);
-    const sales = challans.filter((c) => SALES_TX.has((c.transaction ?? '').trim().toUpperCase()));
+    const sales = challans.filter((c) => SALES_TX.has((c.transaction ?? '').trim().toUpperCase()) && fx.custOk(c.customerId));
 
     interface Agg { custId: number | null; party: string; agent: string | null; revenue: number; invoices: number; lastOrder: Date | null; outstanding: number }
     const map = new Map<string, Agg>();
@@ -409,6 +458,7 @@ export class ReportsService {
       a.outstanding += Math.max(0, n(c.total) - (recvByInv.get(c.code) ?? 0));
     }
     for (const o of orders) {
+      if (!fx.custOk(o.customerId)) continue;
       const a = get(o.customerName, o.customerId ?? null);
       if (!a.lastOrder || o.orderDate > a.lastOrder) a.lastOrder = o.orderDate;
     }
@@ -459,12 +509,15 @@ export class ReportsService {
   }
 
   // ── §8.8 Product & Design ───────────────────────────────────────────────────
-  async productReport(): Promise<ProductReport> {
+  async productReport(f: ReportFilters = {}): Promise<ProductReport> {
     const now = new Date();
-    const [items, designs] = await Promise.all([
-      this.prisma.challanItem.findMany({ select: { productName: true, amount: true, pCategory: true, design: true } }),
+    const fx = await this.resolveFilter(f);
+    const [rawItems, designs] = await Promise.all([
+      this.prisma.challanItem.findMany({ select: { productName: true, amount: true, pCategory: true, design: true, challan: { select: { invDate: true, customerId: true, challanStatus: true } } } }),
       this.prisma.design.findMany({ where: { active: true }, select: { designType: true, category: true, cost: true, rate: true } }),
     ]);
+    // Only lines from live challans, party + date scoped.
+    const items = rawItems.filter((it) => it.challan && it.challan.challanStatus === 'CONFIRMED' && fx.custOk(it.challan.customerId) && fx.dateOk(it.challan.invDate));
     const prod = new Map<string, { value: number; count: number }>();
     const cat = new Map<string, { value: number; count: number }>();
     const dsg = new Map<string, { value: number; count: number }>();
@@ -500,13 +553,15 @@ export class ReportsService {
   }
 
   // ── §8.9 Patterns & Insights ────────────────────────────────────────────────
-  async patterns(): Promise<PatternsReport> {
+  async patterns(f: ReportFilters = {}): Promise<PatternsReport> {
     const now = new Date();
     const DAY = 86_400_000;
-    const [orderItems, challans] = await Promise.all([
-      this.prisma.orderItem.findMany({ where: { status: 'CONFIRMED', order: { status: { not: 'CANCELLED' } } }, select: { productName: true, pCategory: true, order: { select: { id: true, customerName: true, orderDate: true } } } }),
-      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { customerName: true, transaction: true } }),
+    const fx = await this.resolveFilter(f);
+    const [rawItems, challans] = await Promise.all([
+      this.prisma.orderItem.findMany({ where: { status: 'CONFIRMED', order: { status: { not: 'CANCELLED' } } }, select: { productName: true, pCategory: true, order: { select: { id: true, customerName: true, customerId: true, orderDate: true } } } }),
+      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { customerName: true, customerId: true, transaction: true } }),
     ]);
+    const orderItems = rawItems.filter((oi) => fx.custOk(oi.order.customerId) && fx.dateOk(oi.order.orderDate));
 
     // Per party: distinct orders + dates. Product-party pairs → distinct order count.
     const partyOrders = new Map<string, { orders: Set<number>; dates: Date[]; cats: Set<string> }>();
@@ -557,7 +612,7 @@ export class ReportsService {
     loyal.sort((a, b) => b.orders - a.orders);
 
     // Repeat-party rate from invoices.
-    const sales = challans.filter((c) => SALES_TX.has((c.transaction ?? '').trim().toUpperCase()));
+    const sales = challans.filter((c) => SALES_TX.has((c.transaction ?? '').trim().toUpperCase()) && fx.custOk(c.customerId));
     const invByParty = new Map<string, number>();
     for (const c of sales) invByParty.set(c.customerName, (invByParty.get(c.customerName) ?? 0) + 1);
     const withInv = [...invByParty.values()].filter((v) => v >= 1).length;
@@ -590,15 +645,15 @@ export class ReportsService {
   }
 
   // ── §8.10 Orders & Fulfilment ───────────────────────────────────────────────
-  async fulfilment(): Promise<FulfilmentReport> {
+  async fulfilment(f: ReportFilters = {}): Promise<FulfilmentReport> {
     const now = new Date();
     const DAY = 86_400_000;
-    const [orders, dispatchAgg, leadAgg, backlogRows, cancelParties, funnelAgg] = await Promise.all([
-      this.prisma.order.findMany({ select: { status: true } }),
+    const fx = await this.resolveFilter(f);
+    const [rawOrders, dispatchAgg, backlogRows, funnelAgg] = await Promise.all([
+      this.prisma.order.findMany({ select: { status: true, customerId: true, customerName: true, orderDate: true, completionDay: true } }),
       this.prisma.$queryRawUnsafe<{ total: bigint; partial: bigint }[]>(
         "SELECT COUNT(*) AS total, SUM(CASE WHEN UPPER(COALESCE(dispatchStatus,'')) LIKE 'PARTIAL%' THEN 1 ELSE 0 END) AS partial FROM dispatches",
       ),
-      this.prisma.$queryRawUnsafe<{ avg: number | null }[]>("SELECT AVG(completionDay) AS avg FROM orders WHERE completionDay >= 0 AND status <> 'CANCELLED'"),
       // Open orders (undispatched, not yet billed) with age + urgent flag.
       this.prisma.$queryRawUnsafe<{ orderId: number; orderDate: Date; priority: string | null; rate: number | null; unit: string | null; oPcs: number; oGram: number; dPcs: number; dGram: number; billed: number | bigint }[]>(
         `SELECT o.id AS orderId, o.orderDate AS orderDate, COALESCE(NULLIF(oi.priority,''), o.priority) AS priority,
@@ -621,8 +676,15 @@ export class ReportsService {
       ),
     ]);
 
+    // Party + date scope the order-level metrics.
+    const orders = rawOrders.filter((o) => fx.custOk(o.customerId) && fx.dateOk(o.orderDate));
     const totalOrders = orders.length;
     const cancelledOrders = orders.filter((o) => o.status === 'CANCELLED').length;
+    const leadVals = orders.filter((o) => o.status !== 'CANCELLED' && (o.completionDay ?? -1) >= 0).map((o) => o.completionDay as number);
+    const avgLeadDays = leadVals.length ? Math.round(leadVals.reduce((s, v) => s + v, 0) / leadVals.length) : null;
+    const cancelMap = new Map<string, number>();
+    for (const o of orders) if (o.status === 'CANCELLED') cancelMap.set(o.customerName || '—', (cancelMap.get(o.customerName || '—') ?? 0) + 1);
+    const cancellationByParty = [...cancelMap.entries()].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 10);
     const dRow = dispatchAgg[0];
     const dispatchRows = Number(dRow?.total ?? 0);
     const partialRows = Number(dRow?.partial ?? 0);
@@ -661,7 +723,7 @@ export class ReportsService {
       dispatchRows,
       partialRows,
       partialRate: dispatchRows > 0 ? partialRows / dispatchRows : null,
-      avgLeadDays: leadAgg[0]?.avg != null ? Math.round(leadAgg[0].avg) : null,
+      avgLeadDays,
       urgentOpen,
       pendingOrders: openOrders.size,
       aging,
@@ -670,7 +732,7 @@ export class ReportsService {
         { stage: 'Dispatched', value: r0(n(funnelAgg[0]?.dispatched)) },
         { stage: 'Billed', value: r0(n(funnelAgg[0]?.billed)) },
       ],
-      cancellationByParty: cancelParties.map((r) => ({ name: r.name || '—', value: Number(r.c) })),
+      cancellationByParty,
       asOf: now.toISOString(),
     };
   }

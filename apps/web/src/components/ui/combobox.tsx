@@ -318,7 +318,9 @@ export function Combobox({
         sideOffset={4}
         collisionPadding={8}
         className="p-0"
-        style={{ width: 'var(--radix-popover-trigger-width)' }}
+        // Grow to fit the longest option (values no longer truncate to the trigger
+        // width) but never past the viewport edge.
+        style={{ minWidth: 'var(--radix-popover-trigger-width)', maxWidth: 'var(--radix-popover-content-available-width)' }}
         onOpenAutoFocus={(e) => e.preventDefault()}
         onCloseAutoFocus={(e) => e.preventDefault()}
         onFocusOutside={(e) => e.preventDefault()}

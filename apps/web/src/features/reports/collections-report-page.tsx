@@ -3,6 +3,7 @@ import { HandCoins } from 'lucide-react';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { cn } from '@/lib/utils';
 import { Kpi, RankedBars, ReportCard, ReportHeader, ReportSummary } from './report-kit';
+import { ReportFilterBar, useReportFilters } from './report-filters';
 import { useCollectionsReport } from './use-reports';
 
 const flagTone = (flag: string) => {
@@ -15,11 +16,14 @@ const flagTone = (flag: string) => {
 const fmtDate = (d: string | null) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' }) : '—');
 
 export function CollectionsReportPage() {
-  const { data, isLoading } = useCollectionsReport();
+  const filters = useReportFilters();
+  const { data, isLoading } = useCollectionsReport(filters.query);
 
   return (
     <div className="space-y-5">
       <ReportHeader title="Collections & Recovery" subtitle="How much is owed, how old it is, and who to chase first." icon={HandCoins} asOf={data?.asOf} />
+
+      <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
 
       <ReportSummary
         loading={isLoading}

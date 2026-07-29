@@ -3,6 +3,7 @@ import { Users } from 'lucide-react';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { cn } from '@/lib/utils';
 import { RankedBars, ReportCard, ReportHeader, ReportSummary } from './report-kit';
+import { ReportFilterBar, useReportFilters } from './report-filters';
 import { usePartyIntel } from './use-reports';
 
 const SEG_COLOR: Record<string, string> = {
@@ -29,11 +30,14 @@ const segTone = (s: string) => {
 const fmtDate = (d: string | null) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' }) : '—');
 
 export function PartyIntelPage() {
-  const { data, isLoading } = usePartyIntel();
+  const filters = useReportFilters();
+  const { data, isLoading } = usePartyIntel(filters.query);
 
   return (
     <div className="space-y-5">
       <ReportHeader title="Party Intelligence" subtitle="Who your best parties are, who is slipping, and who to win back." icon={Users} asOf={data?.asOf} />
+
+      <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
 
       {(() => {
         const seg = (name: string) => data?.segments.find((s) => s.name === name)?.value ?? 0;

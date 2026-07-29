@@ -2,16 +2,20 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { Boxes } from 'lucide-react';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { Kpi, RankedBars, ReportCard, ReportHeader, ReportSummary } from './report-kit';
+import { ReportFilterBar, useReportFilters } from './report-filters';
 import { useFulfilment } from './use-reports';
 
 const pct = (v: number | null | undefined) => (v == null ? '—' : `${(v * 100).toFixed(1)}%`);
 
 export function FulfilmentReportPage() {
-  const { data, isLoading } = useFulfilment();
+  const filters = useReportFilters();
+  const { data, isLoading } = useFulfilment(filters.query);
 
   return (
     <div className="space-y-5">
       <ReportHeader title="Orders & Fulfilment" subtitle="Where the operational friction is — cancellations, partial dispatch, lead time and backlog." icon={Boxes} asOf={data?.asOf} />
+
+      <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
 
       <ReportSummary
         loading={isLoading}

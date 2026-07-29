@@ -1,15 +1,19 @@
 import { Sparkles } from 'lucide-react';
 import { Kpi, RankedBars, ReportCard, ReportHeader, ReportSummary } from './report-kit';
+import { ReportFilterBar, useReportFilters } from './report-filters';
 import { usePatterns } from './use-reports';
 
 const pct = (v: number | null | undefined) => (v == null ? '—' : `${Math.round(v * 100)}%`);
 
 export function PatternsReportPage() {
-  const { data, isLoading } = usePatterns();
+  const filters = useReportFilters();
+  const { data, isLoading } = usePatterns(filters.query);
 
   return (
     <div className="space-y-5">
       <ReportHeader title="Patterns & Insights" subtitle="How customers buy and what keeps them coming back." icon={Sparkles} asOf={data?.asOf} />
+
+      <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
 
       <ReportSummary
         loading={isLoading}

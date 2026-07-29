@@ -3,19 +3,23 @@ import { Package } from 'lucide-react';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { cn } from '@/lib/utils';
 import { RankedBars, ReportCard, ReportHeader, ReportSummary, REPORT_COLORS } from './report-kit';
+import { ReportFilterBar, useReportFilters } from './report-filters';
 import { useProductReport } from './use-reports';
 
 const marginTone = (flag: 'loss' | 'thin' | 'ok') =>
   flag === 'loss' ? 'bg-red-50 text-red-700 ring-red-600/20' : flag === 'thin' ? 'bg-amber-50 text-amber-700 ring-amber-600/20' : 'bg-emerald-50 text-emerald-700 ring-emerald-600/20';
 
 export function ProductReportPage() {
-  const { data, isLoading } = useProductReport();
+  const filters = useReportFilters();
+  const { data, isLoading } = useProductReport(filters.query);
   const cat = data?.categoryMix ?? [];
   const losses = data?.designMargin.filter((d) => d.flag !== 'ok').length ?? 0;
 
   return (
     <div className="space-y-5">
       <ReportHeader title="Product & Design" subtitle="What sells, and what actually makes money." icon={Package} asOf={data?.asOf} />
+
+      <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
 
       <ReportSummary
         loading={isLoading}
