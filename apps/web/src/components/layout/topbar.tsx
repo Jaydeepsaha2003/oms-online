@@ -60,19 +60,20 @@ export function Topbar({
       <Button variant="ghost" size="icon" className="md:hidden" onClick={onToggleMobile} aria-label="Open menu">
         <Menu />
       </Button>
-      {/* Pin/unpin is only meaningful on large desktops — smaller screens always
-          use the hover expand/collapse rail, so the button is hidden there. Styled
-          as the current page's gradient icon badge rather than a generic toggle glyph. */}
+      {/* The current page's gradient icon badge, always shown so every page has an
+          icon beside its title. On large desktops it doubles as the sidebar
+          pin/unpin toggle; below 1600px pinning is ignored, so the click is a
+          harmless no-op there (the rail stays hover-expand). */}
       <button
         type="button"
         onClick={onToggleCollapse}
         aria-label="Toggle sidebar"
-        className="bg-gradient-brand ring-white/20 hidden size-9 shrink-0 items-center justify-center rounded-lg text-white shadow-md ring-1 transition-opacity hover:opacity-90 min-[1600px]:inline-flex"
+        className="bg-gradient-brand ring-white/20 inline-flex size-10 shrink-0 items-center justify-center rounded-xl text-white shadow-md ring-1 transition-opacity hover:opacity-90"
       >
-        <PageIcon className="size-4.5" />
+        <PageIcon className="size-5" />
       </button>
 
-      <h1 className="truncate text-base font-bold tracking-tight">{title}</h1>
+      <h1 className="truncate text-xl font-bold tracking-tight sm:text-2xl">{title}</h1>
 
       <div className="ml-auto flex items-center gap-2">
         <SystemStatus variant="compact" />
