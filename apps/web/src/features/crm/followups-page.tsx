@@ -684,6 +684,43 @@ function FollowupForm({ kind, editing, prefill, onClose }: { kind: FollowupKind;
     { label: dayName(3), v: dayShift(3) },
   ];
 
+  // ── Shared field fragments (reused by the payment + delivery layouts) ──
+  const dateChipRow = (
+    <div className="flex flex-wrap items-center gap-2">
+      {dateChips.map((c) => (
+        <button
+          key={c.v}
+          type="button"
+          onClick={() => setPromisedAt(promisedAt === c.v ? '' : c.v)}
+          className={cn(
+            'h-11 rounded-lg border px-3.5 text-[15px] font-semibold transition-colors',
+            promisedAt === c.v ? 'border-blue-600 bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-700 hover:border-blue-300 hover:bg-blue-50',
+          )}
+        >
+          {c.label}
+        </button>
+      ))}
+      <Input type="date" className="h-11 w-full flex-1 basis-36 text-[15px]" value={promisedAt} onChange={(e) => setPromisedAt(e.target.value)} />
+    </div>
+  );
+
+  const notesField = (
+    <textarea
+      value={description}
+      onChange={(e) => setDescription(e.target.value)}
+      rows={Math.min(8, Math.max(2, description.split('\n').length + 1))}
+      placeholder="Type the note here — one line or many."
+      className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 w-full rounded-md border px-3 py-2 text-base outline-none placeholder:text-muted-foreground focus-visible:ring-[3px]"
+    />
+  );
+
+  const urgencyButtons = (
+    <div className="grid grid-cols-2 gap-2">
+      <button type="button" onClick={() => setPriority('NORMAL')} className={cn('h-12 rounded-lg border text-[15px] font-semibold transition-colors', priority === 'NORMAL' ? 'border-emerald-600 bg-emerald-600 text-white shadow-sm' : 'bg-white text-slate-700 hover:bg-emerald-50')}>🙂 Normal</button>
+      <button type="button" onClick={() => setPriority('URGENT')} className={cn('h-12 rounded-lg border text-[15px] font-semibold transition-colors', priority === 'URGENT' ? 'border-rose-600 bg-rose-600 text-white shadow-sm' : 'bg-white text-slate-700 hover:bg-rose-50')}>🔥 Urgent</button>
+    </div>
+  );
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[92vh] w-[calc(100vw-2rem)] sm:max-w-3xl">
@@ -704,129 +741,90 @@ function FollowupForm({ kind, editing, prefill, onClose }: { kind: FollowupKind;
             </div>
           </Block>
 
-          {/* 2 · Items & quantities (delivery) — several order lines on one follow-up */}
-          {!isPay && (
-            <Block emoji="📦" title="Items & quantities" hint="Add each item on this follow-up with how much to deliver.">
-              <ItemLinesEditor rows={lineItems} onChange={setLineItems} openItems={openItems} />
-            </Block>
+          {isPay ? (
+            /* ── Payment layout: money → date → what-for → notes → urgency ── */
+            <>
+              <Block emoji="💰" title="How much & by when?" hint="Pick from the balance below, then set the promised amount and date.">
+                <div className="space-y-4">
+                  {(party.trim() || customerId != null) && (
+                    <PartyBalancePanel
+                      customerId={customerId}
+                      party={party}
+                      onPickAmount={(amount, label) => { setPromisedAmount(String(amount)); if (!itemText.trim()) setItemText(`${label} to collect`); }}
+                      onPickInvoice={(code, bal) => { setPromisedAmount(String(bal)); setItemText(`${inrFull(bal)} for ${code}`); }}
+                    />
+                  )}
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div>
+                      <div className="text-muted-foreground mb-1.5 text-xs font-semibold tracking-wide uppercase">Promised amount ₹</div>
+                      <div className="relative">
+                        <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-base text-slate-500">₹</span>
+                        <Input type="number" min="0" inputMode="numeric" placeholder="0" className={cn(BIG_FIELD, 'pl-8 font-semibold tabular-nums')} value={promisedAmount} onChange={(e) => setPromisedAmount(e.target.value)} />
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-muted-foreground mb-1.5 text-xs font-semibold tracking-wide uppercase">Promised by</div>
+                      {dateChipRow}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground mb-1.5 text-xs font-semibold tracking-wide uppercase">What's this payment for? <span className="normal-case">(optional)</span></div>
+                    <Input className={BIG_FIELD} value={itemText} onChange={(e) => setItemText(e.target.value)} placeholder="e.g. balance for challan 210" />
+                  </div>
+                </div>
+              </Block>
+
+              <Block emoji="💬" title="Notes" hint="What was discussed — one line or many.">
+                {notesField}
+              </Block>
+
+              <Block emoji="⚡" title="How urgent?">
+                {urgencyButtons}
+              </Block>
+            </>
+          ) : (
+            /* ── Delivery layout: items → notes → checklist → when → stage + urgency ── */
+            <>
+              <Block emoji="📦" title="Items & quantities" hint="Add each item on this follow-up with how much to deliver.">
+                <ItemLinesEditor rows={lineItems} onChange={setLineItems} openItems={openItems} />
+              </Block>
+
+              <Block emoji="💬" title="Notes" hint="Any details or discussion — one line or many.">
+                {notesField}
+              </Block>
+
+              <Block emoji="✅" title="Checklist" hint={editing ? 'Add new tasks — existing ones stay editable on the board.' : 'Optional — break the promise into sub-tasks.'}>
+                <ChecklistInput items={checklist} onChange={setChecklist} />
+              </Block>
+
+              <Block emoji="📅" title="Promised by when?" hint="Tap a day, or pick a date.">
+                {dateChipRow}
+              </Block>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Block emoji="🏭" title="Where is it now?" hint="Optional — tap one.">
+                  <div className="flex flex-wrap gap-2">
+                    {STAGE_CHIPS.map((s) => (
+                      <button
+                        key={s.v}
+                        type="button"
+                        onClick={() => setStage(stage === s.v ? '' : s.v)}
+                        className={cn(
+                          'inline-flex h-11 items-center gap-1.5 rounded-lg border px-3 text-[15px] font-medium transition-colors',
+                          stage === s.v ? 'border-indigo-600 bg-indigo-600 text-white shadow-sm' : 'bg-white text-slate-700 hover:border-indigo-300 hover:bg-indigo-50',
+                        )}
+                      >
+                        <span>{s.emoji}</span> {s.label}
+                      </button>
+                    ))}
+                  </div>
+                </Block>
+                <Block emoji="⚡" title="How urgent?">
+                  {urgencyButtons}
+                </Block>
+              </div>
+            </>
           )}
-
-          {/* 2b · Payment (payments only) + a typed description / notes */}
-          <Block
-            emoji={isPay ? '💰' : '💬'}
-            title={isPay ? 'Payment & notes' : 'Notes'}
-            hint={isPay ? 'Type what the payment is for.' : 'Any details or discussion — one line or many.'}
-          >
-            <div className="space-y-4">
-              {isPay && (party.trim() || customerId != null) && (
-                <PartyBalancePanel
-                  customerId={customerId}
-                  party={party}
-                  onPickAmount={(amount, label) => { setPromisedAmount(String(amount)); if (!itemText.trim()) setItemText(`${label} to collect`); }}
-                  onPickInvoice={(code, bal) => { setPromisedAmount(String(bal)); setItemText(`${inrFull(bal)} for ${code}`); }}
-                />
-              )}
-              {isPay && (
-                <div>
-                  <div className="text-muted-foreground mb-1 text-xs font-semibold tracking-wide uppercase">Payment</div>
-                  <Input className={BIG_FIELD} value={itemText} onChange={(e) => setItemText(e.target.value)} placeholder="e.g. ₹1,20,000 balance for challan 210" autoFocus={!editing} />
-                </div>
-              )}
-
-              <div>
-                <div className="mb-1.5 flex items-center justify-between gap-2">
-                  <span className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">💬 Description / notes</span>
-                </div>
-                <textarea
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  rows={Math.min(8, Math.max(2, description.split('\n').length + 1))}
-                  placeholder="Type the note here — one line or many."
-                  className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 w-full rounded-md border px-3 py-2 text-base outline-none placeholder:text-muted-foreground focus-visible:ring-[3px]"
-                />
-              </div>
-            </div>
-          </Block>
-
-          {/* 2b · Checklist — optional sub-tasks */}
-          <Block emoji="✅" title="Checklist" hint={editing ? 'Add new tasks — existing ones stay editable on the board.' : 'Optional — break the promise into sub-tasks.'}>
-            <ChecklistInput items={checklist} onChange={setChecklist} />
-          </Block>
-
-          {/* 3 · WHEN */}
-          <Block emoji="📅" title="Promised by when?" hint="Tap a day, or pick a date.">
-            <div className="flex flex-wrap items-center gap-2">
-              {dateChips.map((c) => (
-                <button
-                  key={c.v}
-                  type="button"
-                  onClick={() => setPromisedAt(promisedAt === c.v ? '' : c.v)}
-                  className={cn(
-                    'h-11 rounded-lg border px-4 text-[15px] font-semibold transition-colors',
-                    promisedAt === c.v ? 'border-blue-600 bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-700 hover:border-blue-300 hover:bg-blue-50',
-                  )}
-                >
-                  {c.label}
-                </button>
-              ))}
-              <Input type="date" className="h-11 w-44 text-[15px]" value={promisedAt} onChange={(e) => setPromisedAt(e.target.value)} />
-            </div>
-            {isPay && (
-              <div className="mt-3 flex items-center gap-2">
-                <span className="text-sm font-medium text-slate-600">Promised amount</span>
-                <div className="relative">
-                  <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-slate-500">₹</span>
-                  <Input type="number" min="0" inputMode="numeric" placeholder="0" className="h-11 w-40 pl-7 text-[15px] tabular-nums" value={promisedAmount} onChange={(e) => setPromisedAmount(e.target.value)} />
-                </div>
-                <span className="text-muted-foreground text-xs">how much they promised to pay</span>
-              </div>
-            )}
-          </Block>
-
-          {/* 4 · WHERE / HOW URGENT */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Block emoji="🏭" title="Where is it now?" hint="Optional — tap one.">
-              <div className="flex flex-wrap gap-2">
-                {STAGE_CHIPS.map((s) => (
-                  <button
-                    key={s.v}
-                    type="button"
-                    onClick={() => setStage(stage === s.v ? '' : s.v)}
-                    className={cn(
-                      'inline-flex h-11 items-center gap-1.5 rounded-lg border px-3 text-[15px] font-medium transition-colors',
-                      stage === s.v ? 'border-indigo-600 bg-indigo-600 text-white shadow-sm' : 'bg-white text-slate-700 hover:border-indigo-300 hover:bg-indigo-50',
-                    )}
-                  >
-                    <span>{s.emoji}</span> {s.label}
-                  </button>
-                ))}
-              </div>
-            </Block>
-            <Block emoji="⚡" title="How urgent?">
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPriority('NORMAL')}
-                  className={cn(
-                    'h-12 rounded-lg border text-[15px] font-semibold transition-colors',
-                    priority === 'NORMAL' ? 'border-emerald-600 bg-emerald-600 text-white shadow-sm' : 'bg-white text-slate-700 hover:bg-emerald-50',
-                  )}
-                >
-                  🙂 Normal
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPriority('URGENT')}
-                  className={cn(
-                    'h-12 rounded-lg border text-[15px] font-semibold transition-colors',
-                    priority === 'URGENT' ? 'border-rose-600 bg-rose-600 text-white shadow-sm' : 'bg-white text-slate-700 hover:bg-rose-50',
-                  )}
-                >
-                  🔥 Urgent
-                </button>
-              </div>
-            </Block>
-          </div>
 
           {/* 5 · optional title + reminder overrides, tucked away */}
           <button type="button" onClick={() => setShowAdvanced((v) => !v)} className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 px-1 text-sm font-medium">
