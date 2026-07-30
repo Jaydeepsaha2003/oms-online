@@ -168,6 +168,7 @@ export function ModifyDispatchPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [customerFilter, setCustomerFilter] = useState('');
+  const [agentFilter, setAgentFilter] = useState('');
   const [productFilter, setProductFilter] = useState('');
   const [designFilter, setDesignFilter] = useState('');
   const [page, setPage] = useState(1);
@@ -192,6 +193,7 @@ export function ModifyDispatchPage() {
     search: search || undefined,
     status: statusFilter || undefined,
     customer: customerFilter || undefined,
+    agent: agentFilter || undefined,
     product: productFilter || undefined,
     design: designFilter || undefined,
   };
@@ -216,22 +218,6 @@ export function ModifyDispatchPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Modify Dispatch</h2>
-          <p className="text-muted-foreground text-sm">{data?.total ?? 0} dispatch record(s) · edit or delete</p>
-        </div>
-        <ColumnSettings
-          columns={cols.orderedReorderable}
-          hidden={cols.hidden}
-          onReorder={cols.moveBefore}
-          onMove={cols.move}
-          onToggle={cols.toggle}
-          onReset={cols.reset}
-          dateFormat={{ value: format, options: DATE_FORMATS, onChange: setFormat }}
-        />
-      </div>
-
       <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
         <div className="relative col-span-2 sm:w-64">
           <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
@@ -244,10 +230,24 @@ export function ModifyDispatchPage() {
           <NativeSelect value={customerFilter} onChange={(v) => { setCustomerFilter(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="All customers" />
         </div>
         <div className="sm:w-40">
+          <NativeSelect value={agentFilter} onChange={(v) => { setAgentFilter(v); setPage(1); }} options={['', ...(options?.agents ?? [])]} placeholder="All agents" />
+        </div>
+        <div className="sm:w-40">
           <NativeSelect value={designFilter} onChange={(v) => { setDesignFilter(v); setPage(1); }} options={['', ...(options?.designs ?? [])]} placeholder="All designs" />
         </div>
         <div className="sm:w-40">
           <NativeSelect value={statusFilter} onChange={(v) => { setStatusFilter(v); setPage(1); }} options={['', ...DISPATCH_STATUSES]} placeholder="All statuses" />
+        </div>
+        <div className="col-span-2 ml-auto sm:col-span-1">
+          <ColumnSettings
+            columns={cols.orderedReorderable}
+            hidden={cols.hidden}
+            onReorder={cols.moveBefore}
+            onMove={cols.move}
+            onToggle={cols.toggle}
+            onReset={cols.reset}
+            dateFormat={{ value: format, options: DATE_FORMATS, onChange: setFormat }}
+          />
         </div>
       </div>
 

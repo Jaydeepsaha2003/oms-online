@@ -197,6 +197,7 @@ export class DispatchService {
     const and: Prisma.DispatchWhereInput[] = [];
     if (query.status) and.push({ dispatchStatus: uc(query.status)! });
     if (query.customer) and.push({ customerName: query.customer });
+    if (query.agent) and.push({ agentName: query.agent });
     if (query.product) and.push({ OR: [{ productName: query.product }, { product: query.product }] });
     if (query.design) and.push({ designType: query.design });
     if (search) {
@@ -229,19 +230,21 @@ export class DispatchService {
    *  used to populate the Modify Dispatch dropdown filters. */
   async filterOptions(): Promise<DispatchFilterOptions> {
     const rows = await this.prisma.dispatch.findMany({
-      select: { customerName: true, productName: true, product: true, designType: true },
+      select: { customerName: true, agentName: true, productName: true, product: true, designType: true },
     });
     const customers = new Set<string>();
+    const agents = new Set<string>();
     const products = new Set<string>();
     const designs = new Set<string>();
     for (const r of rows) {
       if (r.customerName) customers.add(r.customerName);
+      if (r.agentName) agents.add(r.agentName);
       const p = r.productName || r.product;
       if (p) products.add(p);
       if (r.designType) designs.add(r.designType);
     }
     const sorted = (s: Set<string>) => [...s].sort((a, b) => a.localeCompare(b));
-    return { customers: sorted(customers), products: sorted(products), designs: sorted(designs) };
+    return { customers: sorted(customers), agents: sorted(agents), products: sorted(products), designs: sorted(designs) };
   }
 
   async findOne(id: number): Promise<DispatchDto> {

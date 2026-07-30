@@ -108,11 +108,14 @@ export type DispatchQuery = PaginationQuery & {
   customer?: string;
   product?: string;
   design?: string;
+  agent?: string;
 };
 /** Distinct values present in dispatch records, for the Modify Dispatch filters.
  *  `subCategories` is only populated for the pending pool (Dispatch Order page). */
 export interface DispatchFilterOptions {
   customers: string[];
+  /** Distinct sales agents present in dispatch records (Modify Dispatch filter). */
+  agents?: string[];
   products: string[];
   /** Base product names (design suffix stripped, e.g. "15 Rajwadi") — the option
    *  set the Dispatch Order product picker shows when its "ALL" toggle is on, so a

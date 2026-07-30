@@ -24,6 +24,7 @@ export class UpdateDispatchDto extends PartialType(CreateDispatchDto) {}
 export class DispatchQueryDto extends PaginationDto {
   @IsOptional() @IsString() status?: string;
   @IsOptional() @IsString() customer?: string;
+  @IsOptional() @IsString() agent?: string;
   @IsOptional() @IsString() product?: string;
   @IsOptional() @IsString() design?: string;
 }
