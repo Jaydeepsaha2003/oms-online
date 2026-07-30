@@ -12,6 +12,7 @@ import {
   Circle,
   ClipboardList,
   Wallet,
+  Tag,
   Contact,
   Factory,
   FilePlus,
@@ -93,6 +94,7 @@ const ICONS: Record<string, LucideIcon> = {
   CalendarClock,
   HandCoins,
   Wallet,
+  Tag,
 };
 
 /** Resolve a menu icon name to a component, falling back to a neutral dot. */

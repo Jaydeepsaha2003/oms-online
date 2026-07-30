@@ -317,6 +317,13 @@ export const MENU: MenuNode[] = [
         icon: 'Wallet',
         permission: perm(RESOURCES.CRM, ACTIONS.VIEW),
       },
+      {
+        id: 'crm-party-lists',
+        label: 'Party Lists',
+        to: '/crm/party-lists',
+        icon: 'Tag',
+        permission: perm(RESOURCES.CRM, ACTIONS.VIEW),
+      },
     ],
   },
   {

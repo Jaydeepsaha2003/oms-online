@@ -36,6 +36,7 @@ import { DispatchModule } from './dispatch/dispatch.module';
 import { ChallansModule } from './challans/challans.module';
 import { SpecialRatesModule } from './special-rates/special-rates.module';
 import { CrmModule } from './crm/crm.module';
+import { PartyListsModule } from './party-lists/party-lists.module';
 import { ChequesModule } from './cheques/cheques.module';
 import { BankAccountsModule } from './bank-accounts/bank-accounts.module';
 import { OpeningBalancesModule } from './opening-balances/opening-balances.module';
@@ -90,6 +91,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     ChallansModule,
     SpecialRatesModule,
     CrmModule,
+    PartyListsModule,
     ChequesModule,
     BankAccountsModule,
     OpeningBalancesModule,
