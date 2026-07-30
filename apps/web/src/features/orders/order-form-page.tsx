@@ -141,8 +141,10 @@ const TAB_FIELDS = [
 ] as const;
 const TAB_PREF_KEY = 'oms:order-tab-order';
 // Saved "rows to show in the item panel" preference (0 = show all).
-const ROWS_PREF_KEY = 'oms:order-rows-to-show';
-const ROWS_OPTIONS = [5, 8, 10, 15, 20, 0];
+// v2: reset everyone to the "All rows" default — the old key had many users
+// stuck on a small cap that hid their added items.
+const ROWS_PREF_KEY = 'oms:order-rows-to-show:v2';
+const ROWS_OPTIONS = [0, 5, 8, 10, 15, 20];
 const rowsLabel = (n: number) => (n === 0 ? 'All rows' : `${n} rows`);
 const FIELD_LABEL: Record<string, string> = Object.fromEntries(TAB_FIELDS.map((f) => [f.key, f.label]));
 
@@ -171,8 +173,25 @@ function loadTabOrder(): TabEntry[] {
 }
 
 const FOCUSABLE = 'input, select, textarea, button, [role="combobox"]';
-const focusField = (root: HTMLElement | null, key: string) =>
-  root?.querySelector<HTMLElement>(`[data-tabfield="${key}"]`)?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
+/** A control the user can actually Tab into right now: not disabled, not removed
+ *  from the tab order, and not visually hidden (offsetParent is null for
+ *  display:none subtrees). */
+const isTabbable = (el: HTMLElement) =>
+  !(el as HTMLInputElement).disabled && el.tabIndex !== -1 && el.offsetParent !== null;
+/** The tabbable controls inside a field wrapper, in DOM order. */
+const fieldControls = (root: HTMLElement | null, key: string): HTMLElement[] => {
+  const wrap = root?.querySelector<HTMLElement>(`[data-tabfield="${key}"]`);
+  if (!wrap) return [];
+  return [...wrap.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(isTabbable);
+};
+/** Focus a field's first usable control; returns false when it has none (so the
+ *  caller can skip to the next field instead of the Tab silently dying). */
+const focusField = (root: HTMLElement | null, key: string): boolean => {
+  const el = fieldControls(root, key)[0];
+  if (!el) return false;
+  el.focus();
+  return true;
+};
 
 function Kbd({ children, className }: { children: ReactNode; className?: string }) {
   return (
@@ -247,12 +266,26 @@ export function OrderFormPage() {
     if (!root) return;
     const wrap = (e.target as HTMLElement).closest('[data-tabfield]');
     if (!wrap || !root.contains(wrap)) return;
-    const i = tabSequence.indexOf(wrap.getAttribute('data-tabfield') ?? '');
+    const key = wrap.getAttribute('data-tabfield') ?? '';
+    const step = e.shiftKey ? -1 : 1;
+
+    // A field can hold several controls (e.g. the Box input + its "fill boxes"
+    // tick). Let natural Tab walk between them before we jump to the next field.
+    const within = fieldControls(root, key);
+    const pos = within.indexOf(e.target as HTMLElement);
+    if (pos !== -1 && pos + step >= 0 && pos + step < within.length) return;
+
+    const i = tabSequence.indexOf(key);
     if (i === -1) return;
-    const j = e.shiftKey ? i - 1 : i + 1;
-    if (j < 0 || j >= tabSequence.length) return; // at the ends, let natural Tab continue
-    e.preventDefault();
-    focusField(root, tabSequence[j]);
+    // Advance to the next field that actually has a focusable control — skipping
+    // ones that are disabled or hidden right now (so Tab never dead-ends).
+    for (let j = i + step; j >= 0 && j < tabSequence.length; j += step) {
+      if (focusField(root, tabSequence[j])) {
+        e.preventDefault();
+        return;
+      }
+    }
+    // Nothing focusable ahead in the sequence — let natural Tab continue.
   };
 
   const completionDayOptions = useMemo(() => settingValues(settings, 'COMPLETION_DAYS'), [settings]);
