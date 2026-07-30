@@ -24,11 +24,20 @@ export interface FilterState {
   agent: string;
   region: string;
 }
-const EMPTY: FilterState = { from: '', to: '', customerId: '', agent: '', region: '' };
+const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/** The default period every report opens on: the current financial year to date
+ *  (India FY starts 1 April). Reset returns here, not to "all time". */
+function fyDefault(): FilterState {
+  const now = new Date();
+  const y = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+  return { from: `${y}-04-01`, to: ymd(now), customerId: '', agent: '', region: '' };
+}
 
 /** Filter state + the query object every report hook consumes. */
 export function useReportFilters() {
-  const [f, setF] = useState<FilterState>(EMPTY);
+  const def = useMemo(fyDefault, []);
+  const [f, setF] = useState<FilterState>(def);
   const query: ReportFilters = useMemo(
     () => ({
       from: f.from || undefined,
@@ -39,11 +48,10 @@ export function useReportFilters() {
     }),
     [f],
   );
-  const active = !!(f.from || f.to || f.customerId || f.agent || f.region);
-  return { f, setF, query, active, reset: () => setF(EMPTY) };
+  // "Active" = narrowed beyond the FY-to-date default (so Reset is meaningful).
+  const active = !!(f.customerId || f.agent || f.region) || f.from !== def.from || f.to !== def.to;
+  return { f, setF, query, active, reset: () => setF(def) };
 }
-
-const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 function presetRange(preset: string): { from: string; to: string } {
   const now = new Date();
   const today = ymd(now);
