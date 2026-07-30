@@ -29,8 +29,8 @@ export function ExportButton({
           disabled={disabled}
           aria-label={label}
           className={cn(
-            'size-9 border-blue-200 bg-blue-50 text-blue-600',
-            'hover:border-blue-300 hover:bg-blue-100 hover:text-blue-700',
+            'size-9 border-blue-700 bg-blue-700 text-white shadow-sm',
+            'hover:border-blue-800 hover:bg-blue-800 hover:text-white',
           )}
         >
           <Download className="size-4" />

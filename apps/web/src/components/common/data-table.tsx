@@ -129,7 +129,12 @@ export function DataTable<T>({
   const showView = !!onRowClick && !actions && !hideRowView;
   const hasActionsCol = !!actions || showView;
   const span = columns.length + (hasActionsCol ? 1 : 0);
-  const stickyTop = !!maxBodyHeight;
+  // Default: cap the table to (roughly) the viewport so tall lists scroll INSIDE
+  // the table — the header stays put and the horizontal scrollbar sits at the
+  // bottom of the visible table instead of far below the fold. Short tables are
+  // unaffected (max-h only caps). Pages can override or opt out via maxBodyHeight.
+  const bodyMax = maxBodyHeight ?? 'max-h-[calc(100dvh_-_13rem)]';
+  const stickyTop = true;
 
   // Client-side sorting for any column that supplies `sortValue`. Cycles a column
   // through asc → desc → unsorted.
@@ -172,7 +177,7 @@ export function DataTable<T>({
     >
       <Table
         width="auto"
-        containerClassName={cn(maxBodyHeight, maxBodyHeight && 'overflow-y-auto', mobileCard && 'hidden sm:block')}
+        containerClassName={cn(bodyMax, 'overflow-y-auto', mobileCard && 'hidden sm:block')}
         className={cn(
           '[&_td]:border-r [&_td]:border-border/60 [&_th]:border-r [&_thead_th]:border-white/25',
           // Brand blue→indigo gradient, bold, uppercase header with white text on every page.
@@ -269,7 +274,7 @@ export function DataTable<T>({
                     ) : (
                       <TableCell
                         key={col.id}
-                        className={cn('whitespace-nowrap', col.align === 'right' && 'text-right tabular-nums font-semibold')}
+                        className={cn('align-middle', col.align === 'right' && 'text-right tabular-nums font-semibold')}
                       >
                         {col.cell(row)}
                       </TableCell>
