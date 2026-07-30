@@ -56,11 +56,19 @@ export function usePendingFilterOptions() {
   });
 }
 
+// Any dispatch change alters what a challan will contain, so also refresh the
+// challans caches (the pending list + the staleTime:Infinity challan draft) —
+// otherwise an edited/removed quantity reappears from a stale draft.
+const invalidateDispatch = (qc: ReturnType<typeof useQueryClient>) => {
+  qc.invalidateQueries({ queryKey: KEY });
+  qc.invalidateQueries({ queryKey: ['challans'] });
+};
+
 export function useCreateDispatch() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: CreateDispatchInput) => http.post<DispatchDto>('/dispatch', input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateDispatch(qc),
   });
 }
 
@@ -68,7 +76,7 @@ export function useUpdateDispatch(id: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: UpdateDispatchInput) => http.patch<DispatchDto>(`/dispatch/${id}`, input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateDispatch(qc),
   });
 }
 
@@ -76,6 +84,6 @@ export function useDeleteDispatch() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => http.delete(`/dispatch/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateDispatch(qc),
   });
 }
