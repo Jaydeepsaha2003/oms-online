@@ -30,6 +30,7 @@ const fmtDate = (d: string | null) => (d ? new Date(d).toLocaleDateString('en-IN
 export function CollectionsReportPage() {
   const filters = useReportFilters();
   const { data, isLoading } = useCollectionsReport(filters.query);
+  const rk = data?.recoveryKpis;
 
   return (
     <div className="space-y-5">
@@ -42,10 +43,10 @@ export function CollectionsReportPage() {
         points={data ? [
           { text: <>Total outstanding is <strong>{inrCompact(data.totalOutstanding)}</strong>, of which <strong>{inrCompact(data.overdue)}</strong>{data.totalOutstanding > 0 && <> ({Math.round((data.overdue / data.totalOutstanding) * 100)}%)</>} is overdue.</>, tone: data.overdue > 0 ? 'bad' : 'good' },
           { text: <><strong>{inrCompact(data.dueSoon)}</strong> falls due in the next 15 days — get ahead of it.</>, tone: 'warn' },
-          { text: <><strong>{data.recovery.filter((r) => r.rank <= 3).length}</strong> parties need a call now; <strong>{data.recovery[0]?.party ?? '—'}</strong> tops the list at <strong>{inrCompact(data.recovery[0]?.outstanding ?? 0)}</strong>.</>, tone: 'bad' },
-          ...(data.recoveryKpis.promisedValue > 0 ? [{ text: <><strong>{inrCompact(data.recoveryKpis.promisedValue)}</strong> is promised-to-pay across {data.recoveryKpis.promisedParties} parties — expected in.</>, tone: 'good' as const }] : []),
-          ...(data.recoveryKpis.promisesOverdue > 0 ? [{ text: <><strong>{data.recoveryKpis.promisesOverdue}</strong> parties broke their promise ({inrCompact(data.recoveryKpis.brokenPromiseValue)}) — chase these first.</>, tone: 'bad' as const }] : []),
-          { text: <><strong>{data.recoveryKpis.neverContacted}</strong> owing parties have no follow-up yet — start working them.</>, tone: data.recoveryKpis.neverContacted > 0 ? 'warn' : 'good' },
+          { text: <><strong>{(data.recovery ?? []).filter((r) => r.rank <= 3).length}</strong> parties need a call now; <strong>{data.recovery?.[0]?.party ?? '—'}</strong> tops the list at <strong>{inrCompact(data.recovery?.[0]?.outstanding ?? 0)}</strong>.</>, tone: 'bad' },
+          ...((rk?.promisedValue ?? 0) > 0 ? [{ text: <><strong>{inrCompact(rk!.promisedValue)}</strong> is promised-to-pay across {rk!.promisedParties} parties — expected in.</>, tone: 'good' as const }] : []),
+          ...((rk?.promisesOverdue ?? 0) > 0 ? [{ text: <><strong>{rk!.promisesOverdue}</strong> parties broke their promise ({inrCompact(rk!.brokenPromiseValue)}) — chase these first.</>, tone: 'bad' as const }] : []),
+          { text: <><strong>{rk?.neverContacted ?? 0}</strong> owing parties have no follow-up yet — start working them.</>, tone: (rk?.neverContacted ?? 0) > 0 ? 'warn' : 'good' },
           { text: <>Collection efficiency is <strong>{data.collectionRate != null ? Math.round(data.collectionRate * 100) : '—'}%</strong> this FY (DSO {data.dsoDays ?? '—'} days).</>, tone: 'info' },
           { text: <>Collections this FY are <strong>{Math.round((((data.collectedModes ?? []).find((m) => m.name === 'Cash')?.value ?? 0) / ((data.collectedModes ?? []).reduce((s, m) => s + m.value, 0) || 1)) * 100)}%</strong> cash vs bank.</>, tone: 'info' },
           ...(data.advanceHeld > 0 ? [{ text: <><strong>{inrCompact(data.advanceHeld)}</strong> is held as advances — net these before chasing.</>, tone: 'info' as const }] : []),
@@ -63,15 +64,15 @@ export function CollectionsReportPage() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
         <Kpi label="Collection rate" value={data?.collectionRate != null ? `${Math.round(data.collectionRate * 100)}%` : '—'} hint="collected ÷ billed (FY)" loading={isLoading} tone="emerald" />
         <Kpi label="DSO" value={data?.dsoDays != null ? `${data.dsoDays}d` : '—'} hint="days sales outstanding" loading={isLoading} tone="slate" />
-        <Kpi label="Promised to pay" value={data ? inrCompact(data.recoveryKpis.promisedValue) : '—'} title={data ? inrFull(data.recoveryKpis.promisedValue) : undefined} hint={data ? `${data.recoveryKpis.promisedParties} parties` : undefined} loading={isLoading} tone="violet" />
-        <Kpi label="Broken promises" value={data ? inrCompact(data.recoveryKpis.brokenPromiseValue) : '—'} title={data ? inrFull(data.recoveryKpis.brokenPromiseValue) : undefined} hint={data ? `${data.recoveryKpis.promisesOverdue} parties` : undefined} loading={isLoading} tone="rose" />
-        <Kpi label="Promises due today" value={data ? String(data.recoveryKpis.promisesDueToday) : '—'} hint="follow up now" loading={isLoading} tone="amber" />
-        <Kpi label="Never contacted" value={data ? String(data.recoveryKpis.neverContacted) : '—'} hint="owing, no follow-up" loading={isLoading} tone="blue" />
+        <Kpi label="Promised to pay" value={data ? inrCompact(rk?.promisedValue ?? 0) : '—'} title={data ? inrFull(rk?.promisedValue ?? 0) : undefined} hint={data ? `${rk?.promisedParties ?? 0} parties` : undefined} loading={isLoading} tone="violet" />
+        <Kpi label="Broken promises" value={data ? inrCompact(rk?.brokenPromiseValue ?? 0) : '—'} title={data ? inrFull(rk?.brokenPromiseValue ?? 0) : undefined} hint={data ? `${rk?.promisesOverdue ?? 0} parties` : undefined} loading={isLoading} tone="rose" />
+        <Kpi label="Promises due today" value={data ? String(rk?.promisesDueToday ?? 0) : '—'} hint="follow up now" loading={isLoading} tone="amber" />
+        <Kpi label="Never contacted" value={data ? String(rk?.neverContacted ?? 0) : '—'} hint="owing, no follow-up" loading={isLoading} tone="blue" />
       </div>
 
       {/* Recovery pipeline */}
       <ReportCard title="Recovery pipeline" right={<Button asChild variant="outline" size="sm"><Link to="/crm/payments"><PhoneCall className="size-3.5" /> Work follow-ups</Link></Button>}>
-        {isLoading ? <div className="bg-muted h-16 animate-pulse rounded" /> : !data?.pipeline.length ? (
+        {isLoading ? <div className="bg-muted h-16 animate-pulse rounded" /> : !data?.pipeline?.length ? (
           <div className="text-muted-foreground py-4 text-center text-sm">No owing parties.</div>
         ) : (
           <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
@@ -130,7 +131,7 @@ export function CollectionsReportPage() {
       </ReportCard>
 
       <ReportCard title="Recovery call list — highest priority first">
-        {isLoading ? <div className="bg-muted h-64 animate-pulse rounded-lg" /> : !data?.recovery.length ? (
+        {isLoading ? <div className="bg-muted h-64 animate-pulse rounded-lg" /> : !data?.recovery?.length ? (
           <div className="text-muted-foreground py-8 text-center text-sm">Nothing to chase — you're all clear. 🎉</div>
         ) : (
           <div className="overflow-x-auto">
