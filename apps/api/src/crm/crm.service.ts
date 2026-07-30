@@ -74,6 +74,7 @@ export class CrmService {
         priority: uc(dto.priority) === 'URGENT' ? 'URGENT' : 'NORMAL',
         status: 'OPEN',
         promisedAt: dto.promisedAt ? new Date(dto.promisedAt) : null,
+        promisedAmount: dto.promisedAmount ?? null,
         reminderIntervalMins: dto.reminderIntervalMins ?? null,
         maxRemindersPerDay: dto.maxRemindersPerDay ?? null,
         createdByName: userName ?? null,
@@ -125,6 +126,7 @@ export class CrmService {
         ...(dto.stage !== undefined ? { stage: uc(dto.stage) } : {}),
         ...(dto.priority !== undefined ? { priority: uc(dto.priority) === 'URGENT' ? 'URGENT' : 'NORMAL' } : {}),
         ...(dto.promisedAt !== undefined ? { promisedAt: dto.promisedAt ? new Date(dto.promisedAt) : null } : {}),
+        ...(dto.promisedAmount !== undefined ? { promisedAmount: dto.promisedAmount } : {}),
         ...(dto.reminderIntervalMins !== undefined ? { reminderIntervalMins: dto.reminderIntervalMins ?? null } : {}),
         ...(dto.maxRemindersPerDay !== undefined ? { maxRemindersPerDay: dto.maxRemindersPerDay ?? null } : {}),
         // Items are replace-on-save when the field is present: drop the old set,
@@ -159,6 +161,7 @@ export class CrmService {
         data: {
           ...(dto.stage !== undefined && dto.stage !== null ? { stage: uc(dto.stage) } : {}),
           ...(newPromised ? { promisedAt: newPromised, nextRemindAt: null, pushSentAt: null } : {}), // re-promise re-opens the window
+          ...(dto.newPromisedAmount != null ? { promisedAmount: dto.newPromisedAmount } : {}),
         },
       }),
     ]);
@@ -500,6 +503,7 @@ export class CrmService {
       priority: r.priority as FollowupPriority,
       status: r.status as FollowupStatus,
       promisedAt: r.promisedAt ? r.promisedAt.toISOString() : null,
+      promisedAmount: r.promisedAmount ?? null,
       reminderIntervalMins: r.reminderIntervalMins,
       maxRemindersPerDay: r.maxRemindersPerDay,
       remindersToday: r.remindersDate === todayStr ? r.remindersToday : 0,

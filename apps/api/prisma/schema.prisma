@@ -943,6 +943,8 @@ model Followup {
   priority   String   @default("NORMAL")
   status     String   @default("OPEN") // OPEN | DONE | CANCELLED
   promisedAt DateTime?
+  // Promise-to-pay amount (PAYMENT follow-ups): "party promised ₹X by promisedAt".
+  promisedAmount Float?
   // Reminder loop (fall back to CRM defaults when null).
   reminderIntervalMins Int?
   maxRemindersPerDay   Int?

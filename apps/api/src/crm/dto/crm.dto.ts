@@ -31,6 +31,7 @@ export class CreateFollowupDto {
   @IsOptional() @IsString() @MaxLength(64) stage?: string | null;
   @IsOptional() @IsIn(['NORMAL', 'URGENT']) priority?: 'NORMAL' | 'URGENT';
   @IsOptional() @IsString() promisedAt?: string | null;
+  @IsOptional() @IsNumber() @Min(0) promisedAmount?: number | null;
   @IsOptional() @IsInt() @Min(1) reminderIntervalMins?: number | null;
   @IsOptional() @IsInt() @Min(0) maxRemindersPerDay?: number | null;
   @IsOptional() @IsArray() @ArrayMaxSize(50) @ValidateNested({ each: true }) @Type(() => ChecklistItemInputDto) checklist?: ChecklistItemInputDto[];
@@ -48,6 +49,7 @@ export class AddFollowupLogDto {
   @IsOptional() @IsString() @MaxLength(2000) note?: string | null;
   @IsOptional() @IsString() @MaxLength(64) stage?: string | null;
   @IsOptional() @IsString() newPromisedAt?: string | null;
+  @IsOptional() @IsNumber() @Min(0) newPromisedAmount?: number | null;
 }
 
 export class FollowupQueryDto extends PaginationDto {

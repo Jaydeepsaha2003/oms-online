@@ -347,7 +347,7 @@ export class ReportsService {
       this.receivedByInvoice(),
       this.prisma.acctPaymentReceipt.findMany({ select: { custId: true, recDate: true, recAmt: true, payMode: true } }),
       // The live recovery CRM: payment follow-ups drive the contact/promise signals.
-      this.prisma.followup.findMany({ where: { kind: 'PAYMENT' }, select: { customerId: true, partyName: true, status: true, promisedAt: true, updatedAt: true, resolvedAt: true } }),
+      this.prisma.followup.findMany({ where: { kind: 'PAYMENT' }, select: { customerId: true, partyName: true, status: true, promisedAt: true, promisedAmount: true, updatedAt: true, resolvedAt: true } }),
     ]);
     const custMap = new Map(custRows.map((c) => [c.id, c]));
     const fyStart = this.startOfFinYear(now);
@@ -406,25 +406,23 @@ export class ReportsService {
 
     // ── CRM recovery signals (from PAYMENT follow-ups) ──
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    interface Crm { lastContact: Date | null; nextPromise: Date | null; open: number; broken: boolean; dueToday: boolean }
+    interface Crm { lastContact: Date | null; nextPromise: Date | null; nextAmount: number | null; open: number; broken: boolean; dueToday: boolean; promisedValue: number; brokenValue: number }
     const crmByKey = new Map<string, Crm>();
-    const keyById = new Map<number, string>();
     const nameKey = (name: string) => `n:${name.trim().toUpperCase()}`;
     let resolvedThisMonth = 0;
     for (const fu of payFollowups) {
       if (fu.resolvedAt && fu.resolvedAt >= monthStart) resolvedThisMonth += 1;
       const key = fu.customerId != null ? `c:${fu.customerId}` : nameKey(fu.partyName);
-      if (fu.customerId != null) keyById.set(fu.customerId, key);
       let c = crmByKey.get(key);
-      if (!c) { c = { lastContact: null, nextPromise: null, open: 0, broken: false, dueToday: false }; crmByKey.set(key, c); }
+      if (!c) { c = { lastContact: null, nextPromise: null, nextAmount: null, open: 0, broken: false, dueToday: false, promisedValue: 0, brokenValue: 0 }; crmByKey.set(key, c); }
       if (!c.lastContact || fu.updatedAt > c.lastContact) c.lastContact = fu.updatedAt;
       if (fu.status === 'OPEN') {
         c.open += 1;
         if (fu.promisedAt) {
-          if (!c.nextPromise || fu.promisedAt < c.nextPromise) c.nextPromise = fu.promisedAt;
+          if (!c.nextPromise || fu.promisedAt < c.nextPromise) { c.nextPromise = fu.promisedAt; c.nextAmount = fu.promisedAmount ?? null; }
           const days = Math.floor((today.getTime() - this.startOfDay(fu.promisedAt).getTime()) / DAY);
-          if (days > 0) c.broken = true;
-          else if (days === 0) c.dueToday = true;
+          if (days > 0) { c.broken = true; c.brokenValue += n(fu.promisedAmount); }
+          else { if (days === 0) c.dueToday = true; c.promisedValue += n(fu.promisedAmount); }
         }
       }
     }
@@ -460,7 +458,7 @@ export class ReportsService {
           outstanding: r0(p.outstanding), overdue: r0(p.overdue), oldestDays: p.oldestDays,
           lastReceipt: lr ? lr.toISOString() : null, flag, rank: rank + crmBoost,
           stage, lastContactAt: c?.lastContact ? c.lastContact.toISOString() : null, daysSinceContact: daysSince,
-          nextPromiseAt: c?.nextPromise ? c.nextPromise.toISOString() : null, promiseState, openFollowups: c?.open ?? 0,
+          nextPromiseAt: c?.nextPromise ? c.nextPromise.toISOString() : null, nextPromiseAmount: c?.nextAmount ?? null, promiseState, openFollowups: c?.open ?? 0,
           score,
         };
       })
@@ -482,6 +480,8 @@ export class ReportsService {
     let neverContacted = 0;
     let inProgress = 0;
     let promisedParties = 0;
+    let promisedValue = 0;
+    let brokenPromiseValue = 0;
     for (const p of owing) {
       const c = crmFor(p.custId, p.party);
       const { stage } = stageOf(c);
@@ -492,6 +492,7 @@ export class ReportsService {
       if (c?.dueToday) promisesDueToday += 1;
       if (c?.broken) promisesOverdue += 1;
       if (c?.nextPromise && !c.broken) promisedParties += 1;
+      if (c) { promisedValue += c.promisedValue; brokenPromiseValue += c.brokenValue; }
     }
     const STAGE_ORDER = ['Promise broken', 'Callback due', 'Not contacted', 'In progress', 'Promised', 'Resolved'];
     const pipeline = [...stageVal.entries()]
@@ -515,7 +516,7 @@ export class ReportsService {
     return {
       totalOutstanding: r0(totalOutstanding), overdue: r0(overdue), dueSoon: r0(dueSoon), advanceHeld,
       collectionRate, dsoDays, collectedModes, topOverdueParties, aging, collectionTrend,
-      recoveryKpis: { promisesDueToday, promisesOverdue, neverContacted, inProgress, resolvedThisMonth, promisedParties },
+      recoveryKpis: { promisesDueToday, promisesOverdue, neverContacted, inProgress, resolvedThisMonth, promisedParties, promisedValue: r0(promisedValue), brokenPromiseValue: r0(brokenPromiseValue) },
       pipeline, recovery, asOf: now.toISOString(),
     };
   }

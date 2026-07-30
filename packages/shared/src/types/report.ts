@@ -126,6 +126,8 @@ export interface RecoveryParty {
   daysSinceContact: number | null;
   /** Soonest open promised-payment date. */
   nextPromiseAt: string | null;
+  /** ₹ amount promised for that soonest promise (promise-to-pay). */
+  nextPromiseAmount: number | null;
   promiseState: PromiseState;
   /** Open PAYMENT follow-ups for this party. */
   openFollowups: number;
@@ -157,6 +159,10 @@ export interface CollectionsReport {
     inProgress: number;
     resolvedThisMonth: number;
     promisedParties: number;
+    /** ₹ still expected from live (non-broken) promises-to-pay. */
+    promisedValue: number;
+    /** ₹ tied up in broken (overdue) promises. */
+    brokenPromiseValue: number;
   };
   /** Outstanding + party count by recovery stage (pipeline). */
   pipeline: { stage: RecoveryStage; parties: number; value: number }[];

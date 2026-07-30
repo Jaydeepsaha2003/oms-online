@@ -76,6 +76,8 @@ export interface FollowupDto {
   priority: FollowupPriority;
   status: FollowupStatus;
   promisedAt: string | null;
+  /** Promise-to-pay amount (₹) for PAYMENT follow-ups. */
+  promisedAmount: number | null;
   /** Per-follow-up reminder overrides (fall back to CRM defaults when null). */
   reminderIntervalMins: number | null;
   maxRemindersPerDay: number | null;
@@ -201,6 +203,8 @@ export interface SaveFollowupInput {
   stage?: string | null;
   priority?: FollowupPriority;
   promisedAt?: string | null;
+  /** Promise-to-pay amount (₹) — for PAYMENT follow-ups. */
+  promisedAmount?: number | null;
   reminderIntervalMins?: number | null;
   maxRemindersPerDay?: number | null;
   /** Checklist tasks to create with the follow-up. */
@@ -225,6 +229,8 @@ export interface AddFollowupLogInput {
   stage?: string | null;
   /** Optionally re-promise a new date with this log entry. */
   newPromisedAt?: string | null;
+  /** Optionally record a new promise-to-pay amount (₹) with this re-promise. */
+  newPromisedAmount?: number | null;
 }
 
 /** CRM reminder defaults (AppConfig key CRM_REMINDER_DEFAULTS). */

@@ -312,11 +312,13 @@ function LogDialog({ f, onClose }: { f: FollowupDto; onClose: () => void }) {
   const [note, setNote] = useState('');
   const [stage, setStage] = useState(f.stage ?? '');
   const [newDate, setNewDate] = useState('');
+  const [newAmount, setNewAmount] = useState('');
+  const isPay = f.kind === 'PAYMENT';
 
   const submit = () => {
-    if (!note.trim() && !stage.trim() && !newDate) return toast.error('Add a note, stage, or a new promised date.');
+    if (!note.trim() && !stage.trim() && !newDate && !newAmount) return toast.error('Add a note, stage, or a new promise.');
     addLog.mutate(
-      { id: f.id, input: { note: note.trim() || null, stage: stage.trim() || null, newPromisedAt: newDate || null } },
+      { id: f.id, input: { note: note.trim() || null, stage: stage.trim() || null, newPromisedAt: newDate || null, newPromisedAmount: isPay && newAmount.trim() ? Number(newAmount) : null } },
       { onSuccess: () => { toast.success('Update logged'); onClose(); }, onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) },
     );
   };
@@ -342,6 +344,12 @@ function LogDialog({ f, onClose }: { f: FollowupDto; onClose: () => void }) {
               <Label className="text-xs">Re-promise date (optional)</Label>
               <Input type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)} />
             </div>
+            {isPay && (
+              <div className="space-y-1">
+                <Label className="text-xs">Promised amount ₹ (optional)</Label>
+                <Input type="number" min="0" inputMode="numeric" placeholder="0" className="tabular-nums" value={newAmount} onChange={(e) => setNewAmount(e.target.value)} />
+              </div>
+            )}
           </div>
         </div>
         <DialogFooter>
@@ -509,6 +517,7 @@ function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing:
   const [stage, setStage] = useState(editing?.stage ?? '');
   const [priority, setPriority] = useState(editing?.priority ?? 'NORMAL');
   const [promisedAt, setPromisedAt] = useState(editing?.promisedAt?.slice(0, 10) ?? '');
+  const [promisedAmount, setPromisedAmount] = useState(editing?.promisedAmount != null ? String(editing.promisedAmount) : '');
   const [interval, setIntervalMins] = useState(editing?.reminderIntervalMins ? String(editing.reminderIntervalMins) : '');
   const [maxPerDay, setMaxPerDay] = useState(editing?.maxRemindersPerDay != null ? String(editing.maxRemindersPerDay) : '');
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -618,6 +627,7 @@ function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing:
       itemText: isPay ? itemText.trim() || null : null,
       title: autoTitle, detail: description.trim() || null, stage: stage.trim() || null, priority: priority as 'NORMAL' | 'URGENT',
       promisedAt: promisedAt || null,
+      promisedAmount: isPay && promisedAmount.trim() ? Number(promisedAmount) : null,
       reminderIntervalMins: interval.trim() ? Number(interval) : null,
       maxRemindersPerDay: maxPerDay.trim() ? Number(maxPerDay) : null,
       items,
@@ -728,6 +738,16 @@ function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing:
               ))}
               <Input type="date" className="h-11 w-44 text-[15px]" value={promisedAt} onChange={(e) => setPromisedAt(e.target.value)} />
             </div>
+            {isPay && (
+              <div className="mt-3 flex items-center gap-2">
+                <span className="text-sm font-medium text-slate-600">Promised amount</span>
+                <div className="relative">
+                  <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-slate-500">₹</span>
+                  <Input type="number" min="0" inputMode="numeric" placeholder="0" className="h-11 w-40 pl-7 text-[15px] tabular-nums" value={promisedAmount} onChange={(e) => setPromisedAmount(e.target.value)} />
+                </div>
+                <span className="text-muted-foreground text-xs">how much they promised to pay</span>
+              </div>
+            )}
           </Block>
 
           {/* 4 · WHERE / HOW URGENT */}

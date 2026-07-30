@@ -43,7 +43,8 @@ export function CollectionsReportPage() {
           { text: <>Total outstanding is <strong>{inrCompact(data.totalOutstanding)}</strong>, of which <strong>{inrCompact(data.overdue)}</strong>{data.totalOutstanding > 0 && <> ({Math.round((data.overdue / data.totalOutstanding) * 100)}%)</>} is overdue.</>, tone: data.overdue > 0 ? 'bad' : 'good' },
           { text: <><strong>{inrCompact(data.dueSoon)}</strong> falls due in the next 15 days — get ahead of it.</>, tone: 'warn' },
           { text: <><strong>{data.recovery.filter((r) => r.rank <= 3).length}</strong> parties need a call now; <strong>{data.recovery[0]?.party ?? '—'}</strong> tops the list at <strong>{inrCompact(data.recovery[0]?.outstanding ?? 0)}</strong>.</>, tone: 'bad' },
-          ...(data.recoveryKpis.promisesOverdue > 0 ? [{ text: <><strong>{data.recoveryKpis.promisesOverdue}</strong> parties broke their payment promise — chase these first.</>, tone: 'bad' as const }] : []),
+          ...(data.recoveryKpis.promisedValue > 0 ? [{ text: <><strong>{inrCompact(data.recoveryKpis.promisedValue)}</strong> is promised-to-pay across {data.recoveryKpis.promisedParties} parties — expected in.</>, tone: 'good' as const }] : []),
+          ...(data.recoveryKpis.promisesOverdue > 0 ? [{ text: <><strong>{data.recoveryKpis.promisesOverdue}</strong> parties broke their promise ({inrCompact(data.recoveryKpis.brokenPromiseValue)}) — chase these first.</>, tone: 'bad' as const }] : []),
           { text: <><strong>{data.recoveryKpis.neverContacted}</strong> owing parties have no follow-up yet — start working them.</>, tone: data.recoveryKpis.neverContacted > 0 ? 'warn' : 'good' },
           { text: <>Collection efficiency is <strong>{data.collectionRate != null ? Math.round(data.collectionRate * 100) : '—'}%</strong> this FY (DSO {data.dsoDays ?? '—'} days).</>, tone: 'info' },
           { text: <>Collections this FY are <strong>{Math.round((((data.collectedModes ?? []).find((m) => m.name === 'Cash')?.value ?? 0) / ((data.collectedModes ?? []).reduce((s, m) => s + m.value, 0) || 1)) * 100)}%</strong> cash vs bank.</>, tone: 'info' },
@@ -62,10 +63,10 @@ export function CollectionsReportPage() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
         <Kpi label="Collection rate" value={data?.collectionRate != null ? `${Math.round(data.collectionRate * 100)}%` : '—'} hint="collected ÷ billed (FY)" loading={isLoading} tone="emerald" />
         <Kpi label="DSO" value={data?.dsoDays != null ? `${data.dsoDays}d` : '—'} hint="days sales outstanding" loading={isLoading} tone="slate" />
+        <Kpi label="Promised to pay" value={data ? inrCompact(data.recoveryKpis.promisedValue) : '—'} title={data ? inrFull(data.recoveryKpis.promisedValue) : undefined} hint={data ? `${data.recoveryKpis.promisedParties} parties` : undefined} loading={isLoading} tone="violet" />
+        <Kpi label="Broken promises" value={data ? inrCompact(data.recoveryKpis.brokenPromiseValue) : '—'} title={data ? inrFull(data.recoveryKpis.brokenPromiseValue) : undefined} hint={data ? `${data.recoveryKpis.promisesOverdue} parties` : undefined} loading={isLoading} tone="rose" />
         <Kpi label="Promises due today" value={data ? String(data.recoveryKpis.promisesDueToday) : '—'} hint="follow up now" loading={isLoading} tone="amber" />
-        <Kpi label="Broken promises" value={data ? String(data.recoveryKpis.promisesOverdue) : '—'} hint="promise date passed" loading={isLoading} tone="rose" />
         <Kpi label="Never contacted" value={data ? String(data.recoveryKpis.neverContacted) : '—'} hint="owing, no follow-up" loading={isLoading} tone="blue" />
-        <Kpi label="Resolved (mth)" value={data ? String(data.recoveryKpis.resolvedThisMonth) : '—'} hint="closed this month" loading={isLoading} tone="violet" />
       </div>
 
       {/* Recovery pipeline */}
@@ -164,7 +165,11 @@ export function CollectionsReportPage() {
                     <td className="py-2 pr-3 text-right font-semibold tabular-nums" title={inrFull(r.outstanding)}>{inrCompact(r.outstanding)}</td>
                     <td className="py-2 pr-3 text-right tabular-nums text-red-600" title={inrFull(r.overdue)}>{r.overdue > 0 ? inrCompact(r.overdue) : '—'}</td>
                     <td className="py-2 pr-3 text-right tabular-nums">{r.oldestDays > 0 ? `${r.oldestDays}d` : '—'}</td>
-                    <td className={cn('py-2 pr-3', promiseTone(r.promiseState))}>{r.nextPromiseAt ? fmtDate(r.nextPromiseAt) : '—'}</td>
+                    <td className={cn('py-2 pr-3 whitespace-nowrap', promiseTone(r.promiseState))}>
+                      {r.nextPromiseAt ? (
+                        <>{fmtDate(r.nextPromiseAt)}{r.nextPromiseAmount != null && r.nextPromiseAmount > 0 && <span className="font-semibold"> · {inrCompact(r.nextPromiseAmount)}</span>}</>
+                      ) : '—'}
+                    </td>
                     <td className="py-2 pr-3 text-muted-foreground">{r.lastContactAt ? `${fmtDate(r.lastContactAt)}${r.daysSinceContact != null ? ` · ${r.daysSinceContact}d` : ''}` : 'never'}</td>
                     <td className="py-2 pr-3 text-right">
                       <Button asChild variant="outline" size="sm" className="h-7 px-2 text-xs">
