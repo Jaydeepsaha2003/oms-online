@@ -33,6 +33,7 @@ export class PendingQueryDto extends PaginationDto {
   @IsOptional() @IsString() dueType?: string;
   @IsOptional() @IsString() unit?: string;
   @IsOptional() @IsString() customer?: string;
+  @IsOptional() @IsString() agent?: string;
   @IsOptional() @IsString() product?: string;
   @IsOptional() @IsString() design?: string;
   @IsOptional() @IsString() subCategory?: string;

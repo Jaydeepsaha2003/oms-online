@@ -39,20 +39,31 @@ export function useDispatches(query: DispatchQuery) {
   });
 }
 
-export function useDispatchFilterOptions() {
+// Only the filter fields matter for the option lists — strip paging so the query
+// key doesn't churn on page changes, and cascade off the other active filters.
+const optionParams = (q: Record<string, unknown> = {}) => {
+  const { page: _p, pageSize: _ps, ...rest } = q;
+  return Object.fromEntries(Object.entries(rest).filter(([, v]) => v != null && v !== ''));
+};
+
+export function useDispatchFilterOptions(query: Partial<DispatchQuery> = {}) {
+  const params = optionParams(query);
   return useQuery({
-    queryKey: [...KEY, 'filter-options'],
-    queryFn: () => http.get<DispatchFilterOptions>('/dispatch/filter-options'),
+    queryKey: [...KEY, 'filter-options', params],
+    queryFn: () => http.get<DispatchFilterOptions>('/dispatch/filter-options', { params }),
     staleTime: 60_000,
+    placeholderData: (prev) => prev,
   });
 }
 
-/** Distinct customer/product/design values among lines still pending dispatch. */
-export function usePendingFilterOptions() {
+/** Distinct customer/agent/product/design values among lines still pending dispatch. */
+export function usePendingFilterOptions(query: Partial<PendingQuery> = {}) {
+  const params = optionParams(query);
   return useQuery({
-    queryKey: [...KEY, 'pending-filter-options'],
-    queryFn: () => http.get<DispatchFilterOptions>('/dispatch/pending-filter-options'),
+    queryKey: [...KEY, 'pending-filter-options', params],
+    queryFn: () => http.get<DispatchFilterOptions>('/dispatch/pending-filter-options', { params }),
     staleTime: 60_000,
+    placeholderData: (prev) => prev,
   });
 }
 

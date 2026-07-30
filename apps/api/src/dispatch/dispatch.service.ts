@@ -117,26 +117,28 @@ export class DispatchService {
     return name;
   }
 
-  /** Distinct customer / product / design values present in the *pending* pool,
-   *  used to populate the Dispatch Order page's filter dropdowns. */
-  async pendingFilterOptions(): Promise<DispatchFilterOptions> {
-    const lines = await this.computePendingLines();
-    const customers = new Set<string>();
-    const products = new Set<string>();
-    const productBases = new Set<string>();
-    const designs = new Set<string>();
-    const subCategories = new Set<string>();
-    for (const l of lines) {
-      if (l.customerName) customers.add(l.customerName);
-      const p = l.productName || l.product;
-      if (p) products.add(p);
-      const base = DispatchService.baseProductName(l.productName || l.product, l.designType);
-      if (base) productBases.add(base);
-      if (l.designType && l.designType.toUpperCase() !== 'NA') designs.add(l.designType);
-      if (l.subCategory) subCategories.add(l.subCategory);
-    }
-    const sorted = (s: Set<string>) => [...s].sort((a, b) => a.localeCompare(b));
-    return { customers: sorted(customers), products: sorted(products), productBases: sorted(productBases), designs: sorted(designs), subCategories: sorted(subCategories) };
+  /** Distinct customer / agent / product / design values present in the *pending*
+   *  pool, used to populate the Dispatch Order page's filter dropdowns. Cascading:
+   *  each field's option list reflects the OTHER active filters (but not itself),
+   *  so a dropdown only ever offers values that would actually return rows. */
+  async pendingFilterOptions(query: PendingQueryDto = {} as PendingQueryDto): Promise<DispatchFilterOptions> {
+    const all = await this.computePendingLines();
+    // Options for one field = the pool filtered by every OTHER active filter.
+    const poolFor = (exclude: keyof PendingQueryDto) => this.applyPendingFilters(all, { ...query, [exclude]: undefined } as PendingQueryDto);
+    const distinct = (lines: PendingLineDto[], pick: (l: PendingLineDto) => string | null | undefined) => {
+      const s = new Set<string>();
+      for (const l of lines) { const v = pick(l); if (v) s.add(v); }
+      return [...s].sort((a, b) => a.localeCompare(b));
+    };
+    const productPool = poolFor('product');
+    return {
+      customers: distinct(poolFor('customer'), (l) => l.customerName),
+      agents: distinct(poolFor('agent'), (l) => l.agentName),
+      products: distinct(productPool, (l) => l.productName || l.product),
+      productBases: distinct(productPool, (l) => DispatchService.baseProductName(l.productName || l.product, l.designType)),
+      designs: distinct(poolFor('design'), (l) => (l.designType && l.designType.toUpperCase() !== 'NA' ? l.designType : null)),
+      subCategories: distinct(poolFor('subCategory'), (l) => l.subCategory),
+    };
   }
 
   /** Apply the Dispatch Order page's search + dropdown filters to the pending pool. */
@@ -149,6 +151,7 @@ export class DispatchService {
     }
     if (query.dueType) lines = lines.filter((l) => l.dueType === query.dueType);
     if (query.customer) lines = lines.filter((l) => l.customerName === query.customer);
+    if (query.agent) lines = lines.filter((l) => l.agentName === query.agent);
     if (query.product) {
       const target = query.product;
       if (query.all) {
@@ -228,23 +231,34 @@ export class DispatchService {
 
   /** Distinct customer / product / design values present in dispatch records,
    *  used to populate the Modify Dispatch dropdown filters. */
-  async filterOptions(): Promise<DispatchFilterOptions> {
+  async filterOptions(query: DispatchQueryDto = {} as DispatchQueryDto): Promise<DispatchFilterOptions> {
     const rows = await this.prisma.dispatch.findMany({
-      select: { customerName: true, agentName: true, productName: true, product: true, designType: true },
+      select: { customerName: true, agentName: true, productName: true, product: true, designType: true, dispatchStatus: true },
     });
-    const customers = new Set<string>();
-    const agents = new Set<string>();
-    const products = new Set<string>();
-    const designs = new Set<string>();
-    for (const r of rows) {
-      if (r.customerName) customers.add(r.customerName);
-      if (r.agentName) agents.add(r.agentName);
-      const p = r.productName || r.product;
-      if (p) products.add(p);
-      if (r.designType) designs.add(r.designType);
-    }
-    const sorted = (s: Set<string>) => [...s].sort((a, b) => a.localeCompare(b));
-    return { customers: sorted(customers), agents: sorted(agents), products: sorted(products), designs: sorted(designs) };
+    type Row = (typeof rows)[number];
+    // Cascading: each field's options reflect the OTHER active filters (not itself),
+    // so a dropdown only offers values that would actually return rows.
+    const apply = (list: Row[], q: DispatchQueryDto) => {
+      let out = list;
+      if (q.status) out = out.filter((r) => r.dispatchStatus === q.status);
+      if (q.customer) out = out.filter((r) => r.customerName === q.customer);
+      if (q.agent) out = out.filter((r) => r.agentName === q.agent);
+      if (q.product) out = out.filter((r) => (r.productName || r.product) === q.product);
+      if (q.design) out = out.filter((r) => r.designType === q.design);
+      return out;
+    };
+    const poolFor = (exclude: keyof DispatchQueryDto) => apply(rows, { ...query, [exclude]: undefined } as DispatchQueryDto);
+    const distinct = (list: Row[], pick: (r: Row) => string | null | undefined) => {
+      const s = new Set<string>();
+      for (const r of list) { const v = pick(r); if (v) s.add(v); }
+      return [...s].sort((a, b) => a.localeCompare(b));
+    };
+    return {
+      customers: distinct(poolFor('customer'), (r) => r.customerName),
+      agents: distinct(poolFor('agent'), (r) => r.agentName),
+      products: distinct(poolFor('product'), (r) => r.productName || r.product),
+      designs: distinct(poolFor('design'), (r) => r.designType),
+    };
   }
 
   async findOne(id: number): Promise<DispatchDto> {

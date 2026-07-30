@@ -31,9 +31,9 @@ const StatusBadge = ({ s }: { s: string }) => (
 );
 
 const COLUMNS: DataColumn<DispatchDto>[] = [
-  { id: 'code', label: 'Dispatch #', pin: 'left0', fixed: true, cell: (d) => <span className="font-mono text-xs font-medium">{d.code ?? `#${d.id}`}</span> },
+  { id: 'code', label: 'DIS#', pin: 'left0', fixed: true, cell: (d) => <span className="font-mono text-xs font-medium">{d.code ?? `#${d.id}`}</span> },
   { id: 'date', label: 'Date', cell: (d) => <span className="whitespace-nowrap">{formatDate(d.dispatchDate)}</span> },
-  { id: 'order', label: 'Order #', cell: (d) => <span className="font-mono text-xs">{shortOrderCode(d.orderCode, d.orderId)}</span> },
+  { id: 'order', label: 'ORD#', cell: (d) => <span className="font-mono text-xs">{shortOrderCode(d.orderCode, d.orderId)}</span> },
   { id: 'customer', label: 'Customer', cell: (d) => <span className="font-medium">{d.customerName}</span> },
   { id: 'product', label: 'Product', cell: (d) => <span className="font-medium">{d.productName || d.product || '—'}</span> },
   { id: 'design', label: 'Design', cell: (d) => d.designType || '—' },
@@ -177,7 +177,15 @@ export function ModifyDispatchPage() {
   const columns = useMemo(() => (canViewRates ? withRates(COLUMNS) : COLUMNS), [canViewRates]);
   const cols = useColumnOrder('dispatch-modify', columns);
   const { format, setFormat } = useDateFormat();
-  const { data: options } = useDispatchFilterOptions();
+  // Cascading options: pass the active filters so each dropdown only lists values
+  // that still exist under the others.
+  const { data: options } = useDispatchFilterOptions({
+    status: statusFilter || undefined,
+    customer: customerFilter || undefined,
+    agent: agentFilter || undefined,
+    product: productFilter || undefined,
+    design: designFilter || undefined,
+  });
 
   useEffect(() => {
     const t = setTimeout(() => {

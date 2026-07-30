@@ -130,6 +130,7 @@ export type PendingQuery = PaginationQuery & {
   unit?: string;
   /** Exact-match filters (values come from the pending-pool {@link DispatchFilterOptions}). */
   customer?: string;
+  agent?: string;
   product?: string;
   design?: string;
   subCategory?: string;

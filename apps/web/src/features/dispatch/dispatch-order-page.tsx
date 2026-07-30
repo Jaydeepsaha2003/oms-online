@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarClock, ChevronLeft, ChevronRight, Filter, Flame, Loader2, Package, PackageCheck, Search, TriangleAlert, Truck, X } from 'lucide-react';
+import { CalendarClock, ChevronLeft, ChevronRight, Filter, Flame, Loader2, Package, PackageCheck, TriangleAlert, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { type DispatchStatus, type PendingLineDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -121,7 +121,7 @@ function DispatchCard({ line, index, showRates, onClick }: { line: PendingLineDt
 }
 
 const COLUMNS: DataColumn<PendingLineDto>[] = [
-  { id: 'order', label: 'Order #', pin: 'left0', pinWidthClass: 'sm:w-16 sm:min-w-16', fixed: true, cell: (r) => <span className="font-mono text-xs font-medium">{shortOrderCode(r.orderCode, r.orderId)}</span> },
+  { id: 'order', label: 'ORD#', pin: 'left0', pinWidthClass: 'sm:w-16 sm:min-w-16', fixed: true, cell: (r) => <span className="font-mono text-xs font-medium">{shortOrderCode(r.orderCode, r.orderId)}</span> },
   { id: 'orderDate', label: 'Order date', cell: (r) => <span className="whitespace-nowrap">{formatDate(r.orderDate)}</span> },
   { id: 'due', label: 'Due', cell: (r) => <span className="flex items-center gap-1.5 whitespace-nowrap">{formatDate(r.dueDate)} <DueBadge t={r.dueType} /></span> },
   { id: 'customer', label: 'Customer', cell: (r) => <span className="font-medium">{r.customerName}</span> },
@@ -162,10 +162,9 @@ const withRates = (cols: DataColumn<PendingLineDto>[]): DataColumn<PendingLineDt
 };
 
 export function DispatchOrderPage() {
-  const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch] = useState('');
   const [dueType, setDueType] = useState('');
   const [customer, setCustomer] = useState('');
+  const [agent, setAgent] = useState('');
   const [product, setProduct] = useState('');
   const [design, setDesign] = useState('');
   const [subCategory, setSubCategory] = useState('');
@@ -186,36 +185,29 @@ export function DispatchOrderPage() {
   // product picker lists base names and one pick matches every design variant.
   const [all, setAll] = useState(false);
 
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setSearch(searchInput.trim());
-      setPage(1);
-    }, 300);
-    return () => clearTimeout(t);
-  }, [searchInput]);
-
-  const { data: options } = usePendingFilterOptions();
-  // Default → short base-name list (one pick = all its designs). ALL on → the full
-  // list with every design variant, so a pick targets that specific item.
-  const productOptions = all ? (options?.products ?? []) : (options?.productBases ?? []);
   const query = {
     page,
     pageSize: PAGE_SIZE,
-    search: search || undefined,
     dueType: dueType || undefined,
     customer: customer || undefined,
+    agent: agent || undefined,
     product: product || undefined,
     design: design || undefined,
     subCategory: subCategory || undefined,
     all: all || undefined,
   };
+  // Filter dropdowns list only values that exist under the other active filters
+  // (cascading), so you can't pick a combination that yields no rows.
+  const { data: options } = usePendingFilterOptions(query);
+  // Default → short base-name list (one pick = all its designs). ALL on → the full
+  // list with every design variant, so a pick targets that specific item.
+  const productOptions = all ? (options?.products ?? []) : (options?.productBases ?? []);
   const { data, isLoading } = usePendingOrders(query);
-  const hasFilters = !!searchInput || !!dueType || !!customer || !!product || !!design || !!subCategory || all;
+  const hasFilters = !!dueType || !!customer || !!agent || !!product || !!design || !!subCategory || all;
   const resetFilters = () => {
-    setSearchInput('');
-    setSearch('');
     setDueType('');
     setCustomer('');
+    setAgent('');
     setProduct('');
     setDesign('');
     setSubCategory('');
@@ -274,9 +266,9 @@ export function DispatchOrderPage() {
     setExporting(true);
     try {
       await exportPendingDispatch({
-        search: search || undefined,
         dueType: dueType || undefined,
         customer: customer || undefined,
+        agent: agent || undefined,
         product: product || undefined,
         design: design || undefined,
         subCategory: subCategory || undefined,
@@ -292,17 +284,12 @@ export function DispatchOrderPage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        {/* Desktop: general search box. */}
-        <div className="relative hidden w-64 sm:block">
-          <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
-          <Input placeholder="Search order #, customer or product…" className="pl-9" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
-        </div>
-
-        {/* Phones: Customer + Product each get their own full-width line so long
-            names fit; the rest (Due / Design / Sub category) live behind the filter
-            icon, which sits with the export button on the Product row. */}
+        {/* Phones: Customer + Agent + Product each get their own full-width line so
+            long names fit; the rest (Due / Design / Sub category) live behind the
+            filter icon, which sits with the export button on the Product row. */}
         <div className="flex w-full flex-col gap-2 sm:hidden">
           <NativeSelect value={customer} onChange={(v) => { setCustomer(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="Customer" />
+          <NativeSelect value={agent} onChange={(v) => { setAgent(v); setPage(1); }} options={['', ...(options?.agents ?? [])]} placeholder="All agents" />
           <div className="flex items-center gap-2">
             <div className="min-w-0 flex-1">
               <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...productOptions]} placeholder={all ? 'Product (any design)' : 'Product'} />
@@ -326,6 +313,9 @@ export function DispatchOrderPage() {
           </div>
           <div className="w-64">
             <NativeSelect value={customer} onChange={(v) => { setCustomer(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="All customers" />
+          </div>
+          <div className="w-44">
+            <NativeSelect value={agent} onChange={(v) => { setAgent(v); setPage(1); }} options={['', ...(options?.agents ?? [])]} placeholder="All agents" />
           </div>
           <div className="w-64">
             <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...productOptions]} placeholder={all ? 'All (any design)' : 'All products'} />
