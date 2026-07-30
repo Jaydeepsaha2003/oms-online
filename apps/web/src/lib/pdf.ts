@@ -138,6 +138,22 @@ export async function openPdf(url: string, filename?: string): Promise<void> {
  *  Quotation: "{Prefix}_{code}_{yyyy-MM-dd_HHmm}.pdf", e.g.
  *  "Challan_SSS-26-27-427_2026-07-19_1830.pdf". `code` falls back to `fallback`
  *  (e.g. "challan-42") when the record has no code yet. */
+/** Resolve once the image data-URL has fully decoded into a bitmap. Used before
+ *  `window.print()` so the (large) capture is painted first — mobile browsers
+ *  otherwise snapshot the print view too early and produce a blank page. */
+export function decodeImage(dataURL: string): Promise<void> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      // decode() gives a firmer "ready to paint" guarantee where supported.
+      if (img.decode) img.decode().then(() => resolve(), () => resolve());
+      else resolve();
+    };
+    img.onerror = () => resolve();
+    img.src = dataURL;
+  });
+}
+
 export function buildBillFilename(prefix: string, code: string | null | undefined, fallback: string): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   const d = new Date();

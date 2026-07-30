@@ -7,7 +7,7 @@ import { jsPDF } from 'jspdf';
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useFitToWidth } from '@/hooks/use-fit-to-width';
 import { Button } from '@/components/ui/button';
-import { buildBillFilename, preOpenPdfTab, savePdfBlob } from '@/lib/pdf';
+import { buildBillFilename, decodeImage, preOpenPdfTab, savePdfBlob } from '@/lib/pdf';
 import kavishLogo from '@/assets/kavish-logo-order.png';
 import { useChallanTerms, useCompany } from '@/features/settings/use-settings';
 import { useChallan } from './use-challans';
@@ -169,6 +169,9 @@ export function ChallanBillPage() {
       const cap = await captureImage();
       if (!cap) return;
       setPrintImg(cap.dataURL);
+      // Pre-decode the (large) capture so it's painted before the browser
+      // snapshots the print view — otherwise mobile prints a blank page.
+      await decodeImage(cap.dataURL);
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       window.print();
     } catch {

@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
 import { Button } from '@/components/ui/button';
-import { buildBillFilename, preOpenPdfTab, savePdfBlob } from '@/lib/pdf';
+import { buildBillFilename, decodeImage, preOpenPdfTab, savePdfBlob } from '@/lib/pdf';
 import { shortOrderCode } from '@/lib/utils';
 import kavishLogo from '@/assets/kavish-logo-order.png';
 import { useIsMobile } from '@/hooks/use-is-mobile';
@@ -162,6 +162,9 @@ export function OrderBillPage() {
       const cap = await captureImage();
       if (!cap) return;
       setPrintImg(cap.dataURL);
+      // Pre-decode the (large) capture so it's painted before the browser
+      // snapshots the print view — otherwise mobile prints a blank page.
+      await decodeImage(cap.dataURL);
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       window.print();
     } catch {
