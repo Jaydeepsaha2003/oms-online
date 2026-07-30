@@ -97,6 +97,9 @@ export interface OrderDto {
   ordType: string;
   comment: string | null;
   userName: string | null;
+  /** Why the order was cancelled + optional free-typed detail (reason "Others"). */
+  cancelReason: string | null;
+  cancelNote: string | null;
   items: OrderItemDto[];
   /** Convenience aggregates for list views. */
   itemCount: number;
@@ -156,6 +159,8 @@ export interface OrderInput {
 
 export type OrderQuery = PaginationQuery & {
   status?: string;
+  /** Filter to orders for this sales agent (exact match). */
+  agent?: string;
   /** Keep orders that contain this product / design on any line (exact match,
    *  values come from {@link OrderFilterOptions}). */
   product?: string;
@@ -163,8 +168,9 @@ export type OrderQuery = PaginationQuery & {
 };
 export type OrderList = Paginated<OrderDto>;
 
-/** Distinct product / design values present on order lines, for the Orders page filters. */
+/** Distinct agent / product / design values present on orders, for the Orders page filters. */
 export interface OrderFilterOptions {
+  agents: string[];
   products: string[];
   designs: string[];
 }

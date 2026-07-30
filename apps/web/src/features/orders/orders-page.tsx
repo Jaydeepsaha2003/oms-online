@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Ban, ChevronLeft, ChevronRight, Eye, Filter, Plus, Printer, RotateCcw, Search, Truck } from 'lucide-react';
+import { Ban, ChevronLeft, ChevronRight, Eye, Filter, Loader2, Plus, Printer, RotateCcw, Search, Trash2, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 import type { OrderDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -16,8 +16,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { NativeSelect } from '@/components/common/combo';
-import { useCancelOrder, useOrderFilterOptions, useOrders } from './use-orders';
+import { CancelReasonFields } from '@/components/common/cancel-reason';
+import { settingValues, useSettings } from '@/features/settings/use-settings';
+import { useCancelOrder, useDeleteOrder, useOrderFilterOptions, useOrders } from './use-orders';
 import { OrderTimelineModal } from './order-timeline-modal';
 
 const PAGE_SIZE = 50;
@@ -85,12 +88,14 @@ export function OrdersPage() {
   const confirm = useConfirm();
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
+  const [agent, setAgent] = useState('');
   const [product, setProduct] = useState('');
   const [design, setDesign] = useState('');
   const [page, setPage] = useState(1);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
-  const activeFilterCount = (product ? 1 : 0) + (design ? 1 : 0);
+  const activeFilterCount = (agent ? 1 : 0) + (product ? 1 : 0) + (design ? 1 : 0);
   const resetFilters = () => {
+    setAgent('');
     setProduct('');
     setDesign('');
     setPage(1);
@@ -100,30 +105,21 @@ export function OrdersPage() {
     page,
     pageSize: PAGE_SIZE,
     search: search || undefined,
+    agent: agent || undefined,
     product: product || undefined,
     design: design || undefined,
   });
-  const cancel = useCancelOrder();
   const cols = useColumnOrder('orders', COLUMNS);
   const { format, setFormat } = useDateFormat();
   const [timelineFor, setTimelineFor] = useState<OrderDto | null>(null);
+  const [cancelling, setCancelling] = useState<OrderDto | null>(null);
+  const [deleting, setDeleting] = useState<OrderDto | null>(null);
+  const canDelete = can('order:delete');
 
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
 
-  const handleCancel = async (o: OrderDto) => {
-    const ok = await confirm({
-      title: 'Cancel this order?',
-      description: `Order ${o.code ?? `#${o.id}`} for "${o.customerName}" will be marked CANCELLED. It stays on record but can no longer be dispatched.`,
-      confirmText: 'Cancel order',
-      destructive: true,
-    });
-    if (!ok) return;
-    cancel.mutate(o.id, {
-      onSuccess: () => toast.success('Order cancelled'),
-      onError: (e) => toast.error(getApiErrorMessage(e, 'Cancel failed')),
-    });
-  };
+  const handleCancel = (o: OrderDto) => setCancelling(o);
 
   // Phones: one stacked card per order instead of a horizontally-scrolling table.
   const orderMobileCard = (o: OrderDto) => {
@@ -200,6 +196,17 @@ export function OrdersPage() {
                 <Ban className="size-4" />
               </Button>
             )}
+            {canDelete && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8 text-destructive hover:text-destructive"
+                onClick={() => setDeleting(o)}
+                aria-label="Delete order permanently"
+              >
+                <Trash2 className="size-4" />
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -241,6 +248,9 @@ export function OrdersPage() {
           )}
         </Button>
         {/* Keep orders whose lines contain the picked product / design. */}
+        <div className="hidden w-44 lg:block">
+          <NativeSelect value={agent} onChange={(v) => { setAgent(v); setPage(1); }} options={['', ...(filterOptions?.agents ?? [])]} placeholder="All agents" />
+        </div>
         <div className="hidden w-56 lg:block">
           <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...(filterOptions?.products ?? [])]} placeholder="All products" />
         </div>
@@ -284,6 +294,15 @@ export function OrdersPage() {
           </SheetHeader>
           <div className="space-y-4">
             <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Agent</Label>
+              <NativeSelect
+                value={agent}
+                onChange={(v) => { setAgent(v); setPage(1); }}
+                options={['', ...(filterOptions?.agents ?? [])]}
+                placeholder="All agents"
+              />
+            </div>
+            <div className="space-y-1.5">
               <Label className="text-muted-foreground text-xs font-medium uppercase">Product</Label>
               <NativeSelect
                 value={product}
@@ -319,8 +338,6 @@ export function OrdersPage() {
         // No height cap — every row renders in the page's own natural scroll
         // (same as every other list page), so pagination sits right after the
         // last row instead of behind a second, nested scrollbar.
-        // Larger, easy-to-read data font (columns still auto-fit their content).
-        className="text-[16px] [&_thead_th]:text-[14px] [&_td]:py-1.5 [&_th]:py-2 [&_tbody_button]:size-8"
         emptyText="No orders yet — create one."
         onRowClick={can('order:update') ? (o) => navigate(`/orders/${o.id}/edit`) : undefined}
         mobileCard={orderMobileCard}
@@ -415,6 +432,25 @@ export function OrdersPage() {
                   </TooltipContent>
                 </Tooltip>
               )}
+              {canDelete && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-8 text-destructive hover:text-destructive"
+                      onClick={() => setDeleting(o)}
+                      aria-label="Delete order permanently"
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-56">
+                    <p className="font-semibold">Delete permanently</p>
+                    <p className="opacity-80">Removes the order and its lines for good — this cannot be undone.</p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
             </div>
           );
         }}
@@ -440,6 +476,93 @@ export function OrdersPage() {
       </div>
 
       {timelineFor && <OrderTimelineModal order={timelineFor} onClose={() => setTimelineFor(null)} />}
+      {cancelling && <CancelOrderDialog order={cancelling} onClose={() => setCancelling(null)} />}
+      {deleting && <DeleteOrderDialog order={deleting} onClose={() => setDeleting(null)} />}
     </div>
+  );
+}
+
+/* ── Cancel with reason ──────────────────────────────────────────────────────── */
+
+function CancelOrderDialog({ order, onClose }: { order: OrderDto; onClose: () => void }) {
+  const cancel = useCancelOrder();
+  const { data: settings } = useSettings();
+  const reasons = settingValues(settings, 'QUOTATION_CANCEL_REASON');
+  const [reason, setReason] = useState('');
+  const [note, setNote] = useState('');
+
+  const submit = () => {
+    if (!reason.trim()) return toast.error('Please choose a reason.');
+    cancel.mutate(
+      { id: order.id, reason: reason.trim(), note: note.trim() || null },
+      {
+        onSuccess: () => { toast.success('Order cancelled'); onClose(); },
+        onError: (e) => toast.error(getApiErrorMessage(e, 'Cancel failed')),
+      },
+    );
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Cancel {order.code ?? `#${order.id}`}</DialogTitle>
+        </DialogHeader>
+        <div className="grid gap-4">
+          <p className="text-muted-foreground text-sm">
+            Order for “{order.customerName}” will be marked CANCELLED. It stays on record but can no longer be dispatched.
+          </p>
+          <CancelReasonFields reasons={reasons} reason={reason} note={note} onReason={setReason} onNote={setNote} />
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>Keep order</Button>
+          <Button type="button" variant="destructive" onClick={submit} disabled={cancel.isPending}>
+            {cancel.isPending ? <Loader2 className="animate-spin" /> : <Ban />} Cancel order
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ── Permanent (hard) delete — admin only, typed confirmation ─────────────────── */
+
+function DeleteOrderDialog({ order, onClose }: { order: OrderDto; onClose: () => void }) {
+  const del = useDeleteOrder();
+  const [confirmText, setConfirmText] = useState('');
+  const armed = confirmText.trim().toUpperCase() === 'DELETE';
+
+  const submit = () => {
+    if (!armed) return;
+    del.mutate(order.id, {
+      onSuccess: () => { toast.success('Order deleted permanently'); onClose(); },
+      onError: (e) => toast.error(getApiErrorMessage(e, 'Delete failed')),
+    });
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Permanently delete {order.code ?? `#${order.id}`}?</DialogTitle>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+            This <strong>permanently removes</strong> the order and its lines for “{order.customerName}”. This cannot be undone.
+            Prefer <strong>Cancel</strong> if you only want to stop it while keeping the record.
+          </div>
+          <div className="space-y-1.5">
+            <Label>Type <span className="font-mono font-bold">DELETE</span> to confirm</Label>
+            <Input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder="DELETE" autoFocus />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+          <Button type="button" variant="destructive" onClick={submit} disabled={!armed || del.isPending}>
+            {del.isPending ? <Loader2 className="animate-spin" /> : <Trash2 />} Delete permanently
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

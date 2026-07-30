@@ -103,7 +103,8 @@ export function useSaveOrder() {
 export function useCancelOrder() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: number) => http.patch<OrderDto>(`/orders/${id}/status`, { status: 'CANCELLED' }),
+    mutationFn: ({ id, reason, note }: { id: number; reason?: string | null; note?: string | null }) =>
+      http.patch<OrderDto>(`/orders/${id}/status`, { status: 'CANCELLED', reason: reason ?? undefined, note: note ?? undefined }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }

@@ -26,6 +26,7 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/common/confirm';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { Combo, NativeSelect } from '@/components/common/combo';
+import { CancelReasonFields } from '@/components/common/cancel-reason';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -497,15 +498,7 @@ function CancelDialog({ quotation, onClose }: { quotation: QuotationDto; onClose
           <p className="text-muted-foreground text-sm">
             Record why this quotation was cancelled — it's kept for analysis (e.g. why deals are lost).
           </p>
-          <div className="space-y-1.5">
-            <Label>Reason *</Label>
-            <Combo value={reason} onChange={setReason} options={reasons} placeholder={reasons.length ? 'Choose a reason…' : 'Type a reason…'} />
-            <p className="text-muted-foreground text-xs">Manage the reason list under Settings → Quotation Cancellation Reasons.</p>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Note (optional)</Label>
-            <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Any extra detail…" />
-          </div>
+          <CancelReasonFields reasons={reasons} reason={reason} note={note} onReason={setReason} onNote={setNote} />
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose}>

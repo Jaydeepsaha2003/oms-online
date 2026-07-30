@@ -510,6 +510,10 @@ model Order {
   ordType        String    @default("SALES ORDER")
   comment        String?
   userName       String?
+  // Why the order was cancelled (chosen from the shared Cancellation Reasons list;
+  // cancelNote holds the free-typed detail when the reason is "Others").
+  cancelReason   String?
+  cancelNote     String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 

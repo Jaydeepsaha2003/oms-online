@@ -32,6 +32,7 @@ export class OrdersService {
     if (query.design) lineFilters.push({ items: { some: { designType: query.design } } });
     const where: Prisma.OrderWhereInput = {
       ...(query.status ? { status: uc(query.status)! } : {}),
+      ...(query.agent ? { agentName: query.agent } : {}),
       ...(lineFilters.length ? { AND: lineFilters } : {}),
       ...(search
         ? {
@@ -248,7 +249,7 @@ export class OrdersService {
   /** Cancel / restore an order. Cancelling is only allowed while the order is
    *  untouched — once any line has a dispatch, the order can no longer be
    *  cancelled (the record must stay consistent with the dispatch history). */
-  async updateStatus(id: number, status: 'CONFIRMED' | 'CANCELLED'): Promise<OrderDto> {
+  async updateStatus(id: number, status: 'CONFIRMED' | 'CANCELLED', reason?: string, note?: string): Promise<OrderDto> {
     const order = await this.prisma.order.findUnique({ where: { id }, select: { id: true, items: { select: { id: true } } } });
     if (!order) throw new NotFoundException('Order not found.');
     if (status === 'CANCELLED' && order.items.length) {
@@ -257,7 +258,12 @@ export class OrdersService {
         throw new BadRequestException('This order already has dispatches — it can no longer be cancelled.');
       }
     }
-    const row = await this.prisma.order.update({ where: { id }, data: { status }, include: INCLUDE });
+    // Record why on cancel; clear it when the order is restored to CONFIRMED.
+    const cancelData =
+      status === 'CANCELLED'
+        ? { cancelReason: reason?.trim() || null, cancelNote: note?.trim() || null }
+        : { cancelReason: null, cancelNote: null };
+    const row = await this.prisma.order.update({ where: { id }, data: { status, ...cancelData }, include: INCLUDE });
     // Cancelling/restoring the order changes whether its booking lines count as
     // drawn — recompute any booking it references.
     await this.recomputeBookings(this.bookingIdsOf(row.items));
@@ -342,9 +348,10 @@ export class OrdersService {
   /** Distinct product / design values present on order lines, for the Orders
    *  page filter dropdowns (only values that can actually match something). */
   async filterOptions(): Promise<OrderFilterOptions> {
-    const rows = await this.prisma.orderItem.findMany({
-      select: { productName: true, product: true, designType: true },
-    });
+    const [rows, orderRows] = await Promise.all([
+      this.prisma.orderItem.findMany({ select: { productName: true, product: true, designType: true } }),
+      this.prisma.order.findMany({ select: { agentName: true }, distinct: ['agentName'], orderBy: { agentName: 'asc' } }),
+    ]);
     const products = new Set<string>();
     const designs = new Set<string>();
     for (const r of rows) {
@@ -353,7 +360,8 @@ export class OrdersService {
       if (r.designType && r.designType.toUpperCase() !== 'NA') designs.add(r.designType);
     }
     const sorted = (s: Set<string>) => [...s].sort((a, b) => a.localeCompare(b));
-    return { products: sorted(products), designs: sorted(designs) };
+    const agents = orderRows.map((o) => o.agentName).filter((a): a is string => !!a).sort((a, b) => a.localeCompare(b));
+    return { agents, products: sorted(products), designs: sorted(designs) };
   }
 
   async lookups(): Promise<OrderLookupsWire> {
@@ -1035,6 +1043,8 @@ export class OrdersService {
       ordType: r.ordType,
       comment: r.comment,
       userName: r.userName,
+      cancelReason: r.cancelReason ?? null,
+      cancelNote: r.cancelNote ?? null,
       items,
       itemCount: active.length,
       totalRate: active.reduce((s, it) => s + (it.rate ?? 0), 0),

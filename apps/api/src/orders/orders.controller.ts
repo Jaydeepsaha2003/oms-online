@@ -97,7 +97,7 @@ export class OrdersController {
   @Permissions(perm(R, ACTIONS.UPDATE))
   @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Changed a sales order status' })
   updateStatus(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateOrderStatusDto) {
-    return this.orders.updateStatus(id, dto.status);
+    return this.orders.updateStatus(id, dto.status, dto.reason, dto.note);
   }
 
   @Patch(':id')

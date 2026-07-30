@@ -27,6 +27,7 @@ const PAGE_SIZE = 50;
 const FILTER_KEY = 'oms:order-modify-filters';
 interface OrderModifyFilters {
   search: string;
+  agent: string;
   product: string;
   design: string;
   priority: string;
@@ -132,6 +133,7 @@ export function OrderModifyPage() {
   const navigate = useNavigate();
   const confirm = useConfirm();
   const [search, setSearch] = useState(() => loadFilters().search ?? '');
+  const [agent, setAgent] = useState(() => loadFilters().agent ?? '');
   const [product, setProduct] = useState(() => loadFilters().product ?? '');
   const [design, setDesign] = useState(() => loadFilters().design ?? '');
   const [priority, setPriority] = useState(() => loadFilters().priority ?? '');
@@ -139,13 +141,14 @@ export function OrderModifyPage() {
 
   // Persist the current filters whenever they change.
   useEffect(() => {
-    sessionStorage.setItem(FILTER_KEY, JSON.stringify({ search, product, design, priority, page }));
-  }, [search, product, design, priority, page]);
+    sessionStorage.setItem(FILTER_KEY, JSON.stringify({ search, agent, product, design, priority, page }));
+  }, [search, agent, product, design, priority, page]);
 
   const { data, isLoading } = useOrders({
     page,
     pageSize: PAGE_SIZE,
     search: search || undefined,
+    agent: agent || undefined,
     product: product || undefined,
     design: design || undefined,
   });
@@ -157,9 +160,10 @@ export function OrderModifyPage() {
   const { format, setFormat } = useDateFormat();
 
   const [edit, setEdit] = useState<Row | null>(null);
-  const hasFilters = !!search || !!product || !!design || !!priority;
+  const hasFilters = !!search || !!agent || !!product || !!design || !!priority;
   const resetFilters = () => {
     setSearch('');
+    setAgent('');
     setProduct('');
     setDesign('');
     setPriority('');
@@ -252,6 +256,14 @@ export function OrderModifyPage() {
               setSearch(e.target.value.trim());
               setPage(1);
             }}
+          />
+        </div>
+        <div className="w-40">
+          <NativeSelect
+            value={agent}
+            onChange={(v) => { setAgent(v); setPage(1); }}
+            options={['', ...(filterOptions?.agents ?? [])]}
+            placeholder="All agents"
           />
         </div>
         <div className="w-44">

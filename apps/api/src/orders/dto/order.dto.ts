@@ -26,6 +26,10 @@ export class UpdateOrderDto extends PartialType(CreateOrderDto) {}
 
 export class UpdateOrderStatusDto {
   @IsIn(['CONFIRMED', 'CANCELLED']) status!: 'CONFIRMED' | 'CANCELLED';
+  /** Cancellation reason (from the shared Cancellation Reasons list). */
+  @IsOptional() @IsString() reason?: string;
+  /** Free-typed detail, used when the reason is "Others". */
+  @IsOptional() @IsString() note?: string;
 }
 
 /** Attach an already-uploaded file (from POST /files/upload) to an order line. */
@@ -42,6 +46,7 @@ export class OrderQueryDto extends PaginationDto {
   @IsString()
   status?: string;
 
+  @IsOptional() @IsString() agent?: string;
   /** Keep orders containing this product / design on any line (exact match). */
   @IsOptional() @IsString() product?: string;
   @IsOptional() @IsString() design?: string;
