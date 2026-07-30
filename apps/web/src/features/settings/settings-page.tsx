@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { ImageIcon, Loader2, Plus, Settings as SettingsIcon, Trash2, Upload } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ImageIcon, Loader2, Plus, Settings as SettingsIcon, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
-import { SETTING_GROUP_META, type OrderOptionDto, type SettingGroupMeta } from '@oms/shared';
+import { DEFAULT_ORDER_QTY_LAYOUT, normalizeQtyOrder, QTY_FIELD_LABEL, SETTING_GROUP_META, type OrderOptionDto, type OrderQtyLayout, type QtyField, type SettingGroupMeta } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useAutoSizePcs } from '@/lib/auto-size-pcs';
+import { useOrderLookups } from '@/features/orders/use-orders';
 import { AccessImportCard } from './access-import-card'; // MS Access connector — Access stays a live parallel data source
 import { CrmReminderCard } from '@/features/crm/crm-settings-card';
 import { MyDevicesCard } from './my-devices-card';
@@ -24,9 +25,11 @@ import {
   useOrderFooter,
   useOrderTerms,
   useSettings,
+  useOrderQtyLayout,
   useUpdateChallanTerms,
   useUpdateCompany,
   useUpdateOrderFooter,
+  useUpdateOrderQtyLayout,
   useUpdateOrderTerms,
 } from './use-settings';
 
@@ -62,6 +65,8 @@ export function SettingsPage() {
       {canEdit && <AccessImportCard />}
 
       <PreferencesCard />
+
+      <OrderQtyLayoutCard canEdit={canEdit} />
 
       <ChallanPrefixCard canEdit={canEdit} />
 
@@ -100,6 +105,100 @@ function PreferencesCard() {
           </span>
           <Switch checked={autoSizePcs} onCheckedChange={setAutoSizePcs} />
         </label>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Arrange the New Order quantity inputs (Bags/Pcs/Kgs/Box) — a default order,
+ *  plus per-category overrides so, e.g., cup categories can lead with Box. */
+function OrderQtyLayoutCard({ canEdit }: { canEdit: boolean }) {
+  const { data: saved } = useOrderQtyLayout();
+  const { data: lookups } = useOrderLookups();
+  const save = useUpdateOrderQtyLayout();
+  const [layout, setLayout] = useState<OrderQtyLayout>(DEFAULT_ORDER_QTY_LAYOUT);
+  const [addCat, setAddCat] = useState('');
+
+  useEffect(() => { if (saved) setLayout({ default: normalizeQtyOrder(saved.default), byCategory: saved.byCategory ?? {} }); }, [saved]);
+
+  const categories = lookups?.categories ?? [];
+  const configured = Object.keys(layout.byCategory).sort((a, b) => a.localeCompare(b));
+  const available = categories.filter((c) => !layout.byCategory[c.trim().toUpperCase()]);
+
+  const move = (order: QtyField[], i: number, dir: -1 | 1): QtyField[] => {
+    const j = i + dir;
+    if (j < 0 || j >= order.length) return order;
+    const next = [...order];
+    [next[i], next[j]] = [next[j], next[i]];
+    return next;
+  };
+  const setDefault = (order: QtyField[]) => setLayout((l) => ({ ...l, default: order }));
+  const setCat = (cat: string, order: QtyField[]) => setLayout((l) => ({ ...l, byCategory: { ...l.byCategory, [cat]: order } }));
+  const removeCat = (cat: string) => setLayout((l) => { const { [cat]: _drop, ...rest } = l.byCategory; return { ...l, byCategory: rest }; });
+  const addCategory = () => {
+    const key = addCat.trim().toUpperCase();
+    if (!key) return;
+    setLayout((l) => ({ ...l, byCategory: { ...l.byCategory, [key]: normalizeQtyOrder(l.default) } }));
+    setAddCat('');
+  };
+
+  const onSave = () => save.mutate(layout, {
+    onSuccess: () => toast.success('Quantity-field layout saved'),
+    onError: (e) => toast.error(getApiErrorMessage(e, 'Save failed')),
+  });
+
+  const Row = ({ order, onChange, onRemove, title }: { order: QtyField[]; onChange: (o: QtyField[]) => void; onRemove?: () => void; title: string }) => (
+    <div className="rounded-lg border bg-slate-50/60 p-2.5">
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <span className="text-sm font-medium">{title}</span>
+        {onRemove && canEdit && (
+          <button type="button" onClick={onRemove} className="text-muted-foreground hover:text-destructive rounded p-1" aria-label={`Remove ${title}`}><Trash2 className="size-3.5" /></button>
+        )}
+      </div>
+      <div className="flex flex-wrap items-stretch gap-1.5">
+        {order.map((f, i) => (
+          <div key={f} className="bg-card flex items-center gap-1 rounded-md border px-2 py-1">
+            <span className="text-primary/60 text-[11px] font-bold tabular-nums">{i + 1}</span>
+            <span className="text-sm font-medium">{QTY_FIELD_LABEL[f]}</span>
+            {canEdit && (
+              <span className="ml-1 flex">
+                <button type="button" disabled={i === 0} onClick={() => onChange(move(order, i, -1))} className="text-muted-foreground hover:text-foreground disabled:opacity-30" aria-label="Move left"><ArrowLeft className="size-3.5" /></button>
+                <button type="button" disabled={i === order.length - 1} onClick={() => onChange(move(order, i, 1))} className="text-muted-foreground hover:text-foreground disabled:opacity-30" aria-label="Move right"><ArrowRight className="size-3.5" /></button>
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Order quantity fields</CardTitle>
+        <p className="text-muted-foreground text-xs">Arrange how Bags / Pcs / Kgs / Box appear on the New Order form — a default order, and per-category overrides applied to the selected item's category.</p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <Row order={layout.default} onChange={setDefault} title="Default (all categories)" />
+        {configured.map((cat) => (
+          <Row key={cat} order={normalizeQtyOrder(layout.byCategory[cat])} onChange={(o) => setCat(cat, o)} onRemove={() => removeCat(cat)} title={cat} />
+        ))}
+        {canEdit && (
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <select
+              value={addCat}
+              onChange={(e) => setAddCat(e.target.value)}
+              className="border-input h-9 rounded-md border bg-transparent px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+            >
+              <option value="">Add a category override…</option>
+              {available.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <Button type="button" variant="outline" size="sm" onClick={addCategory} disabled={!addCat.trim()}><Plus className="size-4" /> Add</Button>
+            <Button type="button" size="sm" className="ml-auto" onClick={onSave} disabled={save.isPending}>
+              {save.isPending ? <Loader2 className="size-4 animate-spin" /> : null} Save layout
+            </Button>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

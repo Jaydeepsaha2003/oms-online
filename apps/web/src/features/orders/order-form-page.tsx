@@ -13,7 +13,7 @@ import {
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRightLeft, BadgePercent, Camera, Check, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Lock, PackageOpen, Pencil, Plus, RotateCcw, Save, Settings2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { ORDER_PRIORITIES, RESOURCES, resolveSpecialRates, type OrderInput } from '@oms/shared';
+import { ORDER_PRIORITIES, RESOURCES, resolveSpecialRates, qtyOrderForCategory, type OrderInput, type QtyField } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useAutoSizePcs } from '@/lib/auto-size-pcs';
@@ -29,7 +29,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Switch } from '@/components/ui/switch';
 import { NativeSelect } from '@/components/common/combo';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { settingValues, useSettings } from '@/features/settings/use-settings';
+import { settingValues, useOrderQtyLayout, useSettings } from '@/features/settings/use-settings';
 import { useCustomerSpecialRates } from '@/features/special-rates/use-special-rates';
 import { useCreateOrder, useOrder, useOrderLookups, useUpdateOrder } from './use-orders';
 import { useConvertQuotation, useCreateQuotation, useQuotation, useUpdateQuotation } from '../quotations/use-quotations';
@@ -218,6 +218,7 @@ export function OrderFormPage() {
 
   const { data: lookups } = useOrderLookups();
   const { data: settings } = useSettings();
+  const { data: qtyLayout } = useOrderQtyLayout();
   const orderQuery = useOrder(docKind === 'order' ? id : undefined);
   const quotationQuery = useQuotation(docKind === 'quotation' ? id : undefined);
   const existing = docKind === 'quotation' ? quotationQuery.data : orderQuery.data;
@@ -1277,41 +1278,56 @@ export function OrderFormPage() {
               <Label className="text-base">Priority</Label>
               <NativeSelect value={entry.priority} onChange={(v) => setEntryField({ priority: v })} options={[...ORDER_PRIORITIES]} />
             </div>
-            <div className="space-y-1 lg:col-span-1" data-tabfield="bags">
-              <Label className="text-base">Bags</Label>
-              <Input type="number" step="any" min={0} value={entry.bags} onKeyDown={onlyNumericKey} onChange={(e) => onBags(e.target.value)} />
-            </div>
-            <div className="space-y-1 lg:col-span-1" data-tabfield="pcs">
-              <Label className={cn('text-base', showBy === 'PCS' && 'text-primary font-semibold')}>Pcs</Label>
-              <Input type="number" step="any" min={0} value={entry.pcs} onKeyDown={onlyNumericKey} onChange={(e) => onPcs(e.target.value)} />
-            </div>
-            <div className="space-y-1 lg:col-span-1" data-tabfield="gram">
-              <Label className={cn('text-base', showBy === 'SIZE' && 'text-primary font-semibold')}>Kgs</Label>
-              <Input type="number" step="any" min={0} value={entry.gram} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ gram: e.target.value })} />
-            </div>
-            <div className="space-y-1 lg:col-span-2" data-tabfield="box">
-              <Label className="text-base">Box</Label>
-              <div className="flex gap-1">
-                <Input type="number" step="any" min={0} value={entry.box} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ box: e.target.value })} />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="size-9 shrink-0 text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700 disabled:text-slate-300"
-                  disabled={boxPreview == null}
-                  onClick={fillBox}
-                  aria-label="Fill boxes required"
-                  title={boxPreview == null ? 'Enter Pcs (product needs pieces-per-box) to fill boxes' : `Fill boxes required — ${boxPreview} box (Pcs ÷ pcs-per-box)`}
-                >
-                  <Check className="size-4" />
-                </Button>
-              </div>
-              {boxPreview != null && Number(entry.box) !== boxPreview && (
-                <button type="button" onClick={fillBox} className="text-[11px] font-medium text-emerald-600 hover:underline">
-                  {boxPreview} box required — tap ✓ to fill
-                </button>
-              )}
-            </div>
+            {/* Bags / Pcs / Kgs / Box — order is configurable per product category
+                in Settings → Order quantity fields; falls back to the default order. */}
+            {qtyOrderForCategory(qtyLayout, entry.category).map((f: QtyField) => {
+              if (f === 'bags')
+                return (
+                  <div key="bags" className="space-y-1 lg:col-span-1" data-tabfield="bags">
+                    <Label className="text-base">Bags</Label>
+                    <Input type="number" step="any" min={0} value={entry.bags} onKeyDown={onlyNumericKey} onChange={(e) => onBags(e.target.value)} />
+                  </div>
+                );
+              if (f === 'pcs')
+                return (
+                  <div key="pcs" className="space-y-1 lg:col-span-1" data-tabfield="pcs">
+                    <Label className={cn('text-base', showBy === 'PCS' && 'text-primary font-semibold')}>Pcs</Label>
+                    <Input type="number" step="any" min={0} value={entry.pcs} onKeyDown={onlyNumericKey} onChange={(e) => onPcs(e.target.value)} />
+                  </div>
+                );
+              if (f === 'kgs')
+                return (
+                  <div key="kgs" className="space-y-1 lg:col-span-1" data-tabfield="gram">
+                    <Label className={cn('text-base', showBy === 'SIZE' && 'text-primary font-semibold')}>Kgs</Label>
+                    <Input type="number" step="any" min={0} value={entry.gram} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ gram: e.target.value })} />
+                  </div>
+                );
+              return (
+                <div key="box" className="space-y-1 lg:col-span-2" data-tabfield="box">
+                  <Label className="text-base">Box</Label>
+                  <div className="flex gap-1">
+                    <Input type="number" step="any" min={0} value={entry.box} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ box: e.target.value })} />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="size-9 shrink-0 text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700 disabled:text-slate-300"
+                      disabled={boxPreview == null}
+                      onClick={fillBox}
+                      aria-label="Fill boxes required"
+                      title={boxPreview == null ? 'Enter Pcs (product needs pieces-per-box) to fill boxes' : `Fill boxes required — ${boxPreview} box (Pcs ÷ pcs-per-box)`}
+                    >
+                      <Check className="size-4" />
+                    </Button>
+                  </div>
+                  {boxPreview != null && Number(entry.box) !== boxPreview && (
+                    <button type="button" onClick={fillBox} className="text-[11px] font-medium text-emerald-600 hover:underline">
+                      {boxPreview} box required — tap ✓ to fill
+                    </button>
+                  )}
+                </div>
+              );
+            })}
             <div className="col-span-2 space-y-1 sm:col-span-3 lg:col-span-2" data-tabfield="comment">
               <Label className="text-base">Remarks</Label>
               <Input value={entry.comment} onChange={(e) => setEntryField({ comment: e.target.value })} placeholder="Item remark…" />

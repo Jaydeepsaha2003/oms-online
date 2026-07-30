@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ChallanTermsDto, ChallanTermsInput, CompanyProfileDto, CompanyProfileInput, OrderFooterDto, OrderFooterInput, OrderOptionDto, OrderOptionInput, OrderTermsDto, OrderTermsInput } from '@oms/shared';
+import type { ChallanTermsDto, ChallanTermsInput, CompanyProfileDto, CompanyProfileInput, OrderFooterDto, OrderFooterInput, OrderOptionDto, OrderOptionInput, OrderQtyLayout, OrderTermsDto, OrderTermsInput } from '@oms/shared';
 import { http } from '@/lib/api';
 
 const KEY = ['settings'] as const;
@@ -7,6 +7,7 @@ const COMPANY_KEY = ['company'] as const;
 const ORDER_TERMS_KEY = ['order-terms'] as const;
 const ORDER_FOOTER_KEY = ['order-footer'] as const;
 const CHALLAN_TERMS_KEY = ['challan-terms'] as const;
+const ORDER_QTY_LAYOUT_KEY = ['order-qty-layout'] as const;
 
 export function useCompany() {
   return useQuery({
@@ -72,6 +73,22 @@ export function useUpdateChallanTerms() {
   return useMutation({
     mutationFn: (input: ChallanTermsInput) => http.put<ChallanTermsDto>('/settings/challan-terms', input),
     onSuccess: () => qc.invalidateQueries({ queryKey: CHALLAN_TERMS_KEY }),
+  });
+}
+
+export function useOrderQtyLayout() {
+  return useQuery({
+    queryKey: ORDER_QTY_LAYOUT_KEY,
+    queryFn: () => http.get<OrderQtyLayout>('/settings/order-qty-layout'),
+    staleTime: 60_000,
+  });
+}
+
+export function useUpdateOrderQtyLayout() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: OrderQtyLayout) => http.put<OrderQtyLayout>('/settings/order-qty-layout', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ORDER_QTY_LAYOUT_KEY }),
   });
 }
 

@@ -10,6 +10,7 @@ import { UpdateCompanyDto } from './dto/company.dto';
 import { UpdateOrderTermsDto } from './dto/order-terms.dto';
 import { UpdateOrderFooterDto } from './dto/order-footer.dto';
 import { UpdateChallanTermsDto } from './dto/challan-terms.dto';
+import { UpdateOrderQtyLayoutDto } from './dto/order-qty-layout.dto';
 
 const R = RESOURCES.SETTING;
 
@@ -80,6 +81,20 @@ export class SettingsController {
   @Audit({ action: ACTIONS.UPDATE, resource: R })
   updateChallanTerms(@Body() dto: UpdateChallanTermsDto) {
     return this.settings.updateChallanTerms(dto);
+  }
+
+  // Order quantity-field layout — read by the New Order form (any authenticated
+  // user), editable only with setting:update.
+  @Get('order-qty-layout')
+  getOrderQtyLayout() {
+    return this.settings.getOrderQtyLayout();
+  }
+
+  @Put('order-qty-layout')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  updateOrderQtyLayout(@Body() dto: UpdateOrderQtyLayoutDto) {
+    return this.settings.updateOrderQtyLayout(dto);
   }
 
   @Post()

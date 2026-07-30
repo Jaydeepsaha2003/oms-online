@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { type ChallanTermsDto, type CompanyProfileDto, type OrderFooterDto, type OrderOptionDto, type OrderTermsDto } from '@oms/shared';
+import { DEFAULT_ORDER_QTY_LAYOUT, normalizeQtyOrder, type ChallanTermsDto, type CompanyProfileDto, type OrderFooterDto, type OrderOptionDto, type OrderQtyLayout, type OrderTermsDto } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { uc } from '../common/coerce';
 import { CreateOrderOptionDto } from './dto/order-option.dto';
@@ -16,6 +16,7 @@ const COMPANY_LOGO = 'COMPANY_LOGO';
 const ORDER_TERMS = 'ORDER_TERMS';
 const ORDER_FOOTER = 'ORDER_FOOTER';
 const CHALLAN_TERMS = 'CHALLAN_TERMS';
+const ORDER_QTY_LAYOUT = 'ORDER_QTY_LAYOUT';
 // Shown until the business saves their own list from Settings.
 const DEFAULT_ORDER_TERMS = [
   'Payment Should Be Made Within 30 Days',
@@ -161,5 +162,38 @@ export class SettingsService {
     const value = JSON.stringify(terms);
     await this.prisma.appConfig.upsert({ where: { key: CHALLAN_TERMS }, update: { value }, create: { key: CHALLAN_TERMS, value } });
     return { terms };
+  }
+
+  /* ── Order quantity-field layout (per-category Bags/Pcs/Kgs/Box order) ────── */
+
+  async getOrderQtyLayout(): Promise<OrderQtyLayout> {
+    const row = await this.prisma.appConfig.findUnique({ where: { key: ORDER_QTY_LAYOUT } });
+    if (!row?.value) return { ...DEFAULT_ORDER_QTY_LAYOUT };
+    try {
+      return this.sanitizeLayout(JSON.parse(row.value));
+    } catch {
+      return { ...DEFAULT_ORDER_QTY_LAYOUT };
+    }
+  }
+
+  async updateOrderQtyLayout(dto: OrderQtyLayout): Promise<OrderQtyLayout> {
+    const clean = this.sanitizeLayout(dto);
+    await this.prisma.appConfig.upsert({ where: { key: ORDER_QTY_LAYOUT }, update: { value: JSON.stringify(clean) }, create: { key: ORDER_QTY_LAYOUT, value: JSON.stringify(clean) } });
+    return clean;
+  }
+
+  /** Coerce any stored/posted layout into a well-formed one: each list holds
+   *  exactly the four fields, category keys are upper-cased, and only categories
+   *  that actually differ from the default are kept. */
+  private sanitizeLayout(raw: Partial<OrderQtyLayout> | null | undefined): OrderQtyLayout {
+    const def = normalizeQtyOrder(raw?.default);
+    const byCategory: OrderQtyLayout['byCategory'] = {};
+    for (const [cat, order] of Object.entries(raw?.byCategory ?? {})) {
+      const key = cat.trim().toUpperCase();
+      if (!key) continue;
+      const norm = normalizeQtyOrder(order);
+      if (norm.join(',') !== def.join(',')) byCategory[key] = norm; // drop no-op overrides
+    }
+    return { default: def, byCategory };
   }
 }
