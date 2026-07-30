@@ -33,6 +33,10 @@ import {
 } from './use-crm';
 import { Chip, initials, itemLine, UrgencyChip } from './crm-shared';
 import { ChecklistInput, type ChecklistDraftItem } from './checklist-input';
+import { OwingPartiesWorklist, PartyBalancePanel, RecoveryMoneyStrip, type CollectPrefill } from './payment-desk';
+import { inrCompact, inrFull } from '@/features/dashboard/format';
+import { usePartyBalances } from './use-crm';
+import type { PartyBalanceSummary } from '@oms/shared';
 
 const STAGES = ['POLISHING', 'SUPPLIER', 'DISPATCH', 'READY'];
 const BUCKETS = [
@@ -66,9 +70,19 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<FollowupDto | null>(null);
+  const [prefill, setPrefill] = useState<CollectPrefill | null>(null);
 
   const isPay = kind === 'PAYMENT';
-  const openForm = (f: FollowupDto | null) => { setEditing(f); setFormOpen(true); };
+  const openForm = (f: FollowupDto | null) => { setEditing(f); setPrefill(null); setFormOpen(true); };
+  const openCollect = (p: CollectPrefill) => { setEditing(null); setPrefill(p); setFormOpen(true); };
+
+  // Payment desk: live party balances power the money strip + party-card badges.
+  const { data: balances = [] } = usePartyBalances(undefined, isPay);
+  const balByParty = useMemo(() => {
+    const m = new Map<string, PartyBalanceSummary>();
+    for (const b of balances) m.set(b.partyName.trim().toUpperCase(), b);
+    return m;
+  }, [balances]);
 
   return (
     <div className="space-y-4">
@@ -87,7 +101,13 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
         )}
       </div>
 
-      {/* KPI strip */}
+      {/* Money-at-a-glance strip (payment recovery) */}
+      {isPay && <RecoveryMoneyStrip balances={balances} />}
+
+      {/* Owing-parties worklist — pick a party and collect (payment recovery) */}
+      {isPay && <OwingPartiesWorklist onCollect={openCollect} onOpenParty={(p) => setSearch(p)} />}
+
+      {/* Follow-up KPI strip */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Kpi label="Overdue" value={summary?.overdue ?? 0} tone="rose" icon={<TriangleAlert className="size-4" />} active={bucket === 'overdue'} onClick={() => setBucket(bucket === 'overdue' ? '' : 'overdue')} />
         <Kpi label="Due today" value={summary?.dueToday ?? 0} tone="amber" icon={<Clock className="size-4" />} active={bucket === 'today'} onClick={() => setBucket(bucket === 'today' ? '' : 'today')} />
@@ -116,11 +136,11 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
         </div>
       ) : (
         <div className="grid gap-3 lg:grid-cols-2">
-          {groups.map((g) => <PartyCard key={g.partyName} group={g} canEdit={canEdit} onEdit={openForm} />)}
+          {groups.map((g) => <PartyCard key={g.partyName} group={g} canEdit={canEdit} onEdit={openForm} balance={balByParty.get(g.partyName.trim().toUpperCase())} />)}
         </div>
       )}
 
-      {formOpen && <FollowupForm kind={kind} editing={editing} onClose={() => setFormOpen(false)} />}
+      {formOpen && <FollowupForm kind={kind} editing={editing} prefill={prefill} onClose={() => setFormOpen(false)} />}
     </div>
   );
 }
@@ -142,7 +162,7 @@ function Kpi({ label, value, tone, icon, active, onClick }: { label: string; val
 
 /* ── Party card ──────────────────────────────────────────────────────────────── */
 
-function PartyCard({ group, canEdit, onEdit }: { group: FollowupPartyGroup; canEdit: boolean; onEdit: (f: FollowupDto) => void }) {
+function PartyCard({ group, canEdit, onEdit, balance }: { group: FollowupPartyGroup; canEdit: boolean; onEdit: (f: FollowupDto) => void; balance?: PartyBalanceSummary }) {
   return (
     <section className="bg-card overflow-hidden rounded-xl border shadow-sm">
       <div className="flex items-center gap-2 border-b bg-gradient-to-r from-slate-50 to-transparent px-3 py-2.5">
@@ -151,6 +171,11 @@ function PartyCard({ group, canEdit, onEdit }: { group: FollowupPartyGroup; canE
           <div className="truncate font-semibold">{group.partyName}</div>
           <div className="text-muted-foreground text-xs">{group.openCount} open{group.nextPromiseAt ? ` · next ${formatDate(group.nextPromiseAt)}` : ''}</div>
         </div>
+        {balance && balance.outstanding > 0 && (
+          <Chip tone={balance.overdue > 0 ? 'rose' : 'amber'} className="tabular-nums" >
+            <span title={inrFull(balance.outstanding)}>{inrCompact(balance.outstanding)} due</span>
+          </Chip>
+        )}
         {group.overdueCount > 0 && <Chip tone="rose">{group.overdueCount} overdue</Chip>}
         {group.activeNudges > 0 && <Chip tone="violet"><AlarmClock className="size-3" /> {group.activeNudges}</Chip>}
       </div>
@@ -501,23 +526,23 @@ function ItemLinesEditor({
   );
 }
 
-function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing: FollowupDto | null; onClose: () => void }) {
+function FollowupForm({ kind, editing, prefill, onClose }: { kind: FollowupKind; editing: FollowupDto | null; prefill?: CollectPrefill | null; onClose: () => void }) {
   const create = useCreateFollowup();
   const update = useUpdateFollowup();
   const addChecklist = useAddChecklist();
-  const [party, setParty] = useState(editing?.partyName ?? '');
-  const [customerId, setCustomerId] = useState<number | null>(editing?.customerId ?? null);
+  const [party, setParty] = useState(editing?.partyName ?? prefill?.party ?? '');
+  const [customerId, setCustomerId] = useState<number | null>(editing?.customerId ?? prefill?.customerId ?? null);
   const [partyQuery, setPartyQuery] = useState('');
   const [orderQuery, setOrderQuery] = useState('');
   const [orderId, setOrderId] = useState<number | null>(editing?.orderId ?? null);
   const [orderCode, setOrderCode] = useState(editing?.orderCode ?? '');
   const [orderItemId, setOrderItemId] = useState<number | null>(editing?.orderItemId ?? null);
-  const [itemText, setItemText] = useState(editing?.itemText ?? '');
+  const [itemText, setItemText] = useState(editing?.itemText ?? prefill?.itemText ?? '');
   const [title, setTitle] = useState(editing?.title ?? '');
   const [stage, setStage] = useState(editing?.stage ?? '');
   const [priority, setPriority] = useState(editing?.priority ?? 'NORMAL');
   const [promisedAt, setPromisedAt] = useState(editing?.promisedAt?.slice(0, 10) ?? '');
-  const [promisedAmount, setPromisedAmount] = useState(editing?.promisedAmount != null ? String(editing.promisedAmount) : '');
+  const [promisedAmount, setPromisedAmount] = useState(editing?.promisedAmount != null ? String(editing.promisedAmount) : prefill?.amount ? String(prefill.amount) : '');
   const [interval, setIntervalMins] = useState(editing?.reminderIntervalMins ? String(editing.reminderIntervalMins) : '');
   const [maxPerDay, setMaxPerDay] = useState(editing?.maxRemindersPerDay != null ? String(editing.maxRemindersPerDay) : '');
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -693,6 +718,14 @@ function FollowupForm({ kind, editing, onClose }: { kind: FollowupKind; editing:
             hint={isPay ? 'Type what the payment is for.' : 'Any details or discussion — one line or many.'}
           >
             <div className="space-y-4">
+              {isPay && (party.trim() || customerId != null) && (
+                <PartyBalancePanel
+                  customerId={customerId}
+                  party={party}
+                  onPickAmount={(amount, label) => { setPromisedAmount(String(amount)); if (!itemText.trim()) setItemText(`${label} to collect`); }}
+                  onPickInvoice={(code, bal) => { setPromisedAmount(String(bal)); setItemText(`${inrFull(bal)} for ${code}`); }}
+                />
+              )}
               {isPay && (
                 <div>
                   <div className="text-muted-foreground mb-1 text-xs font-semibold tracking-wide uppercase">Payment</div>

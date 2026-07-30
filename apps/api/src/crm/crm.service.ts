@@ -15,6 +15,9 @@ import {
   type FollowupStatus,
   type FollowupSummary,
   type Paginated,
+  type PartyBalanceDetail,
+  type PartyBalanceSummary,
+  type PromiseState,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { toNum, toStr, uc } from '../common/coerce';
@@ -422,6 +425,175 @@ export class CrmService {
       })
       .filter((it) => it.remBags > 0 || it.remPcs > 0 || it.remGram > 0 || it.remBox > 0)
       .slice(0, 40);
+  }
+
+  /* ── Party payment balances (Recovery Desk) ─────────────────────────────────
+   * A collector needs to SEE what a party owes before working a payment
+   * follow-up. These read live confirmed-sales exposure (billed − received),
+   * fused with the party's PAYMENT-follow-up promise state. Balances are
+   * all-time — an open invoice is open regardless of any date window. */
+
+  /** Every owing party at a glance, ranked overdue-first. Optional `search`
+   *  filters by party name or agent. */
+  async partyBalances(search?: string): Promise<PartyBalanceSummary[]> {
+    const all = await this.computeBalances();
+    const s = search?.trim().toLowerCase();
+    const list = s ? all.filter((p) => p.partyName.toLowerCase().includes(s) || (p.agent ?? '').toLowerCase().includes(s)) : all;
+    return list.map(({ invoices: _invoices, ...rest }) => rest);
+  }
+
+  /** One party's balance with its open-invoice breakdown. Returns a zeroed
+   *  detail (not null) for a known party with nothing outstanding, so the form
+   *  can always show "cleared". */
+  async partyBalance(customerId?: number, party?: string): Promise<PartyBalanceDetail | null> {
+    const all = await this.computeBalances();
+    if (customerId != null) {
+      const hit = all.find((p) => p.customerId === customerId);
+      if (hit) return hit;
+    }
+    const p = party?.trim();
+    if (p) {
+      const key = p.toUpperCase();
+      const hit = all.find((x) => x.partyName.trim().toUpperCase() === key);
+      if (hit) return hit;
+      // Known/typed party with no open exposure → cleared shell (still carry CRM state).
+      const cust = customerId != null ? await this.prisma.customer.findUnique({ where: { id: customerId }, select: { agentName: true } }) : null;
+      const crm = await this.crmOverlayFor(customerId ?? null, p);
+      return {
+        customerId: customerId ?? null, partyName: p, agent: cust?.agentName ?? null,
+        outstanding: 0, overdue: 0, dueSoon: 0, oldestDays: 0, invoiceCount: 0, lastReceiptAt: null, advanceHeld: 0,
+        ...crm, invoices: [],
+      };
+    }
+    return null;
+  }
+
+  private startOfDay(d: Date): Date {
+    const x = new Date(d);
+    x.setHours(0, 0, 0, 0);
+    return x;
+  }
+
+  /** Shared engine: build every owing party's balance + CRM overlay. */
+  private async computeBalances(): Promise<PartyBalanceDetail[]> {
+    const now = new Date();
+    const today = this.startOfDay(now);
+    const DAY = 86_400_000;
+    const SALES = new Set(['SALES INVOICE', 'DEBIT NOTE']);
+    const r0 = (x: number) => Math.round(x);
+    const num = (v: unknown) => toNum(v) ?? 0;
+    const [challans, custRows, receipts, advances, payFollowups] = await Promise.all([
+      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { code: true, total: true, invDate: true, dueDate: true, customerId: true, customerName: true, transaction: true } }),
+      this.prisma.customer.findMany({ select: { id: true, agentName: true } }),
+      this.prisma.acctPaymentReceipt.findMany({ select: { custId: true, invNo: true, recAmt: true, recDate: true } }),
+      this.prisma.acctPartyAdvance.findMany({ select: { custId: true, bankAmt: true, cashAmt: true } }),
+      this.prisma.followup.findMany({ where: { kind: 'PAYMENT' }, select: { customerId: true, partyName: true, status: true, promisedAt: true, promisedAmount: true, updatedAt: true } }),
+    ]);
+    const recvByInv = new Map<string, number>();
+    const lastRecByCust = new Map<number, Date>();
+    for (const r of receipts) {
+      recvByInv.set(r.invNo, (recvByInv.get(r.invNo) ?? 0) + num(r.recAmt));
+      const c = lastRecByCust.get(r.custId);
+      if (!c || r.recDate > c) lastRecByCust.set(r.custId, r.recDate);
+    }
+    const advByCust = new Map<number, number>();
+    for (const a of advances) advByCust.set(a.custId, (advByCust.get(a.custId) ?? 0) + num(a.bankAmt) + num(a.cashAmt));
+    const custMap = new Map(custRows.map((c) => [c.id, c]));
+
+    const map = new Map<string, PartyBalanceDetail>();
+    for (const c of challans) {
+      if (!SALES.has((c.transaction ?? '').trim().toUpperCase())) continue;
+      const received = recvByInv.get(c.code) ?? 0;
+      const bal = Math.max(0, num(c.total) - received);
+      if (bal <= 0) continue;
+      const key = c.customerName || '—';
+      let p = map.get(key);
+      if (!p) {
+        p = {
+          customerId: c.customerId ?? null, partyName: key,
+          agent: (c.customerId != null ? custMap.get(c.customerId)?.agentName : null) ?? null,
+          outstanding: 0, overdue: 0, dueSoon: 0, oldestDays: 0, invoiceCount: 0, lastReceiptAt: null, advanceHeld: 0,
+          openFollowups: 0, nextPromiseAt: null, nextPromiseAmount: null, promiseState: 'none', hasFollowup: false, invoices: [],
+        };
+        map.set(key, p);
+      }
+      p.outstanding += bal;
+      p.invoiceCount += 1;
+      let overdueDays = 0;
+      if (c.dueDate) {
+        const days = Math.floor((today.getTime() - this.startOfDay(c.dueDate).getTime()) / DAY);
+        if (days > 0) { p.overdue += bal; p.oldestDays = Math.max(p.oldestDays, days); overdueDays = days; }
+        else if (days >= -15) p.dueSoon += bal;
+      }
+      p.invoices.push({ code: c.code, invDate: c.invDate.toISOString(), dueDate: c.dueDate ? c.dueDate.toISOString() : null, total: r0(num(c.total)), received: r0(received), balance: r0(bal), overdueDays });
+    }
+
+    // CRM overlay (party PAYMENT follow-ups → promise state).
+    const crm = this.buildCrmOverlay(payFollowups, today, DAY);
+    for (const p of map.values()) {
+      if (p.customerId != null) {
+        p.advanceHeld = r0(advByCust.get(p.customerId) ?? 0);
+        const lr = lastRecByCust.get(p.customerId);
+        p.lastReceiptAt = lr ? lr.toISOString() : null;
+      }
+      p.outstanding = r0(p.outstanding);
+      p.overdue = r0(p.overdue);
+      p.dueSoon = r0(p.dueSoon);
+      p.invoices.sort((a, b) => b.overdueDays - a.overdueDays || (a.dueDate ?? a.invDate).localeCompare(b.dueDate ?? b.invDate));
+      const c = crm.get(p.customerId != null ? `c:${p.customerId}` : `n:${p.partyName.trim().toUpperCase()}`) ?? (p.customerId != null ? crm.get(`n:${p.partyName.trim().toUpperCase()}`) : undefined);
+      const o = this.crmToOverlay(c);
+      p.openFollowups = o.openFollowups; p.nextPromiseAt = o.nextPromiseAt; p.nextPromiseAmount = o.nextPromiseAmount; p.promiseState = o.promiseState; p.hasFollowup = o.hasFollowup;
+    }
+    return [...map.values()].sort((a, b) => b.overdue - a.overdue || b.outstanding - a.outstanding);
+  }
+
+  /* ── CRM overlay helpers (shared by balances + single-party lookup) ──────── */
+
+  private buildCrmOverlay(
+    followups: { customerId: number | null; partyName: string; status: string; promisedAt: Date | null; promisedAmount: number | null; updatedAt: Date }[],
+    today: Date,
+    DAY: number,
+  ) {
+    interface Crm { open: number; nextPromise: Date | null; nextAmount: number | null; broken: boolean; dueToday: boolean; any: boolean }
+    const crm = new Map<string, Crm>();
+    const nk = (name: string) => `n:${name.trim().toUpperCase()}`;
+    for (const fu of followups) {
+      const k = fu.customerId != null ? `c:${fu.customerId}` : nk(fu.partyName);
+      let c = crm.get(k);
+      if (!c) { c = { open: 0, nextPromise: null, nextAmount: null, broken: false, dueToday: false, any: false }; crm.set(k, c); }
+      c.any = true;
+      if (fu.status === 'OPEN') {
+        c.open += 1;
+        if (fu.promisedAt) {
+          if (!c.nextPromise || fu.promisedAt < c.nextPromise) { c.nextPromise = fu.promisedAt; c.nextAmount = fu.promisedAmount ?? null; }
+          const days = Math.floor((today.getTime() - this.startOfDay(fu.promisedAt).getTime()) / DAY);
+          if (days > 0) c.broken = true;
+          else if (days === 0) c.dueToday = true;
+        }
+      }
+    }
+    return crm;
+  }
+
+  private crmToOverlay(c?: { open: number; nextPromise: Date | null; nextAmount: number | null; broken: boolean; dueToday: boolean; any: boolean }): {
+    openFollowups: number; nextPromiseAt: string | null; nextPromiseAmount: number | null; promiseState: PromiseState; hasFollowup: boolean;
+  } {
+    if (!c) return { openFollowups: 0, nextPromiseAt: null, nextPromiseAmount: null, promiseState: 'none', hasFollowup: false };
+    const promiseState: PromiseState = c.broken ? 'broken' : c.dueToday ? 'due today' : c.nextPromise ? 'upcoming' : 'none';
+    return { openFollowups: c.open, nextPromiseAt: c.nextPromise ? c.nextPromise.toISOString() : null, nextPromiseAmount: c.nextAmount, promiseState, hasFollowup: c.any };
+  }
+
+  /** Single-party CRM overlay (used by the cleared-party shell). */
+  private async crmOverlayFor(customerId: number | null, party: string) {
+    const DAY = 86_400_000;
+    const today = this.startOfDay(new Date());
+    const rows = await this.prisma.followup.findMany({
+      where: { kind: 'PAYMENT', ...(customerId != null ? { customerId } : { partyName: party }) },
+      select: { customerId: true, partyName: true, status: true, promisedAt: true, promisedAmount: true, updatedAt: true },
+    });
+    const crm = this.buildCrmOverlay(rows, today, DAY);
+    const c = crm.get(customerId != null ? `c:${customerId}` : `n:${party.trim().toUpperCase()}`);
+    return this.crmToOverlay(c);
   }
 
   /* ── helpers ────────────────────────────────────────────────────────────── */

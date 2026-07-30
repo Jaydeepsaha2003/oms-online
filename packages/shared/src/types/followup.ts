@@ -6,6 +6,7 @@
  * keeps surfacing it until it's resolved — you can *snooze* it, never *dismiss* it.
  */
 import type { Paginated, PaginationQuery } from './common';
+import type { PromiseState } from './report';
 
 export const FOLLOWUP_KINDS = ['DELIVERY', 'PAYMENT'] as const;
 export type FollowupKind = (typeof FOLLOWUP_KINDS)[number];
@@ -231,6 +232,56 @@ export interface AddFollowupLogInput {
   newPromisedAt?: string | null;
   /** Optionally record a new promise-to-pay amount (₹) with this re-promise. */
   newPromisedAmount?: number | null;
+}
+
+/* ── Party payment balances (Recovery Desk) ──────────────────────────────────── */
+
+/** One still-open sales invoice contributing to a party's balance. */
+export interface PartyOpenInvoice {
+  /** Human invoice number (Challan.code). */
+  code: string;
+  invDate: string;
+  dueDate: string | null;
+  total: number;
+  received: number;
+  balance: number;
+  /** Days past the due date (0 when not yet overdue / no due date). */
+  overdueDays: number;
+}
+
+/** A party's live payment balance at a glance — the money a collector needs
+ *  before starting a payment follow-up. Balances are all-time (an open invoice
+ *  is open regardless of any date window). */
+export interface PartyBalanceSummary {
+  customerId: number | null;
+  partyName: string;
+  agent: string | null;
+  /** Net receivable = billed − received, floored at 0, across open invoices. */
+  outstanding: number;
+  /** Portion of outstanding that is past its due date. */
+  overdue: number;
+  /** Portion due within the next 15 days. */
+  dueSoon: number;
+  /** Age (days) of the oldest overdue invoice; 0 when nothing is overdue. */
+  oldestDays: number;
+  /** Count of open (part-paid or unpaid) invoices. */
+  invoiceCount: number;
+  /** Most recent receipt date for this party. */
+  lastReceiptAt: string | null;
+  /** Unapplied advance money held for this party. */
+  advanceHeld: number;
+  // ── CRM overlay (from this party's PAYMENT follow-ups) ──
+  openFollowups: number;
+  nextPromiseAt: string | null;
+  nextPromiseAmount: number | null;
+  promiseState: PromiseState;
+  /** Whether the party has any PAYMENT follow-up at all (open or done). */
+  hasFollowup: boolean;
+}
+
+/** A party balance with its open-invoice breakdown (form drill-down). */
+export interface PartyBalanceDetail extends PartyBalanceSummary {
+  invoices: PartyOpenInvoice[];
 }
 
 /** CRM reminder defaults (AppConfig key CRM_REMINDER_DEFAULTS). */

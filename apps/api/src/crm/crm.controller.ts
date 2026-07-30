@@ -74,6 +74,20 @@ export class CrmController {
     return this.crm.orderItemSuggest(customerId ? Number(customerId) : undefined, party);
   }
 
+  /** Every owing party's live payment balance (Recovery Desk list). */
+  @Get('party-balances')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  partyBalances(@Query('search') search?: string) {
+    return this.crm.partyBalances(search);
+  }
+
+  /** One party's balance + open-invoice breakdown (form drill-down). */
+  @Get('party-balance')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  partyBalance(@Query('customerId') customerId?: string, @Query('party') party?: string) {
+    return this.crm.partyBalance(customerId ? Number(customerId) : undefined, party);
+  }
+
   @Get()
   @Permissions(perm(R, ACTIONS.VIEW))
   list(@Query() q: FollowupQueryDto) {

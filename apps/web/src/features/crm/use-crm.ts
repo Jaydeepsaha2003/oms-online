@@ -7,6 +7,8 @@ import type {
   FollowupPartyGroup,
   FollowupQuery,
   FollowupSummary,
+  PartyBalanceDetail,
+  PartyBalanceSummary,
   SaveFollowupInput,
 } from '@oms/shared';
 import { http } from '@/lib/api';
@@ -112,6 +114,32 @@ export function useOrderItemSuggest(customerId: number | null, party: string) {
         params: { ...(customerId ? { customerId } : {}), ...(party ? { party } : {}) },
       }),
     enabled: !!customerId || !!party.trim(),
+    staleTime: 15_000,
+  });
+}
+
+/* ── Party payment balances (Recovery Desk) ──────────────────────────────────── */
+
+/** Every owing party's live balance — the collector desk's worklist. */
+export function usePartyBalances(search?: string, enabled = true) {
+  return useQuery({
+    queryKey: [...KEY, 'party-balances', search ?? ''],
+    queryFn: () => http.get<PartyBalanceSummary[]>('/crm/followups/party-balances', { params: search ? { search } : undefined }),
+    enabled,
+    staleTime: 30_000,
+    placeholderData: (prev) => prev,
+  });
+}
+
+/** One party's balance + open-invoice breakdown (shown while filling a follow-up). */
+export function usePartyBalance(customerId: number | null, party: string, enabled = true) {
+  return useQuery({
+    queryKey: [...KEY, 'party-balance', customerId, party],
+    queryFn: () =>
+      http.get<PartyBalanceDetail | null>('/crm/followups/party-balance', {
+        params: { ...(customerId != null ? { customerId } : {}), ...(party ? { party } : {}) },
+      }),
+    enabled: enabled && (customerId != null || party.trim().length > 0),
     staleTime: 15_000,
   });
 }
