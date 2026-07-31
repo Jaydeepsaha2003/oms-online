@@ -98,6 +98,7 @@ export function DataTable<T>({
   maxBodyHeight,
   dense,
   hideRowView,
+  hideIdleSortIcon,
   className,
   mobileCard,
 }: {
@@ -116,6 +117,10 @@ export function DataTable<T>({
   /** Suppress the automatic "view" icon shown when rows are clickable (e.g. when
    *  the row click toggles selection rather than opening a form). */
   hideRowView?: boolean;
+  /** Hide the idle sort indicator (the faint up/down chevron shown on every
+   *  header). Headers then show no icon until clicked; the active column shows a
+   *  single up/down arrow reflecting its sort direction. */
+  hideIdleSortIcon?: boolean;
   /** Extra classes merged onto the table (e.g. bump the data font). twMerge lets
    *  a font-size / padding utility here override the dense/comfortable defaults. */
   className?: string;
@@ -224,7 +229,7 @@ export function DataTable<T>({
                     {col.header ?? col.label}
                     {sort?.id === col.id ? (
                       sort.dir === 'asc' ? <ArrowUp className="size-3.5" /> : <ArrowDown className="size-3.5" />
-                    ) : (
+                    ) : hideIdleSortIcon ? null : (
                       <ChevronsUpDown className="size-3 opacity-40 group-hover/sort:opacity-70" />
                     )}
                   </button>

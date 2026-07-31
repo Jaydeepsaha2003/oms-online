@@ -312,9 +312,14 @@ export function PendingChallanPage() {
         isLoading={isLoading}
         dense
         hideRowView
-        // Page-scoped polish: slightly larger body type, roomier rows, and a
-        // clearer soft-blue zebra (tied to the header) with a matching hover.
-        className="text-[15px] [&_td]:py-2.5 [&_tbody_tr:nth-child(even)_td]:bg-blue-50/70 [&_tbody_tr:hover_td]:bg-sky-100/70"
+        // No idle sort chevron on the headers — an up/down arrow appears only on
+        // the column you click to sort.
+        hideIdleSortIcon
+        // Page-scoped polish: Calibri semibold body in a slightly larger size for
+        // eye-catching, high-visibility rows, roomier rows, and a clear soft-blue
+        // zebra (tied to the header) with a matching hover. Calibri falls back to
+        // the app's default sans on devices without it (e.g. iPhones).
+        className="font-calibri text-[15px] [&_tbody_td]:font-semibold [&_td]:py-2.5 [&_tbody_tr:nth-child(even)_td]:bg-blue-50/70 [&_tbody_tr:hover_td]:bg-sky-100/70"
         mobileCard={pendingMobileCard}
         emptyText="No pending challan lines — everything dispatched has been challaned."
         onRowClick={(r) => toggle(r)}
