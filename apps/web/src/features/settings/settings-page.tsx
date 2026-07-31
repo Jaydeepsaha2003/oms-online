@@ -13,7 +13,9 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useAutoSizePcs } from '@/lib/auto-size-pcs';
 import { useOrderLookups } from '@/features/orders/use-orders';
-import { AccessImportCard } from './access-import-card'; // MS Access connector — Access stays a live parallel data source
+// MS Access connector hidden from Settings for now — re-enable the import and the
+// <AccessImportCard /> render below to bring it back.
+// import { AccessImportCard } from './access-import-card';
 import { CrmReminderCard } from '@/features/crm/crm-settings-card';
 import { MyDevicesCard } from './my-devices-card';
 import { TestNotificationCard } from './test-notification-card';
@@ -62,7 +64,7 @@ export function SettingsPage() {
 
       <ChallanTermsCard canEdit={canEdit} />
 
-      {canEdit && <AccessImportCard />}
+      {/* MS Access connector hidden for now — restore with: {canEdit && <AccessImportCard />} */}
 
       <PreferencesCard />
 
