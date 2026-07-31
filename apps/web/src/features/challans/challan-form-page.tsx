@@ -68,7 +68,10 @@ const n = (v: number | null | undefined) => (Number.isFinite(v as number) ? (v a
 const qty = (v: number | null | undefined) =>
   Number.isFinite(v as number) ? (v as number).toLocaleString('en-IN', { maximumFractionDigits: 3 }) : null;
 const itemLabel = (it: ChallanDraftItem) =>
-  `${it.productName || '(item)'} · ${it.design || 'NA'} · ${isKgs(it.unit) ? `${n(it.kgs)}kg` : `${n(it.pcs)}pc`} @ ₹${n(it.price)}  #${it.dispatchId}`;
+  // Quantities go through qty() (3-decimal, trailing zeros dropped) so the label —
+  // which is also the text shown in the Add-line field once picked — never leaks a
+  // raw float like 74.0999999 (matches how the grid/rows already render qty).
+  `${it.productName || '(item)'} · ${it.design || 'NA'} · ${isKgs(it.unit) ? `${qty(n(it.kgs))}kg` : `${qty(n(it.pcs))}pc`} @ ₹${n(it.price)}  #${it.dispatchId}`;
 
 // Shipping Address input is hidden for now — flip to true to bring the field back.
 // The value itself is still tracked/saved (defaults to the billing address), so
@@ -107,6 +110,10 @@ export function ChallanFormPage() {
   // Working state.
   const [rows, setRows] = useState<Row[]>([]);
   const [addSel, setAddSel] = useState('');
+  // Bumped after each add to force a clean remount of the Add-line select, so its
+  // field text clears instead of lingering on the item just added (the shared
+  // Combobox otherwise restores stale text on blur).
+  const [addKey, setAddKey] = useState(0);
   const [invDate, setInvDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [prefix, setPrefix] = useState('');
   const [manualCode, setManualCode] = useState(''); // '' = auto (server-assigned) invoice number
@@ -281,6 +288,7 @@ export function ChallanFormPage() {
     setRows(next);
     recalc(next);
     setAddSel('');
+    setAddKey((k) => k + 1); // remount the select so its field text resets to empty
   };
   // Bulk-add every remaining pending/dispatched item for this party in one go —
   // triggered by the mobile swipe gesture on the Bill To card (see touchStartRef below).
@@ -742,6 +750,7 @@ export function ChallanFormPage() {
                 {/* Phones: the picker takes its own row; Add / Manual split the next one. */}
                 <div className="w-full min-w-0 sm:w-auto sm:flex-1">
                   <NativeSelect
+                    key={addKey}
                     value={addSel}
                     onChange={setAddSel}
                     options={options}
