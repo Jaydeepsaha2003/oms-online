@@ -110,18 +110,18 @@ export function PendingChallanPage() {
         </span>
       ),
     },
-    { id: 'order', label: 'Ord #', sortValue: (r) => r.orderId ?? 0, cell: (r) => <span className="font-mono text-xs">{shortOrderCode(r.orderCode, r.orderId)}</span> },
-    { id: 'date', label: 'D-Date', sortValue: (r) => r.dispatchDate, cell: (r) => <span className="whitespace-nowrap">{formatDate(r.dispatchDate)}</span> },
-    // Customer renders like Product/Design (same weight/style) — no extra emphasis.
-    { id: 'customer', label: 'Customer', sortValue: (r) => r.customerName, cell: (r) => r.customerName || '—' },
-    { id: 'product', label: 'Product', sortValue: (r) => r.productName ?? '', cell: (r) => r.productName || '—' },
-    { id: 'design', label: 'Design', sortValue: (r) => r.design ?? '', cell: (r) => r.design || '—' },
-    { id: 'bags', label: 'Bags', align: 'right', sortValue: (r) => r.bags ?? 0, cell: (r) => <span className="tabular-nums">{num(r.bags)}</span> },
-    { id: 'kgs', label: 'Kgs', align: 'right', sortValue: (r) => r.kgs ?? 0, cell: (r) => <span className="tabular-nums">{num(r.kgs)}</span> },
-    { id: 'pcs', label: 'Pcs', align: 'right', sortValue: (r) => r.pcs ?? 0, cell: (r) => <span className="tabular-nums">{num(r.pcs)}</span> },
-    { id: 'box', label: 'Box', align: 'right', sortValue: (r) => r.box ?? 0, cell: (r) => <span className="tabular-nums">{num(r.box)}</span> },
-    { id: 'unit', label: 'Unit', sortValue: (r) => r.unit ?? '', cell: (r) => r.unit || '—' },
-    { id: 'rate', label: 'Rate', align: 'right', sortValue: (r) => r.rate ?? 0, cell: (r) => <span className="tabular-nums">{num(r.rate)}</span> },
+    { id: 'order', label: 'Ord #', sortValue: (r) => r.orderId ?? 0, cell: (r) => <span className="font-medium tabular-nums text-[13px]">{shortOrderCode(r.orderCode, r.orderId)}</span> },
+    { id: 'date', label: 'D-Date', sortValue: (r) => r.dispatchDate, cell: (r) => <span className="whitespace-nowrap text-[13px]">{formatDate(r.dispatchDate)}</span> },
+    // Customer is the row's primary identifier → medium 500.
+    { id: 'customer', label: 'Customer', sortValue: (r) => r.customerName, cell: (r) => <span className="font-medium text-[13px]">{r.customerName || '—'}</span> },
+    { id: 'product', label: 'Product', sortValue: (r) => r.productName ?? '', cell: (r) => <span className="text-[13px]">{r.productName || '—'}</span> },
+    { id: 'design', label: 'Design', sortValue: (r) => r.design ?? '', cell: (r) => <span className="text-[13px]">{r.design || '—'}</span> },
+    { id: 'bags', label: 'Bags', align: 'right', sortValue: (r) => r.bags ?? 0, cell: (r) => <span className="tabular-nums text-[13px]">{num(r.bags)}</span> },
+    { id: 'kgs', label: 'Kgs', align: 'right', sortValue: (r) => r.kgs ?? 0, cell: (r) => <span className="tabular-nums text-[13px]">{num(r.kgs)}</span> },
+    { id: 'pcs', label: 'Pcs', align: 'right', sortValue: (r) => r.pcs ?? 0, cell: (r) => <span className="tabular-nums text-[13px]">{num(r.pcs)}</span> },
+    { id: 'box', label: 'Box', align: 'right', sortValue: (r) => r.box ?? 0, cell: (r) => <span className="tabular-nums text-[13px]">{num(r.box)}</span> },
+    { id: 'unit', label: 'Unit', sortValue: (r) => r.unit ?? '', cell: (r) => <span className="text-[13px]">{r.unit || '—'}</span> },
+    { id: 'rate', label: 'Rate', align: 'right', sortValue: (r) => r.rate ?? 0, cell: (r) => <span className="tabular-nums text-[13px]">{num(r.rate)}</span> },
   ];
 
   const selectedCount = selected.size;
@@ -155,12 +155,12 @@ export function PendingChallanPage() {
   const pendingMobileCard = (r: PendingChallanLine) => {
     const isSel = selected.has(r.dispatchId);
     return (
-      <div className={cn('-m-3 space-y-1.5 rounded-lg p-3 transition-colors', isSel && 'bg-primary/5 ring-2 ring-primary')}>
+      <div className={cn('-m-3 space-y-1.5 rounded-lg p-3 font-sans transition-colors', isSel && 'bg-primary/5 ring-2 ring-primary')}>
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-muted-foreground font-mono text-xs font-semibold">{shortOrderCode(r.orderCode, r.orderId)}</p>
-            <p className="truncate leading-tight font-medium">{r.customerName}</p>
-            <p className="text-muted-foreground truncate text-xs">{r.productName || '—'}{r.design ? ` · ${r.design}` : ''}</p>
+            <p className="text-muted-foreground text-[11px] font-semibold uppercase tracking-widest tabular-nums">{shortOrderCode(r.orderCode, r.orderId)}</p>
+            <p className="truncate text-[14px] leading-tight font-medium">{r.customerName}</p>
+            <p className="text-muted-foreground truncate text-[11px]">{r.productName || '—'}{r.design ? ` · ${r.design}` : ''}</p>
           </div>
           <span
             className={cn(
@@ -171,25 +171,25 @@ export function PendingChallanPage() {
             {isSel && <Check className="size-3" strokeWidth={3} />}
           </span>
         </div>
-        <div className="grid grid-cols-4 gap-1.5 text-xs">
+        <div className="grid grid-cols-4 gap-1.5 text-[12px]">
           <div>
-            <p className="text-muted-foreground">Bags</p>
+            <p className="text-muted-foreground text-[10px] font-semibold uppercase tracking-widest">Bags</p>
             <p className="font-medium tabular-nums">{num(r.bags)}</p>
           </div>
           <div>
-            <p className="text-muted-foreground">Kgs</p>
+            <p className="text-muted-foreground text-[10px] font-semibold uppercase tracking-widest">Kgs</p>
             <p className="font-medium tabular-nums">{num(r.kgs)}</p>
           </div>
           <div>
-            <p className="text-muted-foreground">Pcs</p>
+            <p className="text-muted-foreground text-[10px] font-semibold uppercase tracking-widest">Pcs</p>
             <p className="font-medium tabular-nums">{num(r.pcs)}</p>
           </div>
           <div>
-            <p className="text-muted-foreground">Box</p>
+            <p className="text-muted-foreground text-[10px] font-semibold uppercase tracking-widest">Box</p>
             <p className="font-medium tabular-nums">{num(r.box)}</p>
           </div>
         </div>
-        <div className="text-muted-foreground flex items-center justify-between text-xs">
+        <div className="text-muted-foreground flex items-center justify-between text-[11px]">
           <span>{formatDate(r.dispatchDate)} · {r.unit || '—'}</span>
           <span className="font-semibold tabular-nums text-emerald-700">₹{num(r.rate)}</span>
         </div>
@@ -202,11 +202,11 @@ export function PendingChallanPage() {
       {/* Filters + the primary Create Challan action, all in one card. Search stays
           visible; From/To/Quick range collapse behind the Filter icon on phones. The
           page title lives in the top bar, so there's no separate header row. */}
-      <div className="bg-card flex flex-wrap items-end gap-2.5 rounded-md border p-2.5 shadow-sm sm:p-3">
+      <div className="bg-card flex flex-wrap items-end gap-2.5 rounded-md border p-2.5 font-sans shadow-sm sm:p-3">
         <div className="relative w-full sm:w-64">
-          <Label className="text-sm">Search</Label>
+          <Label className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Search</Label>
           <Search className="text-muted-foreground pointer-events-none absolute top-[34px] left-3 size-4" />
-          <Input className="pl-9 text-base" placeholder="Customer, product, design… (comma = multi)" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
+          <Input className="pl-9 text-[14px]" placeholder="Customer, product, design… (comma = multi)" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
         </div>
         <Button
           variant="outline"
@@ -224,16 +224,16 @@ export function PendingChallanPage() {
         </Button>
         <div className="hidden items-end gap-2.5 sm:flex sm:flex-wrap">
           <div className="space-y-1">
-            <Label className="text-sm">From</Label>
-            <Input type="date" className="w-40 text-base" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} />
+            <Label className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">From</Label>
+            <Input type="date" className="w-40 text-[14px]" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} />
           </div>
           <div className="space-y-1">
-            <Label className="text-sm">To</Label>
-            <Input type="date" className="w-40 text-base" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} />
+            <Label className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">To</Label>
+            <Input type="date" className="w-40 text-[14px]" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} />
           </div>
           <div className="w-40 space-y-1">
-            <Label className="text-sm">Quick range</Label>
-            <NativeSelect value={preset} onChange={applyPreset} options={['', ...PRESETS]} placeholder="Range…" className="text-base" />
+            <Label className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Quick range</Label>
+            <NativeSelect value={preset} onChange={applyPreset} options={['', ...PRESETS]} placeholder="Range…" className="text-[14px]" />
           </div>
           {(search || dateFrom || dateTo || preset) && (
             <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={clearAll}>
@@ -251,13 +251,13 @@ export function PendingChallanPage() {
               // party name (kept out of the pill to avoid clutter); the name is still
               // available on hover via the title. Mixed selections stay spelled out.
               title={selectedParties.length === 1 ? selectedParties[0] : selectedParties.length > 1 ? `Mixed customers: ${selectedParties.join(', ')}` : undefined}
-              className={cn('rounded-lg px-3 py-1.5 text-sm font-medium ring-1 ring-inset', selectedParties.length === 1 ? 'bg-sky-50 text-sky-700 ring-sky-200' : 'bg-amber-50 text-amber-700 ring-amber-200')}
+              className={cn('rounded-lg px-3 py-1.5 text-[13px] font-medium tabular-nums ring-1 ring-inset', selectedParties.length === 1 ? 'bg-sky-50 text-sky-700 ring-sky-200' : 'bg-amber-50 text-amber-700 ring-amber-200')}
             >
               {selectedCount} selected{selectedParties.length > 1 ? ' · mixed customers' : selectedParties[0] ? ' · (*)' : ''}
             </span>
           )}
           {canCreate && (
-            <Button onClick={createChallan} disabled={selectedCount === 0} className="flex-1 sm:flex-none" title="Create a challan from the selected lines — one customer (Ctrl+C)">
+            <Button onClick={createChallan} disabled={selectedCount === 0} className="flex-1 text-[14px] font-semibold sm:flex-none" title="Create a challan from the selected lines — one customer (Ctrl+C)">
               <ClipboardList /> Create Challan
             </Button>
           )}
@@ -284,16 +284,16 @@ export function PendingChallanPage() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1.5">
-                <Label className="text-muted-foreground text-xs font-medium uppercase">From</Label>
+                <Label className="text-muted-foreground text-[10px] font-semibold uppercase tracking-widest">From</Label>
                 <Input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-muted-foreground text-xs font-medium uppercase">To</Label>
+                <Label className="text-muted-foreground text-[10px] font-semibold uppercase tracking-widest">To</Label>
                 <Input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} />
               </div>
             </div>
             <div className="space-y-1.5">
-              <Label className="text-muted-foreground text-xs font-medium uppercase">Quick range</Label>
+              <Label className="text-muted-foreground text-[10px] font-semibold uppercase tracking-widest">Quick range</Label>
               <NativeSelect value={preset} onChange={applyPreset} options={['', ...PRESETS]} placeholder="Range…" />
             </div>
           </div>
@@ -315,18 +315,37 @@ export function PendingChallanPage() {
         // No idle sort chevron on the headers — an up/down arrow appears only on
         // the column you click to sort.
         hideIdleSortIcon
-        // Page-scoped polish: Calibri semibold body in a slightly larger size for
-        // eye-catching, high-visibility rows, roomier rows, and a clear soft-blue
-        // zebra (tied to the header) with a matching hover. Calibri falls back to
-        // the app's default sans on devices without it (e.g. iPhones).
-        className="font-calibri text-[15px] [&_tbody_td]:font-semibold [&_td]:py-2.5 [&_tbody_tr:nth-child(even)_td]:bg-blue-50/70 [&_tbody_tr:hover_td]:bg-sky-100/70"
+        // Inter Variable typography spec:
+        // • 13px data rows (font-normal 400), customer column uses font-medium 500
+        // • 10px bold uppercase column headers with wide tracking, muted foreground
+        // • Compact ~6px vertical padding, 12px horizontal
+        // • Dotted 1px row separators instead of solid borders
+        // • Warm amber hover wash
+        // • tabular-nums on all numeric cells (handled per-column)
+        className={[
+          'font-sans text-[13px]',
+          // Column headers: 10px, bold, UPPERCASE, wide letter-spacing, muted foreground
+          '[&_thead_th]:text-[10px] [&_thead_th]:font-bold [&_thead_th]:uppercase [&_thead_th]:tracking-widest',
+          // Compact row height: ~6px vertical padding, 12px horizontal
+          '[&_td]:py-1.5 [&_td]:px-3 [&_th]:px-3',
+          // Dotted 1px row separators instead of solid heavy borders
+          '[&_tbody_tr]:border-b [&_tbody_tr]:border-dotted [&_tbody_tr]:border-border/50',
+          // Remove default solid td right borders for a cleaner look
+          '[&_td]:border-r-0',
+          // Warm amber hover wash — never changes row size
+          '[&_tbody_tr:hover_td]:bg-amber-50/60',
+          // Subtle even-row zebra
+          '[&_tbody_tr:nth-child(even)_td]:bg-slate-50/50',
+          // Data rows use regular 400 weight (specific columns override to 500/600)
+          '[&_tbody_td]:font-normal',
+        ].join(' ')}
         mobileCard={pendingMobileCard}
         emptyText="No pending challan lines — everything dispatched has been challaned."
         onRowClick={(r) => toggle(r)}
       />
 
       <div className="flex items-center justify-between">
-        <p className="text-muted-foreground text-sm">Page {data?.page ?? page} of {totalPages}</p>
+        <p className="text-muted-foreground text-[13px] tabular-nums">Page {data?.page ?? page} of {totalPages}</p>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
             <ChevronLeft /> Prev
