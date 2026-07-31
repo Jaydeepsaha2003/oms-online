@@ -97,9 +97,10 @@ export function PendingChallanPage() {
         </span>
       ),
     },
-    { id: 'order', label: 'Order #', sortValue: (r) => r.orderId ?? 0, cell: (r) => <span className="font-mono text-xs">{shortOrderCode(r.orderCode, r.orderId)}</span> },
+    { id: 'order', label: 'Ord #', sortValue: (r) => r.orderId ?? 0, cell: (r) => <span className="font-mono text-xs">{shortOrderCode(r.orderCode, r.orderId)}</span> },
     { id: 'date', label: 'D-Date', sortValue: (r) => r.dispatchDate, cell: (r) => <span className="whitespace-nowrap">{formatDate(r.dispatchDate)}</span> },
-    { id: 'customer', label: 'Customer', sortValue: (r) => r.customerName, cell: (r) => <span className="font-medium">{r.customerName}</span> },
+    // Customer renders like Product/Design (same weight/style) — no extra emphasis.
+    { id: 'customer', label: 'Customer', sortValue: (r) => r.customerName, cell: (r) => r.customerName || '—' },
     { id: 'product', label: 'Product', sortValue: (r) => r.productName ?? '', cell: (r) => r.productName || '—' },
     { id: 'design', label: 'Design', sortValue: (r) => r.design ?? '', cell: (r) => r.design || '—' },
     { id: 'bags', label: 'Bags', align: 'right', sortValue: (r) => r.bags ?? 0, cell: (r) => <span className="tabular-nums">{num(r.bags)}</span> },
@@ -272,6 +273,9 @@ export function PendingChallanPage() {
         isLoading={isLoading}
         dense
         hideRowView
+        // Page-scoped polish: slightly larger body type, roomier rows, and a
+        // clearer soft-blue zebra (tied to the header) with a matching hover.
+        className="text-[15px] [&_td]:py-2.5 [&_tbody_tr:nth-child(even)_td]:bg-blue-50/70 [&_tbody_tr:hover_td]:bg-sky-100/70"
         mobileCard={pendingMobileCard}
         emptyText="No pending challan lines — everything dispatched has been challaned."
         onRowClick={(r) => toggle(r)}
