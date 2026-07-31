@@ -2,6 +2,7 @@ import { io, type Socket } from 'socket.io-client';
 import { toast } from 'sonner';
 import type { TestNotificationPayload } from '@oms/shared';
 import { useAuthStore } from '@/stores/auth-store';
+import { queryClient } from './query';
 import { playTestChime } from './chime';
 
 let socket: Socket | null = null;
@@ -39,5 +40,13 @@ export function connectNotificationsSocket(): void {
     showNativeNotification(payload);
     playTestChime();
     toast.info(`Test notification received (sent by ${payload.triggeredBy})`);
+  });
+
+  // Live refresh: another user created/edited/cancelled/deleted a challan, so the
+  // un-challaned pool moved. Invalidate the Pending Challan query (base key
+  // ['challans','pending'] — see use-challans.ts) so an open view re-fetches at
+  // once. Silent by design — no toast/sound.
+  socket.on('challans:pending-changed', () => {
+    void queryClient.invalidateQueries({ queryKey: ['challans', 'pending'] });
   });
 }

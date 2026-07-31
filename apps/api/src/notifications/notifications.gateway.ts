@@ -64,4 +64,12 @@ export class NotificationsGateway implements OnGatewayConnection {
     this.server.emit('notification', notification);
     return this.server.sockets.sockets.size;
   }
+
+  /** Silent data-changed ping: tells every open client the un-challaned pool moved
+   *  (a challan was created/updated/cancelled/deleted) so their Pending Challan view
+   *  re-fetches live. No toast/sound — the client just invalidates its query. */
+  emitPendingChallansChanged(): number {
+    this.server.emit('challans:pending-changed');
+    return this.server.sockets.sockets.size;
+  }
 }

@@ -12,6 +12,7 @@ import {
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { PdfService } from '../pdf/pdf.service';
+import { NotificationsGateway } from '../notifications/notifications.gateway';
 import { CreateChallanDto, DraftChallanDto, ItemHistoryQueryDto, PendingChallanQueryDto, ChallanQueryDto } from './dto/challan.dto';
 
 const PREFIX_KEY = 'CHALLAN_PREFIXES';
@@ -24,6 +25,7 @@ export class ChallansService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly pdf: PdfService,
+    private readonly notifications: NotificationsGateway,
   ) {}
 
   /** Dispatch lines still awaiting a challan (mirrors the legacy PendChallan query:
@@ -279,6 +281,9 @@ export class ChallansService {
       include: { items: true },
     });
 
+    // A new challan removes its dispatched lines from the un-challaned pool —
+    // ping open clients so their Pending Challan view refreshes live.
+    this.notifications.emitPendingChallansChanged();
     return this.map(row);
   }
 
@@ -508,18 +513,24 @@ export class ChallansService {
         },
       }),
     ]);
+    // Edited lines may add/remove dispatches from the pool → refresh open views.
+    this.notifications.emitPendingChallansChanged();
     return this.findOne(id);
   }
 
   async updateStatus(id: number, status: string): Promise<ChallanDto> {
     await this.findOne(id);
     const row = await this.prisma.challan.update({ where: { id }, data: { challanStatus: status.toUpperCase() }, include: { items: true } });
+    // Cancelling/reinstating a challan moves its lines out of / back into the pool.
+    this.notifications.emitPendingChallansChanged();
     return this.map(row);
   }
 
   async remove(id: number): Promise<{ id: number }> {
     await this.findOne(id);
     await this.prisma.challan.delete({ where: { id } }); // items cascade
+    // Deleting a challan returns its dispatched lines to the un-challaned pool.
+    this.notifications.emitPendingChallansChanged();
     return { id };
   }
 
