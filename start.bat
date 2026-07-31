@@ -182,15 +182,47 @@ if errorlevel 1 (
 
 :build
 echo.
-echo [2/2] Building production bundles (npm run build)...
+echo [2/2] Building production bundles ^(only what changed^)...
+
+REM Rebuild only the package(s) whose own sources changed since their last build.
+REM Shared is the common dependency: if IT changed, API + web must rebuild too, so
+REM fall back to the full ordered build. Otherwise build API / web independently -
+REM e.g. a backend-only change skips the ~7s web (vite) bundle entirely, and a
+REM frontend-only change skips the API rebuild. Delete a dist/ folder (or run
+REM `npm run clean`) to force that package to rebuild from scratch.
+powershell -NoProfile -Command "$src=@('packages\shared\src','packages\shared\package.json','package.json'); $n=$null; foreach($p in $src){ if(Test-Path $p -PathType Container){$i=Get-ChildItem $p -Recurse -File -EA SilentlyContinue}elseif(Test-Path $p){$i=Get-Item $p -EA SilentlyContinue}else{$i=@()}; foreach($f in $i){ if(-not $n -or $f.LastWriteTime -gt $n){$n=$f.LastWriteTime} } }; $m='packages\shared\dist\esm\index.js'; if((Test-Path $m) -and $n -and (Get-Item $m).LastWriteTime -gt $n){ exit 0 } else { exit 1 }"
+if errorlevel 1 goto bld_full
+
+powershell -NoProfile -Command "$src=@('apps\api\src','apps\api\prisma\schema.prisma','apps\api\package.json'); $n=$null; foreach($p in $src){ if(Test-Path $p -PathType Container){$i=Get-ChildItem $p -Recurse -File -EA SilentlyContinue}elseif(Test-Path $p){$i=Get-Item $p -EA SilentlyContinue}else{$i=@()}; foreach($f in $i){ if(-not $n -or $f.LastWriteTime -gt $n){$n=$f.LastWriteTime} } }; $m='apps\api\dist\src\main.js'; if((Test-Path $m) -and $n -and (Get-Item $m).LastWriteTime -gt $n){ exit 0 } else { exit 1 }"
+if not errorlevel 1 goto bld_skip_api
+echo   - API changed - building API...
+call npm run build:api
+if errorlevel 1 goto bld_failed
+:bld_skip_api
+
+powershell -NoProfile -Command "$src=@('apps\web\src','apps\web\vite.config.ts','apps\web\package.json'); $n=$null; foreach($p in $src){ if(Test-Path $p -PathType Container){$i=Get-ChildItem $p -Recurse -File -EA SilentlyContinue}elseif(Test-Path $p){$i=Get-Item $p -EA SilentlyContinue}else{$i=@()}; foreach($f in $i){ if(-not $n -or $f.LastWriteTime -gt $n){$n=$f.LastWriteTime} } }; $m='apps\web\dist\index.html'; if((Test-Path $m) -and $n -and (Get-Item $m).LastWriteTime -gt $n){ exit 0 } else { exit 1 }"
+if not errorlevel 1 goto bld_skip_web
+echo   - web changed - building web...
+call npm run build:web
+if errorlevel 1 goto bld_failed
+:bld_skip_web
+
+goto bld_done
+
+:bld_full
+echo   - shared changed ^(or first build^) - rebuilding shared + API + web...
 call npm run build
-if errorlevel 1 (
-    echo.
-    echo Build failed - fix the error above, then run start.bat again.
-    echo.
-    pause
-    exit /b 1
-)
+if errorlevel 1 goto bld_failed
+goto bld_done
+
+:bld_failed
+echo.
+echo Build failed - fix the error above, then run start.bat again.
+echo.
+pause
+exit /b 1
+
+:bld_done
 
 echo.
 echo Build complete - launching servers.
