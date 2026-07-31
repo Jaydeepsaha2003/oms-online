@@ -26,6 +26,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { NativeSelect } from '@/components/common/combo';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -215,6 +216,7 @@ export function OrderFormPage() {
   const listPath = docKind === 'quotation' ? '/quotations' : '/orders';
   const docLabel = docKind === 'quotation' ? 'quotation' : 'order';
   const [saved, setSaved] = useState(false); // shows the success-tick overlay
+  const [savePrompt, setSavePrompt] = useState(false); // new-order "Save & PDF / Save only" choice
 
   const { data: lookups } = useOrderLookups();
   const { data: settings } = useSettings();
@@ -898,6 +900,19 @@ export function OrderFormPage() {
     window.setTimeout(() => navigate(dest), 950);
   };
 
+  // "Save only": after the tick, clear the form back to a blank new order and stay
+  // here — ready for the next entry — instead of leaving for the bill/list page.
+  const finishToNewForm = () => {
+    clearOrderDraft();
+    setRestoredDraft(false);
+    setSaved(true);
+    window.setTimeout(() => {
+      blankForm();
+      setSaved(false);
+      requestAnimationFrame(() => focusField(formRef.current, 'customer'));
+    }, 950);
+  };
+
   const validate = (forDraft = false): boolean => {
     if (!customer.trim()) return !toast.error('Please select a correct customer');
     if (!forDraft && !completionDay.trim()) return !toast.error('Please Select the Completion Day');
@@ -1041,12 +1056,31 @@ export function OrderFormPage() {
     else create.mutate(input, { onSuccess: (o) => done(o.id), onError });
   };
 
+  // Create a brand-new CONFIRMED order, then either open its printable bill
+  // ("Save & PDF") or reset the form for the next entry ("Save only"). Called from
+  // the two buttons in the save-choice dialog (which is itself the confirmation).
+  const runNewOrder = async (redirectToBill: boolean) => {
+    setSavePrompt(false);
+    const input = { ...buildInput(await resolveOrderDate()), status: 'CONFIRMED' };
+    create.mutate(input, {
+      onSuccess: (o) => {
+        if (redirectToBill && can('order:print')) finishTo(`/orders/${o.id}/bill`);
+        else finishToNewForm();
+      },
+      onError: (e) => toast.error(getApiErrorMessage(e, 'Save failed')),
+    });
+  };
+
   // The primary action (Ctrl+S / main button). Quotations go through persist();
-  // a new order is CONFIRMED, and the primary button on a draft order finalises it.
+  // editing keeps its single-confirm save. A brand-new order asks how to finish —
+  // "Save & PDF" (open the bill) or "Save only" (blank the form) — Vyapar-style.
   const submit = () => {
     if (docKind === 'quotation') return persist('quotation');
-    const statusValue = isEdit ? (status === 'DRAFT' ? 'CONFIRMED' : status) : 'CONFIRMED';
-    return saveOrder(statusValue, !isEdit);
+    if (isEdit) return saveOrder(status === 'DRAFT' ? 'CONFIRMED' : status, false);
+    // Users who can't print a bill have nothing to preview — save straight away.
+    if (!can('order:print')) return saveOrder('CONFIRMED', false);
+    if (!validate()) return;
+    setSavePrompt(true);
   };
 
   const orderIsDraft = docKind === 'order' && status === 'DRAFT';
@@ -1114,6 +1148,31 @@ export function OrderFormPage() {
           </div>
         </div>
       )}
+
+      {/* New-order save choice — "Save & PDF" opens the printable bill, "Save only"
+          just saves and clears the form for the next entry. */}
+      <Dialog open={savePrompt} onOpenChange={setSavePrompt}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create this order?</DialogTitle>
+            <DialogDescription>
+              {items.length} item{items.length === 1 ? '' : 's'} · total ₹{total.toLocaleString('en-IN')} for{' '}
+              {customer.trim() || '—'}. Choose how to finish.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:justify-end">
+            <Button variant="outline" onClick={() => setSavePrompt(false)} disabled={saving}>
+              Cancel
+            </Button>
+            <Button variant="outline" onClick={() => runNewOrder(false)} disabled={saving}>
+              <Save /> Save only
+            </Button>
+            <Button onClick={() => runNewOrder(true)} disabled={saving}>
+              <FileText /> Save &amp; PDF
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Slim toolbar — the page title already shows in the top bar, so the big
           in-page heading is dropped to avoid a duplicate title and free up space. */}

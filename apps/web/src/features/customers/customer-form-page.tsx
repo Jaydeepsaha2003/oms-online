@@ -58,6 +58,16 @@ const EMPTY = {
 };
 type FormState = typeof EMPTY;
 
+// Legacy Access placeholders ("N/A", "NA", "None", "-", …) stand in for a blank
+// value. Treat them as empty when loading so they don't trip mobile/email
+// validation every time an unrelated field (credit period, etc.) is saved; the
+// cleared value is then persisted as null on the next save.
+const PLACEHOLDERS = new Set(['', 'N/A', 'NA', 'N.A.', 'N.A', 'NONE', 'NIL', '-', '--']);
+const cleanPlaceholder = (v: string | null | undefined): string => {
+  const s = (v ?? '').trim();
+  return PLACEHOLDERS.has(s.toUpperCase()) ? '' : s;
+};
+
 const numOrNull = (v: string): number | null => {
   const n = parseFloat(v);
   return v.trim() === '' || Number.isNaN(n) ? null : n;
@@ -103,8 +113,8 @@ export function CustomerFormPage() {
       city: existing.city ?? '',
       state: existing.state ?? '',
       region: existing.region ?? '',
-      mobile: existing.mobile ?? '',
-      email: existing.email ?? '',
+      mobile: cleanPlaceholder(existing.mobile),
+      email: cleanPlaceholder(existing.email),
       brand: existing.brand ?? '',
       billRatePc: existing.billRatePc?.toString() ?? '',
       payBy: existing.payBy ?? '',

@@ -48,7 +48,9 @@ export class DispatchService {
       // Cancelled lines (and cancelled/draft orders) are not dispatchable.
       where: { status: { not: 'CANCELLED' }, order: { status: { notIn: ['CANCELLED', 'DRAFT'] } } },
       include: { order: true, dispatches: true },
-      orderBy: [{ orderId: 'desc' }, { id: 'asc' }],
+      // Oldest order first (ascending) so the earliest ORD# sits at the top of the
+      // pending list and the newest at the bottom — the shop-floor picking order.
+      orderBy: [{ orderId: 'asc' }, { id: 'asc' }],
     });
     const today = new Date();
     today.setHours(0, 0, 0, 0);

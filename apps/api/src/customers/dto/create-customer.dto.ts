@@ -17,6 +17,15 @@ import { EMAIL_REGEX, MOBILE_REGEX } from '../../common/validation';
 const emptyToUndefined = ({ value }: { value: unknown }) =>
   value === '' || value === null ? undefined : value;
 
+/** Legacy Access placeholders ("N/A", "NA", "None", "-", …) mean "no value" — map
+ *  them (and blanks) to undefined so mobile/email validation doesn't reject a
+ *  customer save when the stored field is one of these junk imports. */
+const PLACEHOLDERS = new Set(['', 'N/A', 'NA', 'N.A.', 'N.A', 'NONE', 'NIL', '-', '--']);
+const placeholderToUndefined = ({ value }: { value: unknown }) =>
+  value == null || (typeof value === 'string' && PLACEHOLDERS.has(value.trim().toUpperCase()))
+    ? undefined
+    : value;
+
 export class CreateCustomerDto {
   @IsOptional()
   @Transform(emptyToUndefined)
@@ -89,7 +98,7 @@ export class CreateCustomerDto {
   region?: string;
 
   @IsOptional()
-  @Transform(emptyToUndefined)
+  @Transform(placeholderToUndefined)
   @IsString()
   @MaxLength(20)
   @Matches(MOBILE_REGEX, {
@@ -98,7 +107,7 @@ export class CreateCustomerDto {
   mobile?: string;
 
   @IsOptional()
-  @Transform(emptyToUndefined)
+  @Transform(placeholderToUndefined)
   @IsString()
   @MaxLength(255)
   @Matches(EMAIL_REGEX, { message: 'Enter a valid email address.' })

@@ -7,7 +7,7 @@ import { jsPDF } from 'jspdf';
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useFitToWidth } from '@/hooks/use-fit-to-width';
 import { Button } from '@/components/ui/button';
-import { buildBillFilename, decodeImage, preOpenPdfTab, savePdfBlob } from '@/lib/pdf';
+import { buildBillFilename, decodeImage, isIOS, preOpenPdfTab, savePdfBlob } from '@/lib/pdf';
 import kavishLogo from '@/assets/kavish-logo-order.png';
 import { useChallanTerms, useCompany } from '@/features/settings/use-settings';
 import { useChallan } from './use-challans';
@@ -164,6 +164,14 @@ export function ChallanBillPage() {
 
   // Print the captured image — guarantees no app/menu text and an exact match.
   const print = async () => {
+    // iOS Safari's window.print() is unreliable for the hidden-image trick below
+    // (it prints a blank / whole page). Route to the PDF instead — the user then
+    // taps Print from the iOS share sheet / Safari's PDF viewer. `download` opens
+    // the tab synchronously inside this tap, so iOS doesn't block it.
+    if (isIOS()) {
+      await download();
+      return;
+    }
     setBusy(true);
     try {
       const cap = await captureImage();
