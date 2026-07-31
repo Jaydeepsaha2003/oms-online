@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { LogOut, Menu, UserRound } from 'lucide-react';
+import { LogOut, Menu, RefreshCw, UserRound } from 'lucide-react';
 import { menuRoutes } from '@oms/shared';
 import { useAuthStore } from '@/stores/auth-store';
 import { useLogout } from '@/hooks/use-auth';
@@ -76,18 +76,30 @@ export function Topbar({
       <h1 className="truncate text-xl font-bold tracking-tight sm:text-2xl">{title}</h1>
 
       <div className="ml-auto flex items-center gap-2">
+        {/* Manual refresh — reloads the page so the latest data (and, with the
+            network-first service worker, the latest deployed app version) is
+            fetched. The companion to the auto-update-on-reload behaviour. */}
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => window.location.reload()}
+          aria-label="Refresh"
+          title="Refresh — reload the latest data & app version"
+        >
+          <RefreshCw />
+        </Button>
         <SystemStatus variant="compact" />
         {can('crm:view') && <NotificationsBell />}
         {user && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="h-9 gap-2 px-2">
+              {/* Just the avatar icon — the name shows inside the menu, not inline. */}
+              <Button variant="ghost" size="icon" className="rounded-full" aria-label={user.name}>
                 <Avatar>
                   <AvatarFallback className="bg-gradient-brand text-xs font-semibold text-white">
                     {initials(user.name)}
                   </AvatarFallback>
                 </Avatar>
-                <span className="hidden text-sm font-medium sm:inline">{user.name}</span>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
