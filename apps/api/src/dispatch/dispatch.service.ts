@@ -106,17 +106,23 @@ export class DispatchService {
     return lines;
   }
 
-  /** The product name with its trailing design token removed — e.g.
-   *  "15 Rajwadi Gold" (design "Gold") → "15 Rajwadi". This is the legacy Form13
-   *  SelectProduct value ("{size|pcs} {product}"); the "ALL" toggle groups every
-   *  design variant of a product by this base. */
-  private static baseProductName(full: string | null | undefined, design: string | null | undefined): string {
+  /** The base product — "{size} {product}" with any trailing design / handle /
+   *  logo suffix dropped — e.g. "10 RDX WL+TOOL+LOGO" (product "RDX") → "10 RDX",
+   *  and "7 DECENT TOOL" (product "DECENT") → "7 DECENT". This is the legacy
+   *  Form13 SelectProduct value; the base-name picker (ALL off) groups every
+   *  design variant of a product under it.
+   *
+   *  We cut the name right after the product word rather than stripping the
+   *  `designType` token: on this data designType is almost always "NA"/null even
+   *  when the name carries a design suffix, so a design-based strip left the
+   *  suffix on and the "base" list still showed full, design-laden names. */
+  private static baseProductName(full: string | null | undefined, product: string | null | undefined): string {
     const name = (full ?? '').trim();
-    const d = (design ?? '').trim();
-    if (d && d.toUpperCase() !== 'NA' && name.toUpperCase().endsWith(' ' + d.toUpperCase())) {
-      return name.slice(0, name.length - d.length - 1).trim();
-    }
-    return name;
+    const prod = (product ?? '').trim();
+    if (!prod) return name;
+    const idx = name.toUpperCase().indexOf(prod.toUpperCase());
+    if (idx === -1) return name; // product word not found in the name → leave as-is
+    return name.slice(0, idx + prod.length).trim();
   }
 
   /** Distinct customer / agent / product / design values present in the *pending*
@@ -137,7 +143,7 @@ export class DispatchService {
       customers: distinct(poolFor('customer'), (l) => l.customerName),
       agents: distinct(poolFor('agent'), (l) => l.agentName),
       products: distinct(productPool, (l) => l.productName || l.product),
-      productBases: distinct(productPool, (l) => DispatchService.baseProductName(l.productName || l.product, l.designType)),
+      productBases: distinct(productPool, (l) => DispatchService.baseProductName(l.productName || l.product, l.product)),
       designs: distinct(poolFor('design'), (l) => (l.designType && l.designType.toUpperCase() !== 'NA' ? l.designType : null)),
       subCategories: distinct(poolFor('subCategory'), (l) => l.subCategory),
     };
