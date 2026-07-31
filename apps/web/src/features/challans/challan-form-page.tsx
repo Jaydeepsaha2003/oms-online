@@ -905,9 +905,32 @@ export function ChallanFormPage() {
                       </div>
                     ))}
                   </div>
-                  <div className="bg-muted/60 flex items-center justify-between border-t-2 px-2.5 py-1.5 text-sm font-semibold">
-                    <span className="text-muted-foreground tracking-wide uppercase">Total · {rows.length} item(s)</span>
-                    <span className="text-primary tabular-nums">{totals.tAmt.toLocaleString('en-IN')}</span>
+                  {/* Totals — the phone equivalent of the desktop tfoot. The four
+                      quantity columns sit in the same 4-col grid each card above
+                      uses, so the numbers line up down the list. */}
+                  <div className="bg-muted/60 border-t-2">
+                    <div className="grid grid-cols-4 gap-2 px-2.5 pt-2 pb-1.5 text-xs">
+                      <div>
+                        <p className="text-muted-foreground tracking-wide uppercase">Bags</p>
+                        <p className="text-sm font-bold tabular-nums">{totals.tBags ? qty(totals.tBags) : '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground tracking-wide uppercase">Pcs</p>
+                        <p className="text-sm font-bold tabular-nums">{totals.tPcs ? qty(totals.tPcs) : '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground tracking-wide uppercase">Kgs</p>
+                        <p className="text-sm font-bold tabular-nums">{totals.tKgs ? qty(totals.tKgs) : '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground tracking-wide uppercase">Box</p>
+                        <p className="text-sm font-bold tabular-nums">{totals.tBox ? qty(totals.tBox) : '—'}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between border-t px-2.5 py-1.5 text-sm font-semibold">
+                      <span className="text-muted-foreground tracking-wide uppercase">Total · {rows.length} item(s)</span>
+                      <span className="text-primary tabular-nums">{totals.tAmt.toLocaleString('en-IN')}</span>
+                    </div>
                   </div>
                 </>
               )}
