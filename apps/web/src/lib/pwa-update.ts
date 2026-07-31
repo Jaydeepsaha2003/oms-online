@@ -1,0 +1,106 @@
+import { queryClient } from './query';
+
+/**
+ * Keeps an installed PWA current — written for iOS home-screen apps.
+ *
+ * On iOS a home-screen app is frozen and resumed rather than reloaded: the page
+ * never runs again, so the one-shot `serviceWorker.register()` in main.tsx never
+ * re-checks for a new worker. Even force-quitting often restores the snapshot.
+ * The result is an app that keeps running last week's build no matter how many
+ * times it is reopened.
+ *
+ * So on every foreground we explicitly:
+ *   1. ask the browser to re-fetch sw.js (`registration.update()`), which — with
+ *      the new worker's `skipWaiting()` + `clients.claim()` — triggers
+ *      `controllerchange` in main.tsx and reloads the app onto the new build;
+ *   2. refetch active queries, so the data on screen is current even when the
+ *      code itself is already up to date (the common case).
+ */
+
+// iOS fires visibilitychange several times around a resume; don't hammer the
+// network with an update check on each one.
+const MIN_CHECK_GAP_MS = 10_000;
+let lastCheck = 0;
+
+async function checkForNewVersion(): Promise<void> {
+  if (!('serviceWorker' in navigator)) return;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    // update() re-fetches sw.js bypassing the HTTP cache (registration used
+    // updateViaCache: 'none'). If it differs by even a byte, the new worker
+    // installs, skips waiting, claims this client → main.tsx reloads the app.
+    await reg?.update();
+  } catch {
+    /* offline or unsupported — nothing to do, we retry on the next foreground */
+  }
+}
+
+/** Refetch what's on screen so a reopened app shows current data, not a snapshot. */
+function refreshData(): void {
+  void queryClient.invalidateQueries({ type: 'active' });
+}
+
+/** The hashed entry bundle this page is running, e.g. "/assets/index-DKgepo0u.js".
+ *  Vite content-hashes it, so its name changes on every build that changes code. */
+function runningBundle(): string | null {
+  const els = Array.from(document.querySelectorAll<HTMLScriptElement>('script[type="module"][src]'));
+  const src = els.map((e) => e.getAttribute('src') ?? '').find((s) => /\/assets\/index-.*\.js$/.test(s));
+  return src || null;
+}
+
+/**
+ * Detects a new deploy without needing sw.js to change: fetch the current
+ * index.html straight from the server and compare its hashed entry bundle with
+ * the one this page is running. Different hash ⇒ a new build is live ⇒ reload.
+ *
+ * This is what actually fixes the iOS home-screen app, where the page is frozen
+ * and resumed (never re-requested), so it can otherwise run an old bundle
+ * indefinitely. `_v` busts every cache layer and is excluded from SW caching.
+ */
+async function reloadIfNewBuildDeployed(): Promise<void> {
+  const current = runningBundle();
+  if (!current) return; // dev server (unhashed /src/main.tsx) — nothing to compare
+  try {
+    const res = await fetch(`/?_v=${Date.now()}`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const html = await res.text();
+    const latest = /src="([^"]*\/assets\/index-[^"]*\.js)"/.exec(html)?.[1];
+    if (!latest) return;
+    // Compare just the filenames so a differing origin/base can't cause a loop.
+    const name = (p: string) => p.split('/').pop();
+    if (name(latest) !== name(current)) window.location.reload();
+  } catch {
+    /* offline / server down — keep running the current build */
+  }
+}
+
+/** Call once on boot (see main.tsx). Safe to call more than once. */
+export function watchForAppUpdates(): void {
+  if (typeof document === 'undefined') return;
+
+  const onForeground = () => {
+    if (document.visibilityState !== 'visible') return;
+    // iOS fires visibilitychange/focus/pageshow several times around a single
+    // resume — collapse that burst into one check.
+    const now = Date.now();
+    if (now - lastCheck < MIN_CHECK_GAP_MS) return;
+    lastCheck = now;
+
+    void checkForNewVersion();
+    void reloadIfNewBuildDeployed();
+    refreshData();
+  };
+
+  document.addEventListener('visibilitychange', onForeground);
+  // iOS restoring from the back/forward cache doesn't always fire
+  // visibilitychange — pageshow with persisted=true is the reliable signal.
+  window.addEventListener('pageshow', (e) => {
+    if ((e as PageTransitionEvent).persisted) onForeground();
+  });
+  // Standalone iOS apps resuming can land here rather than on visibilitychange.
+  window.addEventListener('focus', onForeground);
+
+  // And check once at startup, so a cold open also lands on the newest build.
+  void checkForNewVersion();
+  void reloadIfNewBuildDeployed();
+}

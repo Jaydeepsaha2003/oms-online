@@ -26,6 +26,9 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
   if (NEVER_CACHE.some((re) => re.test(url.pathname))) return;
+  // The client's "is a new build deployed?" probe (lib/pwa-update.ts) — always
+  // straight to the network, and never stored (its URL is unique every time).
+  if (url.searchParams.has('_v')) return;
 
   // App navigations (the SPA shell): NETWORK-FIRST with a short timeout, so a
   // reload always picks up the freshly-deployed shell (and thus the new
