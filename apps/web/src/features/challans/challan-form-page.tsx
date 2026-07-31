@@ -66,6 +66,11 @@ const n = (v: number | null | undefined) => (Number.isFinite(v as number) ? (v a
 const itemLabel = (it: ChallanDraftItem) =>
   `${it.productName || '(item)'} · ${it.design || 'NA'} · ${isKgs(it.unit) ? `${n(it.kgs)}kg` : `${n(it.pcs)}pc`} @ ₹${n(it.price)}  #${it.dispatchId}`;
 
+// Shipping Address input is hidden for now — flip to true to bring the field back.
+// The value itself is still tracked/saved (defaults to the billing address), so
+// hiding it changes nothing about what gets stored on the challan.
+const SHOW_SHIPPING_ADDRESS = false;
+
 export function ChallanFormPage() {
   const navigate = useNavigate();
   const confirm = useConfirm();
@@ -895,8 +900,9 @@ export function ChallanFormPage() {
               )}
             </div>
 
-            {/* Item totals — always visible (even with 0 items), right after the item list */}
-            <div className="bg-muted/40 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-t px-3 py-1.5 text-sm sm:gap-x-6 sm:px-4 sm:py-2">
+            {/* Item totals — phones only. On desktop the table's own <tfoot> already
+                carries these totals, so this strip would just repeat them. */}
+            <div className="bg-muted/40 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-t px-3 py-1.5 text-sm sm:hidden">
               <span className="font-semibold">
                 {rows.length} item{rows.length === 1 ? '' : 's'}
               </span>
@@ -937,16 +943,26 @@ export function ChallanFormPage() {
                         rate (applied automatically) and is shown in the totals panel below. */}
                     <div className="space-y-1"><Label className="text-base">{`Billing Rate${halfBill ? ' · half' : ''}`}</Label><Input value={billingRate} onChange={(e) => setBillingRate(e.target.value)} className="h-9 text-right text-base tabular-nums" /></div>
                   </div>
+                  {SHOW_SHIPPING_ADDRESS && (
+                    <div className="space-y-1">
+                      <Label className="text-base">Shipping Address</Label>
+                      <textarea
+                        className="border-input bg-background min-h-12 w-full rounded-md border px-3 py-2 text-base"
+                        placeholder="Shipping address…"
+                        value={shippingAddress}
+                        onChange={(e) => setShippingAddress(e.target.value)}
+                      />
+                    </div>
+                  )}
                   <div className="space-y-1">
-                    <Label className="text-base">Shipping Address</Label>
+                    <Label className="text-base">Remarks</Label>
                     <textarea
                       className="border-input bg-background min-h-12 w-full rounded-md border px-3 py-2 text-base"
-                      placeholder="Shipping address…"
-                      value={shippingAddress}
-                      onChange={(e) => setShippingAddress(e.target.value)}
+                      placeholder="Remarks…"
+                      value={remarks}
+                      onChange={(e) => setRemarks(e.target.value)}
                     />
                   </div>
-                  <textarea className="border-input bg-background min-h-12 w-full rounded-md border px-3 py-2 text-base" placeholder="Remarks…" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
                 </div>
               </div>
 
