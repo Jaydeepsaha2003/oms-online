@@ -16,6 +16,8 @@ export interface ConfirmOptions {
   cancelText?: string;
   /** Style the confirm button as destructive (for deletes). */
   destructive?: boolean;
+  /** Focus the confirm button on open, so Enter proceeds (default focuses Cancel). */
+  autoFocusConfirm?: boolean;
 }
 
 type ConfirmFn = (options?: ConfirmOptions) => Promise<boolean>;
@@ -45,11 +47,24 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
     resolver.current = null;
   }, []);
 
+  const confirmBtnRef = React.useRef<HTMLButtonElement>(null);
+
   return (
     <ConfirmContext.Provider value={confirm}>
       {children}
       <Dialog open={open} onOpenChange={(o) => (o ? setOpen(true) : settle(false))}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent
+          className="sm:max-w-md"
+          // Opt-in: land focus on the confirm button so Enter proceeds.
+          onOpenAutoFocus={
+            options.autoFocusConfirm
+              ? (e) => {
+                  e.preventDefault();
+                  confirmBtnRef.current?.focus();
+                }
+              : undefined
+          }
+        >
           <DialogHeader>
             <DialogTitle>{options.title ?? 'Are you sure?'}</DialogTitle>
             {options.description ? (
@@ -61,6 +76,7 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
               {options.cancelText ?? 'Cancel'}
             </Button>
             <Button
+              ref={confirmBtnRef}
               variant={options.destructive ? 'destructive' : 'default'}
               onClick={() => settle(true)}
             >

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Check, ChevronLeft, ChevronRight, ClipboardList, Filter, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { useConfirm } from '@/components/common/confirm';
 import { usePendingChallans } from './use-challans';
 import { PRESETS, presetRange } from './date-presets';
 
@@ -20,6 +21,7 @@ const num = (v: number | null) => (v ? v.toLocaleString('en-IN') : '—');
 
 export function PendingChallanPage() {
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const { can } = usePermissions();
   const canCreate = can('challan:create');
 
@@ -74,7 +76,7 @@ export function PendingChallanPage() {
     setPage(1);
   };
 
-  const createChallan = () => {
+  const createChallan = async () => {
     const lines = [...selected.values()];
     if (lines.length === 0) return toast.error('Please select one or more rows.');
     const parties = [...new Set(lines.map((l) => l.customerName.trim()).filter(Boolean))];
@@ -83,7 +85,18 @@ export function PendingChallanPage() {
         parties.length === 0 ? 'Selected rows are missing the customer name.' : `Select rows for the SAME customer. Found: ${parties.join(', ')}`,
       );
     }
-    navigate('/challans/new', { state: { customerName: parties[0], lines } });
+    const party = parties[0];
+    // "X of Y" — Y is how many pending lines this party has in the list; clamped so a
+    // cross-page selection never reads as more than the total.
+    const partyTotal = Math.max(lines.length, items.filter((r) => r.customerName.trim() === party).length);
+    const ok = await confirm({
+      title: 'Create challan?',
+      description: `Proceed with ${lines.length} of ${partyTotal} pending line${partyTotal === 1 ? '' : 's'} for ${party}?`,
+      confirmText: 'Create Challan',
+      autoFocusConfirm: true, // Enter proceeds
+    });
+    if (!ok) return;
+    navigate('/challans/new', { state: { customerName: party, lines } });
   };
 
   const columns: DataColumn<PendingChallanLine>[] = [
@@ -113,6 +126,28 @@ export function PendingChallanPage() {
 
   const selectedCount = selected.size;
   const selectedParties = useMemo(() => [...new Set([...selected.values()].map((l) => l.customerName.trim()))], [selected]);
+
+  // Ctrl/Cmd+C → Create Challan from the selected rows (with the "X of Y" confirm).
+  // Bound once; reads the latest handler/state via refs. We never hijack a genuine
+  // copy: typing in a field or an active text selection is left to the browser, and
+  // with nothing ticked the key does nothing (so a plain Ctrl+C still copies).
+  const createRef = useRef(createChallan);
+  createRef.current = createChallan;
+  const canActRef = useRef(false);
+  canActRef.current = canCreate && selectedCount > 0;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'c') return;
+      const t = e.target as HTMLElement | null;
+      if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+      if ((window.getSelection()?.toString() ?? '') !== '') return;
+      if (!canActRef.current) return;
+      e.preventDefault();
+      void createRef.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // Phones: one card per dispatched line, tap to select (mirrors Order Modify's
   // mobile list). The whole card is highlighted when selected — the `-m-3 p-3`
@@ -164,31 +199,14 @@ export function PendingChallanPage() {
 
   return (
     <div className="space-y-3 sm:space-y-4">
-      {/* The page title lives in the top bar; this row keeps just the selection
-          status + the primary Create Challan action, always visible (not tucked
-          into the mobile filter sheet) since it's the workflow's main call to action. */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
-        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-          {selectedCount > 0 && (
-            <span className={cn('rounded-lg px-3 py-1.5 text-sm font-medium ring-1 ring-inset', selectedParties.length === 1 ? 'bg-sky-50 text-sky-700 ring-sky-200' : 'bg-amber-50 text-amber-700 ring-amber-200')}>
-              {selectedCount} selected{selectedParties.length > 1 ? ' · mixed customers' : selectedParties[0] ? ` · ${selectedParties[0]}` : ''}
-            </span>
-          )}
-          {canCreate && (
-            <Button onClick={createChallan} disabled={selectedCount === 0} title="Create a challan from the selected lines (one customer)">
-              <ClipboardList /> Create Challan
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {/* Filters — Search stays visible; From/To/Quick range collapse behind the
-          Filter icon on phones (see the sheet below). */}
-      <div className="bg-card flex flex-wrap items-end gap-2 rounded-md border p-2.5 shadow-sm sm:p-3">
+      {/* Filters + the primary Create Challan action, all in one card. Search stays
+          visible; From/To/Quick range collapse behind the Filter icon on phones. The
+          page title lives in the top bar, so there's no separate header row. */}
+      <div className="bg-card flex flex-wrap items-end gap-2.5 rounded-md border p-2.5 shadow-sm sm:p-3">
         <div className="relative w-full sm:w-64">
-          <Label className="text-xs">Search</Label>
-          <Search className="text-muted-foreground pointer-events-none absolute top-[30px] left-3 size-4" />
-          <Input className="pl-9" placeholder="Customer, product, design… (comma = multi)" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
+          <Label className="text-sm">Search</Label>
+          <Search className="text-muted-foreground pointer-events-none absolute top-[34px] left-3 size-4" />
+          <Input className="pl-9 text-base" placeholder="Customer, product, design… (comma = multi)" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
         </div>
         <Button
           variant="outline"
@@ -204,22 +222,37 @@ export function PendingChallanPage() {
             </span>
           )}
         </Button>
-        <div className="hidden items-end gap-2 sm:flex sm:flex-wrap">
+        <div className="hidden items-end gap-2.5 sm:flex sm:flex-wrap">
           <div className="space-y-1">
-            <Label className="text-xs">From</Label>
-            <Input type="date" className="w-40" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} />
+            <Label className="text-sm">From</Label>
+            <Input type="date" className="w-40 text-base" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">To</Label>
-            <Input type="date" className="w-40" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} />
+            <Label className="text-sm">To</Label>
+            <Input type="date" className="w-40 text-base" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} />
           </div>
           <div className="w-40 space-y-1">
-            <Label className="text-xs">Quick range</Label>
-            <NativeSelect value={preset} onChange={applyPreset} options={['', ...PRESETS]} placeholder="Range…" />
+            <Label className="text-sm">Quick range</Label>
+            <NativeSelect value={preset} onChange={applyPreset} options={['', ...PRESETS]} placeholder="Range…" className="text-base" />
           </div>
           {(search || dateFrom || dateTo || preset) && (
             <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={clearAll}>
               <X /> Clear
+            </Button>
+          )}
+        </div>
+
+        {/* Selection status + the primary Create Challan action — right-aligned in
+            the same card, always visible (not tucked into the mobile filter sheet). */}
+        <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
+          {selectedCount > 0 && (
+            <span className={cn('rounded-lg px-3 py-1.5 text-sm font-medium ring-1 ring-inset', selectedParties.length === 1 ? 'bg-sky-50 text-sky-700 ring-sky-200' : 'bg-amber-50 text-amber-700 ring-amber-200')}>
+              {selectedCount} selected{selectedParties.length > 1 ? ' · mixed customers' : selectedParties[0] ? ` · ${selectedParties[0]}` : ''}
+            </span>
+          )}
+          {canCreate && (
+            <Button onClick={createChallan} disabled={selectedCount === 0} className="flex-1 sm:flex-none" title="Create a challan from the selected lines — one customer (Ctrl+C)">
+              <ClipboardList /> Create Challan
             </Button>
           )}
         </div>
