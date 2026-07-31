@@ -563,12 +563,11 @@ export function ChallanFormPage() {
   const halfBill = numOr(billingRate) > 0 && !noBill;
 
   return (
-    // Desktop: fill the viewport so ONLY the item list scrolls internally — the
-    // bill-to header, charges and totals stay put. Phones: that fixed-viewport/
-    // internal-scroll layout fights mobile browser chrome (address bar show/hide,
-    // on-screen keyboard) — instead the whole page scrolls naturally, same as
-    // every other form in the app (New Order included).
-    <div className="flex w-full flex-col gap-2 sm:h-full sm:min-h-0 sm:gap-3">
+    // The whole form flows and the page scrolls naturally (same as New Order), so
+    // the item list grows to show ALL rows instead of scrolling inside a fixed
+    // viewport-height box. (The old desktop layout pinned the header/totals and
+    // capped the item list to the leftover height, hiding rows behind a scrollbar.)
+    <div className="flex w-full flex-col gap-2 sm:gap-3">
       {/* Header — pick / show the customer here; Save / Cancel / Reset sit at the
           bottom of the form (sticky). */}
       {/* Phones: the customer picker wraps to its own full-width row (order-last);
@@ -619,9 +618,9 @@ export function ChallanFormPage() {
         </div>
       )}
 
-      {/* Invoice paper — flexes to fill the remaining height; its item list is the
-          only part that scrolls (header / charges / totals stay pinned). */}
-      <div className="bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border shadow-sm">
+      {/* Invoice paper — grows with its content (header, full item list, charges,
+          totals) so nothing is capped; the page scrolls if it runs long. */}
+      <div className="bg-card flex flex-col overflow-hidden rounded-md border shadow-sm">
         {/* Header: Bill-to + invoice meta (compact colourful banner) */}
         <div className="from-primary/[0.08] shrink-0 border-b bg-gradient-to-r via-sky-50/50 to-transparent px-3 py-2 sm:px-4 sm:py-2.5">
           <div className="grid grid-cols-2 items-start gap-x-3 gap-y-2 sm:gap-x-6 sm:gap-y-2.5 lg:grid-cols-6">
@@ -776,9 +775,10 @@ export function ChallanFormPage() {
               )}
             </div>
 
-            {/* Line items — fills the remaining space and scrolls internally when long.
-                Desktop/tablet only: phones get the card list below instead. */}
-            <div className="hidden min-h-[120px] flex-1 overflow-auto sm:block">
+            {/* Line items — grows to show every row (no internal scroll cap); the
+                page scrolls when the list is long. Desktop/tablet only; phones get
+                the card list below instead. */}
+            <div className="hidden sm:block">
               <table className="w-full text-[15px] [&_td]:border-r [&_td]:border-border/60 [&_td:last-child]:border-r-0 [&_th]:border-r [&_th]:border-border/40 [&_th:last-child]:border-r-0">
                 <thead className="bg-muted sticky top-0 z-10">
                   <tr className="text-muted-foreground border-b text-left [&>th]:px-3 [&>th]:py-2 [&>th]:text-sm [&>th]:font-semibold [&>th]:tracking-wide [&>th]:uppercase">
