@@ -246,8 +246,14 @@ export function PendingChallanPage() {
             the same card, always visible (not tucked into the mobile filter sheet). */}
         <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
           {selectedCount > 0 && (
-            <span className={cn('rounded-lg px-3 py-1.5 text-sm font-medium ring-1 ring-inset', selectedParties.length === 1 ? 'bg-sky-50 text-sky-700 ring-sky-200' : 'bg-amber-50 text-amber-700 ring-amber-200')}>
-              {selectedCount} selected{selectedParties.length > 1 ? ' · mixed customers' : selectedParties[0] ? ` · ${selectedParties[0]}` : ''}
+            <span
+              // Single-customer selections show a compact "(*)" instead of the full
+              // party name (kept out of the pill to avoid clutter); the name is still
+              // available on hover via the title. Mixed selections stay spelled out.
+              title={selectedParties.length === 1 ? selectedParties[0] : selectedParties.length > 1 ? `Mixed customers: ${selectedParties.join(', ')}` : undefined}
+              className={cn('rounded-lg px-3 py-1.5 text-sm font-medium ring-1 ring-inset', selectedParties.length === 1 ? 'bg-sky-50 text-sky-700 ring-sky-200' : 'bg-amber-50 text-amber-700 ring-amber-200')}
+            >
+              {selectedCount} selected{selectedParties.length > 1 ? ' · mixed customers' : selectedParties[0] ? ' · (*)' : ''}
             </span>
           )}
           {canCreate && (
