@@ -63,6 +63,10 @@ const isKgs = (unit: string | null) => ['KGS', 'KG', 'KGS.'].includes((unit ?? '
 const round5 = (x: number) => Math.round(x / 5) * 5;
 const round2 = (x: number) => Math.round(x * 100) / 100;
 const n = (v: number | null | undefined) => (Number.isFinite(v as number) ? (v as number) : 0);
+// Quantities (bags/pcs/kgs/box) render at 3 decimals max, trailing zeros dropped.
+// Float sums like 69.8 + 71.6 are otherwise shown raw as 141.39999999999998.
+const qty = (v: number | null | undefined) =>
+  Number.isFinite(v as number) ? (v as number).toLocaleString('en-IN', { maximumFractionDigits: 3 }) : null;
 const itemLabel = (it: ChallanDraftItem) =>
   `${it.productName || '(item)'} · ${it.design || 'NA'} · ${isKgs(it.unit) ? `${n(it.kgs)}kg` : `${n(it.pcs)}pc`} @ ₹${n(it.price)}  #${it.dispatchId}`;
 
@@ -758,7 +762,7 @@ export function ChallanFormPage() {
                         <>
                           <span className="min-w-0 flex-1 truncate font-medium">{it.productName || '(item)'}</span>
                           <span className="text-muted-foreground w-24 truncate">{it.design || 'NA'}</span>
-                          <span className="w-20 text-right tabular-nums">{isKgs(it.unit) ? `${n(it.kgs)} kg` : `${n(it.pcs)} pc`}</span>
+                          <span className="w-20 text-right tabular-nums">{isKgs(it.unit) ? `${qty(n(it.kgs))} kg` : `${qty(n(it.pcs))} pc`}</span>
                           <span className="w-16 text-right tabular-nums">₹{n(it.price)}</span>
                         </>
                       );
@@ -807,10 +811,10 @@ export function ChallanFormPage() {
                       <td className="w-12 text-center text-muted-foreground tabular-nums">{idx + 1}</td>
                       <td className="font-medium">{r.productName || '—'}{r.dispatchId == null && <span className="bg-muted text-muted-foreground ml-1 rounded px-1 text-[10px]">manual</span>}</td>
                       <td className="w-28 text-muted-foreground">{r.design || '—'}</td>
-                      <td className="w-20 text-right tabular-nums">{r.bags ?? '—'}</td>
-                      <td className="w-20 text-right tabular-nums">{r.pcs ?? '—'}</td>
-                      <td className="w-20 text-right tabular-nums">{r.kgs ?? '—'}</td>
-                      <td className="w-20 text-right tabular-nums">{r.box ?? '—'}</td>
+                      <td className="w-20 text-right tabular-nums">{qty(r.bags) ?? '—'}</td>
+                      <td className="w-20 text-right tabular-nums">{qty(r.pcs) ?? '—'}</td>
+                      <td className="w-20 text-right tabular-nums">{qty(r.kgs) ?? '—'}</td>
+                      <td className="w-20 text-right tabular-nums">{qty(r.box) ?? '—'}</td>
                       <td className="w-16 text-muted-foreground">{r.unit || '—'}</td>
                       <td className="w-28 text-right tabular-nums">₹{(r.price ?? 0).toLocaleString('en-IN')}</td>
                       <td className="w-28 text-right font-semibold tabular-nums">{(r.amount ?? 0).toLocaleString('en-IN')}</td>
@@ -835,10 +839,10 @@ export function ChallanFormPage() {
                       <td className="w-12"></td>
                       <td className="text-muted-foreground text-sm tracking-wide uppercase">Total · {rows.length} item(s)</td>
                       <td className="w-28"></td>
-                      <td className="w-20 text-right tabular-nums">{totals.tBags || ''}</td>
-                      <td className="w-20 text-right tabular-nums">{totals.tPcs || ''}</td>
-                      <td className="w-20 text-right tabular-nums">{totals.tKgs || ''}</td>
-                      <td className="w-20 text-right tabular-nums">{totals.tBox || ''}</td>
+                      <td className="w-20 text-right tabular-nums">{totals.tBags ? qty(totals.tBags) : ''}</td>
+                      <td className="w-20 text-right tabular-nums">{totals.tPcs ? qty(totals.tPcs) : ''}</td>
+                      <td className="w-20 text-right tabular-nums">{totals.tKgs ? qty(totals.tKgs) : ''}</td>
+                      <td className="w-20 text-right tabular-nums">{totals.tBox ? qty(totals.tBox) : ''}</td>
                       <td className="w-16"></td>
                       <td className="w-28"></td>
                       <td className="w-28 text-primary text-right tabular-nums">{totals.tAmt.toLocaleString('en-IN')}</td>
@@ -884,10 +888,10 @@ export function ChallanFormPage() {
                           </div>
                         </div>
                         <div className="mt-1.5 grid grid-cols-4 gap-2 text-xs">
-                          <div><p className="text-muted-foreground">Bags</p><p className="font-medium tabular-nums">{r.bags ?? '—'}</p></div>
-                          <div><p className="text-muted-foreground">Pcs</p><p className="font-medium tabular-nums">{r.pcs ?? '—'}</p></div>
-                          <div><p className="text-muted-foreground">Kgs</p><p className="font-medium tabular-nums">{r.kgs ?? '—'}</p></div>
-                          <div><p className="text-muted-foreground">Box</p><p className="font-medium tabular-nums">{r.box ?? '—'}</p></div>
+                          <div><p className="text-muted-foreground">Bags</p><p className="font-medium tabular-nums">{qty(r.bags) ?? '—'}</p></div>
+                          <div><p className="text-muted-foreground">Pcs</p><p className="font-medium tabular-nums">{qty(r.pcs) ?? '—'}</p></div>
+                          <div><p className="text-muted-foreground">Kgs</p><p className="font-medium tabular-nums">{qty(r.kgs) ?? '—'}</p></div>
+                          <div><p className="text-muted-foreground">Box</p><p className="font-medium tabular-nums">{qty(r.box) ?? '—'}</p></div>
                         </div>
                       </div>
                     ))}
@@ -898,26 +902,6 @@ export function ChallanFormPage() {
                   </div>
                 </>
               )}
-            </div>
-
-            {/* Item totals — phones only. On desktop the table's own <tfoot> already
-                carries these totals, so this strip would just repeat them. */}
-            <div className="bg-muted/40 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-t px-3 py-1.5 text-sm sm:hidden">
-              <span className="font-semibold">
-                {rows.length} item{rows.length === 1 ? '' : 's'}
-              </span>
-              <span className="text-muted-foreground">
-                Bags <span className="text-foreground font-semibold tabular-nums">{totals.tBags || 0}</span>
-              </span>
-              <span className="text-muted-foreground">
-                Pcs <span className="text-foreground font-semibold tabular-nums">{totals.tPcs || 0}</span>
-              </span>
-              <span className="text-muted-foreground">
-                Kgs <span className="text-foreground font-semibold tabular-nums">{totals.tKgs || 0}</span>
-              </span>
-              <span className="text-muted-foreground">
-                Box <span className="text-foreground font-semibold tabular-nums">{totals.tBox || 0}</span>
-              </span>
             </div>
 
             {/* Footer: charges + totals. Phones: totals surface first (order-1) since
