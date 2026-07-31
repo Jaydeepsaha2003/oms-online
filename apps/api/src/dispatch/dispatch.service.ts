@@ -13,6 +13,11 @@ import { CreateDispatchDto, DispatchQueryDto, PendingQueryDto, UpdateDispatchDto
 
 const EPS = 1e-6;
 
+// Cap quantities at 3 decimals. Subtracting/summing floats (e.g. ordered − dispatched)
+// otherwise surfaces artifacts like 71.60000000000001 into the remaining qty, which
+// then leaks into the dispatch form's pre-filled / MAX-filled inputs.
+const round3 = (x: number) => Math.round(x * 1000) / 1000;
+
 // Two dispatches on the SAME order line with identical quantities + status inside
 // this window are treated as ONE — a double-tap, a client retry, or two users
 // saving the same shipment at once. Real repeat dispatches of a line are minutes
@@ -62,10 +67,10 @@ export class DispatchService {
         (a, d) => ({ bags: a.bags + (d.bags ?? 0), pcs: a.pcs + (d.pcs ?? 0), gram: a.gram + (d.gram ?? 0), box: a.box + (d.box ?? 0) }),
         { bags: 0, pcs: 0, gram: 0, box: 0 },
       );
-      const remBags = Math.max(0, (it.bags ?? 0) - sum.bags);
-      const remPcs = Math.max(0, (it.pcs ?? 0) - sum.pcs);
-      const remKgs = Math.max(0, (it.gram ?? 0) - sum.gram);
-      const remBox = Math.max(0, (it.box ?? 0) - sum.box);
+      const remBags = round3(Math.max(0, (it.bags ?? 0) - sum.bags));
+      const remPcs = round3(Math.max(0, (it.pcs ?? 0) - sum.pcs));
+      const remKgs = round3(Math.max(0, (it.gram ?? 0) - sum.gram));
+      const remBox = round3(Math.max(0, (it.box ?? 0) - sum.box));
       if (remBags <= EPS && remPcs <= EPS && remKgs <= EPS && remBox <= EPS) continue;
       const due = it.order.completionDate;
       lines.push({
@@ -412,10 +417,10 @@ export class DispatchService {
       { bags: 0, pcs: 0, gram: 0, box: 0 },
     );
     return {
-      bags: Math.max(0, (line.bags ?? 0) - sum.bags),
-      pcs: Math.max(0, (line.pcs ?? 0) - sum.pcs),
-      gram: Math.max(0, (line.gram ?? 0) - sum.gram),
-      box: Math.max(0, (line.box ?? 0) - sum.box),
+      bags: round3(Math.max(0, (line.bags ?? 0) - sum.bags)),
+      pcs: round3(Math.max(0, (line.pcs ?? 0) - sum.pcs)),
+      gram: round3(Math.max(0, (line.gram ?? 0) - sum.gram)),
+      box: round3(Math.max(0, (line.box ?? 0) - sum.box)),
     };
   }
 
