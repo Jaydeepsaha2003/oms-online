@@ -1,7 +1,7 @@
 /* OMS service worker — makes the app installable and adds a light offline layer.
  * Strategy: network-first with cache fallback for same-origin GET static assets
  * and navigations. NEVER caches /api (live data) or the Vite dev internals. */
-const CACHE = 'oms-v9';
+const CACHE = 'oms-v10';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -27,28 +27,36 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
   if (NEVER_CACHE.some((re) => re.test(url.pathname))) return;
 
-  // App navigations (the SPA shell): serve the cached shell INSTANTLY and
-  // refresh it in the background (stale-while-revalidate). Network-first here
-  // blocked first paint on a full network round-trip even though the shell was
-  // already cached — the long black screen on every cold app open over a slow
-  // link (phone on the router's OpenVPN). A deploy is picked up one open later,
-  // which is fine because /assets/ are content-hashed and stay cached, so the
-  // one-open-stale shell still runs its matching chunks. Navigations to real
-  // files (e.g. /oms-rootCA.crt) keep the default handling below.
+  // App navigations (the SPA shell): NETWORK-FIRST with a short timeout, so a
+  // reload always picks up the freshly-deployed shell (and thus the new
+  // content-hashed chunks) right away — this is what makes "update, then reload"
+  // work on mobile, iOS especially, instead of showing yesterday's build.
+  // The timeout keeps the old slow-link win: if the network doesn't answer
+  // within a couple of seconds (phone on the router's OpenVPN), fall back to the
+  // cached shell fast so a cold open still paints instantly instead of hanging
+  // on a black screen. Navigations to real files (e.g. /oms-rootCA.crt) keep
+  // the default handling below.
   if (req.mode === 'navigate' && !/\.[a-z0-9]+$/i.test(url.pathname)) {
     event.respondWith(
-      caches.match('/').then((hit) => {
-        const refresh = fetch('/').then((res) => {
-          if (res.ok) {
-            const copy = res.clone();
-            caches.open(CACHE).then((c) => c.put('/', copy)).catch(() => {});
+      (async () => {
+        const cache = await caches.open(CACHE);
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 2500);
+          const res = await fetch('/', { signal: controller.signal });
+          clearTimeout(timer);
+          if (res && res.ok) {
+            cache.put('/', res.clone()).catch(() => {});
+            return res;
           }
-          return res;
-        });
-        if (!hit) return refresh; // first-ever open: nothing cached yet
-        event.waitUntil(refresh.catch(() => {})); // offline: cached shell already served
-        return hit;
-      }),
+          throw new Error('shell fetch not ok');
+        } catch {
+          // Slow / offline / aborted → serve the last cached shell; if there is
+          // none yet (first-ever open), fall back to a plain network fetch.
+          const hit = await cache.match('/');
+          return hit || fetch('/');
+        }
+      })(),
     );
     return;
   }
