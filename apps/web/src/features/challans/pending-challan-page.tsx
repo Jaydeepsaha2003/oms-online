@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, ChevronLeft, ChevronRight, ClipboardList, Filter, ScrollText, Search, X } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, ClipboardList, Filter, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { PendingChallanLine } from '@oms/shared';
 import { cn, shortOrderCode } from '@/lib/utils';
@@ -163,19 +163,10 @@ export function PendingChallanPage() {
 
   return (
     <div className="space-y-3 sm:space-y-4">
+      {/* The page title lives in the top bar; this row keeps just the selection
+          status + the primary Create Challan action, always visible (not tucked
+          into the mobile filter sheet) since it's the workflow's main call to action. */}
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
-        <div className="flex items-center gap-3">
-          <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
-            <ScrollText className="size-5" />
-          </div>
-          <div>
-            <h2 className="text-2xl font-semibold tracking-tight">Pending Challan</h2>
-            <p className="text-muted-foreground text-sm">{data?.total ?? 0} dispatched line(s) awaiting a challan · tick rows for one customer, then Create Challan</p>
-          </div>
-        </div>
-        {/* Selection status + the primary action — kept out of the filters bar and
-            always visible (not tucked into the mobile filter sheet), since this is
-            the workflow's main call to action. */}
         <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
           {selectedCount > 0 && (
             <span className={cn('rounded-lg px-3 py-1.5 text-sm font-medium ring-1 ring-inset', selectedParties.length === 1 ? 'bg-sky-50 text-sky-700 ring-sky-200' : 'bg-amber-50 text-amber-700 ring-amber-200')}>

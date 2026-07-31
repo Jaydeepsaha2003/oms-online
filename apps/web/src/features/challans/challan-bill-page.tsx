@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Download, Loader2, Printer } from 'lucide-react';
 import { toast } from 'sonner';
 import html2canvas from 'html2canvas-pro';
@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { buildBillFilename, decodeImage, isIOS, preOpenPdfTab, savePdfBlob } from '@/lib/pdf';
 import kavishLogo from '@/assets/kavish-logo-order.png';
 import { useChallanTerms, useCompany } from '@/features/settings/use-settings';
-import { useChallan } from './use-challans';
+import { useChallan, usePendingChallans } from './use-challans';
 
 // Same Kavish brand colours + letterhead layout as the Sales Order / Quotation bill,
 // so all three printed documents look like one consistent family.
@@ -86,9 +86,20 @@ const CHALLAN_DESIGN_W = 960;
 
 export function ChallanBillPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { id } = useParams<{ id: string }>();
   const challanId = id ? Number(id) : undefined;
   const { data: challan, isLoading } = useChallan(challanId);
+  // After saving a challan, the Print/PDF screen's Back should land on Pending
+  // Challan when anything is still awaiting a challan, otherwise on View Challans.
+  // Only this post-save entry passes the flag; a bill opened elsewhere keeps the
+  // plain browser-back. We fetch the pending count live so it reflects this save.
+  const smartBack = (location.state as { backTo?: string } | null)?.backTo === 'challan-pending-or-list';
+  const { data: pending } = usePendingChallans({ page: 1, pageSize: 1 }, { enabled: smartBack });
+  const goBack = () => {
+    if (smartBack) navigate((pending?.total ?? 0) > 0 ? '/challans/pending' : '/challans');
+    else navigate(-1);
+  };
   const { data: termsData } = useChallanTerms();
   const terms = termsData?.terms ?? [];
   const { data: company } = useCompany();
@@ -233,7 +244,7 @@ export function ChallanBillPage() {
       {printImg && <img id="print-image" src={printImg} alt="Sales Challan" style={{ display: 'none' }} />}
 
       <div className="no-print flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate(-1)} aria-label="Back">
+        <Button variant="ghost" size="icon" onClick={goBack} aria-label="Back">
           <ArrowLeft />
         </Button>
         <h2 className="text-xl font-bold tracking-tight">Sales Challan</h2>

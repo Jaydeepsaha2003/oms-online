@@ -24,11 +24,12 @@ import { http } from '@/lib/api';
 const KEY = ['challans'] as const;
 
 /** Dispatch lines still awaiting a challan, with search + date-range filters. */
-export function usePendingChallans(query: PendingChallanQuery) {
+export function usePendingChallans(query: PendingChallanQuery, opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: [...KEY, 'pending', query],
     queryFn: () => http.get<PendingChallanList>('/challans/pending', { params: query }),
     placeholderData: (prev) => prev,
+    enabled: opts?.enabled ?? true,
   });
 }
 

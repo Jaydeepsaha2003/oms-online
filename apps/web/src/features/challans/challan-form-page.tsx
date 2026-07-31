@@ -552,7 +552,7 @@ export function ChallanFormPage() {
           <h2 className="mt-3 text-xl font-semibold">Challan {savedCode} {isEdit ? 'updated' : 'saved'}</h2>
           <p className="text-muted-foreground mt-1 text-sm">Total {inr(totals.total)}{totals.tdsAmount ? ` · Net after TDS ${inr(totals.netReceivable)}` : ''}</p>
           <div className="mt-5 flex flex-wrap justify-center gap-2">
-            <Button onClick={() => navigate(`/challans/${savedId}/bill`)}>
+            <Button onClick={() => navigate(`/challans/${savedId}/bill`, { state: { backTo: 'challan-pending-or-list' } })}>
               <Printer /> Print / PDF
             </Button>
             <Button variant="outline" onClick={() => navigate('/challans')}>
@@ -789,8 +789,8 @@ export function ChallanFormPage() {
                 the card list below instead. */}
             <div className="hidden sm:block">
               <table className="w-full text-[15px] [&_td]:border-r [&_td]:border-border/60 [&_td:last-child]:border-r-0 [&_th]:border-r [&_th]:border-border/40 [&_th:last-child]:border-r-0">
-                <thead className="bg-muted sticky top-0 z-10">
-                  <tr className="text-muted-foreground border-b text-left [&>th]:px-3 [&>th]:py-2 [&>th]:text-sm [&>th]:font-semibold [&>th]:tracking-wide [&>th]:uppercase">
+                <thead className="sticky top-0 z-10 bg-slate-200/90 dark:bg-slate-700">
+                  <tr className="text-foreground border-b border-slate-300 text-left [&>th]:px-3 [&>th]:py-2.5 [&>th]:text-sm [&>th]:font-bold [&>th]:tracking-wide [&>th]:uppercase">
                     <th className="w-12 text-center">#</th>
                     <th>Product</th>
                     <th className="w-28">Design</th>
