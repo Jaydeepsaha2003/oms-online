@@ -32,12 +32,16 @@ export interface MenuNode {
   children?: MenuNode[];
   /** Optional badge text (e.g. a count) the UI may render. */
   badge?: string;
+  /** Alt+Shift+<letter> quick-nav key for a top-level entry (e.g. 'O' → Alt+Shift+O).
+   *  A group jumps to its first accessible child; a leaf to its own route. */
+  shortcut?: string;
 }
 
 // Built fresh — we add nodes here one screen at a time as each page is built.
 export const MENU: MenuNode[] = [
   {
     id: 'dashboard',
+    shortcut: 'D',
     label: 'Dashboard',
     icon: 'LayoutDashboard',
     to: '/',
@@ -45,6 +49,7 @@ export const MENU: MenuNode[] = [
   },
   {
     id: 'reports-group',
+    shortcut: 'R',
     label: 'Reports',
     icon: 'BarChart3',
     permission: perm(RESOURCES.REPORT, ACTIONS.VIEW),
@@ -102,6 +107,7 @@ export const MENU: MenuNode[] = [
   },
   {
     id: 'customers-group',
+    shortcut: 'C',
     label: 'Customers',
     icon: 'Users',
     children: [
@@ -158,6 +164,7 @@ export const MENU: MenuNode[] = [
   },
   {
     id: 'products-group',
+    shortcut: 'P',
     label: 'Products',
     icon: 'Package',
     children: [
@@ -193,6 +200,7 @@ export const MENU: MenuNode[] = [
   },
   {
     id: 'orders-group',
+    shortcut: 'O',
     label: 'Orders',
     icon: 'ShoppingCart',
     anyPermission: [
@@ -241,6 +249,7 @@ export const MENU: MenuNode[] = [
   },
   {
     id: 'dispatch-group',
+    shortcut: 'S',
     label: 'Dispatch',
     icon: 'Truck',
     anyPermission: [perm(RESOURCES.DISPATCH, ACTIONS.VIEW), perm(RESOURCES.DISPATCH, ACTIONS.CREATE)],
@@ -263,6 +272,7 @@ export const MENU: MenuNode[] = [
   },
   {
     id: 'challan-group',
+    shortcut: 'L',
     label: 'Challan',
     icon: 'ScrollText',
     anyPermission: [perm(RESOURCES.CHALLAN, ACTIONS.VIEW), perm(RESOURCES.CHALLAN, ACTIONS.CREATE)],
@@ -299,6 +309,7 @@ export const MENU: MenuNode[] = [
   },
   {
     id: 'crm-group',
+    shortcut: 'M',
     label: 'CRM',
     icon: 'BellRing',
     anyPermission: [perm(RESOURCES.CRM, ACTIONS.VIEW), perm(RESOURCES.CRM, ACTIONS.CREATE)],
@@ -328,6 +339,7 @@ export const MENU: MenuNode[] = [
   },
   {
     id: 'account-group',
+    shortcut: 'A',
     label: 'Account',
     icon: 'Landmark',
     anyPermission: [
@@ -400,6 +412,7 @@ export const MENU: MenuNode[] = [
   },
   {
     id: 'administration',
+    shortcut: 'N',
     label: 'Administration',
     icon: 'ShieldCheck',
     anyPermission: [perm(RESOURCES.USER, ACTIONS.VIEW), perm(RESOURCES.ROLE, ACTIONS.VIEW), perm(RESOURCES.AUDIT_LOG, ACTIONS.VIEW)],
@@ -429,6 +442,7 @@ export const MENU: MenuNode[] = [
   },
   {
     id: 'settings',
+    shortcut: 'G',
     label: 'Settings',
     to: '/settings',
     icon: 'Settings',
@@ -471,6 +485,31 @@ export function filterMenu(granted: Iterable<string>, menu: MenuNode[] = MENU): 
     }, []);
 
   return walk(menu);
+}
+
+/** The first navigable route at or under a node (its own `to`, else the first
+ *  descendant leaf's route). Used to resolve a group's Alt+Shift shortcut target. */
+function firstRoute(node: MenuNode): string | undefined {
+  if (node.to) return node.to;
+  for (const c of node.children ?? []) {
+    const t = firstRoute(c);
+    if (t) return t;
+  }
+  return undefined;
+}
+
+/** The Alt+Shift+<letter> quick-nav targets for a (usually already permission-
+ *  filtered) menu: each top-level node that declares a `shortcut`, mapped to the
+ *  route it should jump to. Pass a filtered menu so a shortcut never targets a
+ *  page the user can't see. */
+export function menuShortcuts(menu: MenuNode[] = MENU): { key: string; to: string; label: string }[] {
+  const out: { key: string; to: string; label: string }[] = [];
+  for (const node of menu) {
+    if (!node.shortcut) continue;
+    const to = firstRoute(node);
+    if (to) out.push({ key: node.shortcut.toUpperCase(), to, label: node.label });
+  }
+  return out;
 }
 
 /** Flatten the menu to its leaf routes (handy for building the router / breadcrumbs). */

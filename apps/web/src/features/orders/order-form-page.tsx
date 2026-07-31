@@ -11,7 +11,7 @@ import {
   type SetStateAction,
 } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRightLeft, BadgePercent, Camera, Check, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Lock, PackageOpen, Pencil, Plus, RotateCcw, Save, Settings2, Trash2 } from 'lucide-react';
+import { ArrowLeft, ArrowRightLeft, BadgePercent, Camera, Check, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Lock, PackageOpen, Pencil, Plus, RotateCcw, Save, Settings2, Trash2, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 import { ORDER_PRIORITIES, RESOURCES, resolveSpecialRates, qtyOrderForCategory, type OrderInput, type QtyField } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -33,6 +33,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { settingValues, useOrderQtyLayout, useSettings } from '@/features/settings/use-settings';
 import { useCustomerSpecialRates } from '@/features/special-rates/use-special-rates';
 import { useCreateOrder, useOrder, useOrderLookups, useUpdateOrder } from './use-orders';
+import { useFulfillOrder } from '../dispatch/use-dispatch';
 import { useConvertQuotation, useCreateQuotation, useQuotation, useUpdateQuotation } from '../quotations/use-quotations';
 import { clearOrderDraft, loadOrderDraft, saveOrderDraft } from './order-draft';
 import { DraftLinePhotos, toPhotoInput, type LinePhoto } from './line-photos';
@@ -230,8 +231,14 @@ export function OrderFormPage() {
   const createQuotation = useCreateQuotation();
   const updateQuotation = useUpdateQuotation(id ?? 0);
   const convertQuotation = useConvertQuotation();
+  const fulfillOrder = useFulfillOrder();
   const saving =
-    create.isPending || update.isPending || createQuotation.isPending || updateQuotation.isPending || convertQuotation.isPending;
+    create.isPending ||
+    update.isPending ||
+    createQuotation.isPending ||
+    updateQuotation.isPending ||
+    convertQuotation.isPending ||
+    fulfillOrder.isPending;
   const keyer = useRef(0);
   const formRef = useRef<HTMLDivElement>(null);
 
@@ -1071,6 +1078,37 @@ export function OrderFormPage() {
     });
   };
 
+  // Create & Dispatch (Alt+D): take the order AND ship every line in full in one
+  // step. Creates the CONFIRMED order, then fully dispatches all its lines, then
+  // clears the form for the next entry. New orders only; needs dispatch:create.
+  const createAndDispatch = async () => {
+    if (isEdit || docKind !== 'order' || !can('dispatch:create')) return;
+    if (!validate()) return;
+    const ok = await confirm({
+      title: 'Create & fully dispatch this order?',
+      description: `${items.length} item${items.length === 1 ? '' : 's'} · total ₹${total.toLocaleString('en-IN')} for ${customer.trim()}. The order is created and every line is dispatched in full right away.`,
+      confirmText: 'Create & Dispatch',
+    });
+    if (!ok) return;
+    const input = { ...buildInput(await resolveOrderDate()), status: 'CONFIRMED' };
+    create.mutate(input, {
+      onSuccess: (o) =>
+        fulfillOrder.mutate(o.id, {
+          onSuccess: (res) => {
+            toast.success(`Order created · ${res.dispatched} line${res.dispatched === 1 ? '' : 's'} dispatched in full`);
+            finishToNewForm();
+          },
+          // The order saved but the bulk dispatch failed — don't lose it; send the
+          // user to the order so they can dispatch the lines manually.
+          onError: (e) => {
+            toast.error(getApiErrorMessage(e, 'Order saved, but dispatch failed — dispatch it manually.'));
+            finishTo(can('order:print') ? `/orders/${o.id}/bill` : '/orders');
+          },
+        }),
+      onError: (e) => toast.error(getApiErrorMessage(e, 'Save failed')),
+    });
+  };
+
   // The primary action (Ctrl+S / main button). Quotations go through persist();
   // editing keeps its single-confirm save. A brand-new order asks how to finish —
   // "Save & PDF" (open the bill) or "Save only" (blank the form) — Vyapar-style.
@@ -1090,7 +1128,7 @@ export function OrderFormPage() {
 
   // Keep the latest action handlers in a ref so the global shortcut listener
   // (bound once) always calls the current closures.
-  const actionsRef = useRef<{ add: () => void; save: () => void; quote: () => void; cancel: () => void; focusItem: () => void } | null>(null);
+  const actionsRef = useRef<{ add: () => void; save: () => void; quote: () => void; dispatch: () => void; cancel: () => void; focusItem: () => void } | null>(null);
   actionsRef.current = {
     add: addItem,
     save: submit,
@@ -1098,6 +1136,7 @@ export function OrderFormPage() {
     quote: () => {
       if (!isEdit && docKind === 'order') persist('quotation');
     },
+    dispatch: createAndDispatch,
     cancel: () => navigate(listPath),
     focusItem: () => formRef.current?.querySelector<HTMLElement>('[data-tabfield="itemName"] input')?.focus(),
   };
@@ -1106,16 +1145,21 @@ export function OrderFormPage() {
       const a = actionsRef.current;
       if (!a) return;
       const k = e.key.toLowerCase();
+      // Shift-held Alt combos belong to the global Alt+Shift menu nav — ignore them here.
+      const alt = e.altKey && !e.shiftKey && !e.ctrlKey && !e.metaKey;
       if ((e.ctrlKey || e.metaKey) && k === 's') {
         e.preventDefault();
         a.save();
-      } else if (e.altKey && k === 'a') {
+      } else if (alt && k === 'a') {
         e.preventDefault();
         a.add();
-      } else if (e.altKey && k === 'q') {
+      } else if (alt && k === 'q') {
         e.preventDefault();
         a.quote();
-      } else if (e.altKey && k === 'i') {
+      } else if (alt && k === 'd') {
+        e.preventDefault();
+        a.dispatch();
+      } else if (alt && k === 'i') {
         e.preventDefault();
         a.focusItem();
       } else if (e.key === 'Escape') {
@@ -1694,6 +1738,19 @@ export function OrderFormPage() {
               title="Save changes and convert to an order"
             >
               <ArrowRightLeft /> Save &amp; Convert
+            </Button>
+          )}
+          {/* Advanced one-step: create the order AND fully dispatch every line. */}
+          {!isEdit && docKind === 'order' && can('dispatch:create') && (
+            <Button
+              type="button"
+              onClick={createAndDispatch}
+              disabled={saving}
+              className="col-span-2 bg-amber-500 text-white hover:bg-amber-600 sm:col-auto"
+              title="Create the order and dispatch every line in full (Alt+D)"
+            >
+              {fulfillOrder.isPending ? <Loader2 className="animate-spin" /> : <Truck />} Create &amp; Dispatch
+              <Kbd className="hidden sm:inline-flex">Alt+D</Kbd>
             </Button>
           )}
           <Button

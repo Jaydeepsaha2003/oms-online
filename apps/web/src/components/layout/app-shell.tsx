@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import { armAudioUnlock } from '@/lib/chime';
 import { connectNotificationsSocket } from '@/lib/notifications-socket';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useMenuShortcuts } from '@/hooks/use-menu-shortcuts';
 import { FollowupNudge } from '@/features/crm/followup-nudge';
 import { Sidebar } from './sidebar';
 import { Topbar } from './topbar';
@@ -51,6 +52,8 @@ export function AppShell() {
   const { can } = usePermissions();
   const location = useLocation();
   const hideTopbar = isHeaderless(location.pathname);
+  // Alt+Shift+<letter> jumps between top-level sections (bound once, app-wide).
+  useMenuShortcuts();
 
   // Unlock the reminder chime on the first interaction (autoplay policy), and
   // open the live connection used for broadcast test notifications.

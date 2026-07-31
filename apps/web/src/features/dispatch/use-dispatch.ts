@@ -83,6 +83,16 @@ export function useCreateDispatch() {
   });
 }
 
+/** Create & Dispatch: fully dispatch every pending line of a just-created order. */
+export function useFulfillOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (orderId: number) =>
+      http.post<{ dispatched: number; skipped: number }>(`/dispatch/fulfill-order/${orderId}`, {}),
+    onSuccess: () => invalidateDispatch(qc),
+  });
+}
+
 export function useUpdateDispatch(id: number) {
   const qc = useQueryClient();
   return useMutation({

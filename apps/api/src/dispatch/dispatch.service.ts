@@ -361,6 +361,77 @@ export class DispatchService {
     return this.toDto(await this.ensureCode(row));
   }
 
+  /**
+   * Fully dispatch every still-pending line of an order in one shot — powers the
+   * New Order form's "Create & Dispatch" (take the order and ship it all at once).
+   * Each eligible line gets a FULLY DISPATCH record for its remaining (= full, on a
+   * brand-new order) quantity. Cancelled/draft orders are rejected; cancelled lines,
+   * already fully-dispatched lines, and zero-quantity lines are skipped. Runs in one
+   * transaction so it's all-or-nothing.
+   */
+  async dispatchOrderFully(orderId: number, userName?: string): Promise<{ dispatched: number; skipped: number }> {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { items: { include: { dispatches: true } } },
+    });
+    if (!order) throw new NotFoundException('Order not found.');
+    if (order.status === 'CANCELLED' || order.status === 'DRAFT') {
+      throw new BadRequestException('This order is not available for dispatch.');
+    }
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      let dispatched = 0;
+      let skipped = 0;
+      for (const it of order.items) {
+        if (it.status === 'CANCELLED' || it.dispatches.some((d) => d.dispatchStatus === 'FULLY DISPATCH')) {
+          skipped++;
+          continue;
+        }
+        const rem = this.remaining(it, it.dispatches);
+        if (rem.bags <= EPS && rem.pcs <= EPS && rem.gram <= EPS && rem.box <= EPS) {
+          skipped++;
+          continue;
+        }
+        const row = await tx.dispatch.create({
+          data: {
+            orderItemId: it.id,
+            orderId: it.orderId,
+            orderCode: order.code ?? this.orderCodeFor(it.orderId),
+            customerId: order.customerId,
+            customerName: order.customerName,
+            agentName: order.agentName,
+            category: order.category,
+            pCategory: it.pCategory,
+            subCategory: it.subCategory,
+            product: it.product,
+            productName: it.productName,
+            designType: it.designType,
+            psize: it.psize,
+            priority: it.priority,
+            calField: it.calField,
+            ordType: it.ordType,
+            productRate: it.productRate,
+            designRate: it.designRate,
+            rate: it.rate,
+            bags: rem.bags,
+            pcs: rem.pcs,
+            gram: rem.gram,
+            box: rem.box,
+            dispatchStatus: 'FULLY DISPATCH',
+            dispatchDate: new Date(),
+            userName: userName ?? null,
+          },
+        });
+        await tx.dispatch.update({ where: { id: row.id }, data: { code: this.codeFor(row.id) } });
+        dispatched++;
+      }
+      return { dispatched, skipped };
+    });
+
+    if (result.dispatched > 0) this.invalidatePendingCache();
+    return result;
+  }
+
   async update(id: number, dto: UpdateDispatchDto): Promise<DispatchDto> {
     const cur = await this.prisma.dispatch.findUnique({ where: { id } });
     if (!cur) throw new NotFoundException('Dispatch not found.');

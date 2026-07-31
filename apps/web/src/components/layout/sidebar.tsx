@@ -106,6 +106,22 @@ export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
   );
 }
 
+/** Dim Alt+Shift+<letter> hint shown at the right of a top-level menu row. The
+ *  visible label is just the letter; the full combo is in the title tooltip. */
+function ShortcutHint({ letter, className }: { letter: string; className?: string }) {
+  return (
+    <kbd
+      title={`Alt+Shift+${letter}`}
+      className={cn(
+        'hidden rounded border border-sidebar-border/60 bg-sidebar-accent/40 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-sidebar-foreground/45 lg:inline-block',
+        className,
+      )}
+    >
+      {letter}
+    </kbd>
+  );
+}
+
 function MenuLeaf({
   node,
   collapsed,
@@ -138,6 +154,7 @@ function MenuLeaf({
           {node.badge}
         </span>
       )}
+      {!collapsed && !node.badge && node.shortcut && <ShortcutHint letter={node.shortcut} className="ml-auto" />}
     </NavLink>
   );
 
@@ -193,7 +210,10 @@ function MenuGroup({
       >
         <Icon className="size-4 shrink-0 transition-colors group-hover:text-brand-amber" />
         <span className="truncate">{node.label}</span>
-        <ChevronRight className={cn('ml-auto size-4 transition-transform', open && 'rotate-90')} />
+        <span className="ml-auto flex items-center gap-1.5">
+          {node.shortcut && <ShortcutHint letter={node.shortcut} />}
+          <ChevronRight className={cn('size-4 transition-transform', open && 'rotate-90')} />
+        </span>
       </button>
       {open && (
         <div className="mt-0.5 ml-4 flex flex-col gap-0.5 border-l pl-2">

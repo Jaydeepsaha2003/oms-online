@@ -108,6 +108,15 @@ export class DispatchController {
     return this.dispatch.create(dto, userName);
   }
 
+  /** Fully dispatch every pending line of an order at once — the New Order form's
+   *  "Create & Dispatch" calls this right after the order is created. */
+  @Post('fulfill-order/:orderId')
+  @Permissions(perm(R, ACTIONS.CREATE))
+  @Audit({ action: ACTIONS.CREATE, resource: R, description: 'Fully dispatched an order (Create & Dispatch)' })
+  fulfillOrder(@Param('orderId', ParseIntPipe) orderId: number, @CurrentUser('name') userName: string) {
+    return this.dispatch.dispatchOrderFully(orderId, userName);
+  }
+
   @Patch(':id')
   @Permissions(perm(R, ACTIONS.UPDATE))
   @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Edited a dispatch' })
