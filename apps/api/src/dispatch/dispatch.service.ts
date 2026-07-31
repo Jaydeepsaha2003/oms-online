@@ -13,6 +13,11 @@ import { CreateDispatchDto, DispatchQueryDto, PendingQueryDto, UpdateDispatchDto
 
 const EPS = 1e-6;
 
+// Cap quantities at 3 decimals. Subtracting/summing floats (e.g. ordered − dispatched)
+// otherwise surfaces artifacts like 71.60000000000001 into the remaining qty, which
+// then leaks into the dispatch form's pre-filled / MAX-filled inputs.
+const round3 = (x: number) => Math.round(x * 1000) / 1000;
+
 // Two dispatches on the SAME order line with identical quantities + status inside
 // this window are treated as ONE — a double-tap, a client retry, or two users
 // saving the same shipment at once. Real repeat dispatches of a line are minutes
@@ -62,10 +67,10 @@ export class DispatchService {
         (a, d) => ({ bags: a.bags + (d.bags ?? 0), pcs: a.pcs + (d.pcs ?? 0), gram: a.gram + (d.gram ?? 0), box: a.box + (d.box ?? 0) }),
         { bags: 0, pcs: 0, gram: 0, box: 0 },
       );
-      const remBags = Math.max(0, (it.bags ?? 0) - sum.bags);
-      const remPcs = Math.max(0, (it.pcs ?? 0) - sum.pcs);
-      const remKgs = Math.max(0, (it.gram ?? 0) - sum.gram);
-      const remBox = Math.max(0, (it.box ?? 0) - sum.box);
+      const remBags = round3(Math.max(0, (it.bags ?? 0) - sum.bags));
+      const remPcs = round3(Math.max(0, (it.pcs ?? 0) - sum.pcs));
+      const remKgs = round3(Math.max(0, (it.gram ?? 0) - sum.gram));
+      const remBox = round3(Math.max(0, (it.box ?? 0) - sum.box));
       if (remBags <= EPS && remPcs <= EPS && remKgs <= EPS && remBox <= EPS) continue;
       const due = it.order.completionDate;
       lines.push({
@@ -106,17 +111,23 @@ export class DispatchService {
     return lines;
   }
 
-  /** The product name with its trailing design token removed — e.g.
-   *  "15 Rajwadi Gold" (design "Gold") → "15 Rajwadi". This is the legacy Form13
-   *  SelectProduct value ("{size|pcs} {product}"); the "ALL" toggle groups every
-   *  design variant of a product by this base. */
-  private static baseProductName(full: string | null | undefined, design: string | null | undefined): string {
+  /** The base product — "{size} {product}" with any trailing design / handle /
+   *  logo suffix dropped — e.g. "10 RDX WL+TOOL+LOGO" (product "RDX") → "10 RDX",
+   *  and "7 DECENT TOOL" (product "DECENT") → "7 DECENT". This is the legacy
+   *  Form13 SelectProduct value; the base-name picker (ALL off) groups every
+   *  design variant of a product under it.
+   *
+   *  We cut the name right after the product word rather than stripping the
+   *  `designType` token: on this data designType is almost always "NA"/null even
+   *  when the name carries a design suffix, so a design-based strip left the
+   *  suffix on and the "base" list still showed full, design-laden names. */
+  private static baseProductName(full: string | null | undefined, product: string | null | undefined): string {
     const name = (full ?? '').trim();
-    const d = (design ?? '').trim();
-    if (d && d.toUpperCase() !== 'NA' && name.toUpperCase().endsWith(' ' + d.toUpperCase())) {
-      return name.slice(0, name.length - d.length - 1).trim();
-    }
-    return name;
+    const prod = (product ?? '').trim();
+    if (!prod) return name;
+    const idx = name.toUpperCase().indexOf(prod.toUpperCase());
+    if (idx === -1) return name; // product word not found in the name → leave as-is
+    return name.slice(0, idx + prod.length).trim();
   }
 
   /** Distinct customer / agent / product / design values present in the *pending*
@@ -137,7 +148,7 @@ export class DispatchService {
       customers: distinct(poolFor('customer'), (l) => l.customerName),
       agents: distinct(poolFor('agent'), (l) => l.agentName),
       products: distinct(productPool, (l) => l.productName || l.product),
-      productBases: distinct(productPool, (l) => DispatchService.baseProductName(l.productName || l.product, l.designType)),
+      productBases: distinct(productPool, (l) => DispatchService.baseProductName(l.productName || l.product, l.product)),
       designs: distinct(poolFor('design'), (l) => (l.designType && l.designType.toUpperCase() !== 'NA' ? l.designType : null)),
       subCategories: distinct(poolFor('subCategory'), (l) => l.subCategory),
     };
@@ -406,10 +417,10 @@ export class DispatchService {
       { bags: 0, pcs: 0, gram: 0, box: 0 },
     );
     return {
-      bags: Math.max(0, (line.bags ?? 0) - sum.bags),
-      pcs: Math.max(0, (line.pcs ?? 0) - sum.pcs),
-      gram: Math.max(0, (line.gram ?? 0) - sum.gram),
-      box: Math.max(0, (line.box ?? 0) - sum.box),
+      bags: round3(Math.max(0, (line.bags ?? 0) - sum.bags)),
+      pcs: round3(Math.max(0, (line.pcs ?? 0) - sum.pcs)),
+      gram: round3(Math.max(0, (line.gram ?? 0) - sum.gram)),
+      box: round3(Math.max(0, (line.box ?? 0) - sum.box)),
     };
   }
 

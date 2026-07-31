@@ -356,6 +356,9 @@ export interface ChallanTotals {
 
 const r0 = (x: number) => Math.round(x);
 const r2 = (x: number) => Math.round(x * 100) / 100;
+// Quantities cap at 3 decimals — summing floats (69.8 + 71.6) otherwise surfaces
+// artifacts like 141.39999999999998 in the KGS total.
+const r3 = (x: number) => Math.round(x * 1000) / 1000;
 const sumBy = <T>(arr: T[], f: (x: T) => number) => arr.reduce((a, x) => a + f(x), 0);
 const num = (v: number | null | undefined) => (Number.isFinite(v as number) ? (v as number) : 0);
 
@@ -368,10 +371,10 @@ const num = (v: number | null | undefined) => (Number.isFinite(v as number) ? (v
  */
 export function computeChallanTotals(input: ChallanTotalsInput): ChallanTotals {
   const items = input.items ?? [];
-  const tBags = sumBy(items, (i) => num(i.bags));
-  const tPcs = sumBy(items, (i) => num(i.pcs));
-  const tKgs = sumBy(items, (i) => num(i.kgs));
-  const tBox = sumBy(items, (i) => num(i.box));
+  const tBags = r3(sumBy(items, (i) => num(i.bags)));
+  const tPcs = r3(sumBy(items, (i) => num(i.pcs)));
+  const tKgs = r3(sumBy(items, (i) => num(i.kgs)));
+  const tBox = r3(sumBy(items, (i) => num(i.box)));
   const tAmt = r0(sumBy(items, (i) => num(i.amount)));
 
   const freight = num(input.freight);
