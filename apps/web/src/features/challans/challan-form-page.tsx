@@ -962,13 +962,13 @@ export function ChallanFormPage() {
                 </button>
                 <div className={cn(showDetails ? 'block' : 'hidden', 'sm:block space-y-2.5')}>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
-                    <div className="space-y-1 xl:col-span-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Transporter</Label><Input value={(isEdit ? savedChallan?.transName : draft.transName) || '—'} readOnly className="bg-muted/40 h-8 rounded-[4px] text-[13px]" /></div>
+                    <div className="space-y-1 xl:col-span-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Transporter</Label><Input value={(isEdit ? savedChallan?.transName : draft.transName) || '—'} readOnly className="h-8 rounded-[4px] border-amber-500 bg-amber-50 text-[13px] dark:border-amber-400/70 dark:bg-amber-400/10" /></div>
                     <LockField label="Freight" value={freight} locked={locked.freight} onUnlock={() => unlock('freight')} onChange={setFreight} onBlur={() => setLocked((l) => ({ ...l, freight: true }))} />
                     <LockField label="Packing" value={packing} locked={locked.packing} onUnlock={() => unlock('packing')} onChange={setPacking} onBlur={() => setLocked((l) => ({ ...l, packing: true }))} />
                     <LockField label="Box / Pouch" value={pouch} locked={locked.pouch} onUnlock={() => unlock('pouch')} onChange={setPouch} onBlur={() => setLocked((l) => ({ ...l, pouch: true }))} />
                     {/* GST % field removed — GST is not editable; it follows the customer's configured
                         rate (applied automatically) and is shown in the totals panel below. */}
-                    <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">{`Billing Rate${halfBill ? ' · half' : ''}`}</Label><Input value={billingRate} onChange={(e) => setBillingRate(e.target.value)} className="h-8 rounded-[4px] text-right text-[13px] tabular-nums" /></div>
+                    <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">{`Billing Rate${halfBill ? ' · half' : ''}`}</Label><Input value={billingRate} onChange={(e) => setBillingRate(e.target.value)} className="h-8 rounded-[4px] border-amber-500 bg-amber-50 text-right text-[13px] tabular-nums dark:border-amber-400/70 dark:bg-amber-400/10" /></div>
                   </div>
                   {SHOW_SHIPPING_ADDRESS && (
                     <div className="space-y-1">
@@ -1100,7 +1100,10 @@ function LockField({ label, value, locked, onUnlock, onChange, onBlur }: { label
         onDoubleClick={onUnlock}
         onChange={(e) => onChange(e.target.value)}
         onBlur={onBlur}
-        className={cn('h-8 rounded-[4px] text-right text-[13px] tabular-nums', locked && 'bg-muted/40 cursor-default')}
+        className={cn(
+          'h-8 rounded-[4px] border-amber-500 bg-amber-50 text-right text-[13px] tabular-nums dark:border-amber-400/70 dark:bg-amber-400/10',
+          locked && 'cursor-default',
+        )}
       />
     </div>
   );

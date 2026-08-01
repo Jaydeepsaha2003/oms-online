@@ -37,4 +37,5 @@ export * from './types/party-list';
 export * from './types/discount';
 export * from './types/note';
 export * from './types/notification';
+export * from './types/approval';
 export * from './types/party-ledger';

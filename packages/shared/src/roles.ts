@@ -58,6 +58,9 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       perm(RESOURCES.USER, ACTIONS.MANAGE),
       perm(RESOURCES.ROLE, ACTIONS.VIEW),
       perm(RESOURCES.AUDIT_LOG, ACTIONS.VIEW),
+      // Signs off whatever lands in the Approvals inbox. `dispatch:manage` above
+      // already implies dispatch:approve, so an admin back-dates directly.
+      perm(RESOURCES.APPROVAL, ACTIONS.MANAGE),
     ],
     isSystem: true,
   },

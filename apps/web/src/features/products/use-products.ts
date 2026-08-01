@@ -19,6 +19,14 @@ export interface ImportResult {
 
 const KEY = ['products'] as const;
 
+// A product's name/rate/category feeds the order item picker (composeOrderLookups
+// → /orders/lookups), same as useSetProductFlags and useSaveCategoryFields below
+// already account for — a plain create/update/delete/import needs the same reach.
+const invalidateProducts = (qc: ReturnType<typeof useQueryClient>) => {
+  qc.invalidateQueries({ queryKey: KEY });
+  qc.invalidateQueries({ queryKey: ['orders', 'lookups'] });
+};
+
 export function useProducts(query: ProductQuery) {
   return useQuery({
     queryKey: [...KEY, query],
@@ -39,7 +47,7 @@ export function useCreateProduct() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: ProductInput) => http.post<ProductDto>('/products', input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateProducts(qc),
   });
 }
 
@@ -47,7 +55,7 @@ export function useUpdateProduct(id: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: ProductInput) => http.patch<ProductDto>(`/products/${id}`, input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateProducts(qc),
   });
 }
 
@@ -55,7 +63,7 @@ export function useDeleteProduct() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => http.delete(`/products/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateProducts(qc),
   });
 }
 
@@ -77,7 +85,7 @@ export function useImportProducts() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (rows: Record<string, unknown>[]) => http.post<ImportResult>('/products/import', { rows }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateProducts(qc),
   });
 }
 

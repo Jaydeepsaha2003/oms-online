@@ -69,10 +69,14 @@ export function usePendingFilterOptions(query: Partial<PendingQuery> = {}) {
 
 // Any dispatch change alters what a challan will contain, so also refresh the
 // challans caches (the pending list + the staleTime:Infinity challan draft) —
-// otherwise an edited/removed quantity reappears from a stale draft.
+// otherwise an edited/removed quantity reappears from a stale draft. It also
+// moves the order's own dispatchState/timeline ('ordered → dispatched →
+// challaned'), which the Orders list renders as a badge — so that needs a
+// refresh too.
 const invalidateDispatch = (qc: ReturnType<typeof useQueryClient>) => {
   qc.invalidateQueries({ queryKey: KEY });
   qc.invalidateQueries({ queryKey: ['challans'] });
+  qc.invalidateQueries({ queryKey: ['orders'] });
 };
 
 export function useCreateDispatch() {

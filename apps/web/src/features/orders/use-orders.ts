@@ -3,6 +3,16 @@ import type { OrderDto, OrderFilterOptions, OrderInput, OrderItemOption, OrderIt
 import { http } from '@/lib/api';
 
 const KEY = ['orders'] as const;
+
+// An order appearing/disappearing changes what Dispatch's pending list and CRM's
+// order-item suggest can offer — both already carry a short staleTime (15-30s) so
+// this mostly tightens the window, but a just-cancelled/deleted order showing up
+// as pickable for even a few seconds is still wrong.
+const invalidateOrderAvailability = (qc: ReturnType<typeof useQueryClient>) => {
+  qc.invalidateQueries({ queryKey: KEY });
+  qc.invalidateQueries({ queryKey: ['dispatch'] });
+  qc.invalidateQueries({ queryKey: ['crm'] });
+};
 const photoKey = (itemId: number) => [...KEY, 'item-photos', itemId] as const;
 
 export function useOrders(query: OrderQuery) {
@@ -78,7 +88,7 @@ export function useCreateOrder() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: OrderInput) => http.post<OrderDto>('/orders', input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateOrderAvailability(qc),
   });
 }
 
@@ -86,7 +96,7 @@ export function useUpdateOrder(id: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: OrderInput) => http.patch<OrderDto>(`/orders/${id}`, input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateOrderAvailability(qc),
   });
 }
 
@@ -95,7 +105,7 @@ export function useSaveOrder() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, input }: { id: number; input: OrderInput }) => http.patch<OrderDto>(`/orders/${id}`, input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateOrderAvailability(qc),
   });
 }
 
@@ -105,7 +115,7 @@ export function useCancelOrder() {
   return useMutation({
     mutationFn: ({ id, reason, note }: { id: number; reason?: string | null; note?: string | null }) =>
       http.patch<OrderDto>(`/orders/${id}/status`, { status: 'CANCELLED', reason: reason ?? undefined, note: note ?? undefined }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateOrderAvailability(qc),
   });
 }
 
@@ -113,7 +123,7 @@ export function useDeleteOrder() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => http.delete(`/orders/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateOrderAvailability(qc),
   });
 }
 

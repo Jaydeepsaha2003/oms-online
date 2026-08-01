@@ -12,10 +12,13 @@ export interface ImportResult {
 const KEY = ['designs'] as const;
 
 // A design's cost/rate feeds every combination it belongs to, so changes must
-// refresh the (live-computed) combinations list too.
+// refresh the (live-computed) combinations list too — and the order item picker
+// (composeOrderLookups → /orders/lookups), same as useSetDesignFlags already knew
+// to do; the plain create/update/delete/import paths need the same reach.
 function invalidateDesignsAndCombos(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: KEY });
   qc.invalidateQueries({ queryKey: ['combinations'] });
+  qc.invalidateQueries({ queryKey: ['orders', 'lookups'] });
 }
 
 export function useDesigns(query: DesignQuery) {
@@ -38,7 +41,7 @@ export function useCreateDesign() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: DesignInput) => http.post<DesignDto>('/designs', input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateDesignsAndCombos(qc),
   });
 }
 

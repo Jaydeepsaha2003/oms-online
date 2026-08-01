@@ -24,6 +24,16 @@ import { http } from '@/lib/api';
 
 const KEY = ['challans'] as const;
 
+// A challan create/edit/status-change/delete moves an order along the
+// "ordered → dispatched → challaned" timeline (OrderTimeline / OrderDto.dispatchState),
+// and the Orders list renders that state as a badge — so it needs to hear about
+// this too, not just the challans caches. Mirrors invalidateDispatch's reasoning
+// in use-dispatch.ts for the same kind of cross-feature effect.
+const invalidateChallans = (qc: ReturnType<typeof useQueryClient>) => {
+  qc.invalidateQueries({ queryKey: KEY });
+  qc.invalidateQueries({ queryKey: ['orders'] });
+};
+
 /** Dispatch lines still awaiting a challan, with search + date-range filters. */
 export function usePendingChallans(query: PendingChallanQuery, opts?: { enabled?: boolean }) {
   return useQuery({
@@ -91,13 +101,29 @@ export function useAllChallanCustomers(search = '') {
   });
 }
 
-/** Build a priced challan draft from the selected dispatch lines (one customer). */
+/**
+ * Build a priced challan draft from the selected dispatch lines (one customer).
+ *
+ * `staleTime: Infinity` means this is never spontaneously refetched — it only
+ * updates when something calls `invalidateQueries`. That's fine while the form
+ * stays mounted, but "Create Challan" opens this fresh every time straight after
+ * a dispatch was just recorded (Dispatch → Pending Challan → Create Challan, all
+ * in a few seconds). If that dispatch also happened to touch a customer whose
+ * draft was already sitting in the cache from earlier in the session — e.g. the
+ * page cache the app persists to localStorage across reloads — this screen could
+ * open onto that older snapshot instead of a real network round-trip, and only a
+ * second visit (after the invalidation from the dispatch mutation had time to
+ * mark it stale) would show the new item. `refetchOnMount: 'always'` removes the
+ * ambiguity entirely: opening Create Challan ALWAYS hits the server, regardless
+ * of anything already sitting in the cache.
+ */
 export function useChallanDraft(input: DraftChallanInput | null) {
   return useQuery({
     queryKey: [...KEY, 'draft', input?.customerName, input?.dispatchIds],
     queryFn: () => http.post<ChallanDraft>('/challans/draft', input),
     enabled: !!input?.customerName,
     staleTime: Infinity,
+    refetchOnMount: 'always',
   });
 }
 
@@ -106,7 +132,7 @@ export function useCreateChallan() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: CreateChallanInput) => http.post<ChallanDto>('/challans', input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateChallans(qc),
   });
 }
 
@@ -119,13 +145,16 @@ export function useChallan(id?: number) {
   });
 }
 
-/** Load a saved challan for editing (stored header + lines + the customer's add-more pool). */
+/** Load a saved challan for editing (stored header + lines + the customer's add-more pool).
+ *  Same reasoning as {@link useChallanDraft}: opening an edit should always be a
+ *  real fetch, not a possibly-stale cache hit. */
 export function useChallanEdit(id: number | null) {
   return useQuery({
     queryKey: [...KEY, 'edit', id],
     queryFn: () => http.get<ChallanEditContext>(`/challans/${id}/edit`),
     enabled: id != null,
     staleTime: Infinity,
+    refetchOnMount: 'always',
   });
 }
 
@@ -134,7 +163,7 @@ export function useUpdateChallan() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...input }: { id: number } & CreateChallanInput) => http.put<ChallanDto>(`/challans/${id}`, input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateChallans(qc),
   });
 }
 
@@ -175,7 +204,7 @@ export function useUpdateChallanStatus() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...body }: { id: number } & UpdateChallanStatusInput) => http.patch<ChallanDto>(`/challans/${id}/status`, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateChallans(qc),
   });
 }
 
@@ -183,7 +212,7 @@ export function useDeleteChallan() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => http.delete<{ id: number }>(`/challans/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateChallans(qc),
   });
 }
 

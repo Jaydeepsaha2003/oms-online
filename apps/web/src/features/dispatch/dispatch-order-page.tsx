@@ -248,7 +248,10 @@ export function DispatchOrderPage() {
   // Sheet "Reset": clear only the sheet's own three filters (Due/Design/Sub
   // category) — both the drafts and what's applied — immediately. The Customer
   // and Product quick-selects sit outside the sheet and keep their own values.
-  const draftDirty = !!(draftDue || draftDesign || draftSubCategory || dueType || design || subCategory);
+  // `all` counts here: the ALL switch is rendered inside this sheet, so leaving it
+  // out left Reset DISABLED whenever ALL was the only active filter — making it
+  // impossible to turn off from a phone.
+  const draftDirty = !!(draftDue || draftDesign || draftSubCategory || dueType || design || subCategory || all);
   const resetSheetFilters = () => {
     setDraftDue('');
     setDraftDesign('');
@@ -256,6 +259,13 @@ export function DispatchOrderPage() {
     setDueType('');
     setDesign('');
     setSubCategory('');
+    // ALL is one of this sheet's own filters, so it resets with them. Turning it
+    // off swaps the product options (full variants → base names) and invalidates
+    // any current pick, which is why toggleAll() clears the product as well.
+    if (all) {
+      setAll(false);
+      setProduct('');
+    }
     setPage(1);
   };
   const items = data?.items ?? [];

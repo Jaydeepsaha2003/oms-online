@@ -93,10 +93,22 @@ export function Combobox({
   // blur handler would close the dropdown mid-drag.
   const draggingList = React.useRef(false);
 
-  // Reflect external value changes into the field when not actively editing.
+  // The blur handler runs on a 120ms timer, so anything it reads from the render
+  // closure is stale by the time it fires. These refs give it the CURRENT value —
+  // without them, clicking a "Reset filters" button while a field was focused left
+  // the old text sitting in the box after the filter state had already cleared.
+  const valueRef = React.useRef(value);
+  const labelForRef = React.useRef(labelFor);
+  valueRef.current = value;
+  labelForRef.current = labelFor;
+
+  // Reflect external value changes into the field. "Not actively editing" means
+  // either unfocused, or focused but with nothing typed yet — so a filter reset
+  // lands immediately even while the field has the caret, instead of waiting for
+  // blur. Mid-typing (dirty) is left alone so the sync can't eat keystrokes.
   React.useEffect(() => {
-    if (!focused.current) setText(labelFor(value));
-  }, [value, labelFor]);
+    if (!focused.current || !dirty) setText(labelFor(value));
+  }, [value, labelFor, dirty]);
 
   const q = text.trim();
   const ql = q.toLowerCase();
@@ -228,7 +240,11 @@ export function Combobox({
       setOpen(false);
       if (!creatable) {
         const typed = text.trim();
-        const committed = labelFor(value);
+        // Read through the refs, not the closure: the value may have changed during
+        // the 120ms wait (a Reset button clearing every filter is the common case),
+        // and reverting to the stale label would put a filter back on screen that
+        // is no longer applied to the data.
+        const committed = labelForRef.current(valueRef.current);
         if (
           typed &&
           typed.toLowerCase() !== committed.toLowerCase() &&

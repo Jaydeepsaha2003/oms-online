@@ -97,11 +97,20 @@ export class DispatchController {
     return this.dispatch.findOne(id);
   }
 
+  /**
+   * Record a dispatch. A date other than today needs `dispatch:approve` — without
+   * it the entry is parked in the Approvals inbox instead of being created, so the
+   * response is either the new dispatch or the approval code to quote.
+   */
   @Post()
   @Permissions(perm(R, ACTIONS.CREATE))
   @Audit({ action: ACTIONS.CREATE, resource: R, description: 'Created a dispatch' })
-  create(@Body() dto: CreateDispatchDto, @CurrentUser('name') userName: string) {
-    return this.dispatch.create(dto, userName);
+  create(@Body() dto: CreateDispatchDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.dispatch.submit(dto, {
+      id: Number(user.id) || null,
+      name: user.name,
+      canApprove: hasPermission(user.permissions, perm(R, ACTIONS.APPROVE)),
+    });
   }
 
   /** Fully dispatch every pending line of an order at once — the New Order form's
@@ -116,8 +125,12 @@ export class DispatchController {
   @Patch(':id')
   @Permissions(perm(R, ACTIONS.UPDATE))
   @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Edited a dispatch' })
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateDispatchDto) {
-    return this.dispatch.update(id, dto);
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateDispatchDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.dispatch.updateAsUser(id, dto, {
+      id: Number(user.id) || null,
+      name: user.name,
+      canApprove: hasPermission(user.permissions, perm(R, ACTIONS.APPROVE)),
+    });
   }
 
   @Delete(':id')

@@ -20,19 +20,19 @@ datasource db {
 // ── Identity & access control ───────────────────────────────────────────────
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
+  id           String    @id @default(cuid())
+  email        String    @unique
   name         String
   passwordHash String
   // Optional 4–6 digit quick-login PIN (bcrypt-hashed). Null = PIN login disabled.
   pinHash      String?
   // One of: 'active' | 'disabled' | 'invited' (enforced by the API via class-validator).
-  status       String   @default("active")
+  status       String    @default("active")
   // Bumping tokenVersion invalidates every outstanding access token for the user.
-  tokenVersion Int      @default(0)
+  tokenVersion Int       @default(0)
   lastLoginAt  DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   roles             UserRole[]
   refreshTokens     RefreshToken[]
@@ -140,21 +140,21 @@ model PushSubscription {
 // ── Audit trail: who did what, when, from where ─────────────────────────────
 
 model AuditLog {
-  id         String   @id @default(cuid())
-  userId     String?
-  userEmail  String?
-  action     String
-  resource   String
-  resourceId String?
+  id          String   @id @default(cuid())
+  userId      String?
+  userEmail   String?
+  action      String
+  resource    String
+  resourceId  String?
   description String?
-  method     String?
-  path       String?
-  statusCode Int?
-  ip         String?
-  userAgent  String?
+  method      String?
+  path        String?
+  statusCode  Int?
+  ip          String?
+  userAgent   String?
   // JSON-serialized before/after snapshot (SQLite has no native Json type).
-  metadata   String?
-  createdAt  DateTime @default(now())
+  metadata    String?
+  createdAt   DateTime @default(now())
 
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
@@ -247,9 +247,9 @@ model Customer {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  transporter Transporter? @relation(fields: [transporterId], references: [id], onDelete: SetNull)
-  gstRates    GstRate[]
-  transRates  TransRate[]
+  transporter      Transporter?              @relation(fields: [transporterId], references: [id], onDelete: SetNull)
+  gstRates         GstRate[]
+  transRates       TransRate[]
   rateOverrides    CustomerRate[]
   logoRestrictions CustomerLogoRestriction[]
   bagWeights       CustomerBagWeight[]
@@ -394,22 +394,22 @@ model TransRate {
 // ── Catalog: Products, Designs & Combinations ───────────────────────────────
 
 model Product {
-  id          Int      @id @default(autoincrement())
+  id             Int      @id @default(autoincrement())
   // Auto-generated code (e.g. PRD-00001).
-  code        String?  @unique
-  category    String
-  subCategory String
-  product     String
-  size        Float?
-  weight      Float?
-  pcs         Float?
-  rate        Float?
+  code           String?  @unique
+  category       String
+  subCategory    String
+  product        String
+  size           Float?
+  weight         Float?
+  pcs            Float?
+  rate           Float?
   // Active products show in the order item pickers; inactive ones are hidden but kept.
   active         Boolean  @default(true)
   // Whether this product appears on the customer Rate List.
   showOnRateList Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   // A product is uniquely identified by category + sub-category + product + size.
   @@unique([category, subCategory, product, size])
@@ -419,20 +419,20 @@ model Product {
 }
 
 model Design {
-  id          Int      @id @default(autoincrement())
+  id             Int      @id @default(autoincrement())
   // Auto-generated code (e.g. DSG-00001).
-  code        String?  @unique
-  category    String
-  subCategory String
-  designType  String
-  cost        Float?
-  rate        Float?
+  code           String?  @unique
+  category       String
+  subCategory    String
+  designType     String
+  cost           Float?
+  rate           Float?
   // Active designs show in the order item pickers; inactive ones are hidden but kept.
   active         Boolean  @default(true)
   // Whether this design appears on the customer Rate List.
   showOnRateList Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   combinationLinks CombinationDesign[]
 
@@ -609,31 +609,31 @@ model QuotationItem {
 
 /// A single line item on an order (a product × design + quantities + rates).
 model OrderItem {
-  id          Int      @id @default(autoincrement())
-  orderId     Int
-  pCategory   String? // product category (GLASS / CUP / …)
-  subCategory String?
-  product     String?
-  design      String?
-  productName String? // composite display name (e.g. "10 PLAIN")
-  designType  String?
-  psize       Float?
-  bags        Float?
-  pcs         Float?
-  gram        Float?
-  box         Float?
-  productRate Float?
-  designRate  Float?
-  rate        Float? // total = productRate + designRate
-  calField    String? // pricing unit: KGS / PCS
-  priority    String? // URGENT / NORMAL (per line item)
-  ordType     String? // order type (e.g. SALES ORDER)
+  id           Int      @id @default(autoincrement())
+  orderId      Int
+  pCategory    String? // product category (GLASS / CUP / …)
+  subCategory  String?
+  product      String?
+  design       String?
+  productName  String? // composite display name (e.g. "10 PLAIN")
+  designType   String?
+  psize        Float?
+  bags         Float?
+  pcs          Float?
+  gram         Float?
+  box          Float?
+  productRate  Float?
+  designRate   Float?
+  rate         Float? // total = productRate + designRate
+  calField     String? // pricing unit: KGS / PCS
+  priority     String? // URGENT / NORMAL (per line item)
+  ordType      String? // order type (e.g. SALES ORDER)
   // Per-line status: CONFIRMED (active) or CANCELLED (kept for the record, excluded
   // from order totals and not dispatchable). Mirrors legacy ORDERTBL.STATUS.
-  status      String   @default("CONFIRMED")
-  comment     String?
+  status       String   @default("CONFIRMED")
+  comment      String?
   // Soft link to the bag Booking this line was converted from (null for normal lines).
-  bookingId   Int?
+  bookingId    Int?
   // Set only when the MS Access import couldn't use the legacy ORDERTBL.ID as this
   // row's id (another row — usually a natively-created OrderItem whose Prisma
   // autoincrement id happened to land on the same number — already owns it).
@@ -642,7 +642,7 @@ model OrderItem {
   // resolve to the correct (remapped) line instead of silently landing on whichever
   // unrelated item now owns the original legacy id.
   legacyItemId Int?
-  createdAt   DateTime @default(now())
+  createdAt    DateTime @default(now())
 
   order      Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
   dispatches Dispatch[]
@@ -933,35 +933,35 @@ model AppConfig {
 /// CRM follow-up: one commitment to a party (delivery or payment). Carries a
 /// promised date + a reminder loop that re-surfaces it until resolved.
 model Followup {
-  id         Int      @id @default(autoincrement())
-  kind       String   @default("DELIVERY") // DELIVERY | PAYMENT
-  customerId Int?
-  partyName  String // always set (free text when the customer isn't in the system)
-  orderId    Int?
-  orderCode  String?
-  orderItemId Int?
-  itemText   String? // free item text when no linked order line
-  title      String
-  detail     String?
-  stage      String? // POLISHING | SUPPLIER | DISPATCH | READY | free text
-  priority   String   @default("NORMAL")
-  status     String   @default("OPEN") // OPEN | DONE | CANCELLED
-  promisedAt DateTime?
+  id                   Int       @id @default(autoincrement())
+  kind                 String    @default("DELIVERY") // DELIVERY | PAYMENT
+  customerId           Int?
+  partyName            String // always set (free text when the customer isn't in the system)
+  orderId              Int?
+  orderCode            String?
+  orderItemId          Int?
+  itemText             String? // free item text when no linked order line
+  title                String
+  detail               String?
+  stage                String? // POLISHING | SUPPLIER | DISPATCH | READY | free text
+  priority             String    @default("NORMAL")
+  status               String    @default("OPEN") // OPEN | DONE | CANCELLED
+  promisedAt           DateTime?
   // Promise-to-pay amount (PAYMENT follow-ups): "party promised ₹X by promisedAt".
-  promisedAmount Float?
+  promisedAmount       Float?
   // Reminder loop (fall back to CRM defaults when null).
   reminderIntervalMins Int?
   maxRemindersPerDay   Int?
-  remindersToday       Int      @default(0)
+  remindersToday       Int       @default(0)
   remindersDate        String? // yyyy-mm-dd the counter applies to (resets daily)
   nextRemindAt         DateTime?
   lastRemindedAt       DateTime?
-  pushSentAt DateTime? // set once a push has fired for the current due-cycle; cleared on re-promise/snooze/reopen
-  createdByName String?
-  resolvedByName String?
-  resolvedAt    DateTime?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  pushSentAt           DateTime? // set once a push has fired for the current due-cycle; cleared on re-promise/snooze/reopen
+  createdByName        String?
+  resolvedByName       String?
+  resolvedAt           DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
   logs      FollowupLog[]
   checklist FollowupChecklistItem[]
@@ -1018,14 +1018,14 @@ model FollowupChecklistItem {
 
 /// One timeline entry on a follow-up (a note / ack / snooze / re-promise).
 model FollowupLog {
-  id           Int      @id @default(autoincrement())
-  followupId   Int
-  kind         String   @default("NOTE") // NOTE | ACK | SNOOZE | PROMISE | STATUS
-  note         String?
-  stage        String?
+  id            Int       @id @default(autoincrement())
+  followupId    Int
+  kind          String    @default("NOTE") // NOTE | ACK | SNOOZE | PROMISE | STATUS
+  note          String?
+  stage         String?
   newPromisedAt DateTime?
-  userName     String?
-  createdAt    DateTime @default(now())
+  userName      String?
+  createdAt     DateTime  @default(now())
 
   followup Followup @relation(fields: [followupId], references: [id], onDelete: Cascade)
 
@@ -1367,4 +1367,56 @@ model AcctPartyDiscount {
   @@index([custId])
   @@index([billType])
   @@map("acct_party_discount")
+}
+
+/// Universal approval inbox.
+///
+/// One row per action that a user was NOT allowed to perform outright and which
+/// therefore needs an admin sign-off. The pending action is stored here as a JSON
+/// `payload` and is only replayed against the real tables once it is approved —
+/// nothing half-made is written into the operational data, so no other query in
+/// the system has to learn to filter out "not yet approved" records.
+///
+/// First user: a dispatch entered with a date other than today by someone without
+/// `dispatch:approve`. Approving it creates the Dispatch exactly as if the user
+/// had had the right; rejecting it leaves no trace beyond this row.
+///
+/// `type` is an open string so new approval kinds can be added without a
+/// migration; see APPROVAL_TYPES in @oms/shared for the ones handled today.
+model ApprovalRequest {
+  id     Int     @id @default(autoincrement())
+  code   String? @unique // APR-#####
+  type   String
+  status String  @default("PENDING") // PENDING | APPROVED | REJECTED | CANCELLED
+
+  /// One-line heading for the inbox row (e.g. "Back-dated dispatch — ACME LTD").
+  title   String
+  /// Supporting detail shown under the title.
+  summary String?
+  /// JSON body replayed verbatim on approval. Shape depends on `type`.
+  payload String
+
+  /// What the request is about, for display/linking (e.g. 'Order', 1234).
+  entity   String?
+  entityId Int?
+
+  requestedById   Int?
+  requestedByName String?
+  requestedAt     DateTime @default(now())
+
+  decidedById   Int?
+  decidedByName String?
+  decidedAt     DateTime?
+  /// Approver's note, and the reason shown to the requester on a rejection.
+  decisionNote  String?
+
+  /// Id of whatever the approval created (e.g. the new Dispatch), for traceability.
+  resultId Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, type])
+  @@index([requestedAt])
+  @@map("approval_request")
 }

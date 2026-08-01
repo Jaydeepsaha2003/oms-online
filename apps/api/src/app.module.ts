@@ -51,6 +51,7 @@ import { AccessImportModule } from './access-import/access-import.module'; // MS
 import { SettingsModule } from './settings/settings.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { BackupModule } from './backup/backup.module';
+import { ApprovalsModule } from './approvals/approvals.module';
 
 @Module({
   imports: [
@@ -108,6 +109,7 @@ import { BackupModule } from './backup/backup.module';
     SettingsModule,
     NotificationsModule,
     BackupModule,
+    ApprovalsModule,
   ],
   controllers: [AppController],
   providers: [

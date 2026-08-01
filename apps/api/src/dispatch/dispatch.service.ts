@@ -1,6 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, type OnModuleInit } from '@nestjs/common';
 import { Dispatch, Prisma } from '@prisma/client';
 import {
+  type DispatchBackdatePayload,
+  type DispatchDateChangePayload,
   type DispatchDto,
   type DispatchFilterOptions,
   type DispatchStatus,
@@ -8,6 +10,8 @@ import {
   type Paginated,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { ApprovalsService } from '../approvals/approvals.service';
+import { formatDate } from '../common/date.util';
 import { toNum, toStr, uc } from '../common/coerce';
 import { CreateDispatchDto, DispatchQueryDto, PendingQueryDto, UpdateDispatchDto } from './dto/dispatch.dto';
 
@@ -32,8 +36,70 @@ const DISPATCH_DEDUPE_WINDOW_MS = 15_000;
 const PENDING_CACHE_TTL_MS = 10_000;
 
 @Injectable()
-export class DispatchService {
-  constructor(private readonly prisma: PrismaService) {}
+export class DispatchService implements OnModuleInit {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly approvals: ApprovalsService,
+  ) {}
+
+  /**
+   * Teach the approvals inbox how to apply an approved back-dated dispatch: replay
+   * the saved payload through the normal create path with the approval already
+   * granted, so it goes through every quantity/duplicate guard exactly as if the
+   * requester had held `dispatch:approve` all along.
+   */
+  onModuleInit(): void {
+    this.approvals.registerHandler('DISPATCH_BACKDATE', async (payload, approverName) => {
+      const p = payload as unknown as DispatchBackdatePayload;
+      const row = await this.create(
+        {
+          orderItemId: p.orderItemId,
+          dispatchStatus: p.dispatchStatus as CreateDispatchDto['dispatchStatus'],
+          bags: p.bags ?? undefined,
+          pcs: p.pcs ?? undefined,
+          gram: p.gram ?? undefined,
+          box: p.box ?? undefined,
+          comment: p.comment ?? undefined,
+          supItem: p.supItem ?? undefined,
+          dispatchDate: p.dispatchDate,
+        },
+        // Keep the ORIGINAL requester on the record — the approver's name belongs
+        // on the approval row, not on the dispatch they merely signed off.
+        p.requestedByName ?? approverName,
+      );
+      return row.id;
+    });
+
+    // Moving an existing dispatch to another date — same gate, applied in place.
+    this.approvals.registerHandler('DISPATCH_DATE_CHANGE', async (payload) => {
+      const p = payload as unknown as DispatchDateChangePayload;
+      const exists = await this.prisma.dispatch.count({ where: { id: p.dispatchId } });
+      if (!exists) {
+        throw new BadRequestException('That dispatch no longer exists, so this date change cannot be applied.');
+      }
+      await this.prisma.dispatch.update({
+        where: { id: p.dispatchId },
+        data: { dispatchDate: new Date(p.dispatchDate) },
+      });
+      this.invalidatePendingCache();
+      return p.dispatchId;
+    });
+  }
+
+  /**
+   * Is this dispatch date "today"? Compared on the calendar day in server-local
+   * time, which is the day the shop is working in. Anything else is a back-date
+   * (or a forward-date) and needs `dispatch:approve`.
+   */
+  private isToday(iso?: string | null): boolean {
+    if (!iso) return true; // omitted → the service stamps now()
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return true;
+    const now = new Date();
+    return (
+      d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()
+    );
+  }
 
   private pendingCache: { at: number; lines: PendingLineDto[] } | null = null;
   private invalidatePendingCache(): void {
@@ -280,6 +346,79 @@ export class DispatchService {
     return this.toDto(row);
   }
 
+  /**
+   * The entry point the Dispatch form calls.
+   *
+   * A dispatch dated today is created immediately. A dispatch dated anything else
+   * is a back-entry: allowed straight through for a user with `dispatch:approve`,
+   * otherwise parked in the approvals inbox and NOT created — so it stays out of
+   * Pending Challan, order fulfilment maths and stock until an admin signs it off.
+   */
+  async submit(
+    dto: CreateDispatchDto,
+    user: { id?: number | null; name?: string | null; canApprove: boolean },
+  ): Promise<{ status: 'CREATED'; dispatch: DispatchDto } | { status: 'PENDING_APPROVAL'; approvalCode: string }> {
+    if (this.isToday(dto.dispatchDate) || user.canApprove) {
+      return { status: 'CREATED', dispatch: await this.create(dto, user.name ?? undefined) };
+    }
+
+    // Validate the line BEFORE parking the request, so an impossible dispatch is
+    // rejected now rather than after an admin has already approved it.
+    const it = await this.prisma.orderItem.findUnique({
+      where: { id: dto.orderItemId },
+      include: { order: true, dispatches: true },
+    });
+    if (!it) throw new NotFoundException('Order line not found.');
+    if (it.order.status === 'CANCELLED' || it.order.status === 'DRAFT') {
+      throw new BadRequestException('This order is not available for dispatch.');
+    }
+    if (it.status === 'CANCELLED') {
+      throw new BadRequestException('This line has been cancelled and cannot be dispatched.');
+    }
+    if (it.dispatches.some((d) => d.dispatchStatus === 'FULLY DISPATCH')) {
+      throw new BadRequestException('This line has already been fully dispatched.');
+    }
+    const qty = {
+      bags: toNum(dto.bags) ?? 0,
+      pcs: toNum(dto.pcs) ?? 0,
+      gram: toNum(dto.gram) ?? 0,
+      box: toNum(dto.box) ?? 0,
+    };
+    this.validateQty(qty, this.remaining(it, it.dispatches), dto.dispatchStatus, it.calField);
+
+    const payload: DispatchBackdatePayload & { requestedByName?: string | null } = {
+      orderItemId: dto.orderItemId,
+      dispatchStatus: dto.dispatchStatus,
+      bags: qty.bags,
+      pcs: qty.pcs,
+      gram: qty.gram,
+      box: qty.box,
+      comment: dto.comment ?? null,
+      supItem: dto.supItem ?? null,
+      dispatchDate: dto.dispatchDate!,
+      customerName: it.order.customerName,
+      orderCode: it.order.code ?? null,
+      productName: it.productName ?? it.product ?? null,
+      requestedByName: user.name ?? null,
+    };
+
+    const req = await this.approvals.request({
+      type: 'DISPATCH_BACKDATE',
+      title: `Back-dated dispatch — ${it.order.customerName}`,
+      summary: `${formatDate(dto.dispatchDate)} · ${payload.productName ?? 'item'} · ${dto.dispatchStatus}${
+        payload.orderCode ? ` · order ${payload.orderCode}` : ''
+      }`,
+      payload: payload as unknown as Record<string, unknown>,
+      entity: 'Order',
+      entityId: it.orderId,
+      requestedById: user.id ?? null,
+      requestedByName: user.name ?? null,
+    });
+
+    return { status: 'PENDING_APPROVAL', approvalCode: req.code ?? `APR-${req.id}` };
+  }
+
+  /** Creates the row unconditionally — the back-date gate lives in {@link submit}. */
   async create(dto: CreateDispatchDto, userName?: string): Promise<DispatchDto> {
     const bags = toNum(dto.bags) ?? 0;
     const pcs = toNum(dto.pcs) ?? 0;
@@ -430,6 +569,60 @@ export class DispatchService {
 
     if (result.dispatched > 0) this.invalidatePendingCache();
     return result;
+  }
+
+  /**
+   * Edit a dispatch. Quantities and notes are always the user's own to change; the
+   * DATE follows the same rule as the Dispatch form — free for `dispatch:approve`,
+   * otherwise parked as an approval. Everything else in the edit still saves
+   * immediately, so a pending date change never blocks a quantity correction.
+   */
+  async updateAsUser(
+    id: number,
+    dto: UpdateDispatchDto,
+    user: { id?: number | null; name?: string | null; canApprove: boolean },
+  ): Promise<{ dispatch: DispatchDto; dateApprovalCode?: string }> {
+    const cur = await this.prisma.dispatch.findUnique({ where: { id } });
+    if (!cur) throw new NotFoundException('Dispatch not found.');
+
+    const wantsDateMove =
+      !!dto.dispatchDate && !this.sameDay(dto.dispatchDate, cur.dispatchDate) && !this.isToday(dto.dispatchDate);
+
+    if (!wantsDateMove || user.canApprove) {
+      return { dispatch: await this.update(id, dto) };
+    }
+
+    // Save everything except the date now, and raise an approval for the move.
+    const { dispatchDate, ...rest } = dto;
+    void dispatchDate;
+    const dispatch = await this.update(id, rest);
+    const payload: DispatchDateChangePayload = {
+      dispatchId: id,
+      dispatchDate: dto.dispatchDate!,
+      currentDate: cur.dispatchDate.toISOString(),
+      customerName: cur.customerName,
+      dispatchCode: cur.code ?? null,
+      productName: cur.productName ?? cur.product ?? null,
+      requestedByName: user.name ?? null,
+    };
+    const req = await this.approvals.request({
+      type: 'DISPATCH_DATE_CHANGE',
+      title: `Dispatch date change — ${cur.customerName}`,
+      summary: `${cur.code ?? `#${id}`} · ${formatDate(cur.dispatchDate.toISOString())} → ${formatDate(dto.dispatchDate)}`,
+      payload: payload as unknown as Record<string, unknown>,
+      entity: 'Dispatch',
+      entityId: id,
+      requestedById: user.id ?? null,
+      requestedByName: user.name ?? null,
+    });
+    return { dispatch, dateApprovalCode: req.code ?? `APR-${req.id}` };
+  }
+
+  /** Same calendar day in server-local time? */
+  private sameDay(iso: string, other: Date): boolean {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return true;
+    return d.getFullYear() === other.getFullYear() && d.getMonth() === other.getMonth() && d.getDate() === other.getDate();
   }
 
   async update(id: number, dto: UpdateDispatchDto): Promise<DispatchDto> {

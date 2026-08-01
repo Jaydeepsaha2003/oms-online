@@ -311,6 +311,14 @@ REM another copy already is). It relaunches the servers within a minute if
 REM they ever die, until stop.bat is used.
 wscript.exe "%~dp0oms-watchdog.vbs"
 
+REM ...and make sure it comes BACK after a reboot/logoff. The line above only
+REM covers the current Windows session, so before this a restart left the
+REM machine with no watchdog and no servers until someone ran start.bat by hand.
+REM This drops a shortcut in the Startup folder (no admin rights needed) and is
+REM a no-op once installed. For coverage before anyone even logs in, run
+REM enable-autostart.bat once as administrator.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\install-keepalive.ps1" >nul 2>&1
+
 REM Wait until both ports are listening so we can confirm a real startup.
 set "READY=1"
 powershell -NoProfile -Command "$d=(Get-Date).AddSeconds(45); while((Get-Date) -lt $d){ if((Get-NetTCPConnection -State Listen -LocalPort 4000 -EA SilentlyContinue) -and (Get-NetTCPConnection -State Listen -LocalPort 6173 -EA SilentlyContinue)){ exit 0 }; Start-Sleep -Milliseconds 700 }; exit 1"

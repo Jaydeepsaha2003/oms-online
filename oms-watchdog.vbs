@@ -14,7 +14,7 @@
 '  after the next start.bat.
 ' ============================================================
 Option Explicit
-Dim sh, fso, wmi, dir
+Dim sh, fso, wmi, dir, webUp, apiUp
 
 Set sh  = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
@@ -49,9 +49,50 @@ Function PortUp(port)
   PortUp = Len(Trim(output)) > 0
 End Function
 
+' Free BOTH production ports before relaunching. `npm run start` brings up the
+' API and the web server together, so when only one of them has died the
+' survivor still holds its port and the relaunch fails to bind - the instance
+' stayed half-dead forever. Killing the leftover first makes the heal actually
+' work. Only ever called when a port is already down, so a healthy server (or a
+' dev server occupying these ports) is never touched.
+Sub FreePorts()
+  Dim tmp, f, line, parts, i, pid
+  tmp = sh.ExpandEnvironmentStrings("%TEMP%") & "\oms-freeports.txt"
+  sh.Run "cmd /c netstat -aon | findstr "":6173 "" > """ & tmp & """ & netstat -aon | findstr "":4000 "" >> """ & tmp & """", 0, True
+  On Error Resume Next
+  Set f = fso.OpenTextFile(tmp, 1)
+  Do While Not f.AtEndOfStream
+    line = Trim(f.ReadLine)
+    If InStr(line, "LISTENING") > 0 Then
+      parts = Split(line, " ")
+      pid = ""
+      For i = UBound(parts) To 0 Step -1
+        If Len(Trim(parts(i))) > 0 Then
+          pid = Trim(parts(i))
+          Exit For
+        End If
+      Next
+      If IsNumeric(pid) And pid <> "0" Then
+        sh.Run "cmd /c taskkill /F /PID " & pid, 0, True
+      End If
+    End If
+  Loop
+  f.Close
+  fso.DeleteFile tmp
+  On Error Goto 0
+End Sub
+
 Do While True
   If Not fso.FileExists(dir & "\.oms-stopped") Then
-    If (Not PortUp(6173)) Or (Not PortUp(4000)) Then
+    webUp = PortUp(6173)
+    apiUp = PortUp(4000)
+    If (Not webUp) Or (Not apiUp) Then
+      ' Half-dead (exactly one side still listening) - clear the survivor so the
+      ' relaunch can bind both ports.
+      If webUp Or apiUp Then
+        FreePorts
+        WScript.Sleep 3000
+      End If
       sh.Run "wscript.exe " & Chr(34) & dir & "\run-prod-hidden.vbs" & Chr(34), 0, True
       ' Give npm + both servers time to boot before re-checking, so a slow
       ' start is never mistaken for a failure and double-launched.

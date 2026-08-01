@@ -88,6 +88,9 @@ export const RESOURCES = {
   SETTING: 'setting',
   /** Whole-database backup download (the raw SQLite file). */
   BACKUP: 'backup',
+  /** The universal Approvals inbox — every request that needs a sign-off before
+   *  it takes effect lands here (first one: back-dated dispatch entries). */
+  APPROVAL: 'approval',
 } as const;
 
 export type Resource = (typeof RESOURCES)[keyof typeof RESOURCES];
@@ -145,7 +148,9 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
     resource: RESOURCES.DISPATCH,
     label: 'Dispatch',
     group: 'Sales',
-    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.EXPORT, ACTIONS.VIEWRATES, ACTIONS.MANAGE],
+    // `approve` here means "may set a dispatch date other than today without a
+    // sign-off". Anyone without it who back-dates raises an approval request.
+    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.EXPORT, ACTIONS.VIEWRATES, ACTIONS.APPROVE, ACTIONS.MANAGE],
   },
   {
     resource: RESOURCES.CHALLAN,
@@ -275,6 +280,14 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
     label: 'Database Backup',
     group: 'Administration',
     actions: [ACTIONS.EXPORT],
+  },
+  {
+    resource: RESOURCES.APPROVAL,
+    label: 'Approvals',
+    group: 'Administration',
+    // `view` opens the inbox (a requester can watch their own requests);
+    // `approve` is what actually lets you sign a request off or reject it.
+    actions: [ACTIONS.VIEW, ACTIONS.APPROVE, ACTIONS.DELETE, ACTIONS.MANAGE],
   },
 ];
 

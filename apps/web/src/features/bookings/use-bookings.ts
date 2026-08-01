@@ -77,7 +77,12 @@ export function useConvertBooking() {
   return useMutation({
     mutationFn: ({ id, ...input }: { id: number } & ConvertBookingInput) =>
       http.post<BookingDto>(`/bookings/${id}/convert`, input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    // This creates real order rows — same cross-feature effect useConvertQuotation
+    // already accounts for, so Orders needs to hear about it too.
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEY });
+      qc.invalidateQueries({ queryKey: ['orders'] });
+    },
   });
 }
 
