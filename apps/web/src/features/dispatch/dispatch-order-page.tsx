@@ -426,6 +426,9 @@ export function DispatchOrderPage() {
             isLoading={isLoading}
             dense
             hideSortIcon
+            // Grow to fit every row (no inner scroll region) so the page's own
+            // scrollbar is the only vertical scrollbar — the list runs to the footer.
+            maxBodyHeight="max-h-none"
             emptyText="No pending order lines — everything is dispatched."
             onRowClick={(r) => setActive(r)}
             className={[
@@ -625,13 +628,28 @@ function DispatchSheet({ line, onClose, onDispatched }: { line: PendingLineDto; 
       });
       if (!ok) return;
       status = 'FULLY DISPATCH'; // nothing is left pending once you go over
-    } else if (form.dispatchStatus === 'FULLY DISPATCH') {
-      const ok = await confirm({
-        title: 'Fully dispatch this line?',
-        description: `${line.productName || line.product} for ${line.customerName} will be closed (no longer pending).`,
-        confirmText: 'Dispatch fully',
-      });
-      if (!ok) return;
+    } else {
+      // Exact-remaining Kgs is suspicious: real dispatched weight is almost always
+      // a little more or less than the ordered amount. Nudge the user to re-check
+      // when the entered Kgs matches the remaining exactly. (Takes precedence over
+      // the generic "fully dispatch" confirm, which is a less specific message.)
+      const remKgs = line.remKgs ?? 0;
+      const exactKgs = gram > 1e-6 && Math.abs(gram - remKgs) < 1e-6;
+      if (exactKgs) {
+        const ok = await confirm({
+          title: 'Dispatch the exact remaining Kgs?',
+          description: `You entered ${n(gram)} Kgs — exactly the full remaining weight. The actual weight going out is usually a little more or less, so please double-check this is really the exact weight before dispatching.`,
+          confirmText: 'Yes, dispatch this Kgs',
+        });
+        if (!ok) return;
+      } else if (form.dispatchStatus === 'FULLY DISPATCH') {
+        const ok = await confirm({
+          title: 'Fully dispatch this line?',
+          description: `${line.productName || line.product} for ${line.customerName} will be closed (no longer pending).`,
+          confirmText: 'Dispatch fully',
+        });
+        if (!ok) return;
+      }
     }
     create.mutate(
       { orderItemId: line.orderItemId, bags, pcs, gram, box, dispatchStatus: status, comment: form.comment.trim() || null },
