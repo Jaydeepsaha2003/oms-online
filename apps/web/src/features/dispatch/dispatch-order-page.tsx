@@ -120,19 +120,26 @@ function DispatchCard({ line, index, showRates, onClick }: { line: PendingLineDt
   );
 }
 
+/** Matches the Pending Challan / Challans / Orders grids: Inter, semibold, near-black. */
+const TEXT_CELL = 'text-[13px] font-semibold text-slate-800 dark:text-slate-200';
+/** Compact, amber-bordered filter controls — same language as the other list pages. */
+const CONTROL =
+  'h-9 rounded-[4px] border-amber-300 dark:border-amber-400/40 text-[12.5px] focus-visible:border-amber-500 focus-visible:ring-amber-400/30';
+const CONTROL_ON = 'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
+
 const COLUMNS: DataColumn<PendingLineDto>[] = [
-  { id: 'order', label: 'ORD#', pin: 'left0', pinWidthClass: 'sm:w-16 sm:min-w-16', fixed: true, cell: (r) => <span className="font-mono text-xs font-medium">{shortOrderCode(r.orderCode, r.orderId)}</span> },
-  { id: 'orderDate', label: 'Order date', cell: (r) => <span className="whitespace-nowrap">{formatDate(r.orderDate)}</span> },
-  { id: 'due', label: 'Due', cell: (r) => <span className="flex items-center gap-1.5 whitespace-nowrap">{formatDate(r.dueDate)} <DueBadge t={r.dueType} /></span> },
-  { id: 'customer', label: 'Customer', cell: (r) => <span className="font-medium">{r.customerName}</span> },
-  { id: 'product', label: 'Product', cell: (r) => <span className="font-medium">{r.productName || r.product || '—'}</span> },
-  { id: 'design', label: 'Design', cell: (r) => r.designType || '—' },
-  { id: 'priority', label: 'Priority', cell: (r) => (r.priority === 'URGENT' ? <span className="font-semibold text-rose-600">URGENT</span> : r.priority || '—') },
-  { id: 'bags', label: 'Bags', align: 'right', cell: (r) => <span className="tabular-nums">{qty(r.remBags)}</span> },
-  { id: 'pcs', label: 'Pcs', align: 'right', cell: (r) => <span className="tabular-nums">{qty(r.remPcs)}</span> },
-  { id: 'kgs', label: 'Kgs', align: 'right', cell: (r) => <span className="tabular-nums">{qty(r.remKgs)}</span> },
-  { id: 'box', label: 'Box', align: 'right', cell: (r) => <span className="tabular-nums">{qty(r.remBox)}</span> },
-  { id: 'comment', label: 'Comment', cell: (r) => (r.comment ? <span className="font-bold text-rose-600">{r.comment}</span> : <span className="text-muted-foreground">—</span>) },
+  { id: 'order', label: 'ORD#', pin: 'left0', pinWidthClass: 'sm:w-16 sm:min-w-16', fixed: true, cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{shortOrderCode(r.orderCode, r.orderId)}</span> },
+  { id: 'orderDate', label: 'Order date', cell: (r) => <span className={cn(TEXT_CELL, 'whitespace-nowrap tabular-nums')}>{formatDate(r.orderDate)}</span> },
+  { id: 'due', label: 'Due', cell: (r) => <span className={cn(TEXT_CELL, 'flex items-center gap-1.5 whitespace-nowrap tabular-nums')}>{formatDate(r.dueDate)} <DueBadge t={r.dueType} /></span> },
+  { id: 'customer', label: 'Customer', cell: (r) => <span className={TEXT_CELL}>{r.customerName}</span> },
+  { id: 'product', label: 'Product', cell: (r) => <span className={TEXT_CELL}>{r.productName || r.product || '—'}</span> },
+  { id: 'design', label: 'Design', cell: (r) => <span className={TEXT_CELL}>{r.designType || '—'}</span> },
+  { id: 'priority', label: 'Priority', cell: (r) => (r.priority === 'URGENT' ? <span className="text-[11.5px] font-bold text-rose-600 dark:text-rose-400">URGENT</span> : <span className={TEXT_CELL}>{r.priority || '—'}</span>) },
+  { id: 'bags', label: 'Bags', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(r.remBags)}</span> },
+  { id: 'pcs', label: 'Pcs', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(r.remPcs)}</span> },
+  { id: 'kgs', label: 'Kgs', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(r.remKgs)}</span> },
+  { id: 'box', label: 'Box', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(r.remBox)}</span> },
+  { id: 'comment', label: 'Comment', cell: (r) => (r.comment ? <span className="text-[13px] font-bold text-rose-600 dark:text-rose-400">{r.comment}</span> : <span className="text-muted-foreground text-[13px]">—</span>) },
 ];
 
 const money = (v: number | null) => (v == null ? '—' : `₹${v.toLocaleString('en-IN')}`);
@@ -140,16 +147,16 @@ const money = (v: number | null) => (v == null ? '—' : `₹${v.toLocaleString(
 /** Rate columns, shown only to users with `dispatch:viewrates`. Amount is the
  *  ₹ value of the still-pending quantity (rate × remaining pcs or kgs). */
 const RATE_COLUMNS: DataColumn<PendingLineDto>[] = [
-  { id: 'productRate', label: 'Product ₹', align: 'right', cell: (r) => <span className="tabular-nums">{money(r.productRate)}</span> },
-  { id: 'designRate', label: 'Design ₹', align: 'right', cell: (r) => <span className="tabular-nums">{money(r.designRate)}</span> },
-  { id: 'rate', label: 'Rate ₹', align: 'right', cell: (r) => <span className="font-semibold tabular-nums">{money(r.rate)}</span> },
+  { id: 'productRate', label: 'Product ₹', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(r.productRate)}</span> },
+  { id: 'designRate', label: 'Design ₹', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(r.designRate)}</span> },
+  { id: 'rate', label: 'Rate ₹', align: 'right', cell: (r) => <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(r.rate)}</span> },
   {
     id: 'amount',
     label: 'Pending ₹',
     align: 'right',
     cell: (r) => {
       const qtyLeft = (r.calField ?? '').toUpperCase() === 'PCS' ? r.remPcs : r.remKgs;
-      return <span className="tabular-nums">{money(r.rate != null ? Math.round(r.rate * qtyLeft) : null)}</span>;
+      return <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(r.rate != null ? Math.round(r.rate * qtyLeft) : null)}</span>;
     },
   },
 ];
@@ -282,72 +289,81 @@ export function DispatchOrderPage() {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        {/* Phones: Customer + Agent + Product each get their own full-width line so
-            long names fit; the rest (Due / Design / Sub category) live behind the
-            filter icon, which sits with the export button on the Product row. */}
-        <div className="flex w-full flex-col gap-2 sm:hidden">
-          <NativeSelect value={customer} onChange={(v) => { setCustomer(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="Customer" />
-          <NativeSelect value={agent} onChange={(v) => { setAgent(v); setPage(1); }} options={['', ...(options?.agents ?? [])]} placeholder="All agents" />
-          <div className="flex items-center gap-2">
-            <div className="min-w-0 flex-1">
-              <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...productOptions]} placeholder={all ? 'Product (any design)' : 'Product'} />
+    // Fills the viewport: toolbar pinned on top, footer pinned at the bottom, only
+    // the list scrolls. `/dispatch/new` is a flush route (app-shell), so the page
+    // owns its own padding. Mobile keeps its own filter sheet + tap-to-dispatch
+    // cards + truck animation untouched.
+    <div className="flex h-full min-h-0 flex-col gap-2 p-2.5 font-sans sm:gap-2.5 sm:p-3">
+      <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
+        <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
+          {/* Phones: Customer + Agent + Product each get their own full-width line so
+              long names fit; the rest (Due / Design / Sub category) live behind the
+              filter icon, which sits with the export button on the Product row. */}
+          <div className="flex w-full flex-col gap-2 sm:hidden">
+            <NativeSelect value={customer} onChange={(v) => { setCustomer(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="Customer" className={cn(CONTROL, 'font-medium', customer && CONTROL_ON)} />
+            <NativeSelect value={agent} onChange={(v) => { setAgent(v); setPage(1); }} options={['', ...(options?.agents ?? [])]} placeholder="All agents" className={cn(CONTROL, 'font-medium', agent && CONTROL_ON)} />
+            <div className="flex items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...productOptions]} placeholder={all ? 'Product (any design)' : 'Product'} className={cn(CONTROL, 'font-medium', product && CONTROL_ON)} />
+              </div>
+              <Button variant="outline" size="icon" className={cn('relative size-9 shrink-0 rounded-[4px] border-amber-300', sheetFilterCount > 0 && CONTROL_ON)} onClick={openMobileFilters} aria-label="More filters">
+                <Filter className="size-4" />
+                {sheetFilterCount > 0 && (
+                  <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-bold tabular-nums">
+                    {sheetFilterCount}
+                  </span>
+                )}
+              </Button>
+              {can('dispatch:export') && <ExportButton onClick={onExport} disabled={exporting} label="Export to Excel" />}
             </div>
-            <Button variant="outline" size="icon" className="relative shrink-0" onClick={openMobileFilters} aria-label="More filters">
-              <Filter className="size-4" />
-              {sheetFilterCount > 0 && (
-                <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-medium">
-                  {sheetFilterCount}
-                </span>
-              )}
-            </Button>
-            {can('dispatch:export') && <ExportButton onClick={onExport} disabled={exporting} label="Export to Excel" />}
           </div>
-        </div>
 
-        {/* Desktop: filters inline. */}
-        <div className="hidden flex-wrap items-center gap-2 sm:flex">
-          <div className="w-40">
-            <NativeSelect value={dueType} onChange={(v) => { setDueType(v); setPage(1); }} options={['', 'Due', 'Over Due']} placeholder="All due" />
+          {/* Desktop: filters inline. */}
+          <div className="hidden flex-wrap items-center gap-2 sm:flex">
+            <div className="w-36">
+              <NativeSelect value={dueType} onChange={(v) => { setDueType(v); setPage(1); }} options={['', 'Due', 'Over Due']} placeholder="All due" className={cn(CONTROL, 'font-medium', dueType && CONTROL_ON)} />
+            </div>
+            <div className="w-56">
+              <NativeSelect value={customer} onChange={(v) => { setCustomer(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="All customers" className={cn(CONTROL, 'font-medium', customer && CONTROL_ON)} />
+            </div>
+            <div className="w-40">
+              <NativeSelect value={agent} onChange={(v) => { setAgent(v); setPage(1); }} options={['', ...(options?.agents ?? [])]} placeholder="All agents" className={cn(CONTROL, 'font-medium', agent && CONTROL_ON)} />
+            </div>
+            <div className="w-56">
+              <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...productOptions]} placeholder={all ? 'All (any design)' : 'All products'} className={cn(CONTROL, 'font-medium', product && CONTROL_ON)} />
+            </div>
+            <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[12.5px] font-semibold select-none" title="ALL: one product pick matches every design variant">
+              <Switch checked={all} onCheckedChange={toggleAll} /> All
+            </label>
+            <div className="w-36">
+              <NativeSelect value={design} onChange={(v) => { setDesign(v); setPage(1); }} options={['', ...(options?.designs ?? [])]} placeholder="All designs" disabled={all} className={cn(CONTROL, 'font-medium', design && CONTROL_ON)} />
+            </div>
+            <div className="w-40">
+              <NativeSelect value={subCategory} onChange={(v) => { setSubCategory(v); setPage(1); }} options={['', ...(options?.subCategories ?? [])]} placeholder="All sub categories" className={cn(CONTROL, 'font-medium', subCategory && CONTROL_ON)} />
+            </div>
+            {hasFilters && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9 rounded-[4px] text-[12.5px] font-semibold text-amber-700 hover:bg-amber-50 hover:text-amber-900 dark:text-amber-300 dark:hover:bg-amber-400/10"
+                onClick={resetFilters}
+                title="Clear all filters"
+              >
+                <X className="size-3.5" /> Reset
+              </Button>
+            )}
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              {can('dispatch:export') && <ExportButton onClick={onExport} disabled={exporting} label="Export pending list to Excel" />}
+              <ColumnSettings
+                columns={cols.orderedReorderable}
+                hidden={cols.hidden}
+                onReorder={cols.moveBefore}
+                onMove={cols.move}
+                onToggle={cols.toggle}
+                onReset={cols.reset}
+              />
+            </div>
           </div>
-          <div className="w-64">
-            <NativeSelect value={customer} onChange={(v) => { setCustomer(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="All customers" />
-          </div>
-          <div className="w-44">
-            <NativeSelect value={agent} onChange={(v) => { setAgent(v); setPage(1); }} options={['', ...(options?.agents ?? [])]} placeholder="All agents" />
-          </div>
-          <div className="w-64">
-            <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...productOptions]} placeholder={all ? 'All (any design)' : 'All products'} />
-          </div>
-          <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-sm font-medium select-none" title="ALL: one product pick matches every design variant">
-            <Switch checked={all} onCheckedChange={toggleAll} /> All
-          </label>
-          <div className="w-40">
-            <NativeSelect value={design} onChange={(v) => { setDesign(v); setPage(1); }} options={['', ...(options?.designs ?? [])]} placeholder="All designs" disabled={all} />
-          </div>
-          <div className="w-44">
-            <NativeSelect value={subCategory} onChange={(v) => { setSubCategory(v); setPage(1); }} options={['', ...(options?.subCategories ?? [])]} placeholder="All sub categories" />
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="border-rose-200 font-bold text-rose-600 hover:bg-rose-50 hover:text-rose-700 disabled:border-input disabled:text-rose-600/40"
-            onClick={resetFilters}
-            disabled={!hasFilters}
-            title={hasFilters ? 'Clear all filters' : 'No filters applied'}
-          >
-            <X /> Reset
-          </Button>
-          {can('dispatch:export') && <ExportButton onClick={onExport} disabled={exporting} label="Export pending list to Excel" />}
-          <ColumnSettings
-            columns={cols.orderedReorderable}
-            hidden={cols.hidden}
-            onReorder={cols.moveBefore}
-            onMove={cols.move}
-            onToggle={cols.toggle}
-            onReset={cols.reset}
-          />
         </div>
       </div>
 
@@ -391,44 +407,71 @@ export function DispatchOrderPage() {
         </SheetContent>
       </Sheet>
 
-      {/* Desktop: the data table. */}
-      <div className="hidden sm:block">
-        <DataTable
-          columns={cols.visibleColumns}
-          rows={items}
-          rowKey={(r) => r.orderItemId}
-          isLoading={isLoading}
-          dense
-          // Compact, readable data font; columns still auto-fit their content.
-          className="text-[15px] [&_thead_th]:h-9 [&_thead_th]:text-[13px] [&_td]:px-3 [&_td]:py-1.5 [&_th]:px-3 [&_tbody_button]:size-7"
-          emptyText="No pending order lines — everything is dispatched."
-          onRowClick={(r) => setActive(r)}
-        />
-      </div>
-
-      {/* Phones: engaging tap-to-dispatch cards with staggered entrance + press feedback.
-          A small horizontal inset keeps the cards clear of the screen edges. */}
-      <div className="space-y-3 px-2 sm:hidden sm:px-0">
-        <style>{DISPATCH_CARD_CSS}</style>
-        {isLoading ? (
-          [0, 1, 2, 3].map((i) => <div key={i} className="bg-muted/40 h-40 animate-pulse rounded-2xl border" />)
-        ) : items.length === 0 ? (
-          <div className="text-muted-foreground flex flex-col items-center gap-2 rounded-2xl border border-dashed bg-card px-4 py-12 text-center text-sm">
-            <PackageCheck className="size-9 text-blue-500" />
-            No pending order lines — everything is dispatched.
-          </div>
-        ) : (
-          items.map((r, i) => <DispatchCard key={r.orderItemId} line={r} index={i} showRates={canViewRates} onClick={() => setActive(r)} />)
+      {/* One scroll region holds BOTH branches — the desktop table renders at its
+          natural height (no `fill`), it's just this wrapper that scrolls now. */}
+      <div
+        className={cn(
+          'flex min-h-0 flex-1 flex-col overflow-y-auto',
+          '[&_[data-slot=table-container]]:overscroll-x-contain',
+          '[&_[data-slot=table-container]]:[scrollbar-width:thin]',
+          '[&_[data-slot=table-container]]:[scrollbar-color:var(--color-slate-400)_var(--color-slate-100)]',
         )}
+      >
+        {/* Desktop: the data table. */}
+        <div className="hidden sm:block">
+          <DataTable
+            columns={cols.visibleColumns}
+            rows={items}
+            rowKey={(r) => r.orderItemId}
+            isLoading={isLoading}
+            dense
+            hideSortIcon
+            emptyText="No pending order lines — everything is dispatched."
+            onRowClick={(r) => setActive(r)}
+            className={[
+              'font-sans text-[13px]',
+              '[&_thead_th]:text-[13.5px] [&_thead_th]:font-extrabold [&_thead_th]:uppercase [&_thead_th]:tracking-wide [&_thead_th]:py-1.5',
+              '[&_thead_th_button]:cursor-pointer',
+              '[&_thead_th:hover]:from-blue-900 [&_thead_th:hover]:to-indigo-900',
+              '[&_td]:py-1 [&_td]:px-3 [&_th]:px-3',
+              '[&_tbody_button:not([role=switch]):not([role=checkbox])]:size-7',
+              '[&_tbody_tr]:border-b [&_tbody_tr]:border-slate-200 dark:[&_tbody_tr]:border-white/10',
+              '[&_td]:border-r [&_td]:border-slate-200 dark:[&_td]:border-white/10 [&_td:last-child]:border-r-0',
+              '[&_tbody_tr:nth-child(even)_td]:bg-slate-100/80 dark:[&_tbody_tr:nth-child(even)_td]:bg-white/[0.04]',
+              '[&_tbody_tr:hover:hover_td]:bg-amber-100/70 dark:[&_tbody_tr:hover:hover_td]:bg-amber-400/10',
+            ].join(' ')}
+          />
+        </div>
+
+        {/* Phones: engaging tap-to-dispatch cards with staggered entrance + press
+            feedback — untouched. A small horizontal inset keeps the cards clear of
+            the screen edges. */}
+        <div className="space-y-3 px-2 sm:hidden sm:px-0">
+          <style>{DISPATCH_CARD_CSS}</style>
+          {isLoading ? (
+            [0, 1, 2, 3].map((i) => <div key={i} className="bg-muted/40 h-40 animate-pulse rounded-2xl border" />)
+          ) : items.length === 0 ? (
+            <div className="text-muted-foreground flex flex-col items-center gap-2 rounded-2xl border border-dashed bg-card px-4 py-12 text-center text-sm">
+              <PackageCheck className="size-9 text-blue-500" />
+              No pending order lines — everything is dispatched.
+            </div>
+          ) : (
+            items.map((r, i) => <DispatchCard key={r.orderItemId} line={r} index={i} showRates={canViewRates} onClick={() => setActive(r)} />)
+          )}
+        </div>
       </div>
 
-      <div className="flex items-center justify-between">
-        <p className="text-muted-foreground text-sm">Page {data?.page ?? page} of {totalPages}</p>
+      {/* ── Footer: paging ─────────────────────────────────────────────────────── */}
+      <div className="bg-card flex items-center justify-between rounded-[4px] border px-3 py-2 shadow-sm">
+        <p className="text-muted-foreground text-[12px] font-medium">
+          Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
+          <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
+        </p>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
             <ChevronLeft /> Prev
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
             Next <ChevronRight />
           </Button>
         </div>

@@ -5,6 +5,7 @@ import { Prisma } from '@prisma/client';
 import { type OrderDto, type OrderFilterOptions, type OrderItemPhotoDto, type OrderLookupsWire, type OrderTimeline, type OrderTimelineChallanRef, type Paginated } from '@oms/shared';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import { PrismaService } from '../prisma/prisma.service';
+import { formatDate } from '../common/date.util';
 import { PdfService } from '../pdf/pdf.service';
 import { BookingsService } from '../bookings/bookings.service';
 import { toNum, toStr, uc } from '../common/coerce';
@@ -503,7 +504,7 @@ export class OrdersService {
     const GREY = '#555555';
     const q = (v?: number | null) => (v ? v.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '-');
     const money = (v?: number | null) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
-    const d = (s?: string | null) => (s ? new Date(s).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
+    const d = (s?: string | null) => formatDate(s);
 
     const docTitle = isQuotation ? 'QUOTATION' : 'SALES ORDER';
     const printItems = order.items.filter((it) => it.status !== 'CANCELLED');
@@ -671,7 +672,7 @@ export class OrdersService {
     const AMBER = '#F59E0B';
     const BLACK = '#111111';
     const q = (v?: number | null) => (v ? v.toLocaleString('en-IN') : '');
-    const d = (s?: string | null) => (s ? new Date(s).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
+    const d = (s?: string | null) => formatDate(s);
     const code = order.code ?? `#${order.id}`;
     // Cancelled lines are omitted from the printed sales order.
     const printItems = order.items.filter((it) => it.status !== 'CANCELLED');

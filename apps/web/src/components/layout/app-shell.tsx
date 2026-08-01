@@ -20,6 +20,26 @@ const PIN_MQ = '(min-width: 1600px)';
 const HEADERLESS_ROUTES = [/^\/orders\/new$/, /^\/orders\/[^/]+\/edit$/, /^\/challans\/new$/, /^\/challans\/[^/]+\/edit$/];
 const isHeaderless = (pathname: string) => HEADERLESS_ROUTES.some((re) => re.test(pathname));
 
+/** Full-height worksheet screens that manage their own insets and scrolling: the
+ *  page fills the viewport exactly, with its toolbar and footer pinned and only
+ *  the data region scrolling. `<main>`'s padding would eat into that, so it's
+ *  dropped (the page re-applies its own tighter padding). */
+const FLUSH_ROUTES = [
+  /^\/challans\/pending$/,
+  /^\/challans$/,
+  /^\/challans\/items$/,
+  /^\/orders$/,
+  /^\/orders\/modify$/,
+  /^\/dispatch$/,
+  /^\/dispatch\/new$/,
+  /^\/products$/,
+  /^\/design-names$/,
+  /^\/customers$/,
+  /^\/transporters$/,
+  /^\/account\/party-ledger$/,
+];
+const isFlush = (pathname: string) => FLUSH_ROUTES.some((re) => re.test(pathname));
+
 /**
  * Authenticated layout. The desktop sidebar is a collapsed icon rail by default
  * and **expands on hover** as an overlay (so page content never shifts). On large
@@ -52,6 +72,7 @@ export function AppShell() {
   const { can } = usePermissions();
   const location = useLocation();
   const hideTopbar = isHeaderless(location.pathname);
+  const flush = isFlush(location.pathname);
   // Alt+Shift+<letter> jumps between top-level sections (bound once, app-wide).
   useMenuShortcuts();
 
@@ -141,8 +162,14 @@ export function AppShell() {
             onToggleCollapse={() => setPinned((v) => !v)}
           />
         )}
-        {/* Tight padding on phones (more width for cards/tables), roomier on desktop. */}
-        <main className="min-h-0 flex-1 overflow-y-auto px-2.5 py-3 sm:p-4 md:p-6">
+        {/* Tight padding on phones (more width for cards/tables), roomier on desktop.
+            Flush routes get no padding and own their whole scroll region. */}
+        <main
+          className={cn(
+            'min-h-0 flex-1',
+            flush ? 'overflow-hidden' : 'overflow-y-auto px-2.5 py-3 sm:p-4 md:p-6',
+          )}
+        >
           <Outlet />
         </main>
       </div>

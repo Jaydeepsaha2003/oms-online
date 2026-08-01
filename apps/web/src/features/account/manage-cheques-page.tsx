@@ -19,6 +19,7 @@ import { toast } from 'sonner';
 import type { ChequeDto, ChequeStatus } from '@oms/shared';
 import { CHARGES_PAID_BY, RESOURCES } from '@oms/shared';
 import { cn } from '@/lib/utils';
+import { formatDate } from '@/lib/date-format';
 import { getApiErrorMessage } from '@/lib/api';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/common/confirm';
@@ -55,7 +56,8 @@ function ymd(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 const ymdOf = (iso: string) => ymd(new Date(iso));
-const prettyDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—');
+// Delegates to the shared formatter so this page follows the system-wide date format.
+const prettyDate = (iso: string | null) => formatDate(iso);
 const TODAY = () => ymd(new Date());
 
 /** Days from today to a due date (negative = overdue). */

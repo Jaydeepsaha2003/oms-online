@@ -7,18 +7,14 @@ import { Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { ExcelService } from '../excel/excel.service';
+import { formatDate } from '../common/date.util';
 import { DispatchService } from './dispatch.service';
 import { CreateDispatchDto, DispatchQueryDto, PendingQueryDto, UpdateDispatchDto } from './dto/dispatch.dto';
 
 const R = RESOURCES.DISPATCH;
 
-/** DD-MM-YYYY for the export cells (blank when no date). */
-const fmtDate = (d?: string | null): string => {
-  if (!d) return '';
-  const x = new Date(d);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(x.getDate())}-${pad(x.getMonth() + 1)}-${x.getFullYear()}`;
-};
+/** System-wide date format (dd-mm-yy) for the export cells; blank when no date. */
+const fmtDate = (d?: string | null): string => formatDate(d, '');
 
 @ApiTags('Dispatch')
 @ApiBearerAuth()

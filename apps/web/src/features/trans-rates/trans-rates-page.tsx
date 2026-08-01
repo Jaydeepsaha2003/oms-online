@@ -44,6 +44,13 @@ import { RateHistoryDialog } from '@/components/common/rate-history-dialog';
 const PAGE_SIZE = 50;
 const num = (n: number | null) => (n == null ? '—' : n.toLocaleString('en-IN'));
 
+/** Matches the Products / Orders / Challans grids: Inter, semibold, near-black. */
+const TEXT_CELL = 'text-[13px] font-semibold text-slate-800 dark:text-slate-200';
+/** Compact, amber-bordered filter controls — same language as the other list pages. */
+const CONTROL =
+  'h-9 rounded-[4px] border-amber-300 dark:border-amber-400/40 text-[12.5px] focus-visible:border-amber-500 focus-visible:ring-amber-400/30';
+const CONTROL_ON = 'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
+
 export function TransRatesPage() {
   const { can } = usePermissions();
   const [mode, setMode] = useState<'list' | 'bulk'>('list');
@@ -61,23 +68,40 @@ export function TransRatesPage() {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Customer Transport Rates</h2>
-          <p className="text-muted-foreground text-sm">
-            Rate per customer × product category × type (PACKING / FREIGHT).
-          </p>
+    <div className="space-y-2.5 font-sans">
+      {/* One compact toolbar: mode toggle → actions. (No page title — the topbar
+          already says "Transport Rates".) */}
+      <div className="bg-card font-poppins flex flex-wrap items-center gap-2 rounded-[4px] border p-2.5 shadow-sm sm:p-3">
+        <div className="flex items-center gap-1 rounded-[4px] border border-amber-300 bg-amber-50/40 p-0.5 dark:border-amber-400/40">
+          {(
+            [
+              { id: 'list' as const, label: 'All rates', icon: List },
+              { id: 'bulk' as const, label: 'Fill by customer', icon: Users },
+            ]
+          ).map(({ id, label, icon: Icon }) => {
+            const on = mode === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setMode(id)}
+                aria-pressed={on}
+                className={cn(
+                  'flex cursor-pointer items-center gap-1.5 rounded-[3px] px-3 py-1.5 text-[12.5px] font-semibold whitespace-nowrap transition-colors duration-150',
+                  on
+                    ? 'bg-primary text-primary-foreground shadow-sm'
+                    : 'text-amber-900/70 hover:bg-amber-100 hover:text-amber-900 dark:text-amber-200/70 dark:hover:bg-amber-400/10',
+                )}
+              >
+                <Icon className="size-3.5" /> {label}
+              </button>
+            );
+          })}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="bg-muted/60 inline-flex rounded-lg p-0.5">
-            <Button variant={mode === 'list' ? 'default' : 'ghost'} size="sm" onClick={() => setMode('list')}>
-              <List className="size-4" /> All rates
-            </Button>
-            <Button variant={mode === 'bulk' ? 'default' : 'ghost'} size="sm" onClick={() => setMode('bulk')}>
-              <Users className="size-4" /> Fill by customer
-            </Button>
-          </div>
+        <p className="text-muted-foreground hidden text-[12px] font-medium sm:block">
+          Rate per customer × product category × type (PACKING / FREIGHT).
+        </p>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
           {can('transrate:export') && <TemplateButton onClick={() => downloadTransTemplate()} />}
           {can('transrate:export') && <ExportButton onClick={() => exportTransRates()} />}
           {can('transrate:import') && <ImportButton onFile={handleImport} pending={importMut.isPending} />}
@@ -159,31 +183,36 @@ function RatesList() {
   };
 
   const columns: DataColumn<TransRateDto>[] = [
-    { id: 'customer', label: 'Customer', cell: (r) => <span className="font-medium">{r.customerName}</span> },
-    { id: 'category', label: 'Category', cell: (r) => r.category },
-    { id: 'type', label: 'Type', cell: (r) => r.type },
-    { id: 'transporter', label: 'Transporter', cell: (r) => r.transportName ?? '—' },
-    { id: 'rate', label: 'Rate', align: 'right', cell: (r) => <span className="tabular-nums">{num(r.rate)}</span> },
+    { id: 'customer', label: 'Customer', cell: (r) => <span className={cn(TEXT_CELL, 'text-indigo-700 dark:text-indigo-300')}>{r.customerName}</span> },
+    { id: 'category', label: 'Category', cell: (r) => <span className={TEXT_CELL}>{r.category}</span> },
+    { id: 'type', label: 'Type', cell: (r) => <span className={TEXT_CELL}>{r.type}</span> },
+    { id: 'transporter', label: 'Transporter', cell: (r) => <span className={TEXT_CELL}>{r.transportName ?? '—'}</span> },
+    { id: 'rate', label: 'Rate', align: 'right', cell: (r) => <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{num(r.rate)}</span> },
     {
       id: 'updated',
       label: 'Last updated',
       cell: (r) => (
-        <span className="text-muted-foreground whitespace-nowrap font-mono text-xs" title={formatDateTime(r.updatedAt)}>
+        <span className="text-muted-foreground whitespace-nowrap text-[12px] font-medium tabular-nums" title={formatDateTime(r.updatedAt)}>
           {formatDateShort(r.updatedAt)}
         </span>
       ),
     },
   ];
 
+  const totalRows = data?.total ?? 0;
+  const from = totalRows === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const to = Math.min(page * PAGE_SIZE, totalRows);
+
   return (
-    <Card>
-      <CardContent className="space-y-4 pt-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative max-w-sm flex-1">
-            <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
+    <div className="space-y-2.5">
+      {/* ── Toolbar: search on the left, the primary action on the right. */}
+      <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
+        <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
+          <div className="relative w-full sm:w-64">
+            <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
             <Input
               placeholder="Search customer, category, type…"
-              className="pl-9"
+              className={cn(CONTROL, 'pl-8 font-medium', searchInput && CONTROL_ON)}
               value={searchInput}
               onChange={(e) => {
                 setSearchInput(e.target.value);
@@ -192,120 +221,156 @@ function RatesList() {
               }}
             />
           </div>
+          <p className="text-muted-foreground shrink-0 text-[12px] font-medium tabular-nums">
+            <span className="font-bold text-foreground">{totalRows.toLocaleString('en-IN')}</span> rate{totalRows === 1 ? '' : 's'}
+          </p>
           {can('transrate:create') && (
-            <Button size="sm" onClick={() => setBulkOpen(true)}>
+            <Button size="sm" className="ml-auto h-9 rounded-[4px] text-[12.5px] font-bold" onClick={() => setBulkOpen(true)}>
               <ListPlus /> Bulk rate change
             </Button>
           )}
         </div>
+      </div>
 
-        <div className="hidden sm:block">
-          <DataTable
-            columns={columns}
-            rows={items}
-            rowKey={(r) => r.id}
-            isLoading={isLoading}
-            emptyText="No transport rates yet — add one or import a sheet."
-            onRowClick={can('transrate:update') ? (r) => setEditing(r) : undefined}
-            actions={(r) => (
-              <div className="flex justify-end gap-1">
-                <Button variant="ghost" size="icon" className="size-8" onClick={() => setHistoryFor(r)} aria-label="History">
-                  <History className="size-4" />
+      <div
+        className={cn(
+          '[&_[data-slot=table-container]]:overscroll-x-contain',
+          '[&_[data-slot=table-container]]:[scrollbar-width:thin]',
+          '[&_[data-slot=table-container]]:[scrollbar-color:var(--color-slate-400)_var(--color-slate-100)]',
+        )}
+      >
+        <DataTable
+          dense
+          hideSortIcon
+          columns={columns}
+          rows={items}
+          rowKey={(r) => r.id}
+          isLoading={isLoading}
+          emptyText="No transport rates yet — add one or import a sheet."
+          onRowClick={can('transrate:update') ? (r) => setEditing(r) : undefined}
+          className={[
+            'font-sans text-[13px]',
+            '[&_thead_th]:text-[13.5px] [&_thead_th]:font-extrabold [&_thead_th]:uppercase [&_thead_th]:tracking-wide [&_thead_th]:py-1.5',
+            '[&_thead_th_button]:cursor-pointer',
+            '[&_thead_th:hover]:from-blue-900 [&_thead_th:hover]:to-indigo-900',
+            '[&_td]:py-1 [&_td]:px-3 [&_th]:px-3',
+            '[&_tbody_button:not([role=switch]):not([role=checkbox])]:size-7',
+            '[&_tbody_tr]:border-b [&_tbody_tr]:border-slate-200 dark:[&_tbody_tr]:border-white/10',
+            '[&_td]:border-r [&_td]:border-slate-200 dark:[&_td]:border-white/10 [&_td:last-child]:border-r-0',
+            '[&_tbody_tr:nth-child(even)_td]:bg-slate-100/80 dark:[&_tbody_tr:nth-child(even)_td]:bg-white/[0.04]',
+            '[&_tbody_tr:hover:hover_td]:bg-amber-100/70 dark:[&_tbody_tr:hover:hover_td]:bg-amber-400/10',
+          ].join(' ')}
+          actions={(r) => (
+            <div className="flex justify-end gap-1">
+              <Button variant="ghost" size="icon" className="size-7" onClick={() => setHistoryFor(r)} aria-label="History">
+                <History className="size-4" />
+              </Button>
+              {can('transrate:update') && (
+                <Button variant="ghost" size="icon" className="size-7" onClick={() => setEditing(r)} aria-label="Edit">
+                  <Pencil className="size-4" />
                 </Button>
-                {can('transrate:update') && (
-                  <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(r)} aria-label="Edit">
-                    <Pencil className="size-4" />
-                  </Button>
-                )}
-                {can('transrate:delete') && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-8 text-destructive hover:text-destructive"
-                    onClick={() => handleDelete(r)}
-                    aria-label="Delete"
-                  >
-                    <Trash2 className="size-4" />
-                  </Button>
-                )}
-              </div>
-            )}
-          />
-        </div>
-
-        {/* Phones: one card per customer, its category/type rates grouped underneath. */}
-        <div className="sm:hidden">
-          {isLoading ? (
-            <div className="text-muted-foreground flex h-24 items-center justify-center">
-              <Loader2 className="size-5 animate-spin" />
-            </div>
-          ) : groupedByCustomer.length === 0 ? (
-            <div className="text-muted-foreground rounded-lg border px-4 py-10 text-center text-sm">
-              No transport rates yet — add one or import a sheet.
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {groupedByCustomer.map(({ customerName, rates }) => (
-                <div key={customerName} className="bg-card overflow-hidden rounded-lg border shadow-sm">
-                  <div className="bg-muted/40 border-b px-3 py-2">
-                    <p className="font-semibold">{customerName}</p>
-                    <p className="text-muted-foreground text-xs">
-                      {rates.length} rate{rates.length === 1 ? '' : 's'}
-                    </p>
-                  </div>
-                  <div className="divide-y">
-                    {rates.map((r) => (
-                      <div
-                        key={r.id}
-                        className={cn('px-3 py-2.5', can('transrate:update') && 'cursor-pointer active:bg-muted')}
-                        onClick={can('transrate:update') ? () => setEditing(r) : undefined}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-sm font-medium">
-                            {r.category} · {r.type}
-                          </p>
-                          <span className="font-semibold tabular-nums">{num(r.rate)}</span>
-                        </div>
-                        <p className="text-muted-foreground text-xs">Transporter: {r.transportName ?? '—'}</p>
-                        <div className="mt-1 flex items-center justify-between">
-                          <span className="text-muted-foreground font-mono text-[11px]" title={formatDateTime(r.updatedAt)}>
-                            {formatDateShort(r.updatedAt)}
-                          </span>
-                          {rateRowActions(r)}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
+              )}
+              {can('transrate:delete') && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 text-destructive hover:text-destructive"
+                  onClick={() => handleDelete(r)}
+                  aria-label="Delete"
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              )}
             </div>
           )}
-        </div>
+        />
+      </div>
 
-        <div className="flex items-center justify-between">
-          <p className="text-muted-foreground text-sm">
-            {data?.total ?? 0} rate(s) · page {data?.page ?? page} of {totalPages}
-          </p>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-              <ChevronLeft /> Prev
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page >= totalPages}
-            >
-              Next <ChevronRight />
-            </Button>
+      {/* Phones: one card per customer, its category/type rates grouped underneath. */}
+      <div className="sm:hidden">
+        {isLoading ? (
+          <div className="text-muted-foreground flex h-24 items-center justify-center">
+            <Loader2 className="size-5 animate-spin" />
           </div>
+        ) : groupedByCustomer.length === 0 ? (
+          <div className="text-muted-foreground rounded-[4px] border px-4 py-10 text-center text-[13px] font-medium">
+            No transport rates yet — add one or import a sheet.
+          </div>
+        ) : (
+          <div className="space-y-2.5">
+            {groupedByCustomer.map(({ customerName, rates }) => (
+              <div key={customerName} className="bg-card overflow-hidden rounded-[4px] border shadow-sm">
+                <div className="bg-muted/40 border-b px-3 py-1.5">
+                  <p className="text-[13px] font-bold">{customerName}</p>
+                  <p className="text-muted-foreground text-[11px] font-medium">
+                    {rates.length} rate{rates.length === 1 ? '' : 's'}
+                  </p>
+                </div>
+                <div className="divide-y divide-slate-200 dark:divide-white/10">
+                  {rates.map((r) => (
+                    <div
+                      key={r.id}
+                      className={cn('px-3 py-2', can('transrate:update') && 'cursor-pointer active:bg-muted')}
+                      onClick={can('transrate:update') ? () => setEditing(r) : undefined}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[13px] font-bold text-slate-800 dark:text-slate-200">
+                          {r.category} · {r.type}
+                        </p>
+                        <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{num(r.rate)}</span>
+                      </div>
+                      <p className="text-muted-foreground text-[11px] font-medium">Transporter: {r.transportName ?? '—'}</p>
+                      <div className="mt-1 flex items-center justify-between">
+                        <span className="text-muted-foreground text-[11px] font-medium tabular-nums" title={formatDateTime(r.updatedAt)}>
+                          {formatDateShort(r.updatedAt)}
+                        </span>
+                        {rateRowActions(r)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Footer: range + paging ─────────────────────────────────────────────── */}
+      <div className="bg-card flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-[4px] border px-3 py-2 shadow-sm">
+        <p className="text-muted-foreground text-[12px] font-medium">
+          {totalRows === 0 ? (
+            'No rates'
+          ) : (
+            <>
+              Showing <span className="font-bold tabular-nums text-foreground">{from.toLocaleString('en-IN')}–{to.toLocaleString('en-IN')}</span> of{' '}
+              <span className="font-bold tabular-nums text-foreground">{totalRows.toLocaleString('en-IN')}</span>
+            </>
+          )}
+        </p>
+        <div className="ml-auto flex items-center gap-2">
+          <p className="text-muted-foreground text-[12px] font-medium">
+            Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
+            <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
+          </p>
+          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+            <ChevronLeft /> Prev
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-[4px] font-semibold"
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={page >= totalPages}
+          >
+            Next <ChevronRight />
+          </Button>
         </div>
-      </CardContent>
+      </div>
 
       {editing && <TransRateDialog rate={editing} onClose={() => setEditing(null)} />}
       {historyFor && <TransHistoryDialog rate={historyFor} onClose={() => setHistoryFor(null)} />}
       {bulkOpen && <TransBulkRateDialog onClose={() => setBulkOpen(false)} />}
-    </Card>
+    </div>
   );
 }
 
@@ -587,20 +652,21 @@ function BulkByCustomer() {
   const [customer, setCustomer] = useState('');
 
   return (
-    <Card>
-      <CardContent className="space-y-4 pt-6">
-        <div className="grid gap-2 sm:max-w-sm">
-          <Label>Customer</Label>
+    <Card className="rounded-[4px]">
+      <CardContent className="space-y-3 pt-5">
+        <div className="grid gap-1 sm:max-w-64">
+          <Label className="text-[10.5px] font-bold tracking-wide text-muted-foreground uppercase">Customer</Label>
           <NativeSelect
             value={customer}
             onChange={setCustomer}
             options={lookups?.customers ?? []}
             placeholder="Select a customer…"
+            className={cn(CONTROL, 'font-medium')}
           />
         </div>
 
         {customer.trim() === '' ? (
-          <p className="text-muted-foreground py-10 text-center text-sm">
+          <p className="text-muted-foreground py-10 text-center text-[13px] font-medium">
             Choose a customer to fill their transport rates.
           </p>
         ) : (

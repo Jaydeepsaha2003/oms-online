@@ -7,21 +7,25 @@ export interface DateFormatOption {
 }
 
 /** The date formats a user can choose from (label = a sample date). */
+// Digits-and-separators only — the month-name formats ("21 Jun 2026") are gone so
+// no date anywhere in the system can render with spaces in it.
 export const DATE_FORMATS: DateFormatOption[] = [
-  { id: 'dmy2', label: '21/06/26' },
-  { id: 'dmmmy', label: '21 Jun 2026' },
-  { id: 'dmmy', label: '21 Jun 26' },
   { id: 'dmyDash', label: '21-06-2026' },
+  { id: 'dmyDash2', label: '21-06-26' },
   { id: 'dmy', label: '21/06/2026' },
+  { id: 'dmy2', label: '21/06/26' },
   { id: 'mdy', label: '06/21/2026' },
   { id: 'ymd', label: '2026-06-21' },
 ];
 
-const KEY = 'oms:date-format';
-// dd/mm/yyyy — the default across every list-view table (Orders, Quotations,
-// Order Modify, Dispatch, and anywhere else that reads the shared preference).
-const DEFAULT = 'dmy';
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// Bumped whenever the system-wide default changes: the suffix retires the format a
+// browser had already saved, so everyone picks up the new default instead of being
+// stuck on their previous choice. (v2 was the short-lived dd-mm-yy default.)
+const KEY = 'oms:date-format:v3';
+// dd-mm-yyyy (e.g. 21-06-2026) — the system-wide default. Every list view, filter,
+// account ledger, date picker and printed document reads this unless the user
+// picks another format in Settings.
+const DEFAULT = 'dmyDash';
 
 let current = (() => {
   try {
@@ -57,21 +61,23 @@ export function formatDate(value: string | Date | null | undefined, fmt: string 
   const dd = String(day).padStart(2, '0');
   const mm = String(month + 1).padStart(2, '0');
   switch (fmt) {
+    case 'dmyDash2':
+      return `${dd}-${mm}-${String(year).slice(2)}`;
     case 'dmy2':
       return `${dd}/${mm}/${String(year).slice(2)}`;
-    case 'dmmy':
-      return `${day} ${MONTHS[month]} ${String(year).slice(2)}`;
-    case 'dmyDash':
-      return `${dd}-${mm}-${year}`;
     case 'dmy':
       return `${dd}/${mm}/${year}`;
     case 'mdy':
       return `${mm}/${dd}/${year}`;
     case 'ymd':
       return `${year}-${mm}-${dd}`;
-    case 'dmmmy':
+    // dd-mm-yyyy is both a real choice and the fallback: an unrecognised id (a
+    // preference saved by an older build, or anything unexpected) must never
+    // silently render a spaced, month-name date — every date in the system reads
+    // as digits and dashes only.
+    case 'dmyDash':
     default:
-      return `${day} ${MONTHS[month]} ${year}`;
+      return `${dd}-${mm}-${year}`;
   }
 }
 

@@ -17,6 +17,7 @@ import {
 import { toast } from 'sonner';
 import type { PendingInvoiceRow, SavePaymentResult } from '@oms/shared';
 import { cn } from '@/lib/utils';
+import { formatDate } from '@/lib/date-format';
 import { getApiErrorMessage } from '@/lib/api';
 import { usePermissions } from '@/hooks/use-permissions';
 import { Button } from '@/components/ui/button';
@@ -32,7 +33,8 @@ import { exportPendingInvoices } from './payment-pending-export';
 
 const money = (v: number | null | undefined) => `₹ ${(v ?? 0).toLocaleString('en-IN')}`;
 const n2 = (v: number) => v.toLocaleString('en-IN');
-const prettyDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—');
+// Delegates to the shared formatter so this page follows the system-wide date format.
+const prettyDate = (iso: string | null) => formatDate(iso);
 
 function ymd(d: Date): string {
   const y = d.getFullYear();

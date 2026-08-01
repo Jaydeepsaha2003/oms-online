@@ -11,6 +11,9 @@ export class PendingChallanQueryDto extends PaginationDto {
   @IsOptional() @IsString() dateTo?: string;
   /** Restrict to one party (exact match) — used by the standalone Create Challan picker. */
   @IsOptional() @IsString() customerName?: string;
+  /** Restrict to one product / design (exact match) — Pending Challan filter bar. */
+  @IsOptional() @IsString() productName?: string;
+  @IsOptional() @IsString() design?: string;
 }
 
 export class ChallanQueryDto extends PaginationDto {

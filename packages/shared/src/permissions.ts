@@ -86,6 +86,8 @@ export const RESOURCES = {
   ROLE: 'role',
   AUDIT_LOG: 'auditlog',
   SETTING: 'setting',
+  /** Whole-database backup download (the raw SQLite file). */
+  BACKUP: 'backup',
 } as const;
 
 export type Resource = (typeof RESOURCES)[keyof typeof RESOURCES];
@@ -267,6 +269,12 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
     label: 'Settings',
     group: 'Administration',
     actions: [ACTIONS.VIEW, ACTIONS.UPDATE],
+  },
+  {
+    resource: RESOURCES.BACKUP,
+    label: 'Database Backup',
+    group: 'Administration',
+    actions: [ACTIONS.EXPORT],
   },
 ];
 

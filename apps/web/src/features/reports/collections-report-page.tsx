@@ -4,6 +4,7 @@ import { AlertTriangle, HandCoins, PhoneCall } from 'lucide-react';
 import type { PromiseState, RecoveryStage } from '@oms/shared';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { cn } from '@/lib/utils';
+import { formatDate } from '@/lib/date-format';
 import { Button } from '@/components/ui/button';
 import { Kpi, RankedBars, ReportCard, ReportHeader, ReportSummary } from './report-kit';
 import { ReportFilterBar, useReportFilters } from './report-filters';
@@ -25,7 +26,8 @@ const STAGE_TONE: Record<RecoveryStage, string> = {
   Resolved: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
 };
 const promiseTone = (s: PromiseState) => (s === 'broken' ? 'text-red-600' : s === 'due today' ? 'text-orange-600' : s === 'upcoming' ? 'text-violet-600' : 'text-muted-foreground');
-const fmtDate = (d: string | null) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' }) : '—');
+// Follows the system-wide date format (dd-mm-yy by default).
+const fmtDate = (d: string | null) => formatDate(d);
 
 export function CollectionsReportPage() {
   const filters = useReportFilters();

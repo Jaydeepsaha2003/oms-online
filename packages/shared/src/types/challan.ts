@@ -38,8 +38,20 @@ export type PendingChallanQuery = PaginationQuery & {
   dateTo?: string;
   /** Restrict to one party (exact) — standalone Create Challan picker. */
   customerName?: string;
+  /** Restrict to one product / design (exact) — Pending Challan filter bar. */
+  productName?: string;
+  design?: string;
 };
 export type PendingChallanList = Paginated<PendingChallanLine>;
+
+/** Dropdown options for the Pending Challan filter bar. Each list holds only
+ *  values that currently appear on un-challaned dispatch lines, so picking one
+ *  can never return an empty page. */
+export interface PendingChallanFilterOptions {
+  customers: string[];
+  products: string[];
+  designs: string[];
+}
 
 export interface ChallanItemDto {
   id: number;
@@ -109,7 +121,12 @@ export interface ChallanSummary {
   totalSales: number;
   totalB: number;
   totalC: number;
+  /** Total GST (tax) across the filtered set. */
+  totalTax: number;
   totalTds: number;
+  /** Status split across the filtered set (not just the current page). */
+  confirmed: number;
+  cancelled: number;
 }
 
 /** Rich analytics roll-up for the Challans "Show KPI" modal. Honours the same

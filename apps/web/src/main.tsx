@@ -5,9 +5,18 @@ import { BrowserRouter } from 'react-router-dom';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import '@fontsource-variable/montserrat';
+// Poppins has no variable build on Google Fonts, so the weights the UI uses are
+// pulled in individually (400 body, 500/600 labels, 700 headings).
+import '@fontsource/poppins/400.css';
+import '@fontsource/poppins/500.css';
+import '@fontsource/poppins/600.css';
+import '@fontsource/poppins/700.css';
 import App from '@/App';
 import { AppProviders } from '@/app/providers';
 import { watchForAppUpdates } from '@/lib/pwa-update';
+// Applies the saved light/dark/system theme on load (keeps in step with the
+// no-flash inline script in index.html).
+import '@/lib/theme';
 import '@/index.css';
 
 createRoot(document.getElementById('root')!).render(

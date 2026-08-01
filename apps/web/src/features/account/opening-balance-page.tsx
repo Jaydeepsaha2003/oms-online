@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import type { OpeningBalanceDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/common/confirm';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
@@ -17,7 +18,8 @@ import { useCreateOpeningBalance, useDeleteOpeningBalance, useOpeningBalances, u
 
 const PAGE_SIZE = 50;
 const money = (v: number) => `₹ ${(v ?? 0).toLocaleString('en-IN')}`;
-const prettyDate = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+// Delegates to the shared formatter so this page follows the system-wide date format.
+const prettyDate = (iso: string | null) => formatDate(iso);
 function ymd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }

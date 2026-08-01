@@ -82,33 +82,33 @@ export function CustomerGstRates({ customerName }: { customerName: string }) {
   const priced = lines.filter((l) => l.rate.trim() !== '').length;
 
   return (
-    <div className="space-y-4">
-      <div className="overflow-hidden rounded-lg border">
-        <Table className="[&_tbody_td]:bg-card [&_tbody_tr:nth-child(even)_td]:bg-slate-50">
+    <div className="space-y-3">
+      <div className="overflow-hidden rounded-[4px] border">
+        <Table className="text-[13px] [&_td]:border-r [&_td]:border-slate-200 dark:[&_td]:border-white/10 [&_td:last-child]:border-r-0 [&_tbody_td]:bg-card [&_tbody_tr:nth-child(even)_td]:bg-slate-100/80 dark:[&_tbody_tr:nth-child(even)_td]:bg-white/[0.04]">
           <TableHeader>
-            <TableRow>
-              <TableHead>Product category</TableHead>
-              <TableHead className="w-44">Rate (%)</TableHead>
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="text-[11.5px] font-bold tracking-wide uppercase">Product category</TableHead>
+              <TableHead className="w-44 text-[11.5px] font-bold tracking-wide uppercase">Rate (%)</TableHead>
               <TableHead className="w-12" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {isFetching && lines.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={3} className="h-20 text-center text-muted-foreground">
+                <TableCell colSpan={3} className="text-muted-foreground h-20 text-center">
                   <Loader2 className="mx-auto size-5 animate-spin" />
                 </TableCell>
               </TableRow>
             ) : lines.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={3} className="h-20 text-center text-muted-foreground">
+                <TableCell colSpan={3} className="text-muted-foreground h-20 text-center text-[13px] font-medium">
                   No product categories found — add products first.
                 </TableCell>
               </TableRow>
             ) : (
               lines.map((line) => (
                 <TableRow key={line.key}>
-                  <TableCell className="font-medium">{line.category}</TableCell>
+                  <TableCell className="font-semibold text-slate-800 dark:text-slate-200">{line.category}</TableCell>
                   <TableCell>
                     <div className="relative">
                       <Input
@@ -116,11 +116,11 @@ export function CustomerGstRates({ customerName }: { customerName: string }) {
                         step="any"
                         inputMode="decimal"
                         placeholder="—"
-                        className="pr-7 text-right tabular-nums"
+                        className="h-8 rounded-[4px] pr-7 text-right text-[13px] tabular-nums"
                         value={line.rate}
                         onChange={(e) => setRate(line.key, e.target.value)}
                       />
-                      <span className="text-muted-foreground pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-xs">
+                      <span className="text-muted-foreground pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-[11px] font-semibold">
                         %
                       </span>
                     </div>
@@ -130,7 +130,7 @@ export function CustomerGstRates({ customerName }: { customerName: string }) {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="size-8 text-destructive hover:text-destructive"
+                        className="size-7 text-destructive hover:text-destructive"
                         onClick={() => removeLine(line)}
                         aria-label="Remove"
                       >
@@ -146,11 +146,11 @@ export function CustomerGstRates({ customerName }: { customerName: string }) {
       </div>
 
       <div className="flex items-center justify-between">
-        <p className="text-muted-foreground text-sm">
-          <span className="text-foreground font-medium tabular-nums">{priced}</span> of {lines.length} categories priced
+        <p className="text-muted-foreground text-[12px] font-medium">
+          <span className="text-foreground font-bold tabular-nums">{priced}</span> of {lines.length} categories priced
         </p>
         {can('gstrate:update') && (
-          <Button onClick={save} disabled={bulk.isPending}>
+          <Button className="h-9 rounded-[4px] text-[12.5px] font-bold" onClick={save} disabled={bulk.isPending}>
             {bulk.isPending ? <Loader2 className="animate-spin" /> : <Save />} Save all
           </Button>
         )}

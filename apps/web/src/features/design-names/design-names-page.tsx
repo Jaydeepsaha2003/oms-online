@@ -30,6 +30,13 @@ const PAGE_SIZE = 2000;
 const IMAGE_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp,image/bmp,image/heic,image/heif';
 const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 
+/** Matches the Products / Orders / Challans grids: Inter, semibold, near-black. */
+const TEXT_CELL = 'text-[13px] font-semibold text-slate-800 dark:text-slate-200';
+/** Compact, amber-bordered filter controls — same language as the other list pages. */
+const CONTROL =
+  'h-9 rounded-[4px] border-amber-300 dark:border-amber-400/40 text-[12.5px] focus-visible:border-amber-500 focus-visible:ring-amber-400/30';
+const CONTROL_ON = 'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
+
 export function DesignNamesPage() {
   const { can } = usePermissions();
   const confirm = useConfirm();
@@ -151,143 +158,157 @@ export function DesignNamesPage() {
     );
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Design Names</h2>
-          <p className="text-muted-foreground text-sm">
-            {data?.total ?? 0} records · {groups.length} design type{groups.length === 1 ? '' : 's'} · maps a design-type code to a readable name
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {can('designname:export') && <ExportButton onClick={() => exportDesignNames(query)} />}
-          {can('designname:import') && <ImportButton onFile={handleImport} pending={importMut.isPending} />}
-          {can('designname:create') && (
-            <Button size="sm" onClick={() => setCreating(true)}>
-              <Plus /> New design name
+    // Fills the viewport: toolbar pinned on top, only the grouped list scrolls.
+    // `/design-names` is a flush route (app-shell), so the page owns its padding.
+    // No footer/pagination — this master list fetches everything in one page.
+    <div className="flex h-full min-h-0 flex-col gap-2 p-2.5 font-sans sm:gap-2.5 sm:p-3">
+      {/* ── Toolbar: search + expand/collapse on the left, actions on the right. */}
+      <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
+        <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
+          <div className="relative w-full sm:w-64">
+            <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
+            <Input
+              placeholder="Search design type or name…"
+              className={cn(CONTROL, 'pl-8 font-medium', searchInput && CONTROL_ON)}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+            />
+          </div>
+          {groups.length > 0 && (
+            <Button type="button" variant="outline" size="sm" onClick={toggleAll} className="h-9 shrink-0 rounded-[4px] text-[12.5px] font-semibold">
+              {allCollapsed ? <ChevronDown /> : <ChevronUp />} {allCollapsed ? 'Expand all' : 'Collapse all'}
             </Button>
           )}
+          <p className="text-muted-foreground shrink-0 text-[12px] font-medium tabular-nums">
+            <span className="font-bold text-foreground">{(data?.total ?? 0).toLocaleString('en-IN')}</span> records ·{' '}
+            <span className="font-bold text-foreground">{groups.length}</span> design type{groups.length === 1 ? '' : 's'}
+          </p>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {can('designname:export') && <ExportButton onClick={() => exportDesignNames(query)} />}
+            {can('designname:import') && <ImportButton onFile={handleImport} pending={importMut.isPending} />}
+            {can('designname:create') && (
+              <Button size="sm" className="h-9 rounded-[4px] text-[12.5px] font-bold" onClick={() => setCreating(true)}>
+                <Plus /> New design name
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative max-w-sm flex-1 min-w-[12rem]">
-          <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
-          <Input
-            placeholder="Search design type or name…"
-            className="pl-9"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-          />
-        </div>
-        {groups.length > 0 && (
-          <Button type="button" variant="outline" size="sm" onClick={toggleAll} className="shrink-0">
-            {allCollapsed ? <ChevronDown /> : <ChevronUp />} {allCollapsed ? 'Expand all' : 'Collapse all'}
-          </Button>
+      <div
+        className={cn(
+          'min-h-0 flex-1 overflow-y-auto',
+          '[&_[data-slot=table-container]]:overscroll-x-contain',
+          '[&_[data-slot=table-container]]:[scrollbar-width:thin]',
+          '[&_[data-slot=table-container]]:[scrollbar-color:var(--color-slate-400)_var(--color-slate-100)]',
+        )}
+      >
+        {isLoading ? (
+          <div className="text-muted-foreground flex h-32 items-center justify-center rounded-[4px] border bg-card">
+            <Loader2 className="size-5 animate-spin" />
+          </div>
+        ) : groups.length === 0 ? (
+          <div className="text-muted-foreground rounded-[4px] border bg-card px-4 py-10 text-center text-[13px]">No design names yet.</div>
+        ) : (
+          <>
+            {/* Desktop/tablet: one sectioned table — a group header row per design
+                type (click to collapse) followed by its design names + photos. */}
+            <div className="hidden overflow-hidden rounded-[4px] border bg-card shadow-sm sm:block">
+              <table className="w-full text-[13px] [&_td]:border-r [&_td]:border-slate-200 dark:[&_td]:border-white/10 [&_td:last-child]:border-r-0">
+                <thead className="sticky top-0 z-10 bg-gradient-to-b from-blue-800 to-indigo-800 text-white">
+                  <tr className="[&>th]:px-3 [&>th]:py-1.5 [&>th]:text-left [&>th]:text-[13.5px] [&>th]:font-extrabold [&>th]:tracking-wide [&>th]:uppercase">
+                    <th className="w-14">Photo</th>
+                    <th>Design name</th>
+                    <th>Last updated</th>
+                    <th className="w-24 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {groups.map(([designType, rows]) => {
+                    const isCollapsed = collapsed.has(designType);
+                    return (
+                      <Fragment key={designType}>
+                        <tr className="border-t border-slate-200 bg-amber-50/60 dark:border-white/10 dark:bg-amber-400/[0.06]">
+                          <td colSpan={4} className="px-3 py-1">
+                            <button
+                              type="button"
+                              onClick={() => toggleGroup(designType)}
+                              className="hover:text-primary flex w-full cursor-pointer items-center gap-2 text-left text-[13px] font-bold text-slate-800 dark:text-slate-200"
+                            >
+                              <ChevronDown className={cn('size-3.5 shrink-0 transition-transform', isCollapsed && '-rotate-90')} />
+                              <span className="uppercase tracking-wide">{designType}</span>
+                              <span className="text-muted-foreground text-[11px] font-semibold">
+                                {rows.length} name{rows.length === 1 ? '' : 's'}
+                              </span>
+                            </button>
+                          </td>
+                        </tr>
+                        {!isCollapsed &&
+                          rows.map((d, idx) => (
+                            <tr
+                              key={d.id}
+                              className={cn(
+                                'border-b border-slate-200 transition-colors last:border-b-0 hover:bg-amber-100/70 dark:border-white/10 dark:hover:bg-amber-400/10',
+                                idx % 2 === 1 && 'bg-slate-100/80 dark:bg-white/[0.04]',
+                                canEdit && 'cursor-pointer',
+                              )}
+                              onClick={canEdit ? () => setEditing(d) : undefined}
+                            >
+                              <td className="px-3 py-1">{thumb(d, 'size-9')}</td>
+                              <td className={cn(TEXT_CELL, 'px-3 py-1')}>{d.designName}</td>
+                              <td className="text-muted-foreground px-3 py-1 text-[12px] font-medium whitespace-nowrap tabular-nums" title={formatDateTime(d.updatedAt)}>
+                                {formatDateShort(d.updatedAt)}
+                              </td>
+                              <td className="px-3 py-1 text-right">{rowActions(d)}</td>
+                            </tr>
+                          ))}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Phones: one collapsible card per design type, its names + photos stacked inside. */}
+            <div className="space-y-2.5 sm:hidden">
+              {groups.map(([designType, rows]) => {
+                const isCollapsed = collapsed.has(designType);
+                return (
+                  <div key={designType} className="overflow-hidden rounded-[4px] border bg-card shadow-sm">
+                    <button
+                      type="button"
+                      onClick={() => toggleGroup(designType)}
+                      className="flex w-full cursor-pointer items-center gap-2 bg-gradient-to-r from-blue-800 to-indigo-800 px-3 py-1.5 text-left text-white"
+                    >
+                      <ChevronDown className={cn('size-3.5 shrink-0 transition-transform', isCollapsed && '-rotate-90')} />
+                      <span className="text-[13px] font-bold uppercase tracking-wide">{designType}</span>
+                      <span className="ml-auto shrink-0 text-[11px] font-medium text-white/75">
+                        {rows.length} name{rows.length === 1 ? '' : 's'}
+                      </span>
+                    </button>
+                    {!isCollapsed && (
+                      <div className="divide-y divide-slate-200 dark:divide-white/10">
+                        {rows.map((d) => (
+                          <div key={d.id} className="flex items-start gap-3 p-2.5" onClick={canEdit ? () => setEditing(d) : undefined}>
+                            {thumb(d, 'size-12')}
+                            <div className="min-w-0 flex-1">
+                              <p className="text-[13px] leading-tight font-bold text-slate-900 dark:text-slate-100">{d.designName}</p>
+                              <p className="text-muted-foreground mt-0.5 text-[11px] font-medium tabular-nums" title={formatDateTime(d.updatedAt)}>
+                                {formatDateShort(d.updatedAt)}
+                              </p>
+                              <div className="mt-1.5 flex items-center justify-end gap-1 border-t pt-1.5">{rowActions(d)}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </>
         )}
       </div>
-
-      {isLoading ? (
-        <div className="text-muted-foreground flex h-32 items-center justify-center rounded-lg border bg-card">
-          <Loader2 className="size-5 animate-spin" />
-        </div>
-      ) : groups.length === 0 ? (
-        <div className="text-muted-foreground rounded-lg border bg-card px-4 py-10 text-center text-sm">No design names yet.</div>
-      ) : (
-        <>
-          {/* Desktop/tablet: one sectioned table — a group header row per design
-              type (click to collapse) followed by its design names + photos. */}
-          <div className="hidden overflow-hidden rounded-[5px] border bg-card shadow-sm sm:block">
-            <table className="w-full text-[15px]">
-              <thead className="bg-gradient-to-b from-blue-800 to-indigo-800 text-white">
-                <tr className="[&>th]:px-5 [&>th]:py-2 [&>th]:text-left [&>th]:text-[14px] [&>th]:font-bold [&>th]:uppercase [&>th]:tracking-wider">
-                  <th className="w-16">Photo</th>
-                  <th>Design name</th>
-                  <th>Last updated</th>
-                  <th className="w-24 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {groups.map(([designType, rows]) => {
-                  const isCollapsed = collapsed.has(designType);
-                  return (
-                    <Fragment key={designType}>
-                      <tr className="bg-muted/70 border-t">
-                        <td colSpan={4} className="px-5 py-1.5">
-                          <button
-                            type="button"
-                            onClick={() => toggleGroup(designType)}
-                            className="hover:text-primary flex w-full items-center gap-2 text-left font-semibold"
-                          >
-                            <ChevronDown className={cn('size-4 shrink-0 transition-transform', isCollapsed && '-rotate-90')} />
-                            <span className="uppercase tracking-wide">{designType}</span>
-                            <span className="text-muted-foreground text-xs font-normal">
-                              {rows.length} name{rows.length === 1 ? '' : 's'}
-                            </span>
-                          </button>
-                        </td>
-                      </tr>
-                      {!isCollapsed &&
-                        rows.map((d, idx) => (
-                          <tr
-                            key={d.id}
-                            className={cn('hover:bg-muted border-b last:border-b-0', idx % 2 === 1 && 'bg-slate-50', canEdit && 'cursor-pointer')}
-                            onClick={canEdit ? () => setEditing(d) : undefined}
-                          >
-                            <td className="px-5 py-1.5">{thumb(d, 'size-10')}</td>
-                            <td className="px-5 py-1.5 font-medium">{d.designName}</td>
-                            <td className="text-muted-foreground px-5 py-1.5 whitespace-nowrap font-mono text-xs" title={formatDateTime(d.updatedAt)}>
-                              {formatDateShort(d.updatedAt)}
-                            </td>
-                            <td className="px-5 py-1.5 text-right">{rowActions(d)}</td>
-                          </tr>
-                        ))}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Phones: one collapsible card per design type, its names + photos stacked inside. */}
-          <div className="space-y-3 sm:hidden">
-            {groups.map(([designType, rows]) => {
-              const isCollapsed = collapsed.has(designType);
-              return (
-                <div key={designType} className="overflow-hidden rounded-lg border bg-card shadow-sm">
-                  <button
-                    type="button"
-                    onClick={() => toggleGroup(designType)}
-                    className="flex w-full items-center gap-2 bg-gradient-to-r from-blue-800 to-indigo-800 px-3 py-2 text-left text-white"
-                  >
-                    <ChevronDown className={cn('size-4 shrink-0 transition-transform', isCollapsed && '-rotate-90')} />
-                    <span className="font-bold uppercase tracking-wide">{designType}</span>
-                    <span className="ml-auto shrink-0 text-xs font-normal text-white/75">
-                      {rows.length} name{rows.length === 1 ? '' : 's'}
-                    </span>
-                  </button>
-                  {!isCollapsed && (
-                    <div className="divide-y">
-                      {rows.map((d) => (
-                        <div key={d.id} className="flex items-start gap-3 p-3" onClick={canEdit ? () => setEditing(d) : undefined}>
-                          {thumb(d, 'size-12')}
-                          <div className="min-w-0 flex-1">
-                            <p className="leading-tight font-medium">{d.designName}</p>
-                            <p className="text-muted-foreground mt-0.5 font-mono text-[11px]" title={formatDateTime(d.updatedAt)}>
-                              {formatDateShort(d.updatedAt)}
-                            </p>
-                            <div className="mt-2 flex items-center justify-end gap-1 border-t pt-2">{rowActions(d)}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
 
       {(creating || editing) && (
         <DesignNameDialog

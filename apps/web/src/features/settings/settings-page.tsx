@@ -19,6 +19,7 @@ import { useOrderLookups } from '@/features/orders/use-orders';
 import { CrmReminderCard } from '@/features/crm/crm-settings-card';
 import { MyDevicesCard } from './my-devices-card';
 import { TestNotificationCard } from './test-notification-card';
+import { DatabaseBackupCard } from './database-backup-card';
 import {
   useChallanTerms,
   useCompany,
@@ -39,6 +40,7 @@ export function SettingsPage() {
   const { data: all, isLoading } = useSettings();
   const { can } = usePermissions();
   const canEdit = can('setting:update');
+  const canBackup = can('backup:export');
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">
@@ -73,6 +75,8 @@ export function SettingsPage() {
       <ChallanPrefixCard canEdit={canEdit} />
 
       <CrmReminderCard />
+
+      {canBackup && <DatabaseBackupCard />}
 
       {isLoading ? (
         <div className="flex h-40 items-center justify-center text-muted-foreground">

@@ -1,6 +1,7 @@
 /** Shared display formatting for audit log entries — used by the Activity Log
  *  page and by the per-record RecordHistory control so both read identically. */
 import { ACTIONS, RESOURCE_DEFINITIONS } from '@oms/shared';
+import { formatDate } from '@/lib/date-format';
 
 const RESOURCE_LABEL = new Map<string, string>(RESOURCE_DEFINITIONS.map((d) => [d.resource, d.label]));
 export const resourceLabel = (key: string) => RESOURCE_LABEL.get(key) ?? key;
@@ -44,12 +45,11 @@ const ACTION_COLOR: Record<string, string> = {
 };
 export const actionColor = (a: string) => ACTION_COLOR[a] ?? 'bg-slate-100 text-slate-700 ring-slate-200';
 
-// dd/mm/yyyy, HH:MM.
+// System-wide date format (dd-mm-yy by default) plus HH:MM.
 export const fmtWhen = (iso: string) => {
   const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, '0');
   const time = d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
-  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}, ${time}`;
+  return `${formatDate(d)}, ${time}`;
 };
 
 export function statusColor(code: number | null | undefined): string {

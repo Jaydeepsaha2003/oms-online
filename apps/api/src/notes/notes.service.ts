@@ -12,6 +12,7 @@ import {
   type SaveNoteResult,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { formatDate } from '../common/date.util';
 import { PdfService } from '../pdf/pdf.service';
 import { NoteDirectoryQueryDto, SaveNoteDto } from './dto/note.dto';
 
@@ -734,7 +735,7 @@ function buildNoteDoc(c: NoteDto): TDocumentDefinitions {
   const nn = (v?: number | null) => v ?? 0;
   const q = (v?: number | null) => (v ? v.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '');
   const money = (v?: number | null) => `${(v ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  const d = (s?: string | null) => (s ? new Date(s).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
+  const d = (s?: string | null) => formatDate(s);
 
   const items = c.items;
   const tAmt = items.reduce((a, it) => a + nn(it.amount), 0);

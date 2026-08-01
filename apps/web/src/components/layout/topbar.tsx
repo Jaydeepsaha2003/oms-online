@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { LogOut, Menu, RefreshCw, UserRound } from 'lucide-react';
+import { LogOut, Menu, Monitor, Moon, RefreshCw, Sun, UserRound } from 'lucide-react';
+import { useTheme, type ThemePref } from '@/lib/theme';
 import { menuRoutes } from '@oms/shared';
 import { useAuthStore } from '@/stores/auth-store';
 import { useLogout } from '@/hooks/use-auth';
@@ -88,6 +89,7 @@ export function Topbar({
         >
           <RefreshCw />
         </Button>
+        <ThemeToggle />
         <SystemStatus variant="compact" />
         {can('crm:view') && <NotificationsBell />}
         {user && (
@@ -129,5 +131,26 @@ export function Topbar({
         )}
       </div>
     </header>
+  );
+}
+
+/** Cycles Light → Dark → System, showing the icon of the *current* choice. The
+ *  three-way cycle keeps "follow the OS" reachable without a dropdown. */
+function ThemeToggle() {
+  const { theme, setTheme } = useTheme();
+  const order: ThemePref[] = ['light', 'dark', 'system'];
+  const next = order[(order.indexOf(theme) + 1) % order.length];
+  const Icon = theme === 'light' ? Sun : theme === 'dark' ? Moon : Monitor;
+  const labels: Record<ThemePref, string> = { light: 'Light', dark: 'Dark', system: 'System' };
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={() => setTheme(next)}
+      aria-label={`Theme: ${labels[theme]}. Switch to ${labels[next]}.`}
+      title={`Theme: ${labels[theme]} — click for ${labels[next]}`}
+    >
+      <Icon />
+    </Button>
   );
 }

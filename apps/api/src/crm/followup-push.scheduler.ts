@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import type { FollowupDto } from '@oms/shared';
+import { formatDate } from '../common/date.util';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
 import { PushService } from '../notifications/push.service';
 import { CrmService } from './crm.service';
@@ -42,7 +43,7 @@ export class FollowupPushScheduler {
   }
 
   private buildNotification(f: FollowupDto): { title: string; body: string; data: Record<string, unknown> } {
-    const promised = f.promisedAt ? ` · promised ${new Date(f.promisedAt).toLocaleDateString('en-GB')}` : '';
+    const promised = f.promisedAt ? ` · promised ${formatDate(f.promisedAt)}` : '';
     return {
       title: `Follow-up: ${f.partyName}`,
       body: `${f.title}${promised}`,

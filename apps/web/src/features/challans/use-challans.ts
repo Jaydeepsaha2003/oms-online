@@ -15,6 +15,7 @@ import type {
   MissingChallanEntry,
   MissingChallanFysDto,
   MissingChallanQuery,
+  PendingChallanFilterOptions,
   PendingChallanList,
   PendingChallanQuery,
   UpdateChallanStatusInput,
@@ -30,6 +31,16 @@ export function usePendingChallans(query: PendingChallanQuery, opts?: { enabled?
     queryFn: () => http.get<PendingChallanList>('/challans/pending', { params: query }),
     placeholderData: (prev) => prev,
     enabled: opts?.enabled ?? true,
+  });
+}
+
+/** Customer / product / design options for the Pending Challan filter bar. Only
+ *  values that currently have un-challaned lines, so no choice returns nothing. */
+export function usePendingChallanFilters() {
+  return useQuery({
+    queryKey: [...KEY, 'pending-filters'],
+    queryFn: () => http.get<PendingChallanFilterOptions>('/challans/pending-filters'),
+    staleTime: 60_000,
   });
 }
 

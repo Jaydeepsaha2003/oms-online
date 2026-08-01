@@ -3,13 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowRight, Landmark, Search, Wallet, Wallet2 } from 'lucide-react';
 import type { PartyAdvanceSummary } from '@oms/shared';
 import { cn } from '@/lib/utils';
+import { formatDate } from '@/lib/date-format';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useAllAdvances } from './use-account';
 
 const money = (v: number | null | undefined) => `₹ ${(v ?? 0).toLocaleString('en-IN')}`;
-const prettyDate = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+// Delegates to the shared formatter so this page follows the system-wide date format.
+const prettyDate = (iso: string | null) => formatDate(iso);
 
 /** Days between an ISO date and today (always ≥ 0 for a past date). */
 function daysSince(iso: string): number {

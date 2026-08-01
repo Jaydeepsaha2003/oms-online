@@ -228,27 +228,27 @@ export function CustomerFormPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-5">
+    <div className="mx-auto max-w-5xl space-y-3 font-sans">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate('/customers')} aria-label="Back">
-          <ArrowLeft />
+      <div className="flex items-center gap-2.5">
+        <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate('/customers')} aria-label="Back">
+          <ArrowLeft className="size-4" />
         </Button>
-        <div className="bg-gradient-brand flex size-11 items-center justify-center rounded-xl text-white shadow-md shadow-blue-600/20 ring-1 ring-white/20">
-          <Contact className="size-5" />
+        <div className="bg-gradient-brand flex size-9 items-center justify-center rounded-[4px] text-white shadow-md shadow-blue-600/20 ring-1 ring-white/20">
+          <Contact className="size-4" />
         </div>
         <div className="min-w-0">
-          <h2 className="truncate text-2xl font-bold tracking-tight">
+          <h2 className="truncate text-[17px] leading-tight font-bold tracking-tight">
             {isEdit ? 'Edit customer' : 'New customer'}
           </h2>
-          <p className="text-muted-foreground truncate text-sm">
+          <p className="text-muted-foreground truncate text-[11.5px] font-medium">
             {isEdit
               ? (existing?.partyName ?? `#${id}`)
               : 'Add a new party to the customer master'}
           </p>
         </div>
         {isEdit && existing?.code && (
-          <span className="ml-auto shrink-0 rounded-lg border bg-muted px-3 py-1.5 font-mono text-xs text-muted-foreground">
+          <span className="ml-auto shrink-0 rounded-[4px] border bg-muted px-2.5 py-1 text-[11.5px] font-bold tabular-nums text-muted-foreground">
             {existing.code}
           </span>
         )}
@@ -256,50 +256,66 @@ export function CustomerFormPage() {
 
       {/* Tabs — manage the customer's details, GST rates and transport rates in one place. */}
       {isEdit && existing?.partyName && (
-        <div className="bg-muted/60 inline-flex flex-wrap rounded-lg p-0.5">
-          <Button variant={tab === 'details' ? 'default' : 'ghost'} size="sm" onClick={() => setTab('details')}>
-            <Contact className="size-4" /> Details
-          </Button>
-          <Button variant={tab === 'gst' ? 'default' : 'ghost'} size="sm" onClick={() => setTab('gst')}>
-            <Percent className="size-4" /> GST Rates
-          </Button>
-          <Button variant={tab === 'trans' ? 'default' : 'ghost'} size="sm" onClick={() => setTab('trans')}>
-            <Receipt className="size-4" /> Transport Rates
-          </Button>
+        <div className="inline-flex flex-wrap items-center gap-1 rounded-[4px] border border-amber-300 bg-amber-50/40 p-0.5 dark:border-amber-400/40">
+          {(
+            [
+              { id: 'details' as const, label: 'Details', icon: Contact },
+              { id: 'gst' as const, label: 'GST Rates', icon: Percent },
+              { id: 'trans' as const, label: 'Transport Rates', icon: Receipt },
+            ]
+          ).map(({ id: tabId, label, icon: Icon }) => {
+            const on = tab === tabId;
+            return (
+              <button
+                key={tabId}
+                type="button"
+                onClick={() => setTab(tabId)}
+                aria-pressed={on}
+                className={cn(
+                  'flex cursor-pointer items-center gap-1.5 rounded-[3px] px-3 py-1.5 text-[12.5px] font-semibold whitespace-nowrap transition-colors duration-150',
+                  on
+                    ? 'bg-primary text-primary-foreground shadow-sm'
+                    : 'text-amber-900/70 hover:bg-amber-100 hover:text-amber-900 dark:text-amber-200/70 dark:hover:bg-amber-400/10',
+                )}
+              >
+                <Icon className="size-3.5" /> {label}
+              </button>
+            );
+          })}
         </div>
       )}
 
       {isEdit && existing?.partyName && tab === 'gst' && (
-        <Card className="gap-0 overflow-hidden py-0">
-          <CardHeader className="flex-row items-center gap-3 border-b bg-muted/30 py-3">
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <Percent className="size-4" />
+        <Card className="gap-0 overflow-hidden rounded-[4px] py-0">
+          <CardHeader className="flex-row items-center gap-2.5 border-b bg-muted/30 py-2.5">
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-[4px] bg-primary/10 text-primary">
+              <Percent className="size-3.5" />
             </span>
             <div className="space-y-0">
-              <CardTitle className="text-sm font-semibold">GST rates</CardTitle>
-              <p className="text-muted-foreground text-xs">GST % per product category for this customer</p>
+              <CardTitle className="text-[13px] font-bold">GST rates</CardTitle>
+              <p className="text-muted-foreground text-[11px] font-medium">GST % per product category for this customer</p>
             </div>
           </CardHeader>
-          <CardContent className="py-5">
+          <CardContent className="py-4">
             <CustomerGstRates customerName={existing.partyName} />
           </CardContent>
         </Card>
       )}
 
       {isEdit && existing?.partyName && tab === 'trans' && (
-        <Card className="gap-0 overflow-hidden py-0">
-          <CardHeader className="flex-row items-center gap-3 border-b bg-muted/30 py-3">
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <Receipt className="size-4" />
+        <Card className="gap-0 overflow-hidden rounded-[4px] py-0">
+          <CardHeader className="flex-row items-center gap-2.5 border-b bg-muted/30 py-2.5">
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-[4px] bg-primary/10 text-primary">
+              <Receipt className="size-3.5" />
             </span>
             <div className="space-y-0">
-              <CardTitle className="text-sm font-semibold">Transport rates</CardTitle>
-              <p className="text-muted-foreground text-xs">
+              <CardTitle className="text-[13px] font-bold">Transport rates</CardTitle>
+              <p className="text-muted-foreground text-[11px] font-medium">
                 Rate per category × type (PACKING / FREIGHT) for this customer
               </p>
             </div>
           </CardHeader>
-          <CardContent className="py-5">
+          <CardContent className="py-4">
             <CustomerTransRates customerName={existing.partyName} />
           </CardContent>
         </Card>
@@ -311,7 +327,7 @@ export function CustomerFormPage() {
           e.preventDefault();
           submit();
         }}
-        className="space-y-5 [&_input]:uppercase [&_input::placeholder]:normal-case"
+        className="space-y-3 [&_input]:uppercase [&_input::placeholder]:normal-case"
       >
         <Section icon={Tags} title="Classification" desc="How this party is sourced and categorised">
           <Field label="Party Source" required>
@@ -397,16 +413,16 @@ export function CustomerFormPage() {
                   setForm((f) => ({ ...f, tdsApplicable: v, tdsPercent: v ? f.tdsPercent : '' }))
                 }
               />
-              <span className="text-muted-foreground text-sm">{form.tdsApplicable ? 'Yes' : 'No'}</span>
+              <span className="text-muted-foreground text-[12.5px] font-medium">{form.tdsApplicable ? 'Yes' : 'No'}</span>
             </div>
           </Field>
           <Field label="Party Status">
             <div className="flex h-9 items-center gap-2">
               <Switch checked={form.active} onCheckedChange={(v) => setForm((f) => ({ ...f, active: v }))} />
-              <span className={form.active ? 'text-sm font-semibold text-emerald-600' : 'text-sm font-semibold text-rose-600'}>
+              <span className={cn('text-[12.5px] font-bold', form.active ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>
                 {form.active ? 'ACTIVE' : 'INACTIVE'}
               </span>
-              {!form.active && <span className="text-muted-foreground text-xs">— hidden from all pickers</span>}
+              {!form.active && <span className="text-muted-foreground text-[11px] font-medium">— hidden from all pickers</span>}
             </div>
           </Field>
           {form.tdsApplicable && (
@@ -437,11 +453,11 @@ export function CustomerFormPage() {
 
         {/* Action bar: sits at the end of the form and scrolls with the page —
             not pinned, so it never overlaps the last fields on short screens. */}
-        <div className="flex items-center justify-end gap-2 border-t px-1 py-3">
-          <Button type="button" variant="outline" onClick={() => navigate('/customers')}>
+        <div className="flex items-center justify-end gap-2 border-t px-1 py-2.5">
+          <Button type="button" variant="outline" className="rounded-[4px] font-semibold" onClick={() => navigate('/customers')}>
             Cancel
           </Button>
-          <Button type="submit" disabled={saving || !dirty}>
+          <Button type="submit" className="rounded-[4px] font-bold" disabled={saving || !dirty}>
             {saving ? <Loader2 className="animate-spin" /> : <Save />}
             {isEdit ? 'Save changes' : 'Create customer'}
           </Button>
@@ -463,18 +479,18 @@ function Section({
   children: ReactNode;
 }) {
   return (
-    <Card className="gap-0 overflow-hidden py-0">
-      <CardHeader className="flex-row items-center gap-3 border-b bg-muted/30 py-3">
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          <Icon className="size-4" />
+    <Card className="gap-0 overflow-hidden rounded-[4px] py-0">
+      <CardHeader className="flex-row items-center gap-2.5 border-b bg-muted/30 py-2.5">
+        <span className="flex size-7 shrink-0 items-center justify-center rounded-[4px] bg-primary/10 text-primary">
+          <Icon className="size-3.5" />
         </span>
         <div className="space-y-0">
-          <CardTitle className="text-sm font-semibold">{title}</CardTitle>
-          {desc && <p className="text-muted-foreground text-xs">{desc}</p>}
+          <CardTitle className="text-[13px] font-bold">{title}</CardTitle>
+          {desc && <p className="text-muted-foreground text-[11px] font-medium">{desc}</p>}
         </div>
       </CardHeader>
-      <CardContent className="py-5">
-        <div className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      <CardContent className="py-4">
+        <div className="grid grid-cols-1 gap-x-3 gap-y-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {children}
         </div>
       </CardContent>
@@ -494,8 +510,8 @@ function Field({
   children: ReactNode;
 }) {
   return (
-    <div className={cn('space-y-1.5', className)}>
-      <Label className="text-xs">
+    <div className={cn('space-y-1', className)}>
+      <Label className="text-[10.5px] font-bold tracking-wide text-muted-foreground uppercase">
         {label}
         {required && <span className="text-destructive"> *</span>}
       </Label>

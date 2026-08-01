@@ -56,6 +56,9 @@ export interface PartyLedgerFooter {
   closingCashNet: number;
 }
 
+/** A party's Party-Lists standing, as reported by the Payment DNA KPI. */
+export type PartyListStanding = 'GREEN' | 'BLACK' | 'CUSTOM' | 'NONE';
+
 /** An aging bucket — total amount + how many invoices. */
 export interface LedgerDueBucket {
   amount: number;
@@ -63,10 +66,23 @@ export interface LedgerDueBucket {
 }
 
 export interface PartyLedgerKpis {
-  /** Oldest unpaid invoice: "dd-MMM-yy (INV NO)" or "No Due Invoice". */
+  /**
+   * The party's oldest still-unpaid invoice — "dd-mm-yyyy (INV NO)", with the
+   * party name appended when the ledger spans more than one party, or
+   * "No Due Invoice". Computed from the whole open-invoice position, NOT just the
+   * vouchers inside the selected period, so an older unpaid bill from a previous
+   * year can't hide behind the date filter.
+   */
   invDueFrom: string;
-  /** Payment behaviour grade: Excellent / Good / Normal / Slow / Bad / N/A. */
+  /**
+   * The party's standing on the CRM Party Lists (Green-listed = trusted payer,
+   * Black-listed = payment risk). For a multi-party ledger this is a tally
+   * ("3 Green · 2 Black"). Falls back to "Unlisted" when no list matches.
+   */
   paymentDNA: string;
+  /** Which bucket {@link paymentDNA} reports, so the UI can colour it. For a
+   *  multi-party tally this is the dominant signal (BLACK outranks GREEN). */
+  paymentDNAKind: PartyListStanding;
   /** Past the due date. */
   overDue: LedgerDueBucket;
   /** Due today or within 15 days. */

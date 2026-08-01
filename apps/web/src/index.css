@@ -56,20 +56,22 @@
 }
 
 .dark {
-  --background: oklch(0.17 0.02 264);
-  --foreground: oklch(0.96 0.01 250);
-  --card: oklch(0.21 0.025 264);
-  --card-foreground: oklch(0.96 0.01 250);
-  --popover: oklch(0.21 0.025 264);
-  --popover-foreground: oklch(0.96 0.01 250);
-  --primary: oklch(0.65 0.18 260);
+  /* Deep navy, not black: an indigo-tinted background (hue ~264) with cards a
+     step lighter so surfaces read against it. */
+  --background: oklch(0.195 0.038 264);
+  --foreground: oklch(0.96 0.012 250);
+  --card: oklch(0.235 0.04 264);
+  --card-foreground: oklch(0.96 0.012 250);
+  --popover: oklch(0.235 0.04 264);
+  --popover-foreground: oklch(0.96 0.012 250);
+  --primary: oklch(0.66 0.18 260);
   --primary-foreground: oklch(0.16 0.03 264);
-  --secondary: oklch(0.28 0.03 264);
-  --secondary-foreground: oklch(0.96 0.01 250);
-  --muted: oklch(0.27 0.025 264);
-  --muted-foreground: oklch(0.70 0.03 256);
-  --accent: oklch(0.30 0.05 262);
-  --accent-foreground: oklch(0.92 0.03 256);
+  --secondary: oklch(0.30 0.04 264);
+  --secondary-foreground: oklch(0.96 0.012 250);
+  --muted: oklch(0.29 0.035 264);
+  --muted-foreground: oklch(0.72 0.032 256);
+  --accent: oklch(0.33 0.055 262);
+  --accent-foreground: oklch(0.93 0.03 256);
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 12%);
   --input: oklch(1 0 0 / 15%);
@@ -91,6 +93,54 @@
   --brand-blue: oklch(0.62 0.19 260);
   --brand-amber: oklch(0.80 0.16 82);
   --brand-orange: oklch(0.70 0.19 48);
+}
+
+/* ── Dark-mode neutral remap ───────────────────────────────────────────────
+   Most of the app uses semantic tokens (bg-card, text-foreground, border-border)
+   that flip automatically. These rules catch the remaining *neutral* hardcoded
+   utilities — flat slate/gray surfaces, text and borders — so a page written with
+   `bg-white` / `text-slate-800` / `border-slate-200` still reads correctly on the
+   navy background instead of glowing white or going invisible.
+
+   Deliberately narrow: only flat greys are remapped. Coloured accents (emerald /
+   amber / indigo chips, etc.) are left alone, and any element that needs a
+   different dark treatment sets it explicitly with a `dark:` variant on the pages
+   that use them. Unlayered so these win over Tailwind's base utilities. */
+.dark .bg-white {
+  background-color: var(--card);
+}
+.dark .bg-slate-50,
+.dark .bg-gray-50 {
+  background-color: oklch(1 0 0 / 0.035);
+}
+.dark .bg-slate-100,
+.dark .bg-gray-100 {
+  background-color: oklch(1 0 0 / 0.06);
+}
+.dark .bg-slate-200 {
+  background-color: oklch(1 0 0 / 0.09);
+}
+.dark .text-slate-900,
+.dark .text-gray-900 {
+  color: var(--foreground);
+}
+.dark .text-slate-800 {
+  color: oklch(0.92 0.012 256);
+}
+.dark .text-slate-700 {
+  color: oklch(0.86 0.015 256);
+}
+.dark .text-slate-600 {
+  color: var(--muted-foreground);
+}
+.dark .text-slate-500 {
+  color: oklch(0.62 0.03 258);
+}
+.dark .border-slate-200 {
+  border-color: var(--border);
+}
+.dark .border-slate-300 {
+  border-color: oklch(1 0 0 / 0.18);
 }
 
 @theme inline {
@@ -142,6 +192,7 @@
   --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --font-calibri: Calibri, 'Segoe UI', var(--font-sans);
   --font-montserrat: 'Montserrat Variable', var(--font-sans);
+  --font-poppins: Poppins, var(--font-sans);
 }
 
 @layer base {

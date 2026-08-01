@@ -2,6 +2,7 @@ import * as React from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { formatDate } from '@/lib/date-format';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -92,8 +93,8 @@ export function DatePicker({
     setOpen(false);
   };
 
-  // dd/mm/yyyy — every date-picker field in the app shows dates this way.
-  const display = selected ? `${pad(selected.getDate())}/${pad(selected.getMonth() + 1)}/${selected.getFullYear()}` : '';
+  // Show the picked date in the system-wide format (dd-mm-yy by default).
+  const display = selected ? formatDate(selected) : '';
 
   return (
     <Popover

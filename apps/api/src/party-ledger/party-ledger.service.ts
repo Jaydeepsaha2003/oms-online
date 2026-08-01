@@ -3,15 +3,20 @@ import { Prisma } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import type {
+  LedgerBalanceRow,
   LedgerReceiptLine,
   PartyLedgerKpis,
   PartyLedgerLookups,
   PartyLedgerQuery,
   PartyLedgerResult,
   PartyLedgerRow,
+  PartyListDef,
+  PartyListStanding,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { formatDate } from '../common/date.util';
 import { PdfService } from '../pdf/pdf.service';
+import { PartyListsService } from '../party-lists/party-lists.service';
 
 const r0 = (x: number) => Math.round(x);
 const EPS = 0.5;
@@ -26,6 +31,18 @@ function parseDay(s: string, label: string): Date {
   if (Number.isNaN(d.getTime())) throw new BadRequestException(`${label} is not valid.`);
   d.setHours(0, 0, 0, 0);
   return d;
+}
+
+/** One confirmed invoice with what's still owed on it, keyed by voucher code. */
+interface PendingInvoice {
+  bankBal: number;
+  cashBal: number;
+  bankAmt: number;
+  cashAmt: number;
+  dueDate: Date | null;
+  invDate: Date;
+  customerId: number | null;
+  customerName: string;
 }
 
 interface RawRow {
@@ -49,6 +66,7 @@ export class PartyLedgerService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly pdf: PdfService,
+    private readonly partyLists: PartyListsService,
   ) {}
 
   async lookups(): Promise<PartyLedgerLookups> {
@@ -119,12 +137,12 @@ export class PartyLedgerService {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const rows: PartyLedgerRow[] = raw
+    const inMode: PartyLedgerRow[] = raw
       .map((rr) => this.decorate(rr, pending, lastRec, mode, today))
       // Transaction-mode filter (B = bank cols only, C = cash only).
-      .filter((row) => (mode === 'B' ? row.bankDr !== 0 || row.bankCr !== 0 : mode === 'C' ? row.cashDr !== 0 || row.cashCr !== 0 : true))
-      // Voucher-type filter.
-      .filter((row) => !q.voucherType || row.voucherType.toUpperCase() === q.voucherType.toUpperCase());
+      .filter((row) => (mode === 'B' ? row.bankDr !== 0 || row.bankCr !== 0 : mode === 'C' ? row.cashDr !== 0 || row.cashCr !== 0 : true));
+    // Voucher-type filter.
+    const rows = inMode.filter((row) => !q.voucherType || row.voucherType.toUpperCase() === q.voucherType.toUpperCase());
 
     // ── 3) Opening as-of `from` ───────────────────────────────────────────────
     const { bankNet: openingBankNet, cashNet: openingCashNet } = await this.openingAsOf(from, custIds);
@@ -145,7 +163,9 @@ export class PartyLedgerService {
     // ── 5) KPIs ───────────────────────────────────────────────────────────────
     const kpis = await this.computeKpis(rows, pending, custIds, scope, q.customerId ?? null);
 
-    const voucherTypes = [...new Set(rows.map((r) => r.voucherType).filter(Boolean))].sort();
+    // Derived BEFORE the voucher-type filter, so picking one type doesn't collapse
+    // the dropdown to that single option and strand the user on it.
+    const voucherTypes = [...new Set(inMode.map((r) => r.voucherType).filter(Boolean))].sort();
 
     return {
       rows,
@@ -316,12 +336,14 @@ export class PartyLedgerService {
   /* ── pending + receipt derivations ──────────────────────────────────────── */
 
   /** InvPendingSummary equivalent: per CONFIRMED challan, bank/cash amount & balance. */
-  private async invoicePending(): Promise<Map<string, { bankBal: number; cashBal: number; bankAmt: number; cashAmt: number; dueDate: Date | null }>> {
+  private async invoicePending(): Promise<Map<string, PendingInvoice>> {
     const challans = await this.prisma.challan.findMany({
       where: { challanStatus: 'CONFIRMED' },
-      select: { code: true, b: true, c: true, dueDate: true },
+      // customerId / customerName / invDate let the ageing KPIs find a party's
+      // oldest unpaid bill across its whole history, not just the shown period.
+      select: { code: true, b: true, c: true, dueDate: true, invDate: true, customerId: true, customerName: true },
     });
-    const map = new Map<string, { bankBal: number; cashBal: number; bankAmt: number; cashAmt: number; dueDate: Date | null }>();
+    const map = new Map<string, PendingInvoice>();
     if (!challans.length) return map;
     const codes = challans.map((c) => c.code);
     const [recs, discs] = await Promise.all([
@@ -349,6 +371,9 @@ export class PartyLedgerService {
         bankBal: bankAmt - (bankRec.get(c.code) ?? 0) - (bankDisc.get(c.code) ?? 0),
         cashBal: cashAmt - (cashRec.get(c.code) ?? 0) - (cashDisc.get(c.code) ?? 0),
         dueDate: c.dueDate ?? null,
+        invDate: c.invDate,
+        customerId: c.customerId ?? null,
+        customerName: c.customerName,
       });
     }
     return map;
@@ -417,7 +442,7 @@ export class PartyLedgerService {
 
   private async computeKpis(
     rows: PartyLedgerRow[],
-    pending: Map<string, { bankBal: number; cashBal: number; bankAmt: number; cashAmt: number; dueDate: Date | null }>,
+    pending: Map<string, PendingInvoice>,
     custIds: number[] | null,
     scope: 'CUSTOMER' | 'AGENT' | 'ALL',
     customerId: number | null,
@@ -426,7 +451,6 @@ export class PartyLedgerService {
     const over = { amount: 0, count: 0 };
     const past = { amount: 0, count: 0 };
     const normal = { amount: 0, count: 0 };
-    let invDueFrom = '';
     for (const r of rows) {
       const vt = r.voucherType.toUpperCase();
       if (vt !== 'SALES INVOICE' && vt !== 'DEBIT NOTE') continue;
@@ -449,46 +473,95 @@ export class PartyLedgerService {
           normal.count += 1;
         }
       }
-      // Oldest unpaid (D/P) → Inv Due From ("dd-MMM-yy (INV NO)").
-      if (!invDueFrom && (r.status === 'D' || r.status === 'P')) {
-        const info = pending.get(r.voucherNo);
-        const dd = info?.dueDate ?? (r.dueDate ? new Date(r.dueDate) : null);
-        if (dd) invDueFrom = `${dd.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' })} (${r.voucherNo})`;
-      }
     }
-    if (!invDueFrom) invDueFrom = 'No Due Invoice';
 
-    const paymentDNA = scope === 'CUSTOMER' && customerId ? await this.paymentDNA(customerId) : 'N/A';
-    return { invDueFrom, paymentDNA, overDue: { amount: r0(over.amount), count: over.count }, pastDue: { amount: r0(past.amount), count: past.count }, normal: { amount: r0(normal.amount), count: normal.count } };
+    const invDueFrom = this.oldestUnpaid(pending, custIds, scope);
+    const dna = await this.listStanding(scope, customerId, custIds);
+    return {
+      invDueFrom,
+      paymentDNA: dna.label,
+      paymentDNAKind: dna.kind,
+      overDue: { amount: r0(over.amount), count: over.count },
+      pastDue: { amount: r0(past.amount), count: past.count },
+      normal: { amount: r0(normal.amount), count: normal.count },
+    };
   }
 
-  /** Payment behaviour grade = avg(recDate − invDate) / creditDays. */
-  private async paymentDNA(customerId: number): Promise<string> {
-    const cust = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { creditPeriod: true, partyName: true } });
-    let creditDays = cust?.creditPeriod ?? 30;
-    if (!creditDays || creditDays <= 0) creditDays = 30;
-
-    // Average days-to-pay from receipts joined to their invoice date.
-    const receipts = await this.prisma.acctPaymentReceipt.findMany({ where: { custId: customerId }, select: { invNo: true, recDate: true } });
-    if (!receipts.length) return 'N/A';
-    const invCodes = [...new Set(receipts.map((r) => r.invNo))];
-    const challans = await this.prisma.challan.findMany({ where: { code: { in: invCodes } }, select: { code: true, invDate: true } });
-    const invDate = new Map(challans.map((c) => [c.code, c.invDate]));
-    let totalDays = 0;
-    let n = 0;
-    for (const rc of receipts) {
-      const inv = invDate.get(rc.invNo);
-      if (!inv) continue;
-      totalDays += Math.max(0, Math.round((rc.recDate.getTime() - inv.getTime()) / DAY));
-      n += 1;
+  /**
+   * The oldest invoice still carrying a balance, as "dd-mm-yyyy (CODE)".
+   *
+   * Deliberately computed from the full open-invoice position rather than the
+   * vouchers on screen: the ledger defaults to the current financial year, and an
+   * unpaid bill raised before it would otherwise be invisible here — so the KPI
+   * used to name a *newer* invoice and understate how long money had been owed.
+   * "Oldest" means earliest due date (falling back to the invoice date when a bill
+   * carries no due date), which is what "due from" asks.
+   */
+  private oldestUnpaid(pending: Map<string, PendingInvoice>, custIds: number[] | null, scope: 'CUSTOMER' | 'AGENT' | 'ALL'): string {
+    const inScope = custIds ? new Set(custIds) : null;
+    let best: { code: string; at: Date; party: string } | null = null;
+    for (const [code, inv] of pending) {
+      if (inScope && (inv.customerId == null || !inScope.has(inv.customerId))) continue;
+      // Still owed on either leg (EPS absorbs rounding crumbs).
+      if (inv.bankBal <= EPS && inv.cashBal <= EPS) continue;
+      const at = inv.dueDate ?? inv.invDate;
+      if (!best || at < best.at) best = { code, at, party: inv.customerName };
     }
-    const avg = n ? totalDays / n : 30;
-    const ratio = avg / creditDays;
-    if (ratio <= 0.8) return 'Excellent';
-    if (ratio <= 1.0) return 'Good';
-    if (ratio <= 1.25) return 'Normal';
-    if (ratio <= 1.5) return 'Slow';
-    return 'Bad';
+    if (!best) return 'No Due Invoice';
+    // A multi-party ledger needs to say WHOSE invoice it is.
+    const who = scope === 'CUSTOMER' ? '' : ` · ${best.party}`;
+    return `${formatDate(best.at)} (${best.code}${who})`;
+  }
+
+  /**
+   * Payment DNA — the party's standing on the CRM Party Lists: Green-listed
+   * (trusted payer) or Black-listed (payment risk), evaluated from live metrics by
+   * the same rules engine the Party Lists screen uses. This replaced an
+   * avg-days-to-pay grade that read "N/A" on every multi-party ledger and ignored
+   * the business's own definition of a good or risky party.
+   */
+  private async listStanding(
+    scope: 'CUSTOMER' | 'AGENT' | 'ALL',
+    customerId: number | null,
+    custIds: number[] | null,
+  ): Promise<{ label: string; kind: PartyListStanding }> {
+    const { lists, parties } = await this.partyLists.evaluate();
+    const kindById = new Map(lists.map((l) => [l.id, l]));
+    const inScope = custIds ? new Set(custIds) : null;
+    const relevant = parties.filter((p) => !inScope || (p.customerId != null && inScope.has(p.customerId)));
+
+    /** The list that best describes one party — risk outranks trust. */
+    const standingOf = (matched: string[]): { kind: PartyListStanding; name: string } => {
+      const defs = matched.map((id) => kindById.get(id)).filter((l): l is PartyListDef => !!l);
+      const black = defs.find((l) => l.kind === 'BLACK');
+      if (black) return { kind: 'BLACK', name: black.name };
+      const green = defs.find((l) => l.kind === 'GREEN');
+      if (green) return { kind: 'GREEN', name: green.name };
+      if (defs.length) return { kind: 'CUSTOM', name: defs[0].name };
+      return { kind: 'NONE', name: 'Unlisted' };
+    };
+
+    if (scope === 'CUSTOMER' && customerId != null) {
+      const me = relevant.find((p) => p.customerId === customerId);
+      if (!me) return { label: 'Unlisted', kind: 'NONE' };
+      const s = standingOf(me.matched);
+      return { label: s.kind === 'NONE' ? 'Unlisted' : s.name, kind: s.kind };
+    }
+
+    // Agent / all-parties: a tally is more use than a single grade.
+    let green = 0;
+    let black = 0;
+    for (const p of relevant) {
+      const k = standingOf(p.matched).kind;
+      if (k === 'BLACK') black += 1;
+      else if (k === 'GREEN') green += 1;
+    }
+    if (!green && !black) return { label: 'Unlisted', kind: 'NONE' };
+    const parts: string[] = [];
+    if (green) parts.push(`${green} Green`);
+    if (black) parts.push(`${black} Black`);
+    // Risk dominates the colour even when greens outnumber blacks.
+    return { label: parts.join(' · '), kind: black ? 'BLACK' : 'GREEN' };
   }
 
   /* ── Export ──────────────────────────────────────────────────────────────── */
@@ -498,15 +571,21 @@ export class PartyLedgerService {
     return `Ledger-${(who ?? 'party').replace(/[\\/:*?"<>|]/g, '-')}`;
   }
 
+  /** The company masthead printed on the statement; blank when never configured. */
+  private async companyName(): Promise<string | null> {
+    const row = await this.prisma.appConfig.findUnique({ where: { key: 'COMPANY_NAME' } });
+    return row?.value?.trim() || null;
+  }
+
   async exportExcel(q: PartyLedgerQuery): Promise<{ buffer: Buffer; filename: string }> {
     const res = await this.ledger(q);
-    const buffer = await buildLedgerXlsx(res, (q.mode ?? 'BOTH').toUpperCase());
+    const buffer = await buildLedgerXlsx(res, (q.mode ?? 'BOTH').toUpperCase(), await this.companyName());
     return { buffer, filename: `${this.baseName(res)}.xlsx` };
   }
 
   async exportPdf(q: PartyLedgerQuery): Promise<{ buffer: Buffer; filename: string }> {
     const res = await this.ledger(q);
-    const buffer = await this.pdf.render(buildLedgerDoc(res, (q.mode ?? 'BOTH').toUpperCase()));
+    const buffer = await this.pdf.render(buildLedgerDoc(res, (q.mode ?? 'BOTH').toUpperCase(), await this.companyName()));
     return { buffer, filename: `${this.baseName(res)}.pdf` };
   }
 }
@@ -517,275 +596,372 @@ const modeLabel = (m: string) => (m === 'B' ? 'Bank only' : m === 'C' ? 'Cash on
 const partyOf = (res: PartyLedgerResult) =>
   res.scope === 'CUSTOMER' ? (res.customerName ?? 'Party') : res.scope === 'AGENT' ? `Agent: ${res.agentName}` : 'All Parties';
 const shortDate = (s: string | null) =>
-  s ? new Date(s).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }) : '';
+  formatDate(s, '');
+
+/** Tally prints every figure to two decimals and leaves a zero cell empty. */
+const amt2 = (v: number) => (v ? v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '');
+/** Same, but a zero prints as 0.00 (used for the ageing summary, never blank). */
+const amt2z = (v: number) => (v || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** The Dr/Cr key pair for one money leg, so Bank and Cash render identically. */
+interface Leg {
+  group: 'Bank' | 'Cash';
+  dr: 'bankDr' | 'cashDr';
+  cr: 'bankCr' | 'cashCr';
+}
+/** Which legs a mode shows: BOTH → Bank then Cash, B → Bank only, C → Cash only. */
+function legsFor(mode: string): Leg[] {
+  const legs: Leg[] = [];
+  if (mode !== 'C') legs.push({ group: 'Bank', dr: 'bankDr', cr: 'bankCr' });
+  if (mode !== 'B') legs.push({ group: 'Cash', dr: 'cashDr', cr: 'cashCr' });
+  return legs;
+}
+
+/** Tally folds the settlement state into the narration line under the particulars. */
+const statusWord = (s: string) => (s === 'F' ? 'Paid in full' : s === 'P' ? 'Part-paid' : s === 'D' ? 'Outstanding' : '');
+const narrationOf = (r: PartyLedgerRow) => [statusWord(r.status), r.dueFrom].filter(Boolean).join(' · ');
 
 /* ── PDF document ─────────────────────────────────────────────────────────── */
 
-function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefinitions {
-  const NAVY = '#0E1E36';
-  const AMBER = '#F59E0B';
-  const q0 = (v: number) => (v ? v.toLocaleString('en-IN', { maximumFractionDigits: 0 }) : '');
+/**
+ * A Tally "Ledger Account" statement, printed the way Tally prints one: plain
+ * black on white with no fills or accent colour, a centred company masthead, and
+ * a boxed grid whose column rules run the full height while horizontal rules
+ * appear only under the headings and around the totals. Amounts carry two
+ * decimals and a zero cell is left blank, both Tally conventions.
+ *
+ * The page turns landscape only when both money legs are shown (four figure
+ * columns); a Bank-only or Cash-only ledger is a plain Debit/Credit statement and
+ * fits portrait, exactly like Tally's own.
+ */
+function buildLedgerDoc(res: PartyLedgerResult, mode: string, company: string | null): TDocumentDefinitions {
+  const BLACK = '#000000';
   const d = shortDate;
-  const who = partyOf(res);
   const k = res.kpis;
-
-  const head = ['Date', 'Due From', 'Particulars', 'Voucher Type', 'Voucher No', 'Bank Dr', 'Bank Cr', 'Cash Dr', 'Cash Cr'].map((text, i) => ({
-    text,
-    bold: true,
-    color: '#ffffff',
-    fontSize: 8,
-    alignment: i >= 5 ? 'right' : 'left',
-  }));
-  const body = res.rows.map((r) => [
-    { text: d(r.txnDate), fontSize: 8 },
-    { text: r.dueFrom, fontSize: 7, color: /Over/i.test(r.dueFrom) ? '#B91C1C' : /Early|On Time|Late/i.test(r.dueFrom) ? '#15803D' : '#334155' },
-    { text: r.particulars, fontSize: 8 },
-    { text: r.voucherType, fontSize: 8 },
-    { text: r.voucherNo, fontSize: 8 },
-    { text: q0(r.bankDr), alignment: 'right', fontSize: 8 },
-    { text: q0(r.bankCr), alignment: 'right', fontSize: 8, color: '#15803D' },
-    { text: q0(r.cashDr), alignment: 'right', fontSize: 8 },
-    { text: q0(r.cashCr), alignment: 'right', fontSize: 8, color: '#15803D' },
-  ]);
-
   const f = res.footer;
-  const footRow = (label: string, b: { bankDr: number; bankCr: number; cashDr: number; cashCr: number }, strong: boolean) => [
-    { text: '', border: [false, false, false, false] },
-    { text: '', border: [false, false, false, false] },
-    { text: '', border: [false, false, false, false] },
-    { text: '', border: [false, false, false, false] },
-    { text: label, bold: true, alignment: 'right', fontSize: 8, color: strong ? NAVY : '#334155' },
-    { text: q0(b.bankDr), alignment: 'right', bold: true, fontSize: 8 },
-    { text: q0(b.bankCr), alignment: 'right', bold: true, fontSize: 8, color: '#15803D' },
-    { text: q0(b.cashDr), alignment: 'right', bold: true, fontSize: 8 },
-    { text: q0(b.cashCr), alignment: 'right', bold: true, fontSize: 8, color: '#15803D' },
+  const legs = legsFor(mode);
+  /** Both legs shown → the Dr/Cr pairs sit under "Bank" / "Cash" group headings. */
+  const grouped = legs.length === 2;
+  const landscape = grouped;
+  /** Printable width, used to draw the full-bleed rule under the masthead. */
+  const pageWidth = (landscape ? 842 : 595) - 48;
+
+  const txt = (text: string, extra: Record<string, unknown> = {}) => ({ text, fontSize: 8, ...extra });
+  const num = (v: number, extra: Record<string, unknown> = {}) => ({ text: amt2(v), fontSize: 8, alignment: 'right', ...extra });
+
+  /* ── headings ── */
+  const groupRow = [
+    txt(''),
+    txt(''),
+    txt(''),
+    txt(''),
+    ...legs.flatMap((l) => [txt(l.group, { bold: true, alignment: 'center', colSpan: 2 }), txt('')]),
   ];
+  const colRow = [
+    txt('Date', { bold: true }),
+    txt('Particulars', { bold: true }),
+    txt('Vch Type', { bold: true }),
+    txt('Vch No', { bold: true }),
+    ...legs.flatMap(() => [txt('Debit', { bold: true, alignment: 'right' }), txt('Credit', { bold: true, alignment: 'right' })]),
+  ];
+  const heads = grouped ? [groupRow, colRow] : [colRow];
+
+  /* ── one voucher line; the settlement state rides along as a narration ── */
+  const dataRow = (r: PartyLedgerRow) => {
+    const note = narrationOf(r);
+    return [
+      txt(d(r.txnDate)),
+      note
+        ? { stack: [txt(r.particulars), txt(`(${note})`, { fontSize: 6.5, italics: true })] }
+        : txt(r.particulars),
+      txt(r.voucherType),
+      txt(r.voucherNo),
+      ...legs.flatMap((l) => [num(r[l.dr]), num(r[l.cr])]),
+    ];
+  };
+
+  /* ── opening / current / closing, laid out on the same grid ── */
+  const balRow = (label: string, b: LedgerBalanceRow, strong: boolean) => [
+    txt(''),
+    txt(label, { bold: true }),
+    txt(''),
+    txt(''),
+    ...legs.flatMap((l) => [num(b[l.dr], { bold: true }), num(b[l.cr], { bold: true })]),
+  ].map((c) => (strong ? { ...c, fontSize: 8.5 } : c));
+
+  const body = [
+    ...heads,
+    balRow('Opening Balance', f.opening, false),
+    ...res.rows.map(dataRow),
+    balRow('Current Total', f.current, false),
+    balRow('Closing Balance', f.closing, true),
+  ];
+  const headerRows = heads.length;
+  /** Row index of the first totals line — the grid rules key off these. */
+  const totalsAt = body.length - 2;
+  const numW = grouped ? 66 : 80;
+
+  const kpiCell = (label: string, bucket: { amount: number; count: number }) => ({
+    stack: [
+      { text: label, fontSize: 6.5, bold: true },
+      { text: amt2z(bucket.amount), fontSize: 9.5, bold: true, margin: [0, 1, 0, 0] },
+      { text: `${bucket.count} invoice(s)`, fontSize: 6.5 },
+    ],
+    margin: [6, 3, 6, 3],
+  });
 
   return {
     pageSize: 'A4',
-    pageOrientation: 'landscape',
-    pageMargins: [24, 24, 24, 30],
-    defaultStyle: { font: 'Helvetica', fontSize: 8, color: '#111111' },
+    pageOrientation: landscape ? 'landscape' : 'portrait',
+    pageMargins: [24, 22, 24, 30],
+    defaultStyle: { font: 'Helvetica', fontSize: 8, color: BLACK },
     content: [
-      {
-        table: { widths: ['*', 'auto'], body: [[
-          { text: 'PARTY LEDGER', color: '#ffffff', bold: true, fontSize: 15 },
-          { text: `${d(res.from)}  to  ${d(res.to)}`, color: '#ffffff', bold: true, fontSize: 10, alignment: 'right', margin: [0, 3, 0, 0] },
-        ]] },
-        layout: { fillColor: () => NAVY, hLineWidth: () => 0, vLineWidth: () => 0, paddingLeft: () => 10, paddingRight: () => 10, paddingTop: () => 6, paddingBottom: () => 6 },
-      },
-      { canvas: [{ type: 'rect', x: 0, y: 0, w: 793, h: 3, color: AMBER }], margin: [0, 0, 0, 8] },
+      /* Masthead — company, document type, party, period. Centred, like Tally. */
+      ...(company ? [{ text: company.toUpperCase(), bold: true, fontSize: 13, alignment: 'center' }] : []),
+      { text: 'Ledger Account', fontSize: 9.5, alignment: 'center', margin: [0, company ? 1 : 0, 0, 3] },
       {
         columns: [
-          { width: '*', text: who ?? '', bold: true, fontSize: 12 },
+          { width: '*', text: partyOf(res), bold: true, fontSize: 11 },
           {
             width: 'auto',
             stack: [
-              { text: `Period:  ${d(res.from)}  –  ${d(res.to)}`, fontSize: 8, color: '#475569', alignment: 'right' },
-              { text: `Mode: ${modeLabel(mode)}   •   Generated: ${new Date().toLocaleString('en-GB')}`, fontSize: 8, color: '#94A3B8', alignment: 'right', margin: [0, 1, 0, 0] },
+              { text: `${d(res.from)}  to  ${d(res.to)}`, fontSize: 9, bold: true, alignment: 'right' },
+              { text: modeLabel(mode), fontSize: 7.5, alignment: 'right', margin: [0, 1, 0, 0] },
             ],
           },
         ],
-        margin: [0, 0, 0, 6],
+        margin: [0, 0, 0, 3],
       },
+      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: pageWidth, y2: 0, lineWidth: 1, lineColor: BLACK }], margin: [0, 0, 0, 5] },
+
+      /* The ledger grid. */
+      {
+        table: { headerRows, widths: [46, '*', 62, 58, ...legs.flatMap(() => [numW, numW])], body },
+        layout: {
+          // Column rules run the full height; horizontal rules only frame the
+          // headings, the opening line and the totals — Tally's exact skeleton.
+          hLineWidth: (i: number) =>
+            i === 0 || i === headerRows || i === body.length || i === totalsAt ? 1 : i === headerRows + 1 || i === body.length - 1 || (grouped && i === 1) ? 0.5 : 0,
+          vLineWidth: () => 0.5,
+          hLineColor: () => BLACK,
+          vLineColor: () => BLACK,
+          paddingLeft: () => 4,
+          paddingRight: () => 4,
+          paddingTop: () => 2.5,
+          paddingBottom: () => 2.5,
+        },
+      },
+
+      /* Ageing summary — the one thing Tally doesn't print, kept because the
+         screen shows it; rendered in the same black-and-white grammar. */
       {
         table: {
           widths: ['*', '*', '*'],
-          body: [[
-            { stack: [{ text: 'OVER DUE', fontSize: 7, bold: true, color: '#991B1B' }, { text: `₹ ${q0(k.overDue.amount) || '0'}`, fontSize: 11, bold: true, color: '#B91C1C', margin: [0, 1, 0, 0] }, { text: `${k.overDue.count} invoice(s)`, fontSize: 7, color: '#64748B' }], margin: [7, 4, 7, 4] },
-            { stack: [{ text: 'DUE SOON / PARTIAL', fontSize: 7, bold: true, color: '#92400E' }, { text: `₹ ${q0(k.pastDue.amount) || '0'}`, fontSize: 11, bold: true, color: '#B45309', margin: [0, 1, 0, 0] }, { text: `${k.pastDue.count} invoice(s)`, fontSize: 7, color: '#64748B' }], margin: [7, 4, 7, 4] },
-            { stack: [{ text: 'WITHIN TERMS', fontSize: 7, bold: true, color: '#166534' }, { text: `₹ ${q0(k.normal.amount) || '0'}`, fontSize: 11, bold: true, color: '#15803D', margin: [0, 1, 0, 0] }, { text: `${k.normal.count} invoice(s)`, fontSize: 7, color: '#64748B' }], margin: [7, 4, 7, 4] },
-          ]],
+          body: [[kpiCell('OVER DUE', k.overDue), kpiCell('DUE SOON / PARTIAL', k.pastDue), kpiCell('WITHIN TERMS', k.normal)]],
         },
         layout: {
-          fillColor: (_r: number, _n: unknown, c: number) => ['#FEF2F2', '#FFFBEB', '#F0FDF4'][c] ?? null,
-          hLineWidth: () => 0,
-          vLineWidth: (i: number) => (i === 1 || i === 2 ? 3 : 0),
-          vLineColor: () => '#FFFFFF',
+          hLineWidth: () => 0.5,
+          vLineWidth: () => 0.5,
+          hLineColor: () => BLACK,
+          vLineColor: () => BLACK,
           paddingLeft: () => 0,
           paddingRight: () => 0,
           paddingTop: () => 0,
           paddingBottom: () => 0,
         },
-        margin: [0, 0, 0, 10],
+        margin: [0, 8, 0, 0],
       },
       {
-        table: { headerRows: 1, widths: [42, 44, '*', 70, 60, 58, 58, 58, 58], body: [head, ...body, footRow('OPENING BALANCE', f.opening, false), footRow('CURRENT TOTAL', f.current, false), footRow('CLOSING BALANCE', f.closing, true)] },
-        layout: {
-          fillColor: (rowIndex: number, node: { table: { body: unknown[] } }) =>
-            rowIndex === 0 ? NAVY : rowIndex >= node.table.body.length - 3 ? '#ECFDF5' : rowIndex % 2 === 0 ? '#F5F7FA' : null,
-          hLineColor: () => '#D6DEE8',
-          vLineColor: () => '#D6DEE8',
-          hLineWidth: () => 0.4,
-          vLineWidth: () => 0.4,
-          paddingLeft: () => 4,
-          paddingRight: () => 4,
-          paddingTop: () => 3,
-          paddingBottom: () => 3,
-        },
+        text: `Oldest unpaid: ${k.invDueFrom}      Party list: ${k.paymentDNA}`,
+        fontSize: 7.5,
+        margin: [0, 3, 0, 0],
       },
     ],
     footer: (currentPage: number, pageCount: number) => ({
       columns: [
-        { text: new Date().toLocaleString('en-GB'), fontSize: 7, color: '#888888', margin: [24, 0, 0, 0] },
-        { text: `Page ${currentPage} of ${pageCount}`, fontSize: 7, color: '#888888', alignment: 'right', margin: [0, 0, 24, 0] },
+        { text: new Date().toLocaleString('en-GB'), fontSize: 7, color: BLACK, margin: [24, 0, 0, 0] },
+        { text: `Page ${currentPage} of ${pageCount}`, fontSize: 7, color: BLACK, alignment: 'right', margin: [0, 0, 24, 0] },
       ],
     }),
   } as unknown as TDocumentDefinitions;
 }
 
-/* ── Excel document (styled, standardized statement) ──────────────────────── */
+/* ── Excel document — the same Tally statement, as a working sheet ─────────── */
 
-async function buildLedgerXlsx(res: PartyLedgerResult, mode: string): Promise<Buffer> {
-  // Palette (ARGB) — mirrors the PDF's navy / amber identity.
-  const NAVY = 'FF0E1E36';
-  const AMBER = 'FFF59E0B';
-  const WHITE = 'FFFFFFFF';
-  const GREEN = 'FF15803D';
-  const RED = 'FFB91C1C';
-  const SLATE = 'FF334155';
-  const GREY = 'FF64748B';
-  const ZEBRA = 'FFF6F8FB';
-  const TOTAL_BG = 'FFECFDF5';
-  const LINE = 'FFD6DEE8';
-
-  const showBank = mode !== 'C';
-  const showCash = mode !== 'B';
-  const q = (v: number) => (v ? v : null); // 0 → blank cell
+/**
+ * The spreadsheet mirrors the PDF's black-and-white Tally grammar (no fills, no
+ * accent colour, thin black rules, two-decimal figures) but keeps Due From and
+ * Status as real columns rather than folding them into a narration line — a sheet
+ * is something you filter and pivot, so the data stays tabular.
+ */
+async function buildLedgerXlsx(res: PartyLedgerResult, mode: string, company: string | null): Promise<Buffer> {
+  const BLACK = 'FF000000';
+  const legs = legsFor(mode);
+  const grouped = legs.length === 2;
+  const q = (v: number) => (v ? v : null); // 0 → blank cell, as Tally prints it
 
   interface Col {
     header: string;
+    /** The Bank / Cash banner this column sits under, when both legs are shown. */
+    group?: string;
     width: number;
     align: 'left' | 'right' | 'center';
     num?: boolean;
     get: (r: PartyLedgerRow) => string | number | null;
-    color?: (r: PartyLedgerRow) => string | undefined;
+    /** Pulls this column's figure out of a totals row. */
+    bal?: (b: LedgerBalanceRow) => number;
   }
   const cols: Col[] = [
     { header: 'Date', width: 12, align: 'left', get: (r) => shortDate(r.txnDate) },
-    {
-      header: 'Due From', width: 12, align: 'left',
-      get: (r) => r.dueFrom || '',
-      color: (r) => (/Over/i.test(r.dueFrom) ? RED : /Early|On Time|Late/i.test(r.dueFrom) ? GREEN : SLATE),
-    },
-    { header: 'Particulars', width: 36, align: 'left', get: (r) => r.particulars },
-    { header: 'Voucher Type', width: 16, align: 'left', get: (r) => r.voucherType },
-    { header: 'Voucher No', width: 16, align: 'left', get: (r) => r.voucherNo },
+    { header: 'Due From', width: 12, align: 'left', get: (r) => r.dueFrom || '' },
+    { header: 'Particulars', width: 38, align: 'left', get: (r) => r.particulars },
+    { header: 'Vch Type', width: 16, align: 'left', get: (r) => r.voucherType },
+    { header: 'Vch No', width: 16, align: 'left', get: (r) => r.voucherNo },
     { header: 'Status', width: 8, align: 'center', get: (r) => r.status || '' },
-    ...(showBank
-      ? ([
-          { header: 'Bank Dr', width: 14, align: 'right', num: true, get: (r) => q(r.bankDr) },
-          { header: 'Bank Cr', width: 14, align: 'right', num: true, get: (r) => q(r.bankCr), color: () => GREEN },
-        ] as Col[])
-      : []),
-    ...(showCash
-      ? ([
-          { header: 'Cash Dr', width: 14, align: 'right', num: true, get: (r) => q(r.cashDr) },
-          { header: 'Cash Cr', width: 14, align: 'right', num: true, get: (r) => q(r.cashCr), color: () => GREEN },
-        ] as Col[])
-      : []),
+    ...legs.flatMap((l): Col[] => [
+      { header: 'Debit', group: l.group, width: 15, align: 'right', num: true, get: (r) => q(r[l.dr]), bal: (b) => b[l.dr] },
+      { header: 'Credit', group: l.group, width: 15, align: 'right', num: true, get: (r) => q(r[l.cr]), bal: (b) => b[l.cr] },
+    ]),
   ];
   const nCols = cols.length;
-  const labelCol = 5; // "Voucher No" column — where the totals labels sit (1-based)
+  const labelCol = 5; // "Vch No" column — where the totals labels sit (1-based)
 
   const wb = new ExcelJS.Workbook();
   wb.creator = 'OMS';
   wb.created = new Date();
-  const ws = wb.addWorksheet('Party Ledger', {
-    views: [{ state: 'frozen', ySplit: 4 }], // keep the title + header rows visible
-    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } },
+  /** Headings occupy rows 1–4 (masthead) plus the group banner when shown. */
+  const groupRowNo = grouped ? 5 : 0;
+  const headRowNo = grouped ? 6 : 5;
+  const ws = wb.addWorksheet('Ledger Account', {
+    views: [{ state: 'frozen', ySplit: headRowNo }], // masthead + headings stay put
+    pageSetup: {
+      orientation: grouped ? 'landscape' : 'portrait',
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 0,
+      margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 },
+    },
   });
   cols.forEach((c, i) => (ws.getColumn(i + 1).width = c.width));
 
-  const thin = { style: 'thin' as const, color: { argb: LINE } };
-  const allBorders = { top: thin, left: thin, bottom: thin, right: thin };
+  const thin = { style: 'thin' as const, color: { argb: BLACK } };
+  const medium = { style: 'medium' as const, color: { argb: BLACK } };
+  const box = { top: thin, left: thin, bottom: thin, right: thin };
+  const centred = (text: string, row: number, size: number, bold: boolean) => {
+    ws.mergeCells(row, 1, row, nCols);
+    const cell = ws.getCell(row, 1);
+    cell.value = text;
+    cell.font = { name: 'Calibri', size, bold, color: { argb: BLACK } };
+    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    ws.getRow(row).height = size + 8;
+  };
 
-  // Row 1 — title band.
-  ws.mergeCells(1, 1, 1, nCols);
-  const title = ws.getCell(1, 1);
-  title.value = 'PARTY LEDGER';
-  title.font = { name: 'Calibri', size: 16, bold: true, color: { argb: WHITE } };
-  title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-  title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
-  for (let c = 1; c <= nCols; c++) ws.getCell(1, c).border = { bottom: { style: 'medium', color: { argb: AMBER } } };
-  ws.getRow(1).height = 30;
+  // Rows 1–4 — the Tally masthead: company, document type, party, period.
+  centred(company ? company.toUpperCase() : 'LEDGER ACCOUNT', 1, 15, true);
+  centred('Ledger Account', 2, 11, false);
+  centred(partyOf(res), 3, 12, true);
+  centred(`${shortDate(res.from)}  to  ${shortDate(res.to)}      ·      ${modeLabel(mode)}`, 4, 9, false);
+  for (let c = 1; c <= nCols; c++) ws.getCell(4, c).border = { bottom: medium };
 
-  // Row 2 — party / agent / scope.
-  ws.mergeCells(2, 1, 2, nCols);
-  const party = ws.getCell(2, 1);
-  party.value = partyOf(res);
-  party.font = { name: 'Calibri', size: 12, bold: true, color: { argb: NAVY } };
-  party.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-  ws.getRow(2).height = 20;
+  // Group banner (Bank / Cash) — only when both legs are shown.
+  if (grouped) {
+    const row = ws.getRow(groupRowNo);
+    const firstLeg = cols.findIndex((c) => c.group);
+    legs.forEach((l, i) => {
+      const from = firstLeg + i * 2 + 1;
+      ws.mergeCells(groupRowNo, from, groupRowNo, from + 1);
+      const cell = row.getCell(from);
+      cell.value = l.group;
+      cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: BLACK } };
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+      cell.border = box;
+      row.getCell(from + 1).border = box;
+    });
+    row.height = 16;
+  }
 
-  // Row 3 — meta (period · mode · generated).
-  ws.mergeCells(3, 1, 3, nCols);
-  const meta = ws.getCell(3, 1);
-  meta.value = `Period:  ${shortDate(res.from)}  –  ${shortDate(res.to)}      •      Mode: ${modeLabel(mode)}      •      Generated: ${new Date().toLocaleString('en-GB')}`;
-  meta.font = { name: 'Calibri', size: 9, color: { argb: GREY } };
-  meta.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-  ws.getRow(3).height = 16;
-
-  // Row 4 — column headers.
-  const headRow = ws.getRow(4);
+  // Column headings.
+  const headRow = ws.getRow(headRowNo);
   cols.forEach((c, i) => {
     const cell = headRow.getCell(i + 1);
     cell.value = c.header;
-    cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: WHITE } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+    cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: BLACK } };
     cell.alignment = { vertical: 'middle', horizontal: c.align === 'right' ? 'right' : c.align === 'center' ? 'center' : 'left' };
-    cell.border = allBorders;
+    cell.border = { ...box, top: medium, bottom: medium };
   });
-  headRow.height = 20;
+  headRow.height = 18;
 
-  // Data rows.
-  let rIdx = 5;
-  res.rows.forEach((r, i) => {
-    const row = ws.getRow(rIdx);
-    const zebra = i % 2 === 1;
-    cols.forEach((c, ci) => {
-      const cell = row.getCell(ci + 1);
-      cell.value = c.get(r);
-      cell.alignment = { vertical: 'middle', horizontal: c.align };
-      cell.font = { name: 'Calibri', size: 9, color: { argb: c.color?.(r) ?? 'FF111827' } };
-      if (c.num) cell.numFmt = '#,##0';
-      if (zebra) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
-      cell.border = allBorders;
-    });
-    rIdx++;
-  });
-
-  // Totals band — opening / current / closing.
-  const f = res.footer;
-  const totalRow = (label: string, b: { bankDr: number; bankCr: number; cashDr: number; cashCr: number }, strong: boolean) => {
+  // Opening / voucher lines / totals all sit on the same grid.
+  let rIdx = headRowNo + 1;
+  const balanceRow = (label: string, b: LedgerBalanceRow, strong: boolean) => {
     const row = ws.getRow(rIdx);
     cols.forEach((c, ci) => {
       const cell = row.getCell(ci + 1);
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TOTAL_BG } };
-      cell.border = { ...allBorders, top: { style: strong ? 'medium' : 'thin', color: { argb: strong ? NAVY : LINE } } };
+      cell.border = { ...box, top: strong ? medium : thin };
       cell.alignment = { vertical: 'middle', horizontal: c.align };
+      cell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: BLACK } };
       if (ci + 1 === labelCol) {
         cell.value = label;
-        cell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: strong ? NAVY : SLATE } };
         cell.alignment = { vertical: 'middle', horizontal: 'right' };
-      } else if (c.num) {
-        const val = c.header === 'Bank Dr' ? b.bankDr : c.header === 'Bank Cr' ? b.bankCr : c.header === 'Cash Dr' ? b.cashDr : b.cashCr;
-        cell.value = val || null;
-        cell.numFmt = '#,##0';
-        cell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: c.header.endsWith('Cr') ? GREEN : NAVY } };
-      } else {
-        cell.font = { name: 'Calibri', size: 9, bold: true };
+      } else if (c.bal) {
+        cell.value = c.bal(b) || null;
+        cell.numFmt = '#,##0.00';
       }
     });
     row.height = strong ? 18 : 16;
     rIdx++;
   };
-  totalRow('OPENING BALANCE', f.opening, false);
-  totalRow('CURRENT TOTAL', f.current, false);
-  totalRow('CLOSING BALANCE', f.closing, true);
 
-  // Filter + freeze already set; enable a filter on the header row.
-  ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: nCols } };
+  balanceRow('Opening Balance', res.footer.opening, false);
+  res.rows.forEach((r) => {
+    const row = ws.getRow(rIdx);
+    cols.forEach((c, ci) => {
+      const cell = row.getCell(ci + 1);
+      cell.value = c.get(r);
+      cell.alignment = { vertical: 'middle', horizontal: c.align };
+      cell.font = { name: 'Calibri', size: 9, color: { argb: BLACK } };
+      if (c.num) cell.numFmt = '#,##0.00';
+      cell.border = box;
+    });
+    rIdx++;
+  });
+  balanceRow('Current Total', res.footer.current, false);
+  balanceRow('Closing Balance', res.footer.closing, true);
+
+  // Ageing summary, two rows below the grid.
+  rIdx += 1;
+  const k = res.kpis;
+  ([
+    ['Over Due', k.overDue],
+    ['Due Soon / Partial', k.pastDue],
+    ['Within Terms', k.normal],
+  ] as const).forEach(([label, bucket]) => {
+    const row = ws.getRow(rIdx);
+    const l = row.getCell(labelCol);
+    l.value = label;
+    l.font = { name: 'Calibri', size: 9, bold: true, color: { argb: BLACK } };
+    l.alignment = { vertical: 'middle', horizontal: 'right' };
+    const v = row.getCell(labelCol + 1);
+    v.value = bucket.amount || 0;
+    v.numFmt = '#,##0.00';
+    v.font = { name: 'Calibri', size: 9, bold: true, color: { argb: BLACK } };
+    v.alignment = { vertical: 'middle', horizontal: 'right' };
+    const n = row.getCell(labelCol + 2);
+    n.value = `${bucket.count} invoice(s)`;
+    n.font = { name: 'Calibri', size: 9, color: { argb: BLACK } };
+    rIdx++;
+  });
+  const tail = ws.getRow(rIdx);
+  tail.getCell(labelCol).value = 'Oldest unpaid';
+  tail.getCell(labelCol).alignment = { horizontal: 'right' };
+  tail.getCell(labelCol + 1).value = k.invDueFrom;
+  rIdx++;
+  const dna = ws.getRow(rIdx);
+  dna.getCell(labelCol).value = 'Party list';
+  dna.getCell(labelCol).alignment = { horizontal: 'right' };
+  dna.getCell(labelCol + 1).value = k.paymentDNA;
+
+  ws.autoFilter = { from: { row: headRowNo, column: 1 }, to: { row: headRowNo, column: nCols } };
 
   const out = await wb.xlsx.writeBuffer();
   return Buffer.from(out as ArrayBuffer);

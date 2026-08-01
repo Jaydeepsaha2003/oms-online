@@ -42,10 +42,32 @@ const loadFilters = (): Partial<OrderModifyFilters> => {
 };
 
 const STATUS_STYLE: Record<string, string> = {
-  CONFIRMED: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
-  PENDING: 'bg-amber-50 text-amber-700 ring-amber-200',
-  CANCELLED: 'bg-rose-50 text-rose-700 ring-rose-200',
+  CONFIRMED: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/25',
+  PENDING: 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/25',
+  CANCELLED: 'bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-400/25',
 };
+const STATUS_DOT: Record<string, string> = {
+  CONFIRMED: 'bg-emerald-500',
+  PENDING: 'bg-amber-500',
+  CANCELLED: 'bg-rose-500',
+};
+
+/** Matches the Pending Challan / Challans / View Orders grids. */
+const TEXT_CELL = 'text-[13px] font-semibold text-slate-800 dark:text-slate-200';
+/** Compact, amber-bordered filter controls — same language as the other list pages. */
+const CONTROL =
+  'h-9 rounded-[4px] border-amber-300 dark:border-amber-400/40 text-[12.5px] focus-visible:border-amber-500 focus-visible:ring-amber-400/30';
+const CONTROL_ON = 'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
+
+/** A status pill with a coloured dot — carries the state alongside the word. */
+function StatusPill({ status }: { status: string }) {
+  return (
+    <span className={cn('inline-flex items-center gap-1.5 rounded-[4px] px-1.5 py-0.5 text-[11.5px] font-bold ring-1 ring-inset', STATUS_STYLE[status] ?? 'bg-muted text-muted-foreground ring-border')}>
+      <span className={cn('size-1.5 shrink-0 rounded-full', STATUS_DOT[status] ?? 'bg-slate-400')} />
+      {status}
+    </span>
+  );
+}
 
 const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? null : Number(s));
 const dash = (v: number | null) => (v == null || v === 0 ? '—' : v.toLocaleString('en-IN'));
@@ -92,39 +114,37 @@ function toInput(o: OrderDto, items: OrderItemDto[]): OrderInput {
 }
 
 const COLUMNS: DataColumn<Row>[] = [
-  { id: 'orderId', label: 'Order ID', fixed: true, cell: (r) => <span className="font-mono font-semibold">{shortOrderCode(r.order.code, r.order.id)}</span> },
-  { id: 'orderDate', label: 'Order Date', cell: (r) => <span className="whitespace-nowrap">{formatDate(r.order.orderDate)}</span> },
-  { id: 'dueDate', label: 'Due Date', cell: (r) => <span className="whitespace-nowrap">{formatDate(r.order.completionDate)}</span> },
-  { id: 'customer', label: 'Customer Name', cell: (r) => <span className="font-medium">{r.order.customerName}</span> },
+  { id: 'orderId', label: 'Order ID', fixed: true, cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums text-indigo-700 dark:text-indigo-300')}>{shortOrderCode(r.order.code, r.order.id)}</span> },
+  { id: 'orderDate', label: 'Order Date', cell: (r) => <span className={cn(TEXT_CELL, 'whitespace-nowrap tabular-nums')}>{formatDate(r.order.orderDate)}</span> },
+  { id: 'dueDate', label: 'Due Date', cell: (r) => <span className={cn(TEXT_CELL, 'whitespace-nowrap tabular-nums')}>{formatDate(r.order.completionDate)}</span> },
+  { id: 'customer', label: 'Customer Name', cell: (r) => <span className={TEXT_CELL}>{r.order.customerName}</span> },
   {
     id: 'product',
     label: 'Product Name',
     cell: (r) => (
-      <span className={r.line.status === 'CANCELLED' ? 'text-muted-foreground font-medium line-through' : 'font-medium'}>
+      <span className={r.line.status === 'CANCELLED' ? 'text-muted-foreground text-[13px] font-semibold line-through' : TEXT_CELL}>
         {r.line.productName || r.line.product || '—'}
       </span>
     ),
   },
-  { id: 'designType', label: 'Design Type', cell: (r) => r.line.designType || '—' },
+  { id: 'designType', label: 'Design Type', cell: (r) => <span className={TEXT_CELL}>{r.line.designType || '—'}</span> },
   {
     id: 'priority',
     label: 'Priority',
-    cell: (r) => (r.line.priority === 'URGENT' ? <span className="font-semibold text-rose-600">URGENT</span> : r.line.priority || '—'),
+    cell: (r) => (r.line.priority === 'URGENT' ? <span className="text-[11.5px] font-bold text-rose-600 dark:text-rose-400">URGENT</span> : <span className={TEXT_CELL}>{r.line.priority || '—'}</span>),
   },
-  { id: 'bags', label: 'Bags', align: 'right', cell: (r) => <span className="tabular-nums">{dash(r.line.bags)}</span> },
-  { id: 'pcs', label: 'Pcs', align: 'right', cell: (r) => <span className="tabular-nums">{dash(r.line.pcs)}</span> },
-  { id: 'kgs', label: 'Kgs', align: 'right', cell: (r) => <span className="tabular-nums">{dash(r.line.gram)}</span> },
-  { id: 'box', label: 'Box', align: 'right', cell: (r) => <span className="tabular-nums">{dash(r.line.box)}</span> },
-  { id: 'rate', label: 'Rate', align: 'right', cell: (r) => <span className="font-semibold tabular-nums text-emerald-700">₹{(r.line.rate ?? 0).toLocaleString('en-IN')}</span> },
-  { id: 'comment', label: 'Comment', cell: (r) => <span className="inline-block max-w-[12rem] truncate align-middle" title={r.line.comment ?? ''}>{r.line.comment || '—'}</span> },
+  { id: 'bags', label: 'Bags', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{dash(r.line.bags)}</span> },
+  { id: 'pcs', label: 'Pcs', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{dash(r.line.pcs)}</span> },
+  { id: 'kgs', label: 'Kgs', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{dash(r.line.gram)}</span> },
+  { id: 'box', label: 'Box', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{dash(r.line.box)}</span> },
+  { id: 'rate', label: 'Rate', align: 'right', cell: (r) => <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">₹{(r.line.rate ?? 0).toLocaleString('en-IN')}</span> },
+  { id: 'comment', label: 'Comment', cell: (r) => <span className={cn(TEXT_CELL, 'inline-block max-w-[12rem] truncate align-middle')} title={r.line.comment ?? ''}>{r.line.comment || '—'}</span> },
   {
     id: 'status',
     label: 'Status',
     cell: (r) => {
       const cancelled = r.line.status === 'CANCELLED';
-      const label = cancelled ? 'CANCELLED' : r.order.status;
-      const style = cancelled ? STATUS_STYLE.CANCELLED : STATUS_STYLE[r.order.status] ?? 'bg-muted text-muted-foreground ring-border';
-      return <span className={`rounded px-1.5 py-0.5 text-xs font-medium ring-1 ${style}`}>{label}</span>;
+      return <StatusPill status={cancelled ? 'CANCELLED' : r.order.status} />;
     },
   },
 ];
@@ -234,176 +254,198 @@ export function OrderModifyPage() {
   };
 
   return (
-    <div className="space-y-4">
-      {/* No page title here — the topbar already shows "Order Modify". Search
-          and column settings share one sticky row so the list starts right
-          below it instead of losing a whole row to a redundant heading. */}
-      {/* Full-bleed opaque sticky bar. The key is the NEGATIVE sticky inset
-          (-top-4/-top-6): a sticky child docks against main's *content* box,
-          which sits below main's p-4/p-6 padding — so a plain `top-0` would
-          stick 16/24px down and let rows peek in that gap. Offsetting top by
-          exactly that padding docks the bar flush at the scrollport, while the
-          side-bleed (-mx + px) covers full width and z-40 keeps it above the
-          table's own sticky cells (z-30) so the View column can't poke over. */}
-      <div className="bg-background sticky -top-4 z-40 -mx-4 flex flex-wrap items-center gap-2 px-4 py-1.5 md:-top-6 md:-mx-6 md:px-6">
-        <div className="relative w-full flex-1 sm:max-w-xs sm:flex-none">
-          <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
-          <Input
-            placeholder="Search order #, customer or agent…"
-            className="pl-9"
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value.trim());
-              setPage(1);
-            }}
-          />
-        </div>
-        <div className="w-40">
-          <NativeSelect
-            value={agent}
-            onChange={(v) => { setAgent(v); setPage(1); }}
-            options={['', ...(filterOptions?.agents ?? [])]}
-            placeholder="All agents"
-          />
-        </div>
-        <div className="w-44">
-          <NativeSelect
-            value={product}
-            onChange={(v) => { setProduct(v); setPage(1); }}
-            options={['', ...(filterOptions?.products ?? [])]}
-            placeholder="All products"
-          />
-        </div>
-        <div className="w-40">
-          <NativeSelect
-            value={design}
-            onChange={(v) => { setDesign(v); setPage(1); }}
-            options={['', ...(filterOptions?.designs ?? [])]}
-            placeholder="All designs"
-          />
-        </div>
-        <div className="w-36">
-          <NativeSelect
-            value={priority}
-            onChange={(v) => { setPriority(v); setPage(1); }}
-            options={['', ...ORDER_PRIORITIES]}
-            placeholder="All priorities"
-          />
-        </div>
-        <Button variant="outline" size="sm" onClick={resetFilters} disabled={!hasFilters} className="shrink-0">
-          <RotateCcw /> Reset
-        </Button>
-        <div className="ml-auto shrink-0">
-          <ColumnSettings
-            columns={cols.orderedReorderable}
-            hidden={cols.hidden}
-            onReorder={cols.moveBefore}
-            onMove={cols.move}
-            onToggle={cols.toggle}
-            onReset={cols.reset}
-            dateFormat={{ value: format, options: DATE_FORMATS, onChange: setFormat }}
-          />
+    // Fills the viewport: toolbar pinned on top, footer pinned at the bottom, only
+    // the line list scrolls. `/orders/modify` is a flush route (app-shell), so the
+    // page owns its own padding.
+    <div className="flex h-full min-h-0 flex-col gap-2 p-2.5 font-sans sm:gap-2.5 sm:p-3">
+      {/* ── Toolbar: search + filters, then column settings — one card. */}
+      <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
+        <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
+          <div className="relative w-full flex-1 sm:max-w-56 sm:flex-none">
+            <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
+            <Input
+              placeholder="Search order #, customer or agent…"
+              className={cn(CONTROL, 'pl-8 font-medium', search && CONTROL_ON)}
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value.trim());
+                setPage(1);
+              }}
+            />
+          </div>
+          <div className="w-36">
+            <NativeSelect
+              value={agent}
+              onChange={(v) => { setAgent(v); setPage(1); }}
+              options={['', ...(filterOptions?.agents ?? [])]}
+              placeholder="All agents"
+              className={cn(CONTROL, 'font-medium', agent && CONTROL_ON)}
+            />
+          </div>
+          <div className="w-40">
+            <NativeSelect
+              value={product}
+              onChange={(v) => { setProduct(v); setPage(1); }}
+              options={['', ...(filterOptions?.products ?? [])]}
+              placeholder="All products"
+              className={cn(CONTROL, 'font-medium', product && CONTROL_ON)}
+            />
+          </div>
+          <div className="w-36">
+            <NativeSelect
+              value={design}
+              onChange={(v) => { setDesign(v); setPage(1); }}
+              options={['', ...(filterOptions?.designs ?? [])]}
+              placeholder="All designs"
+              className={cn(CONTROL, 'font-medium', design && CONTROL_ON)}
+            />
+          </div>
+          <div className="w-32">
+            <NativeSelect
+              value={priority}
+              onChange={(v) => { setPriority(v); setPage(1); }}
+              options={['', ...ORDER_PRIORITIES]}
+              placeholder="All priorities"
+              className={cn(CONTROL, 'font-medium', priority && CONTROL_ON)}
+            />
+          </div>
+          {hasFilters && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-9 shrink-0 rounded-[4px] text-[12.5px] font-semibold text-amber-700 hover:bg-amber-50 hover:text-amber-900 dark:text-amber-300 dark:hover:bg-amber-400/10"
+              onClick={resetFilters}
+              title="Clear all filters"
+            >
+              <RotateCcw className="size-3.5" /> Reset
+            </Button>
+          )}
+          <div className="ml-auto shrink-0">
+            <ColumnSettings
+              columns={cols.orderedReorderable}
+              hidden={cols.hidden}
+              onReorder={cols.moveBefore}
+              onMove={cols.move}
+              onToggle={cols.toggle}
+              onReset={cols.reset}
+              dateFormat={{ value: format, options: DATE_FORMATS, onChange: setFormat }}
+            />
+          </div>
         </div>
       </div>
 
-      <div className="hidden sm:block">
-        <DataTable
-          columns={cols.visibleColumns}
-          rows={rows}
-          rowKey={(r) => `${r.order.id}-${r.line.id}`}
-          isLoading={isLoading}
-          dense
-          // No height cap — every row renders in the page's own natural scroll
-          // (same as the View Orders list), so pagination sits right after the
-          // last row instead of behind a second, nested scrollbar.
-          // Compact data font + tight padding so more columns fit on screen at once.
-          className="text-[14px] [&_thead_th]:text-[12px] [&_td]:px-2.5 [&_td]:py-1.5 [&_th]:px-2.5 [&_th]:py-2 [&_tbody_button]:size-7"
-          emptyText="No order lines found."
-          onRowClick={(r) => setEdit(r)}
-        />
-      </div>
-
-      {/* Phones: one card per order, its lines grouped underneath. */}
-      <div className="sm:hidden">
-        {isLoading ? (
-          <div className="text-muted-foreground flex h-24 items-center justify-center">
-            <Loader2 className="size-5 animate-spin" />
-          </div>
-        ) : groupedByOrder.length === 0 ? (
-          <div className="text-muted-foreground rounded-lg border px-4 py-10 text-center text-sm">No order lines found.</div>
-        ) : (
-          <div className="space-y-3">
-            {groupedByOrder.map(({ order: o, lines }) => (
-              <div key={o.id} className="bg-card overflow-hidden rounded-lg border shadow-sm">
-                <div className="bg-muted/40 border-b px-3 py-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-muted-foreground font-mono text-xs font-semibold">{shortOrderCode(o.code, o.id)}</p>
-                      <p className="truncate font-semibold">{o.customerName}</p>
-                    </div>
-                    <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-xs font-medium ring-1', STATUS_STYLE[o.status] ?? 'bg-muted text-muted-foreground ring-border')}>
-                      {o.status}
-                    </span>
-                  </div>
-                  <p className="text-muted-foreground text-xs">
-                    {formatDate(o.orderDate)} → {formatDate(o.completionDate)} · {lines.length} line{lines.length === 1 ? '' : 's'}
-                  </p>
-                </div>
-                <div className="divide-y">
-                  {lines.map((r) => {
-                    const cancelled = r.line.status === 'CANCELLED';
-                    return (
-                      <div key={r.line.id} className="active:bg-muted cursor-pointer px-3 py-2.5" onClick={() => setEdit(r)}>
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className={cn('truncate text-sm font-medium', cancelled && 'text-muted-foreground line-through')}>
-                              {r.line.productName || r.line.product || '—'}
-                            </p>
-                            <p className="text-muted-foreground truncate text-xs">
-                              {r.line.designType || '—'}
-                              {r.line.priority === 'URGENT' && <span className="ml-1.5 font-semibold text-rose-600">URGENT</span>}
-                            </p>
-                          </div>
-                          <span className="shrink-0 font-semibold tabular-nums text-emerald-700">₹{(r.line.rate ?? 0).toLocaleString('en-IN')}</span>
-                        </div>
-                        <div className="mt-1.5 grid grid-cols-4 gap-2 text-xs">
-                          <div>
-                            <p className="text-muted-foreground">Bags</p>
-                            <p className="font-medium tabular-nums">{dash(r.line.bags)}</p>
-                          </div>
-                          <div>
-                            <p className="text-muted-foreground">Pcs</p>
-                            <p className="font-medium tabular-nums">{dash(r.line.pcs)}</p>
-                          </div>
-                          <div>
-                            <p className="text-muted-foreground">Kgs</p>
-                            <p className="font-medium tabular-nums">{dash(r.line.gram)}</p>
-                          </div>
-                          <div>
-                            <p className="text-muted-foreground">Box</p>
-                            <p className="font-medium tabular-nums">{dash(r.line.box)}</p>
-                          </div>
-                        </div>
-                        {r.line.comment && <p className="text-muted-foreground mt-1.5 truncate text-xs">{r.line.comment}</p>}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
+      {/* One scroll region holds BOTH branches (desktop table / phone cards) — the
+          desktop table renders at its natural height (no `fill`/height cap) exactly
+          as before, it's just this wrapper that now scrolls instead of the page. */}
+      <div
+        className={cn(
+          'flex min-h-0 flex-1 flex-col overflow-y-auto',
+          '[&_[data-slot=table-container]]:overscroll-x-contain',
+          '[&_[data-slot=table-container]]:[scrollbar-width:thin]',
+          '[&_[data-slot=table-container]]:[scrollbar-color:var(--color-slate-400)_var(--color-slate-100)]',
         )}
+      >
+        <div className="hidden sm:block">
+          <DataTable
+            columns={cols.visibleColumns}
+            rows={rows}
+            rowKey={(r) => `${r.order.id}-${r.line.id}`}
+            isLoading={isLoading}
+            dense
+            hideSortIcon
+            emptyText="No order lines found."
+            onRowClick={(r) => setEdit(r)}
+            className={[
+              'font-sans text-[13px]',
+              '[&_thead_th]:text-[13.5px] [&_thead_th]:font-extrabold [&_thead_th]:uppercase [&_thead_th]:tracking-wide [&_thead_th]:py-1.5',
+              '[&_thead_th_button]:cursor-pointer',
+              '[&_thead_th:hover]:from-blue-900 [&_thead_th:hover]:to-indigo-900',
+              '[&_td]:py-1 [&_td]:px-3 [&_th]:px-3',
+              '[&_tbody_button:not([role=switch]):not([role=checkbox])]:size-7',
+              '[&_tbody_tr]:border-b [&_tbody_tr]:border-slate-200 dark:[&_tbody_tr]:border-white/10',
+              '[&_td]:border-r [&_td]:border-slate-200 dark:[&_td]:border-white/10 [&_td:last-child]:border-r-0',
+              '[&_tbody_tr:nth-child(even)_td]:bg-slate-100/80 dark:[&_tbody_tr:nth-child(even)_td]:bg-white/[0.04]',
+              '[&_tbody_tr:hover:hover_td]:bg-amber-100/70 dark:[&_tbody_tr:hover:hover_td]:bg-amber-400/10',
+            ].join(' ')}
+          />
+        </div>
+
+        {/* Phones: one card per order, its lines grouped underneath. */}
+        <div className="sm:hidden">
+          {isLoading ? (
+            <div className="text-muted-foreground flex h-24 items-center justify-center">
+              <Loader2 className="size-5 animate-spin" />
+            </div>
+          ) : groupedByOrder.length === 0 ? (
+            <div className="text-muted-foreground rounded-[4px] border px-4 py-10 text-center text-sm">No order lines found.</div>
+          ) : (
+            <div className="space-y-2.5">
+              {groupedByOrder.map(({ order: o, lines }) => (
+                <div key={o.id} className="bg-card overflow-hidden rounded-[4px] border shadow-sm">
+                  <div className="bg-muted/40 border-b px-3 py-1.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-bold tabular-nums text-indigo-700 dark:text-indigo-300">{shortOrderCode(o.code, o.id)}</p>
+                        <p className="truncate text-[14px] font-bold text-slate-900 dark:text-slate-100">{o.customerName}</p>
+                      </div>
+                      <StatusPill status={o.status} />
+                    </div>
+                    <p className="text-muted-foreground text-[11px] font-medium">
+                      {formatDate(o.orderDate)} → {formatDate(o.completionDate)} · {lines.length} line{lines.length === 1 ? '' : 's'}
+                    </p>
+                  </div>
+                  <div className="divide-y divide-slate-200 dark:divide-white/10">
+                    {lines.map((r) => {
+                      const cancelled = r.line.status === 'CANCELLED';
+                      return (
+                        <div key={r.line.id} className="active:bg-muted cursor-pointer px-3 py-2" onClick={() => setEdit(r)}>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className={cn('truncate text-[13px] font-bold', cancelled ? 'text-muted-foreground line-through' : 'text-slate-800 dark:text-slate-200')}>
+                                {r.line.productName || r.line.product || '—'}
+                              </p>
+                              <p className="text-muted-foreground truncate text-[11px] font-medium">
+                                {r.line.designType || '—'}
+                                {r.line.priority === 'URGENT' && <span className="ml-1.5 font-bold text-rose-600 dark:text-rose-400">URGENT</span>}
+                              </p>
+                            </div>
+                            <span className="shrink-0 text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">₹{(r.line.rate ?? 0).toLocaleString('en-IN')}</span>
+                          </div>
+                          <div className="mt-1 grid grid-cols-4 gap-1.5 text-[11px]">
+                            {([['Bags', r.line.bags], ['Pcs', r.line.pcs], ['Kgs', r.line.gram], ['Box', r.line.box]] as const).map(([lbl, v]) => (
+                              <div key={lbl}>
+                                <p className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">{lbl}</p>
+                                <p className="font-bold tabular-nums text-slate-700 dark:text-slate-200">{dash(v)}</p>
+                              </div>
+                            ))}
+                          </div>
+                          {r.line.comment && <p className="text-muted-foreground mt-1 truncate text-[11px]">{r.line.comment}</p>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="flex items-center justify-between">
-        <p className="text-muted-foreground text-sm">
-          {rows.length} line(s) across {new Set(rows.map((r) => r.order.id)).size} order(s) · page {data?.page ?? page} of {totalPages}
+      {/* ── Footer: line/order counts + paging ─────────────────────────────────── */}
+      <div className="bg-card flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-[4px] border px-3 py-2 shadow-sm">
+        <p className="text-muted-foreground text-[12px] font-medium">
+          <span className="font-bold tabular-nums text-foreground">{rows.length}</span> line(s) across{' '}
+          <span className="font-bold tabular-nums text-foreground">{new Set(rows.map((r) => r.order.id)).size}</span> order(s)
         </p>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+        <div className="ml-auto flex items-center gap-2">
+          <p className="text-muted-foreground text-[12px] font-medium">
+            Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
+            <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
+          </p>
+          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
             <ChevronLeft /> Prev
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
             Next <ChevronRight />
           </Button>
         </div>

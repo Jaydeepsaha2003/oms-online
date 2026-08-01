@@ -35,10 +35,20 @@ REM    [5] npm run build          (build shared -> api -> web, bundled+minified)
 REM ============================================================
 cd /d "%~dp0"
 
+REM "buildonly" (used by restart.bat) builds the latest code WITHOUT touching the
+REM running servers: it skips the already-running check, the stale-process cleanup,
+REM the DB sync and the launch - just install (if needed) + the incremental build,
+REM then exits. restart.bat runs this first so the app stays UP during the build and
+REM a build error never takes the running servers down.
+set "SKIPLAUNCH="
+if /i "%~1"=="buildonly" set "SKIPLAUNCH=1"
+
 echo ============================================================
 echo   Starting OMS production servers...
 echo ============================================================
 echo.
+
+if defined SKIPLAUNCH goto firstrun_guard
 
 REM If BOTH ports are already listening, the server is fully running - skip.
 set "_P4=0"
@@ -77,6 +87,7 @@ if "%_P4%%_P6%" NEQ "00" (
     echo.
 )
 
+:firstrun_guard
 REM First-run guard: the DB sync commands below need the Prisma CLI, which
 REM lives in node_modules - if this is a brand-new machine (no node_modules
 REM at all), install dependencies first so those commands can even run.
@@ -93,6 +104,25 @@ if not exist "node_modules" (
     echo.
 )
 
+REM In buildonly mode (restart.bat's build-first step) the servers are still
+REM running and holding the SQLite database open, so we skip the DB-modifying sync
+REM (migrate/push/seed) to avoid lock contention - it runs safely once, after the
+REM stop, in the real start.bat that follows. BUT if the schema changed, the API
+REM must be compiled against a fresh Prisma client, so regenerate that here first:
+REM `prisma generate` only reads schema.prisma and writes node_modules\.prisma -
+REM no database connection, so it is safe while the servers are running.
+REM (Kept out of a parenthesised block: the paren-heavy PowerShell one-liner below
+REM would confuse cmd's block-paren matching, so this uses a goto instead.)
+if not defined SKIPLAUNCH goto realsync
+powershell -NoProfile -Command "$c='node_modules\.prisma\client\index.js'; $s='apps\api\prisma\schema.prisma'; if((Test-Path $c) -and (Test-Path $s) -and ((Get-Item $c).LastWriteTimeUtc -ge (Get-Item $s).LastWriteTimeUtc)){ exit 0 } else { exit 1 }"
+if errorlevel 1 (
+    echo Schema changed - regenerating the Prisma client for the build...
+    call npm run db:generate
+    echo.
+)
+goto dbsync_done
+
+:realsync
 REM Fast path for the DB sync too: all three prisma steps are no-ops unless
 REM the schema, migrations, seed script or .env changed - but each still costs
 REM seconds of npm+prisma startup. Compare the newest of those files against
@@ -149,6 +179,12 @@ if defined SYNCOK (
 )
 
 :dbsync_done
+
+REM restart.bat already ran the incremental build (buildonly) before stopping, so
+REM the bundles on disk are current - skip the build fast-path check + npm install
+REM check entirely and go straight to launch. (The DB sync above still ran, which
+REM is exactly what buildonly deferred.) Only restart.bat sets OMS_PREBUILT.
+if defined OMS_PREBUILT goto launch
 
 REM Fast path: skip npm install + the build entirely if nothing has changed
 REM since the last build (compares the newest source file's timestamp against
@@ -229,6 +265,14 @@ echo Build complete - launching servers.
 echo.
 
 :launch
+REM buildonly stops here: the incremental build is done and the running servers
+REM were never touched. restart.bat handles the actual stop + relaunch next.
+if defined SKIPLAUNCH (
+    echo.
+    echo Build up to date - running servers were left untouched.
+    exit /b 0
+)
+
 REM Clear the "stopped on purpose" marker so the auto-start watchdog resumes
 REM keeping the servers alive (stop.bat sets it).
 if exist ".oms-stopped" del ".oms-stopped" >nul 2>&1

@@ -5,6 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>OMS — Order Management</title>
 
+    <!-- Apply the saved theme before the bundle paints, so there's no flash of
+         light before dark mode kicks in. Mirrors apps/web/src/lib/theme.ts. -->
+    <script>
+      (function () {
+        try {
+          var p = localStorage.getItem('oms:theme') || 'system';
+          var dark = p === 'dark' || (p === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.classList.toggle('dark', dark);
+        } catch (e) {}
+      })();
+    </script>
+
     <!-- PWA: installable on desktop, Android and iPhone -->
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="theme-color" content="#1e40af" />

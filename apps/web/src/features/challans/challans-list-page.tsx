@@ -1,21 +1,42 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BarChart3, CheckCircle2, ChevronLeft, ChevronRight, FileSpreadsheet, Filter, Layers, Pencil, Printer, ScrollText, Search, Trash2, X, XCircle } from 'lucide-react';
+import {
+  BarChart3,
+  CalendarRange,
+  CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  FileSpreadsheet,
+  Filter,
+  Layers,
+  Pencil,
+  Percent,
+  Printer,
+  Receipt,
+  Search,
+  Trash2,
+  Wallet,
+  X,
+  XCircle,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import type { ChallanDto } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
+import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useColumnOrder } from '@/hooks/use-column-order';
 import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
-import { NativeSelect } from '@/components/common/combo';
+import { DateRangeCalendar } from '@/components/common/date-range-calendar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { fetchAllChallans, useChallans, useDeleteChallan, useUpdateChallanStatus } from './use-challans';
+import { fetchAllChallans, useChallans, useChallanSummary, useDeleteChallan, useUpdateChallanStatus } from './use-challans';
 import { PRESETS, presetRange } from './date-presets';
 import { ChallanAnalyticsDialog } from './challan-analytics-dialog';
 import { ReportDownloadOverlay, type ReportPhase } from './report-download-overlay';
@@ -23,6 +44,22 @@ import { exportDetailedReport, exportSummaryReport, type ReportMeta } from './ch
 
 const PAGE_SIZE = 50;
 const money = (v: number | null) => `₹ ${(v ?? 0).toLocaleString('en-IN')}`;
+
+/** Matches the Pending Challan grid: Inter, semibold, near-black. */
+const TEXT_CELL = 'text-[13px] font-semibold text-slate-800';
+/**
+ * Filter controls share the amber-bordered, 36px, lightly-rounded look used on
+ * Pending Challan, so the two challan screens read as one product.
+ */
+const CONTROL =
+  'h-9 rounded-[4px] border-amber-300 dark:border-amber-400/40 text-[12.5px] focus-visible:border-amber-500 focus-visible:ring-amber-400/30';
+const CONTROL_ON = 'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
+
+const STATUSES = [
+  { value: '', label: 'All' },
+  { value: 'CONFIRMED', label: 'Confirmed' },
+  { value: 'CANCELLED', label: 'Cancelled' },
+] as const;
 
 // Persist the list's filters so they survive navigating into a challan and back.
 const FILTER_KEY = 'oms:challans-filters';
@@ -73,9 +110,11 @@ export function ChallansListPage() {
   const [preset, setPreset] = useState(() => loadFilters().preset ?? '');
   const [status, setStatus] = useState(() => loadFilters().status ?? '');
   const [page, setPage] = useState(() => loadFilters().page ?? 1);
-  // Phones: From/To/Quick range/Status live behind this Filter icon (see the sheet below).
+  // Phones: date range / quick range / status live behind this Filter icon.
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
-  const activeFilterCount = (dateFrom || dateTo ? 1 : 0) + (status ? 1 : 0);
+  const [dateOpen, setDateOpen] = useState(false);
+  const dateActive = !!(dateFrom || dateTo || preset);
+  const activeFilterCount = (dateActive ? 1 : 0) + (status ? 1 : 0);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -99,18 +138,27 @@ export function ChallansListPage() {
     status: status || undefined,
   };
   const { data, isLoading } = useChallans(query);
+  // KPI totals cover the whole filtered set, not the current page — so they only
+  // move when a filter changes. Page/pageSize are omitted so paging never refetches
+  // them (the aggregate ignores pagination anyway).
+  const { data: summary } = useChallanSummary({
+    search: search || undefined,
+    dateFrom: dateFrom || undefined,
+    dateTo: dateTo || undefined,
+    status: status || undefined,
+  });
   const updateStatus = useUpdateChallanStatus();
   const del = useDeleteChallan();
 
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
+  const totalRows = data?.total ?? 0;
 
   // "Show KPI" analytics modal + "Get Report by" export animation.
   const [kpiOpen, setKpiOpen] = useState(false);
   const [report, setReport] = useState<{ kind: 'detailed' | 'summary'; phase: ReportPhase; count?: number } | null>(null);
 
   const runReport = async (kind: 'detailed' | 'summary') => {
-    const title = kind === 'detailed' ? 'Detailed View' : 'Challan Summary';
     try {
       setReport({ kind, phase: 'fetching' });
       const res = await fetchAllChallans(query);
@@ -148,6 +196,12 @@ export function ChallansListPage() {
       setPage(1);
     }
   };
+  const clearDates = () => {
+    setDateFrom('');
+    setDateTo('');
+    setPreset('');
+    setPage(1);
+  };
   const clearAll = () => {
     setSearchInput('');
     setSearch('');
@@ -178,42 +232,86 @@ export function ChallansListPage() {
 
   const columns: DataColumn<ChallanDto>[] = useMemo(
     () => [
-      { id: 'date', label: 'Date', sortValue: (r) => r.invDate, cell: (r) => <span className="whitespace-nowrap">{formatDate(r.invDate)}</span> },
-      { id: 'code', label: 'Challan No', sortValue: (r) => r.code, cell: (r) => <span className="font-mono font-semibold">{r.code}</span> },
-      { id: 'party', label: 'Party', sortValue: (r) => r.customerName, cell: (r) => <span className="font-medium">{r.customerName}</span> },
-      { id: 'total', label: 'Total', align: 'right', sortValue: (r) => r.total ?? 0, cell: (r) => <span className="text-[15px] font-bold tabular-nums">{money(r.total)}</span> },
-      { id: 'b', label: 'B', align: 'right', sortValue: (r) => r.b ?? 0, cell: (r) => <span className="tabular-nums">{money(r.b)}</span> },
-      { id: 'c', label: 'C', align: 'right', sortValue: (r) => r.c ?? 0, cell: (r) => <span className="tabular-nums">{money(r.c)}</span> },
-      { id: 'gst', label: 'GST', align: 'right', sortValue: (r) => r.tax ?? 0, cell: (r) => <span className="tabular-nums">{money(r.tax)}</span> },
+      {
+        id: 'date',
+        label: 'Date',
+        sortValue: (r) => r.invDate,
+        cell: (r) => <span className={cn(TEXT_CELL, 'whitespace-nowrap tabular-nums')}>{formatDate(r.invDate)}</span>,
+      },
+      {
+        id: 'code',
+        label: 'Challan No',
+        sortValue: (r) => r.code,
+        // Same type as every other cell; only the indigo marks it as the identifier.
+        cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums text-indigo-700 dark:text-indigo-300')}>{r.code}</span>,
+      },
+      { id: 'party', label: 'Party', sortValue: (r) => r.customerName, cell: (r) => <span className={TEXT_CELL}>{r.customerName}</span> },
+      {
+        id: 'total',
+        label: 'Total',
+        align: 'right',
+        sortValue: (r) => r.total ?? 0,
+        cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(r.total)}</span>,
+      },
+      { id: 'b', label: 'B', align: 'right', sortValue: (r) => r.b ?? 0, cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(r.b)}</span> },
+      { id: 'c', label: 'C', align: 'right', sortValue: (r) => r.c ?? 0, cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(r.c)}</span> },
+      {
+        id: 'gst',
+        label: 'GST',
+        align: 'right',
+        sortValue: (r) => r.tax ?? 0,
+        cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums text-violet-700 dark:text-violet-300')}>{money(r.tax)}</span>,
+      },
       {
         id: 'tds',
         label: 'TDS',
         align: 'right',
         sortValue: (r) => r.tds ?? 0,
-        cell: (r) => (r.tds ? <span className="tabular-nums text-amber-700">{money(r.tds)}</span> : <span className="text-muted-foreground">—</span>),
+        cell: (r) =>
+          r.tds ? (
+            <span className={cn(TEXT_CELL, 'tabular-nums text-amber-700 dark:text-amber-300')}>{money(r.tds)}</span>
+          ) : (
+            <span className="text-[13px] text-slate-400">—</span>
+          ),
       },
       {
         id: 'due',
         label: 'Due',
         cell: (r) => {
           const di = dueInfo(r.dueDate);
-          return <span className={cn('text-sm', di.over && 'font-semibold text-red-600')}>{di.text}</span>;
+          if (di.text === '—') return <span className="text-[13px] text-slate-400">—</span>;
+          return (
+            <span
+              className={cn(
+                'inline-flex items-center rounded-[4px] px-1.5 py-0.5 text-[11.5px] font-bold whitespace-nowrap tabular-nums ring-1 ring-inset',
+                di.over ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-slate-50 text-slate-600 ring-slate-200',
+              )}
+            >
+              {di.text}
+            </span>
+          );
         },
       },
       {
         id: 'status',
         label: 'Status',
         sortValue: (r) => r.challanStatus,
-        cell: (r) => (
-          <span
-            className={cn(
-              'rounded px-1.5 py-0.5 text-sm font-medium ring-1 ring-inset',
-              r.challanStatus === 'CONFIRMED' ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-rose-50 text-rose-700 ring-rose-200',
-            )}
-          >
-            {r.challanStatus}
-          </span>
-        ),
+        cell: (r) => {
+          const ok = r.challanStatus === 'CONFIRMED';
+          return (
+            <span
+              className={cn(
+                // A coloured dot carries the state alongside the word, so it reads at
+                // a glance without colour being the only signal.
+                'inline-flex items-center gap-1.5 rounded-[4px] px-2 py-0.5 text-[11.5px] font-bold whitespace-nowrap ring-1 ring-inset',
+                ok ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-rose-50 text-rose-700 ring-rose-200',
+              )}
+            >
+              <span className={cn('size-1.5 shrink-0 rounded-full', ok ? 'bg-emerald-500' : 'bg-rose-500')} />
+              {r.challanStatus}
+            </span>
+          );
+        },
       },
     ],
     [],
@@ -223,73 +321,87 @@ export function ChallansListPage() {
   // rendered separately via the DataTable's `actions` prop.
   const cols = useColumnOrder('challans', columns);
 
+  /** One row-action icon button — vivid on hover, muted at rest. */
+  const ActionBtn = ({ onClick, title, tone, children }: { onClick: () => void; title: string; tone: string; children: React.ReactNode }) => (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      className={cn('flex size-6 cursor-pointer items-center justify-center rounded-[4px] text-slate-400 transition-colors', tone)}
+    >
+      {children}
+    </button>
+  );
+
   const rowActions = (r: ChallanDto) => (
-    <div className="flex items-center justify-end gap-1.5">
+    <div className="flex items-center justify-end gap-1">
       {canPrint && (
-        <button onClick={() => navigate(`/challans/${r.id}/bill`)} className="cursor-pointer rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="Print / PDF">
-          <Printer className="size-5" />
-        </button>
+        <ActionBtn onClick={() => navigate(`/challans/${r.id}/bill`)} title="Print / PDF" tone="hover:bg-sky-50 hover:text-sky-600">
+          <Printer className="size-4" />
+        </ActionBtn>
       )}
       {canUpdate && (
-        <button onClick={() => navigate(`/challans/${r.id}/edit`)} className="cursor-pointer rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="Edit">
-          <Pencil className="size-5" />
-        </button>
+        <ActionBtn onClick={() => navigate(`/challans/${r.id}/edit`)} title="Edit" tone="hover:bg-indigo-50 hover:text-indigo-600">
+          <Pencil className="size-4" />
+        </ActionBtn>
       )}
       {canUpdate &&
         (r.challanStatus === 'CONFIRMED' ? (
-          <button onClick={() => setRowStatus(r, 'CANCELLED')} className="cursor-pointer rounded p-1 text-muted-foreground transition-colors hover:bg-rose-50 hover:text-rose-600" title="Mark Cancelled">
-            <XCircle className="size-5" />
-          </button>
+          <ActionBtn onClick={() => setRowStatus(r, 'CANCELLED')} title="Mark Cancelled" tone="hover:bg-rose-50 hover:text-rose-600">
+            <XCircle className="size-4" />
+          </ActionBtn>
         ) : (
-          <button onClick={() => setRowStatus(r, 'CONFIRMED')} className="cursor-pointer rounded p-1 text-muted-foreground transition-colors hover:bg-emerald-50 hover:text-emerald-600" title="Mark Confirmed">
-            <CheckCircle2 className="size-5" />
-          </button>
+          <ActionBtn onClick={() => setRowStatus(r, 'CONFIRMED')} title="Mark Confirmed" tone="hover:bg-emerald-50 hover:text-emerald-600">
+            <CheckCircle2 className="size-4" />
+          </ActionBtn>
         ))}
       {canDelete && (
-        <button onClick={() => remove(r)} className="cursor-pointer rounded p-1 text-muted-foreground transition-colors hover:bg-red-50 hover:text-destructive" title="Delete">
-          <Trash2 className="size-5" />
-        </button>
+        <ActionBtn onClick={() => remove(r)} title="Delete" tone="hover:bg-red-50 hover:text-destructive">
+          <Trash2 className="size-4" />
+        </ActionBtn>
       )}
     </div>
   );
 
-
   // Phones: one card per challan (mirrors the Quotations/Bookings mobile list).
   const challanMobileCard = (r: ChallanDto) => {
     const di = dueInfo(r.dueDate);
+    const ok = r.challanStatus === 'CONFIRMED';
     return (
       <div className="space-y-2">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-muted-foreground font-mono text-xs font-semibold">{r.code}</p>
-            <p className="truncate leading-tight font-medium">{r.customerName}</p>
-            <p className="text-muted-foreground text-xs">{formatDate(r.invDate)}</p>
+            <p className="text-[11.5px] font-bold tabular-nums text-indigo-700 dark:text-indigo-300">{r.code}</p>
+            <p className="truncate text-[14px] leading-tight font-bold text-slate-900">{r.customerName}</p>
+            <p className="text-muted-foreground text-[11.5px] font-medium tabular-nums">{formatDate(r.invDate)}</p>
           </div>
           <span
             className={cn(
-              'shrink-0 rounded px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset',
-              r.challanStatus === 'CONFIRMED' ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-rose-50 text-rose-700 ring-rose-200',
+              'inline-flex shrink-0 items-center gap-1.5 rounded-[4px] px-2 py-0.5 text-[11px] font-bold ring-1 ring-inset',
+              ok ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-rose-50 text-rose-700 ring-rose-200',
             )}
           >
+            <span className={cn('size-1.5 shrink-0 rounded-full', ok ? 'bg-emerald-500' : 'bg-rose-500')} />
             {r.challanStatus}
           </span>
         </div>
-        <div className="grid grid-cols-2 gap-2 text-xs">
+        <div className="grid grid-cols-2 gap-2 text-[12px]">
           <div>
-            <p className="text-muted-foreground">Total</p>
-            <p className="text-[15px] font-bold tabular-nums">{money(r.total)}</p>
+            <p className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Total</p>
+            <p className="text-[15px] font-bold tabular-nums text-slate-900">{money(r.total)}</p>
           </div>
           <div>
-            <p className="text-muted-foreground">Due</p>
-            <p className={cn('font-medium', di.over && 'font-semibold text-red-600')}>{di.text}</p>
+            <p className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Due</p>
+            <p className={cn('font-bold tabular-nums', di.over ? 'text-rose-600' : 'text-slate-700')}>{di.text}</p>
           </div>
           <div>
-            <p className="text-muted-foreground">B / C</p>
-            <p className="font-medium tabular-nums">{money(r.b)} / {money(r.c)}</p>
+            <p className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">B / C</p>
+            <p className="font-semibold tabular-nums text-slate-700">{money(r.b)} / {money(r.c)}</p>
           </div>
           <div>
-            <p className="text-muted-foreground">GST{r.tds ? ' / TDS' : ''}</p>
-            <p className="font-medium tabular-nums">
+            <p className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">GST{r.tds ? ' / TDS' : ''}</p>
+            <p className="font-semibold tabular-nums text-violet-700">
               {money(r.tax)}
               {r.tds ? <span className="text-amber-700"> / {money(r.tds)}</span> : ''}
             </p>
@@ -326,158 +438,335 @@ export function ChallansListPage() {
     );
   };
 
-  return (
-    <div className="space-y-3 sm:space-y-4">
-      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
-        <div className="flex items-center gap-3">
-          <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
-            <ScrollText className="size-5" />
-          </div>
-          <div>
-            <h2 className="text-2xl font-semibold tracking-tight">Challans</h2>
-            <p className="text-muted-foreground text-sm">{data?.total ?? 0} saved challan(s) · view, print, change status or delete</p>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-          <span className="text-muted-foreground mr-1 hidden text-xs font-semibold tracking-wide uppercase sm:inline">Get Report by</span>
-          <Button variant="outline" size="sm" disabled={!!report} onClick={() => runReport('detailed')} title="Export the filtered challan list to Excel">
-            <FileSpreadsheet className="text-emerald-600" /> <span className="hidden sm:inline">Detailed View</span><span className="sm:hidden">Detailed</span>
-          </Button>
-          <Button variant="outline" size="sm" disabled={!!report} onClick={() => runReport('summary')} title="Export challans plus their line items to Excel">
-            <Layers className="text-sky-600" /> <span className="hidden sm:inline">Challan Summary</span><span className="sm:hidden">Summary</span>
-          </Button>
-          <Button size="sm" className="bg-gradient-brand text-white shadow-sm hover:opacity-95" onClick={() => setKpiOpen(true)} title="Open analytics dashboard">
-            <BarChart3 /> Show KPI
-          </Button>
-          <ColumnSettings
-            columns={cols.orderedReorderable}
-            hidden={cols.hidden}
-            onReorder={cols.moveBefore}
-            onMove={cols.move}
-            onToggle={cols.toggle}
-            onReset={cols.reset}
-            dateFormat={{ value: format, options: DATE_FORMATS, onChange: setFormat }}
-          />
-        </div>
-      </div>
+  /** Status segmented control — three states, so pills beat a dropdown. */
+  const statusPills = (
+    <div className="flex items-center gap-1 rounded-[4px] border border-amber-300 bg-amber-50/40 p-0.5">
+      {STATUSES.map((s) => {
+        const on = status === s.value;
+        return (
+          <button
+            key={s.label}
+            type="button"
+            onClick={() => {
+              setStatus(s.value);
+              setPage(1);
+            }}
+            aria-pressed={on}
+            className={cn(
+              'cursor-pointer rounded-[3px] px-2.5 py-1 text-[12px] font-semibold whitespace-nowrap transition-colors duration-150',
+              on
+                ? s.value === 'CONFIRMED'
+                  ? 'bg-emerald-500 text-white shadow-sm'
+                  : s.value === 'CANCELLED'
+                    ? 'bg-rose-500 text-white shadow-sm'
+                    : 'bg-slate-700 text-white shadow-sm'
+                : 'text-amber-900/70 hover:bg-amber-100 hover:text-amber-900',
+            )}
+          >
+            {s.label}
+          </button>
+        );
+      })}
+    </div>
+  );
 
-      {/* Filters — Search stays visible; From/To/Quick range/Status collapse behind
-          the Filter icon on phones (see the sheet below) so the bar never wraps
-          into a cramped multi-row stack of half-width fields. */}
-      <div className="bg-card flex flex-wrap items-end gap-2 rounded-md border p-2.5 shadow-sm sm:p-3">
-        <div className="relative w-full sm:w-56">
-          <Label className="text-xs">Search</Label>
-          <Search className="text-muted-foreground pointer-events-none absolute top-[30px] left-3 size-4" />
-          <Input className="pl-9" placeholder="Challan no or party…" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
-        </div>
-        <Button
-          variant="outline"
-          size="icon"
-          className="relative shrink-0 sm:hidden"
-          onClick={() => setMobileFiltersOpen(true)}
-          aria-label="Filters"
-        >
-          <Filter className="size-4" />
-          {activeFilterCount > 0 && (
-            <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-medium">
-              {activeFilterCount}
-            </span>
+  const presetPills = (
+    <div className="flex flex-wrap items-center gap-1">
+      {PRESETS.map((p) => {
+        const on = preset === p;
+        return (
+          <button
+            key={p}
+            type="button"
+            onClick={() => (on ? clearDates() : applyPreset(p))}
+            aria-pressed={on}
+            className={cn(
+              'cursor-pointer rounded-[4px] border px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap transition-colors duration-150',
+              on
+                ? 'border-primary bg-primary text-primary-foreground shadow-sm'
+                : 'border-border bg-muted/40 text-slate-600 hover:border-primary/40 hover:bg-accent hover:text-accent-foreground',
+            )}
+          >
+            {p}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  const dateLabel = preset || (dateFrom || dateTo ? `${dateFrom ? formatDate(dateFrom) : '…'} → ${dateTo ? formatDate(dateTo) : '…'}` : 'Any date');
+
+  const datePanel = (
+    <div className="w-[15.5rem] space-y-2">
+      {presetPills}
+      <div className="border-t pt-2">
+        <DateRangeCalendar
+          from={dateFrom}
+          to={dateTo}
+          onChange={(f, t) => {
+            setDateFrom(f);
+            setDateTo(t);
+            setPreset('');
+            setPage(1);
+          }}
+        />
+      </div>
+      <div className="flex items-center justify-between gap-2 border-t pt-2">
+        <span className="min-w-0 truncate text-[11.5px] font-semibold">
+          {dateActive ? (
+            <>
+              {dateFrom ? formatDate(dateFrom) : '…'} <span className="text-muted-foreground">→</span> {dateTo ? formatDate(dateTo) : '…'}
+            </>
+          ) : (
+            <span className="text-muted-foreground font-medium">All dates</span>
           )}
-        </Button>
-        <div className="hidden items-end gap-2 sm:flex sm:flex-wrap">
-          <div className="space-y-1">
-            <Label className="text-xs">From</Label>
-            <Input type="date" className="w-40" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} />
+        </span>
+        <span className="flex items-center gap-1">
+          {dateActive && (
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-[12px] font-semibold text-amber-700 hover:bg-amber-50" onClick={clearDates}>
+              <X className="size-3.5" /> Clear
+            </Button>
+          )}
+          <Button size="sm" className="h-7 shrink-0 px-3 text-[12px] font-semibold" onClick={() => setDateOpen(false)}>
+            Done
+          </Button>
+        </span>
+      </div>
+    </div>
+  );
+
+  const from = totalRows === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const to = Math.min(page * PAGE_SIZE, totalRows);
+
+  return (
+    // Fills the viewport: header, KPI rail and filters pinned on top, footer pinned
+    // at the bottom, only the grid scrolls. `/challans` is a flush route (app-shell),
+    // so the page owns its padding.
+    <div className="flex h-full min-h-0 flex-col gap-2 p-2.5 font-sans sm:gap-2.5 sm:p-3">
+      {/* ── Toolbar: filters on the left, the page's actions on the right, all in one
+          card (the page title lives in the top bar, so no separate identity header).
+          Poppins + amber controls match Pending Challan so the two screens feel like
+          one product. */}
+      <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
+        <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
+          <div className="relative w-full sm:w-56">
+            <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
+            <Input
+              className={cn(CONTROL, 'pr-8 pl-8 font-medium', searchInput && CONTROL_ON)}
+              placeholder="Challan no or party…"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+            />
+            {searchInput && (
+              <button
+                type="button"
+                onClick={() => setSearchInput('')}
+                aria-label="Clear search"
+                title="Clear search"
+                className="absolute top-1/2 right-1.5 flex size-5 -translate-y-1/2 cursor-pointer items-center justify-center rounded text-amber-700/70 transition-colors hover:bg-amber-100 hover:text-amber-900"
+              >
+                <X className="size-3" />
+              </button>
+            )}
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs">To</Label>
-            <Input type="date" className="w-40" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} />
-          </div>
-          <div className="w-40 space-y-1">
-            <Label className="text-xs">Quick range</Label>
-            <NativeSelect value={preset} onChange={applyPreset} options={['', ...PRESETS]} placeholder="Range…" />
-          </div>
-          <div className="w-44 space-y-1">
-            <Label className="text-xs">Status</Label>
-            <NativeSelect value={status} onChange={(v) => { setStatus(v); setPage(1); }} options={['', 'CONFIRMED', 'CANCELLED']} placeholder="All statuses" />
-          </div>
+
           <Button
             variant="outline"
-            size="sm"
-            className="text-muted-foreground"
-            onClick={clearAll}
-            disabled={!hasFilters}
-            title={hasFilters ? 'Clear all filters' : 'No filters applied'}
+            size="icon"
+            className={cn('relative size-9 shrink-0 rounded-[4px] border-amber-300 sm:hidden', activeFilterCount > 0 && CONTROL_ON)}
+            onClick={() => setMobileFiltersOpen(true)}
+            aria-label="Filters"
           >
-            <X /> Reset filters
+            <Filter className="size-4" />
+            {activeFilterCount > 0 && (
+              <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-bold tabular-nums">
+                {activeFilterCount}
+              </span>
+            )}
           </Button>
+
+          <div className="hidden sm:block">{statusPills}</div>
+
+          <Popover open={dateOpen} onOpenChange={setDateOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                className={cn(CONTROL, 'hidden max-w-52 font-medium sm:inline-flex', dateActive && CONTROL_ON)}
+                title="Filter by challan date"
+              >
+                <CalendarRange className="size-3.5 shrink-0" />
+                <span className="truncate">{dateLabel}</span>
+                <ChevronDown className="size-3 shrink-0 opacity-60" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="font-poppins w-auto max-w-[calc(100vw-1.5rem)] p-2.5">
+              {datePanel}
+            </PopoverContent>
+          </Popover>
+
+          {hasFilters && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="hidden h-9 rounded-[4px] text-[12.5px] font-semibold text-amber-700 hover:bg-amber-50 hover:text-amber-900 sm:inline-flex"
+              onClick={clearAll}
+              title="Clear all filters"
+            >
+              <X className="size-3.5" /> Reset
+            </Button>
+          )}
+
+          {/* Actions — right-aligned in the same bar. */}
+          <div className="flex w-full flex-wrap items-center gap-1.5 sm:ml-auto sm:w-auto sm:gap-2">
+            <span className="text-muted-foreground mr-0.5 hidden text-[10px] font-bold tracking-widest uppercase sm:inline">Report</span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 rounded-[4px] text-[12.5px] font-semibold"
+              disabled={!!report}
+              onClick={() => runReport('detailed')}
+              title="Export the filtered challan list to Excel"
+            >
+              <FileSpreadsheet className="text-emerald-600" /> <span className="hidden sm:inline">Detailed View</span>
+              <span className="sm:hidden">Detailed</span>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 rounded-[4px] text-[12.5px] font-semibold"
+              disabled={!!report}
+              onClick={() => runReport('summary')}
+              title="Export challans plus their line items to Excel"
+            >
+              <Layers className="text-sky-600" /> <span className="hidden sm:inline">Challan Summary</span>
+              <span className="sm:hidden">Summary</span>
+            </Button>
+            <Button
+              size="sm"
+              className="bg-gradient-brand h-9 rounded-[4px] text-[12.5px] font-bold text-white shadow-sm hover:opacity-95"
+              onClick={() => setKpiOpen(true)}
+              title="Open analytics dashboard"
+            >
+              <BarChart3 /> Show KPI
+            </Button>
+            <ColumnSettings
+              columns={cols.orderedReorderable}
+              hidden={cols.hidden}
+              onReorder={cols.moveBefore}
+              onMove={cols.move}
+              onToggle={cols.toggle}
+              onReset={cols.reset}
+              dateFormat={{ value: format, options: DATE_FORMATS, onChange: setFormat }}
+            />
+          </div>
         </div>
       </div>
 
-      {/* Phones only: From/To/Quick range/Status live behind the Filter icon above. */}
+      {/* ── KPI rail ────────────────────────────────────────────────────────────
+          Every tile is a total across the WHOLE filtered set (server aggregate), so
+          it stays put as you page and only moves when a filter changes — with no
+          filters, these are the all-time totals. */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6 sm:gap-2.5">
+        <Kpi icon={<Receipt className="size-3.5" />} label="Challans" value={(summary?.count ?? totalRows).toLocaleString('en-IN')} tone="indigo" hint="Challans matching the current filters" />
+        <Kpi icon={<Wallet className="size-3.5" />} label="Value" value={inrCompact(summary?.totalSales ?? 0)} title={inrFull(summary?.totalSales ?? 0)} tone="blue" hint="Total value of all matching challans" />
+        <Kpi icon={<CheckCircle2 className="size-3.5" />} label="Confirmed" value={(summary?.confirmed ?? 0).toLocaleString('en-IN')} tone="emerald" hint="Confirmed challans across the filter" />
+        <Kpi icon={<XCircle className="size-3.5" />} label="Cancelled" value={(summary?.cancelled ?? 0).toLocaleString('en-IN')} tone="rose" hint="Cancelled challans across the filter" />
+        <Kpi icon={<Percent className="size-3.5" />} label="GST" value={inrCompact(summary?.totalTax ?? 0)} title={inrFull(summary?.totalTax ?? 0)} tone="violet" hint="Total GST across all matching challans" />
+        <Kpi icon={<Percent className="size-3.5" />} label="TDS" value={inrCompact(summary?.totalTds ?? 0)} title={inrFull(summary?.totalTds ?? 0)} tone="amber" hint="Total TDS across all matching challans" />
+      </div>
+
+      {/* Phones only: date range / quick range / status live behind the Filter icon. */}
       <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
-        <SheetContent side="bottom" className="sm:hidden">
+        <SheetContent side="bottom" className="font-poppins sm:hidden">
           <SheetHeader>
             <div className="flex items-center justify-between">
               <SheetTitle>Filters</SheetTitle>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-muted-foreground -mr-2 gap-1.5"
-                onClick={clearAll}
-                disabled={!hasFilters}
-              >
+              <Button variant="ghost" size="sm" className="text-muted-foreground -mr-2 gap-1.5 font-semibold" onClick={clearAll} disabled={!hasFilters}>
                 <X className="size-3.5" /> Reset
               </Button>
             </div>
           </SheetHeader>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-2">
-              <div className="space-y-1.5">
-                <Label className="text-muted-foreground text-xs font-medium uppercase">From</Label>
-                <Input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-muted-foreground text-xs font-medium uppercase">To</Label>
-                <Input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} />
-              </div>
-            </div>
+          <div className="space-y-4 overflow-y-auto">
             <div className="space-y-1.5">
-              <Label className="text-muted-foreground text-xs font-medium uppercase">Quick range</Label>
-              <NativeSelect value={preset} onChange={applyPreset} options={['', ...PRESETS]} placeholder="Range…" />
+              <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Status</Label>
+              {statusPills}
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-muted-foreground text-xs font-medium uppercase">Status</Label>
-              <NativeSelect value={status} onChange={(v) => { setStatus(v); setPage(1); }} options={['', 'CONFIRMED', 'CANCELLED']} placeholder="All statuses" />
-            </div>
+            {datePanel}
           </div>
           <SheetFooter>
-            <Button className="w-full" onClick={() => setMobileFiltersOpen(false)}>
-              Show {(data?.total ?? 0).toLocaleString('en-IN')} challans
+            <Button className="w-full font-bold" onClick={() => setMobileFiltersOpen(false)}>
+              Show {totalRows.toLocaleString('en-IN')} challans
             </Button>
           </SheetFooter>
         </SheetContent>
       </Sheet>
 
-      <DataTable
-        columns={cols.visibleColumns}
-        rows={items}
-        rowKey={(r) => r.id}
-        isLoading={isLoading}
-        dense
-        className="text-[15px] [&_thead_th]:text-[13px] [&_td]:py-1.5 [&_th]:py-2 [&_tbody_button]:size-8"
-        actions={rowActions}
-        mobileCard={challanMobileCard}
-        emptyText="No challans yet — create one from Pending Challan."
-      />
+      {/* The grid pans sideways when the columns outgrow the screen; slim scrollbars
+          make that discoverable. */}
+      <div
+        className={cn(
+          'flex min-h-0 flex-1 flex-col',
+          '[&_[data-slot=table-container]]:overscroll-x-contain',
+          '[&_[data-slot=table-container]]:[scrollbar-width:thin]',
+          '[&_[data-slot=table-container]]:[scrollbar-color:var(--color-slate-400)_var(--color-slate-100)]',
+        )}
+      >
+        <DataTable
+          columns={cols.visibleColumns}
+          rows={items}
+          rowKey={(r) => r.id}
+          isLoading={isLoading}
+          dense
+          fill
+          hideSortIcon
+          actions={rowActions}
+          mobileCard={challanMobileCard}
+          emptyText="No challans yet — create one from Pending Challan."
+          className={[
+            'font-sans text-[13px]',
+            // Heavy, legible headers — the anchor when panning across a wide grid.
+            '[&_thead_th]:text-[13.5px] [&_thead_th]:font-extrabold [&_thead_th]:uppercase [&_thead_th]:tracking-wide [&_thead_th]:py-1.5',
+            '[&_thead_th_button]:cursor-pointer',
+            '[&_thead_th:hover]:from-blue-900 [&_thead_th:hover]:to-indigo-900',
+            // Compact rows so more fit in view. The default `dense` mode forces every
+            // action button to size-8 (32px), which was the real height floor — the
+            // matching override below drops them to size-6 so the tighter `py-1`
+            // padding actually takes effect (the row is as tall as its tallest cell).
+            '[&_td]:py-1 [&_td]:px-3 [&_th]:px-3',
+            '[&_tbody_button:not([role=switch]):not([role=checkbox])]:size-6',
+            // Full grey grid, both directions (dark variants because these paint the
+            // td, out of reach of the global neutral remap).
+            '[&_tbody_tr]:border-b [&_tbody_tr]:border-slate-200 dark:[&_tbody_tr]:border-white/10',
+            '[&_td]:border-r [&_td]:border-slate-200 dark:[&_td]:border-white/10 [&_td:last-child]:border-r-0',
+            // Banded rows, then a warm hover on top (specificity pinned by repeating
+            // the pseudo-class, so the winner never depends on Tailwind's emit order).
+            '[&_tbody_tr:nth-child(even)_td]:bg-slate-100/80 dark:[&_tbody_tr:nth-child(even)_td]:bg-white/[0.04]',
+            '[&_tbody_tr:hover:hover_td]:bg-amber-100/70 dark:[&_tbody_tr:hover:hover_td]:bg-amber-400/10',
+          ].join(' ')}
+        />
+      </div>
 
-      <div className="flex items-center justify-between">
-        <p className="text-muted-foreground text-sm">Page {data?.page ?? page} of {totalPages}</p>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+      {/* ── Footer: range + paging ─────────────────────────────────────────────── */}
+      <div className="bg-card flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-[4px] border px-3 py-2 shadow-sm">
+        <p className="text-muted-foreground text-[12px] font-medium">
+          {totalRows === 0 ? (
+            'No challans'
+          ) : (
+            <>
+              Showing <span className="font-bold tabular-nums text-foreground">{from.toLocaleString('en-IN')}–{to.toLocaleString('en-IN')}</span> of{' '}
+              <span className="font-bold tabular-nums text-foreground">{totalRows.toLocaleString('en-IN')}</span>
+            </>
+          )}
+        </p>
+        <div className="ml-auto flex items-center gap-2">
+          <p className="text-muted-foreground text-[12px] font-medium">
+            Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
+            <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
+          </p>
+          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
             <ChevronLeft /> Prev
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
             Next <ChevronRight />
           </Button>
         </div>
@@ -491,6 +780,47 @@ export function ChallansListPage() {
         count={report?.count}
         onClose={() => setReport(null)}
       />
+    </div>
+  );
+}
+
+/** Per-tile colour recipes for the KPI rail. */
+const KPI_TONE = {
+  indigo: 'from-indigo-50 to-indigo-100/40 ring-indigo-200 text-indigo-700 dark:from-indigo-500/15 dark:to-indigo-500/5 dark:ring-indigo-400/25 dark:text-indigo-300',
+  blue: 'from-blue-50 to-blue-100/40 ring-blue-200 text-blue-700 dark:from-blue-500/15 dark:to-blue-500/5 dark:ring-blue-400/25 dark:text-blue-300',
+  emerald: 'from-emerald-50 to-emerald-100/40 ring-emerald-200 text-emerald-700 dark:from-emerald-500/15 dark:to-emerald-500/5 dark:ring-emerald-400/25 dark:text-emerald-300',
+  rose: 'from-rose-50 to-rose-100/40 ring-rose-200 text-rose-700 dark:from-rose-500/15 dark:to-rose-500/5 dark:ring-rose-400/25 dark:text-rose-300',
+  violet: 'from-violet-50 to-violet-100/40 ring-violet-200 text-violet-700 dark:from-violet-500/15 dark:to-violet-500/5 dark:ring-violet-400/25 dark:text-violet-300',
+  amber: 'from-amber-50 to-amber-100/40 ring-amber-200 text-amber-700 dark:from-amber-500/15 dark:to-amber-500/5 dark:ring-amber-400/25 dark:text-amber-300',
+} as const;
+
+/** A compact headline figure — a total across the whole filtered set. */
+function Kpi({
+  icon,
+  label,
+  value,
+  tone,
+  hint,
+  title,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  tone: keyof typeof KPI_TONE;
+  hint: string;
+  /** Exact value for the tooltip when `value` is abbreviated (₹3.4L). */
+  title?: string;
+}) {
+  return (
+    <div
+      title={title ? `${hint} — ${title}` : hint}
+      className={cn('rounded-[4px] bg-gradient-to-br p-2 ring-1 ring-inset sm:px-2.5', KPI_TONE[tone])}
+    >
+      <p className="flex items-center gap-1 text-[10px] font-bold tracking-widest uppercase opacity-80">
+        {icon}
+        <span className="truncate">{label}</span>
+      </p>
+      <p className="mt-0.5 truncate text-[17px] font-extrabold tabular-nums text-slate-900">{value}</p>
     </div>
   );
 }

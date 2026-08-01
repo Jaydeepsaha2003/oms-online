@@ -8,6 +8,7 @@ import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useFitToWidth } from '@/hooks/use-fit-to-width';
 import { Button } from '@/components/ui/button';
 import { buildBillFilename, decodeImage, isIOS, preOpenPdfTab, savePdfBlob } from '@/lib/pdf';
+import { formatDate } from '@/lib/date-format';
 import kavishLogo from '@/assets/kavish-logo-order.png';
 import { useChallanTerms, useCompany } from '@/features/settings/use-settings';
 import { useChallan, usePendingChallans } from './use-challans';
@@ -28,12 +29,8 @@ const docTitle = 'SALES RECEIPT';
 const numf = (v: number | null | undefined) => (v ?? 0).toLocaleString('en-IN');
 // Whole rupees only — paise are dropped on the printed receipt.
 const money = (v: number | null | undefined) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 });
-const fmtDate = (d?: string | null) => {
-  if (!d) return '—';
-  const x = new Date(d);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(x.getDate())}-${pad(x.getMonth() + 1)}-${x.getFullYear()}`;
-};
+// Follows the system-wide date format (dd-mm-yy by default).
+const fmtDate = (d?: string | null) => formatDate(d);
 
 /** Indian numbering amount-in-words (e.g. 1,05,588 → "RUPEES ONE LAKH FIVE THOUSAND FIVE HUNDRED AND EIGHTY EIGHT ONLY"). */
 function amountInWordsIndian(amount: number): string {

@@ -31,6 +31,12 @@ export class ChallansController {
     return this.challans.pending(query);
   }
 
+  @Get('pending-filters')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  pendingFilterOptions() {
+    return this.challans.pendingFilterOptions();
+  }
+
   @Get('pending-customers')
   @Permissions(perm(R, ACTIONS.CREATE))
   pendingCustomers(@Query('search') search?: string) {

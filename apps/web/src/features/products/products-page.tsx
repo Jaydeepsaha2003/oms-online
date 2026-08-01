@@ -37,19 +37,26 @@ const num = (n: number | null) => (n == null ? '—' : n.toLocaleString('en-IN')
 /** Amount prefixed with the rupee symbol; dash when unknown. */
 const money = (n: number | null) => (n == null ? '—' : `₹${n.toLocaleString('en-IN')}`);
 
+/** Matches the Orders / Challans / Dispatch grids: Inter, semibold, near-black. */
+const TEXT_CELL = 'text-[13px] font-semibold text-slate-800 dark:text-slate-200';
+/** Compact, amber-bordered filter controls — same language as the other list pages. */
+const CONTROL =
+  'h-9 rounded-[4px] border-amber-300 dark:border-amber-400/40 text-[12.5px] focus-visible:border-amber-500 focus-visible:ring-amber-400/30';
+const CONTROL_ON = 'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
+
 const COLUMNS: DataColumn<ProductDto>[] = [
-  { id: 'category', label: 'Category', pin: 'left0', fixed: true, cell: (p) => <span className={cn('font-medium', !p.active && 'text-muted-foreground line-through')}>{p.category}</span> },
-  { id: 'subCategory', label: 'Sub category', cell: (p) => <span className={cn('font-medium', !p.active && 'text-muted-foreground')}>{p.subCategory}</span> },
-  { id: 'product', label: 'Product', cell: (p) => <span className={cn('font-medium', !p.active && 'text-muted-foreground line-through')}>{p.product}</span> },
-  { id: 'size', label: 'Size', align: 'right', cell: (p) => num(p.size) },
-  { id: 'weight', label: 'Weight', align: 'right', cell: (p) => num(p.weight) },
-  { id: 'pcs', label: 'PCS', align: 'right', cell: (p) => num(p.pcs) },
-  { id: 'rate', label: 'Rate', align: 'right', cell: (p) => <span className="text-[15px] font-bold">{money(p.rate)}</span> },
+  { id: 'category', label: 'Category', pin: 'left0', fixed: true, cell: (p) => <span className={cn(TEXT_CELL, !p.active && 'text-muted-foreground line-through')}>{p.category}</span> },
+  { id: 'subCategory', label: 'Sub category', cell: (p) => <span className={cn(TEXT_CELL, !p.active && 'text-muted-foreground')}>{p.subCategory}</span> },
+  { id: 'product', label: 'Product', cell: (p) => <span className={cn(TEXT_CELL, !p.active && 'text-muted-foreground line-through')}>{p.product}</span> },
+  { id: 'size', label: 'Size', align: 'right', cell: (p) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{num(p.size)}</span> },
+  { id: 'weight', label: 'Weight', align: 'right', cell: (p) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{num(p.weight)}</span> },
+  { id: 'pcs', label: 'PCS', align: 'right', cell: (p) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{num(p.pcs)}</span> },
+  { id: 'rate', label: 'Rate', align: 'right', cell: (p) => <span className="text-[14px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(p.rate)}</span> },
   {
     id: 'updated',
     label: 'Last updated',
     cell: (p) => (
-      <span className="text-muted-foreground whitespace-nowrap font-mono text-xs" title={formatDateTime(p.updatedAt)}>{formatDateShort(p.updatedAt)}</span>
+      <span className="text-muted-foreground whitespace-nowrap text-[12px] font-medium tabular-nums" title={formatDateTime(p.updatedAt)}>{formatDateShort(p.updatedAt)}</span>
     ),
   },
   // Kept as the LAST scrollable column (right before the sticky Actions column) so
@@ -171,36 +178,36 @@ export function ProductsPage() {
 
   // Phones: one stacked card per product instead of a horizontally-scrolling table.
   const productMobileCard = (p: ProductDto) => (
-    <div className="space-y-2.5">
+    <div className="space-y-2">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className={cn('leading-tight font-medium', !p.active && 'text-muted-foreground line-through')}>{p.product}</p>
-          <p className="text-muted-foreground text-xs">
-            {p.category} · <span className="font-montserrat">{p.subCategory}</span>
+          <p className={cn('truncate text-[14px] leading-tight font-bold text-slate-900 dark:text-slate-100', !p.active && 'text-muted-foreground line-through')}>{p.product}</p>
+          <p className="text-muted-foreground truncate text-[11.5px] font-medium">
+            {p.category} · {p.subCategory}
           </p>
         </div>
         <ProductActiveToggle product={p} />
       </div>
-      <div className="grid grid-cols-4 gap-2 text-xs">
+      <div className="grid grid-cols-4 gap-2 text-[12px]">
         <div>
-          <p className="text-muted-foreground">Size</p>
-          <p className="text-sm font-semibold tabular-nums">{num(p.size)}</p>
+          <p className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">Size</p>
+          <p className="font-bold tabular-nums text-slate-800 dark:text-slate-200">{num(p.size)}</p>
         </div>
         <div>
-          <p className="text-muted-foreground">Weight</p>
-          <p className="text-sm font-semibold tabular-nums">{num(p.weight)}</p>
+          <p className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">Weight</p>
+          <p className="font-bold tabular-nums text-slate-800 dark:text-slate-200">{num(p.weight)}</p>
         </div>
         <div>
-          <p className="text-muted-foreground">PCS</p>
-          <p className="text-sm font-semibold tabular-nums">{num(p.pcs)}</p>
+          <p className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">PCS</p>
+          <p className="font-bold tabular-nums text-slate-800 dark:text-slate-200">{num(p.pcs)}</p>
         </div>
         <div>
-          <p className="text-muted-foreground">Rate</p>
-          <p className="text-base font-bold tabular-nums">{money(p.rate)}</p>
+          <p className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">Rate</p>
+          <p className="text-[14px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(p.rate)}</p>
         </div>
       </div>
-      <div className="flex items-center justify-between border-t pt-2.5" onClick={(e) => e.stopPropagation()}>
-        <label className="text-muted-foreground flex cursor-pointer items-center gap-2 text-xs font-medium">
+      <div className="flex items-center justify-between border-t pt-2" onClick={(e) => e.stopPropagation()}>
+        <label className="text-muted-foreground flex cursor-pointer items-center gap-2 text-[11.5px] font-medium">
           <ProductRateListCheckbox product={p} />
           Rate list
         </label>
@@ -227,18 +234,18 @@ export function ProductsPage() {
   );
 
   return (
-    <div className="space-y-4">
-      {/* One compact toolbar row: search → category/sub-category filters → live
-          count → actions. (No page title — the topbar already says "Products".)
-          On phones the dropdowns move behind a Filter icon (see the sheet below)
-          so the row doesn't stack into a wall of controls above the cards. */}
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-        <div className="flex items-center gap-2">
-          <div className="relative w-full max-w-xs">
-            <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
+    // Fills the viewport: toolbar pinned on top, footer pinned at the bottom, only
+    // the grid scrolls. `/products` is a flush route (app-shell), so the page owns
+    // its own padding.
+    <div className="flex h-full min-h-0 flex-col gap-2 p-2.5 font-sans sm:gap-2.5 sm:p-3">
+      {/* ── Toolbar: search + filters on the left, actions on the right, one card. */}
+      <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
+        <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
+          <div className="relative w-full sm:w-64">
+            <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
             <Input
               placeholder="Search category, sub category, product…"
-              className="pl-9"
+              className={cn(CONTROL, 'pl-8 font-medium', searchInput && CONTROL_ON)}
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
             />
@@ -246,74 +253,78 @@ export function ProductsPage() {
           <Button
             variant="outline"
             size="icon"
-            className="relative shrink-0 lg:hidden"
+            className={cn('relative size-9 shrink-0 rounded-[4px] border-amber-300 lg:hidden', activeFilterCount > 0 && CONTROL_ON)}
             onClick={() => setMobileFiltersOpen(true)}
             aria-label="Filters"
           >
             <Filter className="size-4" />
             {activeFilterCount > 0 && (
-              <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-medium">
+              <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-bold tabular-nums">
                 {activeFilterCount}
               </span>
             )}
           </Button>
-        </div>
-        <div className="hidden w-44 lg:block">
-          <NativeSelect
-            value={category}
-            onChange={(v) => {
-              setCategory(v);
-              setSubCategory(''); // a sub from another category would return nothing
-              setPage(1);
-            }}
-            options={['', ...(lookups?.categories ?? [])]}
-            placeholder="All categories"
-          />
-        </div>
-        <div className="hidden w-48 lg:block">
-          <NativeSelect
-            value={subCategory}
-            onChange={(v) => {
-              setSubCategory(v);
-              setPage(1);
-            }}
-            options={['', ...(lookups?.subCategories ?? [])]}
-            placeholder="All sub categories"
-          />
-        </div>
-        <p className="text-muted-foreground shrink-0 text-sm tabular-nums">{(data?.total ?? 0).toLocaleString('en-IN')} records</p>
-        <div className="flex flex-wrap items-center gap-2 lg:ml-auto">
-          <ColumnSettings
-            columns={cols.orderedReorderable}
-            hidden={cols.hidden}
-            onReorder={cols.moveBefore}
-            onMove={cols.move}
-            onToggle={cols.toggle}
-            onReset={cols.reset}
-          />
-          {can('product:export') && <ExportButton onClick={() => exportProducts(query)} />}
-          {can('product:import') && <ImportButton onFile={handleImport} pending={importMut.isPending} />}
-          <Button variant="outline" size="sm" onClick={() => setShowFields(true)} title="Set the price field (KGS/PCS) per category">
-            <Scale /> Price fields
-          </Button>
-          {can('product:create') && (
-            <Button size="sm" onClick={() => setCreating(true)}>
-              <Plus /> New product
+          <div className="hidden w-40 lg:block">
+            <NativeSelect
+              value={category}
+              onChange={(v) => {
+                setCategory(v);
+                setSubCategory(''); // a sub from another category would return nothing
+                setPage(1);
+              }}
+              options={['', ...(lookups?.categories ?? [])]}
+              placeholder="All categories"
+              className={cn(CONTROL, 'font-medium', category && CONTROL_ON)}
+            />
+          </div>
+          <div className="hidden w-44 lg:block">
+            <NativeSelect
+              value={subCategory}
+              onChange={(v) => {
+                setSubCategory(v);
+                setPage(1);
+              }}
+              options={['', ...(lookups?.subCategories ?? [])]}
+              placeholder="All sub categories"
+              className={cn(CONTROL, 'font-medium', subCategory && CONTROL_ON)}
+            />
+          </div>
+          <p className="text-muted-foreground shrink-0 text-[12px] font-medium tabular-nums">
+            <span className="font-bold text-foreground">{(data?.total ?? 0).toLocaleString('en-IN')}</span> records
+          </p>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <ColumnSettings
+              columns={cols.orderedReorderable}
+              hidden={cols.hidden}
+              onReorder={cols.moveBefore}
+              onMove={cols.move}
+              onToggle={cols.toggle}
+              onReset={cols.reset}
+            />
+            {can('product:export') && <ExportButton onClick={() => exportProducts(query)} />}
+            {can('product:import') && <ImportButton onFile={handleImport} pending={importMut.isPending} />}
+            <Button variant="outline" size="sm" className="h-9 rounded-[4px] text-[12.5px] font-semibold" onClick={() => setShowFields(true)} title="Set the price field (KGS/PCS) per category">
+              <Scale /> Price fields
             </Button>
-          )}
+            {can('product:create') && (
+              <Button size="sm" className="h-9 rounded-[4px] text-[12.5px] font-bold" onClick={() => setCreating(true)}>
+                <Plus /> New product
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Phones only: Category / Sub category live behind the Filter icon above. */}
       <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
-        <SheetContent side="bottom" className="lg:hidden">
+        <SheetContent side="bottom" className="font-poppins lg:hidden">
           <SheetHeader>
             <div className="flex items-center justify-between">
               <SheetTitle>Filters</SheetTitle>
               <Button
                 variant="ghost"
                 size="sm"
-                className="text-muted-foreground -mr-2 gap-1.5"
+                className="text-muted-foreground -mr-2 gap-1.5 font-semibold"
                 onClick={resetFilters}
                 disabled={activeFilterCount === 0}
               >
@@ -323,7 +334,7 @@ export function ProductsPage() {
           </SheetHeader>
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <Label className="text-muted-foreground text-xs font-medium uppercase">Category</Label>
+              <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Category</Label>
               <NativeSelect
                 value={category}
                 onChange={(v) => {
@@ -336,7 +347,7 @@ export function ProductsPage() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-muted-foreground text-xs font-medium uppercase">Sub category</Label>
+              <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Sub category</Label>
               <NativeSelect
                 value={subCategory}
                 onChange={(v) => {
@@ -349,55 +360,84 @@ export function ProductsPage() {
             </div>
           </div>
           <SheetFooter>
-            <Button className="w-full" onClick={() => setMobileFiltersOpen(false)}>
+            <Button className="w-full font-bold" onClick={() => setMobileFiltersOpen(false)}>
               Show {(data?.total ?? 0).toLocaleString('en-IN')} products
             </Button>
           </SheetFooter>
         </SheetContent>
       </Sheet>
 
-      <DataTable
-        columns={cols.visibleColumns}
-        rows={items}
-        rowKey={(p) => p.id}
-        isLoading={isLoading}
-        emptyText="No products yet."
-        onRowClick={(p) => can('product:update') && setEditing(p)}
-        mobileCard={productMobileCard}
-        actions={(p) => (
-          <div className="flex items-center justify-end gap-2">
-            <ProductRateListCheckbox product={p} />
-            {can('product:update') && (
-              <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(p)} aria-label="Edit">
-                <Pencil className="size-4" />
-              </Button>
-            )}
-            {can('product:delete') && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-8 text-destructive hover:text-destructive"
-                onClick={() => handleDelete(p)}
-                aria-label="Delete"
-              >
-                <Trash2 className="size-4" />
-              </Button>
-            )}
-          </div>
+      {/* The grid pans sideways when columns outgrow the screen; slim scrollbars
+          make that discoverable. */}
+      <div
+        className={cn(
+          'flex min-h-0 flex-1 flex-col',
+          '[&_[data-slot=table-container]]:overscroll-x-contain',
+          '[&_[data-slot=table-container]]:[scrollbar-width:thin]',
+          '[&_[data-slot=table-container]]:[scrollbar-color:var(--color-slate-400)_var(--color-slate-100)]',
         )}
-      />
+      >
+        <DataTable
+          columns={cols.visibleColumns}
+          rows={items}
+          rowKey={(p) => p.id}
+          isLoading={isLoading}
+          dense
+          fill
+          hideSortIcon
+          emptyText="No products yet."
+          onRowClick={(p) => can('product:update') && setEditing(p)}
+          mobileCard={productMobileCard}
+          className={[
+            'font-sans text-[13px]',
+            '[&_thead_th]:text-[13.5px] [&_thead_th]:font-extrabold [&_thead_th]:uppercase [&_thead_th]:tracking-wide [&_thead_th]:py-1.5',
+            '[&_thead_th_button]:cursor-pointer',
+            '[&_thead_th:hover]:from-blue-900 [&_thead_th:hover]:to-indigo-900',
+            '[&_td]:py-1 [&_td]:px-3 [&_th]:px-3',
+            '[&_tbody_button:not([role=switch]):not([role=checkbox])]:size-7',
+            '[&_tbody_tr]:border-b [&_tbody_tr]:border-slate-200 dark:[&_tbody_tr]:border-white/10',
+            '[&_td]:border-r [&_td]:border-slate-200 dark:[&_td]:border-white/10 [&_td:last-child]:border-r-0',
+            '[&_tbody_tr:nth-child(even)_td]:bg-slate-100/80 dark:[&_tbody_tr:nth-child(even)_td]:bg-white/[0.04]',
+            '[&_tbody_tr:hover:hover_td]:bg-amber-100/70 dark:[&_tbody_tr:hover:hover_td]:bg-amber-400/10',
+          ].join(' ')}
+          actions={(p) => (
+            <div className="flex items-center justify-end gap-2">
+              <ProductRateListCheckbox product={p} />
+              {can('product:update') && (
+                <Button variant="ghost" size="icon" className="size-7" onClick={() => setEditing(p)} aria-label="Edit">
+                  <Pencil className="size-4" />
+                </Button>
+              )}
+              {can('product:delete') && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 text-destructive hover:text-destructive"
+                  onClick={() => handleDelete(p)}
+                  aria-label="Delete"
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              )}
+            </div>
+          )}
+        />
+      </div>
 
-      <div className="flex items-center justify-between">
-        <p className="text-muted-foreground text-sm">
-          Page {data?.page ?? page} of {totalPages}
+      {/* ── Footer: paging ─────────────────────────────────────────────────────── */}
+      <div className="bg-card flex items-center justify-between rounded-[4px] border px-3 py-2 shadow-sm">
+        <p className="text-muted-foreground text-[12px] font-medium">
+          Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
+          <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
         </p>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
             <ChevronLeft /> Prev
           </Button>
           <Button
             variant="outline"
             size="sm"
+            className="rounded-[4px] font-semibold"
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             disabled={page >= totalPages}
           >

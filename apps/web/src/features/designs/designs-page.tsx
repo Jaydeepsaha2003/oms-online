@@ -60,14 +60,22 @@ const PAGE_SIZE = 50;
 const num = (n: number | null) => (n == null ? '—' : n.toLocaleString('en-IN'));
 /** Amount prefixed with the rupee symbol; dash when unknown. */
 const money = (n: number | null) => (n == null ? '—' : `₹${n.toLocaleString('en-IN')}`);
+
+/** Matches the Products / Orders / Challans grids: Inter, semibold, near-black. */
+const TEXT_CELL = 'text-[13px] font-semibold text-slate-800 dark:text-slate-200';
+/** Compact, amber-bordered filter controls — same language as the other list pages. */
+const CONTROL =
+  'h-9 rounded-[4px] border-amber-300 dark:border-amber-400/40 text-[12.5px] focus-visible:border-amber-500 focus-visible:ring-amber-400/30';
+const CONTROL_ON = 'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
+
 /** Margin = rate − cost; up/green for profit, down/red for loss, dash when unknown. */
 const marginCell = (cost: number | null, rate: number | null) => {
-  if (cost == null || rate == null) return <span className="text-muted-foreground">—</span>;
+  if (cost == null || rate == null) return <span className="text-muted-foreground text-[13px]">—</span>;
   const m = rate - cost;
   const Icon = m > 0 ? ArrowUp : m < 0 ? ArrowDown : Minus;
-  const tone = m > 0 ? 'text-emerald-600' : m < 0 ? 'text-destructive' : 'text-muted-foreground';
+  const tone = m > 0 ? 'text-emerald-600 dark:text-emerald-400' : m < 0 ? 'text-destructive' : 'text-muted-foreground';
   return (
-    <span className={cn('inline-flex items-center justify-end gap-1 font-medium tabular-nums', tone)}>
+    <span className={cn('inline-flex items-center justify-end gap-1 text-[13px] font-bold tabular-nums', tone)}>
       ₹{m.toLocaleString('en-IN')}
       <Icon className="size-3.5 shrink-0" />
     </span>
@@ -255,22 +263,23 @@ export function DesignsPage() {
         id: 'sel',
         label: '',
         fixed: true,
+        noSort: true,
         cell: (d) => (
           <span
             className={cn(
-              'flex size-4 items-center justify-center rounded border transition-colors',
-              selected.has(d.id) ? 'border-primary bg-primary text-primary-foreground' : 'border-input',
+              'flex size-4 items-center justify-center rounded-[3px] border-[1.5px] bg-white transition-colors',
+              selected.has(d.id) ? 'border-primary bg-primary text-primary-foreground' : 'border-slate-500',
             )}
           >
-            {selected.has(d.id) && <Check className="size-3" />}
+            {selected.has(d.id) && <Check className="size-3" strokeWidth={3} />}
           </span>
         ),
       },
-      { id: 'category', label: 'Category', sortValue: (d) => d.category, cell: (d) => <span className={cn(!d.active && 'text-muted-foreground')}>{d.category}</span> },
-      { id: 'subCategory', label: 'Sub category', sortValue: (d) => d.subCategory, cell: (d) => <span className={cn(!d.active && 'text-muted-foreground')}>{d.subCategory}</span> },
-      { id: 'designType', label: 'Design type', sortValue: (d) => d.designType, cell: (d) => <span className={cn('font-medium', !d.active && 'text-muted-foreground line-through')}>{d.designType}</span> },
-      { id: 'cost', label: 'Cost', align: 'right', sortValue: (d) => d.cost, cell: (d) => money(d.cost) },
-      { id: 'rate', label: 'Rate', align: 'right', sortValue: (d) => d.rate, cell: (d) => money(d.rate) },
+      { id: 'category', label: 'Category', sortValue: (d) => d.category, cell: (d) => <span className={cn(TEXT_CELL, !d.active && 'text-muted-foreground')}>{d.category}</span> },
+      { id: 'subCategory', label: 'Sub category', sortValue: (d) => d.subCategory, cell: (d) => <span className={cn(TEXT_CELL, !d.active && 'text-muted-foreground')}>{d.subCategory}</span> },
+      { id: 'designType', label: 'Design type', sortValue: (d) => d.designType, cell: (d) => <span className={cn(TEXT_CELL, !d.active && 'text-muted-foreground line-through')}>{d.designType}</span> },
+      { id: 'cost', label: 'Cost', align: 'right', sortValue: (d) => d.cost, cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(d.cost)}</span> },
+      { id: 'rate', label: 'Rate', align: 'right', sortValue: (d) => d.rate, cell: (d) => <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(d.rate)}</span> },
       { id: 'margin', label: 'Margin', align: 'right', sortValue: (d) => (d.cost != null && d.rate != null ? d.rate - d.cost : null), cell: (d) => marginCell(d.cost, d.rate) },
       { id: 'active', label: 'Active', sortValue: (d) => (d.active ? 1 : 0), cell: (d) => <div className="flex justify-center"><DesignActiveToggle design={d} /></div> },
     ],
@@ -279,17 +288,17 @@ export function DesignsPage() {
 
   const comboColumns = useMemo<DataColumn<CombinationDto>[]>(
     () => [
-    { id: 'category', label: 'Category', sortValue: (c) => c.category, cell: (c) => c.category || '—' },
-    { id: 'subCategory', label: 'Sub category', sortValue: (c) => c.subCategory, cell: (c) => c.subCategory || '—' },
-    { id: 'name', label: 'Design type', sortValue: (c) => c.name, cell: (c) => <span className="font-medium">{c.name}</span> },
-    { id: 'cost', label: 'Cost', align: 'right', sortValue: (c) => c.cost, cell: (c) => <span className="font-semibold tabular-nums">{money(c.cost)}</span> },
-    { id: 'rate', label: 'Rate', align: 'right', sortValue: (c) => c.rate, cell: (c) => money(c.rate) },
+    { id: 'category', label: 'Category', sortValue: (c) => c.category, cell: (c) => <span className={TEXT_CELL}>{c.category || '—'}</span> },
+    { id: 'subCategory', label: 'Sub category', sortValue: (c) => c.subCategory, cell: (c) => <span className={TEXT_CELL}>{c.subCategory || '—'}</span> },
+    { id: 'name', label: 'Design type', sortValue: (c) => c.name, cell: (c) => <span className={cn(TEXT_CELL, 'text-indigo-700 dark:text-indigo-300')}>{c.name}</span> },
+    { id: 'cost', label: 'Cost', align: 'right', sortValue: (c) => c.cost, cell: (c) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(c.cost)}</span> },
+    { id: 'rate', label: 'Rate', align: 'right', sortValue: (c) => c.rate, cell: (c) => <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(c.rate)}</span> },
     { id: 'margin', label: 'Margin', align: 'right', sortValue: (c) => (c.cost != null && c.rate != null ? c.rate - c.cost : null), cell: (c) => marginCell(c.cost, c.rate) },
     {
       id: 'updated',
       label: 'Last updated',
       sortValue: (c) => c.updatedAt,
-      cell: (c) => <span className="text-muted-foreground whitespace-nowrap font-mono text-xs" title={formatDateTime(c.updatedAt)}>{formatDateShort(c.updatedAt)}</span>,
+      cell: (c) => <span className="text-muted-foreground whitespace-nowrap text-[12px] font-medium tabular-nums" title={formatDateTime(c.updatedAt)}>{formatDateShort(c.updatedAt)}</span>,
     },
     ],
     [],
@@ -309,7 +318,7 @@ export function DesignsPage() {
   const designMobileCard = (d: DesignDto) => (
     <div
       className={cn(
-        '-m-3 space-y-2.5 border-l-4 p-3 transition-colors',
+        '-m-3 space-y-2 border-l-4 p-3 transition-colors',
         selected.has(d.id) ? 'border-l-primary bg-primary/5' : 'border-l-transparent',
       )}
     >
@@ -324,30 +333,30 @@ export function DesignsPage() {
             {selected.has(d.id) && <Check className="size-2.5" strokeWidth={3} />}
           </span>
           <div className="min-w-0">
-            <p className={cn('leading-tight font-medium', !d.active && 'text-muted-foreground line-through')}>{d.designType}</p>
-            <p className="text-muted-foreground text-xs">
+            <p className={cn('truncate text-[14px] leading-tight font-bold text-slate-900 dark:text-slate-100', !d.active && 'text-muted-foreground line-through')}>{d.designType}</p>
+            <p className="text-muted-foreground truncate text-[11.5px] font-medium">
               {d.category} · {d.subCategory}
             </p>
           </div>
         </div>
         <DesignActiveToggle design={d} />
       </div>
-      <div className="grid grid-cols-3 gap-2 text-xs">
+      <div className="grid grid-cols-3 gap-2 text-[12px]">
         <div>
-          <p className="text-muted-foreground">Cost</p>
-          <p className="font-medium tabular-nums">{money(d.cost)}</p>
+          <p className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">Cost</p>
+          <p className="font-bold tabular-nums text-slate-800 dark:text-slate-200">{money(d.cost)}</p>
         </div>
         <div>
-          <p className="text-muted-foreground">Rate</p>
-          <p className="font-medium tabular-nums">{money(d.rate)}</p>
+          <p className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">Rate</p>
+          <p className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(d.rate)}</p>
         </div>
         <div>
-          <p className="text-muted-foreground">Margin</p>
-          <p className="font-medium">{marginCell(d.cost, d.rate)}</p>
+          <p className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">Margin</p>
+          <p className="font-bold">{marginCell(d.cost, d.rate)}</p>
         </div>
       </div>
-      <div className="flex items-center justify-between border-t pt-2.5" onClick={(e) => e.stopPropagation()}>
-        <label className="text-muted-foreground flex cursor-pointer items-center gap-2 text-xs font-medium">
+      <div className="flex items-center justify-between border-t pt-2" onClick={(e) => e.stopPropagation()}>
+        <label className="text-muted-foreground flex cursor-pointer items-center gap-2 text-[11.5px] font-medium">
           <DesignRateListCheckbox design={d} />
           Rate list
         </label>
@@ -375,34 +384,34 @@ export function DesignsPage() {
 
   // Phones: one stacked card per combination instead of a horizontally-scrolling table.
   const comboMobileCard = (c: CombinationDto) => (
-    <div className="space-y-2.5">
+    <div className="space-y-2">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="leading-tight font-medium">{c.name}</p>
-          <p className="text-muted-foreground text-xs">
+          <p className="truncate text-[14px] leading-tight font-bold text-indigo-700 dark:text-indigo-300">{c.name}</p>
+          <p className="text-muted-foreground truncate text-[11.5px] font-medium">
             {c.category || '—'} · {c.subCategory || '—'}
           </p>
         </div>
-        <span className="text-muted-foreground shrink-0 font-mono text-[11px]" title={formatDateTime(c.updatedAt)}>
+        <span className="text-muted-foreground shrink-0 text-[11px] font-medium tabular-nums" title={formatDateTime(c.updatedAt)}>
           {formatDateShort(c.updatedAt)}
         </span>
       </div>
-      <div className="grid grid-cols-3 gap-2 text-xs">
+      <div className="grid grid-cols-3 gap-2 text-[12px]">
         <div>
-          <p className="text-muted-foreground">Cost</p>
-          <p className="font-medium tabular-nums">{money(c.cost)}</p>
+          <p className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">Cost</p>
+          <p className="font-bold tabular-nums text-slate-800 dark:text-slate-200">{money(c.cost)}</p>
         </div>
         <div>
-          <p className="text-muted-foreground">Rate</p>
-          <p className="font-medium tabular-nums">{money(c.rate)}</p>
+          <p className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">Rate</p>
+          <p className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(c.rate)}</p>
         </div>
         <div>
-          <p className="text-muted-foreground">Margin</p>
-          <p className="font-medium">{marginCell(c.cost, c.rate)}</p>
+          <p className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">Margin</p>
+          <p className="font-bold">{marginCell(c.cost, c.rate)}</p>
         </div>
       </div>
       {can('combination:delete') && (
-        <div className="flex justify-end border-t pt-2.5">
+        <div className="flex justify-end border-t pt-2">
           <Button
             variant="ghost"
             size="icon"
@@ -418,42 +427,18 @@ export function DesignsPage() {
   );
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col gap-3 font-sans">
       {/* ── Designs ─────────────────────────────────────────────────────────── */}
-      <section className="space-y-3">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="text-xl font-semibold tracking-tight">Designs</h2>
-            <p className="text-muted-foreground text-sm">
-              {data?.total ?? 0} designs · select rows to build a combination below
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <ColumnSettings
-              columns={designCols.orderedReorderable}
-              hidden={designCols.hidden}
-              onReorder={designCols.moveBefore}
-              onMove={designCols.move}
-              onToggle={designCols.toggle}
-              onReset={designCols.reset}
-            />
-            {can('design:export') && <ExportButton onClick={() => exportDesigns(query)} />}
-            {can('design:import') && <ImportButton onFile={handleImport} pending={importMut.isPending} />}
-            {can('design:create') && (
-              <Button size="sm" onClick={() => setCreating(true)}>
-                <Plus /> New design
-              </Button>
-            )}
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="flex items-center gap-2">
-            <div className="relative max-w-sm flex-1">
-              <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
+      <section className="space-y-2.5">
+        {/* Toolbar: search + filters on the left, actions on the right, one card.
+            (No section title — the topbar already says "Designs".) */}
+        <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
+          <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
+            <div className="relative w-full sm:w-64">
+              <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
               <Input
                 placeholder="Search category, sub category, design type…"
-                className="pl-9"
+                className={cn(CONTROL, 'pl-8 font-medium', searchInput && CONTROL_ON)}
                 value={searchInput}
                 onChange={(e) => {
                   setSearchInput(e.target.value);
@@ -465,66 +450,95 @@ export function DesignsPage() {
             <Button
               variant="outline"
               size="icon"
-              className="relative shrink-0 lg:hidden"
+              className={cn('relative size-9 shrink-0 rounded-[4px] border-amber-300 lg:hidden', activeFilterCount > 0 && CONTROL_ON)}
               onClick={() => setMobileFiltersOpen(true)}
               aria-label="Filters"
             >
               <Filter className="size-4" />
               {activeFilterCount > 0 && (
-                <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-medium">
+                <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-bold tabular-nums">
                   {activeFilterCount}
                 </span>
               )}
             </Button>
-          </div>
-          <div className="hidden w-44 lg:block">
-            <NativeSelect
-              value={category}
-              onChange={(v) => {
-                setCategory(v);
-                setSubCategory(''); // a sub from another category would return nothing
-                setPage(1);
-              }}
-              options={['', ...(lookups?.categories ?? [])]}
-              placeholder="All categories"
-            />
-          </div>
-          <div className="hidden w-48 lg:block">
-            <NativeSelect
-              value={subCategory}
-              onChange={(v) => {
-                setSubCategory(v);
-                setPage(1);
-              }}
-              options={['', ...(lookups?.subCategories ?? [])]}
-              placeholder="All sub categories"
-            />
-          </div>
-          {selected.size > 0 && (
-            <div className="bg-primary/5 ring-primary/15 flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm ring-1 sm:ml-auto">
-              <span className="font-medium">{selected.size} selected</span>
-              {can('combination:create') && (
-                <Button size="sm" onClick={() => setCombining(true)}>
-                  <Layers className="size-4" /> Create combination
+            <div className="hidden w-40 lg:block">
+              <NativeSelect
+                value={category}
+                onChange={(v) => {
+                  setCategory(v);
+                  setSubCategory(''); // a sub from another category would return nothing
+                  setPage(1);
+                }}
+                options={['', ...(lookups?.categories ?? [])]}
+                placeholder="All categories"
+                className={cn(CONTROL, 'font-medium', category && CONTROL_ON)}
+              />
+            </div>
+            <div className="hidden w-44 lg:block">
+              <NativeSelect
+                value={subCategory}
+                onChange={(v) => {
+                  setSubCategory(v);
+                  setPage(1);
+                }}
+                options={['', ...(lookups?.subCategories ?? [])]}
+                placeholder="All sub categories"
+                className={cn(CONTROL, 'font-medium', subCategory && CONTROL_ON)}
+              />
+            </div>
+            <p className="text-muted-foreground shrink-0 text-[12px] font-medium tabular-nums">
+              <span className="font-bold text-foreground">{(data?.total ?? 0).toLocaleString('en-IN')}</span> designs
+            </p>
+
+            {selected.size > 0 && (
+              <div className="flex items-center gap-2 rounded-[4px] bg-sky-50 px-3 py-1.5 text-[12.5px] font-semibold text-sky-700 ring-1 ring-sky-200 ring-inset dark:bg-sky-400/10 dark:text-sky-300 dark:ring-sky-400/25">
+                <span className="tabular-nums">{selected.size} selected</span>
+                {can('combination:create') && (
+                  <Button size="sm" className="h-7 rounded-[4px] text-[12px] font-bold" onClick={() => setCombining(true)}>
+                    <Layers className="size-3.5" /> Create combination
+                  </Button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setSelected(new Map())}
+                  className="cursor-pointer text-sky-700/70 transition-colors hover:text-sky-900 dark:text-sky-300/70 dark:hover:text-sky-200"
+                  title="Clear selection"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </div>
+            )}
+
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <ColumnSettings
+                columns={designCols.orderedReorderable}
+                hidden={designCols.hidden}
+                onReorder={designCols.moveBefore}
+                onMove={designCols.move}
+                onToggle={designCols.toggle}
+                onReset={designCols.reset}
+              />
+              {can('design:export') && <ExportButton onClick={() => exportDesigns(query)} />}
+              {can('design:import') && <ImportButton onFile={handleImport} pending={importMut.isPending} />}
+              {can('design:create') && (
+                <Button size="sm" className="h-9 rounded-[4px] text-[12.5px] font-bold" onClick={() => setCreating(true)}>
+                  <Plus /> New design
                 </Button>
               )}
-              <Button variant="ghost" size="sm" onClick={() => setSelected(new Map())}>
-                <X className="size-4" /> Clear
-              </Button>
             </div>
-          )}
+          </div>
         </div>
 
         {/* Phones only: Category / Sub category live behind the Filter icon above. */}
         <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
-          <SheetContent side="bottom" className="lg:hidden">
+          <SheetContent side="bottom" className="font-poppins lg:hidden">
             <SheetHeader>
               <div className="flex items-center justify-between">
                 <SheetTitle>Filters</SheetTitle>
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="text-muted-foreground -mr-2 gap-1.5"
+                  className="text-muted-foreground -mr-2 gap-1.5 font-semibold"
                   onClick={resetFilters}
                   disabled={activeFilterCount === 0}
                 >
@@ -534,7 +548,7 @@ export function DesignsPage() {
             </SheetHeader>
             <div className="space-y-4">
               <div className="space-y-1.5">
-                <Label className="text-muted-foreground text-xs font-medium uppercase">Category</Label>
+                <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Category</Label>
                 <NativeSelect
                   value={category}
                   onChange={(v) => {
@@ -547,7 +561,7 @@ export function DesignsPage() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-muted-foreground text-xs font-medium uppercase">Sub category</Label>
+                <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Sub category</Label>
                 <NativeSelect
                   value={subCategory}
                   onChange={(v) => {
@@ -560,58 +574,81 @@ export function DesignsPage() {
               </div>
             </div>
             <SheetFooter>
-              <Button className="w-full" onClick={() => setMobileFiltersOpen(false)}>
+              <Button className="w-full font-bold" onClick={() => setMobileFiltersOpen(false)}>
                 Show {(data?.total ?? 0).toLocaleString('en-IN')} designs
               </Button>
             </SheetFooter>
           </SheetContent>
         </Sheet>
 
-        <DataTable
-          dense
-          hideRowView
-          columns={designCols.visibleColumns}
-          rows={items}
-          rowKey={(d) => d.id}
-          isLoading={isLoading}
-          emptyText="No designs yet."
-          onRowClick={(d) => toggle(d)}
-          mobileCard={designMobileCard}
-          actions={(d) => (
-            <div className="flex items-center justify-end gap-2">
-              <DesignRateListCheckbox design={d} />
-              {can('design:update') && (
-                <Button variant="ghost" size="icon" className="size-7" onClick={() => setEditing(d)} aria-label="Edit">
-                  <Pencil className="size-4" />
-                </Button>
-              )}
-              {can('design:delete') && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-7 text-destructive hover:text-destructive"
-                  onClick={() => handleDelete(d)}
-                  aria-label="Delete"
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              )}
-            </div>
+        <div
+          className={cn(
+            '[&_[data-slot=table-container]]:overscroll-x-contain',
+            '[&_[data-slot=table-container]]:[scrollbar-width:thin]',
+            '[&_[data-slot=table-container]]:[scrollbar-color:var(--color-slate-400)_var(--color-slate-100)]',
           )}
-        />
+        >
+          <DataTable
+            dense
+            hideRowView
+            hideSortIcon
+            columns={designCols.visibleColumns}
+            rows={items}
+            rowKey={(d) => d.id}
+            isLoading={isLoading}
+            emptyText="No designs yet."
+            onRowClick={(d) => toggle(d)}
+            mobileCard={designMobileCard}
+            className={[
+              'font-sans text-[13px]',
+              '[&_thead_th]:text-[13.5px] [&_thead_th]:font-extrabold [&_thead_th]:uppercase [&_thead_th]:tracking-wide [&_thead_th]:py-1.5',
+              '[&_thead_th_button]:cursor-pointer',
+              '[&_thead_th:hover]:from-blue-900 [&_thead_th:hover]:to-indigo-900',
+              '[&_td]:py-1 [&_td]:px-3 [&_th]:px-3',
+              '[&_tbody_button:not([role=switch]):not([role=checkbox])]:size-7',
+              '[&_tbody_tr]:border-b [&_tbody_tr]:border-slate-200 dark:[&_tbody_tr]:border-white/10',
+              '[&_td]:border-r [&_td]:border-slate-200 dark:[&_td]:border-white/10 [&_td:last-child]:border-r-0',
+              '[&_tbody_tr:nth-child(even)_td]:bg-slate-100/80 dark:[&_tbody_tr:nth-child(even)_td]:bg-white/[0.04]',
+              '[&_tbody_tr:hover:hover_td]:bg-amber-100/70 dark:[&_tbody_tr:hover:hover_td]:bg-amber-400/10',
+            ].join(' ')}
+            actions={(d) => (
+              <div className="flex items-center justify-end gap-2">
+                <DesignRateListCheckbox design={d} />
+                {can('design:update') && (
+                  <Button variant="ghost" size="icon" className="size-7" onClick={() => setEditing(d)} aria-label="Edit">
+                    <Pencil className="size-4" />
+                  </Button>
+                )}
+                {can('design:delete') && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 text-destructive hover:text-destructive"
+                    onClick={() => handleDelete(d)}
+                    aria-label="Delete"
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                )}
+              </div>
+            )}
+          />
+        </div>
 
         {totalPages > 1 && (
-          <div className="flex items-center justify-between">
-            <p className="text-muted-foreground text-sm">
-              Page {data?.page ?? page} of {totalPages}
+          <div className="bg-card flex items-center justify-between rounded-[4px] border px-3 py-2 shadow-sm">
+            <p className="text-muted-foreground text-[12px] font-medium">
+              Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
+              <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
             </p>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+              <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
                 <ChevronLeft /> Prev
               </Button>
               <Button
                 variant="outline"
                 size="sm"
+                className="rounded-[4px] font-semibold"
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 disabled={page >= totalPages}
               >
@@ -623,41 +660,24 @@ export function DesignsPage() {
       </section>
 
       {/* ── Combinations ────────────────────────────────────────────────────── */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
-              <Layers className="text-primary size-5" /> Combinations
-            </h2>
-            <p className="text-muted-foreground text-sm">
-              {comboData?.total ?? 0} combinations · cost = live sum of the linked designs
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <ColumnSettings
-              columns={comboCols.orderedReorderable}
-              hidden={comboCols.hidden}
-              onReorder={comboCols.moveBefore}
-              onMove={comboCols.move}
-              onToggle={comboCols.toggle}
-              onReset={comboCols.reset}
-            />
-            {can('combination:export') && combos.length > 0 && (
-              <ExportButton onClick={() => exportCombinations(comboQuery)} />
-            )}
-            {can('combination:import') && (
-              <ImportButton onFile={handleImportCombo} pending={importComboMut.isPending} />
-            )}
-          </div>
+      <section className="space-y-2.5">
+        {/* This sub-section keeps its own header (unlike Designs above) — it's a
+            distinct area the topbar doesn't name on its own. */}
+        <div className="flex items-center gap-2">
+          <Layers className="text-primary size-4" />
+          <h2 className="text-[15px] font-bold tracking-tight">Combinations</h2>
+          <p className="text-muted-foreground text-[12px] font-medium">
+            <span className="font-bold text-foreground">{(comboData?.total ?? 0).toLocaleString('en-IN')}</span> combinations · cost = live sum of the linked designs
+          </p>
         </div>
 
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="flex items-center gap-2">
-            <div className="relative max-w-sm flex-1">
-              <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
+        <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
+          <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
+            <div className="relative w-full sm:w-64">
+              <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
               <Input
                 placeholder="Search combination name, design type…"
-                className="pl-9"
+                className={cn(CONTROL, 'pl-8 font-medium', comboSearchInput && CONTROL_ON)}
                 value={comboSearchInput}
                 onChange={(e) => {
                   setComboSearchInput(e.target.value);
@@ -669,53 +689,72 @@ export function DesignsPage() {
             <Button
               variant="outline"
               size="icon"
-              className="relative shrink-0 lg:hidden"
+              className={cn('relative size-9 shrink-0 rounded-[4px] border-amber-300 lg:hidden', comboActiveFilterCount > 0 && CONTROL_ON)}
               onClick={() => setComboMobileFiltersOpen(true)}
               aria-label="Filters"
             >
               <Filter className="size-4" />
               {comboActiveFilterCount > 0 && (
-                <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-medium">
+                <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-bold tabular-nums">
                   {comboActiveFilterCount}
                 </span>
               )}
             </Button>
-          </div>
-          <div className="hidden w-44 lg:block">
-            <NativeSelect
-              value={comboCategory}
-              onChange={(v) => {
-                setComboCategory(v);
-                setComboSubCategory(''); // a sub from another category would return nothing
-                setComboPage(1);
-              }}
-              options={['', ...(lookups?.categories ?? [])]}
-              placeholder="All categories"
-            />
-          </div>
-          <div className="hidden w-48 lg:block">
-            <NativeSelect
-              value={comboSubCategory}
-              onChange={(v) => {
-                setComboSubCategory(v);
-                setComboPage(1);
-              }}
-              options={['', ...(lookups?.subCategories ?? [])]}
-              placeholder="All sub categories"
-            />
+            <div className="hidden w-40 lg:block">
+              <NativeSelect
+                value={comboCategory}
+                onChange={(v) => {
+                  setComboCategory(v);
+                  setComboSubCategory(''); // a sub from another category would return nothing
+                  setComboPage(1);
+                }}
+                options={['', ...(lookups?.categories ?? [])]}
+                placeholder="All categories"
+                className={cn(CONTROL, 'font-medium', comboCategory && CONTROL_ON)}
+              />
+            </div>
+            <div className="hidden w-44 lg:block">
+              <NativeSelect
+                value={comboSubCategory}
+                onChange={(v) => {
+                  setComboSubCategory(v);
+                  setComboPage(1);
+                }}
+                options={['', ...(lookups?.subCategories ?? [])]}
+                placeholder="All sub categories"
+                className={cn(CONTROL, 'font-medium', comboSubCategory && CONTROL_ON)}
+              />
+            </div>
+
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <ColumnSettings
+                columns={comboCols.orderedReorderable}
+                hidden={comboCols.hidden}
+                onReorder={comboCols.moveBefore}
+                onMove={comboCols.move}
+                onToggle={comboCols.toggle}
+                onReset={comboCols.reset}
+              />
+              {can('combination:export') && combos.length > 0 && (
+                <ExportButton onClick={() => exportCombinations(comboQuery)} />
+              )}
+              {can('combination:import') && (
+                <ImportButton onFile={handleImportCombo} pending={importComboMut.isPending} />
+              )}
+            </div>
           </div>
         </div>
 
         {/* Phones only: Category / Sub category live behind the Filter icon above. */}
         <Sheet open={comboMobileFiltersOpen} onOpenChange={setComboMobileFiltersOpen}>
-          <SheetContent side="bottom" className="lg:hidden">
+          <SheetContent side="bottom" className="font-poppins lg:hidden">
             <SheetHeader>
               <div className="flex items-center justify-between">
                 <SheetTitle>Filters</SheetTitle>
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="text-muted-foreground -mr-2 gap-1.5"
+                  className="text-muted-foreground -mr-2 gap-1.5 font-semibold"
                   onClick={resetComboFilters}
                   disabled={comboActiveFilterCount === 0}
                 >
@@ -725,7 +764,7 @@ export function DesignsPage() {
             </SheetHeader>
             <div className="space-y-4">
               <div className="space-y-1.5">
-                <Label className="text-muted-foreground text-xs font-medium uppercase">Category</Label>
+                <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Category</Label>
                 <NativeSelect
                   value={comboCategory}
                   onChange={(v) => {
@@ -738,7 +777,7 @@ export function DesignsPage() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-muted-foreground text-xs font-medium uppercase">Sub category</Label>
+                <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Sub category</Label>
                 <NativeSelect
                   value={comboSubCategory}
                   onChange={(v) => {
@@ -751,48 +790,72 @@ export function DesignsPage() {
               </div>
             </div>
             <SheetFooter>
-              <Button className="w-full" onClick={() => setComboMobileFiltersOpen(false)}>
+              <Button className="w-full font-bold" onClick={() => setComboMobileFiltersOpen(false)}>
                 Show {(comboData?.total ?? 0).toLocaleString('en-IN')} combinations
               </Button>
             </SheetFooter>
           </SheetContent>
         </Sheet>
 
-        <DataTable
-          columns={comboCols.visibleColumns}
-          rows={combos}
-          rowKey={(c) => c.id}
-          isLoading={combosLoading}
-          emptyText="No combinations yet — select designs above and click Create combination."
-          mobileCard={comboMobileCard}
-          actions={(c) =>
-            can('combination:delete') ? (
-              <div className="flex justify-end">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-7 text-destructive hover:text-destructive"
-                  onClick={() => handleDeleteCombo(c)}
-                  aria-label="Delete"
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              </div>
-            ) : null
-          }
-        />
+        <div
+          className={cn(
+            '[&_[data-slot=table-container]]:overscroll-x-contain',
+            '[&_[data-slot=table-container]]:[scrollbar-width:thin]',
+            '[&_[data-slot=table-container]]:[scrollbar-color:var(--color-slate-400)_var(--color-slate-100)]',
+          )}
+        >
+          <DataTable
+            dense
+            hideSortIcon
+            columns={comboCols.visibleColumns}
+            rows={combos}
+            rowKey={(c) => c.id}
+            isLoading={combosLoading}
+            emptyText="No combinations yet — select designs above and click Create combination."
+            mobileCard={comboMobileCard}
+            className={[
+              'font-sans text-[13px]',
+              '[&_thead_th]:text-[13.5px] [&_thead_th]:font-extrabold [&_thead_th]:uppercase [&_thead_th]:tracking-wide [&_thead_th]:py-1.5',
+              '[&_thead_th_button]:cursor-pointer',
+              '[&_thead_th:hover]:from-blue-900 [&_thead_th:hover]:to-indigo-900',
+              '[&_td]:py-1 [&_td]:px-3 [&_th]:px-3',
+              '[&_tbody_button:not([role=switch]):not([role=checkbox])]:size-7',
+              '[&_tbody_tr]:border-b [&_tbody_tr]:border-slate-200 dark:[&_tbody_tr]:border-white/10',
+              '[&_td]:border-r [&_td]:border-slate-200 dark:[&_td]:border-white/10 [&_td:last-child]:border-r-0',
+              '[&_tbody_tr:nth-child(even)_td]:bg-slate-100/80 dark:[&_tbody_tr:nth-child(even)_td]:bg-white/[0.04]',
+              '[&_tbody_tr:hover:hover_td]:bg-amber-100/70 dark:[&_tbody_tr:hover:hover_td]:bg-amber-400/10',
+            ].join(' ')}
+            actions={(c) =>
+              can('combination:delete') ? (
+                <div className="flex justify-end">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 text-destructive hover:text-destructive"
+                    onClick={() => handleDeleteCombo(c)}
+                    aria-label="Delete"
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </div>
+              ) : null
+            }
+          />
+        </div>
 
         {comboTotalPages > 1 && (
-          <div className="flex items-center justify-between">
-            <p className="text-muted-foreground text-sm">
-              Page {comboData?.page ?? comboPage} of {comboTotalPages}
+          <div className="bg-card flex items-center justify-between rounded-[4px] border px-3 py-2 shadow-sm">
+            <p className="text-muted-foreground text-[12px] font-medium">
+              Page <span className="font-bold tabular-nums text-foreground">{comboData?.page ?? comboPage}</span> of{' '}
+              <span className="font-bold tabular-nums text-foreground">{comboTotalPages}</span>
             </p>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => setComboPage((p) => Math.max(1, p - 1))} disabled={comboPage <= 1}>
+              <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setComboPage((p) => Math.max(1, p - 1))} disabled={comboPage <= 1}>
                 <ChevronLeft /> Prev
               </Button>
               <Button
                 variant="outline"
+                className="rounded-[4px] font-semibold"
                 size="sm"
                 onClick={() => setComboPage((p) => Math.min(comboTotalPages, p + 1))}
                 disabled={comboPage >= comboTotalPages}

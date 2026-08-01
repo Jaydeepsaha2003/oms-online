@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Loader2, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { TransporterDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -41,17 +41,24 @@ import {
 /** Amount prefixed with the rupee symbol; dash when unknown. */
 const money = (n: number | null) => (n == null ? '—' : `₹${n.toLocaleString('en-IN')}`);
 
+/** Matches the Products / Customers / Orders grids: Inter, semibold, near-black. */
+const TEXT_CELL = 'text-[13px] font-semibold text-slate-800 dark:text-slate-200';
+/** Compact, amber-bordered filter controls — same language as the other list pages. */
+const CONTROL =
+  'h-9 rounded-[4px] border-amber-300 dark:border-amber-400/40 text-[12.5px] focus-visible:border-amber-500 focus-visible:ring-amber-400/30';
+const CONTROL_ON = 'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
+
 const COLUMNS: DataColumn<TransporterDto>[] = [
-  { id: 'name', label: 'Transport name', pin: 'left0', fixed: true, cell: (t) => <span className="font-medium">{t.name}</span> },
-  { id: 'packing', label: 'Packing', align: 'right', cell: (t) => money(t.packing) },
-  { id: 'freight', label: 'Freight', align: 'right', cell: (t) => money(t.freight) },
-  { id: 'customers', label: 'Customers', align: 'right', cell: (t) => t.customerCount ?? 0 },
+  { id: 'name', label: 'Transport name', pin: 'left0', fixed: true, cell: (t) => <span className={cn(TEXT_CELL, 'text-indigo-700 dark:text-indigo-300')}>{t.name}</span> },
+  { id: 'packing', label: 'Packing', align: 'right', cell: (t) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(t.packing)}</span> },
+  { id: 'freight', label: 'Freight', align: 'right', cell: (t) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(t.freight)}</span> },
+  { id: 'customers', label: 'Customers', align: 'right', cell: (t) => <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{t.customerCount ?? 0}</span> },
   {
     id: 'updated',
     label: 'Last updated',
     cell: (t) => (
       <span
-        className="text-muted-foreground whitespace-nowrap font-mono text-xs"
+        className="text-muted-foreground whitespace-nowrap text-[12px] font-medium tabular-nums"
         title={`Updated ${formatDateTime(t.updatedAt)} · Added ${formatDateTime(t.createdAt)}`}
       >
         {formatDateShort(t.updatedAt)}
@@ -78,7 +85,8 @@ export function TransportersPage() {
   }, [searchInput]);
 
   const query = { page, pageSize: 50, search: search || undefined };
-  const { data, isLoading } = useTransporters(query);
+  const { data, isLoading, isFetching } = useTransporters(query);
+  const totalPages = data?.totalPages ?? 1;
   const del = useDeleteTransporter();
   const importMut = useImportTransporters();
   const cols = useColumnOrder('transporters', COLUMNS);
@@ -87,28 +95,28 @@ export function TransportersPage() {
 
   // Phones: one stacked card per transporter instead of a horizontally-scrolling table.
   const transporterMobileCard = (t: TransporterDto) => (
-    <div className="space-y-2.5">
+    <div className="space-y-2">
       <div className="flex items-start justify-between gap-2">
-        <p className="leading-tight font-medium">{t.name}</p>
-        <span className="text-muted-foreground shrink-0 font-mono text-[11px]" title={`Updated ${formatDateTime(t.updatedAt)} · Added ${formatDateTime(t.createdAt)}`}>
+        <p className="truncate text-[14px] leading-tight font-bold text-slate-900 dark:text-slate-100">{t.name}</p>
+        <span className="text-muted-foreground shrink-0 text-[11px] font-medium tabular-nums" title={`Updated ${formatDateTime(t.updatedAt)} · Added ${formatDateTime(t.createdAt)}`}>
           {formatDateShort(t.updatedAt)}
         </span>
       </div>
-      <div className="grid grid-cols-3 gap-2 text-xs">
+      <div className="grid grid-cols-3 gap-2 text-[12px]">
         <div>
-          <p className="text-muted-foreground">Packing</p>
-          <p className="font-medium tabular-nums">{money(t.packing)}</p>
+          <p className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">Packing</p>
+          <p className="font-bold tabular-nums text-slate-800 dark:text-slate-200">{money(t.packing)}</p>
         </div>
         <div>
-          <p className="text-muted-foreground">Freight</p>
-          <p className="font-medium tabular-nums">{money(t.freight)}</p>
+          <p className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">Freight</p>
+          <p className="font-bold tabular-nums text-slate-800 dark:text-slate-200">{money(t.freight)}</p>
         </div>
         <div>
-          <p className="text-muted-foreground">Customers</p>
-          <p className="font-medium tabular-nums">{t.customerCount ?? 0}</p>
+          <p className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">Customers</p>
+          <p className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{t.customerCount ?? 0}</p>
         </div>
       </div>
-      <div className="flex items-center justify-end gap-1 border-t pt-2.5" onClick={(e) => e.stopPropagation()}>
+      <div className="flex items-center justify-end gap-1 border-t pt-2" onClick={(e) => e.stopPropagation()}>
         {can('transporter:update') && (
           <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(t)} aria-label="Edit">
             <Pencil className="size-4" />
@@ -155,72 +163,130 @@ export function TransportersPage() {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Transporters</h2>
-          <p className="text-muted-foreground text-sm">{data?.total ?? 0} records</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <ColumnSettings
-            columns={cols.orderedReorderable}
-            hidden={cols.hidden}
-            onReorder={cols.moveBefore}
-            onMove={cols.move}
-            onToggle={cols.toggle}
-            onReset={cols.reset}
-          />
-          {can('transporter:export') && <ExportButton onClick={() => exportTransporters(query)} />}
-          {can('transporter:import') && (
-            <ImportButton onFile={handleImport} pending={importMut.isPending} />
-          )}
-          {can('transporter:create') && (
-            <Button size="sm" onClick={() => setCreating(true)}>
-              <Plus /> New transporter
-            </Button>
-          )}
-        </div>
-      </div>
-
-      <div className="relative max-w-sm">
-        <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
-        <Input
-          placeholder="Search transporter name…"
-          className="pl-9"
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
-        />
-      </div>
-
-      <DataTable
-        columns={cols.visibleColumns}
-        rows={items}
-        rowKey={(t) => t.id}
-        isLoading={isLoading}
-        emptyText="No transporters yet."
-        onRowClick={(t) => can('transporter:update') && setEditing(t)}
-        mobileCard={transporterMobileCard}
-        actions={(t) => (
-          <div className="flex justify-end gap-1">
-            {can('transporter:update') && (
-              <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(t)} aria-label="Edit">
-                <Pencil className="size-4" />
-              </Button>
+    // Fills the viewport: toolbar pinned on top, grid scrolls, footer pinned at
+    // the bottom — same three-band layout as Products/Customers.
+    <div className="flex h-full min-h-0 flex-col gap-2 p-2.5 font-sans sm:gap-2.5 sm:p-3">
+      {/* ── Toolbar: search on the left, actions on the right, one card. */}
+      <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
+        <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
+          <div className="relative w-full sm:w-64">
+            <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
+            <Input
+              placeholder="Search transporter name…"
+              className={cn(CONTROL, 'pl-8 font-medium', searchInput && CONTROL_ON)}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+            />
+          </div>
+          <p className="text-muted-foreground shrink-0 text-[12px] font-medium tabular-nums">
+            <span className="font-bold text-foreground">{(data?.total ?? 0).toLocaleString('en-IN')}</span> record{(data?.total ?? 0) === 1 ? '' : 's'}
+            {isFetching && <Loader2 className="ml-1 inline size-3 animate-spin align-[-2px]" />}
+          </p>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <ColumnSettings
+              columns={cols.orderedReorderable}
+              hidden={cols.hidden}
+              onReorder={cols.moveBefore}
+              onMove={cols.move}
+              onToggle={cols.toggle}
+              onReset={cols.reset}
+            />
+            {can('transporter:export') && <ExportButton onClick={() => exportTransporters(query)} />}
+            {can('transporter:import') && (
+              <ImportButton onFile={handleImport} pending={importMut.isPending} />
             )}
-            {can('transporter:delete') && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-8 text-destructive hover:text-destructive"
-                onClick={() => handleDelete(t)}
-                aria-label="Delete"
-              >
-                <Trash2 className="size-4" />
+            {can('transporter:create') && (
+              <Button size="sm" className="h-9 rounded-[4px] text-[12.5px] font-bold" onClick={() => setCreating(true)}>
+                <Plus /> New transporter
               </Button>
             )}
           </div>
+        </div>
+      </div>
+
+      {/* The grid pans sideways when columns outgrow the screen; slim scrollbars
+          make that discoverable. */}
+      <div
+        className={cn(
+          'flex min-h-0 flex-1 flex-col',
+          '[&_[data-slot=table-container]]:overscroll-x-contain',
+          '[&_[data-slot=table-container]]:[scrollbar-width:thin]',
+          '[&_[data-slot=table-container]]:[scrollbar-color:var(--color-slate-400)_var(--color-slate-100)]',
         )}
-      />
+      >
+        <DataTable
+          columns={cols.visibleColumns}
+          rows={items}
+          rowKey={(t) => t.id}
+          isLoading={isLoading}
+          dense
+          fill
+          hideSortIcon
+          emptyText="No transporters yet."
+          onRowClick={(t) => can('transporter:update') && setEditing(t)}
+          mobileCard={transporterMobileCard}
+          className={[
+            'font-sans text-[13px]',
+            '[&_thead_th]:text-[13.5px] [&_thead_th]:font-extrabold [&_thead_th]:uppercase [&_thead_th]:tracking-wide [&_thead_th]:py-1.5',
+            '[&_thead_th_button]:cursor-pointer',
+            '[&_thead_th:hover]:from-blue-900 [&_thead_th:hover]:to-indigo-900',
+            '[&_td]:py-1 [&_td]:px-3 [&_th]:px-3',
+            '[&_tbody_button:not([role=switch]):not([role=checkbox])]:size-7',
+            '[&_tbody_tr]:border-b [&_tbody_tr]:border-slate-200 dark:[&_tbody_tr]:border-white/10',
+            '[&_td]:border-r [&_td]:border-slate-200 dark:[&_td]:border-white/10 [&_td:last-child]:border-r-0',
+            '[&_tbody_tr:nth-child(even)_td]:bg-slate-100/80 dark:[&_tbody_tr:nth-child(even)_td]:bg-white/[0.04]',
+            '[&_tbody_tr:hover:hover_td]:bg-amber-100/70 dark:[&_tbody_tr:hover:hover_td]:bg-amber-400/10',
+          ].join(' ')}
+          actions={(t) => (
+            <div className="flex justify-end gap-1">
+              {can('transporter:update') && (
+                <Button variant="ghost" size="icon" className="size-7" onClick={() => setEditing(t)} aria-label="Edit">
+                  <Pencil className="size-4" />
+                </Button>
+              )}
+              {can('transporter:delete') && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 text-destructive hover:text-destructive"
+                  onClick={() => handleDelete(t)}
+                  aria-label="Delete"
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              )}
+            </div>
+          )}
+        />
+      </div>
+
+      {/* ── Footer: paging ─────────────────────────────────────────────────────── */}
+      <div className="bg-card flex items-center justify-between rounded-[4px] border px-3 py-2 shadow-sm">
+        <p className="text-muted-foreground text-[12px] font-medium">
+          Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
+          <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
+        </p>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-[4px] font-semibold"
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page <= 1}
+          >
+            <ChevronLeft /> Prev
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-[4px] font-semibold"
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={page >= totalPages}
+          >
+            Next <ChevronRight />
+          </Button>
+        </div>
+      </div>
 
       {(creating || editing) && (
         <TransporterDialog

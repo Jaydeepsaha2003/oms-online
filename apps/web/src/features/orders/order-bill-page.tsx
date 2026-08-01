@@ -7,6 +7,7 @@ import { jsPDF } from 'jspdf';
 import { Button } from '@/components/ui/button';
 import { buildBillFilename, decodeImage, isIOS, preOpenPdfTab, savePdfBlob } from '@/lib/pdf';
 import { shortOrderCode } from '@/lib/utils';
+import { formatDate } from '@/lib/date-format';
 import kavishLogo from '@/assets/kavish-logo-order.png';
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useFitToWidth } from '@/hooks/use-fit-to-width';
@@ -39,7 +40,8 @@ const FALLBACK_FOOTER = ['***THIS IS COMPUTER GENRATED {DOC_TYPE}***'];
 
 // The reference template always prints the raw number (including 0), never blanks it.
 const numf = (v: number | null) => (v ?? 0).toLocaleString('en-IN');
-const fmtDate = (d?: string | null) => (d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
+// Follows the system-wide date format (dd-mm-yy by default).
+const fmtDate = (d?: string | null) => formatDate(d);
 
 const PRINT_CSS = `
 @media print {

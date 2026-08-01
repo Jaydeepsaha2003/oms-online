@@ -2,6 +2,7 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import { Users } from 'lucide-react';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { cn } from '@/lib/utils';
+import { formatDate } from '@/lib/date-format';
 import { RankedBars, ReportCard, ReportHeader, ReportSummary } from './report-kit';
 import { ReportFilterBar, useReportFilters } from './report-filters';
 import { usePartyIntel } from './use-reports';
@@ -27,7 +28,8 @@ const segTone = (s: string) => {
     default: return 'bg-slate-100 text-slate-600 ring-slate-500/20';
   }
 };
-const fmtDate = (d: string | null) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' }) : '—');
+// Follows the system-wide date format (dd-mm-yy by default).
+const fmtDate = (d: string | null) => formatDate(d);
 
 export function PartyIntelPage() {
   const filters = useReportFilters();

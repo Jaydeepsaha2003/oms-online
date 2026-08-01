@@ -124,53 +124,55 @@ export function CustomerTransRates({ customerName }: { customerName: string }) {
   const priced = lines.filter((l) => l.rate.trim() !== '').length;
 
   return (
-    <div className="space-y-4">
-      <div className="max-h-[55vh] overflow-auto rounded-lg border">
-        <Table className="[&_tbody_td]:bg-card [&_tbody_tr:nth-child(even)_td]:bg-slate-50">
+    <div className="space-y-3">
+      <div className="max-h-[55vh] overflow-auto rounded-[4px] border">
+        <Table className="text-[13px] [&_td]:border-r [&_td]:border-slate-200 dark:[&_td]:border-white/10 [&_td:last-child]:border-r-0 [&_tbody_td]:bg-card [&_tbody_tr:nth-child(even)_td]:bg-slate-100/80 dark:[&_tbody_tr:nth-child(even)_td]:bg-white/[0.04]">
           <TableHeader>
-            <TableRow>
-              <TableHead className="sticky top-0 z-10 bg-muted">Category</TableHead>
-              <TableHead className="sticky top-0 z-10 bg-muted">Type</TableHead>
-              <TableHead className="sticky top-0 z-10 bg-muted">Transporter</TableHead>
-              <TableHead className="sticky top-0 z-10 w-36 bg-muted text-right">Rate</TableHead>
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="sticky top-0 z-10 bg-muted text-[11.5px] font-bold tracking-wide uppercase">Category</TableHead>
+              <TableHead className="sticky top-0 z-10 bg-muted text-[11.5px] font-bold tracking-wide uppercase">Type</TableHead>
+              <TableHead className="sticky top-0 z-10 bg-muted text-[11.5px] font-bold tracking-wide uppercase">Transporter</TableHead>
+              <TableHead className="sticky top-0 z-10 w-36 bg-muted text-right text-[11.5px] font-bold tracking-wide uppercase">Rate</TableHead>
               <TableHead className="sticky top-0 z-10 w-12 bg-muted" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {isFetching && lines.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="h-20 text-center text-muted-foreground">
+                <TableCell colSpan={5} className="text-muted-foreground h-20 text-center">
                   <Loader2 className="mx-auto size-5 animate-spin" />
                 </TableCell>
               </TableRow>
             ) : lines.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="h-20 text-center text-muted-foreground">
+                <TableCell colSpan={5} className="text-muted-foreground h-20 text-center text-[13px] font-medium">
                   No category × type combinations yet — use “Add row” below.
                 </TableCell>
               </TableRow>
             ) : (
               lines.map((line) => (
                 <TableRow key={line.key}>
-                  <TableCell className={line.isNew ? '' : 'font-medium'}>
+                  <TableCell className={line.isNew ? '' : 'font-semibold text-slate-800 dark:text-slate-200'}>
                     {line.isNew ? (
                       <Combo
                         value={line.category}
                         onChange={(v) => setField(line.key, { category: v })}
                         options={lookups?.categories ?? []}
                         placeholder="Category"
+                        className="h-8 rounded-[4px] text-[13px]"
                       />
                     ) : (
                       line.category
                     )}
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="font-semibold text-slate-800 dark:text-slate-200">
                     {line.isNew ? (
                       <NativeSelect
                         value={line.type}
                         onChange={(v) => setField(line.key, { type: v })}
                         options={lookups?.types ?? []}
                         placeholder="Type"
+                        className="h-8 rounded-[4px] text-[13px]"
                       />
                     ) : (
                       line.type
@@ -182,6 +184,7 @@ export function CustomerTransRates({ customerName }: { customerName: string }) {
                       onChange={(v) => setField(line.key, { transportName: v })}
                       options={transporterNames}
                       placeholder="Transporter"
+                      className="h-8 rounded-[4px] text-[13px]"
                     />
                   </TableCell>
                   <TableCell>
@@ -190,7 +193,7 @@ export function CustomerTransRates({ customerName }: { customerName: string }) {
                       step="any"
                       inputMode="decimal"
                       placeholder="—"
-                      className="text-right tabular-nums"
+                      className="h-8 rounded-[4px] text-right text-[13px] tabular-nums"
                       value={line.rate}
                       onChange={(e) => setField(line.key, { rate: e.target.value })}
                     />
@@ -200,7 +203,7 @@ export function CustomerTransRates({ customerName }: { customerName: string }) {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="size-8 text-destructive hover:text-destructive"
+                        className="size-7 text-destructive hover:text-destructive"
                         onClick={() => removeLine(line)}
                         aria-label="Remove"
                       >
@@ -217,15 +220,15 @@ export function CustomerTransRates({ customerName }: { customerName: string }) {
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Button variant="outline" size="sm" onClick={addRow}>
+          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={addRow}>
             <Plus /> Add row
           </Button>
-          <p className="text-muted-foreground text-sm">
-            <span className="text-foreground font-medium tabular-nums">{priced}</span> of {lines.length} priced
+          <p className="text-muted-foreground text-[12px] font-medium">
+            <span className="text-foreground font-bold tabular-nums">{priced}</span> of {lines.length} priced
           </p>
         </div>
         {can('transrate:update') && (
-          <Button onClick={save} disabled={bulk.isPending}>
+          <Button className="h-9 rounded-[4px] text-[12.5px] font-bold" onClick={save} disabled={bulk.isPending}>
             {bulk.isPending ? <Loader2 className="animate-spin" /> : <Save />} Save all
           </Button>
         )}

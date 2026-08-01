@@ -89,6 +89,7 @@ export function DataTable<T>({
   rows,
   rowKey,
   onRowClick,
+  rowClassName,
   actions,
   isLoading,
   emptyText = 'No records found.',
@@ -96,9 +97,11 @@ export function DataTable<T>({
   // and the page itself scrolls. Pass this only where a table needs its own
   // internal scroll region (e.g. a long picklist inside a fixed-height panel).
   maxBodyHeight,
+  fill,
   dense,
   hideRowView,
   hideIdleSortIcon,
+  hideSortIcon,
   className,
   mobileCard,
 }: {
@@ -106,12 +109,23 @@ export function DataTable<T>({
   rows: T[];
   rowKey: (row: T) => Key;
   onRowClick?: (row: T) => void;
+  /** Per-row classes, for state-driven row styling (selected / de-emphasised).
+   *  Tint the row via its cells — e.g. `'[&>td]:bg-sky-50'` — because the default
+   *  zebra/hover rules also paint the `td`, not the `tr`. Pinned cells set their
+   *  own background inline and are not affected. */
+  rowClassName?: (row: T) => string | undefined;
   /** Renders the content of the sticky actions cell; omit for no actions column. */
   actions?: (row: T) => ReactNode;
   isLoading?: boolean;
   emptyText?: string;
   /** Cap the table height (e.g. 'max-h-[40vh]') so rows scroll inside, header sticks. */
   maxBodyHeight?: string;
+  /** Stretch to fill a flex-column parent's remaining height instead of capping at
+   *  a max height — for full-screen pages where the table body is the page's only
+   *  scroll region and the toolbar/footer stay pinned. The wrapper becomes a flex
+   *  column so the scroll area (table on `sm+`, card list on phones) takes the
+   *  leftover space. Ignored when `maxBodyHeight` is given. */
+  fill?: boolean;
   /** Compact padding so columns auto-fit their content and more fit on screen. */
   dense?: boolean;
   /** Suppress the automatic "view" icon shown when rows are clickable (e.g. when
@@ -121,6 +135,9 @@ export function DataTable<T>({
    *  header). Headers then show no icon until clicked; the active column shows a
    *  single up/down arrow reflecting its sort direction. */
   hideIdleSortIcon?: boolean;
+  /** Hide the sort indicator entirely — no idle chevron and no active arrow.
+   *  Headers stay clickable and still sort; there's just no icon. */
+  hideSortIcon?: boolean;
   /** Extra classes merged onto the table (e.g. bump the data font). twMerge lets
    *  a font-size / padding utility here override the dense/comfortable defaults. */
   className?: string;
@@ -138,7 +155,7 @@ export function DataTable<T>({
   // the table — the header stays put and the horizontal scrollbar sits at the
   // bottom of the visible table instead of far below the fold. Short tables are
   // unaffected (max-h only caps). Pages can override or opt out via maxBodyHeight.
-  const bodyMax = maxBodyHeight ?? 'max-h-[calc(100dvh_-_13rem)]';
+  const bodyMax = maxBodyHeight ?? (fill ? 'min-h-0 flex-1' : 'max-h-[calc(100dvh_-_13rem)]');
   const stickyTop = true;
 
   // Client-side sorting for any column that supplies `sortValue`. Cycles a column
@@ -178,6 +195,7 @@ export function DataTable<T>({
         mobileCard
           ? 'overflow-visible border-0 bg-transparent shadow-none sm:overflow-hidden sm:border sm:bg-card sm:shadow-sm'
           : 'overflow-hidden border bg-card shadow-sm',
+        fill && 'flex min-h-0 flex-1 flex-col',
       )}
     >
       <Table
@@ -187,7 +205,10 @@ export function DataTable<T>({
           '[&_td]:border-r [&_td]:border-border/60 [&_th]:border-r [&_thead_th]:border-white/25',
           // Brand blue→indigo gradient, bold, uppercase header with white text on every page.
           '[&_thead_th]:bg-gradient-to-b [&_thead_th]:from-blue-800 [&_thead_th]:to-indigo-800 [&_thead_th]:text-white [&_thead_th]:font-bold [&_thead_th]:uppercase [&_thead_th]:tracking-wider',
-          '[&_tbody_td]:bg-card [&_tbody_tr:nth-child(even)_td]:bg-slate-50 [&_tbody_tr:hover_td]:bg-muted',
+          // Zebra + hover. `bg-slate-50` is a flat light grey that wouldn't adapt on
+          // its own (it's applied to the td, not reachable by the global remap), so a
+          // dark variant is spelled out; `bg-card`/`bg-muted` are semantic and flip.
+          '[&_tbody_td]:bg-card [&_tbody_tr:nth-child(even)_td]:bg-slate-50 dark:[&_tbody_tr:nth-child(even)_td]:bg-white/[0.03] [&_tbody_tr:hover_td]:bg-muted',
           dense
             ? // Compact: tight padding so columns shrink to their content and the
               // most columns possible stay on screen. Heights are auto (padding-based).
@@ -227,7 +248,7 @@ export function DataTable<T>({
                     title="Sort"
                   >
                     {col.header ?? col.label}
-                    {sort?.id === col.id ? (
+                    {hideSortIcon ? null : sort?.id === col.id ? (
                       sort.dir === 'asc' ? <ArrowUp className="size-3.5" /> : <ArrowDown className="size-3.5" />
                     ) : hideIdleSortIcon ? null : (
                       <ChevronsUpDown className="size-3 opacity-40 group-hover/sort:opacity-70" />
@@ -264,7 +285,7 @@ export function DataTable<T>({
               return (
                 <TableRow
                   key={rowKey(row)}
-                  className={cn('group', onRowClick && 'cursor-pointer')}
+                  className={cn('group', onRowClick && 'cursor-pointer', rowClassName?.(row))}
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
                 >
                   {columns.map((col) =>
@@ -314,7 +335,7 @@ export function DataTable<T>({
       </Table>
 
       {mobileCard && (
-        <div className="sm:hidden">
+        <div className={cn('sm:hidden', fill && 'min-h-0 flex-1 overflow-y-auto')}>
           {isLoading ? (
             <div className="text-muted-foreground flex h-24 items-center justify-center rounded-lg border bg-card">
               <Loader2 className="size-5 animate-spin" />

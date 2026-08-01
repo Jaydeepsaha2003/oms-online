@@ -50,6 +50,7 @@ import { UploadsModule } from './uploads/uploads.module';
 import { AccessImportModule } from './access-import/access-import.module'; // MS Access connector — Access stays a live parallel data source
 import { SettingsModule } from './settings/settings.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { BackupModule } from './backup/backup.module';
 
 @Module({
   imports: [
@@ -106,6 +107,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 
     SettingsModule,
     NotificationsModule,
+    BackupModule,
   ],
   controllers: [AppController],
   providers: [

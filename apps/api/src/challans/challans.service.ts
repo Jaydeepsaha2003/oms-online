@@ -7,10 +7,13 @@ import {
   type ChallanDraftItem,
   type ChallanDto,
   type ChallanItemHistoryRow,
+  type ChallanSummary,
   type Paginated,
+  type PendingChallanFilterOptions,
   type PendingChallanLine,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { formatDate } from '../common/date.util';
 import { PdfService } from '../pdf/pdf.service';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
 import { CreateChallanDto, DraftChallanDto, ItemHistoryQueryDto, PendingChallanQueryDto, ChallanQueryDto } from './dto/challan.dto';
@@ -38,12 +41,29 @@ export class ChallansService {
     "d.id NOT IN (SELECT ci.dispatchId FROM challan_items ci JOIN challans c ON c.id = ci.challanId WHERE ci.dispatchId IS NOT NULL AND c.challanStatus <> 'CANCELLED')";
 
   /** Build the WHERE clause (+ bound params) for the pending-dispatch raw queries. */
-  private pendingWhere(q: { customerName?: string; dateFrom?: string; dateTo?: string; search?: string }): { clause: string; params: unknown[] } {
+  private pendingWhere(q: {
+    customerName?: string;
+    productName?: string;
+    design?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    search?: string;
+  }): { clause: string; params: unknown[] } {
     const clauses = [ChallansService.NOT_CHALLANED];
     const params: unknown[] = [];
     if (q.customerName?.trim()) {
       clauses.push('d.customerName = ?');
       params.push(q.customerName.trim());
+    }
+    // Exact match, like customerName: these come from the filter bar's dropdowns,
+    // which are themselves built from the distinct values on pending lines.
+    if (q.productName?.trim()) {
+      clauses.push('d.productName = ?');
+      params.push(q.productName.trim());
+    }
+    if (q.design?.trim()) {
+      clauses.push('d.designType = ?');
+      params.push(q.design.trim());
     }
     if (q.dateFrom) {
       const f = new Date(q.dateFrom);
@@ -106,6 +126,28 @@ export class ChallansService {
       pageSize: q.pageSize,
       totalPages: Math.max(1, Math.ceil(total / q.pageSize)),
     };
+  }
+
+  /**
+   * Dropdown options for the Pending Challan filter bar: the distinct customers,
+   * products and designs that still have un-challaned dispatch lines. Built from
+   * the same NOT_CHALLANED pool as the list itself, so every option returns rows.
+   */
+  async pendingFilterOptions(): Promise<PendingChallanFilterOptions> {
+    const { clause, params } = this.pendingWhere({});
+    const distinct = async (column: string): Promise<string[]> => {
+      const rows = await this.prisma.$queryRawUnsafe<{ v: string | null }[]>(
+        `SELECT DISTINCT ${column} AS v FROM dispatches d WHERE ${clause} AND ${column} IS NOT NULL AND TRIM(${column}) <> '' ORDER BY v ASC LIMIT 1000`,
+        ...params,
+      );
+      return rows.map((r) => r.v).filter((v): v is string => !!v);
+    };
+    const [customers, products, designs] = await Promise.all([
+      distinct('d.customerName'),
+      distinct('d.productName'),
+      distinct('d.designType'),
+    ]);
+    return { customers, products, designs };
   }
 
   /** Distinct parties that still have un-challaned dispatch lines (standalone Create Challan picker). */
@@ -297,15 +339,29 @@ export class ChallansService {
   }
 
   /** KPI roll-up over the same filters as the list (ViewChallan KPI cards). */
-  async summary(q: ChallanQueryDto): Promise<{ count: number; totalSales: number; totalB: number; totalC: number; totalTds: number }> {
+  async summary(q: ChallanQueryDto): Promise<ChallanSummary> {
     const where = this.listWhere(q);
-    const agg = await this.prisma.challan.aggregate({ where, _count: { _all: true }, _sum: { total: true, b: true, c: true, tds: true } });
+    // Aggregate over the whole filtered set (listWhere is filter-only — no
+    // pagination), so the KPI rail reflects every matching challan, not the page.
+    const [agg, byStatus] = await Promise.all([
+      this.prisma.challan.aggregate({
+        where,
+        _count: { _all: true },
+        _sum: { total: true, b: true, c: true, tax: true, tds: true },
+      }),
+      this.prisma.challan.groupBy({ by: ['challanStatus'], where, _count: { _all: true } }),
+    ]);
+    const confirmed = byStatus.find((g) => g.challanStatus === 'CONFIRMED')?._count._all ?? 0;
     return {
       count: agg._count._all,
       totalSales: agg._sum.total ?? 0,
       totalB: agg._sum.b ?? 0,
       totalC: agg._sum.c ?? 0,
+      totalTax: agg._sum.tax ?? 0,
       totalTds: agg._sum.tds ?? 0,
+      confirmed,
+      // Anything not CONFIRMED (CANCELLED, plus any legacy state) counts as cancelled.
+      cancelled: agg._count._all - confirmed,
     };
   }
 
@@ -891,7 +947,7 @@ export class ChallansService {
     const GREY = '#555555';
     const q = (v?: number | null) => (v ? v.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '-');
     const money = (v?: number | null) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
-    const d = (s?: string | null) => (s ? new Date(s).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
+    const d = (s?: string | null) => formatDate(s);
 
     const tcs = n(c.tcs);
     const tds = n(c.tds);
@@ -1103,7 +1159,7 @@ export class ChallansService {
     const q = (v?: number | null) => (v ? v.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '-');
     const qTotal = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
     const money = (v?: number | null) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
-    const d = (s?: string | null) => (s ? new Date(s).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\//g, '-') : '—');
+    const d = (s?: string | null) => formatDate(s);
 
     const tcs = n(c.tcs);
     const tds = n(c.tds);

@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { type ChequeDto, type ChequeStatus, type ChequeSummary, type Paginated } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { formatDate } from '../common/date.util';
 import { ChequeQueryDto, CreateChequeDto, DepositChequeDto, SettleChequeDto, UpdateChequeDto } from './dto/cheque.dto';
 
 type Row = Prisma.ChequeGetPayload<object>;
@@ -13,7 +14,7 @@ function parseDate(s: string, field: string): Date {
   d.setHours(0, 0, 0, 0);
   return d;
 }
-const fmt = (d: Date) => d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+const fmt = (d: Date) => formatDate(d);
 
 @Injectable()
 export class ChequesService {

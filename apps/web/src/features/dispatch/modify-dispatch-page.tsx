@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Loader2, Pencil, Search, Trash2 } from 'luci
 import { toast } from 'sonner';
 import { DISPATCH_STATUSES, RESOURCES, type DispatchDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
-import { cn, shortOrderCode } from '@/lib/utils';
+import { cn, shortDispatchCode, shortOrderCode } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useColumnOrder } from '@/hooks/use-column-order';
@@ -23,26 +23,41 @@ const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? 0 : Num
 const qty = (v: number | null) => (v ? v.toLocaleString('en-IN') : '—');
 
 const STATUS_STYLE: Record<string, string> = {
-  'PARTIALLY DISPATCH': 'bg-amber-50 text-amber-700 ring-amber-200',
-  'FULLY DISPATCH': 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+  'PARTIALLY DISPATCH': 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/25',
+  'FULLY DISPATCH': 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/25',
 };
+const STATUS_DOT: Record<string, string> = {
+  'PARTIALLY DISPATCH': 'bg-amber-500',
+  'FULLY DISPATCH': 'bg-emerald-500',
+};
+/** A status pill with a coloured dot — carries the state alongside the word. */
 const StatusBadge = ({ s }: { s: string }) => (
-  <span className={cn('inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset', STATUS_STYLE[s] ?? 'bg-muted')}>{s}</span>
+  <span className={cn('inline-flex items-center gap-1.5 rounded-[4px] px-1.5 py-0.5 text-[11.5px] font-bold ring-1 ring-inset', STATUS_STYLE[s] ?? 'bg-muted text-muted-foreground ring-border')}>
+    <span className={cn('size-1.5 shrink-0 rounded-full', STATUS_DOT[s] ?? 'bg-slate-400')} />
+    {s}
+  </span>
 );
 
+/** Matches the Pending Challan / Challans / Orders grids: Inter, semibold, near-black. */
+const TEXT_CELL = 'text-[13px] font-semibold text-slate-800 dark:text-slate-200';
+/** Compact, amber-bordered filter controls — same language as the other list pages. */
+const CONTROL =
+  'h-9 rounded-[4px] border-amber-300 dark:border-amber-400/40 text-[12.5px] focus-visible:border-amber-500 focus-visible:ring-amber-400/30';
+const CONTROL_ON = 'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
+
 const COLUMNS: DataColumn<DispatchDto>[] = [
-  { id: 'code', label: 'DIS#', pin: 'left0', fixed: true, cell: (d) => <span className="font-mono text-xs font-medium">{d.code ?? `#${d.id}`}</span> },
-  { id: 'date', label: 'Date', cell: (d) => <span className="whitespace-nowrap">{formatDate(d.dispatchDate)}</span> },
-  { id: 'order', label: 'ORD#', cell: (d) => <span className="font-mono text-xs">{shortOrderCode(d.orderCode, d.orderId)}</span> },
-  { id: 'customer', label: 'Customer', cell: (d) => <span className="font-medium">{d.customerName}</span> },
-  { id: 'product', label: 'Product', cell: (d) => <span className="font-medium">{d.productName || d.product || '—'}</span> },
-  { id: 'design', label: 'Design', cell: (d) => d.designType || '—' },
-  { id: 'bags', label: 'Bags', align: 'right', cell: (d) => <span className="tabular-nums">{qty(d.bags)}</span> },
-  { id: 'pcs', label: 'Pcs', align: 'right', cell: (d) => <span className="tabular-nums">{qty(d.pcs)}</span> },
-  { id: 'kgs', label: 'Kgs', align: 'right', cell: (d) => <span className="tabular-nums">{qty(d.gram)}</span> },
-  { id: 'box', label: 'Box', align: 'right', cell: (d) => <span className="tabular-nums">{qty(d.box)}</span> },
+  { id: 'code', label: 'DIS#', pin: 'left0', pinWidthClass: 'sm:w-16 sm:min-w-16', fixed: true, cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums text-indigo-700 dark:text-indigo-300')}>{shortDispatchCode(d.code, d.id)}</span> },
+  { id: 'date', label: 'Date', cell: (d) => <span className={cn(TEXT_CELL, 'whitespace-nowrap tabular-nums')}>{formatDate(d.dispatchDate)}</span> },
+  { id: 'order', label: 'ORD#', cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{shortOrderCode(d.orderCode, d.orderId)}</span> },
+  { id: 'customer', label: 'Customer', cell: (d) => <span className={TEXT_CELL}>{d.customerName}</span> },
+  { id: 'product', label: 'Product', cell: (d) => <span className={TEXT_CELL}>{d.productName || d.product || '—'}</span> },
+  { id: 'design', label: 'Design', cell: (d) => <span className={TEXT_CELL}>{d.designType || '—'}</span> },
+  { id: 'bags', label: 'Bags', align: 'right', cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(d.bags)}</span> },
+  { id: 'pcs', label: 'Pcs', align: 'right', cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(d.pcs)}</span> },
+  { id: 'kgs', label: 'Kgs', align: 'right', cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(d.gram)}</span> },
+  { id: 'box', label: 'Box', align: 'right', cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(d.box)}</span> },
   { id: 'status', label: 'Status', cell: (d) => <StatusBadge s={d.dispatchStatus} /> },
-  { id: 'remarks', label: 'Remarks', cell: (d) => <span className="text-muted-foreground">{d.comment || '—'}</span> },
+  { id: 'remarks', label: 'Remarks', cell: (d) => <span className="text-muted-foreground text-[13px] font-medium">{d.comment || '—'}</span> },
 ];
 
 const money = (v: number | null) => (v == null ? '—' : `₹${v.toLocaleString('en-IN')}`);
@@ -50,16 +65,16 @@ const money = (v: number | null) => (v == null ? '—' : `₹${v.toLocaleString(
 /** Rate columns, shown only with `dispatch:viewrates`. Amount = rate × the
  *  dispatched quantity (pcs or kgs, per the line's calc field). */
 const RATE_COLUMNS: DataColumn<DispatchDto>[] = [
-  { id: 'productRate', label: 'Product ₹', align: 'right', cell: (d) => <span className="tabular-nums">{money(d.productRate)}</span> },
-  { id: 'designRate', label: 'Design ₹', align: 'right', cell: (d) => <span className="tabular-nums">{money(d.designRate)}</span> },
-  { id: 'rate', label: 'Rate ₹', align: 'right', cell: (d) => <span className="font-semibold tabular-nums">{money(d.rate)}</span> },
+  { id: 'productRate', label: 'Product ₹', align: 'right', cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(d.productRate)}</span> },
+  { id: 'designRate', label: 'Design ₹', align: 'right', cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(d.designRate)}</span> },
+  { id: 'rate', label: 'Rate ₹', align: 'right', cell: (d) => <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(d.rate)}</span> },
   {
     id: 'amount',
     label: 'Amount ₹',
     align: 'right',
     cell: (d) => {
       const q = (d.calField ?? '').toUpperCase() === 'PCS' ? d.pcs : d.gram;
-      return <span className="tabular-nums">{money(d.rate != null && q != null ? Math.round(d.rate * q) : null)}</span>;
+      return <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(d.rate != null && q != null ? Math.round(d.rate * q) : null)}</span>;
     },
   },
 ];
@@ -103,7 +118,7 @@ function ModifyDispatchCard({
       <div className="space-y-2.5 p-3.5 text-[13px]">
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="bg-primary/10 text-primary rounded-md px-2 py-0.5 font-mono text-[13px] font-bold">{d.code ?? `#${d.id}`}</span>
+            <span className="bg-primary/10 text-primary rounded-md px-2 py-0.5 font-mono text-[13px] font-bold">{shortDispatchCode(d.code, d.id)}</span>
             <span className="text-muted-foreground font-mono text-[12px]">{shortOrderCode(d.orderCode, d.orderId)}</span>
           </div>
           <StatusBadge s={d.dispatchStatus} />
@@ -225,98 +240,137 @@ export function ModifyDispatchPage() {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
-        <div className="relative col-span-2 sm:w-64">
-          <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
-          <Input placeholder="Search #, customer, item, design or remark…" className="pl-9" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
+    // Fills the viewport: toolbar pinned on top, footer pinned at the bottom, only
+    // the list scrolls. `/dispatch` is a flush route (app-shell), so the page owns
+    // its own padding. Mobile keeps its own tap-to-edit card list untouched.
+    <div className="flex h-full min-h-0 flex-col gap-2 p-2.5 font-sans sm:gap-2.5 sm:p-3">
+      {/* ── Toolbar: search + filters, then column settings — one card. */}
+      <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
+        <div className="grid grid-cols-2 gap-2 p-2.5 sm:flex sm:flex-wrap sm:items-center sm:gap-2.5 sm:p-3">
+          <div className="relative col-span-2 sm:w-56">
+            <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
+            <Input
+              placeholder="Search #, customer, item, design or remark…"
+              className={cn(CONTROL, 'pl-8 font-medium', searchInput && CONTROL_ON)}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+            />
+          </div>
+          <div className="sm:w-40">
+            <NativeSelect value={productFilter} onChange={(v) => { setProductFilter(v); setPage(1); }} options={['', ...(options?.products ?? [])]} placeholder="All items" className={cn(CONTROL, 'font-medium', productFilter && CONTROL_ON)} />
+          </div>
+          <div className="sm:w-40">
+            <NativeSelect value={customerFilter} onChange={(v) => { setCustomerFilter(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="All customers" className={cn(CONTROL, 'font-medium', customerFilter && CONTROL_ON)} />
+          </div>
+          <div className="sm:w-36">
+            <NativeSelect value={agentFilter} onChange={(v) => { setAgentFilter(v); setPage(1); }} options={['', ...(options?.agents ?? [])]} placeholder="All agents" className={cn(CONTROL, 'font-medium', agentFilter && CONTROL_ON)} />
+          </div>
+          <div className="sm:w-36">
+            <NativeSelect value={designFilter} onChange={(v) => { setDesignFilter(v); setPage(1); }} options={['', ...(options?.designs ?? [])]} placeholder="All designs" className={cn(CONTROL, 'font-medium', designFilter && CONTROL_ON)} />
+          </div>
+          <div className="sm:w-36">
+            <NativeSelect value={statusFilter} onChange={(v) => { setStatusFilter(v); setPage(1); }} options={['', ...DISPATCH_STATUSES]} placeholder="All statuses" className={cn(CONTROL, 'font-medium', statusFilter && CONTROL_ON)} />
+          </div>
+          <div className="col-span-2 ml-auto sm:col-span-1">
+            <ColumnSettings
+              columns={cols.orderedReorderable}
+              hidden={cols.hidden}
+              onReorder={cols.moveBefore}
+              onMove={cols.move}
+              onToggle={cols.toggle}
+              onReset={cols.reset}
+              dateFormat={{ value: format, options: DATE_FORMATS, onChange: setFormat }}
+            />
+          </div>
         </div>
-        <div className="sm:w-44">
-          <NativeSelect value={productFilter} onChange={(v) => { setProductFilter(v); setPage(1); }} options={['', ...(options?.products ?? [])]} placeholder="All items" />
-        </div>
-        <div className="sm:w-44">
-          <NativeSelect value={customerFilter} onChange={(v) => { setCustomerFilter(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="All customers" />
-        </div>
-        <div className="sm:w-40">
-          <NativeSelect value={agentFilter} onChange={(v) => { setAgentFilter(v); setPage(1); }} options={['', ...(options?.agents ?? [])]} placeholder="All agents" />
-        </div>
-        <div className="sm:w-40">
-          <NativeSelect value={designFilter} onChange={(v) => { setDesignFilter(v); setPage(1); }} options={['', ...(options?.designs ?? [])]} placeholder="All designs" />
-        </div>
-        <div className="sm:w-40">
-          <NativeSelect value={statusFilter} onChange={(v) => { setStatusFilter(v); setPage(1); }} options={['', ...DISPATCH_STATUSES]} placeholder="All statuses" />
-        </div>
-        <div className="col-span-2 ml-auto sm:col-span-1">
-          <ColumnSettings
-            columns={cols.orderedReorderable}
-            hidden={cols.hidden}
-            onReorder={cols.moveBefore}
-            onMove={cols.move}
-            onToggle={cols.toggle}
-            onReset={cols.reset}
-            dateFormat={{ value: format, options: DATE_FORMATS, onChange: setFormat }}
+      </div>
+
+      {/* One scroll region holds BOTH branches — the desktop table renders at its
+          natural height (no `fill`), it's just this wrapper that scrolls now. */}
+      <div
+        className={cn(
+          'flex min-h-0 flex-1 flex-col overflow-y-auto',
+          '[&_[data-slot=table-container]]:overscroll-x-contain',
+          '[&_[data-slot=table-container]]:[scrollbar-width:thin]',
+          '[&_[data-slot=table-container]]:[scrollbar-color:var(--color-slate-400)_var(--color-slate-100)]',
+        )}
+      >
+        {/* Desktop: the data table. */}
+        <div className="hidden sm:block">
+          <DataTable
+            columns={cols.visibleColumns}
+            rows={items}
+            rowKey={(d) => d.id}
+            isLoading={isLoading}
+            dense
+            hideSortIcon
+            emptyText="No dispatch records yet."
+            onRowClick={(d) => can('dispatch:update') && setEditing(d)}
+            className={[
+              'font-sans text-[13px]',
+              '[&_thead_th]:text-[13.5px] [&_thead_th]:font-extrabold [&_thead_th]:uppercase [&_thead_th]:tracking-wide [&_thead_th]:py-1.5',
+              '[&_thead_th_button]:cursor-pointer',
+              '[&_thead_th:hover]:from-blue-900 [&_thead_th:hover]:to-indigo-900',
+              '[&_td]:py-1 [&_td]:px-3 [&_th]:px-3',
+              '[&_tbody_button:not([role=switch]):not([role=checkbox])]:size-7',
+              '[&_tbody_tr]:border-b [&_tbody_tr]:border-slate-200 dark:[&_tbody_tr]:border-white/10',
+              '[&_td]:border-r [&_td]:border-slate-200 dark:[&_td]:border-white/10 [&_td:last-child]:border-r-0',
+              '[&_tbody_tr:nth-child(even)_td]:bg-slate-100/80 dark:[&_tbody_tr:nth-child(even)_td]:bg-white/[0.04]',
+              '[&_tbody_tr:hover:hover_td]:bg-amber-100/70 dark:[&_tbody_tr:hover:hover_td]:bg-amber-400/10',
+            ].join(' ')}
+            actions={(d) => (
+              <div className="flex justify-end gap-1">
+                <RecordHistory resource={RESOURCES.DISPATCH} resourceId={d.id} label={d.code ?? `#${d.id}`} />
+                {can('dispatch:update') && (
+                  <Button variant="ghost" size="icon" className="size-7" onClick={() => setEditing(d)} aria-label="Edit" title="Edit">
+                    <Pencil className="size-4" />
+                  </Button>
+                )}
+                {can('dispatch:delete') && (
+                  <Button variant="ghost" size="icon" className="size-7 text-destructive hover:text-destructive" onClick={() => handleDelete(d)} aria-label="Delete" title="Delete">
+                    <Trash2 className="size-4" />
+                  </Button>
+                )}
+              </div>
+            )}
           />
         </div>
-      </div>
 
-      {/* Desktop: the data table. */}
-      <div className="hidden sm:block">
-        <DataTable
-          columns={cols.visibleColumns}
-          rows={items}
-          rowKey={(d) => d.id}
-          isLoading={isLoading}
-          dense
-          emptyText="No dispatch records yet."
-          onRowClick={(d) => can('dispatch:update') && setEditing(d)}
-          actions={(d) => (
-            <div className="flex justify-end gap-1">
-              <RecordHistory resource={RESOURCES.DISPATCH} resourceId={d.id} label={d.code ?? `#${d.id}`} />
-              {can('dispatch:update') && (
-                <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(d)} aria-label="Edit" title="Edit">
-                  <Pencil className="size-4" />
-                </Button>
-              )}
-              {can('dispatch:delete') && (
-                <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => handleDelete(d)} aria-label="Delete" title="Delete">
-                  <Trash2 className="size-4" />
-                </Button>
-              )}
-            </div>
+        {/* Phones: card list mirroring the dispatch-order cards — untouched. */}
+        <div className="space-y-3 sm:hidden">
+          <style>{MODIFY_CARD_CSS}</style>
+          {isLoading ? (
+            [0, 1, 2, 3].map((i) => <div key={i} className="bg-muted/40 h-44 animate-pulse rounded-2xl border" />)
+          ) : items.length === 0 ? (
+            <div className="text-muted-foreground rounded-2xl border border-dashed bg-card px-4 py-12 text-center text-sm">No dispatch records yet.</div>
+          ) : (
+            items.map((d, i) => (
+              <ModifyDispatchCard
+                key={d.id}
+                d={d}
+                index={i}
+                canEdit={can('dispatch:update')}
+                canDelete={can('dispatch:delete')}
+                showRates={canViewRates}
+                onEdit={() => setEditing(d)}
+                onDelete={() => handleDelete(d)}
+              />
+            ))
           )}
-        />
+        </div>
       </div>
 
-      {/* Phones: card list mirroring the dispatch-order cards. */}
-      <div className="space-y-3 sm:hidden">
-        <style>{MODIFY_CARD_CSS}</style>
-        {isLoading ? (
-          [0, 1, 2, 3].map((i) => <div key={i} className="bg-muted/40 h-44 animate-pulse rounded-2xl border" />)
-        ) : items.length === 0 ? (
-          <div className="text-muted-foreground rounded-2xl border border-dashed bg-card px-4 py-12 text-center text-sm">No dispatch records yet.</div>
-        ) : (
-          items.map((d, i) => (
-            <ModifyDispatchCard
-              key={d.id}
-              d={d}
-              index={i}
-              canEdit={can('dispatch:update')}
-              canDelete={can('dispatch:delete')}
-              showRates={canViewRates}
-              onEdit={() => setEditing(d)}
-              onDelete={() => handleDelete(d)}
-            />
-          ))
-        )}
-      </div>
-
-      <div className="flex items-center justify-between">
-        <p className="text-muted-foreground text-sm">Page {data?.page ?? page} of {totalPages}</p>
+      {/* ── Footer: paging ─────────────────────────────────────────────────────── */}
+      <div className="bg-card flex items-center justify-between rounded-[4px] border px-3 py-2 shadow-sm">
+        <p className="text-muted-foreground text-[12px] font-medium">
+          Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
+          <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
+        </p>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
             <ChevronLeft /> Prev
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
             Next <ChevronRight />
           </Button>
         </div>

@@ -32,6 +32,7 @@ import {
   type PendingChallanLine,
 } from '@oms/shared';
 import { cn } from '@/lib/utils';
+import { formatDate } from '@/lib/date-format';
 import { useConfirm } from '@/components/common/confirm';
 import { RecordHistory } from '@/components/common/record-history';
 import { NativeSelect } from '@/components/common/combo';
@@ -638,100 +639,103 @@ export function ChallanFormPage() {
       {/* Invoice paper — grows with its content (header, full item list, charges,
           totals) so nothing is capped; the page scrolls if it runs long. */}
       <div className="bg-card flex flex-col overflow-hidden rounded-md border shadow-sm">
-        {/* Header: Bill-to + invoice meta (compact colourful banner) */}
-        <div className="from-primary/[0.08] shrink-0 border-b bg-gradient-to-r via-sky-50/50 to-transparent px-3 py-2 sm:px-4 sm:py-2.5">
-          <div className="grid grid-cols-2 items-start gap-x-3 gap-y-2 sm:gap-x-6 sm:gap-y-2.5 lg:grid-cols-6">
-            {/* Bill To — spans two columns; the four meta fields align in the same row.
-                Phones run the same 2-col grid so the meta fields pair up neatly. */}
+        {/* Header: Bill-to party block + a bordered document-info panel. */}
+        <div className="from-primary/[0.06] dark:from-primary/[0.12] shrink-0 border-b bg-gradient-to-br via-transparent to-sky-50/40 px-3 py-2.5 sm:px-4 dark:to-sky-500/[0.05]">
+          <div className="flex flex-col gap-2.5 lg:flex-row lg:items-stretch lg:gap-4">
+            {/* Bill To — the party, anchored by a brand accent bar on its left. */}
             <div
-              className="bg-background/60 col-span-2 min-w-0 touch-pan-y space-y-1 rounded-lg border border-border/50 px-2.5 py-2 sm:border-0 sm:bg-transparent sm:p-0"
+              className="bg-background/50 min-w-0 flex-1 touch-pan-y space-y-1 rounded-md border border-l-[3px] border-border/50 border-l-primary/50 px-3 py-2 dark:bg-white/[0.03]"
               onTouchStart={onBillToTouchStart}
               onTouchEnd={onBillToTouchEnd}
             >
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-primary/70 flex items-center gap-1.5 text-sm font-semibold tracking-wide uppercase">
-                  <UserSearch className="size-4" /> Bill To
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-primary/70 flex items-center gap-1 text-[10px] font-bold tracking-widest uppercase">
+                  <UserSearch className="size-3.5" /> Bill To
                 </span>
-                {draft?.category && <span className="rounded bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-700">{draft.category}</span>}
-                {draft?.tdsApplicable && <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">TDS {draft.tdsPercent ?? 0}%</span>}
-                {draft?.isScrap && <span className="rounded bg-purple-100 px-2 py-0.5 text-xs font-semibold text-purple-700">SCRAP · 1% TCS</span>}
+                {draft?.category && <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-700 dark:bg-sky-500/15 dark:text-sky-300">{draft.category}</span>}
+                {draft?.tdsApplicable && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">TDS {draft.tdsPercent ?? 0}%</span>}
+                {draft?.isScrap && <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-bold text-purple-700 dark:bg-purple-500/15 dark:text-purple-300">SCRAP · 1% TCS</span>}
               </div>
               {/* Customer is chosen in the top header now — shown here read-only so
                   the invoice still reads its bill-to. */}
-              {draft && <div className="text-xl font-bold tracking-tight">{isEdit ? savedChallan?.customerName : draft.customerName}</div>}
-              {draft && <p className="text-muted-foreground max-w-md truncate text-sm">{(isEdit ? savedChallan?.billingAddress : draft.billingAddress) || '—'}</p>}
+              {draft && <div className="text-base leading-tight font-bold tracking-tight text-slate-900 sm:text-lg dark:text-slate-100">{isEdit ? savedChallan?.customerName : draft.customerName}</div>}
+              {draft && <p className="text-muted-foreground truncate text-[12px]">{(isEdit ? savedChallan?.billingAddress : draft.billingAddress) || '—'}</p>}
               {draft && available.length > 0 && (
-                <div className="text-primary bg-primary/10 mt-1 inline-flex animate-pulse items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium sm:hidden">
+                <div className="text-primary bg-primary/10 mt-1 inline-flex animate-pulse items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium lg:hidden">
                   <ArrowLeftRight className="size-3" /> Swipe here to add all {available.length} pending item{available.length === 1 ? '' : 's'}
+                </div>
+              )}
+
+              {/* Settlement — B/C Amount (pencil to override) + No Bill, on the party card. */}
+              {draft && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border/50 pt-1.5">
+                  <EditableAmount label="B Amount" computed={totals.b} manual={manualB} onManual={setManualB} />
+                  <EditableAmount label="C Amount" computed={totals.c} manual={manualC} onManual={setManualC} />
+                  <label
+                    className={cn(
+                      'ml-auto flex cursor-pointer items-center gap-1.5 rounded-[4px] px-2 py-1 text-[13px] font-semibold transition-colors select-none',
+                      noBill ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted/60',
+                    )}
+                    title="Bill without a tax invoice"
+                  >
+                    <input type="checkbox" checked={noBill} onChange={(e) => onNoBill(e.target.checked)} className="size-3.5 accent-blue-600" />
+                    No Bill
+                    {noBill && <span className="text-[11px] font-medium text-amber-600 dark:text-amber-300">{noBillRemoveGst ? '(GST removed)' : '(GST kept)'}</span>}
+                  </label>
                 </div>
               )}
             </div>
 
-            <MetaCell label="Invoice No" icon={Hash} className="col-span-2 sm:col-span-1">
-              <div className="flex items-center gap-1.5">
-                {!isEdit && (draft?.prefixes.length ?? 0) > 1 && (
-                  <select
-                    value={prefix}
-                    onChange={(e) => setPrefix(e.target.value)}
-                    className="border-input bg-background h-8 rounded border px-1.5 text-sm font-semibold"
-                    title="Challan prefix"
-                  >
-                    {draft?.prefixes.map((p) => (
-                      <option key={p} value={p}>
-                        {p}
-                      </option>
-                    ))}
-                  </select>
-                )}
+            {/* Document-info panel — the four invoice fields as a tidy, divided block.
+                gap-px over a filled ground draws the 1px dividers between cells. */}
+            <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border bg-border/70 lg:flex lg:shrink-0 dark:bg-white/10">
+              <MetaCell label="Invoice No" icon={Hash} className="lg:w-44">
+                <div className="flex items-center gap-1.5">
+                  {!isEdit && (draft?.prefixes.length ?? 0) > 1 && (
+                    <select
+                      value={prefix}
+                      onChange={(e) => setPrefix(e.target.value)}
+                      className="border-input bg-background h-8 rounded-[4px] border px-1.5 text-[13px] font-semibold"
+                      title="Challan prefix"
+                    >
+                      {draft?.prefixes.map((p) => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <Input
+                    value={effectiveCode === '—' ? '' : effectiveCode}
+                    onChange={(e) => setManualCode(e.target.value.toUpperCase())}
+                    placeholder={previewCode}
+                    title="Editable — clear to go back to the auto-assigned number"
+                    className="bg-background h-8 w-full rounded-[4px] text-[13px] font-bold"
+                  />
+                </div>
+              </MetaCell>
+              <MetaCell label="Invoice Date" icon={CalendarDays} className="lg:w-40">
+                <DatePicker value={invDate} onChange={setInvDate} clearable={false} className="bg-background h-8 w-full rounded-[4px] text-[13px]" />
+              </MetaCell>
+              <MetaCell label="Due Date" icon={CalendarCheck2} className="lg:w-36">
                 <Input
-                  value={effectiveCode === '—' ? '' : effectiveCode}
-                  onChange={(e) => setManualCode(e.target.value.toUpperCase())}
-                  placeholder={previewCode}
-                  title="Editable — clear to go back to the auto-assigned number"
-                  className="bg-background h-8 w-full max-w-[10.5rem] font-mono text-sm font-bold"
+                  readOnly
+                  value={dueDate ? formatDate(dueDate) : ''}
+                  placeholder="—"
+                  className="bg-muted/40 h-8 w-full cursor-default rounded-[4px] text-[13px] tabular-nums"
                 />
-              </div>
-            </MetaCell>
-            <MetaCell label="Invoice Date" icon={CalendarDays}>
-              <DatePicker value={invDate} onChange={setInvDate} clearable={false} className="bg-background h-8 w-full max-w-[9.75rem] text-sm" />
-            </MetaCell>
-            <MetaCell label="Due Date" icon={CalendarCheck2}>
-              <Input
-                readOnly
-                value={dueDate ? dueDate.toLocaleDateString('en-GB') : ''}
-                placeholder="—"
-                className="bg-muted/40 h-8 w-full max-w-[9.75rem] cursor-default text-sm tabular-nums"
-              />
-            </MetaCell>
-            <MetaCell label="Status">
-              {isEdit ? (
-                <NativeSelect value={status} onChange={setStatus} options={[...CHALLAN_STATUSES]} className="bg-background h-8 w-full max-w-[9rem]" />
-              ) : (
-                <span className="inline-flex items-center gap-1.5 rounded bg-emerald-100 px-2 py-0.5 text-sm font-semibold text-emerald-700">
-                  <span className="size-2 rounded-full bg-emerald-500" /> CONFIRMED
-                </span>
-              )}
-            </MetaCell>
-          </div>
-
-          {/* Settlement — B/C Amount (click the pencil to override) + No Bill, right in the header. */}
-          {draft && (
-            <div className="bg-background/60 border-primary/10 mt-2 flex flex-wrap items-end gap-x-4 gap-y-1.5 rounded-lg border px-2.5 py-2 sm:mt-2.5 sm:gap-x-8 sm:rounded-none sm:border-0 sm:border-t sm:bg-transparent sm:px-0 sm:py-0 sm:pt-2.5">
-              <EditableAmount label="B Amount" computed={totals.b} manual={manualB} onManual={setManualB} />
-              <EditableAmount label="C Amount" computed={totals.c} manual={manualC} onManual={setManualC} />
-              <label
-                className={cn(
-                  'flex cursor-pointer items-center gap-1.5 rounded px-2 py-1 text-sm font-semibold transition-colors select-none',
-                  noBill ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted/60',
+              </MetaCell>
+              <MetaCell label="Status" className="lg:w-32">
+                {isEdit ? (
+                  <NativeSelect value={status} onChange={setStatus} options={[...CHALLAN_STATUSES]} className="bg-background h-8 w-full rounded-[4px] text-[13px]" />
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 rounded-[4px] bg-emerald-100 px-2 py-1 text-[13px] font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+                    <span className="size-1.5 rounded-full bg-emerald-500" /> CONFIRMED
+                  </span>
                 )}
-                title="Bill without a tax invoice"
-              >
-                <input type="checkbox" checked={noBill} onChange={(e) => onNoBill(e.target.checked)} className="size-3.5 accent-blue-600" />
-                No Bill
-                {noBill && <span className="text-[11px] font-medium text-amber-600">{noBillRemoveGst ? '(GST removed)' : '(GST kept)'}</span>}
-              </label>
+              </MetaCell>
             </div>
-          )}
+          </div>
         </div>
 
         {!isEdit && !customer && (
@@ -778,17 +782,17 @@ export function ChallanFormPage() {
                     }}
                   />
                 </div>
-                <Button onClick={addItem} disabled={!addSel} className="flex-1 sm:flex-none"><Plus /> Add</Button>
-                <Button variant="outline" onClick={() => setShowManual((v) => !v)} className="flex-1 sm:flex-none">{showManual ? 'Hide manual' : 'Manual'}</Button>
+                <Button onClick={addItem} disabled={!addSel} className="h-9 flex-1 rounded-[4px] sm:flex-none"><Plus /> Add</Button>
+                <Button variant="outline" onClick={() => setShowManual((v) => !v)} className="h-9 flex-1 rounded-[4px] sm:flex-none">{showManual ? 'Hide manual' : 'Manual'}</Button>
               </div>
               {showManual && (
                 <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-6">
-                  <div className="col-span-2 space-y-1"><Label className="text-base">Product</Label><Input value={m.product} onChange={(e) => setM({ ...m, product: e.target.value })} placeholder="e.g. S.S. SCRAP" className="h-9 text-base" /></div>
-                  <div className="space-y-1"><Label className="text-base">Design</Label><Input value={m.design} onChange={(e) => setM({ ...m, design: e.target.value })} disabled={draft.isScrap} title={draft.isScrap ? 'Scrap items carry no design' : undefined} className={cn('h-9 text-base', draft.isScrap && 'bg-muted/40 cursor-not-allowed')} /></div>
-                  <div className="space-y-1"><Label className="text-base">Unit</Label><NativeSelect value={m.unit} onChange={(v) => setM({ ...m, unit: v })} options={['KGS', 'PCS']} className="h-9 text-base" /></div>
-                  <div className="space-y-1"><Label className="text-base">Qty</Label><Input value={m.qty} onChange={(e) => setM({ ...m, qty: e.target.value })} className="h-9 text-right text-base tabular-nums" /></div>
-                  <div className="space-y-1"><Label className="text-base">Price</Label><Input value={m.price} onChange={(e) => setM({ ...m, price: e.target.value })} className="h-9 text-right text-base tabular-nums" /></div>
-                  <div className="col-span-2 sm:col-span-6"><Button size="sm" variant="secondary" onClick={addManual} className="w-full sm:w-auto"><Plus /> Add manual line</Button></div>
+                  <div className="col-span-2 space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Product</Label><Input value={m.product} onChange={(e) => setM({ ...m, product: e.target.value })} placeholder="e.g. S.S. SCRAP" className="h-8 rounded-[4px] text-[13px]" /></div>
+                  <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Design</Label><Input value={m.design} onChange={(e) => setM({ ...m, design: e.target.value })} disabled={draft.isScrap} title={draft.isScrap ? 'Scrap items carry no design' : undefined} className={cn('h-8 rounded-[4px] text-[13px]', draft.isScrap && 'bg-muted/40 cursor-not-allowed')} /></div>
+                  <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Unit</Label><NativeSelect value={m.unit} onChange={(v) => setM({ ...m, unit: v })} options={['KGS', 'PCS']} className="h-8 rounded-[4px] text-[13px]" /></div>
+                  <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Qty</Label><Input value={m.qty} onChange={(e) => setM({ ...m, qty: e.target.value })} className="h-8 rounded-[4px] text-right text-[13px] tabular-nums" /></div>
+                  <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Price</Label><Input value={m.price} onChange={(e) => setM({ ...m, price: e.target.value })} className="h-8 rounded-[4px] text-right text-[13px] tabular-nums" /></div>
+                  <div className="col-span-2 sm:col-span-6"><Button size="sm" variant="secondary" onClick={addManual} className="w-full rounded-[4px] sm:w-auto"><Plus /> Add manual line</Button></div>
                 </div>
               )}
             </div>
@@ -797,38 +801,43 @@ export function ChallanFormPage() {
                 page scrolls when the list is long. Desktop/tablet only; phones get
                 the card list below instead. */}
             <div className="hidden sm:block">
-              <table className="w-full text-[15px] [&_td]:border-r [&_td]:border-border/60 [&_td:last-child]:border-r-0 [&_th]:border-r [&_th]:border-border/40 [&_th:last-child]:border-r-0">
-                <thead className="sticky top-0 z-10 bg-slate-200/90 dark:bg-slate-700">
-                  <tr className="text-foreground border-b border-slate-300 text-left [&>th]:px-3 [&>th]:py-2.5 [&>th]:text-sm [&>th]:font-bold [&>th]:tracking-wide [&>th]:uppercase">
-                    <th className="w-12 text-center">#</th>
+              {/* ERP line grid — matches the Challans/Pending tables: blue header,
+                  grey rules both ways, banded rows, compact 13px cells. */}
+              <table className="w-full text-[13px] [&_td]:border-r [&_td]:border-slate-200 dark:[&_td]:border-white/10 [&_td:last-child]:border-r-0 [&_th]:border-r [&_th]:border-white/20 [&_th:last-child]:border-r-0">
+                <thead className="sticky top-0 z-10">
+                  <tr className="bg-gradient-to-b from-blue-800 to-indigo-800 text-left text-white [&>th]:px-3 [&>th]:py-2 [&>th]:text-[11.5px] [&>th]:font-extrabold [&>th]:tracking-wide [&>th]:uppercase">
+                    <th className="w-10 text-center">#</th>
                     <th>Product</th>
-                    <th className="w-28">Design</th>
-                    <th className="w-20 text-right">Bags</th>
-                    <th className="w-20 text-right">Pcs</th>
-                    <th className="w-20 text-right">Kgs</th>
-                    <th className="w-20 text-right">Box</th>
-                    <th className="w-16">Unit</th>
-                    <th className="w-28 text-right">Price</th>
-                    <th className="w-28 text-right">Amount</th>
-                    <th className="w-20 text-right">GST%</th>
-                    <th className="w-10"></th>
+                    <th className="w-24">Design</th>
+                    <th className="w-16 text-right">Bags</th>
+                    <th className="w-16 text-right">Pcs</th>
+                    <th className="w-16 text-right">Kgs</th>
+                    <th className="w-16 text-right">Box</th>
+                    <th className="w-14">Unit</th>
+                    <th className="w-24 text-right">Price</th>
+                    <th className="w-24 text-right">Amount</th>
+                    <th className="w-14 text-right">GST%</th>
+                    <th className="w-9"></th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((r, idx) => (
-                    <tr key={r.key} className="odd:bg-muted/20 hover:bg-primary/5 border-b transition-colors last:border-0 [&>td]:px-3 [&>td]:py-2">
-                      <td className="w-12 text-center text-muted-foreground tabular-nums">{idx + 1}</td>
-                      <td className="font-medium">{r.productName || '—'}{r.dispatchId == null && <span className="bg-muted text-muted-foreground ml-1 rounded px-1 text-[10px]">manual</span>}</td>
-                      <td className="w-28 text-muted-foreground">{r.design || '—'}</td>
-                      <td className="w-20 text-right tabular-nums">{qty(r.bags) ?? '—'}</td>
-                      <td className="w-20 text-right tabular-nums">{qty(r.pcs) ?? '—'}</td>
-                      <td className="w-20 text-right tabular-nums">{qty(r.kgs) ?? '—'}</td>
-                      <td className="w-20 text-right tabular-nums">{qty(r.box) ?? '—'}</td>
-                      <td className="w-16 text-muted-foreground">{r.unit || '—'}</td>
-                      <td className="w-28 text-right tabular-nums">₹{(r.price ?? 0).toLocaleString('en-IN')}</td>
-                      <td className="w-28 text-right font-semibold tabular-nums">{(r.amount ?? 0).toLocaleString('en-IN')}</td>
-                      <td className="w-20 text-muted-foreground text-right tabular-nums">{r.gstRate || 0}</td>
-                      <td className="w-10 text-right"><button onClick={() => removeRow(r.key)} className="text-muted-foreground hover:text-destructive" title="Remove line"><Trash2 className="size-3.5" /></button></td>
+                    <tr
+                      key={r.key}
+                      className="border-b border-slate-200 transition-colors odd:bg-slate-100/70 hover:bg-amber-100/70 dark:border-white/10 dark:odd:bg-white/[0.04] dark:hover:bg-amber-400/10 [&>td]:px-3 [&>td]:py-1"
+                    >
+                      <td className="w-10 text-center text-slate-500 tabular-nums dark:text-slate-400">{idx + 1}</td>
+                      <td className="font-semibold text-slate-800 dark:text-slate-200">{r.productName || '—'}{r.dispatchId == null && <span className="bg-muted text-muted-foreground ml-1 rounded px-1 text-[10px]">manual</span>}</td>
+                      <td className="w-24 font-medium text-slate-600 dark:text-slate-300">{r.design || '—'}</td>
+                      <td className="w-16 text-right font-semibold tabular-nums text-slate-800 dark:text-slate-200">{qty(r.bags) ?? '—'}</td>
+                      <td className="w-16 text-right font-semibold tabular-nums text-slate-800 dark:text-slate-200">{qty(r.pcs) ?? '—'}</td>
+                      <td className="w-16 text-right font-semibold tabular-nums text-slate-800 dark:text-slate-200">{qty(r.kgs) ?? '—'}</td>
+                      <td className="w-16 text-right font-semibold tabular-nums text-slate-800 dark:text-slate-200">{qty(r.box) ?? '—'}</td>
+                      <td className="w-14 font-bold text-[11px] uppercase tracking-wider text-slate-500">{r.unit || '—'}</td>
+                      <td className="w-24 text-right font-semibold tabular-nums text-slate-800 dark:text-slate-200">₹{(r.price ?? 0).toLocaleString('en-IN')}</td>
+                      <td className="w-24 text-right font-bold tabular-nums text-slate-900 dark:text-slate-100">{(r.amount ?? 0).toLocaleString('en-IN')}</td>
+                      <td className="w-14 text-right font-medium tabular-nums text-slate-500 dark:text-slate-400">{r.gstRate || 0}</td>
+                      <td className="w-9 text-right"><button onClick={() => removeRow(r.key)} className="text-slate-400 transition-colors hover:text-destructive" title="Remove line"><Trash2 className="size-4" /></button></td>
                     </tr>
                   ))}
                   {rows.length === 0 && (
@@ -843,20 +852,20 @@ export function ChallanFormPage() {
                   )}
                 </tbody>
                 {rows.length > 0 && (
-                  <tfoot className="bg-muted/60">
-                    <tr className="border-t-2 font-semibold [&>td]:px-3 [&>td]:py-1.5">
-                      <td className="w-12"></td>
-                      <td className="text-muted-foreground text-sm tracking-wide uppercase">Total · {rows.length} item(s)</td>
-                      <td className="w-28"></td>
-                      <td className="w-20 text-right tabular-nums">{totals.tBags ? qty(totals.tBags) : ''}</td>
-                      <td className="w-20 text-right tabular-nums">{totals.tPcs ? qty(totals.tPcs) : ''}</td>
-                      <td className="w-20 text-right tabular-nums">{totals.tKgs ? qty(totals.tKgs) : ''}</td>
-                      <td className="w-20 text-right tabular-nums">{totals.tBox ? qty(totals.tBox) : ''}</td>
-                      <td className="w-16"></td>
-                      <td className="w-28"></td>
-                      <td className="w-28 text-primary text-right tabular-nums">{totals.tAmt.toLocaleString('en-IN')}</td>
-                      <td className="w-20"></td>
+                  <tfoot className="bg-slate-200/80 dark:bg-white/[0.06]">
+                    <tr className="border-t-2 border-slate-300 font-bold dark:border-white/15 [&>td]:px-3 [&>td]:py-1.5">
                       <td className="w-10"></td>
+                      <td className="text-[11px] font-bold tracking-widest text-slate-500 uppercase dark:text-slate-400">Total · {rows.length} item(s)</td>
+                      <td className="w-24"></td>
+                      <td className="w-16 text-right tabular-nums text-slate-800 dark:text-slate-100">{totals.tBags ? qty(totals.tBags) : ''}</td>
+                      <td className="w-16 text-right tabular-nums text-slate-800 dark:text-slate-100">{totals.tPcs ? qty(totals.tPcs) : ''}</td>
+                      <td className="w-16 text-right tabular-nums text-slate-800 dark:text-slate-100">{totals.tKgs ? qty(totals.tKgs) : ''}</td>
+                      <td className="w-16 text-right tabular-nums text-slate-800 dark:text-slate-100">{totals.tBox ? qty(totals.tBox) : ''}</td>
+                      <td className="w-14"></td>
+                      <td className="w-24"></td>
+                      <td className="w-24 text-right tabular-nums text-primary">{totals.tAmt.toLocaleString('en-IN')}</td>
+                      <td className="w-14"></td>
+                      <td className="w-9"></td>
                     </tr>
                   </tfoot>
                 )}
@@ -874,33 +883,35 @@ export function ChallanFormPage() {
                 </div>
               ) : (
                 <>
-                  <div className="divide-y">
+                  <div className="divide-y divide-slate-200 dark:divide-white/10">
                     {rows.map((r, idx) => (
-                      <div key={r.key} className="odd:bg-muted/20 px-2.5 py-2">
+                      <div key={r.key} className="px-2.5 py-1.5 odd:bg-slate-100/70 dark:odd:bg-white/[0.04]">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
-                            <p className="truncate text-sm font-medium">
-                              <span className="text-muted-foreground mr-1 tabular-nums">{idx + 1}.</span>
+                            <p className="truncate text-[13px] font-bold text-slate-800 dark:text-slate-200">
+                              <span className="text-slate-400 mr-1 tabular-nums">{idx + 1}.</span>
                               {r.productName || '—'}
                               {r.dispatchId == null && <span className="bg-muted text-muted-foreground ml-1.5 rounded px-1 text-[10px]">manual</span>}
                             </p>
-                            <p className="text-muted-foreground truncate text-xs">
+                            <p className="text-muted-foreground truncate text-[11px] font-medium">
                               {r.design || '—'} · {r.unit || '—'} · ₹{(r.price ?? 0).toLocaleString('en-IN')}
                               {r.gstRate ? ` · GST ${r.gstRate}%` : ''}
                             </p>
                           </div>
-                          <div className="flex shrink-0 items-center gap-2">
-                            <span className="font-semibold tabular-nums text-emerald-700">₹{(r.amount ?? 0).toLocaleString('en-IN')}</span>
-                            <button onClick={() => removeRow(r.key)} className="text-muted-foreground hover:text-destructive p-1" title="Remove line">
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">₹{(r.amount ?? 0).toLocaleString('en-IN')}</span>
+                            <button onClick={() => removeRow(r.key)} className="text-slate-400 hover:text-destructive p-0.5" title="Remove line">
                               <Trash2 className="size-4" />
                             </button>
                           </div>
                         </div>
-                        <div className="mt-1.5 grid grid-cols-4 gap-2 text-xs">
-                          <div><p className="text-muted-foreground">Bags</p><p className="font-medium tabular-nums">{qty(r.bags) ?? '—'}</p></div>
-                          <div><p className="text-muted-foreground">Pcs</p><p className="font-medium tabular-nums">{qty(r.pcs) ?? '—'}</p></div>
-                          <div><p className="text-muted-foreground">Kgs</p><p className="font-medium tabular-nums">{qty(r.kgs) ?? '—'}</p></div>
-                          <div><p className="text-muted-foreground">Box</p><p className="font-medium tabular-nums">{qty(r.box) ?? '—'}</p></div>
+                        <div className="mt-1 grid grid-cols-4 gap-1.5 text-[11px]">
+                          {([['Bags', r.bags], ['Pcs', r.pcs], ['Kgs', r.kgs], ['Box', r.box]] as const).map(([lbl, v]) => (
+                            <div key={lbl}>
+                              <p className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">{lbl}</p>
+                              <p className="font-bold tabular-nums text-slate-700 dark:text-slate-200">{qty(v) ?? '—'}</p>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     ))}
@@ -950,20 +961,20 @@ export function ChallanFormPage() {
                   <ChevronDown className={cn('ml-auto size-4 transition-transform', showDetails && 'rotate-180')} />
                 </button>
                 <div className={cn(showDetails ? 'block' : 'hidden', 'sm:block space-y-2.5')}>
-                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-6">
-                    <div className="space-y-1 xl:col-span-1"><Label className="text-base">Transporter</Label><Input value={(isEdit ? savedChallan?.transName : draft.transName) || '—'} readOnly className="bg-muted/40 h-9 text-base" /></div>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+                    <div className="space-y-1 xl:col-span-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Transporter</Label><Input value={(isEdit ? savedChallan?.transName : draft.transName) || '—'} readOnly className="bg-muted/40 h-8 rounded-[4px] text-[13px]" /></div>
                     <LockField label="Freight" value={freight} locked={locked.freight} onUnlock={() => unlock('freight')} onChange={setFreight} onBlur={() => setLocked((l) => ({ ...l, freight: true }))} />
                     <LockField label="Packing" value={packing} locked={locked.packing} onUnlock={() => unlock('packing')} onChange={setPacking} onBlur={() => setLocked((l) => ({ ...l, packing: true }))} />
                     <LockField label="Box / Pouch" value={pouch} locked={locked.pouch} onUnlock={() => unlock('pouch')} onChange={setPouch} onBlur={() => setLocked((l) => ({ ...l, pouch: true }))} />
                     {/* GST % field removed — GST is not editable; it follows the customer's configured
                         rate (applied automatically) and is shown in the totals panel below. */}
-                    <div className="space-y-1"><Label className="text-base">{`Billing Rate${halfBill ? ' · half' : ''}`}</Label><Input value={billingRate} onChange={(e) => setBillingRate(e.target.value)} className="h-9 text-right text-base tabular-nums" /></div>
+                    <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">{`Billing Rate${halfBill ? ' · half' : ''}`}</Label><Input value={billingRate} onChange={(e) => setBillingRate(e.target.value)} className="h-8 rounded-[4px] text-right text-[13px] tabular-nums" /></div>
                   </div>
                   {SHOW_SHIPPING_ADDRESS && (
                     <div className="space-y-1">
-                      <Label className="text-base">Shipping Address</Label>
+                      <Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Shipping Address</Label>
                       <textarea
-                        className="border-input bg-background min-h-12 w-full rounded-md border px-3 py-2 text-base"
+                        className="border-input bg-background min-h-10 w-full rounded-[4px] border px-3 py-1.5 text-[13px]"
                         placeholder="Shipping address…"
                         value={shippingAddress}
                         onChange={(e) => setShippingAddress(e.target.value)}
@@ -971,9 +982,9 @@ export function ChallanFormPage() {
                     </div>
                   )}
                   <div className="space-y-1">
-                    <Label className="text-base">Remarks</Label>
+                    <Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Remarks</Label>
                     <textarea
-                      className="border-input bg-background min-h-12 w-full rounded-md border px-3 py-2 text-base"
+                      className="border-input bg-background min-h-10 w-full rounded-[4px] border px-3 py-1.5 text-[13px]"
                       placeholder="Remarks…"
                       value={remarks}
                       onChange={(e) => setRemarks(e.target.value)}
@@ -982,8 +993,8 @@ export function ChallanFormPage() {
                 </div>
               </div>
 
-              <div className="order-1 self-start overflow-hidden rounded-md border shadow-sm lg:order-2">
-                <div className="bg-card space-y-1 p-3">
+              <div className="order-1 self-start overflow-hidden rounded-[4px] border shadow-sm lg:order-2">
+                <div className="bg-card space-y-0.5 p-2.5">
                   <Row2 label="Taxable" value={inr(totals.tAmt)} />
                   <Row2 label="Freight" value={inr(numOr(freight))} />
                   <Row2 label="Packing" value={inr(numOr(packing))} />
@@ -991,14 +1002,14 @@ export function ChallanFormPage() {
                   <Row2 label={`GST${totals.gstRatePct ? ` @ ${totals.gstRatePct}%` : ''}`} value={inr(totals.tax)} />
                   {(draft.isScrap || totals.tcs > 0) && <Row2 label="TCS @ 1%" value={inr(totals.tcs)} />}
                 </div>
-                <div className="bg-gradient-brand flex items-center justify-between px-3 py-2 text-lg font-bold text-white sm:py-2.5">
-                  <span>TOTAL</span>
+                <div className="bg-gradient-brand flex items-center justify-between px-3 py-2 text-base font-bold text-white">
+                  <span className="tracking-wide">TOTAL</span>
                   <span className="tabular-nums">{inr(totals.total)}</span>
                 </div>
                 {draft.tdsApplicable && (
-                  <div className="bg-card space-y-1 p-3">
-                    <Row2 label={`Less: TDS @ ${draft.tdsPercent ?? 0}%`} value={`- ${inr(totals.tdsAmount)}`} className="text-amber-700" />
-                    <div className="flex items-center justify-between rounded-md bg-emerald-50 px-2 py-1 text-sm font-semibold text-emerald-700">
+                  <div className="bg-card space-y-1 p-2.5">
+                    <Row2 label={`Less: TDS @ ${draft.tdsPercent ?? 0}%`} value={`- ${inr(totals.tdsAmount)}`} className="text-amber-700 dark:text-amber-300" />
+                    <div className="flex items-center justify-between rounded-[4px] bg-emerald-50 px-2 py-1 text-[13px] font-semibold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
                       <span>Net Receivable</span>
                       <span className="tabular-nums">{inr(totals.netReceivable)}</span>
                     </div>
@@ -1062,12 +1073,15 @@ function MetaCell({
   className?: string;
   icon?: React.ComponentType<{ className?: string }>;
 }) {
+  // A single field inside the document-info panel. The panel provides the border
+  // and the 1px dividers (via gap-px on a filled ground), so each cell just needs a
+  // solid background and its own padding.
   return (
-    <div className={cn('bg-background/60 rounded-lg border border-border/50 px-2 py-1.5 sm:border-0 sm:bg-transparent sm:p-0', 'space-y-0.5', className)}>
-      <div className="text-muted-foreground flex items-center gap-1 text-sm font-semibold tracking-wide uppercase">
-        {Icon && <Icon className="size-3.5 opacity-70" />} {label}
+    <div className={cn('bg-card min-w-0 space-y-0.5 px-2.5 py-1.5', className)}>
+      <div className="text-muted-foreground flex items-center gap-1 text-[10px] font-bold tracking-widest uppercase">
+        {Icon && <Icon className="size-3 opacity-70" />} {label}
       </div>
-      <div className="text-base leading-tight font-medium">{children}</div>
+      <div className="text-[13px] leading-tight font-semibold">{children}</div>
     </div>
   );
 }
@@ -1075,9 +1089,9 @@ function MetaCell({
 function LockField({ label, value, locked, onUnlock, onChange, onBlur }: { label: string; value: string; locked: boolean; onUnlock: () => void; onChange: (v: string) => void; onBlur: () => void }) {
   return (
     <div className="space-y-1">
-      <Label className="text-base flex items-center gap-1.5">
+      <Label className="flex items-center gap-1.5 text-[11px] font-bold tracking-wide text-muted-foreground uppercase">
         {label}
-        {locked ? <Lock className="size-3.5 text-muted-foreground" /> : <LockOpen className="size-3.5 text-emerald-600" />}
+        {locked ? <Lock className="size-3 text-muted-foreground" /> : <LockOpen className="size-3 text-emerald-600" />}
       </Label>
       <Input
         value={value}
@@ -1086,7 +1100,7 @@ function LockField({ label, value, locked, onUnlock, onChange, onBlur }: { label
         onDoubleClick={onUnlock}
         onChange={(e) => onChange(e.target.value)}
         onBlur={onBlur}
-        className={cn('h-9 text-right text-base tabular-nums', locked && 'bg-muted/40 cursor-default')}
+        className={cn('h-8 rounded-[4px] text-right text-[13px] tabular-nums', locked && 'bg-muted/40 cursor-default')}
       />
     </div>
   );
@@ -1117,7 +1131,7 @@ function EditableAmount({
 
   return (
     <div className="space-y-0.5">
-      <div className="text-muted-foreground text-sm font-semibold tracking-wide uppercase">{label}</div>
+      <div className="text-muted-foreground text-[10px] font-bold tracking-widest uppercase">{label}</div>
       {editing ? (
         <input
           ref={inputRef}
@@ -1125,11 +1139,11 @@ function EditableAmount({
           onChange={(e) => onManual(e.target.value)}
           onBlur={() => setEditing(false)}
           onKeyDown={(e) => e.key === 'Enter' && setEditing(false)}
-          className="border-input bg-background h-8 w-28 rounded border px-2 text-right text-base font-bold tabular-nums focus:ring-1"
+          className="border-input bg-background h-7 w-24 rounded-[4px] border px-2 text-right text-[13px] font-bold tabular-nums focus:ring-1"
         />
       ) : (
         <div className="flex items-center gap-1.5">
-          <span className="text-base leading-tight font-bold tabular-nums">₹{Number(display || 0).toLocaleString('en-IN')}</span>
+          <span className="text-[15px] leading-tight font-bold tabular-nums">₹{Number(display || 0).toLocaleString('en-IN')}</span>
           <button type="button" onClick={() => setEditing(true)} title={`Edit ${label}`} className="text-muted-foreground hover:text-primary">
             <Pencil className="size-3.5" />
           </button>
@@ -1146,9 +1160,9 @@ function EditableAmount({
 
 function Row2({ label, value, strong, className }: { label: string; value: string; strong?: boolean; className?: string }) {
   return (
-    <div className={cn('flex items-center justify-between text-base', strong && 'text-lg font-semibold', className)}>
+    <div className={cn('flex items-center justify-between text-[13px]', strong && 'text-base font-semibold', className)}>
       <span className={cn('text-muted-foreground', strong && 'text-foreground')}>{label}</span>
-      <span className="tabular-nums">{value}</span>
+      <span className="font-semibold tabular-nums">{value}</span>
     </div>
   );
 }
