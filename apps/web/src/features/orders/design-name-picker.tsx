@@ -104,6 +104,12 @@ export function DesignNamePicker({
     const q = norm(search);
     return !q || `${choice.designType} ${choice.designName}`.toUpperCase().includes(q);
   });
+  const groupedChoices = filtered.reduce<Array<{ designType: string; choices: DesignNameChoice[] }>>((groups, choice) => {
+    const group = groups.find((item) => norm(item.designType) === norm(choice.designType));
+    if (group) group.choices.push(choice);
+    else groups.push({ designType: choice.designType, choices: [choice] });
+    return groups;
+  }, []);
   const choiceByName = new Map(choices.map((choice) => [norm(choice.designName), choice]));
 
   const toggle = (choice: DesignNameChoice) => {
@@ -144,41 +150,64 @@ export function DesignNamePicker({
           <ChevronsUpDown className="size-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-1.5">
-        <div className="relative mb-1.5">
-          <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search design names..."
-            className="h-8 pl-8 text-sm"
-            autoFocus
-          />
+      <PopoverContent
+        align="start"
+        sideOffset={6}
+        className="flex max-h-[var(--radix-popover-content-available-height)] w-[min(24rem,calc(100vw-1rem))] flex-col overflow-hidden rounded-md p-0 shadow-lg"
+      >
+        <div className="border-b p-2.5">
+          <div className="relative">
+            <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search design names..."
+              className="h-9 rounded-sm pl-9 text-sm"
+              autoFocus
+            />
+          </div>
         </div>
-        <div className="max-h-56 overflow-y-auto">
-          {filtered.length ? (
-            filtered.map((choice) => {
-              const checked = selectedSet.has(norm(choice.designName));
-              return (
-                <button
-                  key={`${choice.designType}:${choice.designName}`}
-                  type="button"
-                  aria-pressed={checked}
-                  onClick={() => toggle(choice)}
-                  className="hover:bg-accent flex w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm"
-                >
-                  <span className={cn('flex size-4 shrink-0 items-center justify-center rounded-[3px] border', checked && 'border-primary bg-primary text-primary-foreground')}>
-                    {checked && <Check className="size-3" />}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate font-medium">{choice.designName}</span>
-                  <span className="text-muted-foreground shrink-0 text-[10px] font-semibold uppercase">{choice.designType}</span>
-                </button>
-              );
-            })
+        <div className="min-h-0 max-h-72 flex-1 overflow-y-auto overscroll-contain p-1.5">
+          {groupedChoices.length ? (
+            groupedChoices.map((group) => (
+              <section key={group.designType} className="not-first:mt-1.5">
+                <div className="bg-muted/90 text-muted-foreground sticky top-0 z-10 flex items-center justify-between rounded-sm px-2.5 py-1.5 text-[11px] font-semibold uppercase">
+                  <span>{group.designType}</span>
+                  <span className="tabular-nums">{group.choices.length}</span>
+                </div>
+                <div className="py-0.5">
+                  {group.choices.map((choice) => {
+                    const checked = selectedSet.has(norm(choice.designName));
+                    return (
+                      <button
+                        key={`${choice.designType}:${choice.designName}`}
+                        type="button"
+                        aria-pressed={checked}
+                        onClick={() => toggle(choice)}
+                        className={cn(
+                          'hover:bg-accent flex min-h-10 w-full cursor-pointer items-center gap-3 rounded-sm px-2.5 py-2 text-left text-sm transition-colors',
+                          checked && 'bg-primary/8 text-primary hover:bg-primary/12',
+                        )}
+                      >
+                        <span className={cn('flex size-4 shrink-0 items-center justify-center rounded-[3px] border', checked && 'border-primary bg-primary text-primary-foreground')}>
+                          {checked && <Check className="size-3" />}
+                        </span>
+                        <span className="min-w-0 flex-1 break-words font-medium leading-5">{choice.designName}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            ))
           ) : (
-            <p className="text-muted-foreground px-2 py-5 text-center text-sm">No design names found.</p>
+            <p className="text-muted-foreground px-3 py-8 text-center text-sm">No design names found.</p>
           )}
         </div>
+        {selected.length > 0 && (
+          <div className="bg-muted/40 text-muted-foreground border-t px-3 py-2 text-xs">
+            <span className="text-foreground font-semibold tabular-nums">{selected.length}</span> selected
+          </div>
+        )}
       </PopoverContent>
     </Popover>
   );

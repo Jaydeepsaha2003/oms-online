@@ -249,6 +249,12 @@ export function PendingChallanPage() {
   /** The one customer the in-progress challan is for — null when nothing is ticked
    *  or the selection spans several customers. Drives the row de-emphasis below. */
   const activeParty = selectedParties.length === 1 ? selectedParties[0] : null;
+  // Count the party's complete pending pool, not just rows on the current page or
+  // under the active screen filters. This decides whether the selection is partial.
+  const { refetch: refetchActivePartyPending } = usePendingChallans(
+    { page: 1, pageSize: 1, customerName: activeParty || undefined },
+    { enabled: !!activeParty },
+  );
 
   // Page-scoped quantity totals for the summary strip. The API paginates and
   // returns no aggregates, so these describe the rows currently loaded — the
@@ -312,16 +318,20 @@ export function PendingChallanPage() {
       );
     }
     const only = parties[0];
-    // "X of Y" — Y is how many pending lines this party has in the list; clamped so a
-    // cross-page selection never reads as more than the total.
-    const partyTotal = Math.max(lines.length, items.filter((r) => party(r) === only).length);
-    const ok = await confirm({
-      title: 'Create challan?',
-      description: `Proceed with ${lines.length} of ${partyTotal} pending line${partyTotal === 1 ? '' : 's'} for ${only}?`,
-      confirmText: 'Create Challan',
-      autoFocusConfirm: true, // Enter proceeds
-    });
-    if (!ok) return;
+    // Confirm only when rows are being left behind. A complete selection — most
+    // importantly a party whose entire pool is one row — proceeds without noise.
+    const fetched = (await refetchActivePartyPending()).data;
+    const partyTotal = Math.max(lines.length, fetched?.total ?? lines.length);
+    if (lines.length < partyTotal) {
+      const remaining = partyTotal - lines.length;
+      const ok = await confirm({
+        title: 'Create challan with selected rows only?',
+        description: `${only} has ${partyTotal} pending lines. You selected ${lines.length}; ${remaining} line${remaining === 1 ? '' : 's'} will remain pending.`,
+        confirmText: 'Create Selected',
+        autoFocusConfirm: true,
+      });
+      if (!ok) return;
+    }
     navigate('/challans/new', { state: { customerName: only, lines } });
   };
 
@@ -476,7 +486,7 @@ export function PendingChallanPage() {
     },
   ];
 
-  // Ctrl/Cmd+C → Create Challan from the selected rows (with the "X of Y" confirm).
+  // Ctrl/Cmd+C → Create Challan from the selected rows (partial selections confirm).
   // Bound once; reads the latest handler/state via refs. We never hijack a genuine
   // copy: typing in a field or an active text selection is left to the browser, and
   // with nothing ticked the key does nothing (so a plain Ctrl+C still copies).

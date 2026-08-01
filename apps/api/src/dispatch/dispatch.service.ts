@@ -42,6 +42,19 @@ function qtyText(q: { bags?: number | null; pcs?: number | null; gram?: number |
 // then leaks into the dispatch form's pre-filled / MAX-filled inputs.
 const round3 = (x: number) => Math.round(x * 1000) / 1000;
 
+// Dispatch and challan screens label this snapshot simply as "Design". Prefer
+// the human-readable name chosen on the order line, falling back for older rows.
+const dispatchDesign = (line: { design?: string | null; designType?: string | null; productName?: string | null }) => {
+  if (line.design === undefined) return toStr(line.designType);
+  const name = toStr(line.design);
+  const type = toStr(line.designType);
+  const productName = toStr(line.productName);
+  const legacyTypeInName =
+    !!name && name.toUpperCase() !== 'NA' && productName?.toUpperCase().endsWith(` ${name.toUpperCase()}`);
+  if (legacyTypeInName) return type && type.toUpperCase() !== 'NA' ? type : 'NA';
+  return name ?? 'NA';
+};
+
 // Two dispatches on the SAME order line with identical quantities + status inside
 // this window are treated as ONE — a double-tap, a client retry, or two users
 // saving the same shipment at once. Real repeat dispatches of a line are minutes
@@ -223,7 +236,7 @@ export class DispatchService implements OnModuleInit {
         subCategory: it.subCategory,
         product: it.product,
         productName: it.productName,
-        designType: it.designType,
+        designType: dispatchDesign(it),
         psize: it.psize,
         priority: it.priority,
         calField: it.calField,
@@ -372,7 +385,9 @@ export class DispatchService implements OnModuleInit {
     if (query.customer) and.push({ customerName: query.customer });
     if (query.agent) and.push({ agentName: query.agent });
     if (query.product) and.push({ OR: [{ productName: query.product }, { product: query.product }] });
-    if (query.design) and.push({ designType: query.design });
+    if (query.design) {
+      and.push({ OR: [{ orderItem: { design: query.design } }, { designType: query.design }] });
+    }
     if (search) {
       and.push({
         OR: [
@@ -381,13 +396,20 @@ export class DispatchService implements OnModuleInit {
           { productName: { contains: search } },
           { orderCode: { contains: search } },
           { designType: { contains: search } },
+          { orderItem: { design: { contains: search } } },
           { comment: { contains: search } },
         ],
       });
     }
     const where: Prisma.DispatchWhereInput = and.length ? { AND: and } : {};
     const [rows, total] = await this.prisma.$transaction([
-      this.prisma.dispatch.findMany({ where, orderBy: [{ dispatchDate: 'desc' }, { id: 'desc' }], skip: query.skip, take: query.pageSize }),
+      this.prisma.dispatch.findMany({
+        where,
+        include: { orderItem: { select: { design: true, designType: true, productName: true } } },
+        orderBy: [{ dispatchDate: 'desc' }, { id: 'desc' }],
+        skip: query.skip,
+        take: query.pageSize,
+      }),
       this.prisma.dispatch.count({ where }),
     ]);
     return {
@@ -403,9 +425,18 @@ export class DispatchService implements OnModuleInit {
    *  used to populate the Modify Dispatch dropdown filters. */
   async filterOptions(query: DispatchQueryDto = {} as DispatchQueryDto): Promise<DispatchFilterOptions> {
     const rows = await this.prisma.dispatch.findMany({
-      select: { customerName: true, agentName: true, productName: true, product: true, designType: true, dispatchStatus: true },
+      select: {
+        customerName: true,
+        agentName: true,
+        productName: true,
+        product: true,
+        designType: true,
+        dispatchStatus: true,
+        orderItem: { select: { design: true, designType: true, productName: true } },
+      },
     });
     type Row = (typeof rows)[number];
+    const designNameOf = (row: Row) => dispatchDesign(row.orderItem) ?? dispatchDesign(row);
     // Cascading: each field's options reflect the OTHER active filters (not itself),
     // so a dropdown only offers values that would actually return rows.
     const apply = (list: Row[], q: DispatchQueryDto) => {
@@ -414,7 +445,7 @@ export class DispatchService implements OnModuleInit {
       if (q.customer) out = out.filter((r) => r.customerName === q.customer);
       if (q.agent) out = out.filter((r) => r.agentName === q.agent);
       if (q.product) out = out.filter((r) => (r.productName || r.product) === q.product);
-      if (q.design) out = out.filter((r) => r.designType === q.design);
+      if (q.design) out = out.filter((r) => designNameOf(r) === q.design);
       return out;
     };
     const poolFor = (exclude: keyof DispatchQueryDto) => apply(rows, { ...query, [exclude]: undefined } as DispatchQueryDto);
@@ -427,12 +458,15 @@ export class DispatchService implements OnModuleInit {
       customers: distinct(poolFor('customer'), (r) => r.customerName),
       agents: distinct(poolFor('agent'), (r) => r.agentName),
       products: distinct(poolFor('product'), (r) => r.productName || r.product),
-      designs: distinct(poolFor('design'), (r) => r.designType),
+      designs: distinct(poolFor('design'), designNameOf),
     };
   }
 
   async findOne(id: number): Promise<DispatchDto> {
-    const row = await this.prisma.dispatch.findUnique({ where: { id } });
+    const row = await this.prisma.dispatch.findUnique({
+      where: { id },
+      include: { orderItem: { select: { design: true, designType: true, productName: true } } },
+    });
     if (!row) throw new NotFoundException('Dispatch not found.');
     return this.toDto(row);
   }
@@ -573,7 +607,7 @@ export class DispatchService implements OnModuleInit {
           subCategory: it.subCategory,
           product: it.product,
           productName: it.productName,
-          designType: it.designType,
+          designType: dispatchDesign(it),
           psize: it.psize,
           priority: it.priority,
           calField: it.calField,
@@ -657,7 +691,7 @@ export class DispatchService implements OnModuleInit {
             subCategory: it.subCategory,
             product: it.product,
             productName: it.productName,
-            designType: it.designType,
+            designType: dispatchDesign(it),
             psize: it.psize,
             priority: it.priority,
             calField: it.calField,
@@ -877,7 +911,7 @@ export class DispatchService implements OnModuleInit {
     return this.prisma.dispatch.update({ where: { id: row.id }, data: { code: this.codeFor(row.id) } });
   }
 
-  private toDto(r: Dispatch): DispatchDto {
+  private toDto(r: Dispatch & { orderItem?: { design: string | null; designType: string | null; productName: string | null } }): DispatchDto {
     return {
       id: r.id,
       code: r.code ?? this.codeFor(r.id),
@@ -892,7 +926,7 @@ export class DispatchService implements OnModuleInit {
       subCategory: r.subCategory,
       product: r.product,
       productName: r.productName,
-      designType: r.designType,
+      designType: dispatchDesign(r.orderItem ?? r),
       psize: r.psize,
       priority: r.priority,
       calField: r.calField,

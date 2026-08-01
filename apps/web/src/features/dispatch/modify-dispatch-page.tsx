@@ -51,7 +51,7 @@ const COLUMNS: DataColumn<DispatchDto>[] = [
   { id: 'order', label: 'ORD#', cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{shortOrderCode(d.orderCode, d.orderId)}</span> },
   { id: 'customer', label: 'Customer', cell: (d) => <span className={TEXT_CELL}>{d.customerName}</span> },
   { id: 'product', label: 'Product', cell: (d) => <span className={TEXT_CELL}>{d.productName || d.product || '—'}</span> },
-  { id: 'design', label: 'Design', cell: (d) => <span className={TEXT_CELL}>{d.designType || '—'}</span> },
+  { id: 'design', label: 'Design Name', cell: (d) => <span className={TEXT_CELL}>{d.designType || '—'}</span> },
   { id: 'bags', label: 'Bags', align: 'right', cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(d.bags)}</span> },
   { id: 'pcs', label: 'Pcs', align: 'right', cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(d.pcs)}</span> },
   { id: 'kgs', label: 'Kgs', align: 'right', cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(d.gram)}</span> },
@@ -250,14 +250,14 @@ export function ModifyDispatchPage() {
           <div className="relative col-span-2 sm:w-56">
             <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
             <Input
-              placeholder="Search #, customer, item, design or remark…"
+              placeholder="Search #, customer, item, design name or remark…"
               className={cn(CONTROL, 'pl-8 font-medium', searchInput && CONTROL_ON)}
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
             />
           </div>
           {/* Filter order follows the house pattern: Customer, Item Name, Agent,
-              Category, Sub Category, Design (skipping whichever of those this
+              Category, Sub Category, Design Name (skipping whichever of those this
               page doesn't have — there's no Category/Sub Category filter here). */}
           <div className="sm:w-40">
             <NativeSelect value={customerFilter} onChange={(v) => { setCustomerFilter(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="All customers" className={cn(CONTROL, 'font-medium', customerFilter && CONTROL_ON)} />
@@ -268,8 +268,8 @@ export function ModifyDispatchPage() {
           <div className="sm:w-36">
             <NativeSelect value={agentFilter} onChange={(v) => { setAgentFilter(v); setPage(1); }} options={['', ...(options?.agents ?? [])]} placeholder="All agents" className={cn(CONTROL, 'font-medium', agentFilter && CONTROL_ON)} />
           </div>
-          <div className="sm:w-36">
-            <NativeSelect value={designFilter} onChange={(v) => { setDesignFilter(v); setPage(1); }} options={['', ...(options?.designs ?? [])]} placeholder="All designs" className={cn(CONTROL, 'font-medium', designFilter && CONTROL_ON)} />
+          <div className="sm:w-44">
+            <NativeSelect value={designFilter} onChange={(v) => { setDesignFilter(v); setPage(1); }} options={['', ...(options?.designs ?? [])]} placeholder="All design names" className={cn(CONTROL, 'font-medium', designFilter && CONTROL_ON)} />
           </div>
           <div className="sm:w-36">
             <NativeSelect value={statusFilter} onChange={(v) => { setStatusFilter(v); setPage(1); }} options={['', ...DISPATCH_STATUSES]} placeholder="All statuses" className={cn(CONTROL, 'font-medium', statusFilter && CONTROL_ON)} />

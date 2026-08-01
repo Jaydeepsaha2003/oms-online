@@ -646,9 +646,9 @@ const STATUS_LEGEND = 'St:  F = fully paid   P = partially paid   D = due';
  * appear only under the headings and around the totals. Amounts carry two
  * decimals and a zero cell is left blank, both Tally conventions.
  *
- * The page turns landscape only when both money legs are shown (four figure
- * columns); a Bank-only or Cash-only ledger is a plain Debit/Credit statement and
- * fits portrait, exactly like Tally's own.
+ * The statement is kept on an A4 portrait sheet for consistent printing. When
+ * both money legs are shown, the table uses compact type and column widths so
+ * all four amount columns still fit without clipping.
  */
 function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefinitions {
   const BLACK = '#000000';
@@ -658,16 +658,20 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
   const legs = legsFor(mode);
   /** Both legs shown → the Dr/Cr pairs sit under "Bank" / "Cash" group headings. */
   const grouped = legs.length === 2;
-  /** Always landscape. At 9pt the six text columns plus the figure pairs simply
-   *  don't breathe on portrait A4 — Particulars ends up wrapping every second
-   *  party name, which reads far worse than a wider sheet. */
-  const pageWidth = 842 - 48;
+  /** Printable width inside the narrow portrait margins. */
+  const pageWidth = 595 - 36;
 
-  /** Body type. Bumped from 8pt so the statement stays legible in print and on a
-   *  phone; every other size below is set relative to it. */
-  const BODY = 10;
+  /** Single-leg reports have room for larger type; grouped reports use compact
+   *  type to keep Bank and Cash visible together on the portrait sheet. */
+  const BODY = grouped ? 7.5 : 9;
   const txt = (text: string, extra: Record<string, unknown> = {}) => ({ text, fontSize: BODY, ...extra });
-  const num = (v: number, extra: Record<string, unknown> = {}) => ({ text: amt2(v), fontSize: BODY, alignment: 'right', ...extra });
+  const num = (v: number, extra: Record<string, unknown> = {}) => ({
+    text: amt2(v),
+    fontSize: BODY,
+    alignment: 'right',
+    noWrap: true,
+    ...extra,
+  });
   /** Column captions: slightly larger than the body, letter-spaced so a run of
    *  short words ("Vch No", "Debit") reads as a heading rather than as data. */
   const head = (text: string, extra: Record<string, unknown> = {}) => ({
@@ -697,10 +701,15 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
   const heads = grouped ? [groupRow, colRow] : [colRow];
 
   /* ── one voucher line, single row ── */
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
   const dataRow = (r: PartyLedgerRow) => {
     const voucherType = r.voucherType.trim().toUpperCase();
     const particulars = ['SALE', 'SALES', 'SALES INVOICE'].includes(voucherType) ? 'SALES' : r.particulars;
-    const paymentStatus = r.status === 'F' ? 'Paid' : r.status === 'D' ? 'Due' : r.status === 'P' ? `Pending ${amt2z(r.pendingAmount)}` : '';
+    const dueDate = r.dueDate ? new Date(r.dueDate) : null;
+    const overdue = !!dueDate && !Number.isNaN(dueDate.getTime()) && dueDate < today && r.status !== 'F';
+    const balance = r.status === 'P' ? ` ${amt2z(r.pendingAmount)}` : '';
+    const paymentStatus = r.status === 'F' ? 'Paid' : overdue ? `Over Due${balance}` : r.status === 'P' ? `Due${balance}` : r.status === 'D' ? 'Due' : '';
     return [
       txt(d(r.txnDate), { noWrap: true }),
       txt(particulars),
@@ -715,10 +724,10 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
   /* ── opening / current / closing, laid out on the same grid ── */
   const balRow = (label: string, b: LedgerBalanceRow, strong: boolean) => [
     txt(''),
-    txt(label, { bold: true, characterSpacing: strong ? 0.4 : 0 }),
+    txt(label, { bold: true, characterSpacing: strong ? 0.4 : 0, fontSize: BODY - 0.5, noWrap: true }),
     ...Array.from({ length: LEAD - 2 }, () => txt('')),
     ...legs.flatMap((l) => [num(b[l.dr], { bold: true }), num(b[l.cr], { bold: true })]),
-  ].map((c) => (strong ? { ...c, fontSize: BODY + 1 } : c));
+  ].map((c, index) => (strong ? { ...c, fontSize: index === 1 ? BODY - 0.5 : BODY + 0.5 } : c));
 
   const body = [
     ...heads,
@@ -735,8 +744,10 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
      column's widest real value at this size ("SALES DISCOUNT", "SSS/26-27/140",
      a crore-scale amount in bold), so nothing wraps and nothing over-claims
      space: every extra point taken here comes straight out of Particulars. */
-  const numW = 60;
-  const leadW = [48, '*', 86, 63, 90, 58];
+  // The compact grouped widths retain enough room for crore-scale figures while
+  // single-leg reports use wider amount cells and larger type.
+  const numW = grouped ? 52 : 60;
+  const leadW = grouped ? [38, '*', 54, 48, 64, 44] : [43, '*', 62, 64, 84, 49];
 
   const kpiCell = (label: string, bucket: { amount: number; count: number }) => ({
     stack: [
@@ -758,8 +769,8 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
 
   return {
     pageSize: 'A4',
-    pageOrientation: 'landscape',
-    pageMargins: [24, 22, 24, 32],
+    pageOrientation: 'portrait',
+    pageMargins: [18, 22, 18, 32],
     defaultStyle: { font: 'Helvetica', fontSize: BODY, color: BLACK },
     content: [
       /* Party-first Tally masthead: account, report type, address and period. */
@@ -788,8 +799,8 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
           vLineWidth: () => 0.5,
           hLineColor: () => BLACK,
           vLineColor: () => BLACK,
-          paddingLeft: () => 5,
-          paddingRight: () => 5,
+          paddingLeft: () => (grouped ? 2 : 4),
+          paddingRight: () => (grouped ? 2 : 4),
           // Roomier rows: the larger type needs the leading, and it stops the
           // figure columns reading as a solid block. Headings get a touch more.
           paddingTop: (i: number) => (i < headerRows ? 4 : 3),
