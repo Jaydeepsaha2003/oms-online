@@ -686,10 +686,11 @@ export function ChallanFormPage() {
               )}
             </div>
 
-            {/* Document-info panel — the four invoice fields as a tidy, divided block.
-                gap-px over a filled ground draws the 1px dividers between cells. */}
-            <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border bg-border/70 lg:flex lg:shrink-0 dark:bg-white/10">
-              <MetaCell label="Invoice No" icon={Hash} className="lg:w-44">
+            {/* Document-info panel — the four invoice fields as a tidy 2×2 grid.
+                gap-px over a filled ground draws the 1px dividers between cells;
+                a fixed width on desktop keeps the 2×2 compact beside the Bill To. */}
+            <div className="grid grid-cols-2 grid-rows-2 gap-px overflow-hidden rounded-lg border bg-border/70 shadow-sm lg:w-[27rem] lg:shrink-0 lg:self-start dark:bg-white/10">
+              <MetaCell label="Invoice No" icon={Hash}>
                 <div className="flex items-center gap-1.5">
                   {!isEdit && (draft?.prefixes.length ?? 0) > 1 && (
                     <select
@@ -714,10 +715,10 @@ export function ChallanFormPage() {
                   />
                 </div>
               </MetaCell>
-              <MetaCell label="Invoice Date" icon={CalendarDays} className="lg:w-40">
+              <MetaCell label="Invoice Date" icon={CalendarDays}>
                 <DatePicker value={invDate} onChange={setInvDate} clearable={false} className="bg-background h-8 w-full rounded-[4px] text-[13px]" />
               </MetaCell>
-              <MetaCell label="Due Date" icon={CalendarCheck2} className="lg:w-36">
+              <MetaCell label="Due Date" icon={CalendarCheck2}>
                 <Input
                   readOnly
                   value={dueDate ? formatDate(dueDate) : ''}
@@ -725,7 +726,7 @@ export function ChallanFormPage() {
                   className="bg-muted/40 h-8 w-full cursor-default rounded-[4px] text-[13px] tabular-nums"
                 />
               </MetaCell>
-              <MetaCell label="Status" className="lg:w-32">
+              <MetaCell label="Status">
                 {isEdit ? (
                   <NativeSelect value={status} onChange={setStatus} options={[...CHALLAN_STATUSES]} className="bg-background h-8 w-full rounded-[4px] text-[13px]" />
                 ) : (
@@ -1075,9 +1076,10 @@ function MetaCell({
 }) {
   // A single field inside the document-info panel. The panel provides the border
   // and the 1px dividers (via gap-px on a filled ground), so each cell just needs a
-  // solid background and its own padding.
+  // solid background and its own padding. Centred vertically so the 2×2 cells stay
+  // balanced when the grid rows share a height.
   return (
-    <div className={cn('bg-card min-w-0 space-y-0.5 px-2.5 py-1.5', className)}>
+    <div className={cn('bg-card flex min-w-0 flex-col justify-center gap-1 px-3 py-2.5', className)}>
       <div className="text-muted-foreground flex items-center gap-1 text-[10px] font-bold tracking-widest uppercase">
         {Icon && <Icon className="size-3 opacity-70" />} {label}
       </div>
