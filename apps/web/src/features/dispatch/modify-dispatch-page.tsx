@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Loader2, Pencil, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DISPATCH_STATUSES, RESOURCES, type DispatchDto } from '@oms/shared';
@@ -381,6 +381,8 @@ export function ModifyDispatchPage() {
   );
 }
 
+const EDIT_QTY = [['bags', 'Bags'], ['pcs', 'Pcs'], ['gram', 'Kgs'], ['box', 'Box']] as const;
+
 function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onClose: () => void }) {
   const update = useUpdateDispatch(dispatch.id);
   const s = (v: number | null) => (v == null ? '' : String(v));
@@ -391,11 +393,11 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
     box: s(dispatch.box),
     dispatchStatus: dispatch.dispatchStatus,
     comment: dispatch.comment ?? '',
-    supItem: dispatch.supItem ?? '',
   });
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
 
   const submit = () => {
+    if (update.isPending) return; // guard a double-fire (fast Ctrl+S + click)
     const cf = (dispatch.calField ?? '').toUpperCase();
     if (cf === 'PCS' && num(form.pcs) <= 0) return toast.error('Pcs is required — this item is priced by PCS.');
     if (cf === 'KGS' && num(form.gram) <= 0) return toast.error('Kgs is required to dispatch this item.');
@@ -407,7 +409,6 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
         box: num(form.box),
         dispatchStatus: form.dispatchStatus,
         comment: form.comment.trim() || null,
-        supItem: form.supItem.trim() || null,
       },
       {
         onSuccess: () => {
@@ -419,44 +420,101 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
     );
   };
 
+  // Ctrl/Cmd+S saves (bound once; always calls the latest closure via the ref).
+  const submitRef = useRef(submit);
+  submitRef.current = submit;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        submitRef.current();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Edit {dispatch.code ?? `#${dispatch.id}`}</DialogTitle>
+          <DialogTitle className="flex flex-wrap items-center gap-2">
+            <span>Edit dispatch</span>
+            <span className="rounded-md bg-indigo-50 px-2 py-0.5 font-mono text-sm font-bold text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300">
+              {shortDispatchCode(dispatch.code, dispatch.id)}
+            </span>
+            <span className="ml-auto">
+              <StatusBadge s={form.dispatchStatus} />
+            </span>
+          </DialogTitle>
         </DialogHeader>
+
         <div className="grid gap-4">
-          <div className="bg-muted/40 rounded-lg border p-3 text-sm">
-            <div className="font-medium">{dispatch.productName || dispatch.product}{dispatch.designType ? ` · ${dispatch.designType}` : ''}</div>
-            <div className="text-muted-foreground">{dispatch.customerName} · {shortOrderCode(dispatch.orderCode, dispatch.orderId)}</div>
-          </div>
-          <div className="grid grid-cols-4 gap-3">
-            {(['bags', 'pcs', 'gram', 'box'] as const).map((k, i) => (
-              <div key={k} className="space-y-1">
-                <Label className="text-xs">{['Bags', 'Pcs', 'Kgs', 'Box'][i]}</Label>
-                <Input type="number" step="any" className="text-right tabular-nums" value={form[k]} onChange={(e) => set({ [k]: e.target.value } as Partial<typeof form>)} />
-              </div>
-            ))}
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label className="text-xs">Dispatch status</Label>
-              <NativeSelect value={form.dispatchStatus} onChange={(v) => set({ dispatchStatus: v === 'FULLY DISPATCH' ? 'FULLY DISPATCH' : 'PARTIALLY DISPATCH' })} options={[...DISPATCH_STATUSES]} />
+          {/* Read-only context — what this dispatch is for. */}
+          <div className="from-primary/[0.07] rounded-lg border bg-gradient-to-r to-transparent p-3">
+            <div className="text-sm font-semibold">
+              {dispatch.productName || dispatch.product}
+              {dispatch.designType && dispatch.designType.toUpperCase() !== 'NA' ? ` · ${dispatch.designType}` : ''}
             </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Supplementary</Label>
-              <Input value={form.supItem} onChange={(e) => set({ supItem: e.target.value })} />
+            <div className="text-muted-foreground mt-0.5 text-xs">
+              {dispatch.customerName} · {shortOrderCode(dispatch.orderCode, dispatch.orderId)} · {formatDate(dispatch.dispatchDate)}
             </div>
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Dispatch remarks</Label>
+
+          {/* Quantities */}
+          <div className="space-y-1.5">
+            <Label className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">Quantities</Label>
+            <div className="grid grid-cols-4 gap-2.5">
+              {EDIT_QTY.map(([k, label]) => (
+                <div key={k} className="space-y-1">
+                  <Label className="text-[11px] font-medium">{label}</Label>
+                  <Input
+                    type="number"
+                    step="any"
+                    inputMode="decimal"
+                    className="h-10 text-right text-base tabular-nums"
+                    value={form[k]}
+                    onChange={(e) => set({ [k]: e.target.value } as Partial<typeof form>)}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Status — segmented toggle (more tactile than a dropdown). */}
+          <div className="space-y-1.5">
+            <Label className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">Dispatch status</Label>
+            <div className="bg-muted grid grid-cols-2 gap-1 rounded-lg p-1">
+              {[...DISPATCH_STATUSES].map((val) => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => set({ dispatchStatus: val })}
+                  className={cn(
+                    'rounded-md py-2 text-xs font-bold transition-all active:scale-[0.98]',
+                    form.dispatchStatus === val
+                      ? cn('bg-card shadow-sm', val === 'FULLY DISPATCH' ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300')
+                      : 'text-muted-foreground',
+                  )}
+                >
+                  {val === 'FULLY DISPATCH' ? 'Fully dispatched' : 'Partially dispatched'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Remarks */}
+          <div className="space-y-1.5">
+            <Label className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">Remarks</Label>
             <Input value={form.comment} onChange={(e) => set({ comment: e.target.value })} placeholder="Dispatch remark…" />
           </div>
         </div>
+
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={submit} disabled={update.isPending}>
+          <Button onClick={submit} disabled={update.isPending} title="Save changes (Ctrl+S)">
             {update.isPending ? <Loader2 className="animate-spin" /> : null} Save
+            <kbd className="ml-1 hidden rounded bg-white/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold sm:inline">Ctrl+S</kbd>
           </Button>
         </DialogFooter>
       </DialogContent>
