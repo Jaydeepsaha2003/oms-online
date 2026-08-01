@@ -11,7 +11,7 @@ import {
   type SetStateAction,
 } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRightLeft, BadgePercent, Camera, Check, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Lock, PackageOpen, Pencil, Plus, RotateCcw, Save, Settings2, Trash2, Truck } from 'lucide-react';
+import { ArrowLeft, ArrowRightLeft, BadgePercent, Camera, Check, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Lock, PackageOpen, Pencil, Plus, RotateCcw, Save, Settings2, Trash2, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ORDER_PRIORITIES, RESOURCES, resolveSpecialRates, qtyOrderForCategory, type OrderInput, type QtyField } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -39,6 +39,7 @@ import { clearOrderDraft, loadOrderDraft, saveOrderDraft } from './order-draft';
 import { DraftLinePhotos, toPhotoInput, type LinePhoto } from './line-photos';
 import { useActiveCustomerBookings } from '@/features/bookings/use-bookings';
 import { BookingDrawSheet, type DrawnBookingLine } from './booking-draw-sheet';
+import { DesignNamePicker, resolveDesignNameChoices } from './design-name-picker';
 
 /** A line item once added to the order. */
 interface Item {
@@ -319,6 +320,7 @@ export function OrderFormPage() {
   // Item entry (the row being built) + the added items
   const [entry, setEntry] = useState(blankEntry());
   const [items, setItems] = useState<Item[]>([]);
+  const [editingItemKey, setEditingItemKey] = useState<string | null>(null);
 
   // How many item rows to keep visible in the panel before it scrolls — a saved
   // per-user preference. 0 = show all (the panel grows and the page scrolls);
@@ -429,6 +431,7 @@ export function OrderFormPage() {
       setCompletionDay(o.completionDay?.toString() ?? '');
       setStatus(o.status);
       setEntry(blankEntry());
+      setEditingItemKey(null);
       setItems(
         o.items.map((it, i) => ({
           key: `e${it.id}-${i}`,
@@ -441,7 +444,7 @@ export function OrderFormPage() {
           category: it.pCategory ?? '',
           subCategory: it.subCategory ?? '',
           designType: it.designType ?? '',
-          designName: it.designType ? (nameByCode.get(it.designType.toUpperCase()) ?? '') : '',
+          designName: it.design?.trim() || (it.designType ? (nameByCode.get(it.designType.toUpperCase()) ?? '') : ''),
           productRate: it.productRate?.toString() ?? '',
           designRate: it.designRate?.toString() ?? '',
           weight: '',
@@ -527,6 +530,7 @@ export function OrderFormPage() {
     setStatus('CONFIRMED');
     setItems([]);
     setEntry(blankEntry());
+    setEditingItemKey(null);
   };
 
   // Throw away the restored draft and start blank.
@@ -752,27 +756,16 @@ export function OrderFormPage() {
     setEntryField({ box: String(boxPreview) });
   };
 
-  // Design names for the SELECTED item's design-type code — legacy:
-  // SELECT [DESIGN NAME] FROM DesignName WHERE [DESIGN TYPE L] = <the item's design code>.
-  const designChoices = useMemo(() => {
-    const code = entry.designType.trim().toUpperCase();
-    if (!code) return [] as string[];
-    const seen = new Set<string>();
-    const names: string[] = [];
-    for (const dn of lookups?.designNames ?? []) {
-      if (dn.designType.toUpperCase() === code && !seen.has(dn.designName)) {
-        seen.add(dn.designName);
-        names.push(dn.designName);
-      }
-    }
-    return names;
-  }, [lookups, entry.designType]);
+  const designNameOptions = useMemo(
+    () => resolveDesignNameChoices(lookups, entry.designType, entry.category, entry.subCategory),
+    [lookups, entry.designType, entry.category, entry.subCategory],
+  );
 
-  // Picking a name only changes the label — the code + rate come from the item.
+  // Picking names only changes the label; the code and summed rate come from the item.
   const onDesignName = (name: string) => setEntry((e) => ({ ...e, designName: name }));
 
   // The item's design code has no names in the master (or it has no design) → lock to "NA".
-  const noDesignNames = designChoices.length === 0;
+  const noDesignNames = designNameOptions.choices.length === 0;
   // Design rate is editable only when it is > 0 (per the legacy rule).
   const designRateEditable = (n(entry.designRate) ?? 0) > 0;
 
@@ -835,6 +828,7 @@ export function OrderFormPage() {
     // Duplicate guard: same item + design name already on the list → confirm.
     const dupIdx = items.findIndex(
       (i) =>
+        i.key !== editingItemKey &&
         i.status !== 'CANCELLED' &&
         i.itemName.trim().toUpperCase() === entry.itemName.trim().toUpperCase() &&
         (i.designName || 'NA').toUpperCase() === designName.toUpperCase(),
@@ -847,34 +841,55 @@ export function OrderFormPage() {
       });
       if (!ok) return;
     }
-    setItems((its) => [
-      ...its,
-      // Keep any photos carried on the entry (set when editing an existing line);
-      // a fresh entry has none, so new lines still start with an empty gallery.
-      { ...entry, key: `i${keyer.current++}`, calField, designName, photos: entry.photos ?? [] },
-    ]);
+    const wasEditing = editingItemKey != null;
+    const completed: Item = {
+      ...entry,
+      key: editingItemKey ?? `i${keyer.current++}`,
+      calField,
+      designName,
+      photos: entry.photos ?? [],
+    };
+    setItems((its) =>
+      editingItemKey
+        ? its.map((item) => (item.key === editingItemKey ? completed : item))
+        : [...its, completed],
+    );
+    setEditingItemKey(null);
     // Reset the item fields but keep order type / priority for the next line.
     setEntry((e) => ({ ...blankEntry(), ordType: e.ordType, priority: e.priority }));
     // Return focus to Item name so the next line can be entered immediately.
     requestAnimationFrame(() => focusField(formRef.current, 'itemName'));
+    if (wasEditing) toast.success('Item updated');
   };
 
-  const removeItem = (key: string) => setItems((its) => its.filter((i) => i.key !== key));
+  const cancelItemEdit = () => {
+    setEditingItemKey(null);
+    setEntry((e) => ({ ...blankEntry(), ordType: e.ordType, priority: e.priority }));
+  };
 
-  // Edit a just-added line: pull its values back into the entry row above and drop
-  // it from the list, so the user tweaks the fields and taps "Add" to put it back.
+  const removeItem = (key: string) => {
+    setItems((its) => its.filter((i) => i.key !== key));
+    if (editingItemKey === key) cancelItemEdit();
+  };
+
+  // Keep the original row in the list while its values are edited above. This
+  // preserves a safe copy and prevents a second edit from overwriting the first.
   // Only new, manually-entered lines are editable here — saved lines (edit them on
   // Order Modify) and booking-drawn lines (rate frozen) keep just the lock/remove.
   const editItem = (item: Item) => {
     if (item.id != null || item.bookingId != null) return;
+    if (editingItemKey != null) {
+      toast.info('Finish or cancel the current item edit first.');
+      return;
+    }
     const { key, ...rest } = item;
+    setEditingItemKey(key);
     setEntry(rest);
-    setItems((its) => its.filter((i) => i.key !== key));
     requestAnimationFrame(() => {
       formRef.current?.querySelector<HTMLElement>('[data-tabfield="itemName"]')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       focusField(formRef.current, 'itemName');
     });
-    toast.info('Editing item — change the fields above, then tap Add to update it.');
+    toast.info('Editing item — change the fields above, then tap Update.');
   };
 
   const setItemPhotos = (key: string, photos: LinePhoto[]) =>
@@ -924,6 +939,7 @@ export function OrderFormPage() {
     if (!customer.trim()) return !toast.error('Please select a correct customer');
     if (!forDraft && !completionDay.trim()) return !toast.error('Please Select the Completion Day');
     if (items.length === 0) return !toast.error('There are no items to save.');
+    if (editingItemKey != null) return !toast.error('Finish or cancel the current item edit before saving.');
     return true;
   };
 
@@ -962,6 +978,7 @@ export function OrderFormPage() {
       pCategory: i.category.trim() || null,
       subCategory: i.subCategory.trim() || null,
       product: i.product.trim() || null,
+      design: i.designName.trim() || 'NA',
       designType: i.designType.trim() || null,
       productName: i.itemName.trim() || [i.product.trim(), i.designType.trim()].filter(Boolean).join(' ') || null,
       productRate: n(i.productRate),
@@ -1346,13 +1363,13 @@ export function OrderFormPage() {
             </div>
             <div className="space-y-1 lg:col-span-2" data-tabfield="designName">
               <Label className="text-base">Design Name</Label>
-              <NativeSelect
+              <DesignNamePicker
                 value={noDesignNames ? 'NA' : entry.designName}
                 onChange={onDesignName}
-                options={noDesignNames ? ['NA'] : designChoices}
-                placeholder="Design name"
+                choices={designNameOptions.choices}
+                multiple={designNameOptions.multiple}
                 disabled={noDesignNames}
-                onInvalidEntry={() => toast.error('Please select a correct design type')}
+                onInvalidEntry={() => toast.error('Please select a correct design name')}
               />
             </div>
             <div className="space-y-1 lg:col-span-1" data-tabfield="productRate">
@@ -1436,9 +1453,20 @@ export function OrderFormPage() {
               <Input value={entry.comment} onChange={(e) => setEntryField({ comment: e.target.value })} placeholder="Item remark…" />
             </div>
             <div className="col-span-2 sm:col-span-1 lg:col-span-1">
-              <Button onClick={addItem} disabled={noCustomer} className="w-full" aria-label="Add item" title={noCustomer ? 'Select a customer first' : 'Add item (Alt+A)'}>
-                <Plus /> Add
-              </Button>
+              {editingItemKey ? (
+                <div className="flex justify-end gap-1.5">
+                  <Button onClick={addItem} size="icon" aria-label="Update item" title="Update this item (Alt+A)">
+                    <Check className="size-4" />
+                  </Button>
+                  <Button type="button" variant="outline" size="icon" onClick={cancelItemEdit} aria-label="Cancel item edit" title="Cancel item edit">
+                    <X className="size-4" />
+                  </Button>
+                </div>
+              ) : (
+                <Button onClick={addItem} disabled={noCustomer} className="w-full" aria-label="Add item" title={noCustomer ? 'Select a customer first' : 'Add item (Alt+A)'}>
+                  <Plus /> Add
+                </Button>
+              )}
             </div>
           </div>
 
@@ -1513,7 +1541,7 @@ export function OrderFormPage() {
                   </tr>
                 ) : (
                   items.map((i, idx) => (
-                    <tr key={i.key} className="hover:bg-muted/40">
+                    <tr key={i.key} className={cn('hover:bg-muted/40', editingItemKey === i.key && 'bg-sky-50 hover:bg-sky-50')}>
                       <td className="text-muted-foreground text-center tabular-nums">{idx + 1}</td>
                       <td className="font-medium">
                         {i.itemName || i.product || '—'}
@@ -1568,7 +1596,15 @@ export function OrderFormPage() {
                           ) : (
                             <>
                               {i.bookingId == null && (
-                                <Button variant="ghost" size="icon" className="text-primary hover:text-primary size-8" onClick={() => editItem(i)} aria-label="Edit" title="Edit this item">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-primary hover:text-primary size-8"
+                                  onClick={() => editItem(i)}
+                                  disabled={editingItemKey != null}
+                                  aria-label="Edit"
+                                  title={editingItemKey === i.key ? 'Currently editing this item' : editingItemKey ? 'Finish or cancel the current edit first' : 'Edit this item'}
+                                >
                                   <Pencil className="size-4" />
                                 </Button>
                               )}
@@ -1612,7 +1648,7 @@ export function OrderFormPage() {
               <>
                 <div className="divide-y rounded-lg border">
                   {items.map((i, idx) => (
-                    <div key={i.key} className="px-2.5 py-2">
+                    <div key={i.key} className={cn('px-2.5 py-2', editingItemKey === i.key && 'bg-sky-50')}>
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-medium">
@@ -1647,7 +1683,15 @@ export function OrderFormPage() {
                           ) : (
                             <>
                               {i.bookingId == null && (
-                                <Button variant="ghost" size="icon" className="text-primary hover:text-primary size-8" onClick={() => editItem(i)} aria-label="Edit item">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-primary hover:text-primary size-8"
+                                  onClick={() => editItem(i)}
+                                  disabled={editingItemKey != null}
+                                  aria-label="Edit item"
+                                  title={editingItemKey === i.key ? 'Currently editing this item' : editingItemKey ? 'Finish or cancel the current edit first' : 'Edit this item'}
+                                >
                                   <Pencil className="size-4.5" />
                                 </Button>
                               )}

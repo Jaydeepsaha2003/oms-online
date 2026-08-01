@@ -112,14 +112,19 @@ export class PartyLedgerService {
     // Resolve scope: a customer wins over an agent.
     let scope: 'CUSTOMER' | 'AGENT' | 'ALL' = 'ALL';
     let customerName: string | null = null;
+    let customerAddress: string | null = null;
     let custIds: number[] | null = null;
     const agentName = q.agentName?.trim() && q.agentName.trim().toUpperCase() !== 'ALL' ? q.agentName.trim() : null;
 
     if (q.customerId) {
-      const c = await this.prisma.customer.findUnique({ where: { id: q.customerId }, select: { id: true, partyName: true } });
+      const c = await this.prisma.customer.findUnique({
+        where: { id: q.customerId },
+        select: { id: true, partyName: true, city: true, state: true, region: true },
+      });
       if (!c) throw new BadRequestException('Customer not found.');
       scope = 'CUSTOMER';
       customerName = c.partyName;
+      customerAddress = [c.city, c.state, c.region].map((part) => part?.trim()).filter(Boolean).join(', ') || null;
       custIds = [c.id];
     } else if (agentName) {
       scope = 'AGENT';
@@ -161,7 +166,7 @@ export class PartyLedgerService {
     const [ccDr, ccCr] = split(closingCashNet);
 
     // ── 5) KPIs ───────────────────────────────────────────────────────────────
-    const kpis = await this.computeKpis(rows, pending, custIds, scope, q.customerId ?? null);
+    const kpis = await this.computeKpis(rows, pending, custIds, scope, q.customerId ?? null, mode);
 
     // Derived BEFORE the voucher-type filter, so picking one type doesn't collapse
     // the dropdown to that single option and strand the user on it.
@@ -182,6 +187,7 @@ export class PartyLedgerService {
       voucherTypes,
       scope,
       customerName,
+      customerAddress,
       agentName,
       from: from.toISOString(),
       to: to.toISOString(),
@@ -287,6 +293,7 @@ export class PartyLedgerService {
       challanId: rr.challanId ?? null,
       dueFrom: '',
       status: '',
+      pendingAmount: 0,
       bankDr: rr.bankDr,
       bankCr: rr.bankCr,
       cashDr: rr.cashDr,
@@ -297,14 +304,17 @@ export class PartyLedgerService {
 
     const info = pending.get(rr.voucherNo);
     const dueDate = rr.dueDate ?? info?.dueDate ?? rr.txnDate;
-    const invoiceAmt = rr.bankDr + rr.cashDr;
+    const invoiceAmt = mode === 'B' ? rr.bankDr : mode === 'C' ? rr.cashDr : rr.bankDr + rr.cashDr;
 
     if (!info) {
-      // Not in pending view (older / cleared outside the system): just show due-from.
+      // A confirmed invoice without a pending snapshot is treated as wholly due.
+      base.status = invoiceAmt > EPS ? 'D' : '';
+      base.pendingAmount = r0(Math.max(0, invoiceAmt));
       base.dueFrom = this.dueFromText(dueDate, today);
       return base;
     }
-    const pend = mode === 'B' ? info.bankBal : mode === 'C' ? info.cashBal : info.bankBal + info.cashBal;
+    const pend = Math.max(0, mode === 'B' ? info.bankBal : mode === 'C' ? info.cashBal : info.bankBal + info.cashBal);
+    base.pendingAmount = r0(pend);
     if (pend <= EPS) {
       base.status = 'F';
       const paid = lastRec.get(rr.voucherNo);
@@ -446,8 +456,10 @@ export class PartyLedgerService {
     custIds: number[] | null,
     scope: 'CUSTOMER' | 'AGENT' | 'ALL',
     customerId: number | null,
+    mode: string,
   ): Promise<PartyLedgerKpis> {
-    // Aging buckets over unpaid invoice rows (Status ≠ F), amount = bankDr + cashDr.
+    // Ageing buckets use the remaining balance for the selected Bank/Cash mode,
+    // not the invoice's original value (which overstates partially-paid bills).
     const over = { amount: 0, count: 0 };
     const past = { amount: 0, count: 0 };
     const normal = { amount: 0, count: 0 };
@@ -455,7 +467,11 @@ export class PartyLedgerService {
       const vt = r.voucherType.toUpperCase();
       if (vt !== 'SALES INVOICE' && vt !== 'DEBIT NOTE') continue;
       if (r.status === 'F') continue;
-      const amt = r.bankDr + r.cashDr;
+      const info = pending.get(r.voucherNo);
+      const amt = info
+        ? Math.max(0, mode === 'B' ? info.bankBal : mode === 'C' ? info.cashBal : info.bankBal + info.cashBal)
+        : r.pendingAmount;
+      if (amt <= EPS) continue;
       const due = r.dueFrom.trim();
       if (/Over/i.test(due)) {
         over.amount += amt;
@@ -585,7 +601,7 @@ export class PartyLedgerService {
 
   async exportPdf(q: PartyLedgerQuery): Promise<{ buffer: Buffer; filename: string }> {
     const res = await this.ledger(q);
-    const buffer = await this.pdf.render(buildLedgerDoc(res, (q.mode ?? 'BOTH').toUpperCase(), await this.companyName()));
+    const buffer = await this.pdf.render(buildLedgerDoc(res, (q.mode ?? 'BOTH').toUpperCase()));
     return { buffer, filename: `${this.baseName(res)}.pdf` };
   }
 }
@@ -625,16 +641,16 @@ const STATUS_LEGEND = 'St:  F = fully paid   P = partially paid   D = due';
 
 /**
  * A Tally "Ledger Account" statement, printed the way Tally prints one: plain
- * black on white with no fills or accent colour, a centred company masthead, and
+ * black on white with no fills or accent colour, a centred ledger masthead, and
  * a boxed grid whose column rules run the full height while horizontal rules
  * appear only under the headings and around the totals. Amounts carry two
  * decimals and a zero cell is left blank, both Tally conventions.
  *
- * The page turns landscape only when both money legs are shown (four figure
- * columns); a Bank-only or Cash-only ledger is a plain Debit/Credit statement and
- * fits portrait, exactly like Tally's own.
+ * The statement is kept on an A4 portrait sheet for consistent printing. When
+ * both money legs are shown, the table uses compact type and column widths so
+ * all four amount columns still fit without clipping.
  */
-function buildLedgerDoc(res: PartyLedgerResult, mode: string, company: string | null): TDocumentDefinitions {
+function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefinitions {
   const BLACK = '#000000';
   const d = shortDate;
   const k = res.kpis;
@@ -642,16 +658,20 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string, company: string | 
   const legs = legsFor(mode);
   /** Both legs shown → the Dr/Cr pairs sit under "Bank" / "Cash" group headings. */
   const grouped = legs.length === 2;
-  /** Always landscape. At 9pt the six text columns plus the figure pairs simply
-   *  don't breathe on portrait A4 — Particulars ends up wrapping every second
-   *  party name, which reads far worse than a wider sheet. */
-  const pageWidth = 842 - 48;
+  /** Printable width inside the narrow portrait margins. */
+  const pageWidth = 595 - 36;
 
-  /** Body type. Bumped from 8pt so the statement stays legible in print and on a
-   *  phone; every other size below is set relative to it. */
-  const BODY = 9;
+  /** Single-leg reports have room for larger type; grouped reports use compact
+   *  type to keep Bank and Cash visible together on the portrait sheet. */
+  const BODY = grouped ? 7.5 : 9;
   const txt = (text: string, extra: Record<string, unknown> = {}) => ({ text, fontSize: BODY, ...extra });
-  const num = (v: number, extra: Record<string, unknown> = {}) => ({ text: amt2(v), fontSize: BODY, alignment: 'right', ...extra });
+  const num = (v: number, extra: Record<string, unknown> = {}) => ({
+    text: amt2(v),
+    fontSize: BODY,
+    alignment: 'right',
+    noWrap: true,
+    ...extra,
+  });
   /** Column captions: slightly larger than the body, letter-spaced so a run of
    *  short words ("Vch No", "Debit") reads as a heading rather than as data. */
   const head = (text: string, extra: Record<string, unknown> = {}) => ({
@@ -663,7 +683,7 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string, company: string | 
   });
 
   /* ── headings ── */
-  /** Date, Particulars, Vch Type, Vch No, St, Due From. */
+  /** Date, Particulars, Vch Type, Vch No, Payment Status, Due Date. */
   const LEAD = 6;
   const groupRow = [
     ...Array.from({ length: LEAD }, () => txt('')),
@@ -674,31 +694,40 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string, company: string | 
     head('Particulars'),
     head('Vch Type'),
     head('Vch No'),
-    head('St', { alignment: 'center' }),
-    head('Due From'),
+    head('Payment Status'),
+    head('Due Date'),
     ...legs.flatMap(() => [head('Debit', { alignment: 'right' }), head('Credit', { alignment: 'right' })]),
   ];
   const heads = grouped ? [groupRow, colRow] : [colRow];
 
-  /* ── one voucher line, single row: St and Due From are their own columns ── */
-  const dataRow = (r: PartyLedgerRow) => [
-    txt(d(r.txnDate), { noWrap: true }),
-    // The party/narration carries the line, so it's the only cell in medium weight.
-    txt(r.particulars),
-    txt(r.voucherType, { fontSize: BODY - 0.5 }),
-    txt(r.voucherNo, { noWrap: true }),
-    txt(r.status, { bold: true, alignment: 'center' }),
-    txt(r.dueFrom, { fontSize: BODY - 0.5, noWrap: true }),
-    ...legs.flatMap((l) => [num(r[l.dr]), num(r[l.cr])]),
-  ];
+  /* ── one voucher line, single row ── */
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dataRow = (r: PartyLedgerRow) => {
+    const voucherType = r.voucherType.trim().toUpperCase();
+    const particulars = ['SALE', 'SALES', 'SALES INVOICE'].includes(voucherType) ? 'SALES' : r.particulars;
+    const dueDate = r.dueDate ? new Date(r.dueDate) : null;
+    const overdue = !!dueDate && !Number.isNaN(dueDate.getTime()) && dueDate < today && r.status !== 'F';
+    const balance = r.status === 'P' ? ` ${amt2z(r.pendingAmount)}` : '';
+    const paymentStatus = r.status === 'F' ? 'Paid' : overdue ? `Over Due${balance}` : r.status === 'P' ? `Due${balance}` : r.status === 'D' ? 'Due' : '';
+    return [
+      txt(d(r.txnDate), { noWrap: true }),
+      txt(particulars),
+      txt(r.voucherType, { fontSize: BODY - 0.5, noWrap: true }),
+      txt(r.voucherNo, { noWrap: true }),
+      txt(paymentStatus, { bold: !!paymentStatus, fontSize: BODY - 0.5, noWrap: true }),
+      txt(d(r.dueDate), { noWrap: true }),
+      ...legs.flatMap((l) => [num(r[l.dr]), num(r[l.cr])]),
+    ];
+  };
 
   /* ── opening / current / closing, laid out on the same grid ── */
   const balRow = (label: string, b: LedgerBalanceRow, strong: boolean) => [
     txt(''),
-    txt(label, { bold: true, characterSpacing: strong ? 0.4 : 0 }),
+    txt(label, { bold: true, characterSpacing: strong ? 0.4 : 0, fontSize: BODY - 0.5, noWrap: true }),
     ...Array.from({ length: LEAD - 2 }, () => txt('')),
     ...legs.flatMap((l) => [num(b[l.dr], { bold: true }), num(b[l.cr], { bold: true })]),
-  ].map((c) => (strong ? { ...c, fontSize: BODY + 1 } : c));
+  ].map((c, index) => (strong ? { ...c, fontSize: index === 1 ? BODY - 0.5 : BODY + 0.5 } : c));
 
   const body = [
     ...heads,
@@ -715,14 +744,16 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string, company: string | 
      column's widest real value at this size ("SALES DISCOUNT", "SSS/26-27/140",
      a crore-scale amount in bold), so nothing wraps and nothing over-claims
      space: every extra point taken here comes straight out of Particulars. */
-  const numW = 62;
-  const leadW = [48, '*', 76, 63, 12, 48];
+  // The compact grouped widths retain enough room for crore-scale figures while
+  // single-leg reports use wider amount cells and larger type.
+  const numW = grouped ? 52 : 60;
+  const leadW = grouped ? [38, '*', 54, 48, 64, 44] : [43, '*', 62, 64, 84, 49];
 
   const kpiCell = (label: string, bucket: { amount: number; count: number }) => ({
     stack: [
-      { text: label, fontSize: 8, bold: true, characterSpacing: 0.5 },
-      { text: amt2z(bucket.amount), fontSize: 12.5, bold: true, margin: [0, 2, 0, 0] },
-      { text: `${bucket.count} invoice(s)`, fontSize: 8, margin: [0, 1, 0, 0] },
+      { text: label, fontSize: 9, bold: true, characterSpacing: 0.5 },
+      { text: amt2z(bucket.amount), fontSize: 13.5, bold: true, margin: [0, 2, 0, 0] },
+      { text: `${bucket.count} invoice(s)`, fontSize: 9, margin: [0, 1, 0, 0] },
     ],
     margin: [8, 5, 8, 5],
   });
@@ -730,40 +761,30 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string, company: string | 
   /** A labelled fact under the grid ("Oldest unpaid: …"), label lighter than value. */
   const factLine = (pairs: [string, string][]) => ({
     text: pairs.flatMap(([label, value], i) => [
-      { text: `${i ? '        ' : ''}${label}: `, fontSize: 8.5 },
-      { text: value, fontSize: 8.5, bold: true },
+      { text: `${i ? '        ' : ''}${label}: `, fontSize: 9.5 },
+      { text: value, fontSize: 9.5, bold: true },
     ]),
     margin: [0, 4, 0, 0],
   });
 
   return {
     pageSize: 'A4',
-    pageOrientation: 'landscape',
-    pageMargins: [24, 22, 24, 32],
+    pageOrientation: 'portrait',
+    pageMargins: [18, 22, 18, 32],
     defaultStyle: { font: 'Helvetica', fontSize: BODY, color: BLACK },
     content: [
-      /* Masthead — company, document type, party, period. Centred, like Tally.
-         The company sits large and letter-spaced; a hairline under it separates
-         the letterhead from the statement caption. */
-      ...(company
-        ? [
-            { text: company.toUpperCase(), bold: true, fontSize: 16, characterSpacing: 1.2, alignment: 'center' },
-            { canvas: [{ type: 'line', x1: pageWidth * 0.3, y1: 0, x2: pageWidth * 0.7, y2: 0, lineWidth: 0.5, lineColor: BLACK }], margin: [0, 3, 0, 3] },
-          ]
-        : []),
-      { text: 'LEDGER ACCOUNT', fontSize: 10.5, characterSpacing: 2, alignment: 'center', margin: [0, company ? 0 : 2, 0, 6] },
+      /* Party-first Tally masthead: account, report type, address and period. */
       {
-        columns: [
-          { width: '*', text: partyOf(res), bold: true, fontSize: 13.5 },
-          {
-            width: 'auto',
-            stack: [
-              { text: `${d(res.from)}  to  ${d(res.to)}`, fontSize: 10, bold: true, alignment: 'right' },
-              { text: `${modeLabel(mode)}   ·   Amounts in INR`, fontSize: 8, alignment: 'right', margin: [0, 2, 0, 0] },
-            ],
-          },
+        stack: [
+          { text: partyOf(res).toUpperCase(), bold: true, fontSize: 15, alignment: 'center' },
+          { text: 'Ledger Account', fontSize: 11.5, alignment: 'center', margin: [0, 1, 0, 0] },
+          ...(res.customerAddress
+            ? [{ text: res.customerAddress.toUpperCase(), fontSize: 10, alignment: 'center', margin: [0, 3, 0, 0] }]
+            : []),
+          { text: `${d(res.from)}  to  ${d(res.to)}`, fontSize: 10.5, bold: true, alignment: 'center', margin: [0, res.customerAddress ? 6 : 4, 0, 0] },
+          { text: `${modeLabel(mode)}   ·   Amounts in INR`, fontSize: 9, alignment: 'center', margin: [0, 2, 0, 0] },
         ],
-        margin: [0, 0, 0, 4],
+        margin: [0, 0, 0, 5],
       },
       { canvas: [{ type: 'line', x1: 0, y1: 0, x2: pageWidth, y2: 0, lineWidth: 1, lineColor: BLACK }], margin: [0, 0, 0, 6] },
 
@@ -778,8 +799,8 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string, company: string | 
           vLineWidth: () => 0.5,
           hLineColor: () => BLACK,
           vLineColor: () => BLACK,
-          paddingLeft: () => 5,
-          paddingRight: () => 5,
+          paddingLeft: () => (grouped ? 2 : 4),
+          paddingRight: () => (grouped ? 2 : 4),
           // Roomier rows: the larger type needs the leading, and it stops the
           // figure columns reading as a solid block. Headings get a touch more.
           paddingTop: (i: number) => (i < headerRows ? 4 : 3),
@@ -810,11 +831,7 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string, company: string | 
               paddingBottom: () => 0,
             },
           },
-          factLine([
-            ['Oldest unpaid', k.invDueFrom],
-            ['Party list', k.paymentDNA],
-          ]),
-          { text: STATUS_LEGEND, fontSize: 8, margin: [0, 3, 0, 0] },
+          factLine([['Oldest unpaid', k.invDueFrom]]),
         ],
         margin: [0, 10, 0, 0],
       },

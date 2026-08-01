@@ -56,6 +56,7 @@ const SettingsPage = lazy(() => import('@/features/settings/settings-page').then
 const UsersPage = lazy(() => import('@/features/admin/users-page').then((m) => ({ default: m.UsersPage })));
 const RolesPage = lazy(() => import('@/features/admin/roles-page').then((m) => ({ default: m.RolesPage })));
 const AuditLogPage = lazy(() => import('@/features/audit-log/audit-log-page').then((m) => ({ default: m.AuditLogPage })));
+const ApprovalsPage = lazy(() => import('@/features/approvals/approvals-page').then((m) => ({ default: m.ApprovalsPage })));
 const BusinessOverviewPage = lazy(() => import('@/features/reports/business-overview-page').then((m) => ({ default: m.BusinessOverviewPage })));
 const SalesReportPage = lazy(() => import('@/features/reports/sales-report-page').then((m) => ({ default: m.SalesReportPage })));
 const CollectionsReportPage = lazy(() => import('@/features/reports/collections-report-page').then((m) => ({ default: m.CollectionsReportPage })));
@@ -496,6 +497,14 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.AUDIT_LOG, ACTIONS.VIEW)}>
                 <AuditLogPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/approvals"
+            element={
+              <RequirePermission permission={perm(RESOURCES.APPROVAL, ACTIONS.VIEW)}>
+                <ApprovalsPage />
               </RequirePermission>
             }
           />

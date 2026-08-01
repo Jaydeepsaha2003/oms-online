@@ -366,7 +366,7 @@ export class OrdersService {
   }
 
   async lookups(): Promise<OrderLookupsWire> {
-    const [customers, prodCats, subCats, products, designs, allProducts, designNames] = await Promise.all([
+    const [customers, prodCats, subCats, products, designs, combinations, allProducts, designNames] = await Promise.all([
       this.prisma.customer.findMany({
         where: { partyName: { not: null }, active: true },
         select: { id: true, partyName: true, agentName: true, category: true },
@@ -385,6 +385,10 @@ export class OrdersService {
         select: { category: true, subCategory: true, designType: true, rate: true },
         distinct: ['category', 'subCategory', 'designType'],
         orderBy: [{ category: 'asc' }, { designType: 'asc' }],
+      }),
+      this.prisma.combination.findMany({
+        include: { designLinks: { include: { design: true } } },
+        orderBy: { name: 'asc' },
       }),
       // Every ACTIVE product row (incl. size variants) for the composite item-name list.
       this.prisma.product.findMany({
@@ -416,12 +420,44 @@ export class OrdersService {
     // composed here anymore: multiplied out it was ~6,600 rows / 94% of a
     // 1.3 MB payload. The client rebuilds it from the raw rows below
     // (composeOrderLookups in apps/web/src/features/orders/use-orders.ts).
+    const orderDesigns = designs.map((d) => ({
+      category: d.category,
+      subCategory: d.subCategory,
+      designType: d.designType,
+      designName: nameOf(d.designType),
+      rate: d.rate,
+      componentDesignTypes: [d.designType],
+    }));
+    for (const combination of combinations) {
+      const members = combination.designLinks.map((link) => link.design);
+      if (!members.length || members.some((design) => !design.active)) continue;
+      const category = members[0].category;
+      const subCategory = members[0].subCategory;
+      // An order item has one category/sub-category. Mixed-scope combinations
+      // cannot be paired with a product unambiguously, so keep those in the
+      // Combination master but omit them from the item picker.
+      if (members.some((design) => design.category !== category || design.subCategory !== subCategory)) continue;
+      orderDesigns.push({
+        category,
+        subCategory,
+        designType: combination.name,
+        designName: combination.name,
+        rate: members.reduce((sum, design) => sum + (design.rate ?? 0), 0),
+        componentDesignTypes: members.map((design) => design.designType),
+      });
+    }
+    orderDesigns.sort((a, b) =>
+      a.category.localeCompare(b.category) ||
+      a.subCategory.localeCompare(b.subCategory) ||
+      a.designType.localeCompare(b.designType),
+    );
+
     return {
       customers: custList,
       categories: prodCats.map((c) => c.category).filter(Boolean),
       subCategories: subCats.map((c) => c.subCategory).filter(Boolean),
       products: products.map((p) => ({ product: p.product, category: p.category, subCategory: p.subCategory, rate: p.rate })),
-      designs: designs.map((d) => ({ category: d.category, subCategory: d.subCategory, designType: d.designType, designName: nameOf(d.designType), rate: d.rate })),
+      designs: orderDesigns,
       productRows: allProducts.map((p) => ({ product: p.product, category: p.category, subCategory: p.subCategory, size: p.size, pcs: p.pcs, weight: p.weight, rate: p.rate })),
       designNames: designNames.map((dn) => ({ designType: dn.designType, designName: dn.designName })),
       categoryFields: await readCategoryFields(this.prisma),

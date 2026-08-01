@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query,
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { ACTIONS, hasPermission, perm, RESOURCES } from '@oms/shared';
-import { Audit } from '../common/decorators/audit.decorator';
+import { Audit, SkipAudit } from '../common/decorators/audit.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
@@ -104,10 +104,12 @@ export class DispatchController {
    */
   @Post()
   @Permissions(perm(R, ACTIONS.CREATE))
-  @Audit({ action: ACTIONS.CREATE, resource: R, description: 'Created a dispatch' })
+  // The service writes its own rich entry (actual qty/status/date), so the
+  // generic interceptor entry is switched off here rather than duplicating it.
+  @SkipAudit()
   create(@Body() dto: CreateDispatchDto, @CurrentUser() user: AuthenticatedUser) {
     return this.dispatch.submit(dto, {
-      id: Number(user.id) || null,
+      id: user.id ?? null,
       name: user.name,
       canApprove: hasPermission(user.permissions, perm(R, ACTIONS.APPROVE)),
     });
@@ -124,10 +126,11 @@ export class DispatchController {
 
   @Patch(':id')
   @Permissions(perm(R, ACTIONS.UPDATE))
-  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Edited a dispatch' })
+  // Same reasoning as create() — the service records the actual before/after.
+  @SkipAudit()
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateDispatchDto, @CurrentUser() user: AuthenticatedUser) {
     return this.dispatch.updateAsUser(id, dto, {
-      id: Number(user.id) || null,
+      id: user.id ?? null,
       name: user.name,
       canApprove: hasPermission(user.permissions, perm(R, ACTIONS.APPROVE)),
     });

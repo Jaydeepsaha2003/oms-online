@@ -12,7 +12,7 @@ export function usePartyLedgerLookups() {
   });
 }
 
-/** The ledger. `enabled` gates the fetch until the user hits Search. */
+/** The ledger refreshes whenever a filter changes. */
 export function usePartyLedger(query: PartyLedgerQuery | null) {
   return useQuery({
     queryKey: [...KEY, 'ledger', query],

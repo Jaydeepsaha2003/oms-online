@@ -106,9 +106,20 @@ export function Combobox({
   // either unfocused, or focused but with nothing typed yet — so a filter reset
   // lands immediately even while the field has the caret, instead of waiting for
   // blur. Mid-typing (dirty) is left alone so the sync can't eat keystrokes.
+  //
+  // Deliberately reads `labelFor` through the ref, NOT as a dependency: `options`
+  // is an inline array literal on nearly every call site in this app, so `opts`/
+  // `labelFor` get a new identity on EVERY render of the parent, whether or not
+  // the actual option list changed. Depending on `labelFor` directly reran this
+  // effect on every such render, and each run's `setText` — landing during a
+  // focus/blur burst — could still be building on a previous render's async blur
+  // timer, which was enough to tip React into "Maximum update depth exceeded".
+  // `value` and `dirty` are real, meaningful dependents; `labelFor`'s IDENTITY is
+  // not, so only those two gate the effect.
   React.useEffect(() => {
-    if (!focused.current || !dirty) setText(labelFor(value));
-  }, [value, labelFor, dirty]);
+    if (!focused.current || !dirty) setText(labelForRef.current(value));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, dirty]);
 
   const q = text.trim();
   const ql = q.toLowerCase();

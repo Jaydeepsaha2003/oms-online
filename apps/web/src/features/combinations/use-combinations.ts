@@ -11,6 +11,11 @@ export interface ImportResult {
 
 const KEY = ['combinations'] as const;
 
+function invalidateCombinations(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: KEY });
+  qc.invalidateQueries({ queryKey: ['orders', 'lookups'] });
+}
+
 export function useCombinations(query: CombinationQuery) {
   return useQuery({
     queryKey: [...KEY, query],
@@ -23,7 +28,7 @@ export function useCreateCombination() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: CombinationInput) => http.post<CombinationDto>('/combinations', input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateCombinations(qc),
   });
 }
 
@@ -31,7 +36,7 @@ export function useUpdateCombination(id: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: CombinationInput) => http.patch<CombinationDto>(`/combinations/${id}`, input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateCombinations(qc),
   });
 }
 
@@ -39,7 +44,7 @@ export function useDeleteCombination() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => http.delete(`/combinations/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateCombinations(qc),
   });
 }
 
@@ -47,7 +52,7 @@ export function useImportCombinations() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (rows: Record<string, unknown>[]) => http.post<ImportResult>('/combinations/import', { rows }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateCombinations(qc),
   });
 }
 

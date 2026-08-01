@@ -20,3 +20,17 @@ export interface AuditOptions {
  *   @Patch(':id') update() { ... }
  */
 export const Audit = (options: AuditOptions) => SetMetadata(AUDIT_KEY, options);
+
+export const SKIP_AUDIT_KEY = 'skipAudit';
+
+/**
+ * Opt a route OUT of the interceptor's automatic audit entry entirely — for when
+ * the service itself writes a richer, request-specific entry (e.g. an edit's
+ * actual before/after values) and a generic "Edited an X" entry would just be
+ * noise sitting next to it.
+ *
+ * @example
+ *   @SkipAudit()
+ *   @Patch(':id') update() { // service calls AuditService.record(...) itself
+ */
+export const SkipAudit = () => SetMetadata(SKIP_AUDIT_KEY, true);

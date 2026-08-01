@@ -76,6 +76,7 @@ function PhotoManager({
   onRemove,
   title = 'Photos',
   emptyHint = 'No photos yet.',
+  hideHeader = false,
 }: {
   photos: LinePhoto[];
   canEdit?: boolean;
@@ -84,6 +85,9 @@ function PhotoManager({
   onRemove: (photo: LinePhoto) => void;
   title?: string;
   emptyHint?: string;
+  /** Skip the built-in title/count row — for callers that already show it
+   *  themselves (e.g. a collapsible section header). */
+  hideHeader?: boolean;
 }) {
   const [viewer, setViewer] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -108,16 +112,18 @@ function PhotoManager({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
-          <Camera className="size-3.5" /> {title}
-          {photos.length > 0 && (
-            <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-indigo-700">
-              {photos.length}
-            </span>
-          )}
-        </span>
-      </div>
+      {!hideHeader && (
+        <div className="flex items-center justify-between">
+          <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
+            <Camera className="size-3.5" /> {title}
+            {photos.length > 0 && (
+              <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-indigo-700">
+                {photos.length}
+              </span>
+            )}
+          </span>
+        </div>
+      )}
 
       <div
         className={cn(
@@ -409,10 +415,12 @@ export function LiveLinePhotos({
   orderItemId,
   canEdit = true,
   title = 'Line photos',
+  hideHeader = false,
 }: {
   orderItemId: number;
   canEdit?: boolean;
   title?: string;
+  hideHeader?: boolean;
 }) {
   const confirm = useConfirm();
   const { data: photos = [], isLoading } = useOrderItemPhotos(orderItemId);
@@ -464,6 +472,7 @@ export function LiveLinePhotos({
       onRemove={remove}
       title={title}
       emptyHint="No photos on this line."
+      hideHeader={hideHeader}
     />
   );
 }

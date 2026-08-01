@@ -42,6 +42,9 @@ export interface PendingLineDto {
   remPcs: number;
   remKgs: number;
   remBox: number;
+  /** True when this line already has an open back-date approval request — lets
+   *  the pending list show "Pending approval" instead of looking untouched. */
+  hasPendingApproval?: boolean;
 }
 
 export interface DispatchDto {
@@ -125,6 +128,25 @@ export interface DispatchFilterOptions {
   subCategories?: string[];
 }
 export type DispatchList = Paginated<DispatchDto>;
+
+/**
+ * Response for `POST /dispatch`. A dispatch dated anything other than today needs
+ * `dispatch:approve` — without it the entry is parked in the Approvals inbox
+ * instead of being created, so the caller has to branch on `status`.
+ */
+export type SubmitDispatchResult =
+  | { status: 'CREATED'; dispatch: DispatchDto }
+  | { status: 'PENDING_APPROVAL'; approvalCode: string };
+
+/**
+ * Response for `PATCH /dispatch/:id`. The edit always applies; a date MOVE only
+ * applies immediately for an approver — otherwise `dateApprovalCode` is set and
+ * the dispatch keeps its old date until that request is approved.
+ */
+export interface UpdateDispatchResult {
+  dispatch: DispatchDto;
+  dateApprovalCode?: string;
+}
 export type PendingQuery = PaginationQuery & {
   dueType?: string;
   unit?: string;

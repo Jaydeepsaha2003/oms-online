@@ -264,12 +264,14 @@ export function OrdersPage() {
               </span>
             )}
           </Button>
-          {/* Keep orders whose lines contain the picked product / design. */}
-          <div className="hidden w-40 lg:block">
-            <NativeSelect value={agent} onChange={(v) => { setAgent(v); setPage(1); }} options={['', ...(filterOptions?.agents ?? [])]} placeholder="All agents" className={cn(CONTROL, 'font-medium', agent && CONTROL_ON)} />
-          </div>
+          {/* Keep orders whose lines contain the picked product / design. Order
+              follows the house pattern: Item Name, Agent, Design (no Customer
+              filter on this screen, so it starts from Product). */}
           <div className="hidden w-52 lg:block">
             <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...(filterOptions?.products ?? [])]} placeholder="All products" className={cn(CONTROL, 'font-medium', product && CONTROL_ON)} />
+          </div>
+          <div className="hidden w-40 lg:block">
+            <NativeSelect value={agent} onChange={(v) => { setAgent(v); setPage(1); }} options={['', ...(filterOptions?.agents ?? [])]} placeholder="All agents" className={cn(CONTROL, 'font-medium', agent && CONTROL_ON)} />
           </div>
           <div className="hidden w-40 lg:block">
             <NativeSelect value={design} onChange={(v) => { setDesign(v); setPage(1); }} options={['', ...(filterOptions?.designs ?? [])]} placeholder="All designs" className={cn(CONTROL, 'font-medium', design && CONTROL_ON)} />
@@ -324,21 +326,21 @@ export function OrdersPage() {
           </SheetHeader>
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Agent</Label>
-              <NativeSelect
-                value={agent}
-                onChange={(v) => { setAgent(v); setPage(1); }}
-                options={['', ...(filterOptions?.agents ?? [])]}
-                placeholder="All agents"
-              />
-            </div>
-            <div className="space-y-1.5">
               <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Product</Label>
               <NativeSelect
                 value={product}
                 onChange={(v) => { setProduct(v); setPage(1); }}
                 options={['', ...(filterOptions?.products ?? [])]}
                 placeholder="All products"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Agent</Label>
+              <NativeSelect
+                value={agent}
+                onChange={(v) => { setAgent(v); setPage(1); }}
+                options={['', ...(filterOptions?.agents ?? [])]}
+                placeholder="All agents"
               />
             </div>
             <div className="space-y-1.5">

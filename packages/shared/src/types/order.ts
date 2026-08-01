@@ -49,6 +49,7 @@ export interface OrderItemDto {
   pCategory: string | null;
   subCategory: string | null;
   product: string | null;
+  /** Human-readable selected design name(s), e.g. "AK RING+CHINA". */
   design: string | null;
   productName: string | null;
   designType: string | null;
@@ -120,6 +121,7 @@ export interface OrderItemInput {
   pCategory?: string | null;
   subCategory?: string | null;
   product?: string | null;
+  /** Human-readable selected design name(s), e.g. "AK RING+CHINA". */
   design?: string | null;
   productName?: string | null;
   designType?: string | null;
@@ -192,6 +194,9 @@ export interface OrderDesignLite {
   designType: string;
   designName: string;
   rate: number | null;
+  /** The master design types that make up this option. Base designs contain
+   *  themselves; combinations contain every linked type. */
+  componentDesignTypes: string[];
 }
 
 /**

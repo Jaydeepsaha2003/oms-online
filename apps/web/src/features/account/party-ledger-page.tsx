@@ -6,7 +6,6 @@ import {
   FileSpreadsheet,
   Loader2,
   Printer,
-  Search,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -56,26 +55,6 @@ const TD = 'border-r border-r-amber-200/80 px-2 py-[3px] align-middle dark:borde
 const NUM = 'text-right tabular-nums';
 /** The panel that frames the whole worksheet. */
 const PANEL = 'border-amber-300 dark:border-amber-400/30';
-
-// Persist the last search so navigating away to view a challan (and coming back
-// via its Back/Cancel) restores the exact same search instead of resetting.
-const FILTER_KEY = 'oms:party-ledger-filters';
-interface SavedFilters {
-  party: string;
-  agent: string;
-  from: string;
-  to: string;
-  mode: 'BOTH' | 'B' | 'C';
-  voucherType: string;
-  applied: PartyLedgerQuery | null;
-}
-const loadFilters = (): Partial<SavedFilters> => {
-  try {
-    return JSON.parse(sessionStorage.getItem(FILTER_KEY) || '{}') as Partial<SavedFilters>;
-  } catch {
-    return {};
-  }
-};
 
 const FY_START_MONTH = 3; // April (0-based)
 function fyStart(d: Date): Date {
@@ -144,15 +123,12 @@ export function PartyLedgerPage() {
   const { can } = usePermissions();
   const { data: lookups } = usePartyLedgerLookups();
 
-  // Restore the last-used search (kept in sessionStorage) so it survives a
-  // round-trip into "View challan" and back.
-  const [party, setParty] = useState(() => loadFilters().party ?? '');
-  const [agent, setAgent] = useState(() => loadFilters().agent ?? '');
-  const [from, setFrom] = useState(() => loadFilters().from ?? ymd(fyStart(new Date())));
-  const [to, setTo] = useState(() => loadFilters().to ?? ymd(new Date()));
-  const [mode, setMode] = useState<'BOTH' | 'B' | 'C'>(() => loadFilters().mode ?? 'BOTH');
-  const [voucherType, setVoucherType] = useState(() => loadFilters().voucherType ?? '');
-  const [applied, setApplied] = useState<PartyLedgerQuery | null>(() => loadFilters().applied ?? null);
+  const [party, setParty] = useState('');
+  const [agent, setAgent] = useState('');
+  const [from, setFrom] = useState(() => ymd(fyStart(new Date())));
+  const [to, setTo] = useState(() => ymd(new Date()));
+  const [mode, setMode] = useState<'BOTH' | 'B' | 'C'>('BOTH');
+  const [voucherType, setVoucherType] = useState('');
   const [receiptFor, setReceiptFor] = useState<PartyLedgerRow | null>(null);
   const [dateOpen, setDateOpen] = useState(false);
   const [preset, setPreset] = useState('');
@@ -161,33 +137,20 @@ export function PartyLedgerPage() {
   const partyOptions = useMemo(() => (lookups?.customers ?? []).map((c) => c.name), [lookups]);
   const agentOptions = useMemo(() => ['All', ...(lookups?.agents ?? [])], [lookups]);
 
-  const buildQuery = (): PartyLedgerQuery => ({
+  const query = useMemo<PartyLedgerQuery>(() => ({
     customerId: party ? custByName.get(party) : undefined,
     agentName: !party && agent && agent !== 'All' ? agent : undefined,
     from,
     to,
     mode,
     voucherType: voucherType || undefined,
-  });
+  }), [party, agent, from, to, mode, voucherType, custByName]);
 
-  // Auto-load on first mount (ALL, this FY) — mirrors the legacy form. Skipped
-  // when a saved search was restored from sessionStorage.
-  useEffect(() => {
-    if (!applied) setApplied({ from: ymd(fyStart(new Date())), to: ymd(new Date()), mode: 'BOTH' });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Keep the saved search in sync so it's ready if the user navigates away.
-  useEffect(() => {
-    sessionStorage.setItem(FILTER_KEY, JSON.stringify({ party, agent, from, to, mode, voucherType, applied }));
-  }, [party, agent, from, to, mode, voucherType, applied]);
-
-  const { data, isFetching } = usePartyLedger(applied);
+  const { data, isFetching } = usePartyLedger(query);
   const rows = data?.rows ?? [];
   const footer = data?.footer;
   const kpis = data?.kpis;
 
-  const onSearch = () => setApplied(buildQuery());
   const onReset = () => {
     setParty('');
     setAgent('');
@@ -196,8 +159,6 @@ export function PartyLedgerPage() {
     setPreset('');
     setFrom(ymd(fyStart(new Date())));
     setTo(ymd(new Date()));
-    setApplied({ from: ymd(fyStart(new Date())), to: ymd(new Date()), mode: 'BOTH' });
-    sessionStorage.removeItem(FILTER_KEY);
   };
   const applyPreset = (p: Preset) => {
     const { from: f, to: t } = presetRange(p);
@@ -207,7 +168,7 @@ export function PartyLedgerPage() {
   };
 
   const exportUrl = (fmt: 'pdf' | 'xlsx') => {
-    const q = buildQuery();
+    const q = query;
     const params = new URLSearchParams();
     if (q.customerId) params.set('customerId', String(q.customerId));
     if (q.agentName) params.set('agentName', q.agentName);
@@ -407,9 +368,6 @@ export function PartyLedgerPage() {
             ))}
           </div>
 
-          <Button className="h-9 rounded-[4px] text-[12.5px] font-bold" onClick={onSearch} disabled={isFetching}>
-            {isFetching ? <Loader2 className="animate-spin" /> : <Search />} Search
-          </Button>
           <Button variant="outline" className="h-9 rounded-[4px] text-[12.5px] font-semibold" onClick={onReset}>
             <X /> Reset
           </Button>

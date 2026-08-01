@@ -1,13 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   CreateDispatchInput,
-  DispatchDto,
   DispatchFilterOptions,
   DispatchList,
   DispatchQuery,
   PendingList,
   PendingQuery,
+  SubmitDispatchResult,
   UpdateDispatchInput,
+  UpdateDispatchResult,
 } from '@oms/shared';
 import { downloadFile, http } from '@/lib/api';
 
@@ -79,11 +80,18 @@ const invalidateDispatch = (qc: ReturnType<typeof useQueryClient>) => {
   qc.invalidateQueries({ queryKey: ['orders'] });
 };
 
+/** Either creates the dispatch (dated today, or the user can approve back-dates)
+ *  or parks it in the Approvals inbox — see {@link SubmitDispatchResult}. */
 export function useCreateDispatch() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: CreateDispatchInput) => http.post<DispatchDto>('/dispatch', input),
-    onSuccess: () => invalidateDispatch(qc),
+    mutationFn: (input: CreateDispatchInput) => http.post<SubmitDispatchResult>('/dispatch', input),
+    onSuccess: (res) => {
+      // A parked request doesn't touch Dispatch/Orders/Challans data, so only
+      // invalidate when something actually changed.
+      if (res.status === 'CREATED') invalidateDispatch(qc);
+      else qc.invalidateQueries({ queryKey: ['approvals'] });
+    },
   });
 }
 
@@ -97,11 +105,15 @@ export function useFulfillOrder() {
   });
 }
 
+/** The edit always applies; see {@link UpdateDispatchResult} for the date-move gate. */
 export function useUpdateDispatch(id: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: UpdateDispatchInput) => http.patch<DispatchDto>(`/dispatch/${id}`, input),
-    onSuccess: () => invalidateDispatch(qc),
+    mutationFn: (input: UpdateDispatchInput) => http.patch<UpdateDispatchResult>(`/dispatch/${id}`, input),
+    onSuccess: (res) => {
+      invalidateDispatch(qc);
+      if (res.dateApprovalCode) qc.invalidateQueries({ queryKey: ['approvals'] });
+    },
   });
 }
 

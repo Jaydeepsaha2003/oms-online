@@ -12,6 +12,7 @@ import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/com
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { NativeSelect } from '@/components/common/combo';
 import { useBookingQuote } from '@/features/bookings/use-bookings';
+import { DesignNamePicker, resolveDesignNameChoices } from './design-name-picker';
 
 /** Open the Price History page in a new tab, pre-filtered to one product. */
 function openPriceHistory(product: string) {
@@ -172,23 +173,11 @@ export function BookingDrawSheet({
     return m;
   }, [lookups]);
 
-  // designType code -> its design names from the Design Names master (like the order form).
-  const designNamesByCode = useMemo(() => {
-    const m = new Map<string, string[]>();
-    for (const dn of lookups?.designNames ?? []) {
-      const k = dn.designType.toUpperCase();
-      const list = m.get(k) ?? [];
-      if (!list.includes(dn.designName)) list.push(dn.designName);
-      if (!m.has(k)) m.set(k, list);
-    }
-    return m;
-  }, [lookups]);
-
-  const designChoices = useMemo(() => {
-    const code = entry.designType.trim().toUpperCase();
-    return code ? (designNamesByCode.get(code) ?? []) : [];
-  }, [designNamesByCode, entry.designType]);
-  const noDesignNames = designChoices.length === 0;
+  const designNameOptions = useMemo(
+    () => resolveDesignNameChoices(lookups, entry.designType, entry.category, entry.subCategory),
+    [lookups, entry.designType, entry.category, entry.subCategory],
+  );
+  const noDesignNames = designNameOptions.choices.length === 0;
 
   const onItemPick = (label: string) => {
     const it = itemOptions.map.get(label);
@@ -428,11 +417,11 @@ export function BookingDrawSheet({
                     </div>
                     <div className="col-span-1 space-y-1.5 lg:col-span-3">
                       <Label className="text-base">Design Name</Label>
-                      <NativeSelect
+                      <DesignNamePicker
                         value={noDesignNames ? 'NA' : entry.designName}
                         onChange={(v) => setEntry((s) => ({ ...s, designName: v }))}
-                        options={noDesignNames ? ['NA'] : designChoices}
-                        placeholder="Design name"
+                        choices={designNameOptions.choices}
+                        multiple={designNameOptions.multiple}
                         disabled={noDesignNames}
                         className="h-11 text-base"
                         onInvalidEntry={() => toast.error('Please select a correct design name')}

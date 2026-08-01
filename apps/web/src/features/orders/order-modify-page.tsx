@@ -3,10 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, ExternalLink, Loader2, RotateCcw, Save, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { OrderDto, OrderInput, OrderItemDto } from '@oms/shared';
-import { ORDER_PRIORITIES } from '@oms/shared';
+import { ORDER_PRIORITIES, resolveSpecialRates } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn, shortOrderCode } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
+import { useAutoSizePcs } from '@/lib/auto-size-pcs';
 import { useColumnOrder } from '@/hooks/use-column-order';
 import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
@@ -17,29 +18,13 @@ import { Label } from '@/components/ui/label';
 import { Combo, NativeSelect } from '@/components/common/combo';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { settingValues, useSettings } from '@/features/settings/use-settings';
+import { useCustomerSpecialRates } from '@/features/special-rates/use-special-rates';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useOrderFilterOptions, useOrderLookups, useOrders, useSaveOrder } from './use-orders';
 import { LiveLinePhotos } from './line-photos';
+import { DesignNamePicker, resolveDesignNameChoices } from './design-name-picker';
 
 const PAGE_SIZE = 50;
-
-// Persist the list's filters so they survive a page refresh or navigating away and back.
-const FILTER_KEY = 'oms:order-modify-filters';
-interface OrderModifyFilters {
-  search: string;
-  agent: string;
-  product: string;
-  design: string;
-  priority: string;
-  page: number;
-}
-const loadFilters = (): Partial<OrderModifyFilters> => {
-  try {
-    return JSON.parse(sessionStorage.getItem(FILTER_KEY) || '{}') as Partial<OrderModifyFilters>;
-  } catch {
-    return {};
-  }
-};
 
 const STATUS_STYLE: Record<string, string> = {
   CONFIRMED: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/25',
@@ -70,9 +55,12 @@ function StatusPill({ status }: { status: string }) {
 }
 
 const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? null : Number(s));
+const fmtNum = (v: number | null) => (v == null ? '' : String(v));
 const dash = (v: number | null) => (v == null || v === 0 ? '—' : v.toLocaleString('en-IN'));
 
 /** One flat row = an order line plus its parent order's header info. */
+const isLogoDesign = (designType?: string | null) => (designType ?? '').toUpperCase().includes('LOGO');
+
 interface Row {
   order: OrderDto;
   line: OrderItemDto;
@@ -152,17 +140,15 @@ const COLUMNS: DataColumn<Row>[] = [
 export function OrderModifyPage() {
   const navigate = useNavigate();
   const confirm = useConfirm();
-  const [search, setSearch] = useState(() => loadFilters().search ?? '');
-  const [agent, setAgent] = useState(() => loadFilters().agent ?? '');
-  const [product, setProduct] = useState(() => loadFilters().product ?? '');
-  const [design, setDesign] = useState(() => loadFilters().design ?? '');
-  const [priority, setPriority] = useState(() => loadFilters().priority ?? '');
-  const [page, setPage] = useState(() => loadFilters().page ?? 1);
-
-  // Persist the current filters whenever they change.
-  useEffect(() => {
-    sessionStorage.setItem(FILTER_KEY, JSON.stringify({ search, agent, product, design, priority, page }));
-  }, [search, agent, product, design, priority, page]);
+  // Deliberately NOT persisted (unlike most other list pages): these filters
+  // should start fresh every time you arrive here, rather than still be applied
+  // from whatever you were last looking for after stepping away to another page.
+  const [search, setSearch] = useState('');
+  const [agent, setAgent] = useState('');
+  const [product, setProduct] = useState('');
+  const [design, setDesign] = useState('');
+  const [priority, setPriority] = useState('');
+  const [page, setPage] = useState(1);
 
   const { data, isLoading } = useOrders({
     page,
@@ -188,7 +174,6 @@ export function OrderModifyPage() {
     setDesign('');
     setPriority('');
     setPage(1);
-    sessionStorage.removeItem(FILTER_KEY);
   };
 
   // Draft orders are work-in-progress and stay hidden from Order Modify.
@@ -273,15 +258,8 @@ export function OrderModifyPage() {
               }}
             />
           </div>
-          <div className="w-36">
-            <NativeSelect
-              value={agent}
-              onChange={(v) => { setAgent(v); setPage(1); }}
-              options={['', ...(filterOptions?.agents ?? [])]}
-              placeholder="All agents"
-              className={cn(CONTROL, 'font-medium', agent && CONTROL_ON)}
-            />
-          </div>
+          {/* Filter order follows the house pattern: Item Name, Agent, Design (no
+              Customer filter on this screen, so it starts from Product). */}
           <div className="w-40">
             <NativeSelect
               value={product}
@@ -289,6 +267,15 @@ export function OrderModifyPage() {
               options={['', ...(filterOptions?.products ?? [])]}
               placeholder="All products"
               className={cn(CONTROL, 'font-medium', product && CONTROL_ON)}
+            />
+          </div>
+          <div className="w-36">
+            <NativeSelect
+              value={agent}
+              onChange={(v) => { setAgent(v); setPage(1); }}
+              options={['', ...(filterOptions?.agents ?? [])]}
+              placeholder="All agents"
+              className={cn(CONTROL, 'font-medium', agent && CONTROL_ON)}
             />
           </div>
           <div className="w-36">
@@ -495,6 +482,9 @@ function LineEditor({
   const { can } = usePermissions();
   const confirm = useConfirm();
   const { data: lookups } = useOrderLookups();
+  const { data: special } = useCustomerSpecialRates(order.customerId ?? undefined);
+  const { autoSizePcs } = useAutoSizePcs();
+  const [showBy, setShowBy] = useState<'PCS' | 'SIZE'>('SIZE');
   // Once the user has confirmed "add as a new item" (see submit()), the form
   // keeps whatever they typed but Save now creates a fresh line instead of
   // touching the dispatched original — it does NOT auto-submit on its own.
@@ -502,9 +492,12 @@ function LineEditor({
   const s = (v: number | null) => (v == null ? '' : String(v));
   const [form, setForm] = useState({
     itemName: line.productName ?? [line.product, line.designType].filter(Boolean).join(' '),
+    pCategory: line.pCategory ?? '',
+    subCategory: line.subCategory ?? '',
     product: line.product ?? '',
     designType: line.designType ?? '',
-    designName: '',
+    designName: line.design?.trim() || '',
+    psize: s(line.psize),
     ordType: line.ordType ?? '',
     priority: line.priority ?? 'NORMAL',
     bags: s(line.bags),
@@ -523,39 +516,86 @@ function LineEditor({
   const dirty = JSON.stringify(form) !== JSON.stringify(baseline.current);
   // Quantity/rate/product fields — the exact set the backend freezes once a line
   // has been dispatched (status/priority/order-type/comment stay editable there).
-  const MATERIAL_KEYS = ['itemName', 'product', 'designType', 'bags', 'pcs', 'gram', 'box', 'productRate', 'designRate'] as const;
+  const MATERIAL_KEYS = ['itemName', 'pCategory', 'subCategory', 'product', 'designType', 'psize', 'bags', 'pcs', 'gram', 'box', 'productRate', 'designRate'] as const;
   const materialDirty = MATERIAL_KEYS.some((k) => form[k] !== baseline.current[k]);
 
-  // Composite "item name" choices — same dropdown as the New Order page:
-  // each label is "{size} {product} {designType}".
+  // Match New Order: show one item-name form at a time, using either the
+  // catalogue size or pieces-per-box as the visible prefix.
   const itemOptions = useMemo(() => {
     const list = lookups?.items ?? [];
+    const logos = special?.logos ?? [];
+    const norm = (v: string | null | undefined) => (v ?? '').trim().toUpperCase();
+    const logoBlocked = (category: string, subCategory: string) =>
+      logos.some(
+        (l) =>
+          (l.scope === 'CATEGORY' && norm(l.category) === norm(category)) ||
+          (l.scope === 'SUBCATEGORY' && norm(l.category) === norm(category) && norm(l.subCategory) === norm(subCategory)),
+      );
     const map = new Map<string, (typeof list)[number]>();
-    const labels: string[] = [];
+    const options: { value: string; label: string; keywords: string }[] = [];
     for (const it of list) {
-      const label = [it.size != null ? String(it.size) : '', it.product, it.designType ?? ''].filter(Boolean).join(' ');
+      if (isLogoDesign(it.designType) && logoBlocked(it.category, it.subCategory)) continue;
+      const prefix = showBy === 'PCS' ? fmtNum(it.pcs) : fmtNum(it.size);
+      const label = [prefix, it.product, it.designType ?? ''].filter(Boolean).join(' ');
       if (!label || map.has(label)) continue;
       map.set(label, it);
-      labels.push(label);
+      const keywords = [fmtNum(it.size), fmtNum(it.pcs), it.subCategory ?? ''].filter(Boolean).join(' ');
+      options.push({ value: label, label, keywords });
     }
-    return { labels, map };
-  }, [lookups]);
+    return { options, map };
+  }, [lookups, showBy, special]);
 
-  // Design names available for the current design-type code.
-  const designChoices = useMemo(() => {
-    const code = form.designType.trim().toUpperCase();
-    if (!code) return [] as string[];
-    const seen = new Set<string>();
-    const names: string[] = [];
-    for (const dn of lookups?.designNames ?? []) {
-      if (dn.designType.toUpperCase() === code && !seen.has(dn.designName)) {
-        seen.add(dn.designName);
-        names.push(dn.designName);
-      }
-    }
-    return names;
-  }, [lookups, form.designType]);
-  const noDesignNames = designChoices.length === 0;
+  // Open an existing Pcs-labelled line in the matching mode when the catalogue
+  // makes that distinction unambiguous.
+  const initialShowBySet = useRef(false);
+  useEffect(() => {
+    if (!lookups || initialShowBySet.current) return;
+    initialShowBySet.current = true;
+    const lead = form.itemName.trim().match(/^(\d+(?:\.\d+)?)/)?.[1];
+    if (!lead) return;
+    const norm = (v: string | null | undefined) => (v ?? '').trim().toUpperCase();
+    const matchingItems = lookups.items.filter(
+      (it) => norm(it.product) === norm(form.product) && norm(it.designType) === norm(form.designType),
+    );
+    const sizeExact = matchingItems.some((it) => fmtNum(it.size) === lead);
+    const pcsExact = matchingItems.some((it) => fmtNum(it.pcs) === lead);
+    if (pcsExact && !sizeExact) setShowBy('PCS');
+  }, [lookups, form.itemName, form.product, form.designType]);
+
+  // Use the same product-aware Size/Pcs auto-detection as New Order.
+  const detectShowBy = (text: string) => {
+    if (!autoSizePcs) return;
+    const t = text.trim();
+    const lead = t.match(/^(\d+(?:\.\d+)?)/)?.[1];
+    if (!lead) return;
+    const separator = /[\s(),+/-]+/;
+    const list = lookups?.items ?? [];
+    const nameTerms = t.slice(lead.length).trim().toLowerCase().split(separator).filter(Boolean);
+    const named = nameTerms.length
+      ? list.filter((it) => {
+          const words = `${it.product} ${it.designType ?? ''}`.toLowerCase().split(separator).filter(Boolean);
+          return nameTerms.every((term) => words.some((word) => word.startsWith(term)));
+        })
+      : list;
+    const pool = named.length ? named : list;
+    const some = (key: 'size' | 'pcs', test: (value: string) => boolean) =>
+      pool.some((it) => it[key] != null && test(String(it[key])));
+    const sizeExact = some('size', (value) => value === lead);
+    const pcsExact = some('pcs', (value) => value === lead);
+    if (pcsExact && !sizeExact) return setShowBy('PCS');
+    if (sizeExact && !pcsExact) return setShowBy('SIZE');
+    if (sizeExact || pcsExact) return setShowBy('SIZE');
+    const sizePrefix = some('size', (value) => value.startsWith(lead));
+    const pcsPrefix = some('pcs', (value) => value.startsWith(lead));
+    if (pcsPrefix && !sizePrefix) return setShowBy('PCS');
+    if (sizePrefix) setShowBy('SIZE');
+  };
+
+  const designNameOptions = useMemo(
+    () => resolveDesignNameChoices(lookups, form.designType, form.pCategory, form.subCategory),
+    [lookups, form.designType, form.pCategory, form.subCategory],
+  );
+  const noDesignNames = designNameOptions.choices.length === 0;
 
   // Seed the design-name label from the line's design type once lookups arrive.
   useEffect(() => {
@@ -577,13 +617,28 @@ function LineEditor({
       return;
     }
     const realName = it.designName && it.designName !== it.designType ? it.designName : '';
+    const resolved = special
+      ? resolveSpecialRates(special, {
+          category: it.category,
+          subCategory: it.subCategory,
+          product: it.product,
+          designType: it.designType ?? null,
+        })
+      : null;
+    const productRate = (it.productRate ?? 0) + (resolved?.productDelta ?? 0);
+    const designRate = (it.designRate ?? 0) + (resolved?.designDelta ?? 0);
+    const hasProductRate = it.productRate != null || (resolved?.productDelta ?? 0) !== 0;
+    const hasDesignRate = !!it.designType && (it.designRate != null || (resolved?.designDelta ?? 0) !== 0);
     set({
       itemName: label,
+      pCategory: it.category,
+      subCategory: it.subCategory,
       product: it.product,
       designType: it.designType ?? '',
       designName: realName,
-      productRate: it.productRate != null ? String(it.productRate) : '',
-      designRate: it.designType && it.designRate != null ? String(it.designRate) : '',
+      psize: it.size != null ? String(it.size) : '',
+      productRate: hasProductRate ? String(productRate) : '',
+      designRate: hasDesignRate ? String(designRate) : '',
     });
   };
 
@@ -596,9 +651,13 @@ function LineEditor({
 
   const buildUpdated = (): OrderItemDto => ({
     ...line,
+    pCategory: form.pCategory.trim() || null,
+    subCategory: form.subCategory.trim() || null,
     product: form.product.trim() || null,
     designType: form.designType.trim() || null,
+    design: noDesignNames ? 'NA' : form.designName.trim() || null,
     productName: form.itemName.trim() || [form.product.trim(), form.designType.trim()].filter(Boolean).join(' ') || null,
+    psize: num(form.psize),
     ordType: form.ordType || null,
     priority: form.priority || null,
     bags: num(form.bags),
@@ -649,24 +708,37 @@ function LineEditor({
             <span className="font-semibold">Add as New Item</span> to save this as a separate line.
           </div>
         )}
+        {!autoSizePcs && (
+          <Field label="Show item by">
+            <div className="flex h-9 items-center gap-5 text-sm">
+              <label className="flex cursor-pointer items-center gap-1.5">
+                <input type="radio" className="accent-indigo-600" checked={showBy === 'SIZE'} onChange={() => setShowBy('SIZE')} /> Size
+              </label>
+              <label className="flex cursor-pointer items-center gap-1.5">
+                <input type="radio" className="accent-indigo-600" checked={showBy === 'PCS'} onChange={() => setShowBy('PCS')} /> Pcs
+              </label>
+            </div>
+          </Field>
+        )}
         <Field label="Item name">
           <NativeSelect
             value={form.itemName}
             onChange={onItemPick}
-            options={itemOptions.labels}
+            onType={detectShowBy}
+            options={itemOptions.options}
             placeholder="Item name"
             className="text-left"
             onInvalidEntry={() => toast.error('Please select a correct item')}
           />
         </Field>
         <Field label="Design Name">
-          <NativeSelect
+          <DesignNamePicker
             value={noDesignNames ? 'NA' : form.designName}
             onChange={(v) => set({ designName: v })}
-            options={noDesignNames ? ['NA'] : designChoices}
-            placeholder="Design name"
+            choices={designNameOptions.choices}
+            multiple={designNameOptions.multiple}
             disabled={noDesignNames}
-            onInvalidEntry={() => toast.error('Please select a correct design')}
+            onInvalidEntry={() => toast.error('Please select a correct design name')}
           />
         </Field>
         <div className="grid grid-cols-2 gap-3">

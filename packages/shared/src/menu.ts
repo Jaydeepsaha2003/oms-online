@@ -415,7 +415,12 @@ export const MENU: MenuNode[] = [
     shortcut: 'N',
     label: 'Administration',
     icon: 'ShieldCheck',
-    anyPermission: [perm(RESOURCES.USER, ACTIONS.VIEW), perm(RESOURCES.ROLE, ACTIONS.VIEW), perm(RESOURCES.AUDIT_LOG, ACTIONS.VIEW)],
+    anyPermission: [
+      perm(RESOURCES.USER, ACTIONS.VIEW),
+      perm(RESOURCES.ROLE, ACTIONS.VIEW),
+      perm(RESOURCES.AUDIT_LOG, ACTIONS.VIEW),
+      perm(RESOURCES.APPROVAL, ACTIONS.VIEW),
+    ],
     children: [
       {
         id: 'users',
@@ -430,6 +435,13 @@ export const MENU: MenuNode[] = [
         to: '/admin/roles',
         icon: 'KeyRound',
         permission: perm(RESOURCES.ROLE, ACTIONS.VIEW),
+      },
+      {
+        id: 'approvals',
+        label: 'Approvals',
+        to: '/approvals',
+        icon: 'ListChecks',
+        permission: perm(RESOURCES.APPROVAL, ACTIONS.VIEW),
       },
       {
         id: 'audit-log',

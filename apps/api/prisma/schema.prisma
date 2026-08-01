@@ -1400,11 +1400,13 @@ model ApprovalRequest {
   entity   String?
   entityId Int?
 
-  requestedById   Int?
+  // User.id is a cuid STRING, not an int — these were previously Int? and so
+  // silently stored null for every request.
+  requestedById   String?
   requestedByName String?
   requestedAt     DateTime @default(now())
 
-  decidedById   Int?
+  decidedById   String?
   decidedByName String?
   decidedAt     DateTime?
   /// Approver's note, and the reason shown to the requester on a rejection.

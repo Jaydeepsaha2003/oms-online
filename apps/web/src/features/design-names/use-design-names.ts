@@ -11,6 +11,11 @@ export interface ImportResult {
 
 const KEY = ['design-names'] as const;
 
+function invalidateDesignNames(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: KEY });
+  qc.invalidateQueries({ queryKey: ['orders', 'lookups'] });
+}
+
 export function useDesignNames(query: DesignNameQuery) {
   return useQuery({
     queryKey: [...KEY, query],
@@ -23,7 +28,7 @@ export function useCreateDesignName() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: DesignNameInput) => http.post<DesignNameDto>('/design-names', input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateDesignNames(qc),
   });
 }
 
@@ -31,7 +36,7 @@ export function useUpdateDesignName(id: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: DesignNameInput) => http.patch<DesignNameDto>(`/design-names/${id}`, input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateDesignNames(qc),
   });
 }
 
@@ -39,7 +44,7 @@ export function useDeleteDesignName() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => http.delete(`/design-names/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateDesignNames(qc),
   });
 }
 
@@ -48,7 +53,7 @@ export function useImportDesignNames() {
   return useMutation({
     mutationFn: (rows: Record<string, unknown>[]) =>
       http.post<ImportResult>('/design-names/import', { rows }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateDesignNames(qc),
   });
 }
 

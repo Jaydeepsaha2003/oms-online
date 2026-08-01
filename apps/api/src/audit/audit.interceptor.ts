@@ -8,7 +8,7 @@ import { Reflector } from '@nestjs/core';
 import type { Request, Response } from 'express';
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
-import { AUDIT_KEY, type AuditOptions } from '../common/decorators/audit.decorator';
+import { AUDIT_KEY, SKIP_AUDIT_KEY, type AuditOptions } from '../common/decorators/audit.decorator';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { AuditService } from './audit.service';
 
@@ -33,6 +33,12 @@ export class AuditInterceptor implements NestInterceptor {
     if (context.getType() !== 'http') return next.handle();
 
     const req = context.switchToHttp().getRequest<Request>();
+    const skip = this.reflector.getAllAndOverride<boolean | undefined>(SKIP_AUDIT_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (skip) return next.handle();
+
     const meta = this.reflector.getAllAndOverride<AuditOptions | undefined>(AUDIT_KEY, [
       context.getHandler(),
       context.getClass(),
@@ -45,12 +51,13 @@ export class AuditInterceptor implements NestInterceptor {
     if (!shouldAudit) return next.handle();
 
     const user = req.user as AuthenticatedUser | undefined;
+    const paramId = (req.params?.id as string) ?? null;
     const base = {
       userId: user?.id ?? null,
       userEmail: user?.email ?? null,
       action: meta?.action ?? req.method.toLowerCase(),
       resource: meta?.resource ?? this.resourceFromPath(req),
-      resourceId: (req.params?.id as string) ?? null,
+      resourceId: paramId,
       description: meta?.description ?? null,
       method: req.method,
       path: req.originalUrl,
@@ -60,9 +67,15 @@ export class AuditInterceptor implements NestInterceptor {
 
     return next.handle().pipe(
       tap({
-        next: () => {
+        next: (body) => {
           const res = context.switchToHttp().getResponse<Response>();
-          void this.audit.record({ ...base, statusCode: res.statusCode });
+          // A create route has no :id in its own path (POST /dispatch, not
+          // POST /dispatch/:id), so `paramId` is null and this entry could never
+          // be found by the created record's own Activity History lookup (which
+          // queries by that record's real id). Fall back to the id the handler
+          // just returned, so "who created this" actually shows up later.
+          const resourceId = paramId ?? this.resourceIdFromBody(body);
+          void this.audit.record({ ...base, resourceId, statusCode: res.statusCode });
         },
         error: (err) => {
           const statusCode = typeof err?.status === 'number' ? err.status : 500;
@@ -81,6 +94,24 @@ export class AuditInterceptor implements NestInterceptor {
     const parts = req.path.split('/').filter(Boolean); // e.g. ['api','orders','123']
     const idx = parts[0] === 'api' ? 1 : 0;
     return parts[idx] ?? 'unknown';
+  }
+
+  /**
+   * Most create endpoints return the new record flat (`{ id, ... }`), so `.id`
+   * covers them generically. A couple of newer endpoints (dispatch's create,
+   * gated by an approval check) wrap it instead — `{ status, dispatch: { id } }`
+   * when created outright, or `{ status: 'PENDING_APPROVAL' }` with no id at all
+   * when nothing was actually created yet. That last case correctly yields null:
+   * there's no record to attach history to until the approval creates one.
+   */
+  private resourceIdFromBody(body: unknown): string | null {
+    if (!body || typeof body !== 'object') return null;
+    const b = body as Record<string, unknown>;
+    const direct = b.id;
+    if (direct != null && (typeof direct === 'string' || typeof direct === 'number')) return String(direct);
+    const nested = (b.dispatch as Record<string, unknown> | undefined)?.id;
+    if (nested != null && (typeof nested === 'string' || typeof nested === 'number')) return String(nested);
+    return null;
   }
 
   private clientIp(req: Request): string | null {
