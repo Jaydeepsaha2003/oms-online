@@ -37,12 +37,25 @@ const CONTROL =
 const CONTROL_ON =
   'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
 
-/** Header cell: sticky, gradient, uppercase — matches the grids across the app. */
-const TH = 'sticky bg-gradient-to-b from-blue-800 to-indigo-800 px-2 text-[11px] font-extrabold tracking-wide text-white uppercase whitespace-nowrap';
+/* ── Tally palette ──────────────────────────────────────────────────────────
+   Tally puts amber chrome around a plain white data grid, with dark navy bars
+   for the document header — so the ledger below follows that, rather than the
+   blue-gradient headers the rest of the app's list screens use. */
+
+/** Header cell: sticky, amber band, near-black type — Tally's column strip. */
+const TH =
+  'sticky bg-gradient-to-b from-amber-300 to-amber-400 px-2 text-[11px] font-extrabold tracking-wide text-amber-950 uppercase whitespace-nowrap dark:from-amber-500 dark:to-amber-600';
+/** The Bank / Cash banner sits a shade deeper so the two tiers read apart. */
+const TH_GROUP =
+  'sticky bg-gradient-to-b from-amber-400 to-amber-500 px-2 text-[11px] font-extrabold tracking-wide text-amber-950 uppercase whitespace-nowrap dark:from-amber-600 dark:to-amber-700';
+/** Rule between header cells — amber-on-amber, not white. */
+const TH_LINE = 'border-r border-amber-600/30 dark:border-amber-900/30';
 /** Body cell: full grid lines, tight rows. The colour is scoped to the right edge
  *  so a row's own top/bottom rule (the totals band) isn't overridden by it. */
-const TD = 'border-r border-r-slate-200 px-2 py-[3px] align-middle dark:border-r-white/10 last:border-r-0';
+const TD = 'border-r border-r-amber-200/80 px-2 py-[3px] align-middle dark:border-r-amber-400/15 last:border-r-0';
 const NUM = 'text-right tabular-nums';
+/** The panel that frames the whole worksheet. */
+const PANEL = 'border-amber-300 dark:border-amber-400/30';
 
 // Persist the last search so navigating away to view a challan (and coming back
 // via its Back/Cancel) restores the exact same search instead of resetting.
@@ -258,8 +271,8 @@ export function PartyLedgerPage() {
 
   /** Opening / Current / Closing share one row shape across the grid. */
   const balanceCells = (b: LedgerBalanceRow) => legs.flatMap((l) => [b[l.dr], b[l.cr]]);
-  /** Text columns before the figures: Date, Particulars, Vch Type, Vch No. */
-  const LEAD_COLS = 4;
+  /** Text columns before the figures: Date, Particulars, Vch Type, Vch No, St, Due From. */
+  const LEAD_COLS = 6;
   const totalCols = LEAD_COLS + legs.length * 2 + 1 + (canViewChallan ? 1 : 0);
 
   const dateLabel = preset || `${prettyDate(from)} → ${prettyDate(to)}`;
@@ -323,7 +336,7 @@ export function PartyLedgerPage() {
       {/* ── Filter bar ─────────────────────────────────────────────────────────
           Poppins, so the controls read as chrome and stay distinct from the
           figures in the ledger below. */}
-      <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
+      <div className={cn('bg-card font-poppins rounded-[4px] border shadow-sm', PANEL)}>
         <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
           <FitSelect
             label="Customer"
@@ -449,13 +462,26 @@ export function PartyLedgerPage() {
       </div>
 
       {/* ── The ledger ──────────────────────────────────────────────────────── */}
-      <div className="bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[4px] border shadow-sm">
+      <div className={cn('bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[4px] border shadow-sm', PANEL)}>
+        {/* Document header — Tally captions every ledger with the account and the
+            period it covers, on a dark bar above the amber column strip. */}
+        <div className="flex items-center justify-between gap-3 bg-slate-800 px-2.5 py-1 dark:bg-slate-900">
+          <span className="truncate text-[12px] font-extrabold tracking-wide text-amber-300 uppercase">
+            {scopeLabel || 'Ledger Account'}
+          </span>
+          {/* Phones give the account name the full bar — the Date control above
+              already states the period. */}
+          <span className="hidden shrink-0 text-[11px] font-bold tracking-wide text-amber-100/70 tabular-nums sm:inline">
+            {prettyDate(from)} — {prettyDate(to)} · {mode === 'BOTH' ? 'Bank & Cash' : mode === 'B' ? 'Bank' : 'Cash'}
+          </span>
+        </div>
+
         {/* Desktop: the Tally grid. Only this region scrolls; the heading rows stay
             pinned at the top and the Closing Balance at the bottom. */}
         <div
           className={cn(
             'hidden min-h-0 flex-1 overflow-auto overscroll-x-contain sm:block',
-            '[scrollbar-width:thin] [scrollbar-color:var(--color-slate-400)_var(--color-slate-100)]',
+            '[scrollbar-width:thin] [scrollbar-color:var(--color-amber-400)_var(--color-amber-100)]',
           )}
         >
           <table className="w-full border-collapse text-[13px]">
@@ -465,33 +491,45 @@ export function PartyLedgerPage() {
             <thead className="z-30">
               {grouped && (
                 <tr>
-                  <th className={cn(TH, 'top-0 h-7 border-r border-white/25')} colSpan={LEAD_COLS} />
+                  <th className={cn(TH_GROUP, TH_LINE, 'top-0 h-7')} colSpan={LEAD_COLS} />
                   {legs.map((l) => (
-                    <th key={l.group} className={cn(TH, 'top-0 h-7 border-r border-white/25 text-center')} colSpan={2} scope="colgroup">
+                    <th key={l.group} className={cn(TH_GROUP, TH_LINE, 'top-0 h-7 text-center')} colSpan={2} scope="colgroup">
                       {l.group}
                     </th>
                   ))}
-                  <th className={cn(TH, 'top-0 h-7')} colSpan={1 + (canViewChallan ? 1 : 0)} />
+                  <th className={cn(TH_GROUP, 'top-0 h-7')} colSpan={1 + (canViewChallan ? 1 : 0)} />
                 </tr>
               )}
               <tr>
                 {['Date', 'Particulars', 'Vch Type', 'Vch No'].map((h) => (
-                  <th key={h} scope="col" className={cn(TH, grouped ? 'top-7' : 'top-0', 'border-r border-white/25 py-1.5 text-left')}>
+                  <th key={h} scope="col" className={cn(TH, TH_LINE, grouped ? 'top-7' : 'top-0', 'py-1.5 text-left')}>
                     {h}
                   </th>
                 ))}
+                {/* Settlement state (P/D/F) then the ageing, both sitting right after
+                    the voucher number where they're read together. */}
+                <th
+                  scope="col"
+                  title="Settlement: F = fully paid, P = partially paid, D = due"
+                  className={cn(TH, TH_LINE, grouped ? 'top-7' : 'top-0', 'w-8 py-1.5 text-center')}
+                >
+                  St
+                </th>
+                <th scope="col" className={cn(TH, TH_LINE, grouped ? 'top-7' : 'top-0', 'py-1.5 text-left')}>
+                  Due From
+                </th>
                 {legs.flatMap((l) => (
                   ['Debit', 'Credit'].map((side) => (
                     <th
                       key={`${l.group}-${side}`}
                       scope="col"
-                      className={cn(TH, grouped ? 'top-7' : 'top-0', 'border-r border-white/25 py-1.5 text-right')}
+                      className={cn(TH, TH_LINE, grouped ? 'top-7' : 'top-0', 'py-1.5 text-right')}
                     >
                       {grouped ? side : `${l.group} ${side}`}
                     </th>
                   ))
                 ))}
-                <th scope="col" className={cn(TH, grouped ? 'top-7' : 'top-0', 'border-r border-white/25 py-1.5 text-right')}>
+                <th scope="col" className={cn(TH, TH_LINE, grouped ? 'top-7' : 'top-0', 'py-1.5 text-right')}>
                   Balance
                 </th>
                 {canViewChallan && <th scope="col" className={cn(TH, grouped ? 'top-7' : 'top-0', 'w-10 py-1.5')} aria-label="View" />}
@@ -501,9 +539,11 @@ export function PartyLedgerPage() {
             <tbody>
               {/* Opening balance opens the statement, exactly as Tally prints it. */}
               {footer && (
-                <tr className="bg-slate-100 font-bold dark:bg-white/[0.06]">
+                <tr className="bg-amber-100/80 font-bold dark:bg-amber-400/10">
                   <td className={TD} />
-                  <td className={cn(TD, 'text-[13px] font-bold text-slate-900 dark:text-slate-100')}>Opening Balance</td>
+                  <td className={cn(TD, 'text-[13px] font-bold text-amber-950 dark:text-amber-100')}>Opening Balance</td>
+                  <td className={TD} />
+                  <td className={TD} />
                   <td className={TD} />
                   <td className={TD} />
                   {balanceCells(footer.opening).map((v, i) => (
@@ -553,27 +593,27 @@ export function PartyLedgerPage() {
                           : undefined
                       }
                       className={cn(
-                        'border-b border-slate-200 outline-none dark:border-white/10',
-                        'even:bg-slate-100/70 dark:even:bg-white/[0.04]',
-                        'hover:bg-amber-100/70 dark:hover:bg-amber-400/10',
-                        'focus-visible:ring-primary focus-visible:ring-2 focus-visible:ring-inset',
-                        invoice && 'cursor-pointer',
+                        'border-b border-amber-200/70 outline-none dark:border-amber-400/10',
+                        'even:bg-amber-50/70 dark:even:bg-amber-400/[0.05]',
+                        // Tally moves a solid amber selection bar down the ledger.
+                        'hover:bg-amber-200/80 dark:hover:bg-amber-400/20',
+                        'focus-visible:ring-2 focus-visible:ring-amber-600 focus-visible:ring-inset',
+                        invoice && 'group cursor-pointer',
                       )}
                     >
                       <td className={cn(TD, 'whitespace-nowrap tabular-nums font-semibold text-slate-700 dark:text-slate-300')}>
                         {prettyDate(r.txnDate)}
                       </td>
-                      <td className={TD}>
-                        <span className="font-semibold text-slate-800 dark:text-slate-200">{r.particulars}</span>
-                        {(r.status || r.dueFrom) && (
-                          <span className={cn('ml-1.5 text-[11px] font-medium', dueTone(r.dueFrom))}>
-                            {[statusWord(r.status), r.dueFrom].filter(Boolean).join(' · ')}
-                          </span>
-                        )}
-                      </td>
+                      <td className={cn(TD, 'font-semibold text-slate-800 dark:text-slate-200')}>{r.particulars}</td>
                       <td className={cn(TD, 'whitespace-nowrap text-[12px] font-medium text-slate-600 dark:text-slate-400')}>{r.voucherType}</td>
-                      <td className={cn(TD, 'whitespace-nowrap text-[12.5px] font-semibold', invoice && 'text-blue-700 dark:text-blue-400')}>
+                      <td className={cn(TD, 'whitespace-nowrap text-[12.5px] font-semibold', invoice && 'font-bold text-amber-900 underline-offset-2 group-hover:underline dark:text-amber-300')}>
                         {r.voucherNo}
+                      </td>
+                      <td className={cn(TD, 'text-center')}>
+                        <StatusChip status={r.status} />
+                      </td>
+                      <td className={cn(TD, 'whitespace-nowrap')}>
+                        <DueFrom text={r.dueFrom} />
                       </td>
                       {legs.flatMap((l) => [
                         <td key={`${l.group}-dr`} className={cn(TD, NUM, 'font-semibold text-slate-900 dark:text-slate-100')}>
@@ -628,8 +668,8 @@ export function PartyLedgerPage() {
         {/* Phones: one card per voucher — the grid is unusable at this width. */}
         <div className="min-h-0 flex-1 overflow-y-auto p-2 sm:hidden">
           {footer && (
-            <div className="mb-2 flex items-center justify-between rounded-[4px] border bg-slate-100 px-3 py-2 dark:bg-white/[0.06]">
-              <span className="text-[12px] font-bold uppercase tracking-wide">Opening Balance</span>
+            <div className="mb-2 flex items-center justify-between rounded-[4px] border border-amber-300 bg-amber-100/80 px-3 py-2 dark:border-amber-400/30 dark:bg-amber-400/10">
+              <span className="text-[12px] font-bold uppercase tracking-wide text-amber-950 dark:text-amber-100">Opening Balance</span>
               <Balance net={openingNet} className="text-[14px]" />
             </div>
           )}
@@ -659,7 +699,10 @@ export function PartyLedgerPage() {
                           }
                         : undefined
                     }
-                    className={cn('bg-card rounded-[4px] border p-2.5 shadow-sm', invoice && 'active:bg-muted cursor-pointer')}
+                    className={cn(
+                      'bg-card rounded-[4px] border border-amber-200 p-2.5 shadow-sm dark:border-amber-400/20',
+                      invoice && 'cursor-pointer active:bg-amber-100/70 dark:active:bg-amber-400/15',
+                    )}
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
@@ -671,9 +714,10 @@ export function PartyLedgerPage() {
                       <span className="text-muted-foreground shrink-0 text-[11px] font-semibold tabular-nums">{prettyDate(r.txnDate)}</span>
                     </div>
                     {(r.status || r.dueFrom) && (
-                      <p className={cn('mt-1 text-[11px] font-semibold', dueTone(r.dueFrom))}>
-                        {[statusWord(r.status), r.dueFrom].filter(Boolean).join(' · ')}
-                      </p>
+                      <div className="mt-1 flex items-center gap-1.5">
+                        <StatusChip status={r.status} />
+                        <DueFrom text={r.dueFrom} />
+                      </div>
                     )}
                     <div className="mt-2 flex items-end justify-between gap-2 border-t pt-2">
                       <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11.5px]">
@@ -712,15 +756,15 @@ export function PartyLedgerPage() {
             </div>
           )}
           {footer && (
-            <div className="mt-2 space-y-1.5 rounded-[4px] border-2 border-blue-800 bg-blue-50 px-3 py-2 dark:border-blue-400/50 dark:bg-blue-400/10">
+            <div className="mt-2 space-y-1.5 rounded-[4px] border-2 border-amber-600 bg-amber-100/80 px-3 py-2 dark:border-amber-400/60 dark:bg-amber-400/15">
               <div className="flex items-center justify-between">
-                <span className="text-[11.5px] font-semibold uppercase tracking-wide">Current Total</span>
+                <span className="text-[11.5px] font-semibold uppercase tracking-wide text-amber-950 dark:text-amber-100">Current Total</span>
                 <span className="text-[12.5px] font-bold tabular-nums">
                   {balanceCells(footer.current).map((v) => inr(v)).join('  /  ')}
                 </span>
               </div>
-              <div className="flex items-center justify-between border-t border-blue-800/25 pt-1.5 dark:border-blue-400/25">
-                <span className="text-[12px] font-extrabold uppercase tracking-wide">Closing Balance</span>
+              <div className="flex items-center justify-between border-t border-amber-600/30 pt-1.5 dark:border-amber-400/30">
+                <span className="text-[12px] font-extrabold uppercase tracking-wide text-amber-950 dark:text-amber-100">Closing Balance</span>
                 <Balance
                   net={footer.closingBankNet * (mode === 'C' ? 0 : 1) + footer.closingCashNet * (mode === 'B' ? 0 : 1)}
                   className="text-[15px]"
@@ -753,15 +797,16 @@ function FootRow({
   balance?: number;
 }) {
   const bg = strong
-    ? 'bg-blue-100 dark:bg-blue-400/15 border-t-2 border-t-blue-800 dark:border-t-blue-400/60'
-    : 'bg-slate-100 dark:bg-white/[0.07] border-t border-t-slate-300 dark:border-t-white/20';
-  // The grid line is scoped to the RIGHT edge only — a blanket `border-slate-200`
+    ? 'bg-amber-200/90 dark:bg-amber-400/20 border-t-2 border-t-amber-700 dark:border-t-amber-400/70'
+    : 'bg-amber-100/70 dark:bg-amber-400/10 border-t border-t-amber-300 dark:border-t-amber-400/30';
+  // The grid line is scoped to the RIGHT edge only — a blanket `border-amber-200`
   // also sets the top colour and would beat the totals rule above.
-  const cell = cn('border-r border-r-slate-200 px-2 py-1 dark:border-r-white/10 last:border-r-0', bg);
+  const cell = cn('border-r border-r-amber-300/60 px-2 py-1 dark:border-r-amber-400/15 last:border-r-0', bg);
   return (
     <tr className={bg}>
-      <td className={cell} colSpan={lead - 3} />
-      <td className={cn(cell, strong ? 'text-[13.5px] font-extrabold' : 'text-[13px] font-bold')} colSpan={3}>
+      {/* Date stays blank; the label runs across the remaining text columns. */}
+      <td className={cell} />
+      <td className={cn(cell, strong ? 'text-[13.5px] font-extrabold' : 'text-[13px] font-bold')} colSpan={lead - 1}>
         {label}
       </td>
       {cells.map((v, i) => (
@@ -775,14 +820,48 @@ function FootRow({
   );
 }
 
-/** The settlement letter spelled out, so the grid reads without a legend. */
-const statusWord = (s: string) => (s === 'F' ? 'Paid' : s === 'P' ? 'Part-paid' : s === 'D' ? 'Due' : '');
+/**
+ * The one-letter settlement chip this system has always used: F = fully paid,
+ * P = partially paid, D = due. Kept exactly as-is — only the palette gained dark
+ * variants — because it's the shorthand the ledger is read by.
+ */
+function StatusChip({ status }: { status: string }) {
+  if (status === 'F')
+    return (
+      <span className="rounded bg-emerald-100 px-1.5 text-[11.5px] font-bold text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300" title="Fully paid">
+        F
+      </span>
+    );
+  if (status === 'P')
+    // Deeper than the other two: the rows behind it are amber, so a pale amber
+    // chip would disappear into the banding.
+    return (
+      <span className="rounded bg-amber-500 px-1.5 text-[11.5px] font-bold text-amber-950 dark:bg-amber-500 dark:text-amber-950" title="Partially paid">
+        P
+      </span>
+    );
+  if (status === 'D')
+    return (
+      <span className="rounded bg-rose-100 px-1.5 text-[11.5px] font-bold text-rose-700 dark:bg-rose-400/15 dark:text-rose-300" title="Due">
+        D
+      </span>
+    );
+  return null;
+}
+
+/** Ageing text — "45 Over", "36 Late", "12 Left", "Due Today". Overdue reads red;
+ *  Early / On Time / Late describe an already-settled bill, so they read green. */
 const dueTone = (t: string) =>
   /Over/i.test(t)
     ? 'text-rose-600 dark:text-rose-400'
     : /Early|On Time|Late/i.test(t)
       ? 'text-emerald-600 dark:text-emerald-400'
-      : 'text-slate-500 dark:text-slate-400';
+      : 'text-slate-600 dark:text-slate-400';
+
+function DueFrom({ text }: { text: string }) {
+  if (!text) return <span className="text-muted-foreground/50">—</span>;
+  return <span className={cn('text-[12px] font-semibold uppercase', dueTone(text))}>{text}</span>;
+}
 
 /** Payment DNA is now a Party-Lists standing, so it colours by list kind. */
 function dnaTone(kind?: PartyListStanding): Tone {
@@ -832,8 +911,8 @@ function Kpi({
   dot?: PartyListStanding;
 }) {
   return (
-    <div className="bg-card rounded-[4px] border px-2.5 py-1.5 shadow-sm">
-      <div className="text-muted-foreground text-[9.5px] font-bold tracking-widest uppercase">{label}</div>
+    <div className="bg-card rounded-[4px] border border-amber-200 px-2.5 py-1.5 shadow-sm dark:border-amber-400/20">
+      <div className="text-[9.5px] font-bold tracking-widest text-amber-900/70 uppercase dark:text-amber-200/60">{label}</div>
       <div className="flex items-baseline gap-1.5">
         {dot && <span className={cn('mb-px size-2 shrink-0 self-center rounded-full ring-1 ring-black/10', DOT_CLS[dot])} aria-hidden />}
         <span className={cn('truncate text-[15px] font-bold tabular-nums', toneCls[tone])} title={value}>
@@ -922,7 +1001,7 @@ function ReceiptDialog({ row, onClose }: { row: PartyLedgerRow | null; onClose: 
           <ul className="space-y-1.5 py-1 text-sm">
             {lines.map((l, i) => (
               <li key={i} className="flex items-center gap-2">
-                <span className="size-1.5 rounded-full bg-blue-500" />
+                <span className="size-1.5 rounded-full bg-amber-500" />
                 {verb(l.recType)} on {prettyDate(l.recDate)} vide <span className="font-semibold">{l.refRecId || '?'}</span>
                 {l.recAmt > 0 && <span className="ml-auto tabular-nums font-semibold">₹ {inr(l.recAmt)}</span>}
               </li>

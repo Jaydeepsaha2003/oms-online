@@ -617,9 +617,9 @@ function legsFor(mode: string): Leg[] {
   return legs;
 }
 
-/** Tally folds the settlement state into the narration line under the particulars. */
-const statusWord = (s: string) => (s === 'F' ? 'Paid in full' : s === 'P' ? 'Part-paid' : s === 'D' ? 'Outstanding' : '');
-const narrationOf = (r: PartyLedgerRow) => [statusWord(r.status), r.dueFrom].filter(Boolean).join(' · ');
+/** The house settlement shorthand, printed verbatim: F = fully paid, P = partially
+ *  paid, D = due. It gets its own narrow column so the statement matches the screen. */
+const STATUS_LEGEND = 'St:  F = fully paid   P = partially paid   D = due';
 
 /* ── PDF document ─────────────────────────────────────────────────────────── */
 
@@ -642,52 +642,63 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string, company: string | 
   const legs = legsFor(mode);
   /** Both legs shown → the Dr/Cr pairs sit under "Bank" / "Cash" group headings. */
   const grouped = legs.length === 2;
-  const landscape = grouped;
-  /** Printable width, used to draw the full-bleed rule under the masthead. */
-  const pageWidth = (landscape ? 842 : 595) - 48;
+  /** Always landscape. At 9pt the six text columns plus the figure pairs simply
+   *  don't breathe on portrait A4 — Particulars ends up wrapping every second
+   *  party name, which reads far worse than a wider sheet. */
+  const pageWidth = 842 - 48;
 
-  const txt = (text: string, extra: Record<string, unknown> = {}) => ({ text, fontSize: 8, ...extra });
-  const num = (v: number, extra: Record<string, unknown> = {}) => ({ text: amt2(v), fontSize: 8, alignment: 'right', ...extra });
+  /** Body type. Bumped from 8pt so the statement stays legible in print and on a
+   *  phone; every other size below is set relative to it. */
+  const BODY = 9;
+  const txt = (text: string, extra: Record<string, unknown> = {}) => ({ text, fontSize: BODY, ...extra });
+  const num = (v: number, extra: Record<string, unknown> = {}) => ({ text: amt2(v), fontSize: BODY, alignment: 'right', ...extra });
+  /** Column captions: slightly larger than the body, letter-spaced so a run of
+   *  short words ("Vch No", "Debit") reads as a heading rather than as data. */
+  const head = (text: string, extra: Record<string, unknown> = {}) => ({
+    text,
+    fontSize: BODY + 0.5,
+    bold: true,
+    characterSpacing: 0.3,
+    ...extra,
+  });
 
   /* ── headings ── */
+  /** Date, Particulars, Vch Type, Vch No, St, Due From. */
+  const LEAD = 6;
   const groupRow = [
-    txt(''),
-    txt(''),
-    txt(''),
-    txt(''),
-    ...legs.flatMap((l) => [txt(l.group, { bold: true, alignment: 'center', colSpan: 2 }), txt('')]),
+    ...Array.from({ length: LEAD }, () => txt('')),
+    ...legs.flatMap((l) => [head(l.group.toUpperCase(), { alignment: 'center', colSpan: 2, characterSpacing: 1 }), txt('')]),
   ];
   const colRow = [
-    txt('Date', { bold: true }),
-    txt('Particulars', { bold: true }),
-    txt('Vch Type', { bold: true }),
-    txt('Vch No', { bold: true }),
-    ...legs.flatMap(() => [txt('Debit', { bold: true, alignment: 'right' }), txt('Credit', { bold: true, alignment: 'right' })]),
+    head('Date'),
+    head('Particulars'),
+    head('Vch Type'),
+    head('Vch No'),
+    head('St', { alignment: 'center' }),
+    head('Due From'),
+    ...legs.flatMap(() => [head('Debit', { alignment: 'right' }), head('Credit', { alignment: 'right' })]),
   ];
   const heads = grouped ? [groupRow, colRow] : [colRow];
 
-  /* ── one voucher line; the settlement state rides along as a narration ── */
-  const dataRow = (r: PartyLedgerRow) => {
-    const note = narrationOf(r);
-    return [
-      txt(d(r.txnDate)),
-      note
-        ? { stack: [txt(r.particulars), txt(`(${note})`, { fontSize: 6.5, italics: true })] }
-        : txt(r.particulars),
-      txt(r.voucherType),
-      txt(r.voucherNo),
-      ...legs.flatMap((l) => [num(r[l.dr]), num(r[l.cr])]),
-    ];
-  };
+  /* ── one voucher line, single row: St and Due From are their own columns ── */
+  const dataRow = (r: PartyLedgerRow) => [
+    txt(d(r.txnDate), { noWrap: true }),
+    // The party/narration carries the line, so it's the only cell in medium weight.
+    txt(r.particulars),
+    txt(r.voucherType, { fontSize: BODY - 0.5 }),
+    txt(r.voucherNo, { noWrap: true }),
+    txt(r.status, { bold: true, alignment: 'center' }),
+    txt(r.dueFrom, { fontSize: BODY - 0.5, noWrap: true }),
+    ...legs.flatMap((l) => [num(r[l.dr]), num(r[l.cr])]),
+  ];
 
   /* ── opening / current / closing, laid out on the same grid ── */
   const balRow = (label: string, b: LedgerBalanceRow, strong: boolean) => [
     txt(''),
-    txt(label, { bold: true }),
-    txt(''),
-    txt(''),
+    txt(label, { bold: true, characterSpacing: strong ? 0.4 : 0 }),
+    ...Array.from({ length: LEAD - 2 }, () => txt('')),
     ...legs.flatMap((l) => [num(b[l.dr], { bold: true }), num(b[l.cr], { bold: true })]),
-  ].map((c) => (strong ? { ...c, fontSize: 8.5 } : c));
+  ].map((c) => (strong ? { ...c, fontSize: BODY + 1 } : c));
 
   const body = [
     ...heads,
@@ -699,44 +710,66 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string, company: string | 
   const headerRows = heads.length;
   /** Row index of the first totals line — the grid rules key off these. */
   const totalsAt = body.length - 2;
-  const numW = grouped ? 66 : 80;
+  /* Column widths are CONTENT widths — pdfmake adds the 10pt cell padding on top
+     of whatever is declared here. Each is the measured Helvetica width of that
+     column's widest real value at this size ("SALES DISCOUNT", "SSS/26-27/140",
+     a crore-scale amount in bold), so nothing wraps and nothing over-claims
+     space: every extra point taken here comes straight out of Particulars. */
+  const numW = 62;
+  const leadW = [48, '*', 76, 63, 12, 48];
 
   const kpiCell = (label: string, bucket: { amount: number; count: number }) => ({
     stack: [
-      { text: label, fontSize: 6.5, bold: true },
-      { text: amt2z(bucket.amount), fontSize: 9.5, bold: true, margin: [0, 1, 0, 0] },
-      { text: `${bucket.count} invoice(s)`, fontSize: 6.5 },
+      { text: label, fontSize: 8, bold: true, characterSpacing: 0.5 },
+      { text: amt2z(bucket.amount), fontSize: 12.5, bold: true, margin: [0, 2, 0, 0] },
+      { text: `${bucket.count} invoice(s)`, fontSize: 8, margin: [0, 1, 0, 0] },
     ],
-    margin: [6, 3, 6, 3],
+    margin: [8, 5, 8, 5],
+  });
+
+  /** A labelled fact under the grid ("Oldest unpaid: …"), label lighter than value. */
+  const factLine = (pairs: [string, string][]) => ({
+    text: pairs.flatMap(([label, value], i) => [
+      { text: `${i ? '        ' : ''}${label}: `, fontSize: 8.5 },
+      { text: value, fontSize: 8.5, bold: true },
+    ]),
+    margin: [0, 4, 0, 0],
   });
 
   return {
     pageSize: 'A4',
-    pageOrientation: landscape ? 'landscape' : 'portrait',
-    pageMargins: [24, 22, 24, 30],
-    defaultStyle: { font: 'Helvetica', fontSize: 8, color: BLACK },
+    pageOrientation: 'landscape',
+    pageMargins: [24, 22, 24, 32],
+    defaultStyle: { font: 'Helvetica', fontSize: BODY, color: BLACK },
     content: [
-      /* Masthead — company, document type, party, period. Centred, like Tally. */
-      ...(company ? [{ text: company.toUpperCase(), bold: true, fontSize: 13, alignment: 'center' }] : []),
-      { text: 'Ledger Account', fontSize: 9.5, alignment: 'center', margin: [0, company ? 1 : 0, 0, 3] },
+      /* Masthead — company, document type, party, period. Centred, like Tally.
+         The company sits large and letter-spaced; a hairline under it separates
+         the letterhead from the statement caption. */
+      ...(company
+        ? [
+            { text: company.toUpperCase(), bold: true, fontSize: 16, characterSpacing: 1.2, alignment: 'center' },
+            { canvas: [{ type: 'line', x1: pageWidth * 0.3, y1: 0, x2: pageWidth * 0.7, y2: 0, lineWidth: 0.5, lineColor: BLACK }], margin: [0, 3, 0, 3] },
+          ]
+        : []),
+      { text: 'LEDGER ACCOUNT', fontSize: 10.5, characterSpacing: 2, alignment: 'center', margin: [0, company ? 0 : 2, 0, 6] },
       {
         columns: [
-          { width: '*', text: partyOf(res), bold: true, fontSize: 11 },
+          { width: '*', text: partyOf(res), bold: true, fontSize: 13.5 },
           {
             width: 'auto',
             stack: [
-              { text: `${d(res.from)}  to  ${d(res.to)}`, fontSize: 9, bold: true, alignment: 'right' },
-              { text: modeLabel(mode), fontSize: 7.5, alignment: 'right', margin: [0, 1, 0, 0] },
+              { text: `${d(res.from)}  to  ${d(res.to)}`, fontSize: 10, bold: true, alignment: 'right' },
+              { text: `${modeLabel(mode)}   ·   Amounts in INR`, fontSize: 8, alignment: 'right', margin: [0, 2, 0, 0] },
             ],
           },
         ],
-        margin: [0, 0, 0, 3],
+        margin: [0, 0, 0, 4],
       },
-      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: pageWidth, y2: 0, lineWidth: 1, lineColor: BLACK }], margin: [0, 0, 0, 5] },
+      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: pageWidth, y2: 0, lineWidth: 1, lineColor: BLACK }], margin: [0, 0, 0, 6] },
 
       /* The ledger grid. */
       {
-        table: { headerRows, widths: [46, '*', 62, 58, ...legs.flatMap(() => [numW, numW])], body },
+        table: { headerRows, widths: [...leadW, ...legs.flatMap(() => [numW, numW])], body },
         layout: {
           // Column rules run the full height; horizontal rules only frame the
           // headings, the opening line and the totals — Tally's exact skeleton.
@@ -745,43 +778,53 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string, company: string | 
           vLineWidth: () => 0.5,
           hLineColor: () => BLACK,
           vLineColor: () => BLACK,
-          paddingLeft: () => 4,
-          paddingRight: () => 4,
-          paddingTop: () => 2.5,
-          paddingBottom: () => 2.5,
+          paddingLeft: () => 5,
+          paddingRight: () => 5,
+          // Roomier rows: the larger type needs the leading, and it stops the
+          // figure columns reading as a solid block. Headings get a touch more.
+          paddingTop: (i: number) => (i < headerRows ? 4 : 3),
+          paddingBottom: (i: number) => (i < headerRows ? 4 : 3),
         },
       },
 
       /* Ageing summary — the one thing Tally doesn't print, kept because the
-         screen shows it; rendered in the same black-and-white grammar. */
+         screen shows it; rendered in the same black-and-white grammar. Held
+         together as one unbreakable block so the three buckets and the two fact
+         lines can never be split across a page turn. */
       {
-        table: {
-          widths: ['*', '*', '*'],
-          body: [[kpiCell('OVER DUE', k.overDue), kpiCell('DUE SOON / PARTIAL', k.pastDue), kpiCell('WITHIN TERMS', k.normal)]],
-        },
-        layout: {
-          hLineWidth: () => 0.5,
-          vLineWidth: () => 0.5,
-          hLineColor: () => BLACK,
-          vLineColor: () => BLACK,
-          paddingLeft: () => 0,
-          paddingRight: () => 0,
-          paddingTop: () => 0,
-          paddingBottom: () => 0,
-        },
-        margin: [0, 8, 0, 0],
-      },
-      {
-        text: `Oldest unpaid: ${k.invDueFrom}      Party list: ${k.paymentDNA}`,
-        fontSize: 7.5,
-        margin: [0, 3, 0, 0],
+        unbreakable: true,
+        stack: [
+          {
+            table: {
+              widths: ['*', '*', '*'],
+              body: [[kpiCell('OVER DUE', k.overDue), kpiCell('DUE SOON / PARTIAL', k.pastDue), kpiCell('WITHIN TERMS', k.normal)]],
+            },
+            layout: {
+              hLineWidth: () => 0.5,
+              vLineWidth: () => 0.5,
+              hLineColor: () => BLACK,
+              vLineColor: () => BLACK,
+              paddingLeft: () => 0,
+              paddingRight: () => 0,
+              paddingTop: () => 0,
+              paddingBottom: () => 0,
+            },
+          },
+          factLine([
+            ['Oldest unpaid', k.invDueFrom],
+            ['Party list', k.paymentDNA],
+          ]),
+          { text: STATUS_LEGEND, fontSize: 8, margin: [0, 3, 0, 0] },
+        ],
+        margin: [0, 10, 0, 0],
       },
     ],
     footer: (currentPage: number, pageCount: number) => ({
       columns: [
-        { text: new Date().toLocaleString('en-GB'), fontSize: 7, color: BLACK, margin: [24, 0, 0, 0] },
-        { text: `Page ${currentPage} of ${pageCount}`, fontSize: 7, color: BLACK, alignment: 'right', margin: [0, 0, 24, 0] },
+        { text: `Generated ${new Date().toLocaleString('en-GB')}`, fontSize: 8, color: BLACK, margin: [24, 0, 0, 0] },
+        { text: `Page ${currentPage} of ${pageCount}`, fontSize: 8, bold: true, color: BLACK, alignment: 'right', margin: [0, 0, 24, 0] },
       ],
+      margin: [0, 6, 0, 0],
     }),
   } as unknown as TDocumentDefinitions;
 }
@@ -811,20 +854,25 @@ async function buildLedgerXlsx(res: PartyLedgerResult, mode: string, company: st
     /** Pulls this column's figure out of a totals row. */
     bal?: (b: LedgerBalanceRow) => number;
   }
+  // Column order mirrors the screen and the PDF: St and Due From follow Vch No.
   const cols: Col[] = [
     { header: 'Date', width: 12, align: 'left', get: (r) => shortDate(r.txnDate) },
-    { header: 'Due From', width: 12, align: 'left', get: (r) => r.dueFrom || '' },
     { header: 'Particulars', width: 38, align: 'left', get: (r) => r.particulars },
     { header: 'Vch Type', width: 16, align: 'left', get: (r) => r.voucherType },
     { header: 'Vch No', width: 16, align: 'left', get: (r) => r.voucherNo },
-    { header: 'Status', width: 8, align: 'center', get: (r) => r.status || '' },
+    { header: 'St', width: 5, align: 'center', get: (r) => r.status || '' },
+    { header: 'Due From', width: 12, align: 'left', get: (r) => r.dueFrom || '' },
     ...legs.flatMap((l): Col[] => [
       { header: 'Debit', group: l.group, width: 15, align: 'right', num: true, get: (r) => q(r[l.dr]), bal: (b) => b[l.dr] },
       { header: 'Credit', group: l.group, width: 15, align: 'right', num: true, get: (r) => q(r[l.cr]), bal: (b) => b[l.cr] },
     ]),
   ];
   const nCols = cols.length;
-  const labelCol = 5; // "Vch No" column — where the totals labels sit (1-based)
+  const labelCol = 4; // "Vch No" column — where the totals labels sit (1-based)
+  /** The summary block below the grid uses wide text columns, not the narrow St. */
+  const sumLabelCol = 2; // Particulars
+  const sumValueCol = 4; // Vch No
+  const sumNoteCol = 6; // Due From
 
   const wb = new ExcelJS.Workbook();
   wb.creator = 'OMS';
@@ -937,29 +985,31 @@ async function buildLedgerXlsx(res: PartyLedgerResult, mode: string, company: st
     ['Within Terms', k.normal],
   ] as const).forEach(([label, bucket]) => {
     const row = ws.getRow(rIdx);
-    const l = row.getCell(labelCol);
+    const l = row.getCell(sumLabelCol);
     l.value = label;
     l.font = { name: 'Calibri', size: 9, bold: true, color: { argb: BLACK } };
     l.alignment = { vertical: 'middle', horizontal: 'right' };
-    const v = row.getCell(labelCol + 1);
+    const v = row.getCell(sumValueCol);
     v.value = bucket.amount || 0;
     v.numFmt = '#,##0.00';
     v.font = { name: 'Calibri', size: 9, bold: true, color: { argb: BLACK } };
     v.alignment = { vertical: 'middle', horizontal: 'right' };
-    const n = row.getCell(labelCol + 2);
+    const n = row.getCell(sumNoteCol);
     n.value = `${bucket.count} invoice(s)`;
     n.font = { name: 'Calibri', size: 9, color: { argb: BLACK } };
     rIdx++;
   });
   const tail = ws.getRow(rIdx);
-  tail.getCell(labelCol).value = 'Oldest unpaid';
-  tail.getCell(labelCol).alignment = { horizontal: 'right' };
-  tail.getCell(labelCol + 1).value = k.invDueFrom;
+  tail.getCell(sumLabelCol).value = 'Oldest unpaid';
+  tail.getCell(sumLabelCol).alignment = { horizontal: 'right' };
+  tail.getCell(sumValueCol).value = k.invDueFrom;
   rIdx++;
   const dna = ws.getRow(rIdx);
-  dna.getCell(labelCol).value = 'Party list';
-  dna.getCell(labelCol).alignment = { horizontal: 'right' };
-  dna.getCell(labelCol + 1).value = k.paymentDNA;
+  dna.getCell(sumLabelCol).value = 'Party list';
+  dna.getCell(sumLabelCol).alignment = { horizontal: 'right' };
+  dna.getCell(sumValueCol).value = k.paymentDNA;
+  rIdx += 2;
+  ws.getRow(rIdx).getCell(sumLabelCol).value = STATUS_LEGEND;
 
   ws.autoFilter = { from: { row: headRowNo, column: 1 }, to: { row: headRowNo, column: nCols } };
 
