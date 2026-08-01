@@ -8,6 +8,8 @@ import {
   type DispatchStatus,
   type PendingLineDto,
   type Paginated,
+  type SubmitDispatchResult,
+  type UpdateDispatchResult,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApprovalsService } from '../approvals/approvals.service';
@@ -357,7 +359,7 @@ export class DispatchService implements OnModuleInit {
   async submit(
     dto: CreateDispatchDto,
     user: { id?: number | null; name?: string | null; canApprove: boolean },
-  ): Promise<{ status: 'CREATED'; dispatch: DispatchDto } | { status: 'PENDING_APPROVAL'; approvalCode: string }> {
+  ): Promise<SubmitDispatchResult> {
     if (this.isToday(dto.dispatchDate) || user.canApprove) {
       return { status: 'CREATED', dispatch: await this.create(dto, user.name ?? undefined) };
     }
@@ -581,7 +583,7 @@ export class DispatchService implements OnModuleInit {
     id: number,
     dto: UpdateDispatchDto,
     user: { id?: number | null; name?: string | null; canApprove: boolean },
-  ): Promise<{ dispatch: DispatchDto; dateApprovalCode?: string }> {
+  ): Promise<UpdateDispatchResult> {
     const cur = await this.prisma.dispatch.findUnique({ where: { id } });
     if (!cur) throw new NotFoundException('Dispatch not found.');
 

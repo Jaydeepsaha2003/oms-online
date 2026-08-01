@@ -23,24 +23,6 @@ import { LiveLinePhotos } from './line-photos';
 
 const PAGE_SIZE = 50;
 
-// Persist the list's filters so they survive a page refresh or navigating away and back.
-const FILTER_KEY = 'oms:order-modify-filters';
-interface OrderModifyFilters {
-  search: string;
-  agent: string;
-  product: string;
-  design: string;
-  priority: string;
-  page: number;
-}
-const loadFilters = (): Partial<OrderModifyFilters> => {
-  try {
-    return JSON.parse(sessionStorage.getItem(FILTER_KEY) || '{}') as Partial<OrderModifyFilters>;
-  } catch {
-    return {};
-  }
-};
-
 const STATUS_STYLE: Record<string, string> = {
   CONFIRMED: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/25',
   PENDING: 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/25',
@@ -152,17 +134,15 @@ const COLUMNS: DataColumn<Row>[] = [
 export function OrderModifyPage() {
   const navigate = useNavigate();
   const confirm = useConfirm();
-  const [search, setSearch] = useState(() => loadFilters().search ?? '');
-  const [agent, setAgent] = useState(() => loadFilters().agent ?? '');
-  const [product, setProduct] = useState(() => loadFilters().product ?? '');
-  const [design, setDesign] = useState(() => loadFilters().design ?? '');
-  const [priority, setPriority] = useState(() => loadFilters().priority ?? '');
-  const [page, setPage] = useState(() => loadFilters().page ?? 1);
-
-  // Persist the current filters whenever they change.
-  useEffect(() => {
-    sessionStorage.setItem(FILTER_KEY, JSON.stringify({ search, agent, product, design, priority, page }));
-  }, [search, agent, product, design, priority, page]);
+  // Deliberately NOT persisted (unlike most other list pages): these filters
+  // should start fresh every time you arrive here, rather than still be applied
+  // from whatever you were last looking for after stepping away to another page.
+  const [search, setSearch] = useState('');
+  const [agent, setAgent] = useState('');
+  const [product, setProduct] = useState('');
+  const [design, setDesign] = useState('');
+  const [priority, setPriority] = useState('');
+  const [page, setPage] = useState(1);
 
   const { data, isLoading } = useOrders({
     page,
@@ -188,7 +168,6 @@ export function OrderModifyPage() {
     setDesign('');
     setPriority('');
     setPage(1);
-    sessionStorage.removeItem(FILTER_KEY);
   };
 
   // Draft orders are work-in-progress and stay hidden from Order Modify.
@@ -273,15 +252,8 @@ export function OrderModifyPage() {
               }}
             />
           </div>
-          <div className="w-36">
-            <NativeSelect
-              value={agent}
-              onChange={(v) => { setAgent(v); setPage(1); }}
-              options={['', ...(filterOptions?.agents ?? [])]}
-              placeholder="All agents"
-              className={cn(CONTROL, 'font-medium', agent && CONTROL_ON)}
-            />
-          </div>
+          {/* Filter order follows the house pattern: Item Name, Agent, Design (no
+              Customer filter on this screen, so it starts from Product). */}
           <div className="w-40">
             <NativeSelect
               value={product}
@@ -289,6 +261,15 @@ export function OrderModifyPage() {
               options={['', ...(filterOptions?.products ?? [])]}
               placeholder="All products"
               className={cn(CONTROL, 'font-medium', product && CONTROL_ON)}
+            />
+          </div>
+          <div className="w-36">
+            <NativeSelect
+              value={agent}
+              onChange={(v) => { setAgent(v); setPage(1); }}
+              options={['', ...(filterOptions?.agents ?? [])]}
+              placeholder="All agents"
+              className={cn(CONTROL, 'font-medium', agent && CONTROL_ON)}
             />
           </div>
           <div className="w-36">

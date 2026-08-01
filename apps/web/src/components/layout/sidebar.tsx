@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { getMenuIcon } from '@/lib/icons';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useNudgeCount } from '@/features/crm/followup-nudge';
+import { usePendingApprovalCount } from '@/features/approvals/use-approvals';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { SystemStatus } from '@/components/common/system-status';
@@ -28,6 +29,9 @@ export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
   const { permissions, can } = usePermissions();
   const location = useLocation();
   const nudges = useNudgeCount(can('crm:view'));
+  const canViewApprovals = can('approval:view');
+  const { data: approvalCount } = usePendingApprovalCount(canViewApprovals);
+  const pendingApprovals = approvalCount?.pending ?? 0;
   const items = useMemo(() => {
     const filtered = filterMenu(permissions, MENU);
     if (nudges > 0) {
@@ -37,8 +41,14 @@ export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
         if (leaf) leaf.badge = String(nudges);
       }
     }
+    if (pendingApprovals > 0) {
+      for (const g of filtered) {
+        const leaf = g.children?.find((c) => c.id === 'approvals');
+        if (leaf) leaf.badge = String(pendingApprovals);
+      }
+    }
     return filtered;
-  }, [permissions, nudges]);
+  }, [permissions, nudges, pendingApprovals]);
 
   // Accordion: only one group is open at a time. Default to the active route's group.
   const activeGroupId = useMemo(

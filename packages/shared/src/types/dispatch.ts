@@ -125,6 +125,25 @@ export interface DispatchFilterOptions {
   subCategories?: string[];
 }
 export type DispatchList = Paginated<DispatchDto>;
+
+/**
+ * Response for `POST /dispatch`. A dispatch dated anything other than today needs
+ * `dispatch:approve` — without it the entry is parked in the Approvals inbox
+ * instead of being created, so the caller has to branch on `status`.
+ */
+export type SubmitDispatchResult =
+  | { status: 'CREATED'; dispatch: DispatchDto }
+  | { status: 'PENDING_APPROVAL'; approvalCode: string };
+
+/**
+ * Response for `PATCH /dispatch/:id`. The edit always applies; a date MOVE only
+ * applies immediately for an approver — otherwise `dateApprovalCode` is set and
+ * the dispatch keeps its old date until that request is approved.
+ */
+export interface UpdateDispatchResult {
+  dispatch: DispatchDto;
+  dateApprovalCode?: string;
+}
 export type PendingQuery = PaginationQuery & {
   dueType?: string;
   unit?: string;

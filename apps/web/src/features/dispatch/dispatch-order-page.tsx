@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarClock, ChevronLeft, ChevronRight, Filter, Flame, Loader2, Package, PackageCheck, TriangleAlert, Truck, X } from 'lucide-react';
+import { CalendarClock, CalendarDays, ChevronLeft, ChevronRight, Filter, Flame, Loader2, Package, PackageCheck, RotateCcw, TriangleAlert, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { type DispatchStatus, type PendingLineDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -20,6 +20,7 @@ import { Label } from '@/components/ui/label';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Switch } from '@/components/ui/switch';
 import { exportPendingDispatch, useCreateDispatch, usePendingFilterOptions, usePendingOrders } from './use-dispatch';
+import { useDispatchDate } from './use-dispatch-date';
 
 const PAGE_SIZE = 50;
 const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? 0 : Number(s));
@@ -275,6 +276,11 @@ export function DispatchOrderPage() {
   const sheetFilterCount = (dueType ? 1 : 0) + (design ? 1 : 0) + (subCategory ? 1 : 0);
   const { can } = usePermissions();
   const canViewRates = can('dispatch:viewrates');
+  const canApproveDispatch = can('dispatch:approve');
+  // The date every dispatch created from this page uses — defaults to today,
+  // sticks for the rest of the calendar day once changed, resets on its own the
+  // next day. See use-dispatch-date.ts.
+  const dispatchDateCtl = useDispatchDate();
   const columns = useMemo(() => (canViewRates ? withRates(COLUMNS) : COLUMNS), [canViewRates]);
   const cols = useColumnOrder('dispatch-pending', columns);
   // Export the pending list under the CURRENTLY applied filters (the server
@@ -304,17 +310,64 @@ export function DispatchOrderPage() {
     // owns its own padding. Mobile keeps its own filter sheet + tap-to-dispatch
     // cards + truck animation untouched.
     <div className="flex h-full min-h-0 flex-col gap-2 p-2.5 font-sans sm:gap-2.5 sm:p-3">
+      {/* ── Dispatch date — applies to every dispatch created below until changed
+          or the day rolls over. A date other than today needs `dispatch:approve`;
+          without it the entry is parked in Approvals instead of created. */}
+      <div
+        className={cn(
+          'bg-card font-poppins rounded-[4px] border shadow-sm',
+          !dispatchDateCtl.isToday && 'border-amber-400 dark:border-amber-400/50',
+        )}
+      >
+        <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
+          <CalendarDays className="text-muted-foreground size-4 shrink-0" />
+          <Label htmlFor="dispatch-date" className="shrink-0 text-[11px] font-bold tracking-wide text-muted-foreground uppercase">
+            Dispatching for
+          </Label>
+          <Input
+            id="dispatch-date"
+            type="date"
+            value={dispatchDateCtl.date}
+            onChange={(e) => e.target.value && dispatchDateCtl.setDate(e.target.value)}
+            className={cn(CONTROL, 'w-auto shrink-0', !dispatchDateCtl.isToday && CONTROL_ON)}
+          />
+          {!dispatchDateCtl.isToday && (
+            <>
+              <span className="shrink-0 rounded-[4px] bg-amber-100 px-1.5 py-0.5 text-[11px] font-bold text-amber-800 dark:bg-amber-400/15 dark:text-amber-300">
+                Back-dated
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 shrink-0 gap-1 text-[12px] font-semibold text-amber-700 hover:bg-amber-50 hover:text-amber-900 dark:text-amber-300 dark:hover:bg-amber-400/10"
+                onClick={dispatchDateCtl.resetToToday}
+              >
+                <RotateCcw className="size-3" /> Reset to today
+              </Button>
+            </>
+          )}
+          {!dispatchDateCtl.isToday && (
+            <p className="text-muted-foreground ml-auto hidden max-w-sm text-right text-[11.5px] font-medium sm:block">
+              {canApproveDispatch
+                ? 'You can approve, so this date applies directly — no sign-off needed.'
+                : 'Dispatches on this date will wait in Approvals for an admin to sign off.'}
+            </p>
+          )}
+        </div>
+      </div>
+
       <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
         <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
-          {/* Phones: Customer + Agent + Product each get their own full-width line so
-              long names fit; the rest (Due / Design / Sub category) live behind the
-              filter icon, which sits with the export button on the Product row. */}
+          {/* Phones: Customer + Product + Agent each get their own full-width line
+              (house order: Customer, Item Name, Agent, …), long names fit; the rest
+              (Due / Design / Sub category) live behind the filter icon, which sits
+              with the export button on the Agent row. */}
           <div className="flex w-full flex-col gap-2 sm:hidden">
             <NativeSelect value={customer} onChange={(v) => { setCustomer(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="Customer" className={cn(CONTROL, 'font-medium', customer && CONTROL_ON)} />
-            <NativeSelect value={agent} onChange={(v) => { setAgent(v); setPage(1); }} options={['', ...(options?.agents ?? [])]} placeholder="All agents" className={cn(CONTROL, 'font-medium', agent && CONTROL_ON)} />
+            <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...productOptions]} placeholder={all ? 'Product (any design)' : 'Product'} className={cn(CONTROL, 'font-medium', product && CONTROL_ON)} />
             <div className="flex items-center gap-2">
               <div className="min-w-0 flex-1">
-                <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...productOptions]} placeholder={all ? 'Product (any design)' : 'Product'} className={cn(CONTROL, 'font-medium', product && CONTROL_ON)} />
+                <NativeSelect value={agent} onChange={(v) => { setAgent(v); setPage(1); }} options={['', ...(options?.agents ?? [])]} placeholder="All agents" className={cn(CONTROL, 'font-medium', agent && CONTROL_ON)} />
               </div>
               <Button variant="outline" size="icon" className={cn('relative size-9 shrink-0 rounded-[4px] border-amber-300', sheetFilterCount > 0 && CONTROL_ON)} onClick={openMobileFilters} aria-label="More filters">
                 <Filter className="size-4" />
@@ -333,11 +386,11 @@ export function DispatchOrderPage() {
             <div className="w-36">
               <NativeSelect value={dueType} onChange={(v) => { setDueType(v); setPage(1); }} options={['', 'Due', 'Over Due']} placeholder="All due" className={cn(CONTROL, 'font-medium', dueType && CONTROL_ON)} />
             </div>
+            {/* Filter order follows the house pattern: Customer, Item Name, Agent,
+                Category, Sub Category, Design (no separate top-level Category
+                dropdown on this page — only Sub Category — so that's skipped). */}
             <div className="w-56">
               <NativeSelect value={customer} onChange={(v) => { setCustomer(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="All customers" className={cn(CONTROL, 'font-medium', customer && CONTROL_ON)} />
-            </div>
-            <div className="w-40">
-              <NativeSelect value={agent} onChange={(v) => { setAgent(v); setPage(1); }} options={['', ...(options?.agents ?? [])]} placeholder="All agents" className={cn(CONTROL, 'font-medium', agent && CONTROL_ON)} />
             </div>
             <div className="w-56">
               <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...productOptions]} placeholder={all ? 'All (any design)' : 'All products'} className={cn(CONTROL, 'font-medium', product && CONTROL_ON)} />
@@ -345,11 +398,14 @@ export function DispatchOrderPage() {
             <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[12.5px] font-semibold select-none" title="ALL: one product pick matches every design variant">
               <Switch checked={all} onCheckedChange={toggleAll} /> All
             </label>
-            <div className="w-36">
-              <NativeSelect value={design} onChange={(v) => { setDesign(v); setPage(1); }} options={['', ...(options?.designs ?? [])]} placeholder="All designs" disabled={all} className={cn(CONTROL, 'font-medium', design && CONTROL_ON)} />
+            <div className="w-40">
+              <NativeSelect value={agent} onChange={(v) => { setAgent(v); setPage(1); }} options={['', ...(options?.agents ?? [])]} placeholder="All agents" className={cn(CONTROL, 'font-medium', agent && CONTROL_ON)} />
             </div>
             <div className="w-40">
               <NativeSelect value={subCategory} onChange={(v) => { setSubCategory(v); setPage(1); }} options={['', ...(options?.subCategories ?? [])]} placeholder="All sub categories" className={cn(CONTROL, 'font-medium', subCategory && CONTROL_ON)} />
+            </div>
+            <div className="w-36">
+              <NativeSelect value={design} onChange={(v) => { setDesign(v); setPage(1); }} options={['', ...(options?.designs ?? [])]} placeholder="All designs" disabled={all} className={cn(CONTROL, 'font-medium', design && CONTROL_ON)} />
             </div>
             {hasFilters && (
               <Button
@@ -401,12 +457,12 @@ export function DispatchOrderPage() {
               <NativeSelect value={draftDue} onChange={setDraftDue} options={['', 'Due', 'Over Due']} placeholder="All due" />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-muted-foreground text-xs font-medium uppercase">Design</Label>
-              <NativeSelect value={draftDesign} onChange={setDraftDesign} options={['', ...(options?.designs ?? [])]} placeholder={all ? 'Any (ALL on)' : 'All designs'} disabled={all} />
-            </div>
-            <div className="space-y-1.5">
               <Label className="text-muted-foreground text-xs font-medium uppercase">Sub category</Label>
               <NativeSelect value={draftSubCategory} onChange={setDraftSubCategory} options={['', ...(options?.subCategories ?? [])]} placeholder="All sub categories" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Design</Label>
+              <NativeSelect value={draftDesign} onChange={setDraftDesign} options={['', ...(options?.designs ?? [])]} placeholder={all ? 'Any (ALL on)' : 'All designs'} disabled={all} />
             </div>
           </div>
           <SheetFooter>
@@ -494,6 +550,7 @@ export function DispatchOrderPage() {
         {active && (
           <DispatchSheet
             line={active}
+            dispatchDate={dispatchDateCtl.date}
             onClose={() => setActive(null)}
             onDispatched={(code) => {
               setActive(null);
@@ -571,7 +628,19 @@ const QTY_FIELDS = [
 
 /** Slide-over to dispatch a pending order line — a native bottom sheet on phones,
  *  a right side-panel on desktop. Qty fields start blank. */
-function DispatchSheet({ line, onClose, onDispatched }: { line: PendingLineDto; onClose: () => void; onDispatched: (code: string) => void }) {
+function DispatchSheet({
+  line,
+  dispatchDate,
+  onClose,
+  onDispatched,
+}: {
+  line: PendingLineDto;
+  /** The sticky date from the page's top bar — every dispatch this sheet creates
+   *  is stamped with it. */
+  dispatchDate: string;
+  onClose: () => void;
+  onDispatched: (code: string) => void;
+}) {
   const create = useCreateDispatch();
   const confirm = useConfirm();
   const { can } = usePermissions();
@@ -662,9 +731,20 @@ function DispatchSheet({ line, onClose, onDispatched }: { line: PendingLineDto; 
       }
     }
     create.mutate(
-      { orderItemId: line.orderItemId, bags, pcs, gram, box, dispatchStatus: status, comment: form.comment.trim() || null },
+      { orderItemId: line.orderItemId, bags, pcs, gram, box, dispatchStatus: status, comment: form.comment.trim() || null, dispatchDate },
       {
-        onSuccess: (d) => onDispatched(d.code ?? ''),
+        onSuccess: (res) => {
+          if (res.status === 'CREATED') {
+            onDispatched(res.dispatch.code ?? '');
+          } else {
+            // Back-dated, and this user can't approve it themselves — nothing was
+            // created; it's now waiting in Approvals.
+            toast.info(`Sent for approval — ${res.approvalCode}`, {
+              description: 'This dispatch needs an admin sign-off before it takes effect.',
+            });
+            onClose();
+          }
+        },
         onError: (e) => toast.error(getApiErrorMessage(e, 'Dispatch failed')),
       },
     );
@@ -710,6 +790,15 @@ function DispatchSheet({ line, onClose, onDispatched }: { line: PendingLineDto; 
             {line.designType && line.designType.toUpperCase() !== 'NA' ? ` · ${line.designType}` : ''}
           </div>
           {line.calField && <div className="text-muted-foreground mt-0.5 text-xs">Priced by {line.calField}</div>}
+        </div>
+
+        {/* Read-only — set from the "Dispatching for" control at the top of the
+            page, which applies to every dispatch created there. */}
+        <div className="flex items-center gap-1.5 text-xs">
+          <CalendarDays className="text-muted-foreground size-3.5 shrink-0" />
+          <span className="text-muted-foreground">Dispatching for</span>
+          <span className="font-semibold">{formatDate(dispatchDate)}</span>
+          <span className="text-muted-foreground">— change it from the top of the page.</span>
         </div>
 
         <div>

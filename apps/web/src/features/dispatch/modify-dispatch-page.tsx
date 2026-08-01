@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Loader2, Pencil, Search, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2, Pencil, Search, Trash2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { DISPATCH_STATUSES, RESOURCES, type DispatchDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -256,11 +256,14 @@ export function ModifyDispatchPage() {
               onChange={(e) => setSearchInput(e.target.value)}
             />
           </div>
-          <div className="sm:w-40">
-            <NativeSelect value={productFilter} onChange={(v) => { setProductFilter(v); setPage(1); }} options={['', ...(options?.products ?? [])]} placeholder="All items" className={cn(CONTROL, 'font-medium', productFilter && CONTROL_ON)} />
-          </div>
+          {/* Filter order follows the house pattern: Customer, Item Name, Agent,
+              Category, Sub Category, Design (skipping whichever of those this
+              page doesn't have — there's no Category/Sub Category filter here). */}
           <div className="sm:w-40">
             <NativeSelect value={customerFilter} onChange={(v) => { setCustomerFilter(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="All customers" className={cn(CONTROL, 'font-medium', customerFilter && CONTROL_ON)} />
+          </div>
+          <div className="sm:w-40">
+            <NativeSelect value={productFilter} onChange={(v) => { setProductFilter(v); setPage(1); }} options={['', ...(options?.products ?? [])]} placeholder="All items" className={cn(CONTROL, 'font-medium', productFilter && CONTROL_ON)} />
           </div>
           <div className="sm:w-36">
             <NativeSelect value={agentFilter} onChange={(v) => { setAgentFilter(v); setPage(1); }} options={['', ...(options?.agents ?? [])]} placeholder="All agents" className={cn(CONTROL, 'font-medium', agentFilter && CONTROL_ON)} />
@@ -383,7 +386,17 @@ export function ModifyDispatchPage() {
 
 const EDIT_QTY = [['bags', 'Bags'], ['pcs', 'Pcs'], ['gram', 'Kgs'], ['box', 'Box']] as const;
 
+/** ISO datetime → the `YYYY-MM-DD` an `<input type="date">` needs, in local time
+ *  (a plain `.slice(0, 10)` on an ISO string would use UTC and can land on the
+ *  wrong day). */
+const toDateInput = (iso: string) => {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onClose: () => void }) {
+  const { can } = usePermissions();
+  const canApprove = can('dispatch:approve');
   const update = useUpdateDispatch(dispatch.id);
   const s = (v: number | null) => (v == null ? '' : String(v));
   const [form, setForm] = useState({
@@ -393,8 +406,10 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
     box: s(dispatch.box),
     dispatchStatus: dispatch.dispatchStatus,
     comment: dispatch.comment ?? '',
+    dispatchDate: toDateInput(dispatch.dispatchDate),
   });
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
+  const dateChanged = form.dispatchDate !== toDateInput(dispatch.dispatchDate);
 
   const submit = () => {
     if (update.isPending) return; // guard a double-fire (fast Ctrl+S + click)
@@ -409,10 +424,19 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
         box: num(form.box),
         dispatchStatus: form.dispatchStatus,
         comment: form.comment.trim() || null,
+        dispatchDate: form.dispatchDate,
       },
       {
-        onSuccess: () => {
-          toast.success('Dispatch updated');
+        onSuccess: (res) => {
+          if (res.dateApprovalCode) {
+            // Everything else saved; the date move itself is now waiting on a
+            // sign-off and the dispatch keeps its ORIGINAL date until then.
+            toast.success('Dispatch updated', {
+              description: `The date change needs admin approval — see ${res.dateApprovalCode}.`,
+            });
+          } else {
+            toast.success('Dispatch updated');
+          }
           onClose();
         },
         onError: (e) => toast.error(getApiErrorMessage(e, 'Update failed')),
@@ -457,8 +481,22 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
               {dispatch.designType && dispatch.designType.toUpperCase() !== 'NA' ? ` · ${dispatch.designType}` : ''}
             </div>
             <div className="text-muted-foreground mt-0.5 text-xs">
-              {dispatch.customerName} · {shortOrderCode(dispatch.orderCode, dispatch.orderId)} · {formatDate(dispatch.dispatchDate)}
+              {dispatch.customerName} · {shortOrderCode(dispatch.orderCode, dispatch.orderId)}
             </div>
+          </div>
+
+          {/* Dispatch date — editable. Moving it off today needs `dispatch:approve`;
+              without it, everything else in this edit still saves immediately and
+              only the date move itself waits on a sign-off (the dispatch keeps its
+              current date until then). */}
+          <div className="space-y-1.5">
+            <Label className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">Dispatch date</Label>
+            <Input type="date" value={form.dispatchDate} onChange={(e) => set({ dispatchDate: e.target.value })} className="h-10 text-base tabular-nums" />
+            {dateChanged && !canApprove && (
+              <p className="flex items-center gap-1 text-[11.5px] font-medium text-amber-700 dark:text-amber-400">
+                <TriangleAlert className="size-3.5 shrink-0" /> This move needs admin approval — everything else you change here still saves right away.
+              </p>
+            )}
           </div>
 
           {/* Quantities */}
