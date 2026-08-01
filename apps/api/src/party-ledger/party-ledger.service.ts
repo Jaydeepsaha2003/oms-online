@@ -663,8 +663,8 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string, company: string | 
   });
 
   /* ── headings ── */
-  /** Date, Particulars, Vch Type, Vch No, St, Due From. */
-  const LEAD = 6;
+  /** Date, Particulars, Vch Type, Vch No, Due Date. */
+  const LEAD = 5;
   const groupRow = [
     ...Array.from({ length: LEAD }, () => txt('')),
     ...legs.flatMap((l) => [head(l.group.toUpperCase(), { alignment: 'center', colSpan: 2, characterSpacing: 1 }), txt('')]),
@@ -674,21 +674,19 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string, company: string | 
     head('Particulars'),
     head('Vch Type'),
     head('Vch No'),
-    head('St', { alignment: 'center' }),
-    head('Due From'),
+    head('Due Date'),
     ...legs.flatMap(() => [head('Debit', { alignment: 'right' }), head('Credit', { alignment: 'right' })]),
   ];
   const heads = grouped ? [groupRow, colRow] : [colRow];
 
-  /* ── one voucher line, single row: St and Due From are their own columns ── */
+  /* ── one voucher line, single row ── */
   const dataRow = (r: PartyLedgerRow) => [
     txt(d(r.txnDate), { noWrap: true }),
     // The party/narration carries the line, so it's the only cell in medium weight.
     txt(r.particulars),
     txt(r.voucherType, { fontSize: BODY - 0.5 }),
     txt(r.voucherNo, { noWrap: true }),
-    txt(r.status, { bold: true, alignment: 'center' }),
-    txt(r.dueFrom, { fontSize: BODY - 0.5, noWrap: true }),
+    txt(d(r.dueDate), { noWrap: true }),
     ...legs.flatMap((l) => [num(r[l.dr]), num(r[l.cr])]),
   ];
 
@@ -716,7 +714,7 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string, company: string | 
      a crore-scale amount in bold), so nothing wraps and nothing over-claims
      space: every extra point taken here comes straight out of Particulars. */
   const numW = 62;
-  const leadW = [48, '*', 76, 63, 12, 48];
+  const leadW = [48, '*', 76, 63, 58];
 
   const kpiCell = (label: string, bucket: { amount: number; count: number }) => ({
     stack: [
@@ -814,7 +812,6 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string, company: string | 
             ['Oldest unpaid', k.invDueFrom],
             ['Party list', k.paymentDNA],
           ]),
-          { text: STATUS_LEGEND, fontSize: 8, margin: [0, 3, 0, 0] },
         ],
         margin: [0, 10, 0, 0],
       },

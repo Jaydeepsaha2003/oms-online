@@ -578,8 +578,6 @@ export function ChallanFormPage() {
     );
   }
 
-  const halfBill = numOr(billingRate) > 0 && !noBill;
-
   return (
     // The whole form flows and the page scrolls naturally (same as New Order), so
     // the item list grows to show ALL rows instead of scrolling inside a fixed
@@ -686,10 +684,11 @@ export function ChallanFormPage() {
               )}
             </div>
 
-            {/* Document-info panel — the four invoice fields as a tidy, divided block.
+            {/* Document-info panel — the four invoice fields as a tidy, divided
+                2×2 block (always — no single-row mode, even on wide screens).
                 gap-px over a filled ground draws the 1px dividers between cells. */}
-            <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border bg-border/70 lg:flex lg:shrink-0 dark:bg-white/10">
-              <MetaCell label="Invoice No" icon={Hash} className="lg:w-44">
+            <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border bg-border/70 lg:w-[26rem] lg:shrink-0 dark:bg-white/10">
+              <MetaCell label="Invoice No" icon={Hash}>
                 <div className="flex items-center gap-1.5">
                   {!isEdit && (draft?.prefixes.length ?? 0) > 1 && (
                     <select
@@ -714,10 +713,10 @@ export function ChallanFormPage() {
                   />
                 </div>
               </MetaCell>
-              <MetaCell label="Invoice Date" icon={CalendarDays} className="lg:w-40">
+              <MetaCell label="Invoice Date" icon={CalendarDays}>
                 <DatePicker value={invDate} onChange={setInvDate} clearable={false} className="bg-background h-8 w-full rounded-[4px] text-[13px]" />
               </MetaCell>
-              <MetaCell label="Due Date" icon={CalendarCheck2} className="lg:w-36">
+              <MetaCell label="Due Date" icon={CalendarCheck2}>
                 <Input
                   readOnly
                   value={dueDate ? formatDate(dueDate) : ''}
@@ -725,7 +724,7 @@ export function ChallanFormPage() {
                   className="bg-muted/40 h-8 w-full cursor-default rounded-[4px] text-[13px] tabular-nums"
                 />
               </MetaCell>
-              <MetaCell label="Status" className="lg:w-32">
+              <MetaCell label="Status">
                 {isEdit ? (
                   <NativeSelect value={status} onChange={setStatus} options={[...CHALLAN_STATUSES]} className="bg-background h-8 w-full rounded-[4px] text-[13px]" />
                 ) : (
@@ -968,7 +967,7 @@ export function ChallanFormPage() {
                     <LockField label="Box / Pouch" value={pouch} locked={locked.pouch} onUnlock={() => unlock('pouch')} onChange={setPouch} onBlur={() => setLocked((l) => ({ ...l, pouch: true }))} />
                     {/* GST % field removed — GST is not editable; it follows the customer's configured
                         rate (applied automatically) and is shown in the totals panel below. */}
-                    <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">{`Billing Rate${halfBill ? ' · half' : ''}`}</Label><Input value={billingRate} onChange={(e) => setBillingRate(e.target.value)} className="h-8 rounded-[4px] border-amber-500 bg-amber-50 text-right text-[13px] tabular-nums dark:border-amber-400/70 dark:bg-amber-400/10" /></div>
+                    <div className="space-y-1 sm:w-28"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Billing Rate</Label><Input value={billingRate} onChange={(e) => setBillingRate(e.target.value)} className="h-8 rounded-[4px] border-amber-500 bg-amber-50 text-right text-[13px] tabular-nums dark:border-amber-400/70 dark:bg-amber-400/10" /></div>
                   </div>
                   {SHOW_SHIPPING_ADDRESS && (
                     <div className="space-y-1">
