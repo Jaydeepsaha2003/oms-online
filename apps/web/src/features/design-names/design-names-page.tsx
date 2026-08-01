@@ -8,6 +8,7 @@ import { parseExcelFile } from '@/lib/excel';
 import { cn, formatDateShort, formatDateTime } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/common/confirm';
+import { NativeSelect } from '@/components/common/combo';
 import { ExportButton, ImportButton } from '@/components/common/excel-actions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,6 +22,7 @@ import {
   useImportDesignNames,
   useUpdateDesignName,
 } from './use-design-names';
+import { useDesigns } from '../designs/use-designs';
 
 // This is a small master-data lookup (a few hundred rows) grouped by design
 // type, so we fetch the whole matching set in one page instead of paginating —
@@ -460,6 +462,7 @@ function DesignNameDialog({ designName, onClose }: { designName: DesignNameDto |
   const isEdit = !!designName;
   const create = useCreateDesignName();
   const update = useUpdateDesignName(designName?.id ?? 0);
+  const { data: designData, isLoading: designsLoading } = useDesigns({ page: 1, pageSize: PAGE_SIZE, sortBy: 'designType', sortOrder: 'asc' });
   const saving = create.isPending || update.isPending;
 
   const [designType, setDesignType] = useState(designName?.designType ?? '');
@@ -467,6 +470,19 @@ function DesignNameDialog({ designName, onClose }: { designName: DesignNameDto |
   const [photo, setPhoto] = useState<{ path: string; url: string } | null>(
     designName?.photoPath && designName?.photoUrl ? { path: designName.photoPath, url: designName.photoUrl } : null,
   );
+  const designTypes = useMemo(
+    () => [...new Set([...(designName?.designType ? [designName.designType] : []), ...(designData?.items ?? []).map((d) => d.designType)])].sort((a, b) => a.localeCompare(b)),
+    [designData, designName?.designType],
+  );
+  const selectedRates = useMemo(
+    () => [...new Set((designData?.items ?? []).filter((d) => d.designType.toUpperCase() === designType.toUpperCase() && d.rate != null).map((d) => d.rate as number))],
+    [designData, designType],
+  );
+  const rateLabel = designsLoading
+    ? 'Loading…'
+    : selectedRates.length
+      ? selectedRates.map((rate) => `₹ ${rate.toLocaleString('en-IN')}`).join(' / ')
+      : 'Not set';
 
   const submit = () => {
     if (!designType.trim() || !name.trim()) return toast.error('Design type and name are required');
@@ -500,9 +516,24 @@ function DesignNameDialog({ designName, onClose }: { designName: DesignNameDto |
             submit();
           }}
         >
-          <div className="space-y-2 [&_input]:uppercase">
-            <Label>Design type *</Label>
-            <Input value={designType} onChange={(e) => setDesignType(e.target.value)} autoFocus />
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_9rem]">
+            <div className="space-y-2 [&_input]:uppercase">
+              <Label>Design type *</Label>
+              <NativeSelect
+                value={designType}
+                onChange={setDesignType}
+                options={designTypes}
+                placeholder={designsLoading ? 'Loading design types…' : 'Select design type'}
+                disabled={designsLoading}
+                onInvalidEntry={() => toast.error('Please select an existing design type')}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Rate</Label>
+              <div className="bg-muted/40 flex h-9 items-center justify-end rounded-sm border px-3 text-sm font-semibold tabular-nums">
+                {designType ? rateLabel : '—'}
+              </div>
+            </div>
           </div>
           <div className="space-y-2 [&_input]:uppercase">
             <Label>Design name *</Label>

@@ -166,7 +166,7 @@ export class PartyLedgerService {
     const [ccDr, ccCr] = split(closingCashNet);
 
     // ── 5) KPIs ───────────────────────────────────────────────────────────────
-    const kpis = await this.computeKpis(rows, pending, custIds, scope, q.customerId ?? null);
+    const kpis = await this.computeKpis(rows, pending, custIds, scope, q.customerId ?? null, mode);
 
     // Derived BEFORE the voucher-type filter, so picking one type doesn't collapse
     // the dropdown to that single option and strand the user on it.
@@ -293,6 +293,7 @@ export class PartyLedgerService {
       challanId: rr.challanId ?? null,
       dueFrom: '',
       status: '',
+      pendingAmount: 0,
       bankDr: rr.bankDr,
       bankCr: rr.bankCr,
       cashDr: rr.cashDr,
@@ -303,14 +304,17 @@ export class PartyLedgerService {
 
     const info = pending.get(rr.voucherNo);
     const dueDate = rr.dueDate ?? info?.dueDate ?? rr.txnDate;
-    const invoiceAmt = rr.bankDr + rr.cashDr;
+    const invoiceAmt = mode === 'B' ? rr.bankDr : mode === 'C' ? rr.cashDr : rr.bankDr + rr.cashDr;
 
     if (!info) {
-      // Not in pending view (older / cleared outside the system): just show due-from.
+      // A confirmed invoice without a pending snapshot is treated as wholly due.
+      base.status = invoiceAmt > EPS ? 'D' : '';
+      base.pendingAmount = r0(Math.max(0, invoiceAmt));
       base.dueFrom = this.dueFromText(dueDate, today);
       return base;
     }
-    const pend = mode === 'B' ? info.bankBal : mode === 'C' ? info.cashBal : info.bankBal + info.cashBal;
+    const pend = Math.max(0, mode === 'B' ? info.bankBal : mode === 'C' ? info.cashBal : info.bankBal + info.cashBal);
+    base.pendingAmount = r0(pend);
     if (pend <= EPS) {
       base.status = 'F';
       const paid = lastRec.get(rr.voucherNo);
@@ -452,8 +456,10 @@ export class PartyLedgerService {
     custIds: number[] | null,
     scope: 'CUSTOMER' | 'AGENT' | 'ALL',
     customerId: number | null,
+    mode: string,
   ): Promise<PartyLedgerKpis> {
-    // Aging buckets over unpaid invoice rows (Status ≠ F), amount = bankDr + cashDr.
+    // Ageing buckets use the remaining balance for the selected Bank/Cash mode,
+    // not the invoice's original value (which overstates partially-paid bills).
     const over = { amount: 0, count: 0 };
     const past = { amount: 0, count: 0 };
     const normal = { amount: 0, count: 0 };
@@ -461,7 +467,11 @@ export class PartyLedgerService {
       const vt = r.voucherType.toUpperCase();
       if (vt !== 'SALES INVOICE' && vt !== 'DEBIT NOTE') continue;
       if (r.status === 'F') continue;
-      const amt = r.bankDr + r.cashDr;
+      const info = pending.get(r.voucherNo);
+      const amt = info
+        ? Math.max(0, mode === 'B' ? info.bankBal : mode === 'C' ? info.cashBal : info.bankBal + info.cashBal)
+        : r.pendingAmount;
+      if (amt <= EPS) continue;
       const due = r.dueFrom.trim();
       if (/Over/i.test(due)) {
         over.amount += amt;
@@ -655,7 +665,7 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
 
   /** Body type. Bumped from 8pt so the statement stays legible in print and on a
    *  phone; every other size below is set relative to it. */
-  const BODY = 9;
+  const BODY = 10;
   const txt = (text: string, extra: Record<string, unknown> = {}) => ({ text, fontSize: BODY, ...extra });
   const num = (v: number, extra: Record<string, unknown> = {}) => ({ text: amt2(v), fontSize: BODY, alignment: 'right', ...extra });
   /** Column captions: slightly larger than the body, letter-spaced so a run of
@@ -669,8 +679,8 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
   });
 
   /* ── headings ── */
-  /** Date, Particulars, Vch Type, Vch No, Due Date. */
-  const LEAD = 5;
+  /** Date, Particulars, Vch Type, Vch No, Payment Status, Due Date. */
+  const LEAD = 6;
   const groupRow = [
     ...Array.from({ length: LEAD }, () => txt('')),
     ...legs.flatMap((l) => [head(l.group.toUpperCase(), { alignment: 'center', colSpan: 2, characterSpacing: 1 }), txt('')]),
@@ -680,6 +690,7 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
     head('Particulars'),
     head('Vch Type'),
     head('Vch No'),
+    head('Payment Status'),
     head('Due Date'),
     ...legs.flatMap(() => [head('Debit', { alignment: 'right' }), head('Credit', { alignment: 'right' })]),
   ];
@@ -689,11 +700,13 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
   const dataRow = (r: PartyLedgerRow) => {
     const voucherType = r.voucherType.trim().toUpperCase();
     const particulars = ['SALE', 'SALES', 'SALES INVOICE'].includes(voucherType) ? 'SALES' : r.particulars;
+    const paymentStatus = r.status === 'F' ? 'Paid' : r.status === 'D' ? 'Due' : r.status === 'P' ? `Pending ${amt2z(r.pendingAmount)}` : '';
     return [
       txt(d(r.txnDate), { noWrap: true }),
       txt(particulars),
-      txt(r.voucherType, { fontSize: BODY - 0.5 }),
+      txt(r.voucherType, { fontSize: BODY - 0.5, noWrap: true }),
       txt(r.voucherNo, { noWrap: true }),
+      txt(paymentStatus, { bold: !!paymentStatus, fontSize: BODY - 0.5, noWrap: true }),
       txt(d(r.dueDate), { noWrap: true }),
       ...legs.flatMap((l) => [num(r[l.dr]), num(r[l.cr])]),
     ];
@@ -722,14 +735,14 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
      column's widest real value at this size ("SALES DISCOUNT", "SSS/26-27/140",
      a crore-scale amount in bold), so nothing wraps and nothing over-claims
      space: every extra point taken here comes straight out of Particulars. */
-  const numW = 62;
-  const leadW = [48, '*', 76, 63, 58];
+  const numW = 60;
+  const leadW = [48, '*', 86, 63, 90, 58];
 
   const kpiCell = (label: string, bucket: { amount: number; count: number }) => ({
     stack: [
-      { text: label, fontSize: 8, bold: true, characterSpacing: 0.5 },
-      { text: amt2z(bucket.amount), fontSize: 12.5, bold: true, margin: [0, 2, 0, 0] },
-      { text: `${bucket.count} invoice(s)`, fontSize: 8, margin: [0, 1, 0, 0] },
+      { text: label, fontSize: 9, bold: true, characterSpacing: 0.5 },
+      { text: amt2z(bucket.amount), fontSize: 13.5, bold: true, margin: [0, 2, 0, 0] },
+      { text: `${bucket.count} invoice(s)`, fontSize: 9, margin: [0, 1, 0, 0] },
     ],
     margin: [8, 5, 8, 5],
   });
@@ -737,8 +750,8 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
   /** A labelled fact under the grid ("Oldest unpaid: …"), label lighter than value. */
   const factLine = (pairs: [string, string][]) => ({
     text: pairs.flatMap(([label, value], i) => [
-      { text: `${i ? '        ' : ''}${label}: `, fontSize: 8.5 },
-      { text: value, fontSize: 8.5, bold: true },
+      { text: `${i ? '        ' : ''}${label}: `, fontSize: 9.5 },
+      { text: value, fontSize: 9.5, bold: true },
     ]),
     margin: [0, 4, 0, 0],
   });
@@ -752,13 +765,13 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
       /* Party-first Tally masthead: account, report type, address and period. */
       {
         stack: [
-          { text: partyOf(res).toUpperCase(), bold: true, fontSize: 14, alignment: 'center' },
-          { text: 'Ledger Account', fontSize: 10.5, alignment: 'center', margin: [0, 1, 0, 0] },
+          { text: partyOf(res).toUpperCase(), bold: true, fontSize: 15, alignment: 'center' },
+          { text: 'Ledger Account', fontSize: 11.5, alignment: 'center', margin: [0, 1, 0, 0] },
           ...(res.customerAddress
-            ? [{ text: res.customerAddress.toUpperCase(), fontSize: 9, alignment: 'center', margin: [0, 3, 0, 0] }]
+            ? [{ text: res.customerAddress.toUpperCase(), fontSize: 10, alignment: 'center', margin: [0, 3, 0, 0] }]
             : []),
-          { text: `${d(res.from)}  to  ${d(res.to)}`, fontSize: 9.5, bold: true, alignment: 'center', margin: [0, res.customerAddress ? 6 : 4, 0, 0] },
-          { text: `${modeLabel(mode)}   ·   Amounts in INR`, fontSize: 8, alignment: 'center', margin: [0, 2, 0, 0] },
+          { text: `${d(res.from)}  to  ${d(res.to)}`, fontSize: 10.5, bold: true, alignment: 'center', margin: [0, res.customerAddress ? 6 : 4, 0, 0] },
+          { text: `${modeLabel(mode)}   ·   Amounts in INR`, fontSize: 9, alignment: 'center', margin: [0, 2, 0, 0] },
         ],
         margin: [0, 0, 0, 5],
       },

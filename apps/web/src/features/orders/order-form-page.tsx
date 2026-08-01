@@ -39,6 +39,7 @@ import { clearOrderDraft, loadOrderDraft, saveOrderDraft } from './order-draft';
 import { DraftLinePhotos, toPhotoInput, type LinePhoto } from './line-photos';
 import { useActiveCustomerBookings } from '@/features/bookings/use-bookings';
 import { BookingDrawSheet, type DrawnBookingLine } from './booking-draw-sheet';
+import { DesignNamePicker, resolveDesignNameChoices } from './design-name-picker';
 
 /** A line item once added to the order. */
 interface Item {
@@ -441,7 +442,7 @@ export function OrderFormPage() {
           category: it.pCategory ?? '',
           subCategory: it.subCategory ?? '',
           designType: it.designType ?? '',
-          designName: it.designType ? (nameByCode.get(it.designType.toUpperCase()) ?? '') : '',
+          designName: it.design?.trim() || (it.designType ? (nameByCode.get(it.designType.toUpperCase()) ?? '') : ''),
           productRate: it.productRate?.toString() ?? '',
           designRate: it.designRate?.toString() ?? '',
           weight: '',
@@ -752,27 +753,16 @@ export function OrderFormPage() {
     setEntryField({ box: String(boxPreview) });
   };
 
-  // Design names for the SELECTED item's design-type code — legacy:
-  // SELECT [DESIGN NAME] FROM DesignName WHERE [DESIGN TYPE L] = <the item's design code>.
-  const designChoices = useMemo(() => {
-    const code = entry.designType.trim().toUpperCase();
-    if (!code) return [] as string[];
-    const seen = new Set<string>();
-    const names: string[] = [];
-    for (const dn of lookups?.designNames ?? []) {
-      if (dn.designType.toUpperCase() === code && !seen.has(dn.designName)) {
-        seen.add(dn.designName);
-        names.push(dn.designName);
-      }
-    }
-    return names;
-  }, [lookups, entry.designType]);
+  const designNameOptions = useMemo(
+    () => resolveDesignNameChoices(lookups, entry.designType, entry.category, entry.subCategory),
+    [lookups, entry.designType, entry.category, entry.subCategory],
+  );
 
-  // Picking a name only changes the label — the code + rate come from the item.
+  // Picking names only changes the label; the code and summed rate come from the item.
   const onDesignName = (name: string) => setEntry((e) => ({ ...e, designName: name }));
 
   // The item's design code has no names in the master (or it has no design) → lock to "NA".
-  const noDesignNames = designChoices.length === 0;
+  const noDesignNames = designNameOptions.choices.length === 0;
   // Design rate is editable only when it is > 0 (per the legacy rule).
   const designRateEditable = (n(entry.designRate) ?? 0) > 0;
 
@@ -962,6 +952,7 @@ export function OrderFormPage() {
       pCategory: i.category.trim() || null,
       subCategory: i.subCategory.trim() || null,
       product: i.product.trim() || null,
+      design: i.designName.trim() || 'NA',
       designType: i.designType.trim() || null,
       productName: i.itemName.trim() || [i.product.trim(), i.designType.trim()].filter(Boolean).join(' ') || null,
       productRate: n(i.productRate),
@@ -1346,13 +1337,13 @@ export function OrderFormPage() {
             </div>
             <div className="space-y-1 lg:col-span-2" data-tabfield="designName">
               <Label className="text-base">Design Name</Label>
-              <NativeSelect
+              <DesignNamePicker
                 value={noDesignNames ? 'NA' : entry.designName}
                 onChange={onDesignName}
-                options={noDesignNames ? ['NA'] : designChoices}
-                placeholder="Design name"
+                choices={designNameOptions.choices}
+                multiple={designNameOptions.multiple}
                 disabled={noDesignNames}
-                onInvalidEntry={() => toast.error('Please select a correct design type')}
+                onInvalidEntry={() => toast.error('Please select a correct design name')}
               />
             </div>
             <div className="space-y-1 lg:col-span-1" data-tabfield="productRate">

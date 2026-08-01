@@ -29,6 +29,8 @@ export interface PartyLedgerRow {
   /** "12 Left" / "3 Over" / "Due Today" / "5 Early" / "On Time" / "2 Late" / "". */
   dueFrom: string;
   status: LedgerRowStatus;
+  /** Outstanding amount for the selected Bank/Cash print mode. */
+  pendingAmount: number;
   bankDr: number;
   bankCr: number;
   cashDr: number;

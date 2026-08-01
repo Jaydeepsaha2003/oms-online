@@ -224,6 +224,22 @@
   .uppercase::placeholder {
     text-transform: none;
   }
+
+  /* iOS Safari auto-zooms the whole page in on focus of any text input/select
+     whose computed font-size is under 16px — e.g. tapping the compact Customer
+     or Product dropdowns on the Dispatch Order phone view. Scoped to the same
+     "phone" width this app already treats as mobile (Tailwind's `sm` breakpoint)
+     so desktop's deliberately compact 12.5px controls are untouched. */
+  @media (max-width: 639.98px) {
+    /* !important: these fields carry their own Tailwind arbitrary-value
+       font-size utility (e.g. text-[12.5px]), which as a class selector
+       otherwise outranks this plain element selector. */
+    input,
+    select,
+    textarea {
+      font-size: 16px !important;
+    }
+  }
 }
 
 /* Lightweight, GPU-friendly animations used by the sign-in screen. */

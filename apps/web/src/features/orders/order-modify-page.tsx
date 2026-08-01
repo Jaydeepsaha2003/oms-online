@@ -22,6 +22,7 @@ import { useCustomerSpecialRates } from '@/features/special-rates/use-special-ra
 import { usePermissions } from '@/hooks/use-permissions';
 import { useOrderFilterOptions, useOrderLookups, useOrders, useSaveOrder } from './use-orders';
 import { LiveLinePhotos } from './line-photos';
+import { DesignNamePicker, resolveDesignNameChoices } from './design-name-picker';
 
 const PAGE_SIZE = 50;
 
@@ -495,7 +496,7 @@ function LineEditor({
     subCategory: line.subCategory ?? '',
     product: line.product ?? '',
     designType: line.designType ?? '',
-    designName: '',
+    designName: line.design?.trim() || '',
     psize: s(line.psize),
     ordType: line.ordType ?? '',
     priority: line.priority ?? 'NORMAL',
@@ -590,21 +591,11 @@ function LineEditor({
     if (sizePrefix) setShowBy('SIZE');
   };
 
-  // Design names available for the current design-type code.
-  const designChoices = useMemo(() => {
-    const code = form.designType.trim().toUpperCase();
-    if (!code) return [] as string[];
-    const seen = new Set<string>();
-    const names: string[] = [];
-    for (const dn of lookups?.designNames ?? []) {
-      if (dn.designType.toUpperCase() === code && !seen.has(dn.designName)) {
-        seen.add(dn.designName);
-        names.push(dn.designName);
-      }
-    }
-    return names;
-  }, [lookups, form.designType]);
-  const noDesignNames = designChoices.length === 0;
+  const designNameOptions = useMemo(
+    () => resolveDesignNameChoices(lookups, form.designType, form.pCategory, form.subCategory),
+    [lookups, form.designType, form.pCategory, form.subCategory],
+  );
+  const noDesignNames = designNameOptions.choices.length === 0;
 
   // Seed the design-name label from the line's design type once lookups arrive.
   useEffect(() => {
@@ -664,6 +655,7 @@ function LineEditor({
     subCategory: form.subCategory.trim() || null,
     product: form.product.trim() || null,
     designType: form.designType.trim() || null,
+    design: noDesignNames ? 'NA' : form.designName.trim() || null,
     productName: form.itemName.trim() || [form.product.trim(), form.designType.trim()].filter(Boolean).join(' ') || null,
     psize: num(form.psize),
     ordType: form.ordType || null,
@@ -740,13 +732,13 @@ function LineEditor({
           />
         </Field>
         <Field label="Design Name">
-          <NativeSelect
+          <DesignNamePicker
             value={noDesignNames ? 'NA' : form.designName}
             onChange={(v) => set({ designName: v })}
-            options={noDesignNames ? ['NA'] : designChoices}
-            placeholder="Design name"
+            choices={designNameOptions.choices}
+            multiple={designNameOptions.multiple}
             disabled={noDesignNames}
-            onInvalidEntry={() => toast.error('Please select a correct design')}
+            onInvalidEntry={() => toast.error('Please select a correct design name')}
           />
         </Field>
         <div className="grid grid-cols-2 gap-3">
