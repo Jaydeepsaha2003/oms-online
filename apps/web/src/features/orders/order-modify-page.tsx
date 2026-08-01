@@ -3,10 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, ExternalLink, Loader2, RotateCcw, Save, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { OrderDto, OrderInput, OrderItemDto } from '@oms/shared';
-import { ORDER_PRIORITIES } from '@oms/shared';
+import { ORDER_PRIORITIES, resolveSpecialRates } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn, shortOrderCode } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
+import { useAutoSizePcs } from '@/lib/auto-size-pcs';
 import { useColumnOrder } from '@/hooks/use-column-order';
 import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
@@ -17,6 +18,7 @@ import { Label } from '@/components/ui/label';
 import { NativeSelect } from '@/components/common/combo';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { settingValues, useSettings } from '@/features/settings/use-settings';
+import { useCustomerSpecialRates } from '@/features/special-rates/use-special-rates';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useOrderFilterOptions, useOrderLookups, useOrders, useSaveOrder } from './use-orders';
 import { LiveLinePhotos } from './line-photos';
@@ -52,9 +54,12 @@ function StatusPill({ status }: { status: string }) {
 }
 
 const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? null : Number(s));
+const fmtNum = (v: number | null) => (v == null ? '' : String(v));
 const dash = (v: number | null) => (v == null || v === 0 ? '—' : v.toLocaleString('en-IN'));
 
 /** One flat row = an order line plus its parent order's header info. */
+const isLogoDesign = (designType?: string | null) => (designType ?? '').toUpperCase().includes('LOGO');
+
 interface Row {
   order: OrderDto;
   line: OrderItemDto;
@@ -476,6 +481,9 @@ function LineEditor({
   const { can } = usePermissions();
   const confirm = useConfirm();
   const { data: lookups } = useOrderLookups();
+  const { data: special } = useCustomerSpecialRates(order.customerId ?? undefined);
+  const { autoSizePcs } = useAutoSizePcs();
+  const [showBy, setShowBy] = useState<'PCS' | 'SIZE'>('SIZE');
   // Once the user has confirmed "add as a new item" (see submit()), the form
   // keeps whatever they typed but Save now creates a fresh line instead of
   // touching the dispatched original — it does NOT auto-submit on its own.
@@ -510,30 +518,77 @@ function LineEditor({
   const MATERIAL_KEYS = ['itemName', 'pCategory', 'subCategory', 'product', 'designType', 'psize', 'bags', 'pcs', 'gram', 'box', 'productRate', 'designRate'] as const;
   const materialDirty = MATERIAL_KEYS.some((k) => form[k] !== baseline.current[k]);
 
-  // Composite "item name" choices — same dropdown as the New Order page:
-  // each label can be "{size} {product} {designType}" or "{pcs} {product}
-  // {designType}", so Order Modify can switch between the same item-name forms
-  // users create from the main order form's Size/Pcs mode.
+  // Match New Order: show one item-name form at a time, using either the
+  // catalogue size or pieces-per-box as the visible prefix.
   const itemOptions = useMemo(() => {
     const list = lookups?.items ?? [];
+    const logos = special?.logos ?? [];
+    const norm = (v: string | null | undefined) => (v ?? '').trim().toUpperCase();
+    const logoBlocked = (category: string, subCategory: string) =>
+      logos.some(
+        (l) =>
+          (l.scope === 'CATEGORY' && norm(l.category) === norm(category)) ||
+          (l.scope === 'SUBCATEGORY' && norm(l.category) === norm(category) && norm(l.subCategory) === norm(subCategory)),
+      );
     const map = new Map<string, (typeof list)[number]>();
     const options: { value: string; label: string; keywords: string }[] = [];
     for (const it of list) {
-      const size = it.size != null ? String(it.size) : '';
-      const pcs = it.pcs != null ? String(it.pcs) : '';
-      const labels = [
-        [size, it.product, it.designType ?? ''].filter(Boolean).join(' '),
-        [pcs, it.product, it.designType ?? ''].filter(Boolean).join(' '),
-      ].filter((label, idx, arr) => label && arr.indexOf(label) === idx);
-      const keywords = [size, pcs, it.subCategory ?? ''].filter(Boolean).join(' ');
-      for (const label of labels) {
-        if (map.has(label)) continue;
-        map.set(label, it);
-        options.push({ value: label, label, keywords });
-      }
+      if (isLogoDesign(it.designType) && logoBlocked(it.category, it.subCategory)) continue;
+      const prefix = showBy === 'PCS' ? fmtNum(it.pcs) : fmtNum(it.size);
+      const label = [prefix, it.product, it.designType ?? ''].filter(Boolean).join(' ');
+      if (!label || map.has(label)) continue;
+      map.set(label, it);
+      const keywords = [fmtNum(it.size), fmtNum(it.pcs), it.subCategory ?? ''].filter(Boolean).join(' ');
+      options.push({ value: label, label, keywords });
     }
     return { options, map };
-  }, [lookups]);
+  }, [lookups, showBy, special]);
+
+  // Open an existing Pcs-labelled line in the matching mode when the catalogue
+  // makes that distinction unambiguous.
+  const initialShowBySet = useRef(false);
+  useEffect(() => {
+    if (!lookups || initialShowBySet.current) return;
+    initialShowBySet.current = true;
+    const lead = form.itemName.trim().match(/^(\d+(?:\.\d+)?)/)?.[1];
+    if (!lead) return;
+    const norm = (v: string | null | undefined) => (v ?? '').trim().toUpperCase();
+    const matchingItems = lookups.items.filter(
+      (it) => norm(it.product) === norm(form.product) && norm(it.designType) === norm(form.designType),
+    );
+    const sizeExact = matchingItems.some((it) => fmtNum(it.size) === lead);
+    const pcsExact = matchingItems.some((it) => fmtNum(it.pcs) === lead);
+    if (pcsExact && !sizeExact) setShowBy('PCS');
+  }, [lookups, form.itemName, form.product, form.designType]);
+
+  // Use the same product-aware Size/Pcs auto-detection as New Order.
+  const detectShowBy = (text: string) => {
+    if (!autoSizePcs) return;
+    const t = text.trim();
+    const lead = t.match(/^(\d+(?:\.\d+)?)/)?.[1];
+    if (!lead) return;
+    const separator = /[\s(),+/-]+/;
+    const list = lookups?.items ?? [];
+    const nameTerms = t.slice(lead.length).trim().toLowerCase().split(separator).filter(Boolean);
+    const named = nameTerms.length
+      ? list.filter((it) => {
+          const words = `${it.product} ${it.designType ?? ''}`.toLowerCase().split(separator).filter(Boolean);
+          return nameTerms.every((term) => words.some((word) => word.startsWith(term)));
+        })
+      : list;
+    const pool = named.length ? named : list;
+    const some = (key: 'size' | 'pcs', test: (value: string) => boolean) =>
+      pool.some((it) => it[key] != null && test(String(it[key])));
+    const sizeExact = some('size', (value) => value === lead);
+    const pcsExact = some('pcs', (value) => value === lead);
+    if (pcsExact && !sizeExact) return setShowBy('PCS');
+    if (sizeExact && !pcsExact) return setShowBy('SIZE');
+    if (sizeExact || pcsExact) return setShowBy('SIZE');
+    const sizePrefix = some('size', (value) => value.startsWith(lead));
+    const pcsPrefix = some('pcs', (value) => value.startsWith(lead));
+    if (pcsPrefix && !sizePrefix) return setShowBy('PCS');
+    if (sizePrefix) setShowBy('SIZE');
+  };
 
   // Design names available for the current design-type code.
   const designChoices = useMemo(() => {
@@ -571,6 +626,18 @@ function LineEditor({
       return;
     }
     const realName = it.designName && it.designName !== it.designType ? it.designName : '';
+    const resolved = special
+      ? resolveSpecialRates(special, {
+          category: it.category,
+          subCategory: it.subCategory,
+          product: it.product,
+          designType: it.designType ?? null,
+        })
+      : null;
+    const productRate = (it.productRate ?? 0) + (resolved?.productDelta ?? 0);
+    const designRate = (it.designRate ?? 0) + (resolved?.designDelta ?? 0);
+    const hasProductRate = it.productRate != null || (resolved?.productDelta ?? 0) !== 0;
+    const hasDesignRate = !!it.designType && (it.designRate != null || (resolved?.designDelta ?? 0) !== 0);
     set({
       itemName: label,
       pCategory: it.category,
@@ -579,8 +646,8 @@ function LineEditor({
       designType: it.designType ?? '',
       designName: realName,
       psize: it.size != null ? String(it.size) : '',
-      productRate: it.productRate != null ? String(it.productRate) : '',
-      designRate: it.designType && it.designRate != null ? String(it.designRate) : '',
+      productRate: hasProductRate ? String(productRate) : '',
+      designRate: hasDesignRate ? String(designRate) : '',
     });
   };
 
@@ -649,10 +716,23 @@ function LineEditor({
             <span className="font-semibold">Add as New Item</span> to save this as a separate line.
           </div>
         )}
+        {!autoSizePcs && (
+          <Field label="Show item by">
+            <div className="flex h-9 items-center gap-5 text-sm">
+              <label className="flex cursor-pointer items-center gap-1.5">
+                <input type="radio" className="accent-indigo-600" checked={showBy === 'SIZE'} onChange={() => setShowBy('SIZE')} /> Size
+              </label>
+              <label className="flex cursor-pointer items-center gap-1.5">
+                <input type="radio" className="accent-indigo-600" checked={showBy === 'PCS'} onChange={() => setShowBy('PCS')} /> Pcs
+              </label>
+            </div>
+          </Field>
+        )}
         <Field label="Item name">
           <NativeSelect
             value={form.itemName}
             onChange={onItemPick}
+            onType={detectShowBy}
             options={itemOptions.options}
             placeholder="Item name"
             className="text-left"

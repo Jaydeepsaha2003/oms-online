@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarClock, CalendarDays, ChevronLeft, ChevronRight, Filter, Flame, Hourglass, Loader2, Package, PackageCheck, RotateCcw, TriangleAlert, Truck, X } from 'lucide-react';
+import { Camera, CalendarClock, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Filter, Flame, Hourglass, Loader2, Package, PackageCheck, RotateCcw, TriangleAlert, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { type DispatchStatus, type PendingLineDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -9,6 +9,7 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useColumnOrder } from '@/hooks/use-column-order';
 import { LiveLinePhotos } from '../orders/line-photos';
+import { useOrderItemPhotos } from '../orders/use-orders';
 import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
 import { ExportButton } from '@/components/common/excel-actions';
@@ -641,6 +642,16 @@ const QTY_FIELDS = [
   ['gram', 'Kgs', 'remKgs'],
   ['box', 'Box', 'remBox'],
 ] as const;
+/** calField → the QTY_FIELDS key that's actually priced, so it can be moved to
+ *  the front of the grid — the packing floor should see the one field that
+ *  matters for this line first, not wherever it happens to fall by default. */
+const PRICED_FIELD: Record<string, (typeof QTY_FIELDS)[number][0]> = { PCS: 'pcs', KGS: 'gram' };
+const orderedQtyFields = (calField: string | null) => {
+  const priced = calField ? PRICED_FIELD[calField.toUpperCase()] : undefined;
+  if (!priced) return QTY_FIELDS;
+  const front = QTY_FIELDS.find((f) => f[0] === priced)!;
+  return [front, ...QTY_FIELDS.filter((f) => f[0] !== priced)];
+};
 
 /** Slide-over to dispatch a pending order line — a native bottom sheet on phones,
  *  a right side-panel on desktop. Qty fields start blank. */
@@ -661,6 +672,10 @@ function DispatchSheet({
   const confirm = useConfirm();
   const { can } = usePermissions();
   const isMobile = useIsMobile();
+  // Photos default collapsed on phones — packing staff mainly need qty entry,
+  // and the sheet should fit with minimal scrolling. Desktop keeps it open.
+  const [photosOpen, setPhotosOpen] = useState(!isMobile);
+  const { data: existingPhotos } = useOrderItemPhotos(line.orderItemId);
   const [form, setForm] = useState({
     bags: '',
     pcs: '',
@@ -799,8 +814,8 @@ function DispatchSheet({
 
       {/* px + negative margin gives the inputs' focus ring room to paint into the
           sheet's padding instead of being clipped by overflow-y-auto. */}
-      <div className="-mx-1.5 flex-1 space-y-4 overflow-y-auto px-1.5 pt-1 pb-1.5">
-        <div className="bg-muted/40 rounded-xl border p-3">
+      <div className="-mx-1.5 flex-1 space-y-3 overflow-y-auto px-1.5 pt-1 pb-1.5 sm:space-y-4">
+        <div className="bg-muted/40 rounded-xl border p-2.5 sm:p-3">
           <div className="text-sm font-semibold">
             {line.productName || line.product}
             {line.designType && line.designType.toUpperCase() !== 'NA' ? ` · ${line.designType}` : ''}
@@ -809,21 +824,22 @@ function DispatchSheet({
         </div>
 
         {/* Read-only — set from the "Dispatching for" control at the top of the
-            page, which applies to every dispatch created there. */}
+            page, which applies to every dispatch created there. The "how to
+            change it" hint is desktop-only clutter on a phone. */}
         <div className="flex items-center gap-1.5 text-xs">
           <CalendarDays className="text-muted-foreground size-3.5 shrink-0" />
           <span className="text-muted-foreground">Dispatching for</span>
           <span className="font-semibold">{formatDate(dispatchDate)}</span>
-          <span className="text-muted-foreground">— change it from the top of the page.</span>
+          <span className="text-muted-foreground hidden sm:inline">— change it from the top of the page.</span>
         </div>
 
         <div>
           <p className="text-muted-foreground mb-2 text-xs">Enter what's going out — tap <span className="text-primary font-semibold">MAX</span> to fill the remaining amount.</p>
-          <div className="grid grid-cols-2 gap-2.5">
-            {QTY_FIELDS.map(([k, label, remKey], i) => {
+          <div className="grid grid-cols-2 gap-2">
+            {orderedQtyFields(line.calField).map(([k, label, remKey], i) => {
               const rem = line[remKey] ?? 0;
               return (
-                <div key={k} className="bg-card space-y-1.5 rounded-xl border p-2.5">
+                <div key={k} className="bg-card space-y-1 rounded-xl border p-2">
                   <div className="flex items-center justify-between gap-1">
                     <span className="text-sm font-semibold">{label}</span>
                     {rem > 0 && (
@@ -877,9 +893,29 @@ function DispatchSheet({
           <Input value={form.comment} onChange={(e) => set({ comment: e.target.value })} placeholder="Dispatch remark…" />
         </div>
 
-        {/* This order line's photos — view, and add more from the shop floor. */}
-        <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-          <LiveLinePhotos orderItemId={line.orderItemId} canEdit={can('order:update')} title="Order-line photos" />
+        {/* This order line's photos — collapsed by default on phones so the
+            sheet stays short; tap to view/add from the shop floor. */}
+        <div className="rounded-xl border border-slate-200 bg-slate-50/70">
+          <button
+            type="button"
+            onClick={() => setPhotosOpen((o) => !o)}
+            className="flex w-full items-center justify-between gap-2 px-3 py-2.5"
+          >
+            <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
+              <Camera className="size-3.5" /> Order-line photos
+              {!!existingPhotos?.length && (
+                <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-indigo-700">
+                  {existingPhotos.length}
+                </span>
+              )}
+            </span>
+            <ChevronDown className={cn('text-muted-foreground size-4 shrink-0 transition-transform', photosOpen && 'rotate-180')} />
+          </button>
+          {photosOpen && (
+            <div className="px-3 pb-3">
+              <LiveLinePhotos orderItemId={line.orderItemId} canEdit={can('order:update')} hideHeader />
+            </div>
+          )}
         </div>
       </div>
 

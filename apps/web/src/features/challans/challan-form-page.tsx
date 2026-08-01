@@ -820,7 +820,7 @@ export function ChallanFormPage() {
                     <th className="w-9"></th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="text-[14.5px]">
                   {rows.map((r, idx) => (
                     <tr
                       key={r.key}
