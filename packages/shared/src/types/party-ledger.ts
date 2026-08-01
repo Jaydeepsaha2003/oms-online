@@ -99,6 +99,8 @@ export interface PartyLedgerResult {
   voucherTypes: string[];
   scope: 'CUSTOMER' | 'AGENT' | 'ALL';
   customerName: string | null;
+  /** Customer location shown in the PDF ledger heading for single-party reports. */
+  customerAddress: string | null;
   agentName: string | null;
   from: string;
   to: string;

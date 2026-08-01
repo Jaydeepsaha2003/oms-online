@@ -112,14 +112,19 @@ export class PartyLedgerService {
     // Resolve scope: a customer wins over an agent.
     let scope: 'CUSTOMER' | 'AGENT' | 'ALL' = 'ALL';
     let customerName: string | null = null;
+    let customerAddress: string | null = null;
     let custIds: number[] | null = null;
     const agentName = q.agentName?.trim() && q.agentName.trim().toUpperCase() !== 'ALL' ? q.agentName.trim() : null;
 
     if (q.customerId) {
-      const c = await this.prisma.customer.findUnique({ where: { id: q.customerId }, select: { id: true, partyName: true } });
+      const c = await this.prisma.customer.findUnique({
+        where: { id: q.customerId },
+        select: { id: true, partyName: true, city: true, state: true, region: true },
+      });
       if (!c) throw new BadRequestException('Customer not found.');
       scope = 'CUSTOMER';
       customerName = c.partyName;
+      customerAddress = [c.city, c.state, c.region].map((part) => part?.trim()).filter(Boolean).join(', ') || null;
       custIds = [c.id];
     } else if (agentName) {
       scope = 'AGENT';
@@ -182,6 +187,7 @@ export class PartyLedgerService {
       voucherTypes,
       scope,
       customerName,
+      customerAddress,
       agentName,
       from: from.toISOString(),
       to: to.toISOString(),
@@ -585,7 +591,7 @@ export class PartyLedgerService {
 
   async exportPdf(q: PartyLedgerQuery): Promise<{ buffer: Buffer; filename: string }> {
     const res = await this.ledger(q);
-    const buffer = await this.pdf.render(buildLedgerDoc(res, (q.mode ?? 'BOTH').toUpperCase(), await this.companyName()));
+    const buffer = await this.pdf.render(buildLedgerDoc(res, (q.mode ?? 'BOTH').toUpperCase()));
     return { buffer, filename: `${this.baseName(res)}.pdf` };
   }
 }
@@ -625,7 +631,7 @@ const STATUS_LEGEND = 'St:  F = fully paid   P = partially paid   D = due';
 
 /**
  * A Tally "Ledger Account" statement, printed the way Tally prints one: plain
- * black on white with no fills or accent colour, a centred company masthead, and
+ * black on white with no fills or accent colour, a centred ledger masthead, and
  * a boxed grid whose column rules run the full height while horizontal rules
  * appear only under the headings and around the totals. Amounts carry two
  * decimals and a zero cell is left blank, both Tally conventions.
@@ -634,7 +640,7 @@ const STATUS_LEGEND = 'St:  F = fully paid   P = partially paid   D = due';
  * columns); a Bank-only or Cash-only ledger is a plain Debit/Credit statement and
  * fits portrait, exactly like Tally's own.
  */
-function buildLedgerDoc(res: PartyLedgerResult, mode: string, company: string | null): TDocumentDefinitions {
+function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefinitions {
   const BLACK = '#000000';
   const d = shortDate;
   const k = res.kpis;
@@ -680,15 +686,18 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string, company: string | 
   const heads = grouped ? [groupRow, colRow] : [colRow];
 
   /* ── one voucher line, single row ── */
-  const dataRow = (r: PartyLedgerRow) => [
-    txt(d(r.txnDate), { noWrap: true }),
-    // The party/narration carries the line, so it's the only cell in medium weight.
-    txt(r.particulars),
-    txt(r.voucherType, { fontSize: BODY - 0.5 }),
-    txt(r.voucherNo, { noWrap: true }),
-    txt(d(r.dueDate), { noWrap: true }),
-    ...legs.flatMap((l) => [num(r[l.dr]), num(r[l.cr])]),
-  ];
+  const dataRow = (r: PartyLedgerRow) => {
+    const voucherType = r.voucherType.trim().toUpperCase();
+    const particulars = ['SALE', 'SALES', 'SALES INVOICE'].includes(voucherType) ? 'SALES' : r.particulars;
+    return [
+      txt(d(r.txnDate), { noWrap: true }),
+      txt(particulars),
+      txt(r.voucherType, { fontSize: BODY - 0.5 }),
+      txt(r.voucherNo, { noWrap: true }),
+      txt(d(r.dueDate), { noWrap: true }),
+      ...legs.flatMap((l) => [num(r[l.dr]), num(r[l.cr])]),
+    ];
+  };
 
   /* ── opening / current / closing, laid out on the same grid ── */
   const balRow = (label: string, b: LedgerBalanceRow, strong: boolean) => [
@@ -740,28 +749,18 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string, company: string | 
     pageMargins: [24, 22, 24, 32],
     defaultStyle: { font: 'Helvetica', fontSize: BODY, color: BLACK },
     content: [
-      /* Masthead — company, document type, party, period. Centred, like Tally.
-         The company sits large and letter-spaced; a hairline under it separates
-         the letterhead from the statement caption. */
-      ...(company
-        ? [
-            { text: company.toUpperCase(), bold: true, fontSize: 16, characterSpacing: 1.2, alignment: 'center' },
-            { canvas: [{ type: 'line', x1: pageWidth * 0.3, y1: 0, x2: pageWidth * 0.7, y2: 0, lineWidth: 0.5, lineColor: BLACK }], margin: [0, 3, 0, 3] },
-          ]
-        : []),
-      { text: 'LEDGER ACCOUNT', fontSize: 10.5, characterSpacing: 2, alignment: 'center', margin: [0, company ? 0 : 2, 0, 6] },
+      /* Party-first Tally masthead: account, report type, address and period. */
       {
-        columns: [
-          { width: '*', text: partyOf(res), bold: true, fontSize: 13.5 },
-          {
-            width: 'auto',
-            stack: [
-              { text: `${d(res.from)}  to  ${d(res.to)}`, fontSize: 10, bold: true, alignment: 'right' },
-              { text: `${modeLabel(mode)}   ·   Amounts in INR`, fontSize: 8, alignment: 'right', margin: [0, 2, 0, 0] },
-            ],
-          },
+        stack: [
+          { text: partyOf(res).toUpperCase(), bold: true, fontSize: 14, alignment: 'center' },
+          { text: 'Ledger Account', fontSize: 10.5, alignment: 'center', margin: [0, 1, 0, 0] },
+          ...(res.customerAddress
+            ? [{ text: res.customerAddress.toUpperCase(), fontSize: 9, alignment: 'center', margin: [0, 3, 0, 0] }]
+            : []),
+          { text: `${d(res.from)}  to  ${d(res.to)}`, fontSize: 9.5, bold: true, alignment: 'center', margin: [0, res.customerAddress ? 6 : 4, 0, 0] },
+          { text: `${modeLabel(mode)}   ·   Amounts in INR`, fontSize: 8, alignment: 'center', margin: [0, 2, 0, 0] },
         ],
-        margin: [0, 0, 0, 4],
+        margin: [0, 0, 0, 5],
       },
       { canvas: [{ type: 'line', x1: 0, y1: 0, x2: pageWidth, y2: 0, lineWidth: 1, lineColor: BLACK }], margin: [0, 0, 0, 6] },
 
@@ -808,10 +807,7 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string, company: string | 
               paddingBottom: () => 0,
             },
           },
-          factLine([
-            ['Oldest unpaid', k.invDueFrom],
-            ['Party list', k.paymentDNA],
-          ]),
+          factLine([['Oldest unpaid', k.invDueFrom]]),
         ],
         margin: [0, 10, 0, 0],
       },

@@ -586,8 +586,7 @@ export function ChallanFormPage() {
     <div className="flex w-full flex-col gap-2 sm:gap-3">
       {/* Header — pick / show the customer here; Save / Cancel / Reset sit at the
           bottom of the form (sticky). */}
-      {/* Phones: the customer picker wraps to its own full-width row (order-last);
-          desktop keeps the single-row title · picker · Missing-Challan layout. */}
+      {/* Phones: the customer picker wraps to its own full-width row (order-last). */}
       <div className="bg-background/85 z-20 -mt-1 flex shrink-0 flex-wrap items-center gap-1.5 rounded-md py-1 backdrop-blur sm:gap-2">
         <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(backTo)} title="Back">
           <ArrowLeft className="size-4" />
@@ -612,16 +611,6 @@ export function ChallanFormPage() {
           </div>
         )}
         {isEdit && editId && <RecordHistory resource={RESOURCES.CHALLAN} resourceId={editId} label={savedChallan?.code} className="ml-auto shrink-0" />}
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className={cn('shrink-0', !isEdit && 'ml-auto')}
-          onClick={() => setMissingChallanOpen(true)}
-          title="Find skipped invoice numbers in a prefix's series"
-        >
-          <ListX /> <span className="hidden sm:inline">Missing Challan</span><span className="sm:hidden">Missing</span>
-        </Button>
       </div>
 
       {/* Restored work-in-progress notice */}
@@ -684,55 +673,65 @@ export function ChallanFormPage() {
               )}
             </div>
 
-            {/* Document-info panel — the four invoice fields as a tidy, divided
-                2×2 block (always — no single-row mode, even on wide screens).
-                gap-px over a filled ground draws the 1px dividers between cells. */}
-            <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border bg-border/70 lg:w-[26rem] lg:shrink-0 dark:bg-white/10">
-              <MetaCell label="Invoice No" icon={Hash}>
-                <div className="flex items-center gap-1.5">
-                  {!isEdit && (draft?.prefixes.length ?? 0) > 1 && (
-                    <select
-                      value={prefix}
-                      onChange={(e) => setPrefix(e.target.value)}
-                      className="border-input bg-background h-8 rounded-[4px] border px-1.5 text-[13px] font-semibold"
-                      title="Challan prefix"
-                    >
-                      {draft?.prefixes.map((p) => (
-                        <option key={p} value={p}>
-                          {p}
-                        </option>
-                      ))}
-                    </select>
-                  )}
+            {/* Keep the 2x2 document panel left of its related series action. */}
+            <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-start">
+              <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border bg-border/70 sm:w-[26rem] dark:bg-white/10">
+                <MetaCell label="Invoice No" icon={Hash}>
+                  <div className="flex items-center gap-1.5">
+                    {!isEdit && (draft?.prefixes.length ?? 0) > 1 && (
+                      <select
+                        value={prefix}
+                        onChange={(e) => setPrefix(e.target.value)}
+                        className="border-input bg-background h-8 rounded-[4px] border px-1.5 text-[13px] font-semibold"
+                        title="Challan prefix"
+                      >
+                        {draft?.prefixes.map((p) => (
+                          <option key={p} value={p}>
+                            {p}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    <Input
+                      value={effectiveCode === '—' ? '' : effectiveCode}
+                      onChange={(e) => setManualCode(e.target.value.toUpperCase())}
+                      placeholder={previewCode}
+                      title="Editable — clear to go back to the auto-assigned number"
+                      className="bg-background h-8 w-full rounded-[4px] text-[13px] font-bold"
+                    />
+                  </div>
+                </MetaCell>
+                <MetaCell label="Invoice Date" icon={CalendarDays}>
+                  <DatePicker value={invDate} onChange={setInvDate} clearable={false} className="bg-background h-8 w-full rounded-[4px] text-[13px]" />
+                </MetaCell>
+                <MetaCell label="Due Date" icon={CalendarCheck2}>
                   <Input
-                    value={effectiveCode === '—' ? '' : effectiveCode}
-                    onChange={(e) => setManualCode(e.target.value.toUpperCase())}
-                    placeholder={previewCode}
-                    title="Editable — clear to go back to the auto-assigned number"
-                    className="bg-background h-8 w-full rounded-[4px] text-[13px] font-bold"
+                    readOnly
+                    value={dueDate ? formatDate(dueDate) : ''}
+                    placeholder="—"
+                    className="bg-muted/40 h-8 w-full cursor-default rounded-[4px] text-[13px] tabular-nums"
                   />
-                </div>
-              </MetaCell>
-              <MetaCell label="Invoice Date" icon={CalendarDays}>
-                <DatePicker value={invDate} onChange={setInvDate} clearable={false} className="bg-background h-8 w-full rounded-[4px] text-[13px]" />
-              </MetaCell>
-              <MetaCell label="Due Date" icon={CalendarCheck2}>
-                <Input
-                  readOnly
-                  value={dueDate ? formatDate(dueDate) : ''}
-                  placeholder="—"
-                  className="bg-muted/40 h-8 w-full cursor-default rounded-[4px] text-[13px] tabular-nums"
-                />
-              </MetaCell>
-              <MetaCell label="Status">
-                {isEdit ? (
-                  <NativeSelect value={status} onChange={setStatus} options={[...CHALLAN_STATUSES]} className="bg-background h-8 w-full rounded-[4px] text-[13px]" />
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 rounded-[4px] bg-emerald-100 px-2 py-1 text-[13px] font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
-                    <span className="size-1.5 rounded-full bg-emerald-500" /> CONFIRMED
-                  </span>
-                )}
-              </MetaCell>
+                </MetaCell>
+                <MetaCell label="Status">
+                  {isEdit ? (
+                    <NativeSelect value={status} onChange={setStatus} options={[...CHALLAN_STATUSES]} className="bg-background h-8 w-full rounded-[4px] text-[13px]" />
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 rounded-[4px] bg-emerald-100 px-2 py-1 text-[13px] font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+                      <span className="size-1.5 rounded-full bg-emerald-500" /> CONFIRMED
+                    </span>
+                  )}
+                </MetaCell>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0 self-start"
+                onClick={() => setMissingChallanOpen(true)}
+                title="Find skipped invoice numbers in a prefix's series"
+              >
+                <ListX /> <span className="hidden sm:inline">Missing Challan</span><span className="sm:hidden">Missing</span>
+              </Button>
             </div>
           </div>
         </div>
@@ -960,14 +959,14 @@ export function ChallanFormPage() {
                   <ChevronDown className={cn('ml-auto size-4 transition-transform', showDetails && 'rotate-180')} />
                 </button>
                 <div className={cn(showDetails ? 'block' : 'hidden', 'sm:block space-y-2.5')}>
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-[minmax(12rem,1.5fr)_repeat(4,minmax(6.5rem,1fr))]">
                     <div className="space-y-1 xl:col-span-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Transporter</Label><Input value={(isEdit ? savedChallan?.transName : draft.transName) || '—'} readOnly className="h-8 rounded-[4px] border-amber-500 bg-amber-50 text-[13px] dark:border-amber-400/70 dark:bg-amber-400/10" /></div>
                     <LockField label="Freight" value={freight} locked={locked.freight} onUnlock={() => unlock('freight')} onChange={setFreight} onBlur={() => setLocked((l) => ({ ...l, freight: true }))} />
                     <LockField label="Packing" value={packing} locked={locked.packing} onUnlock={() => unlock('packing')} onChange={setPacking} onBlur={() => setLocked((l) => ({ ...l, packing: true }))} />
                     <LockField label="Box / Pouch" value={pouch} locked={locked.pouch} onUnlock={() => unlock('pouch')} onChange={setPouch} onBlur={() => setLocked((l) => ({ ...l, pouch: true }))} />
                     {/* GST % field removed — GST is not editable; it follows the customer's configured
                         rate (applied automatically) and is shown in the totals panel below. */}
-                    <div className="space-y-1 sm:w-28"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Billing Rate</Label><Input value={billingRate} onChange={(e) => setBillingRate(e.target.value)} className="h-8 rounded-[4px] border-amber-500 bg-amber-50 text-right text-[13px] tabular-nums dark:border-amber-400/70 dark:bg-amber-400/10" /></div>
+                    <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Billing Rate</Label><Input value={billingRate} onChange={(e) => setBillingRate(e.target.value)} className="h-8 rounded-[4px] border-amber-500 bg-amber-50 text-right text-[13px] tabular-nums dark:border-amber-400/70 dark:bg-amber-400/10" /></div>
                   </div>
                   {SHOW_SHIPPING_ADDRESS && (
                     <div className="space-y-1">

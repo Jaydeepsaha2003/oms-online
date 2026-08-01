@@ -205,6 +205,7 @@ export function DispatchOrderPage() {
   const [draftDue, setDraftDue] = useState('');
   const [draftDesign, setDraftDesign] = useState('');
   const [draftSubCategory, setDraftSubCategory] = useState('');
+  const [draftAgent, setDraftAgent] = useState('');
   const [exporting, setExporting] = useState(false);
   // "ALL" toggle (legacy Form13 checkbox linked to SelectProduct): when on, the
   // product picker lists base names and one pick matches every design variant.
@@ -253,6 +254,7 @@ export function DispatchOrderPage() {
     setDraftDue(dueType);
     setDraftDesign(design);
     setDraftSubCategory(subCategory);
+    setDraftAgent(agent);
     setMobileFiltersOpen(true);
   };
   // "Show": commit the drafts to the real filter state, then close.
@@ -260,23 +262,27 @@ export function DispatchOrderPage() {
     setDueType(draftDue);
     setDesign(draftDesign);
     setSubCategory(draftSubCategory);
+    setAgent(draftAgent);
     setPage(1);
     setMobileFiltersOpen(false);
   };
-  // Sheet "Reset": clear only the sheet's own three filters (Due/Design/Sub
-  // category) — both the drafts and what's applied — immediately. The Customer
-  // and Product quick-selects sit outside the sheet and keep their own values.
+  // Sheet "Reset": clear every filter that lives behind the Filter icon
+  // (Agent/Due/Design/Sub category/ALL) — both the drafts and what's applied —
+  // immediately. Customer and Product keep their own on-screen selects, so a
+  // phone still has a one-tap way to clear just those.
   // `all` counts here: the ALL switch is rendered inside this sheet, so leaving it
   // out left Reset DISABLED whenever ALL was the only active filter — making it
   // impossible to turn off from a phone.
-  const draftDirty = !!(draftDue || draftDesign || draftSubCategory || dueType || design || subCategory || all);
+  const draftDirty = !!(draftDue || draftDesign || draftSubCategory || draftAgent || dueType || design || subCategory || agent || all);
   const resetSheetFilters = () => {
     setDraftDue('');
     setDraftDesign('');
     setDraftSubCategory('');
+    setDraftAgent('');
     setDueType('');
     setDesign('');
     setSubCategory('');
+    setAgent('');
     // ALL is one of this sheet's own filters, so it resets with them. Turning it
     // off swaps the product options (full variants → base names) and invalidates
     // any current pick, which is why toggleAll() clears the product as well.
@@ -288,9 +294,10 @@ export function DispatchOrderPage() {
   };
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
-  // Customer + Product are their own search boxes on mobile now, so the filter-icon
-  // badge counts only what still lives behind it (Due / Design / Sub category).
-  const sheetFilterCount = (dueType ? 1 : 0) + (design ? 1 : 0) + (subCategory ? 1 : 0);
+  // Customer + Product are their own on-screen selects on mobile, so the
+  // filter-icon badge counts only what lives behind it (Agent/Due/Design/Sub
+  // category/ALL).
+  const sheetFilterCount = (agent ? 1 : 0) + (dueType ? 1 : 0) + (design ? 1 : 0) + (subCategory ? 1 : 0) + (all ? 1 : 0);
   const { can } = usePermissions();
   const canViewRates = can('dispatch:viewrates');
   const canApproveDispatch = can('dispatch:approve');
@@ -375,17 +382,14 @@ export function DispatchOrderPage() {
 
       <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
         <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
-          {/* Phones: Customer + Product + Agent each get their own full-width line
-              (house order: Customer, Item Name, Agent, …), long names fit; the rest
-              (Due / Design / Sub category) live behind the filter icon, which sits
-              with the export button on the Agent row. */}
+          {/* Phones: just the two filters people actually reach for first —
+              Customer and Product — each on their own full-width line. Everything
+              else (Agent / Due / Design / Sub category / ALL) lives behind the
+              Filter icon, which sits with Export and a one-tap Reset-all. */}
           <div className="flex w-full flex-col gap-2 sm:hidden">
             <NativeSelect value={customer} onChange={(v) => { setCustomer(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="Customer" className={cn(CONTROL, 'font-medium', customer && CONTROL_ON)} />
             <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...productOptions]} placeholder={all ? 'Product (any design)' : 'Product'} className={cn(CONTROL, 'font-medium', product && CONTROL_ON)} />
             <div className="flex items-center gap-2">
-              <div className="min-w-0 flex-1">
-                <NativeSelect value={agent} onChange={(v) => { setAgent(v); setPage(1); }} options={['', ...(options?.agents ?? [])]} placeholder="All agents" className={cn(CONTROL, 'font-medium', agent && CONTROL_ON)} />
-              </div>
               <Button variant="outline" size="icon" className={cn('relative size-9 shrink-0 rounded-[4px] border-amber-300', sheetFilterCount > 0 && CONTROL_ON)} onClick={openMobileFilters} aria-label="More filters">
                 <Filter className="size-4" />
                 {sheetFilterCount > 0 && (
@@ -394,6 +398,19 @@ export function DispatchOrderPage() {
                   </span>
                 )}
               </Button>
+              {hasFilters && (
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="size-9 shrink-0 rounded-[4px] border-amber-300 text-amber-700 hover:bg-amber-50 hover:text-amber-900 dark:text-amber-300 dark:hover:bg-amber-400/10"
+                  onClick={resetFilters}
+                  aria-label="Reset all filters"
+                  title="Reset all filters"
+                >
+                  <X className="size-4" />
+                </Button>
+              )}
+              <div className="min-w-0 flex-1" />
               {can('dispatch:export') && <ExportButton onClick={onExport} disabled={exporting} label="Export to Excel" />}
             </div>
           </div>
@@ -469,6 +486,10 @@ export function DispatchOrderPage() {
               </span>
               <Switch checked={all} onCheckedChange={toggleAll} />
             </label>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Agent</Label>
+              <NativeSelect value={draftAgent} onChange={setDraftAgent} options={['', ...(options?.agents ?? [])]} placeholder="All agents" />
+            </div>
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-xs font-medium uppercase">Due</Label>
               <NativeSelect value={draftDue} onChange={setDraftDue} options={['', 'Due', 'Over Due']} placeholder="All due" />
