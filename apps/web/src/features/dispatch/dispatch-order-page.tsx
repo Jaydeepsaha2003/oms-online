@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarClock, CalendarDays, ChevronLeft, ChevronRight, Filter, Flame, Loader2, Package, PackageCheck, RotateCcw, TriangleAlert, Truck, X } from 'lucide-react';
+import { CalendarClock, CalendarDays, ChevronLeft, ChevronRight, Filter, Flame, Hourglass, Loader2, Package, PackageCheck, RotateCcw, TriangleAlert, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { type DispatchStatus, type PendingLineDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -30,6 +30,16 @@ const DueBadge = ({ t }: { t: string }) => (
   <span className={cn('inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset', t === 'Over Due' ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-blue-50 text-blue-800 ring-blue-200')}>
     <CalendarClock className="size-3" />
     {t}
+  </span>
+);
+
+/** Shown when a line already has an open back-date approval request awaiting a
+ *  decision — otherwise the line looks untouched after a non-approver submits
+ *  and refreshes, even though a request is already in flight. */
+const PendingApprovalBadge = () => (
+  <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-400/10 dark:text-amber-300 dark:ring-amber-400/30">
+    <Hourglass className="size-3" />
+    Pending approval
   </span>
 );
 
@@ -73,6 +83,12 @@ function DispatchCard({ line, index, showRates, onClick }: { line: PendingLineDt
           </div>
           <DueBadge t={line.dueType} />
         </div>
+
+        {line.hasPendingApproval && (
+          <div>
+            <PendingApprovalBadge />
+          </div>
+        )}
 
         <div>
           <p className="truncate text-[16px] font-semibold leading-tight">{line.customerName}</p>
@@ -131,7 +147,7 @@ const CONTROL_ON = 'border-amber-500 bg-amber-50 text-amber-900 font-semibold da
 const COLUMNS: DataColumn<PendingLineDto>[] = [
   { id: 'order', label: 'ORD#', pin: 'left0', pinWidthClass: 'sm:w-16 sm:min-w-16', fixed: true, cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{shortOrderCode(r.orderCode, r.orderId)}</span> },
   { id: 'orderDate', label: 'Order date', cell: (r) => <span className={cn(TEXT_CELL, 'whitespace-nowrap tabular-nums')}>{formatDate(r.orderDate)}</span> },
-  { id: 'due', label: 'Due', cell: (r) => <span className={cn(TEXT_CELL, 'flex items-center gap-1.5 whitespace-nowrap tabular-nums')}>{formatDate(r.dueDate)} <DueBadge t={r.dueType} /></span> },
+  { id: 'due', label: 'Due', cell: (r) => <span className={cn(TEXT_CELL, 'flex items-center gap-1.5 whitespace-nowrap tabular-nums')}>{formatDate(r.dueDate)} <DueBadge t={r.dueType} /> {r.hasPendingApproval && <PendingApprovalBadge />}</span> },
   { id: 'customer', label: 'Customer', cell: (r) => <span className={TEXT_CELL}>{r.customerName}</span> },
   { id: 'product', label: 'Product', cell: (r) => <span className={TEXT_CELL}>{r.productName || r.product || '—'}</span> },
   { id: 'design', label: 'Design', cell: (r) => <span className={TEXT_CELL}>{r.designType || '—'}</span> },

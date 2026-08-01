@@ -42,6 +42,9 @@ export interface PendingLineDto {
   remPcs: number;
   remKgs: number;
   remBox: number;
+  /** True when this line already has an open back-date approval request — lets
+   *  the pending list show "Pending approval" instead of looking untouched. */
+  hasPendingApproval?: boolean;
 }
 
 export interface DispatchDto {

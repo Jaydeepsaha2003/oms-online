@@ -483,9 +483,12 @@ function LineEditor({
   const s = (v: number | null) => (v == null ? '' : String(v));
   const [form, setForm] = useState({
     itemName: line.productName ?? [line.product, line.designType].filter(Boolean).join(' '),
+    pCategory: line.pCategory ?? '',
+    subCategory: line.subCategory ?? '',
     product: line.product ?? '',
     designType: line.designType ?? '',
     designName: '',
+    psize: s(line.psize),
     ordType: line.ordType ?? '',
     priority: line.priority ?? 'NORMAL',
     bags: s(line.bags),
@@ -504,22 +507,32 @@ function LineEditor({
   const dirty = JSON.stringify(form) !== JSON.stringify(baseline.current);
   // Quantity/rate/product fields — the exact set the backend freezes once a line
   // has been dispatched (status/priority/order-type/comment stay editable there).
-  const MATERIAL_KEYS = ['itemName', 'product', 'designType', 'bags', 'pcs', 'gram', 'box', 'productRate', 'designRate'] as const;
+  const MATERIAL_KEYS = ['itemName', 'pCategory', 'subCategory', 'product', 'designType', 'psize', 'bags', 'pcs', 'gram', 'box', 'productRate', 'designRate'] as const;
   const materialDirty = MATERIAL_KEYS.some((k) => form[k] !== baseline.current[k]);
 
   // Composite "item name" choices — same dropdown as the New Order page:
-  // each label is "{size} {product} {designType}".
+  // each label can be "{size} {product} {designType}" or "{pcs} {product}
+  // {designType}", so Order Modify can switch between the same item-name forms
+  // users create from the main order form's Size/Pcs mode.
   const itemOptions = useMemo(() => {
     const list = lookups?.items ?? [];
     const map = new Map<string, (typeof list)[number]>();
-    const labels: string[] = [];
+    const options: { value: string; label: string; keywords: string }[] = [];
     for (const it of list) {
-      const label = [it.size != null ? String(it.size) : '', it.product, it.designType ?? ''].filter(Boolean).join(' ');
-      if (!label || map.has(label)) continue;
-      map.set(label, it);
-      labels.push(label);
+      const size = it.size != null ? String(it.size) : '';
+      const pcs = it.pcs != null ? String(it.pcs) : '';
+      const labels = [
+        [size, it.product, it.designType ?? ''].filter(Boolean).join(' '),
+        [pcs, it.product, it.designType ?? ''].filter(Boolean).join(' '),
+      ].filter((label, idx, arr) => label && arr.indexOf(label) === idx);
+      const keywords = [size, pcs, it.subCategory ?? ''].filter(Boolean).join(' ');
+      for (const label of labels) {
+        if (map.has(label)) continue;
+        map.set(label, it);
+        options.push({ value: label, label, keywords });
+      }
     }
-    return { labels, map };
+    return { options, map };
   }, [lookups]);
 
   // Design names available for the current design-type code.
@@ -560,9 +573,12 @@ function LineEditor({
     const realName = it.designName && it.designName !== it.designType ? it.designName : '';
     set({
       itemName: label,
+      pCategory: it.category,
+      subCategory: it.subCategory,
       product: it.product,
       designType: it.designType ?? '',
       designName: realName,
+      psize: it.size != null ? String(it.size) : '',
       productRate: it.productRate != null ? String(it.productRate) : '',
       designRate: it.designType && it.designRate != null ? String(it.designRate) : '',
     });
@@ -577,9 +593,12 @@ function LineEditor({
 
   const buildUpdated = (): OrderItemDto => ({
     ...line,
+    pCategory: form.pCategory.trim() || null,
+    subCategory: form.subCategory.trim() || null,
     product: form.product.trim() || null,
     designType: form.designType.trim() || null,
     productName: form.itemName.trim() || [form.product.trim(), form.designType.trim()].filter(Boolean).join(' ') || null,
+    psize: num(form.psize),
     ordType: form.ordType || null,
     priority: form.priority || null,
     bags: num(form.bags),
@@ -634,7 +653,7 @@ function LineEditor({
           <NativeSelect
             value={form.itemName}
             onChange={onItemPick}
-            options={itemOptions.labels}
+            options={itemOptions.options}
             placeholder="Item name"
             className="text-left"
             onInvalidEntry={() => toast.error('Please select a correct item')}

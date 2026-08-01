@@ -44,7 +44,7 @@ export class ApprovalsController {
     @Body() dto: ApprovalDecisionDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.approvals.approve(id, { id: Number(user.id) || null, name: user.name }, dto.note);
+    return this.approvals.approve(id, { id: user.id ?? null, name: user.name }, dto.note);
   }
 
   @Post(':id/reject')
@@ -55,7 +55,7 @@ export class ApprovalsController {
     @Body() dto: ApprovalDecisionDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.approvals.reject(id, { id: Number(user.id) || null, name: user.name }, dto.note);
+    return this.approvals.reject(id, { id: user.id ?? null, name: user.name }, dto.note);
   }
 
   @Delete(':id')

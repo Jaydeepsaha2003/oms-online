@@ -13,11 +13,29 @@ import {
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApprovalsService } from '../approvals/approvals.service';
+import { AuditService } from '../audit/audit.service';
 import { formatDate } from '../common/date.util';
 import { toNum, toStr, uc } from '../common/coerce';
 import { CreateDispatchDto, DispatchQueryDto, PendingQueryDto, UpdateDispatchDto } from './dto/dispatch.dto';
 
 const EPS = 1e-6;
+
+/** Who performed an action, for the audit trail. `id` is a User cuid. */
+interface Actor {
+  id?: string | null;
+  name?: string | null;
+}
+
+/** "3 bags · 160 kgs" — only the units that carry a value, so the trail stays readable. */
+function qtyText(q: { bags?: number | null; pcs?: number | null; gram?: number | null; box?: number | null }): string {
+  const parts = [
+    q.bags ? `${q.bags} bags` : null,
+    q.pcs ? `${q.pcs} pcs` : null,
+    q.gram ? `${q.gram} kgs` : null,
+    q.box ? `${q.box} box` : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(' · ') : 'no quantities';
+}
 
 // Cap quantities at 3 decimals. Subtracting/summing floats (e.g. ordered − dispatched)
 // otherwise surfaces artifacts like 71.60000000000001 into the remaining qty, which
@@ -42,7 +60,31 @@ export class DispatchService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly approvals: ApprovalsService,
+    private readonly audit: AuditService,
   ) {}
+
+  /**
+   * Record one entry against a specific dispatch, so it shows up in that
+   * dispatch's own Activity History panel (which queries resource=dispatch +
+   * resourceId=<that dispatch's id>).
+   */
+  private logDispatch(input: {
+    dispatchId: number;
+    action: string;
+    description: string;
+    actor?: Actor;
+    metadata?: Record<string, unknown>;
+  }): void {
+    void this.audit.record({
+      userId: input.actor?.id ?? null,
+      action: input.action,
+      resource: 'dispatch',
+      resourceId: String(input.dispatchId),
+      description: input.description,
+      statusCode: 200,
+      metadata: input.metadata ?? null,
+    });
+  }
 
   /**
    * Teach the approvals inbox how to apply an approved back-dated dispatch: replay
@@ -68,6 +110,8 @@ export class DispatchService implements OnModuleInit {
         // Keep the ORIGINAL requester on the record — the approver's name belongs
         // on the approval row, not on the dispatch they merely signed off.
         p.requestedByName ?? approverName,
+        undefined,
+        { skipAudit: true }, // ApprovalsService.approve() writes the combined entry
       );
       return row.id;
     });
@@ -85,6 +129,29 @@ export class DispatchService implements OnModuleInit {
       });
       this.invalidatePendingCache();
       return p.dispatchId;
+    });
+
+    // Both approval types land their decision inside the DISPATCH's own Activity
+    // History, not just the generic approvals log — see ApprovalAuditTarget.
+    this.approvals.registerAuditTarget('DISPATCH_BACKDATE', {
+      resource: 'dispatch',
+      label: 'back-dated dispatch',
+      describe: (payload) => {
+        const p = payload as unknown as DispatchBackdatePayload;
+        return `${qtyText({ bags: p.bags, pcs: p.pcs, gram: p.gram, box: p.box })} · dated ${formatDate(p.dispatchDate)}`;
+      },
+      // Nothing exists until approved, so a REJECTION has no record to attach to.
+      existingResourceId: () => null,
+    });
+    this.approvals.registerAuditTarget('DISPATCH_DATE_CHANGE', {
+      resource: 'dispatch',
+      label: 'dispatch date change',
+      describe: (payload) => {
+        const p = payload as unknown as DispatchDateChangePayload;
+        return `${formatDate(p.currentDate)} → ${formatDate(p.dispatchDate)}`;
+      },
+      // The dispatch already exists — a rejection is meaningful history on it too.
+      existingResourceId: (payload) => (payload as unknown as DispatchDateChangePayload).dispatchId,
     });
   }
 
@@ -264,7 +331,29 @@ export class DispatchService implements OnModuleInit {
     const lines = this.applyPendingFilters(await this.computePendingLines(), query);
     const total = lines.length;
     const page = lines.slice(query.skip, query.skip + query.pageSize);
-    return { items: page, total, page: query.page, pageSize: query.pageSize, totalPages: Math.max(1, Math.ceil(total / query.pageSize)) };
+    const pendingIds = await this.pendingApprovalOrderItemIds();
+    const items = pendingIds.size ? page.map((l) => (pendingIds.has(l.orderItemId) ? { ...l, hasPendingApproval: true } : l)) : page;
+    return { items, total, page: query.page, pageSize: query.pageSize, totalPages: Math.max(1, Math.ceil(total / query.pageSize)) };
+  }
+
+  /** Order lines that already have an open back-date approval request awaiting
+   *  a decision — so the pending pool can flag them instead of looking untouched
+   *  after a non-approver submits and refreshes the page. */
+  private async pendingApprovalOrderItemIds(): Promise<Set<number>> {
+    const rows = await this.prisma.approvalRequest.findMany({
+      where: { type: 'DISPATCH_BACKDATE', status: 'PENDING' },
+      select: { payload: true },
+    });
+    const ids = new Set<number>();
+    for (const r of rows) {
+      try {
+        const payload = JSON.parse(r.payload) as { orderItemId?: number };
+        if (typeof payload.orderItemId === 'number') ids.add(payload.orderItemId);
+      } catch {
+        /* malformed payload — skip */
+      }
+    }
+    return ids;
   }
 
   /** All pending lines matching the filters (no pagination) — for the Excel export. */
@@ -358,10 +447,10 @@ export class DispatchService implements OnModuleInit {
    */
   async submit(
     dto: CreateDispatchDto,
-    user: { id?: number | null; name?: string | null; canApprove: boolean },
+    user: { id?: string | null; name?: string | null; canApprove: boolean },
   ): Promise<SubmitDispatchResult> {
     if (this.isToday(dto.dispatchDate) || user.canApprove) {
-      return { status: 'CREATED', dispatch: await this.create(dto, user.name ?? undefined) };
+      return { status: 'CREATED', dispatch: await this.create(dto, user.name ?? undefined, user) };
     }
 
     // Validate the line BEFORE parking the request, so an impossible dispatch is
@@ -420,8 +509,14 @@ export class DispatchService implements OnModuleInit {
     return { status: 'PENDING_APPROVAL', approvalCode: req.code ?? `APR-${req.id}` };
   }
 
-  /** Creates the row unconditionally — the back-date gate lives in {@link submit}. */
-  async create(dto: CreateDispatchDto, userName?: string): Promise<DispatchDto> {
+  /**
+   * Creates the row unconditionally — the back-date gate lives in {@link submit}.
+   * `skipAudit` is set when this runs as an approval replay: ApprovalsService
+   * writes its OWN combined "approved — created X" entry in that case, so a
+   * plain "created" entry here would just be a confusing duplicate sitting next
+   * to it in the dispatch's history.
+   */
+  async create(dto: CreateDispatchDto, userName?: string, actor?: Actor, opts?: { skipAudit?: boolean }): Promise<DispatchDto> {
     const bags = toNum(dto.bags) ?? 0;
     const pcs = toNum(dto.pcs) ?? 0;
     const gram = toNum(dto.gram) ?? 0;
@@ -460,12 +555,12 @@ export class DispatchService implements OnModuleInit {
           d.dispatchStatus === dto.dispatchStatus &&
           Date.now() - d.createdAt.getTime() < DISPATCH_DEDUPE_WINDOW_MS,
       );
-      if (dup) return dup;
+      if (dup) return { row: dup, deduped: true };
 
       const rem = this.remaining(it, it.dispatches);
       this.validateQty({ bags, pcs, gram, box }, rem, dto.dispatchStatus, it.calField);
 
-      return tx.dispatch.create({
+      const created = await tx.dispatch.create({
         data: {
           orderItemId: it.id,
           orderId: it.orderId,
@@ -497,9 +592,25 @@ export class DispatchService implements OnModuleInit {
           userName: userName ?? null,
         },
       });
+      return { row: created, deduped: false };
     });
+
+    const dispatch = await this.ensureCode(row.row);
+    // Only log a real insert — a deduped double-submit returns the existing row
+    // and must not add a second "created" entry to its history.
+    if (!row.deduped && !opts?.skipAudit) {
+      this.logDispatch({
+        dispatchId: dispatch.id,
+        action: 'create',
+        description: `Dispatched ${qtyText({ bags, pcs, gram, box })} · ${dto.dispatchStatus} · dated ${formatDate(
+          dispatch.dispatchDate.toISOString(),
+        )}${dispatch.productName ? ` · ${dispatch.productName}` : ''}`,
+        actor: actor ?? { name: userName ?? null },
+        metadata: { bags, pcs, gram, box, dispatchStatus: dto.dispatchStatus, dispatchDate: dispatch.dispatchDate.toISOString() },
+      });
+    }
     this.invalidatePendingCache(); // a new dispatch changes what's still pending
-    return this.toDto(await this.ensureCode(row));
+    return this.toDto(dispatch);
   }
 
   /**
@@ -582,7 +693,7 @@ export class DispatchService implements OnModuleInit {
   async updateAsUser(
     id: number,
     dto: UpdateDispatchDto,
-    user: { id?: number | null; name?: string | null; canApprove: boolean },
+    user: { id?: string | null; name?: string | null; canApprove: boolean },
   ): Promise<UpdateDispatchResult> {
     const cur = await this.prisma.dispatch.findUnique({ where: { id } });
     if (!cur) throw new NotFoundException('Dispatch not found.');
@@ -591,13 +702,13 @@ export class DispatchService implements OnModuleInit {
       !!dto.dispatchDate && !this.sameDay(dto.dispatchDate, cur.dispatchDate) && !this.isToday(dto.dispatchDate);
 
     if (!wantsDateMove || user.canApprove) {
-      return { dispatch: await this.update(id, dto) };
+      return { dispatch: await this.update(id, dto, user) };
     }
 
     // Save everything except the date now, and raise an approval for the move.
     const { dispatchDate, ...rest } = dto;
     void dispatchDate;
-    const dispatch = await this.update(id, rest);
+    const dispatch = await this.update(id, rest, user);
     const payload: DispatchDateChangePayload = {
       dispatchId: id,
       dispatchDate: dto.dispatchDate!,
@@ -627,7 +738,7 @@ export class DispatchService implements OnModuleInit {
     return d.getFullYear() === other.getFullYear() && d.getMonth() === other.getMonth() && d.getDate() === other.getDate();
   }
 
-  async update(id: number, dto: UpdateDispatchDto): Promise<DispatchDto> {
+  async update(id: number, dto: UpdateDispatchDto, actor?: Actor): Promise<DispatchDto> {
     const cur = await this.prisma.dispatch.findUnique({ where: { id } });
     if (!cur) throw new NotFoundException('Dispatch not found.');
     const it = await this.prisma.orderItem.findUnique({ where: { id: cur.orderItemId }, include: { dispatches: true } });
@@ -656,6 +767,38 @@ export class DispatchService implements OnModuleInit {
         ...(dto.dispatchDate ? { dispatchDate: new Date(dto.dispatchDate) } : {}),
       },
     });
+
+    // Spell out WHAT actually changed, field by field, so the history answers
+    // "what was edited" instead of just "edited".
+    const changes: string[] = [];
+    const qtyBefore = { bags: cur.bags, pcs: cur.pcs, gram: cur.gram, box: cur.box };
+    const qtyAfter = { bags, pcs, gram, box };
+    if (
+      (cur.bags ?? 0) !== bags ||
+      (cur.pcs ?? 0) !== pcs ||
+      (cur.gram ?? 0) !== gram ||
+      (cur.box ?? 0) !== box
+    ) {
+      changes.push(`qty ${qtyText(qtyBefore)} → ${qtyText(qtyAfter)}`);
+    }
+    if (cur.dispatchStatus !== status) changes.push(`status ${cur.dispatchStatus} → ${status}`);
+    if (!this.sameDay(row.dispatchDate.toISOString(), cur.dispatchDate)) {
+      changes.push(
+        `date ${formatDate(cur.dispatchDate.toISOString())} → ${formatDate(row.dispatchDate.toISOString())}`,
+      );
+    }
+    if (dto.comment !== undefined && (cur.comment ?? '') !== (toStr(dto.comment) ?? '')) {
+      changes.push(`remark "${cur.comment ?? ''}" → "${toStr(dto.comment) ?? ''}"`);
+    }
+    if (changes.length) {
+      this.logDispatch({
+        dispatchId: id,
+        action: 'update',
+        description: `Edited: ${changes.join('; ')}`,
+        actor,
+        metadata: { before: { ...qtyBefore, dispatchStatus: cur.dispatchStatus, dispatchDate: cur.dispatchDate.toISOString() }, after: { ...qtyAfter, dispatchStatus: status, dispatchDate: row.dispatchDate.toISOString() } },
+      });
+    }
     this.invalidatePendingCache(); // edited quantities change remaining-to-dispatch
     return this.toDto(row);
   }

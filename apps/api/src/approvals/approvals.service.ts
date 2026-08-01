@@ -9,6 +9,7 @@ import {
   type ApprovalType,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
 
 /** Row shape used internally; matches the ApprovalRequest model. */
 type Row = Prisma.ApprovalRequestGetPayload<object>;
@@ -24,6 +25,30 @@ type Row = Prisma.ApprovalRequestGetPayload<object>;
 export type ApprovalHandler = (payload: Record<string, unknown>, approverName: string) => Promise<number | null>;
 
 /**
+ * Where an approval's decision should ALSO be logged, beyond the generic
+ * `approval` resource entry every decision already gets — e.g. a dispatch
+ * back-date's approval is far more useful sitting inside THAT DISPATCH's own
+ * Activity History than buried under a separate "approval" resource nobody
+ * browsing that record would think to look at.
+ */
+export interface ApprovalAuditTarget {
+  /** The RESOURCES value to attach the decision entry to, e.g. 'dispatch'. */
+  resource: string;
+  /** A short label for the description, e.g. "back-dated dispatch". */
+  label: string;
+  /** One line summarising the request's own content (qty, dates, etc.), shown
+   *  in the decision's audit description. */
+  describe: (payload: Record<string, unknown>) => string;
+  /**
+   * The id of an ALREADY-EXISTING record this request concerns, if any — used to
+   * attach a REJECTION to that record's history (nothing new was created to
+   * attach it to otherwise). Return null when the request creates a brand-new
+   * record on approval and nothing exists yet to reject "into".
+   */
+  existingResourceId?: (payload: Record<string, unknown>) => number | null;
+}
+
+/**
  * The universal approvals inbox.
  *
  * A request is a *pending action*, not a half-written record: the payload sits
@@ -34,8 +59,17 @@ export type ApprovalHandler = (payload: Record<string, unknown>, approverName: s
 @Injectable()
 export class ApprovalsService {
   private readonly handlers = new Map<string, ApprovalHandler>();
+  private readonly auditTargets = new Map<string, ApprovalAuditTarget>();
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
+
+  /** Register where a type's decisions should ALSO be logged — see {@link ApprovalAuditTarget}. */
+  registerAuditTarget(type: ApprovalType | string, target: ApprovalAuditTarget): void {
+    this.auditTargets.set(type, target);
+  }
 
   /**
    * Register the replay handler for one approval type. Called from a feature
@@ -53,7 +87,7 @@ export class ApprovalsService {
     payload: Record<string, unknown>;
     entity?: string | null;
     entityId?: number | null;
-    requestedById?: number | null;
+    requestedById?: string | null;
     requestedByName?: string | null;
   }): Promise<ApprovalRequestDto> {
     const row = await this.prisma.approvalRequest.create({
@@ -128,7 +162,7 @@ export class ApprovalsService {
    * FIRST — if creating the real record fails, the request stays PENDING rather
    * than being marked done with nothing to show for it.
    */
-  async approve(id: number, approver: { id?: number | null; name: string }, note?: string): Promise<ApprovalRequestDto> {
+  async approve(id: number, approver: { id?: string | null; name: string }, note?: string): Promise<ApprovalRequestDto> {
     const row = await this.prisma.approvalRequest.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('Approval request not found.');
     if (row.status !== 'PENDING') throw new BadRequestException(`This request was already ${row.status.toLowerCase()}.`);
@@ -158,11 +192,25 @@ export class ApprovalsService {
         resultId,
       },
     });
+
+    // A dispatch back-date's approval is far more findable sitting inside THAT
+    // dispatch's own Activity History than under the generic 'approval' resource.
+    const target = this.auditTargets.get(row.type);
+    if (target && resultId != null) {
+      void this.audit.record({
+        userId: approver.id ?? null,
+        action: 'approve',
+        resource: target.resource,
+        resourceId: String(resultId),
+        description: `Approved ${target.label} requested by ${row.requestedByName ?? 'someone'} — ${target.describe(payload)}${note?.trim() ? ` · note: ${note.trim()}` : ''}`,
+        statusCode: 200,
+      });
+    }
     return this.toDto(saved);
   }
 
   /** Reject a request. A note is required so the requester learns why. */
-  async reject(id: number, approver: { id?: number | null; name: string }, note?: string): Promise<ApprovalRequestDto> {
+  async reject(id: number, approver: { id?: string | null; name: string }, note?: string): Promise<ApprovalRequestDto> {
     const reason = note?.trim();
     if (!reason) throw new BadRequestException('Add a short reason so the requester knows why this was rejected.');
 
@@ -180,6 +228,30 @@ export class ApprovalsService {
         decisionNote: reason,
       },
     });
+
+    // Only attach a rejection entry to an EXISTING record's history — a rejected
+    // back-dated dispatch never existed in the first place, so there's nothing to
+    // attach it to (the general 'approval' resource entry still covers it).
+    const target = this.auditTargets.get(row.type);
+    if (target?.existingResourceId) {
+      let payload: Record<string, unknown> = {};
+      try {
+        payload = JSON.parse(row.payload) as Record<string, unknown>;
+      } catch {
+        /* malformed payload — describe() below just gets an empty object */
+      }
+      const existingId = target.existingResourceId(payload);
+      if (existingId != null) {
+        void this.audit.record({
+          userId: approver.id ?? null,
+          action: 'reject',
+          resource: target.resource,
+          resourceId: String(existingId),
+          description: `Rejected ${target.label} requested by ${row.requestedByName ?? 'someone'} — ${target.describe(payload)} · reason: ${reason}`,
+          statusCode: 200,
+        });
+      }
+    }
     return this.toDto(saved);
   }
 

@@ -309,10 +309,14 @@ function DecisionDialog({
     currentDate: 'Current date',
     dispatchCode: 'Dispatch',
     dispatchStatus: 'Type',
+    bags: 'Bags',
+    pcs: 'Pcs',
+    gram: 'Kgs',
+    box: 'Box',
   };
   const DATE_KEYS = new Set(['dispatchDate', 'currentDate']);
   const payloadRows = Object.entries(request.payload)
-    .filter(([k, v]) => FRIENDLY_KEYS[k] && v != null && v !== '')
+    .filter(([k, v]) => FRIENDLY_KEYS[k] && v != null && v !== '' && v !== 0)
     .map(([k, v]) => [k, DATE_KEYS.has(k) ? formatDate(String(v)) : String(v)] as [string, string]);
 
   return (
