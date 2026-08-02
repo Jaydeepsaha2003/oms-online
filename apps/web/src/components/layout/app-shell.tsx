@@ -6,6 +6,8 @@ import { connectNotificationsSocket } from '@/lib/notifications-socket';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useMenuShortcuts } from '@/hooks/use-menu-shortcuts';
 import { FollowupNudge } from '@/features/crm/followup-nudge';
+import { TallyReconRunProvider } from '@/features/account/tally-recon-run-context';
+import { TallyReconDock } from '@/features/account/tally-recon-dock';
 import { Sidebar } from './sidebar';
 import { Topbar } from './topbar';
 
@@ -126,64 +128,69 @@ export function AppShell() {
   }, [pinned]);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
-      {/* Desktop sidebar: the <aside> only reserves the rail/pinned width; the panel
-          itself is a fixed overlay that grows on hover without pushing content. */}
-      <aside
-        className={cn(
-          'hidden shrink-0 transition-[width] duration-200 md:block',
-          isPinned ? 'w-72' : 'w-16',
-        )}
-      >
-        <div
-          ref={panelRef}
-          onPointerEnter={() => setHovered(true)}
-          onPointerLeave={() => setHovered(false)}
+    <TallyReconRunProvider>
+      <div className="flex h-screen overflow-hidden bg-background">
+        {/* Desktop sidebar: the <aside> only reserves the rail/pinned width; the panel
+            itself is a fixed overlay that grows on hover without pushing content. */}
+        <aside
           className={cn(
-            'fixed top-0 left-0 z-50 h-screen border-r bg-sidebar transition-[width] duration-200',
-            expanded ? 'w-72' : 'w-16',
-            hovered && !isPinned && 'shadow-2xl shadow-blue-950/25',
+            'hidden shrink-0 transition-[width] duration-200 md:block',
+            isPinned ? 'w-72' : 'w-16',
           )}
         >
-          <Sidebar collapsed={!expanded} />
-        </div>
-      </aside>
-
-      {/* Mobile drawer */}
-      {mobileOpen && (
-        <div className="fixed inset-0 z-50 md:hidden">
           <div
-            className="absolute inset-0 bg-black/50"
-            onClick={() => setMobileOpen(false)}
-            aria-hidden
-          />
-          <div className="absolute left-0 top-0 h-full w-72 border-r shadow-lg">
-            <Sidebar collapsed={false} onNavigate={() => setMobileOpen(false)} />
+            ref={panelRef}
+            onPointerEnter={() => setHovered(true)}
+            onPointerLeave={() => setHovered(false)}
+            className={cn(
+              'fixed top-0 left-0 z-50 h-screen border-r bg-sidebar transition-[width] duration-200',
+              expanded ? 'w-72' : 'w-16',
+              hovered && !isPinned && 'shadow-2xl shadow-blue-950/25',
+            )}
+          >
+            <Sidebar collapsed={!expanded} />
           </div>
-        </div>
-      )}
+        </aside>
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {!hideTopbar && (
-          <Topbar
-            onToggleMobile={() => setMobileOpen(true)}
-            onToggleCollapse={() => setPinned((v) => !v)}
-          />
+        {/* Mobile drawer */}
+        {mobileOpen && (
+          <div className="fixed inset-0 z-50 md:hidden">
+            <div
+              className="absolute inset-0 bg-black/50"
+              onClick={() => setMobileOpen(false)}
+              aria-hidden
+            />
+            <div className="absolute left-0 top-0 h-full w-72 border-r shadow-lg">
+              <Sidebar collapsed={false} onNavigate={() => setMobileOpen(false)} />
+            </div>
+          </div>
         )}
-        {/* Tight padding on phones (more width for cards/tables), roomier on desktop.
-            Flush routes get no padding and own their whole scroll region. */}
-        <main
-          className={cn(
-            'min-h-0 flex-1',
-            flush ? 'overflow-hidden' : 'overflow-y-auto px-2.5 py-3 sm:p-4 md:p-6',
-          )}
-        >
-          <Outlet />
-        </main>
-      </div>
 
-      {/* Global "anti-forget" reminder — only for users who can see CRM. */}
-      {canViewCrm && <FollowupNudge />}
-    </div>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {!hideTopbar && (
+            <Topbar
+              onToggleMobile={() => setMobileOpen(true)}
+              onToggleCollapse={() => setPinned((v) => !v)}
+            />
+          )}
+          {/* Tight padding on phones (more width for cards/tables), roomier on desktop.
+              Flush routes get no padding and own their whole scroll region. */}
+          <main
+            className={cn(
+              'min-h-0 flex-1',
+              flush ? 'overflow-hidden' : 'overflow-y-auto px-2.5 py-3 sm:p-4 md:p-6',
+            )}
+          >
+            <Outlet />
+          </main>
+        </div>
+
+        {/* Global "anti-forget" reminder — only for users who can see CRM. */}
+        {canViewCrm && <FollowupNudge />}
+
+        {/* A Tally reconciliation keeps running while the user works elsewhere. */}
+        <TallyReconDock />
+      </div>
+    </TallyReconRunProvider>
   );
 }

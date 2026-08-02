@@ -311,10 +311,31 @@
   animation: slide-in-top 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+/* Tally reconciliation: the server's parse-and-match stage has no honest
+   percentage, so the bar sweeps instead of pretending to fill. */
+@keyframes recon-sweep {
+  0% {
+    transform: translateX(-105%);
+  }
+  100% {
+    transform: translateX(255%);
+  }
+}
+.animate-recon-sweep {
+  animation: recon-sweep 1.15s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .oms-blob,
   .animate-bell-ring {
     animation: none !important;
+  }
+  /* Without the sweep a 40%-wide bar reads as stalled progress — fill the track
+     instead, so "working" still comes across. */
+  .animate-recon-sweep {
+    animation: none !important;
+    width: 100% !important;
+    opacity: 0.65;
   }
 }
 

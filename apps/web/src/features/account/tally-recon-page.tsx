@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   AlertTriangle,
@@ -27,9 +27,10 @@ import {
   useDeleteReconRun,
   useReconRun,
   useReconRuns,
-  useRunRecon,
   useSaveTallyAlias,
 } from './use-tally-recon';
+import { useTallyReconRun } from './tally-recon-run-context';
+import { ReconProgressBar, phaseLabel } from './tally-recon-dock';
 
 /* ── house chrome — the same language as Party Ledger / Daybook ────────────── */
 
@@ -152,7 +153,6 @@ export function TallyReconPage() {
 
   const fileRef = useRef<HTMLInputElement>(null);
   const [runId, setRunId] = useState<number | null>(null);
-  const [pct, setPct] = useState(0);
 
   const [status, setStatus] = useState<ReconStatus | 'PROBLEMS' | ''>('PROBLEMS');
   const [vchType, setVchType] = useState('');
@@ -170,7 +170,9 @@ export function TallyReconPage() {
   const { data: run, isFetching } = useReconRun(activeId);
   const { data: lookups } = usePartyLedgerLookups();
 
-  const runRecon = useRunRecon();
+  // The reconciliation itself lives in the app shell so it survives navigating
+  // away mid-run; this page just drives it and renders its progress inline.
+  const recon = useTallyReconRun();
   const removeRun = useDeleteReconRun();
   const saveAlias = useSaveTallyAlias();
   const createReceipts = useCreateReconReceipts();
@@ -229,29 +231,26 @@ export function TallyReconPage() {
 
   const onPickFile = () => fileRef.current?.click();
 
-  const onFile = async (file: File | undefined) => {
+  const onFile = (file: File | undefined) => {
     if (!file) return;
-    setPct(0);
-    try {
-      const res = await runRecon.mutateAsync({ file, onProgress: setPct });
-      setRunId(res.id);
-      setPicked(new Set());
-      setStatus('PROBLEMS');
-      setVchType('');
-      setParty('');
-      const problems = res.missingInOms + res.missingInTally + res.mismatchCount + res.unmatchedParty;
-      toast.success(
-        problems
-          ? `Reconciled ${inr(res.voucherCount)} vouchers — ${inr(problems)} need attention.`
-          : `Reconciled ${inr(res.voucherCount)} vouchers — everything agrees.`,
-      );
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not reconcile that register.');
-    } finally {
-      setPct(0);
-      if (fileRef.current) fileRef.current.value = '';
-    }
+    // Fire and forget: the provider owns the request, and both the toast and the
+    // floating card report the outcome even if the user leaves this page.
+    void recon.start(file);
+    if (fileRef.current) fileRef.current.value = '';
   };
+
+  // A run that finishes — here or while the user was elsewhere — becomes the
+  // report on screen. Consumed once, so manually picking an older run then sticks.
+  useEffect(() => {
+    if (recon.phase !== 'done') return;
+    const fresh = recon.takeFreshRunId();
+    if (fresh == null) return;
+    setRunId(fresh);
+    setPicked(new Set());
+    setStatus('PROBLEMS');
+    setVchType('');
+    setParty('');
+  }, [recon.phase, recon.takeFreshRunId]);
 
   const onDeleteRun = async () => {
     if (!activeId) return;
@@ -305,7 +304,7 @@ export function TallyReconPage() {
         type="file"
         accept=".xlsx,.xls"
         className="hidden"
-        onChange={(e) => void onFile(e.target.files?.[0])}
+        onChange={(e) => onFile(e.target.files?.[0])}
       />
 
       {/* ── toolbar ───────────────────────────────────────────────────────── */}
@@ -315,10 +314,10 @@ export function TallyReconPage() {
             <Button
               className="h-9 gap-1.5 rounded-[4px] bg-slate-800 text-[12.5px] font-bold text-amber-200 hover:bg-slate-700 dark:bg-slate-900"
               onClick={onPickFile}
-              disabled={runRecon.isPending}
+              disabled={recon.busy}
             >
-              {runRecon.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}
-              {runRecon.isPending ? (pct && pct < 100 ? `Uploading ${pct}%` : 'Reconciling…') : 'Upload Tally register'}
+              {recon.busy ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}
+              {recon.busy ? 'Reconciling…' : 'Upload Tally register'}
             </Button>
           )}
 
@@ -483,6 +482,74 @@ export function TallyReconPage() {
         )}
       </div>
 
+      {/* ── live progress / outcome, inline on the page ───────────────────── */}
+      {recon.phase !== 'idle' && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={cn(
+            'font-poppins animate-in fade-in slide-in-from-top-1 rounded-[4px] border-2 shadow-sm duration-300',
+            recon.phase === 'done'
+              ? 'border-emerald-500 bg-emerald-50 dark:border-emerald-400/60 dark:bg-emerald-400/10'
+              : recon.phase === 'error'
+                ? 'border-rose-500 bg-rose-50 dark:border-rose-400/60 dark:bg-rose-400/10'
+                : 'border-amber-400 bg-amber-50 dark:border-amber-400/50 dark:bg-amber-400/10',
+          )}
+        >
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-2.5 py-2 sm:px-3">
+            <span className="shrink-0">
+              {recon.phase === 'done' ? (
+                <CircleCheck className="size-4 text-emerald-700 dark:text-emerald-400" />
+              ) : recon.phase === 'error' ? (
+                <AlertTriangle className="size-4 text-rose-700 dark:text-rose-400" />
+              ) : (
+                <Loader2 className="size-4 animate-spin text-blue-800 dark:text-blue-400" />
+              )}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[12.5px] leading-tight font-bold">{phaseLabel(recon)}</p>
+              <p className="text-muted-foreground mt-0.5 truncate text-[11.5px] font-medium">
+                {recon.phase === 'error'
+                  ? recon.error
+                  : recon.phase === 'analysing'
+                    ? `${recon.fileName} — checking openings, invoices, notes and receipts against OMS.`
+                    : recon.phase === 'done' && recon.result
+                      ? `${recon.fileName} — ${inr(recon.result.voucherCount)} vouchers across ${inr(recon.result.ledgerCount)} ledgers in ${recon.elapsed}s.`
+                      : recon.fileName}
+              </p>
+            </div>
+            {recon.busy && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 shrink-0 rounded-[4px] text-[12px] font-semibold"
+                onClick={recon.cancel}
+              >
+                Cancel
+              </Button>
+            )}
+            {!recon.busy && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 shrink-0 rounded-[4px] text-[12px] font-semibold"
+                onClick={recon.dismiss}
+              >
+                <X className="size-3.5" /> Dismiss
+              </Button>
+            )}
+          </div>
+          {recon.busy && (
+            <div className="px-2.5 pb-2 sm:px-3">
+              <ReconProgressBar state={recon} />
+              <p className="text-muted-foreground mt-1 text-[10.5px] font-medium">
+                You can leave this page — the reconciliation carries on and you'll be told when it's done.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── the report ────────────────────────────────────────────────────── */}
       <div className={cn('bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[4px] border shadow-sm', PANEL)}>
         <div className="flex items-center justify-between gap-3 bg-slate-800 px-2.5 py-1 dark:bg-slate-900">
@@ -507,7 +574,7 @@ export function TallyReconPage() {
               </p>
             </div>
             {canRun && (
-              <Button className="h-9 gap-1.5 rounded-[4px] text-[12.5px] font-bold" onClick={onPickFile} disabled={runRecon.isPending}>
+              <Button className="h-9 gap-1.5 rounded-[4px] text-[12.5px] font-bold" onClick={onPickFile} disabled={recon.busy}>
                 <Upload className="size-3.5" /> Choose register
               </Button>
             )}
