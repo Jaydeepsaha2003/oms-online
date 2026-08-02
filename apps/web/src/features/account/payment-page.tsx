@@ -35,6 +35,10 @@ const money = (v: number | null | undefined) => `₹ ${inr(v)}`;
  *  the same convention the Party Ledger / Daybook summary rows use. */
 const moneyOrDash = (v: number) => (v ? inr(v) : '-');
 const prettyDate = (iso: string | null) => formatDate(iso);
+/** Voucher type as it reads on screen: a plain sale is just "SALES" (the stored
+ *  value is "SALES INVOICE", which is needlessly long in a dense grid). Display
+ *  only — the underlying value still drives matching, saving and the export. */
+const txnLabel = (t: string) => (t.trim().toUpperCase() === 'SALES INVOICE' ? 'SALES' : t);
 
 function ymd(d: Date): string {
   const y = d.getFullYear();
@@ -697,7 +701,7 @@ export function PaymentPage() {
                         <td className={cn(TD, 'whitespace-nowrap font-semibold tabular-nums text-slate-700 dark:text-slate-300')}>{prettyDate(r.invDate)}</td>
                         <td className={cn(TD, 'font-mono text-[12.5px] font-bold whitespace-nowrap text-slate-800 dark:text-slate-200')}>{r.invNo}</td>
                         {isAgent && <td className={cn(TD, 'font-semibold text-slate-800 dark:text-slate-200')}>{r.customerName}</td>}
-                        <td className={cn(TD, 'text-[12px] font-medium text-slate-600 dark:text-slate-400')}>{r.transaction}</td>
+                        <td className={cn(TD, 'text-[12px] font-medium text-slate-600 dark:text-slate-400')}>{txnLabel(r.transaction)}</td>
                         <td className={cn(TD, 'whitespace-nowrap font-semibold tabular-nums text-slate-700 dark:text-slate-300')}>{prettyDate(r.dueDate)}</td>
                         <td className={TD}>
                           <span className={cn('rounded px-1.5 py-0.5 text-[10.5px] font-bold whitespace-nowrap ring-1 ring-inset', style.chip)}>{r.dueType}</span>
@@ -762,7 +766,7 @@ export function PaymentPage() {
                         {selectable && <input type="checkbox" readOnly checked={ticked} tabIndex={-1} className="pointer-events-none mt-0.5 size-4 shrink-0 accent-blue-600" aria-label={`Select invoice ${r.invNo}`} />}
                         <div className="min-w-0">
                           <p className="font-mono text-[13px] font-bold text-slate-900 dark:text-slate-100">{r.invNo}</p>
-                          <p className="text-muted-foreground truncate text-[11.5px] font-medium">{r.transaction} · {prettyDate(r.invDate)}</p>
+                          <p className="text-muted-foreground truncate text-[11.5px] font-medium">{txnLabel(r.transaction)} · {prettyDate(r.invDate)}</p>
                           {isAgent && <p className="truncate text-[12px] font-semibold">{r.customerName}</p>}
                         </div>
                       </div>
