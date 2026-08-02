@@ -53,6 +53,7 @@ const SalesDiscountPage = lazy(() => import('@/features/account/sales-discount-p
 const NotesPage = lazy(() => import('@/features/account/notes-page').then((m) => ({ default: m.NotesPage })));
 const PartyLedgerPage = lazy(() => import('@/features/account/party-ledger-page').then((m) => ({ default: m.PartyLedgerPage })));
 const DaybookPage = lazy(() => import('@/features/account/daybook-page').then((m) => ({ default: m.DaybookPage })));
+const TallyReconPage = lazy(() => import('@/features/account/tally-recon-page').then((m) => ({ default: m.TallyReconPage })));
 const SettingsPage = lazy(() => import('@/features/settings/settings-page').then((m) => ({ default: m.SettingsPage })));
 const UsersPage = lazy(() => import('@/features/admin/users-page').then((m) => ({ default: m.UsersPage })));
 const RolesPage = lazy(() => import('@/features/admin/roles-page').then((m) => ({ default: m.RolesPage })));
@@ -427,6 +428,14 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.DAYBOOK, ACTIONS.VIEW)}>
                 <DaybookPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/account/tally-recon"
+            element={
+              <RequirePermission permission={perm(RESOURCES.TALLY_RECON, ACTIONS.VIEW)}>
+                <TallyReconPage />
               </RequirePermission>
             }
           />

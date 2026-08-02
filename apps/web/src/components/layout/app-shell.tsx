@@ -44,6 +44,7 @@ const FLUSH_ROUTES = [
   /^\/account\/bank-accounts$/,
   /^\/account\/opening-balance$/,
   /^\/account\/daybook$/,
+  /^\/account\/tally-recon$/,
 ];
 const isFlush = (pathname: string) => FLUSH_ROUTES.some((re) => re.test(pathname));
 

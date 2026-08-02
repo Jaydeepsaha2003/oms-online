@@ -1422,3 +1422,87 @@ model ApprovalRequest {
   @@index([requestedAt])
   @@map("approval_request")
 }
+
+/// ── Tally reconciliation ──────────────────────────────────────────────────
+/// Compares an uploaded Tally ledger register (Sundry Debtors, BANK entries
+/// only) against what OMS holds, so data-entry gaps on either side surface.
+
+/// A Tally ledger name that doesn't equal an OMS party name, pinned to the
+/// customer it really is. Built once by the user and reused by every later
+/// upload, because Tally spellings drift ("CHAITNYA" vs "CHAITANYA").
+model TallyPartyAlias {
+  id         Int      @id @default(autoincrement())
+  /// Ledger name exactly as it appears in the register.
+  tallyName  String   @unique
+  customerId Int
+  createdAt  DateTime @default(now())
+  createdBy  String?
+
+  @@map("tally_party_alias")
+}
+
+/// One upload + its computed result, kept so a reconciliation can be reopened
+/// and used as evidence of what was checked when.
+model TallyReconRun {
+  id         Int      @id @default(autoincrement())
+  fileName   String
+  /// Period the register covers, read from its own header.
+  fromDate   DateTime
+  toDate     DateTime
+  uploadedAt DateTime @default(now())
+  userName   String?
+
+  /// Headline counters, so the runs list needn't re-aggregate the rows.
+  ledgerCount    Int @default(0)
+  voucherCount   Int @default(0)
+  matchedCount   Int @default(0)
+  missingInOms   Int @default(0)
+  missingInTally Int @default(0)
+  mismatchCount  Int @default(0)
+  unmatchedParty Int @default(0)
+
+  rows TallyReconRow[]
+
+  @@index([uploadedAt])
+  @@map("tally_recon_run")
+}
+
+/// One compared line. Rows sourced from TALLY carry what the register said;
+/// rows sourced from OMS are the ones the register never mentioned.
+model TallyReconRow {
+  id    Int           @id @default(autoincrement())
+  runId Int
+  run   TallyReconRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  /// TALLY | OMS — which side this line came from.
+  source       String
+  ledgerName   String
+  customerId   Int?
+  customerName String?
+  txnDate      DateTime
+  /// OPENING | SALES | RECEIPT | CREDIT NOTE | DEBIT NOTE | DISCOUNT | OTHER
+  vchType      String
+  vchNo        String
+  particulars  String?
+  /// Bank-leg figures only, which is all the register carries.
+  dr           Float @default(0)
+  cr           Float @default(0)
+
+  /// MATCHED | MISSING_IN_OMS | MISSING_IN_TALLY | AMOUNT_MISMATCH |
+  /// DATE_MISMATCH | UNMATCHED_PARTY | NOT_APPLICABLE
+  status    String
+  /// The OMS voucher this line was matched to, and its figures, when matched.
+  omsRef    String?
+  omsAmount Float?
+  omsDate   DateTime?
+  note      String?
+
+  /// Set when the user creates the missing entry straight from the report.
+  resolvedAt  DateTime?
+  resolvedRef String?
+
+  @@index([runId])
+  @@index([runId, status])
+  @@index([runId, vchType])
+  @@map("tally_recon_row")
+}
