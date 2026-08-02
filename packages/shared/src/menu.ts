@@ -403,6 +403,13 @@ export const MENU: MenuNode[] = [
         permission: perm(RESOURCES.DAYBOOK, ACTIONS.VIEW),
       },
       {
+        id: 'tally-recon',
+        label: 'Tally Reconciliation',
+        to: '/account/tally-recon',
+        icon: 'GitCompareArrows',
+        permission: perm(RESOURCES.TALLY_RECON, ACTIONS.VIEW),
+      },
+      {
         id: 'manage-cheques',
         label: 'Manage Cheques',
         to: '/account/cheques',

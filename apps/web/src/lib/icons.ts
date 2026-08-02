@@ -2,6 +2,7 @@
 import {
   BadgePercent,
   BarChart3,
+  GitCompareArrows,
   BellRing,
   BookOpen,
   BookOpenCheck,
@@ -52,6 +53,7 @@ import {
 } from 'lucide-react';
 
 const ICONS: Record<string, LucideIcon> = {
+  GitCompareArrows,
   LayoutDashboard,
   ShoppingCart,
   ClipboardList,
