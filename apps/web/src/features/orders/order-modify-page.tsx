@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboa
 import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, ExternalLink, Loader2, RotateCcw, Save, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { OrderDto, OrderInput, OrderItemDto } from '@oms/shared';
-import { ORDER_PRIORITIES, resolveSpecialRates } from '@oms/shared';
+import type { OrderDto, OrderInput, OrderItemDto, QtyField } from '@oms/shared';
+import { ORDER_PRIORITIES, qtyOrderForCategory, resolveSpecialRates } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn, shortOrderCode } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
@@ -18,7 +18,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Combo, NativeSelect } from '@/components/common/combo';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { settingValues, useSettings } from '@/features/settings/use-settings';
+import { settingValues, useOrderQtyLayout, useSettings } from '@/features/settings/use-settings';
 import { useCustomerSpecialRates } from '@/features/special-rates/use-special-rates';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useOrderFilterOptions, useOrderLookups, useOrders, useSaveOrder } from './use-orders';
@@ -58,6 +58,14 @@ function StatusPill({ status }: { status: string }) {
 const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? null : Number(s));
 const fmtNum = (v: number | null) => (v == null ? '' : String(v));
 const dash = (v: number | null) => (v == null || v === 0 ? '—' : v.toLocaleString('en-IN'));
+
+/** Maps the shared QtyField key ('kgs') to the line editor's own form key ('gram'). */
+const QTY_FIELD_INFO: Record<QtyField, { key: 'bags' | 'pcs' | 'gram' | 'box'; label: string }> = {
+  bags: { key: 'bags', label: 'Bags' },
+  pcs: { key: 'pcs', label: 'Pcs' },
+  kgs: { key: 'gram', label: 'Kgs' },
+  box: { key: 'box', label: 'Box' },
+};
 
 /** One flat row = an order line plus its parent order's header info. */
 const isLogoDesign = (designType?: string | null) => (designType ?? '').toUpperCase().includes('LOGO');
@@ -494,6 +502,7 @@ function LineEditor({
   const confirm = useConfirm();
   const { data: lookups } = useOrderLookups();
   const { data: special } = useCustomerSpecialRates(order.customerId ?? undefined);
+  const { data: qtyLayout } = useOrderQtyLayout();
   const { autoSizePcs } = useAutoSizePcs();
   const [showBy, setShowBy] = useState<'PCS' | 'SIZE'>('SIZE');
   // Once the user has confirmed "add as a new item" (see submit()), the form
@@ -521,6 +530,10 @@ function LineEditor({
   });
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
   const rate = (num(form.productRate) ?? 0) + (num(form.designRate) ?? 0);
+  // Bags/Pcs/Kgs/Box order follows the item's product category, per Settings →
+  // Order quantity fields — same layout as the New Order form. Re-picking a
+  // different item updates form.pCategory, so this re-sequences live too.
+  const qtyFields = useMemo(() => qtyOrderForCategory(qtyLayout, form.pCategory).map((f) => QTY_FIELD_INFO[f]), [qtyLayout, form.pCategory]);
 
   // Snapshot of the untouched form — Save stays disabled until something differs.
   const baseline = useRef(form);
@@ -761,18 +774,11 @@ function LineEditor({
           <Field label="Priority">
             <NativeSelect value={form.priority} onChange={(v) => set({ priority: v })} options={[...ORDER_PRIORITIES]} />
           </Field>
-          <Field label="Bags">
-            <Input type="number" step="any" value={form.bags} onKeyDown={onlyNum} onChange={(e) => set({ bags: e.target.value })} />
-          </Field>
-          <Field label="Pcs">
-            <Input type="number" step="any" value={form.pcs} onKeyDown={onlyNum} onChange={(e) => set({ pcs: e.target.value })} />
-          </Field>
-          <Field label="Kgs">
-            <Input type="number" step="any" value={form.gram} onKeyDown={onlyNum} onChange={(e) => set({ gram: e.target.value })} />
-          </Field>
-          <Field label="Box">
-            <Input type="number" step="any" value={form.box} onKeyDown={onlyNum} onChange={(e) => set({ box: e.target.value })} />
-          </Field>
+          {qtyFields.map(({ key: k, label }) => (
+            <Field key={k} label={label}>
+              <Input type="number" step="any" value={form[k]} onKeyDown={onlyNum} onChange={(e) => set({ [k]: e.target.value } as Partial<typeof form>)} />
+            </Field>
+          ))}
           <Field label="Prod ₹">
             <Input type="number" step="any" value={form.productRate} onKeyDown={onlyNum} onChange={(e) => set({ productRate: e.target.value })} />
           </Field>

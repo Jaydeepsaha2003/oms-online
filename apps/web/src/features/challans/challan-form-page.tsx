@@ -26,10 +26,12 @@ import { toast } from 'sonner';
 import {
   CHALLAN_STATUSES,
   computeChallanTotals,
+  qtyOrderForCategory,
   RESOURCES,
   type ChallanDraftItem,
   type CreateChallanInput,
   type PendingChallanLine,
+  type QtyField,
 } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
@@ -40,6 +42,7 @@ import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { useOrderQtyLayout } from '@/features/settings/use-settings';
 import {
   useAllChallanCustomers,
   useChallanDraft,
@@ -54,6 +57,16 @@ import { MissingChallanDialog } from './missing-challan-dialog';
 
 type NavState = { customerName?: string; lines?: PendingChallanLine[]; returnTo?: string };
 type Row = ChallanDraftItem & { key: string };
+
+/** Bags/Pcs/Kgs/Box column order + accessors, driven by Settings → Order quantity
+ *  fields. A challan's rows can span several product categories at once, and an
+ *  HTML table's columns can't vary per row — so unlike the single-item forms
+ *  (New Order, Dispatch, Order Modify), this table always uses the layout's
+ *  DEFAULT arrangement rather than a per-row category lookup. */
+const QTY_COL_LABEL: Record<QtyField, string> = { bags: 'Bags', pcs: 'Pcs', kgs: 'Kgs', box: 'Box' };
+const qtyCell = (r: Row, f: QtyField): number | null => (f === 'bags' ? r.bags : f === 'pcs' ? r.pcs : f === 'kgs' ? r.kgs : r.box);
+const qtyTotal = (t: ReturnType<typeof computeChallanTotals>, f: QtyField): number =>
+  f === 'bags' ? t.tBags : f === 'pcs' ? t.tPcs : f === 'kgs' ? t.tKgs : t.tBox;
 
 const inr = (v: number) => `₹ ${(v ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const numOr = (s: string) => {
@@ -127,6 +140,12 @@ export function ChallanFormPage() {
   const createChallan = useCreateChallan();
   const updateChallan = useUpdateChallan();
   const saving = createChallan.isPending || updateChallan.isPending;
+
+  // Bags/Pcs/Kgs/Box column order — Settings → Order quantity fields' DEFAULT
+  // arrangement (see the QTY_COL_LABEL comment above for why this table can't
+  // vary the order per row).
+  const { data: qtyLayout } = useOrderQtyLayout();
+  const qtyOrder = useMemo(() => qtyOrderForCategory(qtyLayout, undefined), [qtyLayout]);
 
   const draft = isEdit ? editQ.data?.draft : createDraftQ.data;
   const savedChallan = editQ.data?.challan;
@@ -835,10 +854,9 @@ export function ChallanFormPage() {
                     <th className="w-10 text-center">#</th>
                     <th>Product</th>
                     <th className="w-24">Design</th>
-                    <th className="w-16 text-right">Bags</th>
-                    <th className="w-16 text-right">Pcs</th>
-                    <th className="w-16 text-right">Kgs</th>
-                    <th className="w-16 text-right">Box</th>
+                    {qtyOrder.map((f) => (
+                      <th key={f} className="w-16 text-right">{QTY_COL_LABEL[f]}</th>
+                    ))}
                     <th className="w-14">Unit</th>
                     <th className="w-24 text-right">Price</th>
                     <th className="w-24 text-right">Amount</th>
@@ -855,10 +873,9 @@ export function ChallanFormPage() {
                       <td className="w-10 text-center text-slate-500 tabular-nums dark:text-slate-400">{idx + 1}</td>
                       <td className="font-semibold text-slate-800 dark:text-slate-200">{r.productName || '—'}{r.dispatchId == null && <span className="bg-muted text-muted-foreground ml-1 rounded px-1 text-[10px]">manual</span>}</td>
                       <td className="w-24 font-medium text-slate-600 dark:text-slate-300">{r.design || '—'}</td>
-                      <td className="w-16 text-right font-semibold tabular-nums text-slate-800 dark:text-slate-200">{qty(r.bags) ?? '—'}</td>
-                      <td className="w-16 text-right font-semibold tabular-nums text-slate-800 dark:text-slate-200">{qty(r.pcs) ?? '—'}</td>
-                      <td className="w-16 text-right font-semibold tabular-nums text-slate-800 dark:text-slate-200">{qty(r.kgs) ?? '—'}</td>
-                      <td className="w-16 text-right font-semibold tabular-nums text-slate-800 dark:text-slate-200">{qty(r.box) ?? '—'}</td>
+                      {qtyOrder.map((f) => (
+                        <td key={f} className="w-16 text-right font-semibold tabular-nums text-slate-800 dark:text-slate-200">{qty(qtyCell(r, f)) ?? '—'}</td>
+                      ))}
                       <td className="w-14 font-bold text-[11px] uppercase tracking-wider text-slate-500">{r.unit || '—'}</td>
                       <td className="w-24 text-right font-semibold tabular-nums text-slate-800 dark:text-slate-200">₹{(r.price ?? 0).toLocaleString('en-IN')}</td>
                       <td className="w-24 text-right font-bold tabular-nums text-slate-900 dark:text-slate-100">{(r.amount ?? 0).toLocaleString('en-IN')}</td>
@@ -883,10 +900,9 @@ export function ChallanFormPage() {
                       <td className="w-10"></td>
                       <td className="text-[11px] font-bold tracking-widest text-slate-500 uppercase dark:text-slate-400">Total · {rows.length} item(s)</td>
                       <td className="w-24"></td>
-                      <td className="w-16 text-right tabular-nums text-slate-800 dark:text-slate-100">{totals.tBags ? qty(totals.tBags) : ''}</td>
-                      <td className="w-16 text-right tabular-nums text-slate-800 dark:text-slate-100">{totals.tPcs ? qty(totals.tPcs) : ''}</td>
-                      <td className="w-16 text-right tabular-nums text-slate-800 dark:text-slate-100">{totals.tKgs ? qty(totals.tKgs) : ''}</td>
-                      <td className="w-16 text-right tabular-nums text-slate-800 dark:text-slate-100">{totals.tBox ? qty(totals.tBox) : ''}</td>
+                      {qtyOrder.map((f) => (
+                        <td key={f} className="w-16 text-right tabular-nums text-slate-800 dark:text-slate-100">{qtyTotal(totals, f) ? qty(qtyTotal(totals, f)) : ''}</td>
+                      ))}
                       <td className="w-14"></td>
                       <td className="w-24"></td>
                       <td className="w-24 text-right tabular-nums text-primary">{totals.tAmt.toLocaleString('en-IN')}</td>
@@ -932,10 +948,10 @@ export function ChallanFormPage() {
                           </div>
                         </div>
                         <div className="mt-1 grid grid-cols-4 gap-1.5 text-[11px]">
-                          {([['Bags', r.bags], ['Pcs', r.pcs], ['Kgs', r.kgs], ['Box', r.box]] as const).map(([lbl, v]) => (
-                            <div key={lbl}>
-                              <p className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">{lbl}</p>
-                              <p className="font-bold tabular-nums text-slate-700 dark:text-slate-200">{qty(v) ?? '—'}</p>
+                          {qtyOrder.map((f) => (
+                            <div key={f}>
+                              <p className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">{QTY_COL_LABEL[f]}</p>
+                              <p className="font-bold tabular-nums text-slate-700 dark:text-slate-200">{qty(qtyCell(r, f)) ?? '—'}</p>
                             </div>
                           ))}
                         </div>
@@ -947,22 +963,12 @@ export function ChallanFormPage() {
                       uses, so the numbers line up down the list. */}
                   <div className="bg-muted/60 border-t-2">
                     <div className="grid grid-cols-4 gap-2 px-2.5 pt-2 pb-1.5 text-xs">
-                      <div>
-                        <p className="text-muted-foreground tracking-wide uppercase">Bags</p>
-                        <p className="text-sm font-bold tabular-nums">{totals.tBags ? qty(totals.tBags) : '—'}</p>
-                      </div>
-                      <div>
-                        <p className="text-muted-foreground tracking-wide uppercase">Pcs</p>
-                        <p className="text-sm font-bold tabular-nums">{totals.tPcs ? qty(totals.tPcs) : '—'}</p>
-                      </div>
-                      <div>
-                        <p className="text-muted-foreground tracking-wide uppercase">Kgs</p>
-                        <p className="text-sm font-bold tabular-nums">{totals.tKgs ? qty(totals.tKgs) : '—'}</p>
-                      </div>
-                      <div>
-                        <p className="text-muted-foreground tracking-wide uppercase">Box</p>
-                        <p className="text-sm font-bold tabular-nums">{totals.tBox ? qty(totals.tBox) : '—'}</p>
-                      </div>
+                      {qtyOrder.map((f) => (
+                        <div key={f}>
+                          <p className="text-muted-foreground tracking-wide uppercase">{QTY_COL_LABEL[f]}</p>
+                          <p className="text-sm font-bold tabular-nums">{qtyTotal(totals, f) ? qty(qtyTotal(totals, f)) : '—'}</p>
+                        </div>
+                      ))}
                     </div>
                     <div className="flex items-center justify-between border-t px-2.5 py-1.5 text-sm font-semibold">
                       <span className="text-muted-foreground tracking-wide uppercase">Total · {rows.length} item(s)</span>

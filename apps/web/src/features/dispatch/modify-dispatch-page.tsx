@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Loader2, Pencil, Search, Trash2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
-import { DISPATCH_STATUSES, RESOURCES, type DispatchDto } from '@oms/shared';
+import { DISPATCH_STATUSES, RESOURCES, qtyOrderForCategory, type DispatchDto, type QtyField } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn, shortDispatchCode, shortOrderCode } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useColumnOrder } from '@/hooks/use-column-order';
+import { useOrderQtyLayout } from '@/features/settings/use-settings';
 import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
 import { RecordHistory } from '@/components/common/record-history';
@@ -395,7 +396,17 @@ export function ModifyDispatchPage() {
   );
 }
 
-const EDIT_QTY = [['bags', 'Bags'], ['pcs', 'Pcs'], ['gram', 'Kgs'], ['box', 'Box']] as const;
+/** Maps the shared QtyField key ('kgs') to this dialog's own form key ('gram'). */
+const QTY_FIELD_INFO: Record<QtyField, { key: 'bags' | 'pcs' | 'gram' | 'box'; label: string }> = {
+  bags: { key: 'bags', label: 'Bags' },
+  pcs: { key: 'pcs', label: 'Pcs' },
+  kgs: { key: 'gram', label: 'Kgs' },
+  box: { key: 'box', label: 'Box' },
+};
+/** Bags/Pcs/Kgs/Box in the order configured for this dispatch's product category
+ *  (Settings → Order quantity fields) — same layout as the New Order form. */
+const orderedQtyFields = (qtyLayout: Parameters<typeof qtyOrderForCategory>[0], pCategory: string | null) =>
+  qtyOrderForCategory(qtyLayout, pCategory).map((f) => QTY_FIELD_INFO[f]);
 
 /** ISO datetime → the `YYYY-MM-DD` an `<input type="date">` needs, in local time
  *  (a plain `.slice(0, 10)` on an ISO string would use UTC and can land on the
@@ -409,6 +420,8 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
   const { can } = usePermissions();
   const canApprove = can('dispatch:approve');
   const update = useUpdateDispatch(dispatch.id);
+  const { data: qtyLayout } = useOrderQtyLayout();
+  const qtyFields = useMemo(() => orderedQtyFields(qtyLayout, dispatch.pCategory), [qtyLayout, dispatch.pCategory]);
   const s = (v: number | null) => (v == null ? '' : String(v));
   const [form, setForm] = useState({
     bags: s(dispatch.bags),
@@ -514,7 +527,7 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
           <div className="space-y-1.5">
             <Label className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">Quantities</Label>
             <div className="grid grid-cols-4 gap-2.5">
-              {EDIT_QTY.map(([k, label]) => (
+              {qtyFields.map(({ key: k, label }) => (
                 <div key={k} className="space-y-1">
                   <Label className="text-[11px] font-medium">{label}</Label>
                   <Input

@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Camera, CalendarClock, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Filter, Flame, Hourglass, Loader2, Package, PackageCheck, RotateCcw, TriangleAlert, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { type DispatchStatus, type PendingLineDto } from '@oms/shared';
+import { qtyOrderForCategory, type DispatchStatus, type PendingLineDto, type QtyField } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn, shortOrderCode } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useColumnOrder } from '@/hooks/use-column-order';
+import { useOrderQtyLayout } from '@/features/settings/use-settings';
 import { LiveLinePhotos } from '../orders/line-photos';
 import { useOrderItemPhotos } from '../orders/use-orders';
 import { useConfirm } from '@/components/common/confirm';
@@ -664,22 +665,19 @@ function DispatchTruckAnimation({ code, onDone }: { code: string; onDone: () => 
   );
 }
 
-const QTY_FIELDS = [
-  ['bags', 'Bags', 'remBags'],
-  ['pcs', 'Pcs', 'remPcs'],
-  ['gram', 'Kgs', 'remKgs'],
-  ['box', 'Box', 'remBox'],
-] as const;
-/** calField → the QTY_FIELDS key that's actually priced, so it can be moved to
- *  the front of the grid — the packing floor should see the one field that
- *  matters for this line first, not wherever it happens to fall by default. */
-const PRICED_FIELD: Record<string, (typeof QTY_FIELDS)[number][0]> = { PCS: 'pcs', KGS: 'gram' };
-const orderedQtyFields = (calField: string | null) => {
-  const priced = calField ? PRICED_FIELD[calField.toUpperCase()] : undefined;
-  if (!priced) return QTY_FIELDS;
-  const front = QTY_FIELDS.find((f) => f[0] === priced)!;
-  return [front, ...QTY_FIELDS.filter((f) => f[0] !== priced)];
+/** Maps the shared QtyField key ('kgs') to this sheet's own field name ('gram')
+ *  + its form key + remaining-quantity key. */
+const QTY_FIELD_INFO: Record<QtyField, { key: 'bags' | 'pcs' | 'gram' | 'box'; label: string; remKey: 'remBags' | 'remPcs' | 'remKgs' | 'remBox' }> = {
+  bags: { key: 'bags', label: 'Bags', remKey: 'remBags' },
+  pcs: { key: 'pcs', label: 'Pcs', remKey: 'remPcs' },
+  kgs: { key: 'gram', label: 'Kgs', remKey: 'remKgs' },
+  box: { key: 'box', label: 'Box', remKey: 'remBox' },
 };
+/** Bags/Pcs/Kgs/Box in the order configured for this line's product category
+ *  (Settings → Order quantity fields) — the same layout the New Order form uses,
+ *  so the packing floor sees quantities arranged the same way end to end. */
+const orderedQtyFields = (qtyLayout: Parameters<typeof qtyOrderForCategory>[0], pCategory: string | null) =>
+  qtyOrderForCategory(qtyLayout, pCategory).map((f) => QTY_FIELD_INFO[f]);
 
 /** Slide-over to dispatch a pending order line — a native bottom sheet on phones,
  *  a right side-panel on desktop. Qty fields start blank. */
@@ -704,6 +702,10 @@ function DispatchSheet({
   // and the sheet should fit with minimal scrolling. Desktop keeps it open.
   const [photosOpen, setPhotosOpen] = useState(!isMobile);
   const { data: existingPhotos } = useOrderItemPhotos(line.orderItemId);
+  // Bags/Pcs/Kgs/Box entry order follows this line's product category, per
+  // Settings → Order quantity fields — same layout as the New Order form.
+  const { data: qtyLayout } = useOrderQtyLayout();
+  const qtyFields = useMemo(() => orderedQtyFields(qtyLayout, line.pCategory), [qtyLayout, line.pCategory]);
   const [form, setForm] = useState({
     bags: '',
     pcs: '',
@@ -864,7 +866,7 @@ function DispatchSheet({
         <div>
           <p className="text-muted-foreground mb-2 text-xs">Enter what's going out — tap <span className="text-primary font-semibold">MAX</span> to fill the remaining amount.</p>
           <div className="grid grid-cols-2 gap-2">
-            {orderedQtyFields(line.calField).map(([k, label, remKey], i) => {
+            {qtyFields.map(({ key: k, label, remKey }, i) => {
               const rem = line[remKey] ?? 0;
               return (
                 <div key={k} className="bg-card space-y-1 rounded-xl border p-2">
