@@ -6,6 +6,7 @@ import { getApiErrorMessage } from '@/lib/api';
 import { parseExcelFile } from '@/lib/excel';
 import { cn, formatDateShort, formatDateTime } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useColumnOrder } from '@/hooks/use-column-order';
 import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
@@ -332,6 +333,8 @@ function TransporterDialog({
     if (isEdit) update.mutate(input, opts);
     else create.mutate(input, opts);
   };
+
+  useSaveShortcut(submit);
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>

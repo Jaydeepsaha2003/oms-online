@@ -32,6 +32,7 @@ export function Combo({
 
 /** Fixed-list searchable dropdown (pick from options only). */
 export function NativeSelect({
+  id,
   value,
   onChange,
   options,
@@ -43,6 +44,8 @@ export function NativeSelect({
   renderOption,
   listHeader,
 }: {
+  /** Passed to the underlying field so a `<Label htmlFor>` can point at it. */
+  id?: string;
   value: string;
   onChange: (v: string) => void;
   options: (string | ComboboxOption)[];
@@ -56,6 +59,7 @@ export function NativeSelect({
 }) {
   return (
     <Combobox
+      id={id}
       value={value}
       onChange={onChange}
       options={options}

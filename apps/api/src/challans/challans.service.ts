@@ -196,7 +196,7 @@ export class ChallansService {
     const ordered = ids.map((id) => byId.get(id)).filter((d): d is (typeof dispatches)[number] => !!d);
 
     const transName = customer?.transportName ?? null;
-    const { gstByCat, rateFor } = await this.rateMaps(customerName, transName);
+    const { gstFor, rateFor } = await this.rateMaps(customerName, transName);
 
     const items = ordered.map((d) => {
       const cat = (d.pCategory ?? '').toUpperCase();
@@ -218,17 +218,17 @@ export class ChallansService {
         amount: Math.round(qty * price * 100) / 100,
         pCategory: d.pCategory,
         comment: d.comment,
-        gstRate: gstByCat.get(cat) ?? 0,
+        gstRate: gstFor(cat),
         freightRate: rateFor(cat, 'FREIGHT'),
         packingRate: rateFor(cat, 'PACKING'),
       };
     });
 
     const tBox = items.reduce((a, i) => a + n(i.box), 0);
-    const freight = round5(items.reduce((a, i) => a + n(i.bags) * i.freightRate, 0));
-    const packing = round5(items.reduce((a, i) => a + n(i.bags) * i.packingRate, 0));
+    const freight = round5(items.reduce((a, i) => a + n(i.bags) * n(i.freightRate), 0));
+    const packing = round5(items.reduce((a, i) => a + n(i.bags) * n(i.packingRate), 0));
     const pouch = Math.round(tBox * n(customer?.boxRate) * 100) / 100;
-    const gst = Math.max(0, ...items.map((i) => i.gstRate));
+    const gst = Math.max(0, ...items.map((i) => n(i.gstRate)));
     const isScrap = (customer?.category ?? '').toUpperCase() === 'SCRAP';
 
     const billingAddress = [customer?.partyName, customer?.city, customer?.state, customer?.region]
@@ -460,12 +460,15 @@ export class ChallansService {
       this.prisma.transRate.findMany({ where: { customerName, type: { in: ['FREIGHT', 'PACKING'] } } }),
     ]);
     const gstByCat = new Map(gstRates.map((g) => [(g.category ?? '').toUpperCase(), n(g.rate)]));
-    const rateFor = (cat: string, type: string): number => {
+    // null = no master row at all for this category (+ transport, for freight/packing)
+    // — genuinely unconfigured, distinct from a configured rate of 0.
+    const gstFor = (cat: string): number | null => (gstByCat.has(cat) ? gstByCat.get(cat)! : null);
+    const rateFor = (cat: string, type: string): number | null => {
       const matches = transRates.filter((t) => (t.category ?? '').toUpperCase() === cat && t.type === type);
       const preferred = matches.find((t) => transName && t.transportName === transName) ?? matches[0];
-      return n(preferred?.rate);
+      return preferred ? n(preferred.rate) : null;
     };
-    return { gstByCat, rateFor };
+    return { gstByCat, gstFor, rateFor };
   }
 
   /** Everything the form needs to EDIT a saved challan: the stored challan, the
@@ -475,7 +478,7 @@ export class ChallansService {
     const challan = await this.findOne(id);
     const draft = await this.draft({ customerName: challan.customerName });
     const customer = await this.prisma.customer.findFirst({ where: { partyName: challan.customerName } });
-    const { gstByCat, rateFor } = await this.rateMaps(challan.customerName, customer?.transportName ?? null);
+    const { gstFor, rateFor } = await this.rateMaps(challan.customerName, customer?.transportName ?? null);
 
     const dispIds = challan.items.map((i) => i.dispatchId).filter((x): x is number => x != null);
     const disp = dispIds.length ? await this.prisma.dispatch.findMany({ where: { id: { in: dispIds } }, select: { id: true, pCategory: true } }) : [];
@@ -498,7 +501,7 @@ export class ChallansService {
         amount: it.amount ?? 0,
         pCategory: it.pCategory,
         comment: it.comment,
-        gstRate: gstByCat.get(cat) ?? n(challan.gst),
+        gstRate: gstFor(cat) ?? n(challan.gst),
         freightRate: rateFor(cat, 'FREIGHT'),
         packingRate: rateFor(cat, 'PACKING'),
       };

@@ -62,6 +62,13 @@ export const MENU: MenuNode[] = [
         permission: perm(RESOURCES.REPORT, ACTIONS.VIEW),
       },
       {
+        id: 'report-summary-analysis',
+        label: 'Summary Analysis',
+        to: '/reports/summary',
+        icon: 'Lightbulb',
+        permission: perm(RESOURCES.REPORT, ACTIONS.VIEW),
+      },
+      {
         id: 'report-sales',
         label: 'Sales & Revenue',
         to: '/reports/sales',
@@ -349,6 +356,7 @@ export const MENU: MenuNode[] = [
       perm(RESOURCES.CHEQUE, ACTIONS.VIEW),
       perm(RESOURCES.OPENING_BALANCE, ACTIONS.VIEW),
       perm(RESOURCES.BANK_ACCOUNT, ACTIONS.VIEW),
+      perm(RESOURCES.DAYBOOK, ACTIONS.VIEW),
     ],
     children: [
       {
@@ -386,6 +394,13 @@ export const MENU: MenuNode[] = [
         to: '/account/party-ledger',
         icon: 'BookText',
         permission: perm(RESOURCES.PARTY_LEDGER, ACTIONS.VIEW),
+      },
+      {
+        id: 'daybook',
+        label: 'Daybook',
+        to: '/account/daybook',
+        icon: 'BookOpenCheck',
+        permission: perm(RESOURCES.DAYBOOK, ACTIONS.VIEW),
       },
       {
         id: 'manage-cheques',

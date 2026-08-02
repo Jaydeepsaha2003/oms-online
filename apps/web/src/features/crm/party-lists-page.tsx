@@ -15,6 +15,7 @@ import {
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useConfirm } from '@/components/common/confirm';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { NativeSelect } from '@/components/common/combo';
@@ -257,6 +258,8 @@ function ListBuilder({ lists, editing, onClose }: { lists: PartyListDef[]; editi
     const next = editing ? lists.map((l) => (l.id === editing.id ? def : l)) : [...lists, def];
     persist(next);
   };
+
+  useSaveShortcut(submit);
 
   const remove = async () => {
     if (!editing) return;

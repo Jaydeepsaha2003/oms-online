@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import type { BusinessOverview, CollectionsReport, FulfilmentReport, PartyIntelReport, PatternsReport, ProductReport, ReportFilters, ReportMeasure, SalesReport } from '@oms/shared';
+import type { BusinessOverview, CollectionsReport, FulfilmentReport, PartyIntelReport, PatternsReport, ProductReport, ReportFilters, ReportMeasure, SalesReport, SummaryAnalysisReport } from '@oms/shared';
 import { http } from '@/lib/api';
 
 const KEY = ['reports'] as const;
@@ -10,6 +10,10 @@ function params(f: ReportFilters, extra?: Record<string, unknown>): Record<strin
   const p: Record<string, unknown> = { ...extra };
   for (const [k, v] of Object.entries(f)) if (v != null && v !== '') p[k] = v;
   return p;
+}
+
+export function useSummaryAnalysis(f: ReportFilters = {}) {
+  return useQuery({ queryKey: [...KEY, 'summary-analysis', f], queryFn: () => http.get<SummaryAnalysisReport>('/reports/summary-analysis', { params: params(f) }), ...opts });
 }
 
 /** §8.5 — Business Overview. */

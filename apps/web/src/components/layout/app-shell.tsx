@@ -37,6 +37,12 @@ const FLUSH_ROUTES = [
   /^\/customers$/,
   /^\/transporters$/,
   /^\/account\/party-ledger$/,
+  /^\/account\/payment$/,
+  /^\/account\/advances$/,
+  /^\/account\/discount$/,
+  /^\/account\/bank-accounts$/,
+  /^\/account\/opening-balance$/,
+  /^\/account\/daybook$/,
 ];
 const isFlush = (pathname: string) => FLUSH_ROUTES.some((re) => re.test(pathname));
 
@@ -124,7 +130,7 @@ export function AppShell() {
       <aside
         className={cn(
           'hidden shrink-0 transition-[width] duration-200 md:block',
-          isPinned ? 'w-72' : 'w-20',
+          isPinned ? 'w-72' : 'w-16',
         )}
       >
         <div
@@ -133,7 +139,7 @@ export function AppShell() {
           onPointerLeave={() => setHovered(false)}
           className={cn(
             'fixed top-0 left-0 z-50 h-screen border-r bg-sidebar transition-[width] duration-200',
-            expanded ? 'w-72' : 'w-20',
+            expanded ? 'w-72' : 'w-16',
             hovered && !isPinned && 'shadow-2xl shadow-blue-950/25',
           )}
         >

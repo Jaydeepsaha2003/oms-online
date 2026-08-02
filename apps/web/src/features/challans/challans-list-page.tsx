@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  EllipsisVertical,
   FileSpreadsheet,
   Filter,
   Layers,
@@ -32,6 +33,7 @@ import { ColumnSettings } from '@/components/common/column-settings';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { DateRangeCalendar } from '@/components/common/date-range-calendar';
 import { Button } from '@/components/ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -62,7 +64,8 @@ const STATUSES = [
 ] as const;
 
 // Persist the list's filters so they survive navigating into a challan and back.
-const FILTER_KEY = 'oms:challans-filters';
+const FILTER_KEY = 'oms:challans-filters:v2';
+const DEFAULT_PRESET = 'This Year';
 interface ChallanFilters {
   searchInput: string;
   dateFrom: string;
@@ -100,16 +103,19 @@ export function ChallansListPage() {
   const canUpdate = can('challan:update');
   const canDelete = can('challan:delete');
   const canPrint = can('challan:print');
+  const initialFilters = useMemo(() => loadFilters(), []);
+  const defaultFy = useMemo(() => presetRange(DEFAULT_PRESET)!, []);
 
   // Restore the last-used filters (kept in sessionStorage) so they survive a
-  // round-trip into a challan's edit form and back.
-  const [searchInput, setSearchInput] = useState(() => loadFilters().searchInput ?? '');
-  const [search, setSearch] = useState(() => (loadFilters().searchInput ?? '').trim());
-  const [dateFrom, setDateFrom] = useState(() => loadFilters().dateFrom ?? '');
-  const [dateTo, setDateTo] = useState(() => loadFilters().dateTo ?? '');
-  const [preset, setPreset] = useState(() => loadFilters().preset ?? '');
-  const [status, setStatus] = useState(() => loadFilters().status ?? '');
-  const [page, setPage] = useState(() => loadFilters().page ?? 1);
+  // round-trip into a challan's edit form and back. A fresh visit starts at the
+  // current Indian financial year (April through today).
+  const [searchInput, setSearchInput] = useState(() => initialFilters.searchInput ?? '');
+  const [search, setSearch] = useState(() => (initialFilters.searchInput ?? '').trim());
+  const [dateFrom, setDateFrom] = useState(() => initialFilters.dateFrom ?? defaultFy.from);
+  const [dateTo, setDateTo] = useState(() => initialFilters.dateTo ?? defaultFy.to);
+  const [preset, setPreset] = useState(() => initialFilters.preset ?? DEFAULT_PRESET);
+  const [status, setStatus] = useState(() => initialFilters.status ?? '');
+  const [page, setPage] = useState(() => initialFilters.page ?? 1);
   // Phones: date range / quick range / status live behind this Filter icon.
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [dateOpen, setDateOpen] = useState(false);
@@ -205,14 +211,14 @@ export function ChallansListPage() {
   const clearAll = () => {
     setSearchInput('');
     setSearch('');
-    setDateFrom('');
-    setDateTo('');
-    setPreset('');
+    setDateFrom(defaultFy.from);
+    setDateTo(defaultFy.to);
+    setPreset(DEFAULT_PRESET);
     setStatus('');
     setPage(1);
-    sessionStorage.removeItem(FILTER_KEY);
   };
-  const hasFilters = !!(search || dateFrom || dateTo || preset || status);
+  const isDefaultFy = preset === DEFAULT_PRESET && dateFrom === defaultFy.from && dateTo === defaultFy.to;
+  const hasFilters = !!(search || status || !isDefaultFy);
 
   const setRowStatus = (c: ChallanDto, next: 'CONFIRMED' | 'CANCELLED') =>
     updateStatus.mutate(
@@ -321,48 +327,72 @@ export function ChallansListPage() {
   // rendered separately via the DataTable's `actions` prop.
   const cols = useColumnOrder('challans', columns);
 
-  /** One row-action icon button — vivid on hover, muted at rest. */
-  const ActionBtn = ({ onClick, title, tone, children }: { onClick: () => void; title: string; tone: string; children: React.ReactNode }) => (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      aria-label={title}
-      className={cn('flex size-6 cursor-pointer items-center justify-center rounded-[4px] text-slate-400 transition-colors', tone)}
-    >
-      {children}
-    </button>
-  );
-
-  const rowActions = (r: ChallanDto) => (
-    <div className="flex items-center justify-end gap-1">
-      {canPrint && (
-        <ActionBtn onClick={() => navigate(`/challans/${r.id}/bill`)} title="Print / PDF" tone="hover:bg-sky-50 hover:text-sky-600">
-          <Printer className="size-4" />
-        </ActionBtn>
-      )}
-      {canUpdate && (
-        <ActionBtn onClick={() => navigate(`/challans/${r.id}/edit`)} title="Edit" tone="hover:bg-indigo-50 hover:text-indigo-600">
-          <Pencil className="size-4" />
-        </ActionBtn>
-      )}
-      {canUpdate &&
-        (r.challanStatus === 'CONFIRMED' ? (
-          <ActionBtn onClick={() => setRowStatus(r, 'CANCELLED')} title="Mark Cancelled" tone="hover:bg-rose-50 hover:text-rose-600">
-            <XCircle className="size-4" />
-          </ActionBtn>
-        ) : (
-          <ActionBtn onClick={() => setRowStatus(r, 'CONFIRMED')} title="Mark Confirmed" tone="hover:bg-emerald-50 hover:text-emerald-600">
-            <CheckCircle2 className="size-4" />
-          </ActionBtn>
-        ))}
-      {canDelete && (
-        <ActionBtn onClick={() => remove(r)} title="Delete" tone="hover:bg-red-50 hover:text-destructive">
-          <Trash2 className="size-4" />
-        </ActionBtn>
-      )}
-    </div>
-  );
+  const rowActions = (r: ChallanDto) => {
+    const confirmed = r.challanStatus === 'CONFIRMED';
+    return (
+      <div className="flex justify-end">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7 rounded-full border border-transparent text-slate-600 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 data-[state=open]:border-indigo-300 data-[state=open]:bg-indigo-100 data-[state=open]:text-indigo-800"
+              aria-label={`Actions for challan ${r.code}`}
+              title="Challan actions"
+            >
+              <EllipsisVertical className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            sideOffset={6}
+            aria-label={`Actions for challan ${r.code}`}
+            className="w-64 overflow-hidden rounded-lg border-slate-200 p-0 font-sans shadow-xl shadow-slate-900/15"
+          >
+            <DropdownMenuLabel className="border-b border-slate-200 bg-slate-50 px-3 py-2.5">
+              <span className="block text-[10px] font-bold uppercase tracking-wider text-indigo-600">Challan actions</span>
+              <span className="mt-0.5 block truncate text-[13px] font-bold text-slate-900">{r.code}</span>
+              <span className="mt-0.5 block truncate text-[11px] font-medium text-slate-500">{r.customerName}</span>
+            </DropdownMenuLabel>
+            <div className="p-1.5">
+            {canPrint && (
+              <DropdownMenuItem className="rounded-md px-2.5 py-2 font-medium" onSelect={() => navigate(`/challans/${r.id}/bill`)}>
+                <Printer className="text-blue-600" /> Print / PDF
+              </DropdownMenuItem>
+            )}
+            {canUpdate && (
+              <DropdownMenuItem className="rounded-md px-2.5 py-2 font-medium" onSelect={() => navigate(`/challans/${r.id}/edit`)}>
+                <Pencil className="text-amber-600" /> Edit challan
+              </DropdownMenuItem>
+            )}
+            {canUpdate && (
+              <>
+                <DropdownMenuSeparator className="my-1.5" />
+                {confirmed ? (
+                  <DropdownMenuItem className="rounded-md px-2.5 py-2 font-medium" variant="destructive" onSelect={() => setRowStatus(r, 'CANCELLED')}>
+                    <XCircle /> Mark cancelled
+                  </DropdownMenuItem>
+                ) : (
+                  <DropdownMenuItem className="rounded-md px-2.5 py-2 font-medium text-emerald-700 focus:bg-emerald-50 focus:text-emerald-800" onSelect={() => setRowStatus(r, 'CONFIRMED')}>
+                    <CheckCircle2 className="text-emerald-600" /> Mark confirmed
+                  </DropdownMenuItem>
+                )}
+              </>
+            )}
+            {canDelete && (
+              <>
+                {(canPrint || canUpdate) && <DropdownMenuSeparator className="my-1.5" />}
+                <DropdownMenuItem className="rounded-md px-2.5 py-2 font-medium" variant="destructive" onSelect={() => remove(r)}>
+                  <Trash2 /> Delete permanently
+                </DropdownMenuItem>
+              </>
+            )}
+            </div>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    );
+  };
 
   // Phones: one card per challan (mirrors the Quotations/Bookings mobile list).
   const challanMobileCard = (r: ChallanDto) => {
@@ -407,32 +437,8 @@ export function ChallansListPage() {
             </p>
           </div>
         </div>
-        <div className="flex items-center justify-end gap-1 border-t pt-2" onClick={(e) => e.stopPropagation()}>
-          {canPrint && (
-            <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(`/challans/${r.id}/bill`)} aria-label="Print / PDF">
-              <Printer className="size-4" />
-            </Button>
-          )}
-          {canUpdate && (
-            <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(`/challans/${r.id}/edit`)} aria-label="Edit">
-              <Pencil className="size-4" />
-            </Button>
-          )}
-          {canUpdate &&
-            (r.challanStatus === 'CONFIRMED' ? (
-              <Button variant="ghost" size="icon" className="size-8 text-rose-600 hover:bg-rose-50 hover:text-rose-700" onClick={() => setRowStatus(r, 'CANCELLED')} aria-label="Mark Cancelled">
-                <XCircle className="size-4" />
-              </Button>
-            ) : (
-              <Button variant="ghost" size="icon" className="size-8 text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700" onClick={() => setRowStatus(r, 'CONFIRMED')} aria-label="Mark Confirmed">
-                <CheckCircle2 className="size-4" />
-              </Button>
-            ))}
-          {canDelete && (
-            <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => remove(r)} aria-label="Delete">
-              <Trash2 className="size-4" />
-            </Button>
-          )}
+        <div className="flex items-center justify-end border-t pt-2" onClick={(e) => e.stopPropagation()}>
+          {rowActions(r)}
         </div>
       </div>
     );
@@ -470,10 +476,11 @@ export function ChallansListPage() {
     </div>
   );
 
-  const presetPills = (
-    <div className="flex flex-wrap items-center gap-1">
+  const presetOptions = (
+    <div className="grid grid-cols-2 gap-1 sm:grid-cols-1">
       {PRESETS.map((p) => {
         const on = preset === p;
+        const label = p === 'This Year' ? 'This FY' : p === 'Last Year' ? 'Last FY' : p;
         return (
           <button
             key={p}
@@ -481,56 +488,64 @@ export function ChallansListPage() {
             onClick={() => (on ? clearDates() : applyPreset(p))}
             aria-pressed={on}
             className={cn(
-              'cursor-pointer rounded-[4px] border px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap transition-colors duration-150',
+              'flex h-8 cursor-pointer items-center rounded-[4px] border px-2.5 text-left text-[11.5px] font-semibold whitespace-nowrap transition-colors duration-150',
               on
-                ? 'border-primary bg-primary text-primary-foreground shadow-sm'
-                : 'border-border bg-muted/40 text-slate-600 hover:border-primary/40 hover:bg-accent hover:text-accent-foreground',
+                ? 'border-indigo-600 bg-indigo-600 text-white shadow-sm'
+                : 'border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-100 hover:text-slate-900',
             )}
           >
-            {p}
+            {label}
           </button>
         );
       })}
     </div>
   );
 
-  const dateLabel = preset || (dateFrom || dateTo ? `${dateFrom ? formatDate(dateFrom) : '…'} → ${dateTo ? formatDate(dateTo) : '…'}` : 'Any date');
+  const datePresetLabel = preset === 'This Year' ? 'This FY' : preset === 'Last Year' ? 'Last FY' : preset;
+  const dateLabel = datePresetLabel || (dateFrom || dateTo ? `${dateFrom ? formatDate(dateFrom) : '…'} → ${dateTo ? formatDate(dateTo) : '…'}` : 'Any date');
 
   const datePanel = (
-    <div className="w-[15.5rem] space-y-2">
-      {presetPills}
-      <div className="border-t pt-2">
-        <DateRangeCalendar
-          from={dateFrom}
-          to={dateTo}
-          onChange={(f, t) => {
-            setDateFrom(f);
-            setDateTo(t);
-            setPreset('');
-            setPage(1);
-          }}
-        />
+    <div className="w-full sm:w-[31rem]">
+      <div className="border-b bg-slate-50 px-3 py-2.5">
+        <div className="flex items-center gap-2">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-[6px] bg-indigo-100 text-indigo-700">
+            <CalendarRange className="size-4" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-[12.5px] font-bold text-slate-900">Challan date range</p>
+            <p className="truncate text-[11px] font-medium text-slate-500">
+              {dateActive ? `${dateFrom ? formatDate(dateFrom) : 'Start date'} to ${dateTo ? formatDate(dateTo) : 'End date'}` : 'Showing challans from all dates'}
+            </p>
+          </div>
+        </div>
       </div>
-      <div className="flex items-center justify-between gap-2 border-t pt-2">
-        <span className="min-w-0 truncate text-[11.5px] font-semibold">
-          {dateActive ? (
-            <>
-              {dateFrom ? formatDate(dateFrom) : '…'} <span className="text-muted-foreground">→</span> {dateTo ? formatDate(dateTo) : '…'}
-            </>
-          ) : (
-            <span className="text-muted-foreground font-medium">All dates</span>
-          )}
-        </span>
-        <span className="flex items-center gap-1">
-          {dateActive && (
-            <Button variant="ghost" size="sm" className="h-7 px-2 text-[12px] font-semibold text-amber-700 hover:bg-amber-50" onClick={clearDates}>
-              <X className="size-3.5" /> Clear
-            </Button>
-          )}
-          <Button size="sm" className="h-7 shrink-0 px-3 text-[12px] font-semibold" onClick={() => setDateOpen(false)}>
-            Done
+      <div className="grid sm:grid-cols-[9rem_1fr]">
+        <div className="border-b bg-slate-50/60 p-2 sm:border-r sm:border-b-0">
+          <p className="mb-1.5 px-2 text-[9.5px] font-bold uppercase tracking-wider text-slate-400">Quick ranges</p>
+          {presetOptions}
+        </div>
+        <div className="p-3">
+          <DateRangeCalendar
+            from={dateFrom}
+            to={dateTo}
+            onChange={(f, t) => {
+              setDateFrom(f);
+              setDateTo(t);
+              setPreset('');
+              setPage(1);
+            }}
+          />
+        </div>
+      </div>
+      <div className="flex items-center justify-end gap-1.5 border-t bg-slate-50 px-3 py-2">
+        {dateActive && (
+          <Button variant="ghost" size="sm" className="h-8 px-2.5 text-[12px] font-semibold text-slate-600 hover:bg-slate-200 hover:text-slate-900" onClick={clearDates}>
+            <X className="size-3.5" /> Clear
           </Button>
-        </span>
+        )}
+        <Button size="sm" className="h-8 shrink-0 bg-indigo-600 px-4 text-[12px] font-semibold hover:bg-indigo-700" onClick={() => setDateOpen(false)}>
+          Done
+        </Button>
       </div>
     </div>
   );
@@ -599,7 +614,7 @@ export function ChallansListPage() {
                 <ChevronDown className="size-3 shrink-0 opacity-60" />
               </Button>
             </PopoverTrigger>
-            <PopoverContent align="start" className="font-poppins w-auto max-w-[calc(100vw-1.5rem)] p-2.5">
+            <PopoverContent align="start" className="font-poppins w-auto max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-lg border-slate-200 p-0 shadow-xl shadow-slate-900/15">
               {datePanel}
             </PopoverContent>
           </Popover>
@@ -720,6 +735,7 @@ export function ChallansListPage() {
           fill
           hideSortIcon
           actions={rowActions}
+          actionsHeader={null}
           mobileCard={challanMobileCard}
           emptyText="No challans yet — create one from Pending Challan."
           className={[
@@ -733,7 +749,8 @@ export function ChallansListPage() {
             // matching override below drops them to size-6 so the tighter `py-1`
             // padding actually takes effect (the row is as tall as its tallest cell).
             '[&_td]:py-1 [&_td]:px-3 [&_th]:px-3',
-            '[&_tbody_button:not([role=switch]):not([role=checkbox])]:size-6',
+            '[&_thead_th:last-child]:w-16 [&_tbody_td:last-child]:w-16',
+            '[&_tbody_button:not([role=switch]):not([role=checkbox])]:size-7',
             // Full grey grid, both directions (dark variants because these paint the
             // td, out of reach of the global neutral remap).
             '[&_tbody_tr]:border-b [&_tbody_tr]:border-slate-200 dark:[&_tbody_tr]:border-white/10',

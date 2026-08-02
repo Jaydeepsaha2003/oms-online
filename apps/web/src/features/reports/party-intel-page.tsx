@@ -47,7 +47,7 @@ export function PartyIntelPage() {
           <ReportSummary
             loading={isLoading}
             points={data ? [
-              { text: <><strong>{data.concentration?.totalParties ?? 0}</strong> revenue-earning parties; the top <strong>{data.concentration?.topParties ?? 0}</strong> drive <strong>{data.concentration?.topShare != null ? Math.round(data.concentration.topShare * 100) : '—'}%</strong> of revenue.</>, tone: 'info' },
+              { text: <><strong>{data.concentration?.totalParties ?? 0}</strong> parties earned revenue in the selected period; the top <strong>{data.concentration?.topParties ?? 0}</strong> drive <strong>{data.concentration?.topShare != null ? Math.round(data.concentration.topShare * 100) : '—'}%</strong> of it.</>, tone: 'info' },
               { text: <><strong>{seg('VIP')}</strong> VIPs contribute <strong>{inrCompact((data.segmentRevenue ?? []).find((s) => s.name === 'VIP')?.value ?? 0)}</strong> — protect these relationships.</>, tone: 'good' },
               { text: <><strong>{seg('At-risk') + seg('Dormant')}</strong> parties are slipping (at-risk or dormant) — worth re-engaging.</>, tone: seg('At-risk') + seg('Dormant') > 0 ? 'warn' : 'good' },
               { text: <><strong>{seg('Win-back')}</strong> high-value parties have gone quiet — prime win-back targets.</>, tone: seg('Win-back') > 0 ? 'bad' : 'good' },
@@ -81,7 +81,7 @@ export function PartyIntelPage() {
               {data?.concentration.topShare != null && (
                 <div className="bg-muted/50 mt-3 rounded-lg px-3 py-2 text-sm">
                   Top <strong>{data.concentration.topParties}</strong> parties (10%) drive{' '}
-                  <strong className="text-primary">{Math.round(data.concentration.topShare * 100)}%</strong> of all revenue.
+                  <strong className="text-primary">{Math.round(data.concentration.topShare * 100)}%</strong> of selected-period revenue.
                 </div>
               )}
               <div className="mt-3">
@@ -92,7 +92,7 @@ export function PartyIntelPage() {
           )}
         </ReportCard>
 
-        <ReportCard title="Parties — by lifetime revenue">
+        <ReportCard title="Parties — by selected-period revenue">
           {isLoading ? <div className="bg-muted h-64 animate-pulse rounded-lg" /> : (
             <div className="max-h-[440px] overflow-auto">
               <table className="w-full min-w-[600px] text-sm">

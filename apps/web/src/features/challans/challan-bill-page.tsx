@@ -29,6 +29,10 @@ const docTitle = 'SALES RECEIPT';
 const numf = (v: number | null | undefined) => (v ?? 0).toLocaleString('en-IN');
 // Whole rupees only — paise are dropped on the printed receipt.
 const money = (v: number | null | undefined) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+// Rate keeps its decimals (e.g. 92.5) — rounding it to a whole number silently
+// changes the actual agreed price shown on the receipt, unlike Amount which is
+// genuinely whole rupees.
+const rateFmt = (v: number | null | undefined) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
 // Follows the system-wide date format (dd-mm-yy by default).
 const fmtDate = (d?: string | null) => formatDate(d);
 
@@ -407,7 +411,7 @@ export function ChallanBillPage() {
                     <td style={{ ...td, textAlign: 'right' }}>{it.pcs ? numf(it.pcs) : '-'}</td>
                     <td style={{ ...td, textAlign: 'right' }}>{it.kgs ? numf(it.kgs) : '-'}</td>
                     <td style={{ ...td, textAlign: 'center' }}>{isKgs(it.unit) ? 'KGS' : it.unit || '-'}</td>
-                    <td style={{ ...td, textAlign: 'right' }}>{money(it.price)}</td>
+                    <td style={{ ...td, textAlign: 'right' }}>{rateFmt(it.price)}</td>
                     <td style={{ ...td, textAlign: 'right', fontWeight: 700 }}>{money(it.amount)}</td>
                   </tr>
                 );

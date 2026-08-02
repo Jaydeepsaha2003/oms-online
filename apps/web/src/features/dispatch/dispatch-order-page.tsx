@@ -511,18 +511,20 @@ export function DispatchOrderPage() {
         </SheetContent>
       </Sheet>
 
-      {/* One scroll region holds BOTH branches — the desktop table renders at its
-          natural height (no `fill`), it's just this wrapper that scrolls now. */}
+      {/* The table/card list takes the leftover height and scrolls WITHIN itself
+          (both directions on desktop), so the horizontal scrollbar sits right
+          under the visible rows instead of being pushed to the bottom of a
+          50-row table that only the page's own scroll could ever reach. */}
       <div
         className={cn(
-          'flex min-h-0 flex-1 flex-col overflow-y-auto',
+          'flex min-h-0 flex-1 flex-col',
           '[&_[data-slot=table-container]]:overscroll-x-contain',
           '[&_[data-slot=table-container]]:[scrollbar-width:thin]',
           '[&_[data-slot=table-container]]:[scrollbar-color:var(--color-slate-400)_var(--color-slate-100)]',
         )}
       >
         {/* Desktop: the data table. */}
-        <div className="hidden sm:block">
+        <div className="hidden min-h-0 flex-1 sm:flex sm:flex-col">
           <DataTable
             columns={cols.visibleColumns}
             rows={items}
@@ -530,9 +532,10 @@ export function DispatchOrderPage() {
             isLoading={isLoading}
             dense
             hideSortIcon
-            // Grow to fit every row (no inner scroll region) so the page's own
-            // scrollbar is the only vertical scrollbar — the list runs to the footer.
-            maxBodyHeight="max-h-none"
+            // Bounded to the space actually left on screen — its own scroll
+            // region (vertical + horizontal) stays fully visible on first
+            // paint, no scrolling the whole page down to reach it.
+            fill
             emptyText="No pending order lines — everything is dispatched."
             onRowClick={(r) => setActive(r)}
             className={[
@@ -555,8 +558,9 @@ export function DispatchOrderPage() {
 
         {/* Phones: engaging tap-to-dispatch cards with staggered entrance + press
             feedback — untouched. A small horizontal inset keeps the cards clear of
-            the screen edges. */}
-        <div className="space-y-3 px-2 sm:hidden sm:px-0">
+            the screen edges. Own scroll region now that the outer wrapper doesn't
+            scroll (that's the desktop table's job via `fill` above). */}
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-2 sm:hidden sm:px-0">
           <style>{DISPATCH_CARD_CSS}</style>
           {isLoading ? (
             [0, 1, 2, 3].map((i) => <div key={i} className="bg-muted/40 h-40 animate-pulse rounded-2xl border" />)

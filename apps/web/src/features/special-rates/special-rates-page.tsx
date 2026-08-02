@@ -14,6 +14,7 @@ import type {
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useConfirm } from '@/components/common/confirm';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { NativeSelect } from '@/components/common/combo';
@@ -463,6 +464,8 @@ function RatePanel({
     }
   };
 
+  useSaveShortcut(submit, canCreate);
+
   const onDelete = async (r: CustomerRateDto) => {
     const ok = await confirm({
       title: 'Remove override?',
@@ -600,6 +603,8 @@ function LogoPanel({
     }
   };
 
+  useSaveShortcut(submit, canCreate);
+
   const onDelete = async (r: CustomerLogoDto) => {
     const ok = await confirm({
       title: 'Remove restriction?',
@@ -717,6 +722,8 @@ function BagWeightPanel({
       save.mutate({ customerId: target.customerId, ...common }, { onSuccess: () => onSuccess('Bag weight saved'), onError });
     }
   };
+
+  useSaveShortcut(submit, canCreate);
 
   const onDelete = async (r: CustomerBagWeightDto) => {
     const ok = await confirm({

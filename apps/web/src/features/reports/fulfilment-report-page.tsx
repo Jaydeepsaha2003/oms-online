@@ -23,7 +23,7 @@ export function FulfilmentReportPage() {
           { text: <><strong>{pct(data.cancellationRate)}</strong> of orders get cancelled ({data.cancelledOrders} of {data.totalOrders}).</>, tone: (data.cancellationRate ?? 0) > 0.1 ? 'bad' : 'good' },
           { text: <>Average lead time is <strong>{data.avgLeadDays ?? '—'} days</strong> from order to completion.</>, tone: 'info' },
           { text: <><strong>{data.pendingOrders}</strong> orders are still open, <strong>{data.urgentOpen}</strong> of them marked urgent.</>, tone: data.urgentOpen > 0 ? 'warn' : 'info' },
-          ...((data.funnel?.length ?? 0) === 3 && (data.funnel[0]?.value ?? 0) > 0 ? [{ text: <>Of ordered value, <strong>{Math.round(((data.funnel[2]?.value ?? 0) / (data.funnel[0]?.value || 1)) * 100)}%</strong> has been billed so far.</>, tone: 'info' as const }] : []),
+          ...((data.funnel?.length ?? 0) === 3 ? [{ text: <>Selected-period value: <strong>{inrCompact(data.funnel[0]?.value ?? 0)}</strong> ordered, <strong>{inrCompact(data.funnel[1]?.value ?? 0)}</strong> dispatched and <strong>{inrCompact(data.funnel[2]?.value ?? 0)}</strong> billed.</>, tone: 'info' as const }] : []),
         ] : []}
       />
 
@@ -34,15 +34,11 @@ export function FulfilmentReportPage() {
         <Kpi label="Pending orders" value={data ? (data.pendingOrders ?? 0).toLocaleString('en-IN') : '—'} hint={data ? `${data.urgentOpen ?? 0} urgent` : undefined} loading={isLoading} tone="violet" />
       </div>
 
-      <ReportCard title="Value funnel — ordered → dispatched → billed">
+      <ReportCard title="Selected-period value — ordered, dispatched and billed">
         {isLoading ? <div className="bg-muted h-40 animate-pulse rounded-lg" /> : (
           <>
             <RankedBars data={(data?.funnel ?? []).map((f) => ({ name: f.stage, value: f.value }))} />
-            {data && (data.funnel?.length ?? 0) === 3 && (data.funnel[0]?.value ?? 0) > 0 && (
-              <p className="text-muted-foreground mt-2 text-xs">
-                {Math.round(((data.funnel[1]?.value ?? 0) / (data.funnel[0]?.value || 1)) * 100)}% of ordered value dispatched · {Math.round(((data.funnel[2]?.value ?? 0) / (data.funnel[0]?.value || 1)) * 100)}% billed.
-              </p>
-            )}
+            <p className="text-muted-foreground mt-2 text-xs">Each stage uses its own natural date in the selected period. Values are not treated as one linked order cohort.</p>
           </>
         )}
       </ReportCard>

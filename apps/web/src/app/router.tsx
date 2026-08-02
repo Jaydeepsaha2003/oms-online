@@ -52,12 +52,14 @@ const AdvancesPage = lazy(() => import('@/features/account/advances-page').then(
 const SalesDiscountPage = lazy(() => import('@/features/account/sales-discount-page').then((m) => ({ default: m.SalesDiscountPage })));
 const NotesPage = lazy(() => import('@/features/account/notes-page').then((m) => ({ default: m.NotesPage })));
 const PartyLedgerPage = lazy(() => import('@/features/account/party-ledger-page').then((m) => ({ default: m.PartyLedgerPage })));
+const DaybookPage = lazy(() => import('@/features/account/daybook-page').then((m) => ({ default: m.DaybookPage })));
 const SettingsPage = lazy(() => import('@/features/settings/settings-page').then((m) => ({ default: m.SettingsPage })));
 const UsersPage = lazy(() => import('@/features/admin/users-page').then((m) => ({ default: m.UsersPage })));
 const RolesPage = lazy(() => import('@/features/admin/roles-page').then((m) => ({ default: m.RolesPage })));
 const AuditLogPage = lazy(() => import('@/features/audit-log/audit-log-page').then((m) => ({ default: m.AuditLogPage })));
 const ApprovalsPage = lazy(() => import('@/features/approvals/approvals-page').then((m) => ({ default: m.ApprovalsPage })));
 const BusinessOverviewPage = lazy(() => import('@/features/reports/business-overview-page').then((m) => ({ default: m.BusinessOverviewPage })));
+const SummaryAnalysisPage = lazy(() => import('@/features/reports/summary-analysis-page').then((m) => ({ default: m.SummaryAnalysisPage })));
 const SalesReportPage = lazy(() => import('@/features/reports/sales-report-page').then((m) => ({ default: m.SalesReportPage })));
 const CollectionsReportPage = lazy(() => import('@/features/reports/collections-report-page').then((m) => ({ default: m.CollectionsReportPage })));
 const PartyIntelPage = lazy(() => import('@/features/reports/party-intel-page').then((m) => ({ default: m.PartyIntelPage })));
@@ -421,6 +423,14 @@ export function AppRoutes() {
             }
           />
           <Route
+            path="/account/daybook"
+            element={
+              <RequirePermission permission={perm(RESOURCES.DAYBOOK, ACTIONS.VIEW)}>
+                <DaybookPage />
+              </RequirePermission>
+            }
+          />
+          <Route
             path="/account/cheques"
             element={
               <RequirePermission permission={perm(RESOURCES.CHEQUE, ACTIONS.VIEW)}>
@@ -513,6 +523,14 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.REPORT, ACTIONS.VIEW)}>
                 <BusinessOverviewPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/reports/summary"
+            element={
+              <RequirePermission permission={perm(RESOURCES.REPORT, ACTIONS.VIEW)}>
+                <SummaryAnalysisPage />
               </RequirePermission>
             }
           />

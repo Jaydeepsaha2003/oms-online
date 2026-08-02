@@ -134,7 +134,7 @@ export class PartyLedgerService {
     }
 
     // ── 1) Ledger rows in [from, to] ──────────────────────────────────────────
-    const raw = await this.collectRows(from, toExclusive, custIds);
+    const raw = await this.collectRows(from, toExclusive, custIds, agentName);
 
     // ── 2) Per-invoice pending (bank/cash bal + amount) + last receipt date ───
     const pending = await this.invoicePending();
@@ -150,7 +150,7 @@ export class PartyLedgerService {
     const rows = inMode.filter((row) => !q.voucherType || row.voucherType.toUpperCase() === q.voucherType.toUpperCase());
 
     // ── 3) Opening as-of `from` ───────────────────────────────────────────────
-    const { bankNet: openingBankNet, cashNet: openingCashNet } = await this.openingAsOf(from, custIds);
+    const { bankNet: openingBankNet, cashNet: openingCashNet } = await this.openingAsOf(from, custIds, agentName);
 
     // ── 4) Footer (opening / current / closing) ───────────────────────────────
     const cur = rows.reduce(
@@ -196,7 +196,21 @@ export class PartyLedgerService {
 
   /* ── row collection ─────────────────────────────────────────────────────── */
 
-  private async collectRows(from: Date, toExclusive: Date, custIds: number[] | null): Promise<RawRow[]> {
+  /**
+   * How to match AcctLedger rows for a scoped (party / agent) ledger.
+   *
+   * A receipt taken against an AGENT is written with `custId = 0` and only the
+   * `agentName` set — it isn't tied to any one of the agent's customers. Matching
+   * on `custId` alone therefore showed the agent's invoices as debits but hid every
+   * payment they made, so an agent ledger's closing balance never came down.
+   */
+  private ledgerScopeOr(custIds: number[], agentName: string | null): Prisma.AcctLedgerWhereInput[] {
+    const or: Prisma.AcctLedgerWhereInput[] = [{ custId: { in: custIds } }];
+    if (agentName) or.push({ agentName });
+    return or;
+  }
+
+  private async collectRows(from: Date, toExclusive: Date, custIds: number[] | null, agentName: string | null): Promise<RawRow[]> {
     // Sale invoices (Challan, excluding Debit Notes) — B = bank Dr, C = cash Dr.
     // Only CONFIRMED challans are ledger debits; a CANCELLED challan is void and must
     // not appear as a receivable (matches the Payment receivables view).
@@ -209,7 +223,7 @@ export class PartyLedgerService {
 
     // Ledger vouchers (RECEIPT / DEBIT NOTE / CREDIT NOTE / SALES DISCOUNT).
     const ledgerWhere: Prisma.AcctLedgerWhereInput = { transDate: { gte: from, lt: toExclusive } };
-    if (custIds) ledgerWhere.custId = { in: custIds };
+    if (custIds) ledgerWhere.OR = this.ledgerScopeOr(custIds, agentName);
     const ledger = await this.prisma.acctLedger.findMany({
       where: ledgerWhere,
       select: { voucherNo: true, transDate: true, customerName: true, particulars: true, voucherType: true, bankDebit: true, cashDebit: true, bankCredit: true, cashCredit: true },
@@ -398,54 +412,73 @@ export class PartyLedgerService {
 
   /* ── opening balance as-of ──────────────────────────────────────────────── */
 
-  /** Opening net (+Dr/−Cr) as-of `from`: base opening (≤ from) + movement (base→from). */
-  private async openingAsOf(from: Date, custIds: number[] | null): Promise<{ bankNet: number; cashNet: number }> {
-    // Base opening: OPENING rows (imported from ACCT OPENING BALANCE) dated ≤ from.
+  /**
+   * Opening net (+Dr / −Cr) as-of `from`.
+   *
+   * An OPENING row states a party's balance **as at its own date**, so only that
+   * party's movement AFTER that date may be added on top. Each customer therefore
+   * gets their own anchor date; a customer with no OPENING row anchors at the
+   * epoch, so their entire history counts.
+   *
+   * This used to collapse every customer onto ONE global anchor — the latest
+   * OPENING date in the whole set. On a single-party ledger that's harmless (there
+   * is only one anchor), but on an ALL-parties or AGENT ledger it silently dropped
+   * every invoice raised before that global date for all the other parties, while
+   * their receipts inside the report window still counted as credits. The opening
+   * came out massively understated and the closing balance could flip to Cr.
+   */
+  private async openingAsOf(from: Date, custIds: number[] | null, agentName: string | null): Promise<{ bankNet: number; cashNet: number }> {
     const openWhere: Prisma.AcctOpeningTransWhereInput = { kind: 'OPENING', transDate: { lte: from } };
     if (custIds) openWhere.custId = { in: custIds };
-    const openings = await this.prisma.acctOpeningTrans.findMany({ where: openWhere, select: { bankAmt: true, cashAmt: true, transDate: true, drCr: true } });
-    let baseBank = 0;
-    let baseCash = 0;
-    let baseDate = new Date(1900, 0, 1);
+    const openings = await this.prisma.acctOpeningTrans.findMany({
+      where: openWhere,
+      select: { custId: true, bankAmt: true, cashAmt: true, transDate: true, drCr: true },
+    });
+
+    const EPOCH = new Date(1900, 0, 1);
+    /** custId → the date that customer's opening figure is stated as at. */
+    const anchor = new Map<number, Date>();
+    let bankNet = 0;
+    let cashNet = 0;
     for (const o of openings) {
       const sign = (o.drCr ?? 'DEBIT').toUpperCase() === 'CREDIT' ? -1 : 1;
-      baseBank += sign * (o.bankAmt ?? 0);
-      baseCash += sign * (o.cashAmt ?? 0);
-      if (o.transDate > baseDate) baseDate = o.transDate;
+      bankNet += sign * (o.bankAmt ?? 0);
+      cashNet += sign * (o.cashAmt ?? 0);
+      const prev = anchor.get(o.custId);
+      if (!prev || o.transDate > prev) anchor.set(o.custId, o.transDate);
     }
 
-    // Movement from baseDate up to (but excluding) `from` — same rows the grid shows.
-    const move = await this.movement(baseDate, from, custIds);
-    return { bankNet: baseBank + move.bank, cashNet: baseCash + move.cash };
-  }
-
-  /** Σ(Dr − Cr) of sale invoices (non-DN) + ledger vouchers in [start, end). */
-  private async movement(start: Date, end: Date, custIds: number[] | null): Promise<{ bank: number; cash: number }> {
-    if (end <= start) return { bank: 0, cash: 0 };
-    // CONFIRMED only — a cancelled challan is void, so it must not move the opening
-    // balance either (keeps opening/closing consistent with the grid and Payments).
-    const chWhere: Prisma.ChallanWhereInput = { challanStatus: 'CONFIRMED', invDate: { gte: start, lt: end } };
-    const ldWhere: Prisma.AcctLedgerWhereInput = { transDate: { gte: start, lt: end } };
+    // Everything before `from`, kept only when it falls on/after its own party's
+    // anchor. CONFIRMED challans only — a cancelled one is void, so it must not
+    // move the opening either (keeps opening/closing consistent with the grid).
+    const chWhere: Prisma.ChallanWhereInput = { challanStatus: 'CONFIRMED', invDate: { lt: from } };
+    const ldWhere: Prisma.AcctLedgerWhereInput = { transDate: { lt: from } };
     if (custIds) {
       chWhere.customerId = { in: custIds };
-      ldWhere.custId = { in: custIds };
+      ldWhere.OR = this.ledgerScopeOr(custIds, agentName);
     }
     const [challans, ledger] = await Promise.all([
-      this.prisma.challan.findMany({ where: chWhere, select: { prefix: true, transaction: true, b: true, c: true } }),
-      this.prisma.acctLedger.findMany({ where: ldWhere, select: { bankDebit: true, cashDebit: true, bankCredit: true, cashCredit: true } }),
+      this.prisma.challan.findMany({
+        where: chWhere,
+        select: { customerId: true, invDate: true, prefix: true, transaction: true, b: true, c: true },
+      }),
+      this.prisma.acctLedger.findMany({
+        where: ldWhere,
+        select: { custId: true, transDate: true, bankDebit: true, cashDebit: true, bankCredit: true, cashCredit: true },
+      }),
     ]);
-    let bank = 0;
-    let cash = 0;
     for (const c of challans) {
       if (isDebitNoteChallan(c.prefix, c.transaction)) continue;
-      bank += c.b ?? 0;
-      cash += c.c ?? 0;
+      if (c.invDate < (anchor.get(c.customerId ?? -1) ?? EPOCH)) continue;
+      bankNet += c.b ?? 0;
+      cashNet += c.c ?? 0;
     }
     for (const l of ledger) {
-      bank += (l.bankDebit ?? 0) - (l.bankCredit ?? 0);
-      cash += (l.cashDebit ?? 0) - (l.cashCredit ?? 0);
+      if (l.transDate < (anchor.get(l.custId ?? -1) ?? EPOCH)) continue;
+      bankNet += (l.bankDebit ?? 0) - (l.bankCredit ?? 0);
+      cashNet += (l.cashDebit ?? 0) - (l.cashCredit ?? 0);
     }
-    return { bank, cash };
+    return { bankNet, cashNet };
   }
 
   /* ── KPIs ────────────────────────────────────────────────────────────────── */
@@ -587,6 +620,16 @@ export class PartyLedgerService {
     return `Ledger-${(who ?? 'party').replace(/[\\/:*?"<>|]/g, '-')}`;
   }
 
+  /** PartyName_dd_mm_yy_hhmmss, kept filesystem-safe for Content-Disposition. */
+  private pdfName(res: PartyLedgerResult): string {
+    const who = res.scope === 'CUSTOMER' ? res.customerName : res.scope === 'AGENT' ? `Agent-${res.agentName}` : 'All-Parties';
+    const safeParty = (who ?? 'party').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-').trim();
+    const now = new Date();
+    const two = (value: number) => String(value).padStart(2, '0');
+    const stamp = `${two(now.getDate())}_${two(now.getMonth() + 1)}_${two(now.getFullYear() % 100)}_${two(now.getHours())}${two(now.getMinutes())}${two(now.getSeconds())}`;
+    return `${safeParty}_${stamp}.pdf`;
+  }
+
   /** The company masthead printed on the statement; blank when never configured. */
   private async companyName(): Promise<string | null> {
     const row = await this.prisma.appConfig.findUnique({ where: { key: 'COMPANY_NAME' } });
@@ -602,7 +645,7 @@ export class PartyLedgerService {
   async exportPdf(q: PartyLedgerQuery): Promise<{ buffer: Buffer; filename: string }> {
     const res = await this.ledger(q);
     const buffer = await this.pdf.render(buildLedgerDoc(res, (q.mode ?? 'BOTH').toUpperCase()));
-    return { buffer, filename: `${this.baseName(res)}.pdf` };
+    return { buffer, filename: this.pdfName(res) };
   }
 }
 
@@ -611,8 +654,15 @@ export class PartyLedgerService {
 const modeLabel = (m: string) => (m === 'B' ? 'Bank only' : m === 'C' ? 'Cash only' : 'Bank & Cash');
 const partyOf = (res: PartyLedgerResult) =>
   res.scope === 'CUSTOMER' ? (res.customerName ?? 'Party') : res.scope === 'AGENT' ? `Agent: ${res.agentName}` : 'All Parties';
-const shortDate = (s: string | null) =>
-  formatDate(s, '');
+const PDF_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
+/** Compact d-MMM-yy date used by both Date columns in the portrait PDF. */
+const pdfDate = (value: string | Date | null): string => {
+  if (!value) return '';
+  const date = typeof value === 'string' ? new Date(value) : value;
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.getDate()}-${PDF_MONTHS[date.getMonth()]}-${String(date.getFullYear()).slice(-2)}`;
+};
+const shortDate = (value: string | null) => formatDate(value, '');
 
 /** Tally prints every figure to two decimals and leaves a zero cell empty. */
 const amt2 = (v: number) => (v ? v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '');
@@ -652,7 +702,7 @@ const STATUS_LEGEND = 'St:  F = fully paid   P = partially paid   D = due';
  */
 function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefinitions {
   const BLACK = '#000000';
-  const d = shortDate;
+  const d = pdfDate;
   const k = res.kpis;
   const f = res.footer;
   const legs = legsFor(mode);
@@ -664,7 +714,7 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
   /** Single-leg reports have room for larger type; grouped reports use compact
    *  type to keep Bank and Cash visible together on the portrait sheet. */
   const BODY = grouped ? 7.5 : 9;
-  const txt = (text: string, extra: Record<string, unknown> = {}) => ({ text, fontSize: BODY, ...extra });
+  const txt = (text: string, extra: Record<string, unknown> = {}) => ({ text, fontSize: BODY, lineHeight: 1.12, ...extra });
   const num = (v: number, extra: Record<string, unknown> = {}) => ({
     text: amt2(v),
     fontSize: BODY,
@@ -690,12 +740,12 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
     ...legs.flatMap((l) => [head(l.group.toUpperCase(), { alignment: 'center', colSpan: 2, characterSpacing: 1 }), txt('')]),
   ];
   const colRow = [
-    head('Date'),
+    head('Date', { alignment: 'right' }),
     head('Particulars'),
     head('Vch Type'),
     head('Vch No'),
     head('Payment Status'),
-    head('Due Date'),
+    head('Due Date', { alignment: 'right' }),
     ...legs.flatMap(() => [head('Debit', { alignment: 'right' }), head('Credit', { alignment: 'right' })]),
   ];
   const heads = grouped ? [groupRow, colRow] : [colRow];
@@ -706,17 +756,18 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
   const dataRow = (r: PartyLedgerRow) => {
     const voucherType = r.voucherType.trim().toUpperCase();
     const particulars = ['SALE', 'SALES', 'SALES INVOICE'].includes(voucherType) ? 'SALES' : r.particulars;
+    const voucherLabel = voucherType === 'SALES INVOICE' ? 'Sales' : r.voucherType;
     const dueDate = r.dueDate ? new Date(r.dueDate) : null;
     const overdue = !!dueDate && !Number.isNaN(dueDate.getTime()) && dueDate < today && r.status !== 'F';
     const balance = r.status === 'P' ? ` ${amt2z(r.pendingAmount)}` : '';
     const paymentStatus = r.status === 'F' ? 'Paid' : overdue ? `Over Due${balance}` : r.status === 'P' ? `Due${balance}` : r.status === 'D' ? 'Due' : '';
     return [
-      txt(d(r.txnDate), { noWrap: true }),
+      txt(d(r.txnDate), { alignment: 'right', noWrap: true }),
       txt(particulars),
-      txt(r.voucherType, { fontSize: BODY - 0.5, noWrap: true }),
+      txt(voucherLabel, { fontSize: BODY - 1, noWrap: true }),
       txt(r.voucherNo, { noWrap: true }),
       txt(paymentStatus, { bold: !!paymentStatus, fontSize: BODY - 0.5, noWrap: true }),
-      txt(d(r.dueDate), { noWrap: true }),
+      txt(d(r.dueDate), { alignment: 'right', noWrap: true }),
       ...legs.flatMap((l) => [num(r[l.dr]), num(r[l.cr])]),
     ];
   };
@@ -746,8 +797,8 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
      space: every extra point taken here comes straight out of Particulars. */
   // The compact grouped widths retain enough room for crore-scale figures while
   // single-leg reports use wider amount cells and larger type.
-  const numW = grouped ? 52 : 60;
-  const leadW = grouped ? [38, '*', 54, 48, 64, 44] : [43, '*', 62, 64, 84, 49];
+  const numW = grouped ? 52 : 58;
+  const leadW = grouped ? [34, '*', 42, 48, 64, 38] : [39, '*', 50, 60, 78, 44];
 
   const kpiCell = (label: string, bucket: { amount: number; count: number }) => ({
     stack: [
@@ -771,7 +822,7 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
     pageSize: 'A4',
     pageOrientation: 'portrait',
     pageMargins: [18, 22, 18, 32],
-    defaultStyle: { font: 'Helvetica', fontSize: BODY, color: BLACK },
+    defaultStyle: { font: 'Calibri', fontSize: BODY, color: BLACK },
     content: [
       /* Party-first Tally masthead: account, report type, address and period. */
       {
@@ -790,21 +841,29 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
 
       /* The ledger grid. */
       {
-        table: { headerRows, widths: [...leadW, ...legs.flatMap(() => [numW, numW])], body },
+        table: { headerRows, dontBreakRows: true, widths: [...leadW, ...legs.flatMap(() => [numW, numW])], body },
         layout: {
           // Column rules run the full height; horizontal rules only frame the
           // headings, the opening line and the totals — Tally's exact skeleton.
           hLineWidth: (i: number) =>
-            i === 0 || i === headerRows || i === body.length || i === totalsAt ? 1 : i === headerRows + 1 || i === body.length - 1 || (grouped && i === 1) ? 0.5 : 0,
+            i === totalsAt || i === body.length
+              ? 1.5
+              : i === body.length - 1
+                ? 0.8
+                : i === 0 || i === headerRows
+                  ? 1
+                  : i === headerRows + 1 || (grouped && i === 1)
+                    ? 0.5
+                    : 0,
           vLineWidth: () => 0.5,
           hLineColor: () => BLACK,
           vLineColor: () => BLACK,
-          paddingLeft: () => (grouped ? 2 : 4),
-          paddingRight: () => (grouped ? 2 : 4),
+          paddingLeft: () => (grouped ? 2 : 3),
+          paddingRight: () => (grouped ? 2 : 3),
           // Roomier rows: the larger type needs the leading, and it stops the
           // figure columns reading as a solid block. Headings get a touch more.
-          paddingTop: (i: number) => (i < headerRows ? 4 : 3),
-          paddingBottom: (i: number) => (i < headerRows ? 4 : 3),
+          paddingTop: () => 4,
+          paddingBottom: () => 4,
         },
       },
 

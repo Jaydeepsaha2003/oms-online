@@ -9,6 +9,7 @@ import { cn, shortOrderCode } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
 import { useAutoSizePcs } from '@/lib/auto-size-pcs';
 import { useColumnOrder } from '@/hooks/use-column-order';
+import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
@@ -321,29 +322,37 @@ export function OrderModifyPage() {
         </div>
       </div>
 
-      {/* One scroll region holds BOTH branches (desktop table / phone cards) — the
-          desktop table renders at its natural height (no `fill`/height cap) exactly
-          as before, it's just this wrapper that now scrolls instead of the page. */}
+      {/* The table/card list takes the leftover height and scrolls WITHIN itself
+          (both directions on desktop), so the horizontal scrollbar sits right
+          under the visible rows instead of being pushed to the bottom of a long
+          table that only the page's own scroll could ever reach. */}
       <div
         className={cn(
-          'flex min-h-0 flex-1 flex-col overflow-y-auto',
+          'flex min-h-0 flex-1 flex-col',
           '[&_[data-slot=table-container]]:overscroll-x-contain',
           '[&_[data-slot=table-container]]:[scrollbar-width:thin]',
           '[&_[data-slot=table-container]]:[scrollbar-color:var(--color-slate-400)_var(--color-slate-100)]',
         )}
       >
-        <div className="hidden sm:block">
+        <div className="hidden min-h-0 flex-1 sm:flex sm:flex-col">
           <DataTable
             columns={cols.visibleColumns}
             rows={rows}
             rowKey={(r) => `${r.order.id}-${r.line.id}`}
             isLoading={isLoading}
             dense
+            // Bounded to the space actually left on screen — its own scroll
+            // region (vertical + horizontal) stays fully visible on first
+            // paint, no scrolling the whole page down to reach it.
+            fill
             hideSortIcon
             emptyText="No order lines found."
             onRowClick={(r) => setEdit(r)}
             className={[
               'font-sans text-[13px]',
+              // Rows are click-to-edit, so block accidental text selection (a
+              // stray drag while scrolling otherwise highlights the row's text).
+              '[&_tbody]:select-none',
               '[&_thead_th]:text-[13.5px] [&_thead_th]:font-extrabold [&_thead_th]:uppercase [&_thead_th]:tracking-wide [&_thead_th]:py-1.5',
               '[&_thead_th_button]:cursor-pointer',
               '[&_thead_th:hover]:from-blue-900 [&_thead_th:hover]:to-indigo-900',
@@ -357,8 +366,10 @@ export function OrderModifyPage() {
           />
         </div>
 
-        {/* Phones: one card per order, its lines grouped underneath. */}
-        <div className="sm:hidden">
+        {/* Phones: one card per order, its lines grouped underneath. Own scroll
+            region now that the outer wrapper doesn't scroll (that's the desktop
+            table's job via `fill` above). */}
+        <div className="min-h-0 flex-1 overflow-y-auto sm:hidden">
           {isLoading ? (
             <div className="text-muted-foreground flex h-24 items-center justify-center">
               <Loader2 className="size-5 animate-spin" />
@@ -691,6 +702,8 @@ function LineEditor({
 
     onSave(buildUpdated());
   };
+
+  useSaveShortcut(submit);
 
   return (
     <SheetContent className="flex w-full max-w-md flex-col" onOpenAutoFocus={(e) => e.preventDefault()}>

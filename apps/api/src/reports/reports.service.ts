@@ -13,6 +13,8 @@ import type {
   ReportMonthPoint,
   ReportSlice,
   SalesReport,
+  SummaryAnalysisAction,
+  SummaryAnalysisReport,
   TrendDirection,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
@@ -161,15 +163,17 @@ export class ReportsService {
     const trendStart = new Date(now.getFullYear(), now.getMonth() - 11, 1); // 12 months incl. current
     const fx = await this.resolveFilter(f);
 
-    const [challans, receipts, orders, custRows, backlog] = await Promise.all([
-      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { invDate: true, total: true, category: true, customerName: true, customerId: true, transaction: true } }),
+    const [challans, receipts, orders, custRows, backlog, recvByInv] = await Promise.all([
+      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { code: true, invDate: true, total: true, category: true, customerName: true, customerId: true, transaction: true } }),
       this.prisma.acctPaymentReceipt.findMany({ select: { recDate: true, recAmt: true, payMode: true, custId: true } }),
       this.prisma.order.findMany({ where: { status: { not: 'CANCELLED' } }, select: { orderDate: true, customerId: true } }),
       this.prisma.customer.findMany({ select: { id: true, region: true, agentName: true } }),
-      this.prisma.$queryRawUnsafe<{ amt: number | null }[]>(
-        `SELECT SUM(COALESCE(d.rate,0) * (CASE WHEN UPPER(COALESCE(d.calField,'')) = 'PCS' THEN COALESCE(d.pcs,0) ELSE COALESCE(d.gram,0) END)) AS amt
+      this.prisma.$queryRawUnsafe<{ customerId: number | null; dispatchDate: Date; amt: number | null }[]>(
+        `SELECT d.customerId, d.dispatchDate,
+                COALESCE(d.rate,0) * (CASE WHEN UPPER(COALESCE(d.calField,'')) = 'PCS' THEN COALESCE(d.pcs,0) ELSE COALESCE(d.gram,0) END) AS amt
            FROM dispatches d WHERE ${ReportsService.NOT_CHALLANED}`,
       ),
+      this.receivedByInvoice(),
     ]);
 
     const custMap = new Map(custRows.map((c) => [c.id, c]));
@@ -217,9 +221,16 @@ export class ReportsService {
     const collectionModes = ['Bank', 'Cash', 'Cheque'].map((name) => ({ name, value: r0(modeMap.get(name)?.value ?? 0) })).filter((s) => s.value > 0);
 
     // Outstanding is a balance view: party-scoped, all-time (never date-scoped).
-    const billed = sales.reduce((s, c) => s + n(c.total), 0);
-    const collected = recs.reduce((s, r) => s + n(r.recAmt), 0);
-    const outstanding = Math.max(0, r0(billed) - r0(collected));
+    let outstanding = 0;
+    const owing = new Set<string>();
+    const activeIds = new Set(sales.filter((c) => inWin(c.invDate)).map((c) => c.customerId != null ? `c:${c.customerId}` : `n:${c.customerName.trim().toUpperCase()}`));
+    for (const c of sales) {
+      const balance = Math.max(0, n(c.total) - (recvByInv.get(c.code) ?? 0));
+      if (balance <= 0) continue;
+      outstanding += balance;
+      owing.add(c.customerId != null ? `c:${c.customerId}` : `n:${c.customerName.trim().toUpperCase()}`);
+    }
+    outstanding = r0(outstanding);
     const winDays = Math.max(1, Math.round((win.curEnd.getTime() - win.curStart.getTime()) / 86_400_000));
     const dsoDays = revenue.current > 0 ? r0((outstanding / revenue.current) * winDays) : null;
     const collectionRate = revenue.current > 0 ? collections.current / revenue.current : null;
@@ -232,7 +243,7 @@ export class ReportsService {
       outstanding,
       collectionRate,
       dsoDays,
-      backlogValue: r0(n(backlog[0]?.amt)),
+      backlogValue: r0(backlog.filter((b) => fx.custOk(b.customerId) && fx.dateOk(b.dispatchDate)).reduce((s, b) => s + n(b.amt), 0)),
       trend,
       categoryMix: this.topSlices(cat, 10),
       topParties: this.topSlices(party, 12),
@@ -240,6 +251,8 @@ export class ReportsService {
       byAgent: this.topSlices(agent, 12),
       avgInvoiceValue: challansMetric.current > 0 ? r0(revenue.current / challansMetric.current) : 0,
       activeParties: party.size,
+      owingParties: owing.size,
+      olderOwingParties: [...owing].filter((key) => !activeIds.has(key)).length,
       collectionModes,
       asOf: now.toISOString(),
     };
@@ -268,14 +281,14 @@ export class ReportsService {
       this.prisma.customer.findMany({ select: { id: true, region: true, agentName: true, state: true } }),
     ]);
     const custMap = new Map(custRows.map((c) => [c.id, c]));
-    const sales = challans.filter((c) => SALES_TX.has((c.transaction ?? '').trim().toUpperCase()) && fx.custOk(c.customerId) && fx.dateOk(c.invDate));
+    const partySales = challans.filter((c) => SALES_TX.has((c.transaction ?? '').trim().toUpperCase()) && fx.custOk(c.customerId));
+    const sales = partySales.filter((c) => fx.dateOk(c.invDate));
 
     const buckets = new Map<string, ReportMonthPoint>();
     for (let i = 0; i < span; i++) {
       const d = new Date(first.getFullYear(), first.getMonth() + i, 1);
       buckets.set(this.monthKey(d), { month: this.monthKey(d), label: this.monthLabel(d), billed: 0, collected: 0 });
     }
-    const byMonthCal = new Array(12).fill(0);
     const agent = new Map<string, { value: number; count: number }>();
     const region = new Map<string, { value: number; count: number }>();
     const state = new Map<string, { value: number; count: number }>();
@@ -289,7 +302,6 @@ export class ReportsService {
       const v = n(c.total);
       const b = buckets.get(this.monthKey(c.invDate));
       if (b) b.billed += v;
-      byMonthCal[c.invDate.getMonth()] += v;
       const cu = c.customerId != null ? custMap.get(c.customerId) : undefined;
       add(agent, (cu?.agentName ?? '').trim() || 'SELF', v);
       add(region, (cu?.region ?? '').trim().toUpperCase() || 'UNKNOWN', v);
@@ -297,8 +309,16 @@ export class ReportsService {
       add(party, c.customerName || '—', v);
       add(cat, (c.category ?? '').trim() || 'Uncategorised', v);
     }
-    const meanMonth = byMonthCal.reduce((s, v) => s + v, 0) / 12 || 1;
-    const seasonality = byMonthCal.map((v, i) => ({ month: String(i + 1).padStart(2, '0'), label: MON[i], index: Math.round((v / meanMonth) * 100) / 100 }));
+    const historyByMonth = new Array(12).fill(0);
+    const historyPeriods = new Array(12).fill(0).map(() => new Set<string>());
+    for (const c of partySales) {
+      const month = c.invDate.getMonth();
+      historyByMonth[month] += n(c.total);
+      historyPeriods[month].add(this.monthKey(c.invDate));
+    }
+    const monthAverages = historyByMonth.map((v, i) => v / Math.max(1, historyPeriods[i].size));
+    const meanMonth = monthAverages.reduce((s, v) => s + v, 0) / 12 || 1;
+    const seasonality = monthAverages.map((v, i) => ({ month: String(i + 1).padStart(2, '0'), label: MON[i], index: Math.round((v / meanMonth) * 100) / 100 }));
 
     // Year-over-year, aligned to the Indian FY (Apr→Mar).
     const fyStart = this.startOfFinYear(now);
@@ -306,19 +326,19 @@ export class ReportsService {
     const fyEnd = new Date(fyStart.getFullYear() + 1, 3, 1);
     const yoyThis = new Array(12).fill(0);
     const yoyLast = new Array(12).fill(0);
-    for (const c of sales) {
+    for (const c of partySales) {
       const t = c.invDate;
       const idx = (t.getMonth() - 3 + 12) % 12; // Apr=0 … Mar=11
-      if (t >= fyStart && t < fyEnd) yoyThis[idx] += n(c.total);
+      if (t >= fyStart && t < fyEnd && t <= now) yoyThis[idx] += n(c.total);
       else if (t >= lastFyStart && t < fyStart) yoyLast[idx] += n(c.total);
     }
     const FYMON = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'];
     const yoy = FYMON.map((label, i) => ({ label, thisYear: r0(yoyThis[i]), lastYear: r0(yoyLast[i]) }));
     // Like-for-like growth: this FY-to-date vs last FY over the SAME elapsed months
     // (comparing 4 months against a full 12 would be misleading).
-    const fyMonthIdx = (now.getMonth() - 3 + 12) % 12; // Apr=0 … current month
     const tThis = yoyThis.reduce((s, v) => s + v, 0);
-    const tLast = yoyLast.slice(0, fyMonthIdx + 1).reduce((s, v) => s + v, 0);
+    const lastCutoff = new Date(lastFyStart.getTime() + (now.getTime() - fyStart.getTime()));
+    const tLast = partySales.filter((c) => c.invDate >= lastFyStart && c.invDate <= lastCutoff).reduce((s, c) => s + n(c.total), 0);
 
     return {
       monthly: [...buckets.values()].map((p) => ({ ...p, billed: r0(p.billed) })),
@@ -342,14 +362,15 @@ export class ReportsService {
     const fx = await this.resolveFilter(f);
     const [challans, custRows, advances, recvByInv, lastRec, payFollowups] = await Promise.all([
       this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { code: true, total: true, invDate: true, dueDate: true, customerId: true, customerName: true, transaction: true } }),
-      this.prisma.customer.findMany({ select: { id: true, agentName: true } }),
-      this.prisma.acctPartyAdvance.findMany({ select: { bankAmt: true, cashAmt: true } }),
+      this.prisma.customer.findMany({ select: { id: true, partyName: true, agentName: true } }),
+      this.prisma.acctPartyAdvance.findMany({ select: { custId: true, bankAmt: true, cashAmt: true } }),
       this.receivedByInvoice(),
       this.prisma.acctPaymentReceipt.findMany({ select: { custId: true, recDate: true, recAmt: true, payMode: true } }),
       // The live recovery CRM: payment follow-ups drive the contact/promise signals.
       this.prisma.followup.findMany({ where: { kind: 'PAYMENT' }, select: { customerId: true, partyName: true, status: true, promisedAt: true, promisedAmount: true, updatedAt: true, resolvedAt: true } }),
     ]);
     const custMap = new Map(custRows.map((c) => [c.id, c]));
+    const allowedNames = new Set(custRows.filter((c) => fx.custOk(c.id)).map((c) => (c.partyName ?? '').trim().toUpperCase()));
     const fyStart = this.startOfFinYear(now);
     const lastRecByCust = new Map<number, Date>();
     const modeMap = new Map<string, { value: number; count: number }>();
@@ -402,7 +423,7 @@ export class ReportsService {
       }
     }
     aging.forEach((a, i) => { a.value = r0(a.value); a.parties = agingParties[i].size; });
-    const advanceHeld = r0(advances.reduce((s, a) => s + n(a.bankAmt) + n(a.cashAmt), 0));
+    const advanceHeld = r0(advances.filter((a) => fx.custOk(a.custId)).reduce((s, a) => s + n(a.bankAmt) + n(a.cashAmt), 0));
 
     // ── CRM recovery signals (from PAYMENT follow-ups) ──
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -411,6 +432,7 @@ export class ReportsService {
     const nameKey = (name: string) => `n:${name.trim().toUpperCase()}`;
     let resolvedThisMonth = 0;
     for (const fu of payFollowups) {
+      if (!(fx.custOk(fu.customerId) || (fu.customerId == null && allowedNames.has(fu.partyName.trim().toUpperCase())))) continue;
       if (fu.resolvedAt && fu.resolvedAt >= monthStart) resolvedThisMonth += 1;
       const key = fu.customerId != null ? `c:${fu.customerId}` : nameKey(fu.partyName);
       let c = crmByKey.get(key);
@@ -506,15 +528,25 @@ export class ReportsService {
     for (const r of lastRec) { if (!fx.custOk(r.custId)) continue; const b = tb.get(this.monthKey(r.recDate)); if (b) b.collected += n(r.recAmt); }
     const collectionTrend = [...tb.values()].map((p) => ({ ...p, collected: r0(p.collected) }));
 
-    const fyStart2 = this.startOfFinYear(now);
-    const fyBilled = sales.filter((c) => c.invDate >= fyStart2).reduce((s, c) => s + n(c.total), 0);
-    const fyCollected = lastRec.filter((r) => fx.custOk(r.custId) && r.recDate >= fyStart2).reduce((s, r) => s + n(r.recAmt), 0);
-    const collectionRate = fyBilled > 0 ? fyCollected / fyBilled : null;
-    const elapsedFyDays = Math.max(1, Math.round((now.getTime() - fyStart2.getTime()) / DAY));
-    const dsoDays = fyBilled > 0 ? r0((totalOutstanding / fyBilled) * elapsedFyDays) : null;
+    const periodStart = fx.from ?? this.startOfFinYear(now);
+    const periodEnd = fx.to ?? now;
+    const periodBilled = sales.filter((c) => c.invDate >= periodStart && c.invDate <= periodEnd).reduce((s, c) => s + n(c.total), 0);
+    const periodCollected = lastRec.filter((r) => fx.custOk(r.custId) && r.recDate >= periodStart && r.recDate <= periodEnd).reduce((s, r) => s + n(r.recAmt), 0);
+    const collectionRate = periodBilled > 0 ? periodCollected / periodBilled : null;
+    const periodDays = Math.max(1, Math.round((periodEnd.getTime() - periodStart.getTime()) / DAY));
+    const dsoDays = periodBilled > 0 ? r0((totalOutstanding / periodBilled) * periodDays) : null;
+
+    const activeKeys = new Set(
+      sales
+        .filter((c) => fx.dateOk(c.invDate))
+        .map((c) => c.customerId != null ? `c:${c.customerId}` : nameKey(c.customerName)),
+    );
+    const owingKeys = owing.map((p) => p.custId != null ? `c:${p.custId}` : nameKey(p.party));
 
     return {
       totalOutstanding: r0(totalOutstanding), overdue: r0(overdue), dueSoon: r0(dueSoon), advanceHeld,
+      owingParties: owing.length,
+      olderOwingParties: owingKeys.filter((key) => !activeKeys.has(key)).length,
       collectionRate, dsoDays, collectedModes, topOverdueParties, aging, collectionTrend,
       recoveryKpis: { promisesDueToday, promisesOverdue, neverContacted, inProgress, resolvedThisMonth, promisedParties, promisedValue: r0(promisedValue), brokenPromiseValue: r0(brokenPromiseValue) },
       pipeline, recovery, asOf: now.toISOString(),
@@ -528,47 +560,54 @@ export class ReportsService {
     const fx = await this.resolveFilter(f);
     const [custs, challans, orders, recvByInv] = await Promise.all([
       this.prisma.customer.findMany({ where: { active: true }, select: { id: true, partyName: true, agentName: true } }),
-      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { customerId: true, customerName: true, total: true, code: true, transaction: true } }),
+      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { customerId: true, customerName: true, total: true, code: true, invDate: true, transaction: true } }),
       this.prisma.order.findMany({ where: { status: { not: 'CANCELLED' } }, select: { customerId: true, customerName: true, orderDate: true } }),
       this.receivedByInvoice(),
     ]);
-    const sales = challans.filter((c) => SALES_TX.has((c.transaction ?? '').trim().toUpperCase()) && fx.custOk(c.customerId));
+    const allSales = challans.filter((c) => SALES_TX.has((c.transaction ?? '').trim().toUpperCase()) && fx.custOk(c.customerId));
+    const sales = allSales.filter((c) => fx.dateOk(c.invDate));
 
-    interface Agg { custId: number | null; party: string; agent: string | null; revenue: number; invoices: number; lastOrder: Date | null; outstanding: number }
+    const asOfDate = fx.to ?? now;
+    interface Agg { custId: number | null; party: string; agent: string | null; revenue: number; invoices: number; lifeRevenue: number; lifeInvoices: number; lastOrder: Date | null; outstanding: number }
     const map = new Map<string, Agg>();
     const keyOf = (name: string) => name.trim().toUpperCase();
     const custByName = new Map(custs.map((c) => [keyOf(c.partyName ?? ''), c]));
     const get = (name: string, custId: number | null): Agg => {
       const k = keyOf(name);
       let a = map.get(k);
-      if (!a) { const cu = custByName.get(k); a = { custId: custId ?? cu?.id ?? null, party: name, agent: cu?.agentName ?? null, revenue: 0, invoices: 0, lastOrder: null, outstanding: 0 }; map.set(k, a); }
+      if (!a) { const cu = custByName.get(k); a = { custId: custId ?? cu?.id ?? null, party: name, agent: cu?.agentName ?? null, revenue: 0, invoices: 0, lifeRevenue: 0, lifeInvoices: 0, lastOrder: null, outstanding: 0 }; map.set(k, a); }
       return a;
     };
+    for (const c of custs) if (fx.custOk(c.id) && c.partyName?.trim()) get(c.partyName, c.id);
     for (const c of sales) {
       const a = get(c.customerName, c.customerId ?? null);
       a.revenue += n(c.total);
       a.invoices += 1;
+    }
+    for (const c of allSales) {
+      const a = get(c.customerName, c.customerId ?? null);
+      if (c.invDate <= asOfDate) { a.lifeRevenue += n(c.total); a.lifeInvoices += 1; }
       a.outstanding += Math.max(0, n(c.total) - (recvByInv.get(c.code) ?? 0));
     }
     for (const o of orders) {
-      if (!fx.custOk(o.customerId)) continue;
+      if (!fx.custOk(o.customerId) || o.orderDate > asOfDate) continue;
       const a = get(o.customerName, o.customerId ?? null);
       if (!a.lastOrder || o.orderDate > a.lastOrder) a.lastOrder = o.orderDate;
     }
 
-    const revenues = [...map.values()].map((a) => a.revenue).filter((v) => v > 0).sort((x, y) => x - y);
+    const revenues = [...map.values()].map((a) => a.lifeRevenue).filter((v) => v > 0).sort((x, y) => x - y);
     const pct = (arr: number[], p: number) => (arr.length === 0 ? 0 : arr[Math.min(arr.length - 1, Math.floor(arr.length * p))]);
     const vip = pct(revenues, 0.75);
     const median = pct(revenues, 0.5);
 
     const segmentOf = (a: Agg): string => {
-      const days = a.lastOrder ? Math.floor((now.getTime() - a.lastOrder.getTime()) / DAY) : null;
-      if (a.invoices === 0 && a.lastOrder == null) return 'No orders';
-      if (days != null && days >= 120) return a.revenue >= vip ? 'Win-back' : 'Dormant';
+      const days = a.lastOrder ? Math.floor((asOfDate.getTime() - a.lastOrder.getTime()) / DAY) : null;
+      if (a.lifeInvoices === 0 && a.lastOrder == null) return 'No orders';
+      if (days != null && days >= 120) return a.lifeRevenue >= vip ? 'Win-back' : 'Dormant';
       if (days != null && days >= 90) return 'At-risk';
-      if (a.revenue >= vip) return 'VIP';
-      if (a.invoices <= 1) return 'One-time';
-      if (a.revenue >= median && a.invoices >= 2) return 'Loyal';
+      if (a.lifeRevenue >= vip) return 'VIP';
+      if (a.lifeInvoices <= 1) return 'One-time';
+      if (a.lifeRevenue >= median && a.lifeInvoices >= 2) return 'Loyal';
       return 'Active';
     };
 
@@ -578,7 +617,7 @@ export class ReportsService {
       const seg = segmentOf(a);
       segCount.set(seg, (segCount.get(seg) ?? 0) + 1);
       segRev.set(seg, (segRev.get(seg) ?? 0) + a.revenue);
-      const days = a.lastOrder ? Math.floor((now.getTime() - a.lastOrder.getTime()) / DAY) : null;
+      const days = a.lastOrder ? Math.floor((asOfDate.getTime() - a.lastOrder.getTime()) / DAY) : null;
       return { customerId: a.custId, party: a.party, agent: a.agent, revenue: r0(a.revenue), invoices: a.invoices, lastOrder: a.lastOrder ? a.lastOrder.toISOString() : null, daysSince: days, segment: seg, outstanding: r0(a.outstanding) };
     }).sort((x, y) => y.revenue - x.revenue).slice(0, 300);
 
@@ -606,11 +645,11 @@ export class ReportsService {
     const now = new Date();
     const fx = await this.resolveFilter(f);
     const [rawItems, designs] = await Promise.all([
-      this.prisma.challanItem.findMany({ select: { productName: true, amount: true, bags: true, pcs: true, kgs: true, box: true, pCategory: true, design: true, challan: { select: { invDate: true, customerId: true, challanStatus: true } } } }),
+      this.prisma.challanItem.findMany({ select: { productName: true, amount: true, bags: true, pcs: true, kgs: true, box: true, pCategory: true, design: true, challan: { select: { invDate: true, customerId: true, challanStatus: true, transaction: true } } } }),
       this.prisma.design.findMany({ where: { active: true }, select: { designType: true, category: true, cost: true, rate: true } }),
     ]);
     // Only lines from live challans, party + date scoped.
-    const items = rawItems.filter((it) => it.challan && it.challan.challanStatus === 'CONFIRMED' && fx.custOk(it.challan.customerId) && fx.dateOk(it.challan.invDate));
+    const items = rawItems.filter((it) => it.challan && it.challan.challanStatus === 'CONFIRMED' && SALES_TX.has((it.challan.transaction ?? '').trim().toUpperCase()) && fx.custOk(it.challan.customerId) && fx.dateOk(it.challan.invDate));
     // Slice by the chosen measure: money (amount) or a physical unit.
     const measureOf = (it: (typeof items)[number]): number =>
       measure === 'bags' ? n(it.bags) : measure === 'pcs' ? n(it.pcs) : measure === 'kgs' ? n(it.kgs) : measure === 'box' ? n(it.box) : n(it.amount);
@@ -655,27 +694,32 @@ export class ReportsService {
     const fx = await this.resolveFilter(f);
     const [rawItems, challans] = await Promise.all([
       this.prisma.orderItem.findMany({ where: { status: 'CONFIRMED', order: { status: { not: 'CANCELLED' } } }, select: { productName: true, pCategory: true, order: { select: { id: true, customerName: true, customerId: true, orderDate: true } } } }),
-      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { customerName: true, customerId: true, transaction: true } }),
+      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { customerName: true, customerId: true, invDate: true, transaction: true } }),
     ]);
     const orderItems = rawItems.filter((oi) => fx.custOk(oi.order.customerId) && fx.dateOk(oi.order.orderDate));
 
     // Per party: distinct orders + dates. Product-party pairs → distinct order count.
-    const partyOrders = new Map<string, { orders: Set<number>; dates: Date[]; cats: Set<string> }>();
+    const partyOrders = new Map<string, { orders: Set<number>; orderDates: Map<number, Date>; cats: Set<string> }>();
     const pairOrders = new Map<string, Set<number>>(); // `${party}|${product}` → orderIds
     const catPref = new Map<string, { value: number; count: number }>();
+    const categoryOrders = new Set<string>();
     for (const oi of orderItems) {
       const party = oi.order.customerName || '—';
       const oid = oi.order.id;
       let po = partyOrders.get(party);
-      if (!po) { po = { orders: new Set(), dates: [], cats: new Set() }; partyOrders.set(party, po); }
+      if (!po) { po = { orders: new Set(), orderDates: new Map(), cats: new Set() }; partyOrders.set(party, po); }
       po.orders.add(oid);
-      po.dates.push(oi.order.orderDate);
+      po.orderDates.set(oid, oi.order.orderDate);
       const cat = (oi.pCategory ?? '').trim() || 'Uncategorised';
       po.cats.add(cat);
-      const c = catPref.get(cat); if (c) c.value += 1; else catPref.set(cat, { value: 1, count: 1 });
+      const categoryOrderKey = JSON.stringify([cat, oid]);
+      if (!categoryOrders.has(categoryOrderKey)) {
+        categoryOrders.add(categoryOrderKey);
+        const c = catPref.get(cat); if (c) c.value += 1; else catPref.set(cat, { value: 1, count: 1 });
+      }
       const prod = (oi.productName ?? '').trim();
       if (prod) {
-        const pk = `${party}|${prod}`;
+        const pk = JSON.stringify([party, prod]);
         let s = pairOrders.get(pk); if (!s) { s = new Set(); pairOrders.set(pk, s); } s.add(oid);
       }
     }
@@ -685,7 +729,7 @@ export class ReportsService {
     for (const [pk, orders] of pairOrders) {
       if (orders.size >= 2) {
         reorderedPairs += 1;
-        const prod = pk.split('|')[1];
+        const prod = (JSON.parse(pk) as [string, string])[1];
         const rp = reorderProducts.get(prod); if (rp) rp.value += 1; else reorderProducts.set(prod, { value: 1, count: 1 });
       }
     }
@@ -695,7 +739,7 @@ export class ReportsService {
     const gaps: number[] = [];
     const loyal: { party: string; orders: number; avgGapDays: number | null; categories: number }[] = [];
     for (const [party, po] of partyOrders) {
-      const uniqDates = [...new Set(po.dates.map((d) => this.startOfDay(d).getTime()))].sort((a, b) => a - b);
+      const uniqDates = [...po.orderDates.values()].map((d) => d.getTime()).sort((a, b) => a - b);
       let avgGap: number | null = null;
       if (uniqDates.length >= 2) {
         let sum = 0;
@@ -708,7 +752,7 @@ export class ReportsService {
     loyal.sort((a, b) => b.orders - a.orders);
 
     // Repeat-party rate from invoices.
-    const sales = challans.filter((c) => SALES_TX.has((c.transaction ?? '').trim().toUpperCase()) && fx.custOk(c.customerId));
+    const sales = challans.filter((c) => SALES_TX.has((c.transaction ?? '').trim().toUpperCase()) && fx.custOk(c.customerId) && fx.dateOk(c.invDate));
     const invByParty = new Map<string, number>();
     for (const c of sales) invByParty.set(c.customerName, (invByParty.get(c.customerName) ?? 0) + 1);
     const withInv = [...invByParty.values()].filter((v) => v >= 1).length;
@@ -745,30 +789,28 @@ export class ReportsService {
     const now = new Date();
     const DAY = 86_400_000;
     const fx = await this.resolveFilter(f);
-    const [rawOrders, dispatchAgg, backlogRows, funnelAgg] = await Promise.all([
+    const [rawOrders, rawDispatches, backlogRows, funnelOrderItems, funnelChallans] = await Promise.all([
       this.prisma.order.findMany({ select: { status: true, customerId: true, customerName: true, orderDate: true, completionDay: true } }),
-      this.prisma.$queryRawUnsafe<{ total: bigint; partial: bigint }[]>(
-        "SELECT COUNT(*) AS total, SUM(CASE WHEN UPPER(COALESCE(dispatchStatus,'')) LIKE 'PARTIAL%' THEN 1 ELSE 0 END) AS partial FROM dispatches",
-      ),
+      this.prisma.dispatch.findMany({ select: { dispatchStatus: true, customerId: true, dispatchDate: true, rate: true, calField: true, pcs: true, gram: true } }),
       // Open orders (undispatched, not yet billed) with age + urgent flag.
-      this.prisma.$queryRawUnsafe<{ orderId: number; orderDate: Date; priority: string | null; rate: number | null; unit: string | null; oPcs: number; oGram: number; dPcs: number; dGram: number; billed: number | bigint }[]>(
-        `SELECT o.id AS orderId, o.orderDate AS orderDate, COALESCE(NULLIF(oi.priority,''), o.priority) AS priority,
+      this.prisma.$queryRawUnsafe<{ orderId: number; customerId: number | null; orderDate: Date; priority: string | null; rate: number | null; unit: string | null; oPcs: number; oGram: number; dPcs: number; dGram: number }[]>(
+        `SELECT o.id AS orderId, o.customerId AS customerId, o.orderDate AS orderDate, COALESCE(NULLIF(oi.priority,''), o.priority) AS priority,
                 COALESCE(oi.rate,0) AS rate, UPPER(COALESCE(oi.calField,'')) AS unit,
                 COALESCE(oi.pcs,0) AS oPcs, COALESCE(oi.gram,0) AS oGram,
-                COALESCE(d.dPcs,0) AS dPcs, COALESCE(d.dGram,0) AS dGram,
-                EXISTS (SELECT 1 FROM dispatches dd JOIN challan_items ci ON ci.dispatchId = dd.id JOIN challans ch ON ch.id = ci.challanId AND ch.challanStatus <> 'CANCELLED' WHERE dd.orderItemId = oi.id) AS billed
+                COALESCE(d.dPcs,0) AS dPcs, COALESCE(d.dGram,0) AS dGram
            FROM order_items oi JOIN orders o ON o.id = oi.orderId
            LEFT JOIN (SELECT orderItemId, SUM(COALESCE(pcs,0)) AS dPcs, SUM(COALESCE(gram,0)) AS dGram FROM dispatches GROUP BY orderItemId) d ON d.orderItemId = oi.id
           WHERE oi.status = 'CONFIRMED' AND o.status <> 'CANCELLED'`,
       ),
       // Value funnel: ordered → dispatched → billed.
-      this.prisma.$queryRawUnsafe<{ ordered: number | null; dispatched: number | null; billed: number | null }[]>(
-        `SELECT
-           (SELECT SUM(COALESCE(oi.rate,0) * (CASE WHEN UPPER(COALESCE(oi.calField,'')) = 'PCS' THEN COALESCE(oi.pcs,0) ELSE COALESCE(oi.gram,0) END))
-              FROM order_items oi JOIN orders o ON o.id = oi.orderId WHERE oi.status = 'CONFIRMED' AND o.status <> 'CANCELLED') AS ordered,
-           (SELECT SUM(COALESCE(d.rate,0) * (CASE WHEN UPPER(COALESCE(d.calField,'')) = 'PCS' THEN COALESCE(d.pcs,0) ELSE COALESCE(d.gram,0) END)) FROM dispatches d) AS dispatched,
-           (SELECT SUM(COALESCE(total,0)) FROM challans WHERE challanStatus = 'CONFIRMED' AND UPPER(TRIM(COALESCE("transaction",''))) IN ('SALES INVOICE','DEBIT NOTE')) AS billed`,
-      ),
+      this.prisma.orderItem.findMany({
+        where: { status: 'CONFIRMED', order: { status: { not: 'CANCELLED' } } },
+        select: { rate: true, calField: true, pcs: true, gram: true, order: { select: { customerId: true, orderDate: true } } },
+      }),
+      this.prisma.challan.findMany({
+        where: { challanStatus: 'CONFIRMED' },
+        select: { total: true, customerId: true, invDate: true, transaction: true },
+      }),
     ]);
 
     // Party + date scope the order-level metrics.
@@ -780,9 +822,9 @@ export class ReportsService {
     const cancelMap = new Map<string, number>();
     for (const o of orders) if (o.status === 'CANCELLED') cancelMap.set(o.customerName || '—', (cancelMap.get(o.customerName || '—') ?? 0) + 1);
     const cancellationByParty = [...cancelMap.entries()].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 10);
-    const dRow = dispatchAgg[0];
-    const dispatchRows = Number(dRow?.total ?? 0);
-    const partialRows = Number(dRow?.partial ?? 0);
+    const dispatches = rawDispatches.filter((d) => fx.custOk(d.customerId) && fx.dateOk(d.dispatchDate));
+    const dispatchRows = dispatches.length;
+    const partialRows = dispatches.filter((d) => (d.dispatchStatus ?? '').trim().toUpperCase().startsWith('PARTIAL')).length;
 
     const BANDS = [
       { key: '0-7', label: '0–7 days', lo: 0, hi: 7 },
@@ -793,7 +835,7 @@ export class ReportsService {
     const aging = BANDS.map((b) => ({ key: b.key, label: b.label, orders: 0, value: 0 }));
     const openOrders = new Map<number, { value: number; age: number; urgent: boolean }>();
     for (const r of backlogRows) {
-      if (Number(r.billed) > 0) continue;
+      if (!fx.custOk(r.customerId) || !fx.dateOk(r.orderDate)) continue;
       const ordered = r.unit === 'PCS' ? r.oPcs : r.oGram;
       const pending = ordered - (r.unit === 'PCS' ? r.dPcs : r.dGram);
       if (pending <= Math.max(0.5, ordered * 0.01)) continue;
@@ -811,6 +853,16 @@ export class ReportsService {
     }
     aging.forEach((a) => (a.value = r0(a.value)));
 
+    const quantityValue = (row: { rate: number | null; calField: string | null; pcs: number | null; gram: number | null }) =>
+      n(row.rate) * ((row.calField ?? '').trim().toUpperCase() === 'PCS' ? n(row.pcs) : n(row.gram));
+    const orderedValue = funnelOrderItems
+      .filter((it) => fx.custOk(it.order.customerId) && fx.dateOk(it.order.orderDate))
+      .reduce((sum, it) => sum + quantityValue(it), 0);
+    const dispatchedValue = dispatches.reduce((sum, d) => sum + quantityValue(d), 0);
+    const billedValue = funnelChallans
+      .filter((c) => SALES_TX.has((c.transaction ?? '').trim().toUpperCase()) && fx.custOk(c.customerId) && fx.dateOk(c.invDate))
+      .reduce((sum, c) => sum + n(c.total), 0);
+
     return {
       totalOrders,
       cancelledOrders,
@@ -823,12 +875,76 @@ export class ReportsService {
       pendingOrders: openOrders.size,
       aging,
       funnel: [
-        { stage: 'Ordered', value: r0(n(funnelAgg[0]?.ordered)) },
-        { stage: 'Dispatched', value: r0(n(funnelAgg[0]?.dispatched)) },
-        { stage: 'Billed', value: r0(n(funnelAgg[0]?.billed)) },
+        { stage: 'Ordered', value: r0(orderedValue) },
+        { stage: 'Dispatched', value: r0(dispatchedValue) },
+        { stage: 'Billed', value: r0(billedValue) },
       ],
       cancellationByParty,
       asOf: now.toISOString(),
+    };
+  }
+
+  async summaryAnalysis(f: ReportFilters = {}): Promise<SummaryAnalysisReport> {
+    const [overview, collections, sales, parties, products, patterns, fulfilment] = await Promise.all([
+      this.businessOverview(f),
+      this.collectionsReport(f),
+      this.salesReport(12, f),
+      this.partyIntel(f),
+      this.productReport(f, 'amount'),
+      this.patterns(f),
+      this.fulfilment(f),
+    ]);
+
+    const money = (value: number) => `Rs ${r0(value).toLocaleString('en-IN')}`;
+    const pct = (value: number | null) => value == null ? 'not available' : `${Math.round(value * 100)}%`;
+    const seg = (name: string) => parties.segments.find((s) => s.name === name)?.value ?? 0;
+    const recentMonths = sales.monthly.filter((m) => m.billed > 0).slice(-3);
+    const next30DayRevenue = recentMonths.length ? r0(recentMonths.reduce((sum, m) => sum + m.billed, 0) / recentMonths.length) : 0;
+    const collectible30Days = r0(Math.min(collections.totalOutstanding, collections.overdue * 0.35 + collections.dueSoon * 0.75 + collections.recoveryKpis.promisedValue));
+    const periodStart = f.from ? this.startOfDay(new Date(f.from)) : this.startOfFinYear(new Date());
+    const periodEnd = f.to ? this.endOfDay(new Date(f.to)) : new Date();
+    const periodDays = Math.max(1, Math.round((periodEnd.getTime() - periodStart.getTime()) / 86_400_000));
+    const cashUnlockFromTenDsoDays = r0((overview.revenue.current / periodDays) * 10);
+    const actions: SummaryAnalysisAction[] = [];
+    const add = (action: SummaryAnalysisAction) => actions.push(action);
+
+    add({ id: 'overdue', category: 'Cash', priority: 'Do today', title: 'Start with overdue money', detail: 'Call the largest overdue parties first. Ask for a clear payment date and amount.', evidence: `${money(collections.overdue)} is overdue across ${collections.aging.reduce((s, a) => s + a.parties, 0)} ageing entries.`, impact: `A 10% recovery can bring about ${money(collections.overdue * 0.1)}.`, route: '/reports/collections' });
+    add({ id: 'never-contacted', category: 'Cash', priority: 'Do today', title: 'Call parties with no payment follow-up', detail: 'Create a payment follow-up for every owing party that has not been contacted.', evidence: `${collections.recoveryKpis.neverContacted} owing parties have no payment follow-up.`, impact: 'This gives every blocked payment an owner and next date.', route: '/crm/payments' });
+    add({ id: 'older-debtors', category: 'Cash', priority: 'Do today', title: 'Separate old debtors from current buyers', detail: 'Do not wait for a new order. Chase old invoices as a separate recovery list.', evidence: `${collections.olderOwingParties} owing parties were not billed in the selected period.`, impact: 'Old debt can be collected without adding more production or stock.', route: '/reports/collections' });
+    add({ id: 'due-soon', category: 'Cash', priority: 'This week', title: 'Call before the due date', detail: 'Confirm payment one week before it becomes overdue.', evidence: `${money(collections.dueSoon)} falls due in the next 15 days.`, impact: `Protect up to ${money(collections.dueSoon)} from becoming late.`, route: '/reports/collections' });
+    add({ id: 'promises', category: 'Cash', priority: collections.recoveryKpis.promisesOverdue > 0 ? 'Do today' : 'Watch', title: 'Track every payment promise', detail: 'Record promised amount and date. Call again on the same day if the promise is missed.', evidence: `${collections.recoveryKpis.promisesOverdue} promises are broken and ${collections.recoveryKpis.promisesDueToday} are due today.`, impact: 'Short follow-up gaps improve payment conversion.', route: '/crm/payments' });
+    add({ id: 'advances', category: 'Cash', priority: 'This week', title: 'Use advances before asking for full payment', detail: 'Adjust available advances against open bills and show the true balance to the party.', evidence: `${money(collections.advanceHeld)} is held as party advances.`, impact: 'Cleaner balances make collection calls faster and reduce disputes.', route: '/account/advances' });
+    add({ id: 'dso', category: 'Cash', priority: 'This week', title: 'Reduce DSO by 10 days', detail: 'Set a first target of collecting ten sales-days faster.', evidence: `Current DSO is about ${collections.dsoDays ?? 0} days.`, impact: `Ten fewer DSO days can release about ${money(cashUnlockFromTenDsoDays)}.`, route: '/reports/collections' });
+    add({ id: 'collection-gap', category: 'Cash', priority: 'Do today', title: 'Close the billing and collection gap', detail: 'Do not grow low-margin sales unless collection speed also improves.', evidence: `Collected ${pct(collections.collectionRate)} of billed value in the current FY.`, impact: `${money(Math.max(0, overview.revenue.current - overview.collections.current))} of period billing is not matched by period collections.`, route: '/reports/overview' });
+    add({ id: 'top-overdue', category: 'Cash', priority: 'Do today', title: `Call ${collections.topOverdueParties[0]?.name ?? 'the top overdue party'}`, detail: 'The largest overdue account should be the first recovery call of the day.', evidence: `${money(collections.topOverdueParties[0]?.value ?? 0)} is overdue from this party.`, impact: 'One successful large-party call can move cash faster than many small calls.', route: '/reports/collections' });
+
+    add({ id: 'revenue-trend', category: 'Sales', priority: overview.revenue.direction === 'down' ? 'This week' : 'Watch', title: overview.revenue.direction === 'down' ? 'Recover the sales slowdown' : 'Protect the current sales pace', detail: 'Use the best parties and fastest-moving utensils for the next sales calls.', evidence: `Period billing is ${money(overview.revenue.current)}, ${Math.abs(overview.revenue.deltaPct ?? 0).toFixed(0)}% ${overview.revenue.direction} versus the previous equal period.`, impact: `Recent run rate suggests about ${money(next30DayRevenue)} billing in the next 30 days.`, route: '/reports/sales' });
+    add({ id: 'top-party', category: 'Sales', priority: 'This week', title: 'Protect the biggest revenue party', detail: 'Confirm its next requirement, payment plan and production slot before stock is made.', evidence: `${overview.topParties[0]?.name ?? 'The top party'} billed ${money(overview.topParties[0]?.value ?? 0)} in the period.`, impact: 'Protects a large part of near-term revenue with fewer selling hours.', route: '/reports/parties' });
+    add({ id: 'active-parties', category: 'Sales', priority: 'This week', title: 'Increase orders from current buyers', detail: 'Ask active buyers for one extra fast-moving item instead of only finding new parties.', evidence: `${overview.activeParties} parties were billed; average invoice was ${money(overview.avgInvoiceValue)}.`, impact: `One average invoice from 10% of active parties is about ${money(overview.activeParties * 0.1 * overview.avgInvoiceValue)}.`, route: '/reports/overview' });
+    add({ id: 'top-product', category: 'Sales', priority: 'This week', title: `Push ${products.topProducts[0]?.name ?? 'the top product'}`, detail: 'Keep the top steel utensil ready and offer it first to repeat buyers.', evidence: `It produced ${money(products.topProducts[0]?.value ?? 0)} of item value in the period.`, impact: 'Fast movers turn steel and labour into invoices sooner.', route: '/reports/products' });
+    add({ id: 'top-category', category: 'Sales', priority: 'Watch', title: `Build the next offer around ${products.categoryMix[0]?.name ?? 'the top category'}`, detail: 'Bundle one related cup, glass, loti or utensil item with the leading category.', evidence: `${money(products.categoryMix[0]?.value ?? 0)} came from this category.`, impact: 'A focused offer can increase basket size without a long sales cycle.', route: '/reports/products' });
+
+    const lossDesigns = products.designMargin.filter((d) => d.flag === 'loss');
+    const thinDesigns = products.designMargin.filter((d) => d.flag === 'thin');
+    add({ id: 'loss-designs', category: 'Margin', priority: lossDesigns.length ? 'Do today' : 'Watch', title: 'Stop loss-making design rates', detail: 'Block or reprice designs where listed rate is not above cost.', evidence: `${lossDesigns.length} active designs are at zero or negative list margin.`, impact: 'Prevents sales that increase cash pressure instead of profit.', route: '/reports/products' });
+    add({ id: 'thin-designs', category: 'Margin', priority: thinDesigns.length ? 'This week' : 'Watch', title: 'Review thin-margin designs', detail: 'Add labour, packing and wastage before approving a thin rate.', evidence: `${thinDesigns.length} active designs have less than 15% list margin.`, impact: 'A small price correction protects profit on high-volume items.', route: '/reports/products' });
+    add({ id: 'margin-category', category: 'Margin', priority: 'This week', title: 'Sell volume only with a margin check', detail: 'Compare the best-selling category with its design margin before accepting a large order.', evidence: `${products.marginByCategory.at(-1)?.name ?? 'The lowest category'} has the lowest average listed margin at ${products.marginByCategory.at(-1)?.value ?? 0}%.`, impact: 'Avoids locking cash in busy but weak-margin production.', route: '/reports/products' });
+
+    add({ id: 'repeat-party', category: 'Customers', priority: 'This week', title: 'Turn first buyers into repeat buyers', detail: 'Call after delivery and ask what should be repeated or changed.', evidence: `${pct(patterns.repeatPartyRate)} of billed parties bought at least twice in the period.`, impact: 'Repeat orders cost less time to win and are easier to plan.', route: '/reports/patterns' });
+    add({ id: 'product-reorder', category: 'Customers', priority: 'This week', title: 'Use product reorder dates', detail: 'Call near the normal reorder gap with the same product and latest rate.', evidence: `${pct(patterns.reorderRate)} of party-product pairs were reordered; average order gap is ${patterns.avgOrderGapDays ?? 0} days.`, impact: 'Timed calls can bring the next invoice forward.', route: '/reports/patterns' });
+    add({ id: 'dormant', category: 'Customers', priority: 'This week', title: 'Win back dormant parties carefully', detail: 'Offer only proven fast movers and ask for a short payment term.', evidence: `${seg('Dormant') + seg('Win-back')} parties are dormant or ready for win-back in this period view.`, impact: 'Reactivates revenue without giving fresh long credit.', route: '/reports/parties' });
+    add({ id: 'at-risk', category: 'Customers', priority: 'This week', title: 'Call at-risk parties before they go quiet', detail: 'Ask about quality, rate, delivery and the next buying date.', evidence: `${seg('At-risk')} parties are marked at risk.`, impact: 'Saves existing revenue before spending time on new leads.', route: '/reports/parties' });
+
+    add({ id: 'pending-orders', category: 'Operations', priority: 'Do today', title: 'Clear old pending orders', detail: 'Finish, dispatch or close the oldest open order before starting slow new work.', evidence: `${fulfilment.pendingOrders} orders are open; ${money(fulfilment.aging.at(-1)?.value ?? 0)} is in the oldest band.`, impact: 'Finished orders become invoices and cash sooner.', route: '/reports/fulfilment' });
+    add({ id: 'urgent-orders', category: 'Operations', priority: fulfilment.urgentOpen ? 'Do today' : 'Watch', title: 'Give every urgent order one owner', detail: 'Confirm material, production and dispatch time for each urgent order.', evidence: `${fulfilment.urgentOpen} open orders are marked urgent.`, impact: 'Reduces delayed billing and customer follow-up time.', route: '/reports/fulfilment' });
+    add({ id: 'partial-dispatch', category: 'Operations', priority: 'This week', title: 'Reduce partial dispatch work', detail: 'Group production and packing so more order lines leave complete.', evidence: `${pct(fulfilment.partialRate)} of selected dispatch rows are partial; cancellation rate is ${pct(fulfilment.cancellationRate)}.`, impact: 'Fewer partial loads reduce packing, freight and billing effort.', route: '/reports/fulfilment' });
+    add({ id: 'unbilled-dispatch', category: 'Operations', priority: overview.backlogValue > 0 ? 'Do today' : 'Watch', title: 'Bill dispatched goods quickly', detail: 'Create the challan on the same day after dispatch is checked.', evidence: `${money(overview.backlogValue)} is dispatched but not billed in the selected period.`, impact: 'Billing earlier starts the payment clock earlier.', route: '/challans/pending' });
+
+    return {
+      headline: { revenue: overview.revenue.current, collections: overview.collections.current, outstanding: collections.totalOutstanding, overdue: collections.overdue, backlog: overview.backlogValue, activeParties: overview.activeParties, owingParties: collections.owingParties },
+      forecast: { next30DayRevenue, collectible30Days, cashUnlockFromTenDsoDays, confidence: recentMonths.length >= 3 ? 'Medium' : 'Low' },
+      actions,
+      asOf: new Date().toISOString(),
     };
   }
 }

@@ -91,6 +91,7 @@ export function DataTable<T>({
   onRowClick,
   rowClassName,
   actions,
+  actionsHeader,
   isLoading,
   emptyText = 'No records found.',
   // No height cap by default: the table grows to fit its rows (a page of ~50)
@@ -116,6 +117,8 @@ export function DataTable<T>({
   rowClassName?: (row: T) => string | undefined;
   /** Renders the content of the sticky actions cell; omit for no actions column. */
   actions?: (row: T) => ReactNode;
+  /** Optional visible label for the actions column. Pass `null` to keep it blank. */
+  actionsHeader?: ReactNode;
   isLoading?: boolean;
   emptyText?: string;
   /** Cap the table height (e.g. 'max-h-[40vh]') so rows scroll inside, header sticks. */
@@ -259,9 +262,10 @@ export function DataTable<T>({
             ))}
             {hasActionsCol && (
               <TableHead
+                aria-label="Row actions"
                 className={cn('sticky right-0 z-30 w-24 border-r-0 text-right', stickyTop && 'top-0', SHADOW_R)}
               >
-                {actions ? 'Actions' : 'View'}
+                {actionsHeader === undefined ? (actions ? 'Actions' : 'View') : actionsHeader}
               </TableHead>
             )}
           </TableRow>

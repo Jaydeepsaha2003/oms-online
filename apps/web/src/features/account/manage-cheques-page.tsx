@@ -13,6 +13,7 @@ import {
   ReceiptIndianRupee,
   RotateCcw,
   Trash2,
+  X,
   XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -22,6 +23,7 @@ import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { getApiErrorMessage } from '@/lib/api';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useConfirm } from '@/components/common/confirm';
 import { RecordHistory } from '@/components/common/record-history';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
@@ -47,6 +49,11 @@ import {
 
 const PAGE_SIZE = 50;
 const money = (v: number | null | undefined) => `₹ ${(v ?? 0).toLocaleString('en-IN')}`;
+
+/** Compact, amber-bordered filter controls — same language as the challan/orders screens. */
+const CONTROL =
+  'h-9 rounded-[4px] border-amber-300 dark:border-amber-400/40 text-[12.5px] focus-visible:border-amber-500 focus-visible:ring-amber-400/30';
+const CONTROL_ON = 'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
 
 /** yyyy-mm-dd in LOCAL time (date inputs + server payloads). */
 function ymd(d: Date): string {
@@ -101,6 +108,12 @@ export function ManageChequesPage() {
   const query = { page, pageSize: PAGE_SIZE, status: status || undefined, search: searchInput.trim() || undefined };
   const { data: gridData, isLoading } = useCheques(query);
   const totalPages = gridData?.totalPages ?? 1;
+  const hasFilters = !!(status || searchInput);
+  const resetFilters = () => {
+    setStatus('');
+    setSearchInput('');
+    setPage(1);
+  };
 
   // modals
   const [formModal, setFormModal] = useState<'new' | ChequeDto | null>(null);
@@ -237,14 +250,37 @@ export function ManageChequesPage() {
       <div className="grid gap-4 xl:grid-cols-[1fr_350px]">
         {/* LEFT: filters + grid */}
         <div className="min-w-0 space-y-3">
-          <div className="bg-card flex flex-wrap items-end gap-2 rounded-md border p-3 shadow-sm">
-            <div className="w-44 space-y-1">
-              <Label className="text-xs">Status</Label>
-              <NativeSelect value={status} onChange={(v) => { setStatus(v); setPage(1); }} options={['', 'PENDING', 'DEPOSITED', 'CLEARED', 'BOUNCED']} placeholder="All statuses" />
-            </div>
-            <div className="flex-1 space-y-1">
-              <Label className="text-xs">Search</Label>
-              <Input placeholder="Cheque no, party, bank…" value={searchInput} onChange={(e) => { setSearchInput(e.target.value); setPage(1); }} />
+          <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
+            <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
+              <div className="w-44">
+                <Label className="sr-only">Status</Label>
+                <NativeSelect
+                  value={status}
+                  onChange={(v) => { setStatus(v); setPage(1); }}
+                  options={['', 'PENDING', 'DEPOSITED', 'CLEARED', 'BOUNCED']}
+                  placeholder="All statuses"
+                  className={cn(CONTROL, 'font-medium', status && CONTROL_ON)}
+                />
+              </div>
+              <div className="min-w-[10rem] flex-1">
+                <Label className="sr-only">Search</Label>
+                <Input
+                  placeholder="Cheque no, party, bank…"
+                  value={searchInput}
+                  onChange={(e) => { setSearchInput(e.target.value); setPage(1); }}
+                  className={cn(CONTROL, 'font-medium', searchInput && CONTROL_ON)}
+                />
+              </div>
+              {hasFilters && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-9 rounded-[4px] text-[12.5px] font-semibold text-amber-700 hover:bg-amber-50 hover:text-amber-900 dark:text-amber-300 dark:hover:bg-amber-400/10"
+                  onClick={resetFilters}
+                >
+                  <X className="size-3.5" /> Reset
+                </Button>
+              )}
             </div>
           </div>
 
@@ -254,21 +290,34 @@ export function ManageChequesPage() {
             rowKey={(c) => c.id}
             isLoading={isLoading}
             dense
-            className="text-[15px] [&_thead_th]:text-[13px] [&_td]:py-2 [&_th]:py-2 [&_tbody_button]:size-8"
+            className={[
+              'font-sans text-[13px]',
+              '[&_tbody]:select-none',
+              '[&_thead_th]:text-[13.5px] [&_thead_th]:font-extrabold [&_thead_th]:uppercase [&_thead_th]:tracking-wide [&_thead_th]:py-1.5',
+              '[&_thead_th_button]:cursor-pointer',
+              '[&_thead_th:hover]:from-blue-900 [&_thead_th:hover]:to-indigo-900',
+              '[&_td]:py-1 [&_td]:px-3 [&_th]:px-3',
+              '[&_tbody_button:not([role=switch]):not([role=checkbox])]:size-7',
+              '[&_tbody_tr]:border-b [&_tbody_tr]:border-slate-200 dark:[&_tbody_tr]:border-white/10',
+              '[&_td]:border-r [&_td]:border-slate-200 dark:[&_td]:border-white/10 [&_td:last-child]:border-r-0',
+              '[&_tbody_tr:nth-child(even)_td]:bg-slate-100/80 dark:[&_tbody_tr:nth-child(even)_td]:bg-white/[0.04]',
+              '[&_tbody_tr:hover:hover_td]:bg-amber-100/70 dark:[&_tbody_tr:hover:hover_td]:bg-amber-400/10',
+            ].join(' ')}
             actions={rowActions}
             emptyText="No cheques match the current filter."
           />
 
           {totalPages > 1 && (
-            <div className="flex items-center justify-between">
-              <p className="text-muted-foreground text-sm">
-                Page {gridData?.page ?? page} of {totalPages}
+            <div className="bg-card flex items-center justify-between rounded-[4px] border px-3 py-2 shadow-sm">
+              <p className="text-muted-foreground text-[12px] font-medium">
+                Page <span className="font-bold tabular-nums text-foreground">{gridData?.page ?? page}</span> of{' '}
+                <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
               </p>
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+                <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
                   <ChevronLeft /> Prev
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+                <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
                   Next <ChevronRight />
                 </Button>
               </div>
@@ -458,6 +507,8 @@ function ChequeFormModal({ cheque, onClose }: { cheque: ChequeDto | null; onClos
     if (isEdit) update.mutate(payload, opts);
     else create.mutate(payload, opts);
   };
+
+  useSaveShortcut(submit);
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -650,6 +701,8 @@ function SettleModal({ initialId, onClose }: { initialId: number | ''; onClose: 
       },
     );
   };
+
+  useSaveShortcut(submit);
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -856,6 +909,8 @@ function DepositModal({ cheque, onClose }: { cheque: ChequeDto; onClose: () => v
       },
     );
   };
+
+  useSaveShortcut(save);
 
   const Row = ({ k, v }: { k: string; v: string }) => (
     <>

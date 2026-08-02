@@ -208,10 +208,13 @@ export interface ChallanDraftItem {
   amount: number;
   pCategory: string | null;
   comment: string | null;
-  /** Per-line rates resolved from the master tables (Form14 grid columns). */
-  gstRate: number;
-  freightRate: number;
-  packingRate: number;
+  /** Per-line rates resolved from the master tables (Form14 grid columns).
+   *  `null` means the rate master has NO row for this category/transport at
+   *  all — not configured — as opposed to `0`, which means it's configured
+   *  and genuinely zero. Create Challan warns on the former, not the latter. */
+  gstRate: number | null;
+  freightRate: number | null;
+  packingRate: number | null;
 }
 
 export interface ChallanDraft {

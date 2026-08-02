@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { ChevronRight, Boxes } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { filterMenu, MENU, type MenuNode } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { getMenuIcon } from '@/lib/icons';
@@ -11,6 +11,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { SystemStatus } from '@/components/common/system-status';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useCompany } from '@/features/settings/use-settings';
+import kavishLogo from '@/assets/kavish-logo.png';
 
 const APP_NAME = import.meta.env.VITE_APP_NAME ?? 'OMS';
 
@@ -27,7 +29,10 @@ interface SidebarProps {
  */
 export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
   const { permissions, can } = usePermissions();
+  const { data: company } = useCompany();
   const location = useLocation();
+  const brandLogo = company?.logo || kavishLogo;
+  const brandName = company?.name || 'Kavish';
   const nudges = useNudgeCount(can('crm:view'));
   const canViewApprovals = can('approval:view');
   const { data: approvalCount } = usePendingApprovalCount(canViewApprovals);
@@ -68,8 +73,8 @@ export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
   return (
     <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
       <div className={cn('flex h-16 items-center gap-3 px-4', collapsed && 'justify-center px-0')}>
-        <div className="bg-gradient-brand flex size-9 shrink-0 items-center justify-center rounded-xl text-white shadow-lg shadow-blue-950/40 ring-1 ring-white/20">
-          <Boxes className="size-5" />
+        <div className="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-md bg-white p-0.5 shadow-sm ring-1 ring-white/20">
+          <img src={brandLogo} alt={`${brandName} logo`} className="size-full object-contain" />
         </div>
         {!collapsed && (
           <div className="flex min-w-0 flex-col leading-tight">
@@ -82,7 +87,14 @@ export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
       </div>
       <Separator className="bg-sidebar-border" />
 
-      <ScrollArea className="flex-1 px-2 py-3">
+      <ScrollArea
+        type="auto"
+        className={cn(
+          'min-h-0 flex-1 px-2 py-3',
+          collapsed &&
+            '[&_[data-slot=scroll-area-scrollbar]]:w-[3px] [&_[data-slot=scroll-area-scrollbar]]:border-l-0 [&_[data-slot=scroll-area-scrollbar]]:p-0 [&_[data-slot=scroll-area-thumb]]:bg-sidebar-foreground/45',
+        )}
+      >
         <nav className={cn('flex flex-col', collapsed ? 'gap-0' : 'gap-0.5')}>
           {items.map((node) =>
             node.children?.length ? (

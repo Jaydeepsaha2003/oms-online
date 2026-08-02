@@ -7,6 +7,7 @@ import { parseExcelFile } from '@/lib/excel';
 import { cn, formatDateShort, formatDateTime } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useColumnOrder } from '@/hooks/use-column-order';
+import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
@@ -493,6 +494,8 @@ function CategoryFieldsDialog({ canEdit, onClose }: { canEdit: boolean; onClose:
     });
   };
 
+  useSaveShortcut(submit);
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-md">
@@ -586,6 +589,8 @@ function ProductDialog({ product, onClose }: { product: ProductDto | null; onClo
     if (isEdit) update.mutate(input, opts);
     else create.mutate(input, opts);
   };
+
+  useSaveShortcut(submit);
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>

@@ -16,6 +16,7 @@ import {
 import { toast } from 'sonner';
 import type { CustomerInput } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
+import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -218,6 +219,8 @@ export function CustomerFormPage() {
     if (isEdit) update.mutate(input, opts);
     else create.mutate(input, opts);
   };
+
+  useSaveShortcut(submit);
 
   if (isEdit && loadingCustomer) {
     return (

@@ -7,6 +7,7 @@ import { getApiErrorMessage, uploadFile } from '@/lib/api';
 import { parseExcelFile } from '@/lib/excel';
 import { cn, formatDateShort, formatDateTime } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useConfirm } from '@/components/common/confirm';
 import { NativeSelect } from '@/components/common/combo';
 import { ExportButton, ImportButton } from '@/components/common/excel-actions';
@@ -502,6 +503,8 @@ function DesignNameDialog({ designName, onClose }: { designName: DesignNameDto |
     if (isEdit) update.mutate(input, opts);
     else create.mutate(input, opts);
   };
+
+  useSaveShortcut(submit);
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>

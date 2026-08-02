@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Ban, ChevronLeft, ChevronRight, Eye, Filter, Loader2, Plus, Printer, RotateCcw, Search, Trash2, Truck } from 'lucide-react';
+import { Ban, ChevronLeft, ChevronRight, EllipsisVertical, Eye, Filter, Loader2, Plus, Printer, RotateCcw, Search, Trash2, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 import type { OrderDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -14,7 +14,7 @@ import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { NativeSelect } from '@/components/common/combo';
@@ -141,6 +141,54 @@ export function OrdersPage() {
   const to = Math.min(page * PAGE_SIZE, totalRows);
 
   const handleCancel = (o: OrderDto) => setCancelling(o);
+
+  const orderActionsMenu = (o: OrderDto) => {
+    const truck = TRUCK_STATE[o.dispatchState ?? 'NONE'] ?? TRUCK_STATE.NONE;
+    const alreadyCancelled = o.status === 'CANCELLED';
+    const hasDispatches = (o.dispatchState ?? 'NONE') !== 'NONE';
+    const canCancel = !alreadyCancelled && !hasDispatches;
+    const cancelLabel = alreadyCancelled ? 'Already cancelled' : hasDispatches ? 'Cannot cancel - items dispatched' : 'Cancel order';
+
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" className="size-7" aria-label={`Actions for order ${shortOrderCode(o.code, o.id)}`} title="Order actions">
+            <EllipsisVertical className="size-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56 font-sans">
+          {can('order:view') && (
+            <DropdownMenuItem onSelect={() => navigate(`/orders/${o.id}/edit`)}>
+              <Eye /> View order
+            </DropdownMenuItem>
+          )}
+          {can('order:view') && (
+            <DropdownMenuItem onSelect={() => setTimelineFor(o)}>
+              <Truck /> Order journey - {truck.label}
+            </DropdownMenuItem>
+          )}
+          {can('order:print') && (
+            <DropdownMenuItem onSelect={() => navigate(`/orders/${o.id}/bill`)}>
+              <Printer /> Bill / Invoice
+            </DropdownMenuItem>
+          )}
+          {can('order:update') && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" disabled={!canCancel} onSelect={() => handleCancel(o)}>
+                <Ban /> {cancelLabel}
+              </DropdownMenuItem>
+            </>
+          )}
+          {canDelete && (
+            <DropdownMenuItem variant="destructive" onSelect={() => setDeleting(o)}>
+              <Trash2 /> Delete permanently
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  };
 
   // Phones: one stacked card per order instead of a horizontally-scrolling table.
   const orderMobileCard = (o: OrderDto) => {
@@ -384,10 +432,14 @@ export function OrdersPage() {
           mobileCard={orderMobileCard}
           className={[
             'font-sans text-[13px]',
+            // Rows are click-to-edit, so block accidental text selection (a
+            // stray drag while scrolling otherwise highlights the row's text).
+            '[&_tbody]:select-none',
             '[&_thead_th]:text-[13.5px] [&_thead_th]:font-extrabold [&_thead_th]:uppercase [&_thead_th]:tracking-wide [&_thead_th]:py-1.5',
             '[&_thead_th_button]:cursor-pointer',
             '[&_thead_th:hover]:from-blue-900 [&_thead_th:hover]:to-indigo-900',
             '[&_td]:py-1 [&_td]:px-3 [&_th]:px-3',
+            '[&_thead_th:last-child]:w-16 [&_tbody_td:last-child]:w-16',
             '[&_tbody_button:not([role=switch]):not([role=checkbox])]:size-7',
             '[&_tbody_tr]:border-b [&_tbody_tr]:border-slate-200 dark:[&_tbody_tr]:border-white/10',
             '[&_td]:border-r [&_td]:border-slate-200 dark:[&_td]:border-white/10 [&_td:last-child]:border-r-0',
@@ -395,117 +447,8 @@ export function OrdersPage() {
             '[&_tbody_tr:hover:hover_td]:bg-amber-100/70 dark:[&_tbody_tr:hover:hover_td]:bg-amber-400/10',
           ].join(' ')}
           actions={(o) => {
-            if (!(can('order:view') || can('order:print') || can('order:update'))) return null;
-            const truck = TRUCK_STATE[o.dispatchState ?? 'NONE'] ?? TRUCK_STATE.NONE;
-            const alreadyCancelled = o.status === 'CANCELLED';
-            const hasDispatches = (o.dispatchState ?? 'NONE') !== 'NONE';
-            const canCancel = !alreadyCancelled && !hasDispatches;
-            return (
-              <div className="flex justify-end gap-1">
-                {can('order:view') && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button variant="ghost" size="icon" className="size-7" onClick={() => navigate(`/orders/${o.id}/edit`)} aria-label="View order">
-                        <Eye className="size-4" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="top">
-                      <p className="font-semibold">View order</p>
-                      <p className="opacity-80">Open the full order to see or edit its details.</p>
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-                {can('order:view') && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className={cn('size-7', truck.cls)}
-                        onClick={() => setTimelineFor(o)}
-                        aria-label={`Order journey — ${truck.label}`}
-                      >
-                        <Truck className="size-4" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="top" className="max-w-60">
-                      <p className="font-semibold">Order journey · {truck.label}</p>
-                      <p className="opacity-80">{truck.detail} Click to see every dispatch and challan, step by step.</p>
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-                {can('order:print') && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button variant="ghost" size="icon" className="size-7" onClick={() => navigate(`/orders/${o.id}/bill`)} aria-label="Bill / Invoice">
-                        <Printer className="size-4" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="top">
-                      <p className="font-semibold">Bill / Invoice</p>
-                      <p className="opacity-80">Open the printable sales-order bill.</p>
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-                {can('order:update') && (
-                  <Tooltip>
-                    {/* span wrapper — a disabled button swallows pointer events, so the
-                        tooltip explaining WHY it's disabled would never show without it */}
-                    <TooltipTrigger asChild>
-                      <span className="inline-flex">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-7 text-destructive hover:text-destructive disabled:text-slate-300"
-                          disabled={!canCancel}
-                          onClick={() => handleCancel(o)}
-                          aria-label={alreadyCancelled ? 'Order already cancelled' : hasDispatches ? 'Cannot cancel — items dispatched' : 'Cancel order'}
-                        >
-                          <Ban className="size-4" />
-                        </Button>
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent side="top" className="max-w-56">
-                      {alreadyCancelled ? (
-                        <>
-                          <p className="font-semibold">Already cancelled</p>
-                          <p className="opacity-80">This order is cancelled and kept for records.</p>
-                        </>
-                      ) : hasDispatches ? (
-                        <>
-                          <p className="font-semibold">Cannot cancel</p>
-                          <p className="opacity-80">Items of this order are already dispatched — only untouched orders can be cancelled.</p>
-                        </>
-                      ) : (
-                        <>
-                          <p className="font-semibold">Cancel order</p>
-                          <p className="opacity-80">Marks the order CANCELLED. It stays on record but can no longer be dispatched.</p>
-                        </>
-                      )}
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-                {canDelete && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-7 text-destructive hover:text-destructive"
-                        onClick={() => setDeleting(o)}
-                        aria-label="Delete order permanently"
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="top" className="max-w-56">
-                      <p className="font-semibold">Delete permanently</p>
-                      <p className="opacity-80">Removes the order and its lines for good — this cannot be undone.</p>
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-              </div>
-            );
+            if (!(can('order:view') || can('order:print') || can('order:update') || canDelete)) return null;
+            return <div className="flex justify-end">{orderActionsMenu(o)}</div>;
           }}
         />
       </div>

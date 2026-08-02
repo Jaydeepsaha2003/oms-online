@@ -6,9 +6,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
-  HandCoins,
-  Info,
-  Landmark,
   Loader2,
   RotateCcw,
   Save,
@@ -20,20 +17,23 @@ import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { getApiErrorMessage } from '@/lib/api';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { NativeSelect } from '@/components/common/combo';
 import { useCustomers } from '@/features/customers/use-customers';
 import { useAgents } from '@/features/agents/use-agents';
 import { useActiveBankAccounts, useChequeOptions, usePaymentContext, usePaymentLedger, useSavePayment } from './use-account';
 import { exportPendingInvoices } from './payment-pending-export';
 
-const money = (v: number | null | undefined) => `₹ ${(v ?? 0).toLocaleString('en-IN')}`;
-const n2 = (v: number) => v.toLocaleString('en-IN');
-// Delegates to the shared formatter so this page follows the system-wide date format.
+const inr = (v: number | null | undefined) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+const money = (v: number | null | undefined) => `₹ ${inr(v)}`;
+/** A zero figure reads as "-" in the summary strip — accounting-statement style,
+ *  the same convention the Party Ledger / Daybook summary rows use. */
+const moneyOrDash = (v: number) => (v ? inr(v) : '-');
 const prettyDate = (iso: string | null) => formatDate(iso);
 
 function ymd(d: Date): string {
@@ -49,10 +49,45 @@ function fyStart(): string {
   return ymd(new Date(t.getMonth() >= 3 ? t.getFullYear() : t.getFullYear() - 1, 3, 1));
 }
 
-const DUE_STYLE: Record<string, { row: string; badge: string }> = {
-  NORMAL: { row: 'bg-emerald-50/70', badge: 'bg-emerald-100 text-emerald-700 ring-emerald-200' },
-  'PAST DUE': { row: 'bg-amber-50/70', badge: 'bg-amber-100 text-amber-700 ring-amber-200' },
-  OVERDUE: { row: 'bg-rose-50/70', badge: 'bg-rose-100 text-rose-700 ring-rose-200' },
+/* ── Tally palette — the amber chrome + navy column strip used across the
+   account screens (Party Ledger, Daybook), so this voucher reads as part of
+   the same accounting family. ─────────────────────────────────────────────── */
+
+/** Compact, amber-bordered controls — the house filter/input language. */
+const CONTROL =
+  'h-9 rounded-[4px] border-amber-300 dark:border-amber-400/40 text-[12.5px] focus-visible:border-amber-500 focus-visible:ring-amber-400/30';
+const CONTROL_ON = 'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
+/** Small caps field caption sitting above each control. */
+const FIELD_LABEL = 'text-[10px] font-bold tracking-widest text-amber-900/70 uppercase dark:text-amber-200/60';
+/** Sticky navy→indigo column strip — identical to every other grid in the app. */
+const TH =
+  'sticky top-0 z-10 bg-gradient-to-b from-blue-800 to-indigo-800 px-2 py-1.5 text-left text-[11px] font-extrabold tracking-wide text-white uppercase whitespace-nowrap dark:from-blue-900 dark:to-indigo-900';
+const TH_LINE = 'border-r border-white/15';
+const TD = 'border-r border-r-amber-200/80 px-2 py-[3px] align-middle dark:border-r-amber-400/15 last:border-r-0';
+const NUM = 'text-right tabular-nums';
+/** The frame around each worksheet panel. */
+const PANEL = 'border-amber-300 dark:border-amber-400/30';
+/** The dark document caption bar that tops each panel. */
+const DOC_BAR = 'flex shrink-0 items-center justify-between gap-3 bg-slate-800 px-2.5 py-1 dark:bg-slate-900';
+const DOC_TITLE = 'truncate text-[12px] font-extrabold tracking-wide text-amber-300 uppercase';
+
+/** Per-status row tint + chip, matching the legacy traffic-light grid. */
+const DUE_STYLE: Record<string, { row: string; chip: string; text: string }> = {
+  NORMAL: {
+    row: 'bg-emerald-50/60 dark:bg-emerald-400/[0.06]',
+    chip: 'bg-emerald-100 text-emerald-700 ring-emerald-200 dark:bg-emerald-400/15 dark:text-emerald-300 dark:ring-emerald-400/25',
+    text: 'text-emerald-700 dark:text-emerald-400',
+  },
+  'PAST DUE': {
+    row: 'bg-amber-50/70 dark:bg-amber-400/[0.07]',
+    chip: 'bg-amber-100 text-amber-800 ring-amber-200 dark:bg-amber-400/15 dark:text-amber-300 dark:ring-amber-400/25',
+    text: 'text-amber-700 dark:text-amber-400',
+  },
+  OVERDUE: {
+    row: 'bg-rose-50/70 dark:bg-rose-400/[0.07]',
+    chip: 'bg-rose-100 text-rose-700 ring-rose-200 dark:bg-rose-400/15 dark:text-rose-300 dark:ring-rose-400/25',
+    text: 'text-rose-600 dark:text-rose-400',
+  },
 };
 
 export function PaymentPage() {
@@ -109,8 +144,16 @@ export function PaymentPage() {
   }, [ctxError]);
 
   const bucket: 'BANK' | 'CASH' = payMode === 'CASH' ? 'CASH' : 'BANK';
-  const invoices = ctx?.invoices ?? [];
+  const allInvoices = ctx?.invoices ?? [];
   const bucketAmt = (r: PendingInvoiceRow) => (bucket === 'BANK' ? r.bankBal : r.cashBal);
+  /** The grid only lists invoices that carry money in the CHOSEN bucket — the
+   *  legacy form does the same, so a cash-only bill never shows as a "0" row
+   *  while you're recording a bank receipt. Before a mode is picked, show all. */
+  const invoices = useMemo(
+    () => (payMode ? allInvoices.filter((r) => bucketAmt(r) > 0.004) : allInvoices),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allInvoices, payMode, bucket],
+  );
 
   /* ── cheque picker (CHEQUE mode, party only) ────────────────────────────── */
   const { data: chequeOpts } = useChequeOptions(customerId, payMode === 'CHEQUE');
@@ -122,7 +165,19 @@ export function PaymentPage() {
   };
   const chequeComment = chequeByNo.get(chequeNo)?.comments ?? null;
 
-  /* ── live allocation preview (mirrors the engine sizing) ────────────────── */
+  /**
+   * Advance already sitting on account for this party.
+   *
+   * In PARTY mode the engine funds invoice clearing from this FIRST, then from
+   * today's receipt. That doesn't let the receipt clear any more invoices than it
+   * could alone — allocations are still sized by the receipt — but every rupee the
+   * old advance funds frees an equal rupee of receipt cash, which re-parks as a
+   * fresh advance. So an existing advance inflates what gets parked. AGENT mode
+   * ignores advances entirely and funds purely from the receipt.
+   */
+  const advanceAvail = (ctx?.totals && (bucket === 'BANK' ? ctx.totals.advanceBank : ctx.totals.advanceCash)) ?? 0;
+
+  /* ── live allocation preview (mirrors the engine exactly) ───────────────── */
   const receipt = Number(receiptStr) || 0;
   const preview = useMemo(() => {
     const openingPend = (ctx?.openings ?? []).reduce((a, o) => a + (bucket === 'BANK' ? o.pendingBank : o.pendingCash), 0);
@@ -143,9 +198,19 @@ export function PaymentPage() {
       }
     }
     const adjTotal = [...adjByInv.values()].reduce((a, v) => a + v, 0);
-    return { openingPend, openingUse, adjByInv, adjTotal, advanceToSave: Math.max(0, Math.round((receipt - openingUse - adjTotal) * 100) / 100) };
+    const fromReceipt = Math.max(0, Math.round((receipt - openingUse - adjTotal) * 100) / 100);
+    /** Old advance spent on the invoices above — frees the same amount of receipt. */
+    const advanceUsed = isAgent ? 0 : Math.round(Math.min(advanceAvail, adjTotal) * 100) / 100;
+    return {
+      openingPend,
+      openingUse,
+      adjByInv,
+      adjTotal,
+      advanceUsed,
+      advanceToSave: Math.round((fromReceipt + advanceUsed) * 100) / 100,
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ctx, receipt, adjMode, selected, bucket, invoices]);
+  }, [ctx, receipt, adjMode, selected, bucket, invoices, advanceAvail, isAgent]);
 
   /* ── AGST REF ticking (with the legacy auto-trim) ───────────────────────── */
   useEffect(() => {
@@ -179,18 +244,41 @@ export function PaymentPage() {
     });
   };
 
-  /* ── KPI cards (NORMAL / PAST DUE / OVERDUE) ────────────────────────────── */
-  const kpis = useMemo(() => {
-    const mk = () => ({ bank: 0, cash: 0, count: 0 });
-    const out: Record<string, { bank: number; cash: number; count: number }> = { NORMAL: mk(), 'PAST DUE': mk(), OVERDUE: mk() };
-    for (const i of invoices) {
+  /* ── the six ledger-summary figures (legacy header block) ───────────────── */
+  const invoiceOutstanding = invoices.reduce((a, i) => a + bucketAmt(i), 0);
+  /** Before a pay mode is picked there's no "leg" to report on, so the opening
+   *  shows both sides added together — same as the legacy form does. */
+  const openingDisplay = payMode ? preview.openingPend : ((ctx?.totals?.openingBank ?? 0) + (ctx?.totals?.openingCash ?? 0));
+  const currentOutstanding = openingDisplay + invoiceOutstanding;
+  const allocated = preview.openingUse + preview.adjTotal;
+  const outstandingAfterAdj = Math.max(0, Math.round((currentOutstanding - allocated) * 100) / 100);
+  const remainingBalance = Math.max(0, Math.round((receipt - allocated) * 100) / 100);
+  /** Nothing left to clear → the only sensible adjustment is to park the money,
+   *  so the legacy form locks the mode to ADVANCE. Mirror that. */
+  const noPending = ownerChosen && !ctxLoading && invoices.length === 0;
+  useEffect(() => {
+    if (noPending && adjMode !== 'ADVANCE') setAdjMode('ADVANCE');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noPending]);
+
+  /* ── due buckets — bank and cash are counted SEPARATELY (a bill can be open
+       on one leg and settled on the other), matching the legacy overview. ─── */
+  const buckets = useMemo(() => {
+    const mk = () => ({ bank: 0, cash: 0, bankCount: 0, cashCount: 0 });
+    const out: Record<string, ReturnType<typeof mk>> = { NORMAL: mk(), 'PAST DUE': mk(), OVERDUE: mk() };
+    for (const i of allInvoices) {
       const k = out[i.dueType] ?? out.NORMAL;
-      k.bank += i.bankBal;
-      k.cash += i.cashBal;
-      k.count += 1;
+      if (i.bankBal > 0.004) {
+        k.bank += i.bankBal;
+        k.bankCount += 1;
+      }
+      if (i.cashBal > 0.004) {
+        k.cash += i.cashBal;
+        k.cashCount += 1;
+      }
     }
     return out;
-  }, [invoices]);
+  }, [allInvoices]);
 
   /* ── actions ────────────────────────────────────────────────────────────── */
   const save = useSavePayment();
@@ -247,6 +335,8 @@ export function PaymentPage() {
     );
   };
 
+  useSaveShortcut(submit);
+
   // Ctrl+E → Receipt Ledger (legacy shortcut).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -273,319 +363,479 @@ export function PaymentPage() {
     });
   };
 
-  const openingLabel = payMode ? (bucket === 'BANK' ? preview.openingPend : preview.openingPend) : preview.openingPend;
-  const invoiceOutstanding = invoices.reduce((a, i) => a + bucketAmt(i), 0);
-  const advanceAvail = (ctx?.totals && (bucket === 'BANK' ? ctx.totals.advanceBank : ctx.totals.advanceCash)) ?? 0;
+  const needsBank = payMode === 'BANK' || payMode === 'CHEQUE';
+  const gridCols = 9 + (adjMode === 'AGST REF' ? 1 : 0) + (isAgent ? 1 : 0);
 
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
-          <HandCoins className="size-5" />
-        </div>
-        <div className="flex items-center gap-1.5">
-          <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">Receive Payment</h2>
-          {/* The old inline strap-line ate a whole row on 13" screens — it now
-              lives behind this info tip so the form starts higher up. */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                aria-label="How a receipt is applied"
-                className="text-muted-foreground hover:text-foreground hover:bg-muted inline-flex size-6 shrink-0 items-center justify-center rounded-full transition-colors"
-              >
-                <Info className="size-4" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="max-w-xs text-sm leading-relaxed">
-              Receive money from a party or an agent — openings clear first, then invoices oldest-first, the rest parks on account.
-            </TooltipContent>
-          </Tooltip>
-        </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <Button
-            variant="outline"
-            onClick={() => (ownerChosen ? setLedgerOpen(true) : toast.error('Please select PARTY NAME or AGENT NAME first.'))}
-            title="Receipt ledger (Ctrl+E)"
-          >
-            <ScrollText /> Receipt Ledger
-          </Button>
-          <Button variant="outline" onClick={exportPending} disabled={!invoices.length} title="Download the pending invoices to Excel">
-            <Download className="text-emerald-600" /> Pending Excel
-          </Button>
-        </div>
-      </div>
-
-      {/* Receipt form */}
-      <div className="bg-card space-y-3 rounded-md border p-4 shadow-sm">
-        {/* Fluid auto-fit grid: every field is at least 210px and grows to share
-            the row, so the form reflows to as many columns as fit — 4–6 on a
-            wide monitor, fewer on a 13" laptop — without ever overflowing. */}
-        <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(210px,1fr))] [&_input]:text-base">
-          <div className="space-y-1">
-            <Label className="text-base">Receipt Date *</Label>
-            <Input type="date" max={TODAY()} value={recDate} onChange={(e) => setRecDate(e.target.value)} />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-base">Party Name</Label>
-            <NativeSelect value={party} onChange={(v) => { setParty(v); if (v) setAgent(''); setSelected([]); }} options={['', ...partyOptions]} placeholder="Select party…" disabled={!!agent} />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-base">Agent Name</Label>
-            <NativeSelect value={agent} onChange={(v) => { setAgent(v); if (v) setParty(''); setSelected([]); }} options={['', ...agentOptions]} placeholder="…or select agent" disabled={!!party} />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-base">Payment Mode *</Label>
-            <NativeSelect value={payMode} onChange={(v) => { setPayMode(v); setChequeNo(''); setSelected([]); }} options={['', 'BANK', 'CHEQUE', 'CASH']} placeholder="BANK / CHEQUE / CASH" />
+    // Fills the viewport on desktop: the voucher panel stays put while only the
+    // invoice grid scrolls. Below `lg` it falls back to a normal scrolling page,
+    // where a fixed split would be unusable.
+    <div className="flex h-full min-h-0 flex-col gap-2 overflow-y-auto p-2.5 font-sans sm:gap-2.5 sm:p-3 lg:overflow-hidden">
+      {/* ── Split: voucher entry (left) · party ledger (right) ────────────── */}
+      <div className="grid gap-2 sm:gap-2.5 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(19rem,21rem)_1fr]">
+        {/* ── Voucher entry ──────────────────────────────────────────────── */}
+        <section className={cn('bg-card flex flex-col overflow-hidden rounded-[4px] border shadow-sm lg:min-h-0', PANEL)}>
+          <div className={DOC_BAR}>
+            <span className={DOC_TITLE}>Entry</span>
+            <span className="shrink-0 text-[11px] font-bold tracking-wide text-white tabular-nums">{prettyDate(new Date(recDate).toISOString())}</span>
           </div>
 
-          {(payMode === 'BANK' || payMode === 'CHEQUE') && (
+          {/* Scrolls inside the panel only on the fixed-viewport desktop split;
+              on smaller screens the whole page scrolls instead, so the fields
+              never sit in a cramped nested scroller. */}
+          <div className="space-y-2.5 p-2.5 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
             <div className="space-y-1">
-              <Label className="text-base">Bank Name *</Label>
-              <NativeSelect value={bankName} onChange={setBankName} options={bankOptions} placeholder="Our receiving account…" />
+              <Label htmlFor="rec-date" className={FIELD_LABEL}>Receipt Date *</Label>
+              <DatePicker id="rec-date" value={recDate} onChange={(v) => v && setRecDate(v)} clearable={false} className={cn(CONTROL, 'w-full')} />
             </div>
-          )}
-          {payMode === 'CHEQUE' && (
+
             <div className="space-y-1">
-              <Label className="text-base">Cheque No * <span className="text-muted-foreground">(cleared)</span></Label>
+              <Label htmlFor="party" className={FIELD_LABEL}>Party Name</Label>
               <NativeSelect
-                value={chequeNo}
-                onChange={pickCheque}
-                options={(chequeOpts ?? []).map((c) => c.chequeNo)}
-                placeholder={isAgent ? 'Party mode only' : (chequeOpts?.length ? 'Select cheque…' : 'No cleared cheques')}
-                disabled={isAgent}
+                id="party"
+                value={party}
+                onChange={(v) => { setParty(v); if (v) setAgent(''); setSelected([]); }}
+                options={['', ...partyOptions]}
+                placeholder="Select party…"
+                disabled={!!agent}
+                className={cn(CONTROL, 'font-medium', party && CONTROL_ON)}
               />
             </div>
-          )}
-          {payMode === 'CASH' && (
-            <>
-              <div className="space-y-1">
-                <Label className="text-base">Cash Transfer Location *</Label>
-                <Input value={cashLoc} onChange={(e) => setCashLoc(e.target.value)} className="uppercase" placeholder="e.g. SHOP" />
+
+            <div className="space-y-1">
+              <Label htmlFor="agent" className={FIELD_LABEL}>Agent Name</Label>
+              <NativeSelect
+                id="agent"
+                value={agent}
+                onChange={(v) => { setAgent(v); if (v) setParty(''); setSelected([]); }}
+                options={['', ...agentOptions]}
+                placeholder="…or select agent"
+                disabled={!!party}
+                className={cn(CONTROL, 'font-medium', agent && CONTROL_ON)}
+              />
+            </div>
+
+            {/* Pay mode as a segmented control — three fixed choices read faster
+                as buttons than as a dropdown, and it's one tap instead of two. */}
+            <div className="space-y-1">
+              <span className={FIELD_LABEL}>Payment Mode *</span>
+              <div role="group" aria-label="Payment mode" className="grid grid-cols-3 gap-0.5 rounded-[4px] border border-amber-300 bg-amber-50/40 p-0.5 dark:border-amber-400/40 dark:bg-transparent">
+                {(['BANK', 'CHEQUE', 'CASH'] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    aria-pressed={payMode === m}
+                    onClick={() => { setPayMode(payMode === m ? '' : m); setChequeNo(''); setSelected([]); }}
+                    className={cn(
+                      // 44px tall on touch screens (comfortable tap target), tighter on desktop.
+                      'min-h-11 cursor-pointer rounded-[3px] py-1.5 text-[11.5px] font-bold tracking-wide uppercase transition-colors duration-150 lg:min-h-8',
+                      payMode === m
+                        ? 'bg-primary text-primary-foreground shadow-sm'
+                        : 'text-amber-900/70 hover:bg-amber-100 hover:text-amber-900 dark:text-amber-200/70 dark:hover:bg-amber-400/10',
+                    )}
+                  >
+                    {m}
+                  </button>
+                ))}
               </div>
+            </div>
+
+            {needsBank && (
               <div className="space-y-1">
-                <Label className="text-base">Cash Received By *</Label>
-                <Input value={cashBy} onChange={(e) => setCashBy(e.target.value)} className="uppercase" placeholder="Who collected" />
+                <Label htmlFor="bank" className={FIELD_LABEL}>Bank Name *</Label>
+                <NativeSelect
+                  id="bank"
+                  value={bankName}
+                  onChange={setBankName}
+                  options={bankOptions}
+                  placeholder="Our receiving account…"
+                  className={cn(CONTROL, 'font-medium', bankName && CONTROL_ON)}
+                />
+                {bankOptions.length === 0 && (
+                  <p className="text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                    No active bank accounts — add one under Account → Bank Accounts.
+                  </p>
+                )}
               </div>
-            </>
-          )}
-
-          <div className="space-y-1">
-            <Label className="text-base">Mode of Adj *</Label>
-            <NativeSelect value={adjMode} onChange={(v) => { setAdjMode(v); setSelected([]); }} options={['AUTOMATIC', 'ADVANCE', 'AGST REF']} />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-base">Receipt Amount *</Label>
-            <Input value={receiptStr} onChange={(e) => setReceiptStr(e.target.value)} inputMode="decimal" placeholder="0" className="text-right text-base font-semibold tabular-nums" />
-          </div>
-          <div className="space-y-1 sm:col-span-2">
-            <Label className="text-base">Remarks</Label>
-            <Input value={remarks} onChange={(e) => setRemarks(e.target.value)} className="uppercase" placeholder="Optional" />
-          </div>
-        </div>
-
-        {chequeComment && (
-          <p className="rounded-md bg-slate-600 px-3 py-1.5 text-sm font-semibold text-white">Cheque note: {chequeComment}</p>
-        )}
-        {bankOptions.length === 0 && (payMode === 'BANK' || payMode === 'CHEQUE') && (
-          <p className="flex items-center gap-1.5 text-sm text-amber-600">
-            <Landmark className="size-4" /> No active bank accounts — add one under Account → Bank Accounts.
-          </p>
-        )}
-
-        <div className="flex flex-col gap-3 border-t pt-3 lg:flex-row lg:items-center">
-          <div className="flex flex-wrap items-center gap-2">
-            {canCreate && (
-              <Button className="bg-emerald-600 text-white hover:bg-emerald-700" onClick={submit} disabled={save.isPending}>
-                {save.isPending ? <Loader2 className="animate-spin" /> : <Save />} SUBMIT
-              </Button>
             )}
-            <Button variant="outline" className="border-rose-200 text-rose-600 hover:bg-rose-50" onClick={clearAll}>
-              <RotateCcw /> CLEAR
-            </Button>
-          </div>
-          {/* Compact stat tiles instead of one long text line — they wrap onto a
-              second row on narrow screens rather than colliding with the buttons. */}
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:ml-auto lg:flex lg:flex-wrap">
-            <Stat label="Opening" value={money(openingLabel)} />
-            <Stat label={`Invoices (${bucket.toLowerCase()})`} value={money(invoiceOutstanding)} />
-            <Stat label="Advance available" value={money(advanceAvail)} />
-            <Stat label="To allocate" value={money(preview.openingUse + preview.adjTotal)} valueClass="text-blue-700" />
-            <Stat label="Advance to save" value={money(preview.advanceToSave)} valueClass={preview.advanceToSave > 0 ? 'text-amber-700' : undefined} />
-          </div>
-        </div>
-      </div>
 
-      {/* KPI cards */}
-      {ownerChosen && (
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-          {(['NORMAL', 'PAST DUE', 'OVERDUE'] as const).map((k) => {
-            const v = kpis[k];
-            const active = !!payMode && (bucket === 'BANK' ? v.bank : v.cash) > 0;
-            const tone = k === 'NORMAL' ? 'emerald' : k === 'PAST DUE' ? 'amber' : 'rose';
-            return (
-              <div key={k} className={cn('rounded-lg border p-3 shadow-sm transition-opacity', `border-${tone}-200 bg-${tone}-50/60`, !active && 'opacity-70')}>
-                <p className="text-muted-foreground text-base font-semibold tracking-wide uppercase">{k} DUE'S ({v.count})</p>
-                <div className="mt-1 flex gap-5 text-lg tabular-nums">
-                  <span className={cn(payMode && bucket === 'BANK' && 'font-bold')}>Bank: {money(v.bank)}</span>
-                  <span className={cn(payMode && bucket === 'CASH' && 'font-bold')}>Cash: {money(v.cash)}</span>
-                </div>
+            {payMode === 'CHEQUE' && (
+              <div className="space-y-1">
+                <Label htmlFor="cheque" className={FIELD_LABEL}>Cheque No * (cleared)</Label>
+                <NativeSelect
+                  id="cheque"
+                  value={chequeNo}
+                  onChange={pickCheque}
+                  options={(chequeOpts ?? []).map((c) => c.chequeNo)}
+                  placeholder={isAgent ? 'Party mode only' : chequeOpts?.length ? 'Select cheque…' : 'No cleared cheques'}
+                  disabled={isAgent}
+                  className={cn(CONTROL, 'font-medium', chequeNo && CONTROL_ON)}
+                />
+                {chequeComment && (
+                  <p className="rounded-[4px] bg-slate-700 px-2 py-1 text-[11px] font-semibold text-white dark:bg-slate-800">{chequeComment}</p>
+                )}
               </div>
-            );
-          })}
-        </div>
-      )}
+            )}
 
-      {/* Pending invoices — wide table on ≥sm, stacked cards on phones */}
-      <div className="bg-card hidden overflow-hidden rounded-md border shadow-sm sm:block">
-        <div className="overflow-x-auto">
-          <table className="w-full text-lg [&_td]:border-r [&_td]:border-border/60 [&_td:last-child]:border-r-0">
-            <thead>
-              <tr className="bg-gradient-to-b from-blue-800 to-indigo-800 text-white [&_th]:border-r [&_th]:border-white/25 [&_th:last-child]:border-r-0 [&_th]:px-3 [&_th]:py-2.5 [&_th]:text-left [&_th]:text-base [&_th]:font-bold [&_th]:tracking-wider [&_th]:uppercase [&_th]:whitespace-nowrap">
-                {adjMode === 'AGST REF' && <th className="w-10">Sel</th>}
-                <th>Inv Date</th>
-                <th>Inv No</th>
-                {isAgent && <th>Party Name</th>}
-                <th>Transaction</th>
-                <th>Due Date</th>
-                <th>Status</th>
-                <th className="!text-right">{payMode ? `${bucket} Amt` : 'Amt'}</th>
-                <th className="!text-right">Adj Amt</th>
-                <th className="!text-right">Bal Amt</th>
-                <th>Due Days</th>
-              </tr>
-            </thead>
-            <tbody className="[&_td]:border-t [&_td]:px-3 [&_td]:py-2 [&_td]:whitespace-nowrap">
-              {!ownerChosen ? (
-                <tr><td colSpan={11} className="text-muted-foreground h-24 text-center">Select a Party or an Agent to load pending invoices.</td></tr>
-              ) : ctxLoading && !ctx ? (
-                <tr><td colSpan={11} className="h-24 text-center"><Loader2 className="text-muted-foreground mx-auto size-5 animate-spin" /></td></tr>
-              ) : invoices.length === 0 ? (
-                <tr><td colSpan={11} className="text-muted-foreground h-24 text-center">No pending invoices — everything is settled. 🎉</td></tr>
-              ) : (
-                invoices.map((r) => {
-                  const amt = bucketAmt(r);
-                  const adj = preview.adjByInv.get(r.invNo) ?? 0;
-                  const bal = Math.max(0, Math.round((amt - adj) * 100) / 100);
-                  const ticked = selected.includes(r.invNo);
-                  const style = DUE_STYLE[r.dueType] ?? DUE_STYLE.NORMAL;
-                  return (
-                    <tr key={r.invNo} className={cn(ticked ? 'bg-slate-200/70' : style.row)}>
-                      {adjMode === 'AGST REF' && (
-                        <td>
-                          <input type="checkbox" className="size-4" checked={ticked} onChange={() => toggleSel(r.invNo)} />
-                        </td>
-                      )}
-                      <td>{prettyDate(r.invDate)}</td>
-                      <td className="font-mono font-semibold">{r.invNo}</td>
-                      {isAgent && <td className="font-medium">{r.customerName}</td>}
-                      <td>{r.transaction}</td>
-                      <td>{prettyDate(r.dueDate)}</td>
-                      <td>
-                        <span className={cn('rounded px-1.5 py-0.5 text-base font-semibold ring-1 ring-inset', style.badge)}>{r.dueType}</span>
-                      </td>
-                      <td className="text-right font-semibold tabular-nums">{n2(amt)}</td>
-                      <td className={cn('text-right tabular-nums', adj > 0 && 'font-bold text-blue-700')}>{adj ? n2(adj) : '—'}</td>
-                      <td className="text-right tabular-nums">{n2(bal)}</td>
-                      <td className={cn('text-base font-semibold', r.dueType === 'OVERDUE' ? 'text-rose-600' : 'text-muted-foreground')}>{r.dueDays}</td>
-                    </tr>
-                  );
-                })
+            {payMode === 'CASH' && (
+              <>
+                <div className="space-y-1">
+                  <Label htmlFor="cash-loc" className={FIELD_LABEL}>Cash Transfer To *</Label>
+                  <Input id="cash-loc" value={cashLoc} onChange={(e) => setCashLoc(e.target.value)} placeholder="e.g. SHOP" className={cn(CONTROL, 'uppercase')} />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="cash-by" className={FIELD_LABEL}>Cash Received By *</Label>
+                  <Input id="cash-by" value={cashBy} onChange={(e) => setCashBy(e.target.value)} placeholder="Who collected" className={cn(CONTROL, 'uppercase')} />
+                </div>
+              </>
+            )}
+
+            {/* The amount is the heart of the voucher — given its own emphasis
+                so it never gets lost among the pickers above it. */}
+            <div className="space-y-1 rounded-[4px] border-2 border-amber-500 bg-amber-50/70 p-2 dark:border-amber-400/60 dark:bg-amber-400/10">
+              <Label htmlFor="rec-amt" className={FIELD_LABEL}>Receipt Amount *</Label>
+              <Input
+                id="rec-amt"
+                value={receiptStr}
+                onChange={(e) => setReceiptStr(e.target.value)}
+                inputMode="decimal"
+                placeholder="0"
+                className="bg-background h-10 rounded-[4px] text-right text-[17px] font-bold tabular-nums"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex items-baseline justify-between gap-2">
+                <Label htmlFor="adj-mode" className={FIELD_LABEL}>Mode of Adjustment *</Label>
+                {advanceAvail > 0 && (
+                  <span className="text-[10.5px] font-bold tabular-nums text-amber-700 dark:text-amber-400" title="Advance already on account — spent before this receipt">
+                    Adv {inr(advanceAvail)}
+                  </span>
+                )}
+              </div>
+              <NativeSelect
+                id="adj-mode"
+                value={adjMode}
+                onChange={(v) => { setAdjMode(v); setSelected([]); }}
+                options={noPending ? ['ADVANCE'] : ['AUTOMATIC', 'ADVANCE', 'AGST REF']}
+                disabled={noPending}
+                className={cn(CONTROL, 'font-medium', CONTROL_ON)}
+              />
+              <p className="text-muted-foreground text-[11px] leading-snug">
+                {noPending
+                  ? 'Nothing pending — the receipt can only be parked on account.'
+                  : adjMode === 'AUTOMATIC'
+                    ? 'Clears openings, then invoices oldest-first.'
+                    : adjMode === 'ADVANCE'
+                      ? 'Parks the whole amount on account — no invoice is touched.'
+                      : `Only the ticked invoices are cleared${selected.length ? ` (${selected.length} ticked).` : ' — tick rows in the grid.'}`}
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              <Label htmlFor="remarks" className={FIELD_LABEL}>Remarks</Label>
+              <Input id="remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Optional" className={cn(CONTROL, 'uppercase')} />
+            </div>
+          </div>
+
+          {/* Live allocation read-out + the commit actions, pinned to the foot of
+              the panel so they're reachable without scrolling the fields. */}
+          <div className="shrink-0 border-t border-amber-300 bg-amber-50/60 p-2.5 dark:border-amber-400/30 dark:bg-amber-400/[0.07]">
+            <div className="space-y-0.5">
+              <AllocLine label="Opening cleared" value={preview.openingUse} />
+              <AllocLine label="Invoices cleared" value={preview.adjTotal} />
+              {preview.advanceUsed > 0 && <AllocLine label="…funded by old advance" value={preview.advanceUsed} />}
+              <AllocLine label="To advance ledger" value={preview.advanceToSave} tone={preview.advanceToSave > 0 ? 'amber' : undefined} />
+              <div className="mt-1 flex items-center justify-between border-t border-amber-600/30 pt-1 dark:border-amber-400/30">
+                <span className="text-[11px] font-extrabold tracking-wide text-amber-950 uppercase dark:text-amber-100">Receipt</span>
+                <span className="text-[15px] font-extrabold tabular-nums text-slate-900 dark:text-slate-100">{inr(receipt)}</span>
+              </div>
+            </div>
+            <div className="mt-2 flex gap-2">
+              {canCreate && (
+                <Button
+                  onClick={submit}
+                  disabled={save.isPending}
+                  title="Save receipt (Ctrl+S)"
+                  className="h-11 flex-[2] bg-emerald-600 font-bold text-white hover:bg-emerald-700 lg:h-10"
+                >
+                  {save.isPending ? <Loader2 className="animate-spin" /> : <Save />} SUBMIT
+                </Button>
               )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+              <Button variant="outline" onClick={clearAll} className="h-11 flex-1 border-rose-200 font-semibold text-rose-600 hover:bg-rose-50 lg:h-10 dark:border-rose-400/40 dark:text-rose-400 dark:hover:bg-rose-400/10">
+                <RotateCcw /> CLEAR
+              </Button>
+            </div>
+          </div>
+        </section>
 
-      {/* Phones: one card per pending invoice instead of an 11-column table. */}
-      <div className="space-y-2.5 sm:hidden">
-        {!ownerChosen ? (
-          <div className="text-muted-foreground bg-card rounded-md border px-4 py-10 text-center">Select a Party or an Agent to load pending invoices.</div>
-        ) : ctxLoading && !ctx ? (
-          <div className="bg-card flex h-24 items-center justify-center rounded-md border"><Loader2 className="text-muted-foreground size-5 animate-spin" /></div>
-        ) : invoices.length === 0 ? (
-          <div className="text-muted-foreground bg-card rounded-md border px-4 py-10 text-center">No pending invoices — everything is settled. 🎉</div>
-        ) : (
-          invoices.map((r) => {
-            const amt = bucketAmt(r);
-            const adj = preview.adjByInv.get(r.invNo) ?? 0;
-            const bal = Math.max(0, Math.round((amt - adj) * 100) / 100);
-            const ticked = selected.includes(r.invNo);
-            const style = DUE_STYLE[r.dueType] ?? DUE_STYLE.NORMAL;
-            const selectable = adjMode === 'AGST REF';
-            return (
-              <div
-                key={r.invNo}
-                className={cn('rounded-lg border p-3 shadow-sm', ticked ? 'bg-slate-200/70' : style.row, selectable && 'active:bg-slate-200/60 cursor-pointer')}
-                onClick={selectable ? () => toggleSel(r.invNo) : undefined}
+        {/* ── Party ledger: summary + allocation grid ─────────────────────── */}
+        <section className={cn('bg-card flex flex-col overflow-hidden rounded-[4px] border shadow-sm lg:min-h-0', PANEL)}>
+          <div className={DOC_BAR}>
+            <span className={DOC_TITLE}>
+              Ledger Summary — {ownerLabel || 'no party selected'}
+              {isAgent && <span className="ml-1 opacity-70">(agent)</span>}
+            </span>
+            {/* The two browse/export actions live here rather than in a header
+                strip of their own — same row, no extra vertical space. */}
+            <div className="flex shrink-0 items-center gap-1.5">
+              <span className="hidden text-[11px] font-bold tracking-wide text-white uppercase tabular-nums lg:inline">
+                {payMode ? `${bucket} leg` : 'Pick a mode'}
+                {ctxLoading && ownerChosen && <Loader2 className="ml-1.5 inline size-3 animate-spin align-[-2px]" />}
+              </span>
+              <button
+                type="button"
+                onClick={() => (ownerChosen ? setLedgerOpen(true) : toast.error('Please select PARTY NAME or AGENT NAME first.'))}
+                title="Receipt ledger (Ctrl+E)"
+                className="flex cursor-pointer items-center gap-1 rounded-[3px] px-1.5 py-1 text-[11px] font-bold tracking-wide text-amber-200 uppercase transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:outline-none"
               >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex min-w-0 items-start gap-2">
-                    {selectable && <input type="checkbox" readOnly checked={ticked} className="pointer-events-none mt-1 size-4 shrink-0" />}
-                    <div className="min-w-0">
-                      <p className="font-mono font-semibold">{r.invNo}</p>
-                      <p className="text-muted-foreground text-sm">{r.transaction} · {prettyDate(r.invDate)}</p>
-                      {isAgent && <p className="truncate text-sm font-medium">{r.customerName}</p>}
+                <ScrollText className="size-3.5" /> <span className="hidden sm:inline">Ledger</span>
+              </button>
+              <button
+                type="button"
+                onClick={exportPending}
+                disabled={!invoices.length}
+                title="Download the pending invoices to Excel"
+                className="flex cursor-pointer items-center gap-1 rounded-[3px] px-1.5 py-1 text-[11px] font-bold tracking-wide text-amber-200 uppercase transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+              >
+                <Download className="size-3.5" /> <span className="hidden sm:inline">Excel</span>
+              </button>
+            </div>
+          </div>
+
+          {/* The six figures the legacy form prints above its grid. */}
+          <dl className="grid shrink-0 grid-cols-2 gap-px border-b border-amber-300 bg-amber-200/60 sm:grid-cols-3 lg:grid-cols-6 dark:border-amber-400/30 dark:bg-amber-400/20">
+            <Fig label="Opening Bal" value={openingDisplay} />
+            <Fig label="Invoices O/S" value={invoiceOutstanding} />
+            <Fig label="Current O/S" value={currentOutstanding} strong />
+            <Fig label="Remaining Bal" value={remainingBalance} />
+            <Fig label="O/S After Adj" value={outstandingAfterAdj} strong />
+            <Fig label="To Advance" value={preview.advanceToSave} tone={preview.advanceToSave > 0 ? 'amber' : undefined} />
+          </dl>
+
+          {/* Desktop grid. */}
+          <div className={cn('hidden overflow-x-auto overscroll-x-contain sm:block lg:min-h-0 lg:flex-1 lg:overflow-auto', '[scrollbar-width:thin] [scrollbar-color:var(--color-amber-400)_var(--color-amber-100)]')}>
+            <table className="w-full border-collapse text-[13px]">
+              <caption className="sr-only">Pending invoices for {ownerLabel || 'the selected party'}</caption>
+              <thead>
+                <tr>
+                  {adjMode === 'AGST REF' && <th scope="col" className={cn(TH, TH_LINE, 'w-9 text-center')}>Sel</th>}
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-24')}>Inv Date</th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-32')}>Inv No</th>
+                  {isAgent && <th scope="col" className={cn(TH, TH_LINE)}>Party</th>}
+                  <th scope="col" className={cn(TH, TH_LINE)}>Transaction</th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-24')}>Due Date</th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-24')}>Status</th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-28 text-right')}>{payMode ? `${bucket} Amt` : 'Amount'}</th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-28 text-right')}>Clear Amt</th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-28 text-right')}>Bal Amt</th>
+                  <th scope="col" className={cn(TH, 'w-20')}>Due</th>
+                </tr>
+              </thead>
+              <tbody className="select-none">
+                {!ownerChosen ? (
+                  <tr>
+                    <td colSpan={gridCols} className="text-muted-foreground h-28 text-center text-[13px] font-medium">
+                      Select a Party or an Agent to load pending invoices.
+                    </td>
+                  </tr>
+                ) : ctxLoading && !ctx ? (
+                  <tr>
+                    <td colSpan={gridCols} className="h-28 text-center"><Loader2 className="text-muted-foreground mx-auto size-5 animate-spin" /></td>
+                  </tr>
+                ) : invoices.length === 0 ? (
+                  <tr>
+                    <td colSpan={gridCols} className="text-muted-foreground h-28 text-center text-[13px] font-medium">
+                      Nothing pending on the {bucket.toLowerCase()} leg — everything is settled.
+                    </td>
+                  </tr>
+                ) : (
+                  invoices.map((r) => {
+                    const amt = bucketAmt(r);
+                    const adj = preview.adjByInv.get(r.invNo) ?? 0;
+                    const bal = Math.max(0, Math.round((amt - adj) * 100) / 100);
+                    const ticked = selected.includes(r.invNo);
+                    const style = DUE_STYLE[r.dueType] ?? DUE_STYLE.NORMAL;
+                    const selectable = adjMode === 'AGST REF';
+                    return (
+                      <tr
+                        key={r.invNo}
+                        role={selectable ? 'button' : undefined}
+                        tabIndex={selectable ? 0 : undefined}
+                        aria-pressed={selectable ? ticked : undefined}
+                        onClick={selectable ? () => toggleSel(r.invNo) : undefined}
+                        onKeyDown={
+                          selectable
+                            ? (e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  toggleSel(r.invNo);
+                                }
+                              }
+                            : undefined
+                        }
+                        className={cn(
+                          'border-b border-amber-200/70 outline-none dark:border-amber-400/10',
+                          ticked ? 'bg-sky-100/90 dark:bg-sky-400/20' : style.row,
+                          'hover:bg-amber-200/70 dark:hover:bg-amber-400/20',
+                          'focus-visible:ring-2 focus-visible:ring-amber-600 focus-visible:ring-inset',
+                          selectable && 'cursor-pointer',
+                        )}
+                      >
+                        {selectable && (
+                          <td className={cn(TD, 'text-center')}>
+                            <input
+                              type="checkbox"
+                              className="pointer-events-none size-3.5 accent-blue-600"
+                              checked={ticked}
+                              readOnly
+                              tabIndex={-1}
+                              aria-label={`Select invoice ${r.invNo}`}
+                            />
+                          </td>
+                        )}
+                        <td className={cn(TD, 'whitespace-nowrap font-semibold tabular-nums text-slate-700 dark:text-slate-300')}>{prettyDate(r.invDate)}</td>
+                        <td className={cn(TD, 'font-mono text-[12.5px] font-bold whitespace-nowrap text-slate-800 dark:text-slate-200')}>{r.invNo}</td>
+                        {isAgent && <td className={cn(TD, 'font-semibold text-slate-800 dark:text-slate-200')}>{r.customerName}</td>}
+                        <td className={cn(TD, 'text-[12px] font-medium text-slate-600 dark:text-slate-400')}>{r.transaction}</td>
+                        <td className={cn(TD, 'whitespace-nowrap font-semibold tabular-nums text-slate-700 dark:text-slate-300')}>{prettyDate(r.dueDate)}</td>
+                        <td className={TD}>
+                          <span className={cn('rounded px-1.5 py-0.5 text-[10.5px] font-bold whitespace-nowrap ring-1 ring-inset', style.chip)}>{r.dueType}</span>
+                        </td>
+                        <td className={cn(TD, NUM, 'font-semibold text-slate-900 dark:text-slate-100')}>{inr(amt)}</td>
+                        <td className={cn(TD, NUM, adj > 0 ? 'font-bold text-blue-700 dark:text-blue-400' : 'text-muted-foreground/50')}>{adj ? inr(adj) : '-'}</td>
+                        <td className={cn(TD, NUM, 'font-semibold', bal <= 0.004 && 'text-emerald-700 dark:text-emerald-400')}>{inr(bal)}</td>
+                        <td className={cn(TD, 'text-[11.5px] font-bold whitespace-nowrap', style.text)}>{r.dueDays}</td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+              {invoices.length > 0 && (
+                <tfoot className="sticky bottom-0 z-20">
+                  <tr className="bg-amber-200/90 font-bold shadow-[inset_0_2px_0_0_var(--color-amber-700)] dark:bg-amber-400/20 dark:shadow-[inset_0_2px_0_0_var(--color-amber-400)]">
+                    {/* Leading filler spans every column before Status, so the
+                        three figures land exactly under Amount / Clear / Bal. */}
+                    <td className={TD} colSpan={gridCols - 5} />
+                    <td className={cn(TD, 'text-[11px] font-extrabold tracking-wide text-amber-950 uppercase dark:text-amber-100')}>Total</td>
+                    <td className={cn(TD, NUM, 'text-[13.5px] font-extrabold')}>{inr(invoiceOutstanding)}</td>
+                    <td className={cn(TD, NUM, 'text-[13.5px] font-extrabold text-blue-700 dark:text-blue-400')}>{preview.adjTotal ? inr(preview.adjTotal) : '-'}</td>
+                    <td className={cn(TD, NUM, 'text-[13.5px] font-extrabold')}>{inr(Math.max(0, invoiceOutstanding - preview.adjTotal))}</td>
+                    <td className={TD} />
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+
+          {/* Phones: one card per pending invoice instead of an 11-column grid. */}
+          <div className="space-y-2 p-2 sm:hidden">
+            {!ownerChosen ? (
+              <p className="text-muted-foreground px-4 py-10 text-center text-[13px] font-medium">Select a Party or an Agent to load pending invoices.</p>
+            ) : ctxLoading && !ctx ? (
+              <div className="flex h-24 items-center justify-center"><Loader2 className="text-muted-foreground size-5 animate-spin" /></div>
+            ) : invoices.length === 0 ? (
+              <p className="text-muted-foreground px-4 py-10 text-center text-[13px] font-medium">Nothing pending on the {bucket.toLowerCase()} leg.</p>
+            ) : (
+              invoices.map((r) => {
+                const amt = bucketAmt(r);
+                const adj = preview.adjByInv.get(r.invNo) ?? 0;
+                const bal = Math.max(0, Math.round((amt - adj) * 100) / 100);
+                const ticked = selected.includes(r.invNo);
+                const style = DUE_STYLE[r.dueType] ?? DUE_STYLE.NORMAL;
+                const selectable = adjMode === 'AGST REF';
+                return (
+                  <div
+                    key={r.invNo}
+                    role={selectable ? 'button' : undefined}
+                    tabIndex={selectable ? 0 : undefined}
+                    aria-pressed={selectable ? ticked : undefined}
+                    onClick={selectable ? () => toggleSel(r.invNo) : undefined}
+                    className={cn(
+                      'rounded-[4px] border border-amber-200 p-2.5 shadow-sm dark:border-amber-400/20',
+                      ticked ? 'bg-sky-100/90 dark:bg-sky-400/20' : style.row,
+                      selectable && 'cursor-pointer active:brightness-95',
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex min-w-0 items-start gap-2">
+                        {selectable && <input type="checkbox" readOnly checked={ticked} tabIndex={-1} className="pointer-events-none mt-0.5 size-4 shrink-0 accent-blue-600" aria-label={`Select invoice ${r.invNo}`} />}
+                        <div className="min-w-0">
+                          <p className="font-mono text-[13px] font-bold text-slate-900 dark:text-slate-100">{r.invNo}</p>
+                          <p className="text-muted-foreground truncate text-[11.5px] font-medium">{r.transaction} · {prettyDate(r.invDate)}</p>
+                          {isAgent && <p className="truncate text-[12px] font-semibold">{r.customerName}</p>}
+                        </div>
+                      </div>
+                      <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-[10.5px] font-bold ring-1 ring-inset', style.chip)}>{r.dueType}</span>
+                    </div>
+                    <div className="mt-2 grid grid-cols-3 gap-2 border-t border-amber-300/50 pt-2 text-[12.5px] dark:border-amber-400/20">
+                      <div>
+                        <p className="text-muted-foreground text-[10px] font-bold tracking-wide uppercase">{payMode ? bucket : 'Amount'}</p>
+                        <p className="font-bold tabular-nums">{inr(amt)}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground text-[10px] font-bold tracking-wide uppercase">Clear</p>
+                        <p className={cn('font-bold tabular-nums', adj > 0 ? 'text-blue-700 dark:text-blue-400' : 'text-muted-foreground/50')}>{adj ? inr(adj) : '-'}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground text-[10px] font-bold tracking-wide uppercase">Balance</p>
+                        <p className="font-bold tabular-nums">{inr(bal)}</p>
+                      </div>
+                    </div>
+                    <div className="text-muted-foreground mt-1.5 flex items-center justify-between text-[11.5px]">
+                      <span>Due {prettyDate(r.dueDate)}</span>
+                      <span className={cn('font-bold', style.text)}>{r.dueDays}</span>
                     </div>
                   </div>
-                  <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-sm font-semibold ring-1 ring-inset', style.badge)}>{r.dueType}</span>
-                </div>
-                <div className="mt-2.5 grid grid-cols-3 gap-2 text-sm">
-                  <div>
-                    <p className="text-muted-foreground text-xs uppercase">{payMode ? `${bucket} Amt` : 'Amt'}</p>
-                    <p className="font-semibold tabular-nums">{n2(amt)}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground text-xs uppercase">Adj</p>
-                    <p className={cn('tabular-nums', adj > 0 && 'font-bold text-blue-700')}>{adj ? n2(adj) : '—'}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground text-xs uppercase">Bal</p>
-                    <p className="font-semibold tabular-nums">{n2(bal)}</p>
-                  </div>
-                </div>
-                <div className="text-muted-foreground mt-2 flex items-center justify-between border-t pt-2 text-sm">
-                  <span>Due {prettyDate(r.dueDate)}</span>
-                  <span className={cn('font-semibold', r.dueType === 'OVERDUE' ? 'text-rose-600' : 'text-muted-foreground')}>{r.dueDays}</span>
-                </div>
-              </div>
-            );
-          })
-        )}
+                );
+              })
+            )}
+          </div>
+        </section>
       </div>
 
-      {/* Save result */}
+      {/* ── Ageing rail — bank and cash counted independently, exactly as the
+             legacy overview panels do. ─────────────────────────────────────── */}
+      <div className="grid shrink-0 grid-cols-1 gap-2 sm:grid-cols-3 sm:gap-2.5">
+        {(['NORMAL', 'PAST DUE', 'OVERDUE'] as const).map((k) => (
+          <DueCard key={k} kind={k} v={buckets[k]} activeBucket={payMode ? bucket : null} />
+        ))}
+      </div>
+
+      {/* ── Save result ──────────────────────────────────────────────────── */}
       <Dialog open={!!result} onOpenChange={(o) => !o && setResult(null)}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-xl">
-              <CheckCircle2 className="size-6 text-emerald-600" /> Saved successfully
+            <DialogTitle className="flex items-center gap-2 text-lg">
+              <CheckCircle2 className="size-5 text-emerald-600" /> Receipt saved
             </DialogTitle>
-            <DialogDescription className="text-base">Voucher No = <b className="font-mono">{result?.voucherNo}</b></DialogDescription>
+            <DialogDescription>Voucher No <b className="font-mono text-foreground">{result?.voucherNo}</b></DialogDescription>
           </DialogHeader>
-          <div className="space-y-1.5 text-base">
+          <div className="space-y-1 rounded-[4px] border border-amber-300 bg-amber-50/70 p-2.5 text-[13px] dark:border-amber-400/30 dark:bg-amber-400/10">
             <p className="flex justify-between"><span>Opening cleared</span><b className="tabular-nums">{money(result?.openingCleared)}</b></p>
             <p className="flex justify-between"><span>Invoices cleared</span><b className="tabular-nums">{money(result?.invoicesCleared)}</b></p>
-            <p className="flex justify-between"><span>Advance saved</span><b className="tabular-nums">{money(result?.advanceParked)}</b></p>
-            {result?.receiptRefId && <p className="text-muted-foreground text-sm">Receipt REF ID: <span className="font-mono">{result.receiptRefId}</span></p>}
-            {result?.advanceRefId && <p className="text-muted-foreground text-sm">Advance REF ID: <span className="font-mono">{result.advanceRefId}</span></p>}
+            <p className="flex justify-between border-t border-amber-600/30 pt-1 dark:border-amber-400/30"><span>Advance saved</span><b className="tabular-nums">{money(result?.advanceParked)}</b></p>
+            {result?.receiptRefId && <p className="text-muted-foreground pt-0.5 text-[11.5px]">Receipt REF: <span className="font-mono">{result.receiptRefId}</span></p>}
+            {result?.advanceRefId && <p className="text-muted-foreground text-[11.5px]">Advance REF: <span className="font-mono">{result.advanceRefId}</span></p>}
           </div>
           {!!result?.allocations?.length && (
-            <div className="max-h-56 overflow-auto rounded-md border">
-              <table className="w-full text-sm [&_td]:border-r [&_td]:border-border/60 [&_td:last-child]:border-r-0">
+            <div className="max-h-56 overflow-auto rounded-[4px] border">
+              <table className="w-full border-collapse text-[12.5px]">
                 <thead>
-                  <tr className="bg-muted text-muted-foreground [&_th]:border-r [&_th]:border-border/40 [&_th:last-child]:border-r-0 [&_th]:px-2.5 [&_th]:py-1.5 [&_th]:text-left [&_th]:text-xs [&_th]:uppercase">
-                    <th>What</th><th>Invoice</th><th>Funded by</th><th className="!text-right">Amount</th>
+                  <tr>
+                    <th className={cn(TH, TH_LINE)}>What</th>
+                    <th className={cn(TH, TH_LINE)}>Invoice</th>
+                    <th className={cn(TH, TH_LINE)}>Funded by</th>
+                    <th className={cn(TH, 'text-right')}>Amount</th>
                   </tr>
                 </thead>
-                <tbody className="[&_td]:border-t [&_td]:px-2.5 [&_td]:py-1.5">
+                <tbody>
                   {result.allocations.map((a, i) => (
-                    <tr key={i}>
-                      <td>{a.kind === 'OPENING' ? 'Opening' : a.kind === 'INVOICE' ? 'Invoice' : 'Advance'}</td>
-                      <td className="font-mono text-xs">{a.invNo ?? a.customerName}</td>
-                      <td className="font-mono text-xs">{a.fundedBy}</td>
-                      <td className="text-right font-semibold tabular-nums">{n2(a.amount)}</td>
+                    <tr key={i} className="border-b border-amber-200/70 even:bg-amber-50/70 dark:border-amber-400/10 dark:even:bg-amber-400/[0.05]">
+                      <td className={TD}>{a.kind === 'OPENING' ? 'Opening' : a.kind === 'INVOICE' ? 'Invoice' : 'Advance'}</td>
+                      <td className={cn(TD, 'font-mono text-[11.5px]')}>{a.invNo ?? a.customerName}</td>
+                      <td className={cn(TD, 'font-mono text-[11.5px]')}>{a.fundedBy}</td>
+                      <td className={cn(TD, NUM, 'font-bold')}>{inr(a.amount)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -598,17 +848,83 @@ export function PaymentPage() {
         </DialogContent>
       </Dialog>
 
-      {ledgerOpen && <LedgerModal ownerKind={isAgent ? 'Agent' : 'Party'} owner={ownerLabel} customerId={isAgent ? undefined : customerId} agentName={isAgent ? agent : undefined} onClose={() => setLedgerOpen(false)} />}
+      {ledgerOpen && (
+        <LedgerModal
+          ownerKind={isAgent ? 'Agent' : 'Party'}
+          owner={ownerLabel}
+          customerId={isAgent ? undefined : customerId}
+          agentName={isAgent ? agent : undefined}
+          onClose={() => setLedgerOpen(false)}
+        />
+      )}
     </div>
   );
 }
 
-/** A compact labelled figure used in the receipt-form summary strip. */
-function Stat({ label, value, valueClass }: { label: string; value: string; valueClass?: string }) {
+/** One of the six figures in the ledger-summary strip. */
+function Fig({ label, value, strong, tone }: { label: string; value: number; strong?: boolean; tone?: 'amber' }) {
   return (
-    <div className="bg-muted/40 rounded-md border px-3 py-1.5">
-      <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">{label}</p>
-      <p className={cn('text-foreground text-lg font-semibold tabular-nums', valueClass)}>{value}</p>
+    <div className="bg-card min-w-0 px-2 py-1">
+      <dt className="truncate text-[9.5px] font-bold tracking-widest text-amber-900/70 uppercase dark:text-amber-200/60">{label}</dt>
+      <dd
+        className={cn(
+          'truncate tabular-nums',
+          strong ? 'text-[15px] font-extrabold' : 'text-[14px] font-bold',
+          tone === 'amber' && value > 0 ? 'text-amber-700 dark:text-amber-400' : 'text-slate-900 dark:text-slate-100',
+        )}
+        title={inr(value)}
+      >
+        {moneyOrDash(value)}
+      </dd>
+    </div>
+  );
+}
+
+/** A line in the voucher's live allocation read-out. */
+function AllocLine({ label, value, tone }: { label: string; value: number; tone?: 'amber' }) {
+  return (
+    <div className="flex items-center justify-between text-[12px]">
+      <span className="text-amber-900/80 dark:text-amber-200/70">{label}</span>
+      <span className={cn('font-bold tabular-nums', tone === 'amber' && value > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-slate-800 dark:text-slate-200')}>
+        {moneyOrDash(value)}
+      </span>
+    </div>
+  );
+}
+
+/** One ageing bucket — bank and cash side by side, the leg in play highlighted. */
+function DueCard({
+  kind,
+  v,
+  activeBucket,
+}: {
+  kind: 'NORMAL' | 'PAST DUE' | 'OVERDUE';
+  v: { bank: number; cash: number; bankCount: number; cashCount: number };
+  activeBucket: 'BANK' | 'CASH' | null;
+}) {
+  const tone =
+    kind === 'NORMAL'
+      ? 'border-emerald-300 bg-emerald-50/70 dark:border-emerald-400/30 dark:bg-emerald-400/[0.07]'
+      : kind === 'PAST DUE'
+        ? 'border-amber-300 bg-amber-50/70 dark:border-amber-400/30 dark:bg-amber-400/[0.07]'
+        : 'border-rose-300 bg-rose-50/70 dark:border-rose-400/30 dark:bg-rose-400/[0.07]';
+  const head =
+    kind === 'NORMAL'
+      ? 'text-emerald-800 dark:text-emerald-300'
+      : kind === 'PAST DUE'
+        ? 'text-amber-800 dark:text-amber-300'
+        : 'text-rose-700 dark:text-rose-300';
+  return (
+    <div className={cn('rounded-[4px] border px-2.5 py-1.5 shadow-sm', tone)}>
+      <p className={cn('text-[10px] font-extrabold tracking-widest uppercase', head)}>{kind} Due&apos;s</p>
+      <div className="mt-0.5 flex items-baseline justify-between gap-3">
+        <span className={cn('min-w-0 truncate text-[13px] tabular-nums', activeBucket === 'BANK' ? 'font-extrabold text-slate-900 dark:text-slate-100' : 'font-medium text-slate-600 dark:text-slate-400')}>
+          Bank <span className="text-[10.5px] opacity-70">({v.bankCount})</span> {inr(v.bank)}
+        </span>
+        <span className={cn('min-w-0 truncate text-[13px] tabular-nums', activeBucket === 'CASH' ? 'font-extrabold text-slate-900 dark:text-slate-100' : 'font-medium text-slate-600 dark:text-slate-400')}>
+          Cash <span className="text-[10.5px] opacity-70">({v.cashCount})</span> {inr(v.cash)}
+        </span>
+      </div>
     </div>
   );
 }
@@ -624,45 +940,55 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[90dvh] w-[min(900px,96vw)] max-w-[96vw] overflow-y-auto sm:!max-w-[900px]">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-xl">
+          <DialogTitle className="flex items-center gap-2 text-lg">
             <BookOpenCheck className="text-primary size-5" /> Receipt Ledger — {ownerKind}: {owner}
           </DialogTitle>
-          <DialogDescription className="text-base">Vouchers this financial year (Apr–Mar).</DialogDescription>
+          <DialogDescription>Vouchers this financial year (Apr–Mar).</DialogDescription>
         </DialogHeader>
-        <div className="overflow-x-auto rounded-md border">
-          <table className="w-full text-sm [&_td]:border-r [&_td]:border-border/60 [&_td:last-child]:border-r-0">
+        <div className="overflow-x-auto rounded-[4px] border">
+          <table className="w-full border-collapse text-[12.5px]">
             <thead>
-              <tr className="bg-gradient-to-b from-blue-800 to-indigo-800 text-white [&_th]:border-r [&_th]:border-white/25 [&_th:last-child]:border-r-0 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:text-xs [&_th]:font-bold [&_th]:uppercase [&_th]:whitespace-nowrap">
-                <th>Voucher</th><th>Date</th><th>Customer</th><th>Mode</th><th>Particulars</th><th className="!text-right">Bank Cr</th><th className="!text-right">Cash Cr</th><th>Remarks</th>
+              <tr>
+                <th scope="col" className={cn(TH, TH_LINE)}>Voucher</th>
+                <th scope="col" className={cn(TH, TH_LINE)}>Date</th>
+                <th scope="col" className={cn(TH, TH_LINE)}>Customer</th>
+                <th scope="col" className={cn(TH, TH_LINE)}>Mode</th>
+                <th scope="col" className={cn(TH, TH_LINE)}>Particulars</th>
+                <th scope="col" className={cn(TH, TH_LINE, 'text-right')}>Bank Cr</th>
+                <th scope="col" className={cn(TH, TH_LINE, 'text-right')}>Cash Cr</th>
+                <th scope="col" className={cn(TH)}>Remarks</th>
               </tr>
             </thead>
-            <tbody className="[&_td]:border-t [&_td]:px-3 [&_td]:py-1.5 [&_td]:whitespace-nowrap">
+            <tbody className="select-none">
               {isLoading ? (
                 <tr><td colSpan={8} className="h-20 text-center"><Loader2 className="text-muted-foreground mx-auto size-5 animate-spin" /></td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={8} className="text-muted-foreground h-20 text-center">No receipts recorded this financial year.</td></tr>
+                <tr><td colSpan={8} className="text-muted-foreground h-20 text-center text-[13px] font-medium">No receipts recorded this financial year.</td></tr>
               ) : (
                 rows.map((r) => (
-                  <tr key={r.id} className="even:bg-muted/25">
-                    <td className="font-mono font-semibold">{r.voucherNo}</td>
-                    <td>{prettyDate(r.transDate)}</td>
-                    <td>{r.customerName}</td>
-                    <td>{r.transMode}</td>
-                    <td className="max-w-56 truncate" title={r.particulars ?? ''}>{r.particulars ?? '—'}</td>
-                    <td className="text-right font-semibold tabular-nums">{r.bankCredit ? n2(r.bankCredit) : '—'}</td>
-                    <td className="text-right font-semibold tabular-nums">{r.cashCredit ? n2(r.cashCredit) : '—'}</td>
-                    <td className="text-muted-foreground max-w-40 truncate" title={r.transRemarks ?? ''}>{r.transRemarks ?? '—'}</td>
+                  <tr key={r.id} className="border-b border-amber-200/70 even:bg-amber-50/70 hover:bg-amber-200/70 dark:border-amber-400/10 dark:even:bg-amber-400/[0.05] dark:hover:bg-amber-400/20">
+                    <td className={cn(TD, 'font-mono font-bold whitespace-nowrap')}>{r.voucherNo}</td>
+                    <td className={cn(TD, 'font-semibold whitespace-nowrap tabular-nums')}>{prettyDate(r.transDate)}</td>
+                    <td className={cn(TD, 'font-semibold')}>{r.customerName}</td>
+                    <td className={cn(TD, 'text-[12px] font-medium text-slate-600 dark:text-slate-400')}>{r.transMode}</td>
+                    <td className={cn(TD, 'max-w-56 truncate')} title={r.particulars ?? ''}>{r.particulars ?? '—'}</td>
+                    <td className={cn(TD, NUM, 'font-bold')}>{r.bankCredit ? inr(r.bankCredit) : '-'}</td>
+                    <td className={cn(TD, NUM, 'font-bold')}>{r.cashCredit ? inr(r.cashCredit) : '-'}</td>
+                    <td className={cn(TD, 'text-muted-foreground max-w-40 truncate')} title={r.transRemarks ?? ''}>{r.transRemarks ?? '—'}</td>
                   </tr>
                 ))
               )}
             </tbody>
           </table>
         </div>
-        <DialogFooter className="sm:justify-between">
-          <p className="text-muted-foreground text-sm">{data?.total ?? 0} voucher(s) · page {data?.page ?? page} of {totalPages}</p>
+        <DialogFooter className="bg-card flex items-center justify-between rounded-[4px] border px-3 py-2 shadow-sm sm:justify-between">
+          <p className="text-muted-foreground text-[12px] font-medium">
+            {data?.total ?? 0} voucher(s) · Page <span className="text-foreground font-bold tabular-nums">{data?.page ?? page}</span> of{' '}
+            <span className="text-foreground font-bold tabular-nums">{totalPages}</span>
+          </p>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}><ChevronLeft /> Prev</Button>
-            <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>Next <ChevronRight /></Button>
+            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}><ChevronLeft /> Prev</Button>
+            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>Next <ChevronRight /></Button>
           </div>
         </DialogFooter>
       </DialogContent>

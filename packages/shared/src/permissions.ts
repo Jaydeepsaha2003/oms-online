@@ -74,6 +74,9 @@ export const RESOURCES = {
   /** Party Ledger / Trial Balance (legacy Party Ledger Account) — Tally-style
    *  per-party statement with opening, running Dr/Cr, aging KPIs & closing. */
   PARTY_LEDGER: 'partyledger',
+  /** Daybook — every voucher of every type across all parties, in chronological
+   *  order, Tally-style (legacy Day Book report). */
+  DAYBOOK: 'daybook',
   SUPPLIER: 'supplier',
   INVENTORY: 'inventory',
   PRODUCTION: 'production',
@@ -216,6 +219,12 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
   {
     resource: RESOURCES.PARTY_LEDGER,
     label: 'Party Ledger',
+    group: 'Accounts',
+    actions: [ACTIONS.VIEW, ACTIONS.EXPORT, ACTIONS.PRINT],
+  },
+  {
+    resource: RESOURCES.DAYBOOK,
+    label: 'Daybook',
     group: 'Accounts',
     actions: [ACTIONS.VIEW, ACTIONS.EXPORT, ACTIONS.PRINT],
   },

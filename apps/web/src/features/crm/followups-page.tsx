@@ -7,6 +7,7 @@ import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useConfirm } from '@/components/common/confirm';
 import { Combobox } from '@/components/ui/combobox';
 import { NativeSelect } from '@/components/common/combo';
@@ -348,6 +349,8 @@ function LogDialog({ f, onClose }: { f: FollowupDto; onClose: () => void }) {
     );
   };
 
+  useSaveShortcut(submit);
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
@@ -675,6 +678,8 @@ function FollowupForm({ kind, editing, prefill, onClose }: { kind: FollowupKind;
       create.mutate(input, { onSuccess: onDone, onError: onFail });
     }
   };
+
+  useSaveShortcut(submit);
 
   const saving = create.isPending || update.isPending;
   const dateChips = [

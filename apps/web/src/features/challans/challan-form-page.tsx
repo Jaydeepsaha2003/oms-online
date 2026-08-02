@@ -79,6 +79,31 @@ const itemLabel = (it: ChallanDraftItem) =>
 // hiding it changes nothing about what gets stored on the challan.
 const SHOW_SHIPPING_ADDRESS = false;
 
+// `null` on gstRate/freightRate/packingRate means the rate master has NO row at
+// all for that item's category (+ transport) — genuinely unconfigured, not the
+// same as a deliberately-set 0. Flag it loudly: a silent 0 here means the party
+// gets billed short on freight/packing, or undercharged/overcharged GST.
+const warnMissingRates = (items: ChallanDraftItem[]) => {
+  const missing = new Map<string, Set<string>>(); // category → which rates are missing
+  for (const it of items) {
+    const miss: string[] = [];
+    if (it.gstRate == null) miss.push('GST');
+    if (it.freightRate == null) miss.push('Freight');
+    if (it.packingRate == null) miss.push('Packing');
+    if (!miss.length) continue;
+    const cat = it.pCategory || 'this item';
+    const set = missing.get(cat) ?? new Set<string>();
+    miss.forEach((m) => set.add(m));
+    missing.set(cat, set);
+  }
+  if (!missing.size) return;
+  const detail = [...missing.entries()].map(([cat, rates]) => `${cat} — ${[...rates].join('/')}`).join(', ');
+  toast.warning('Some rates are not set up for these items', {
+    description: `${detail}. They'll bill as ₹0 until added under Customer GST Rates / Transport Rates.`,
+    duration: 9000,
+  });
+};
+
 export function ChallanFormPage() {
   const navigate = useNavigate();
   const confirm = useConfirm();
@@ -244,6 +269,7 @@ export function ChallanFormPage() {
       setBillingRate(String(draft.billingRate ?? 0));
       setShippingAddress(draft.billingAddress ?? '');
       recalc(next, draft);
+      if (preset.length) warnMissingRates(preset);
       if (draft.isScrap) setM((x) => ({ ...x, product: 'S.S. SCRAP', unit: 'KGS' }));
       draftReady.current = true;
     }
@@ -288,6 +314,7 @@ export function ChallanFormPage() {
     const next = [...rows, { ...it, key: `${it.dispatchId ?? 'm'}-${rows.length}-${performance.now() | 0}` }];
     setRows(next);
     recalc(next);
+    warnMissingRates([it]);
     setAddSel('');
     setAddKey((k) => k + 1); // remount the select so its field text resets to empty
   };
@@ -302,6 +329,7 @@ export function ChallanFormPage() {
     setRows(next);
     recalc(next);
     toast.success(`Added ${available.length} pending item${available.length === 1 ? '' : 's'}`);
+    warnMissingRates(available);
   };
   // Swipe-to-add-all: a horizontal swipe on the Bill To card loads every pending
   // dispatched item for the selected party straight into the list (mobile shortcut

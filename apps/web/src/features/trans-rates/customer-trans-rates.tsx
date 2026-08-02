@@ -3,6 +3,7 @@ import { Loader2, Plus, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getApiErrorMessage } from '@/lib/api';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useConfirm } from '@/components/common/confirm';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -119,6 +120,8 @@ export function CustomerTransRates({ customerName }: { customerName: string }) {
       },
     );
   };
+
+  useSaveShortcut(save, can('transrate:update'));
 
   const transporterNames = (lookups?.transporters ?? []).map((t) => t.name);
   const priced = lines.filter((l) => l.rate.trim() !== '').length;

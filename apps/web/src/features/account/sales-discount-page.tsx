@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { BadgePercent, History, Loader2, Pencil, Search, Trash2 } from 'lucide-react';
+import { BadgePercent, History, Loader2, Pencil, Search, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { DiscountDto, DiscountInvoiceRow } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useConfirm } from '@/components/common/confirm';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { NativeSelect } from '@/components/common/combo';
@@ -29,6 +30,13 @@ const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart
 
 type Mode = '' | 'BANK' | 'CASH';
 type DiscountTarget = { row: DiscountInvoiceRow; side: 'BANK' | 'CASH'; editing: DiscountDto | null };
+
+/** Matches the Pending Challan / Challans / Orders / Dispatch grids: Inter, semibold, near-black. */
+const TEXT_CELL = 'text-[13px] font-semibold text-slate-800 dark:text-slate-200';
+/** Compact, amber-bordered filter controls — same language as the other list pages. */
+const CONTROL =
+  'h-9 rounded-[4px] border-amber-300 dark:border-amber-400/40 text-[12.5px] focus-visible:border-amber-500 focus-visible:ring-amber-400/30';
+const CONTROL_ON = 'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
 
 export function SalesDiscountPage() {
   const { can } = usePermissions();
@@ -65,66 +73,95 @@ export function SalesDiscountPage() {
 
   const bankActive = mode === 'BANK';
   const cashActive = mode === 'CASH';
+  const hasFilters = !!party || !!mode || !!searchInput;
+  const resetFilters = () => {
+    setParty('');
+    setMode('');
+    setSearchInput('');
+    setSearch('');
+  };
 
   const columns: DataColumn<DiscountInvoiceRow>[] = [
-    { id: 'invDate', label: 'Inv Date', cell: (r) => <span className="whitespace-nowrap">{prettyDate(r.invDate)}</span> },
-    { id: 'invNo', label: 'Inv No', cell: (r) => <span className="font-mono font-semibold">{r.invNo}</span> },
-    { id: 'party', label: 'Customer', cell: (r) => <span className="font-medium">{r.customerName}</span> },
-    { id: 'billAmt', label: 'Bill Amt', align: 'right', cell: (r) => <span className="tabular-nums">{money(r.billAmt)}</span> },
-    { id: 'billDisc', label: 'Bill Disc', align: 'right', cell: (r) => <span className={cn('tabular-nums', bankActive && 'bg-emerald-50')}>{money(r.billDisc)}</span> },
-    { id: 'billBal', label: 'Bill Bal', align: 'right', cell: (r) => <span className={cn('tabular-nums font-semibold', bankActive && 'bg-amber-50')}>{money(r.billBal)}</span> },
-    { id: 'cashAmt', label: 'Cash Amt', align: 'right', cell: (r) => <span className="tabular-nums">{money(r.cashAmt)}</span> },
-    { id: 'cashDisc', label: 'Cash Disc', align: 'right', cell: (r) => <span className={cn('tabular-nums', cashActive && 'bg-emerald-50')}>{money(r.cashDisc)}</span> },
-    { id: 'cashBal', label: 'Cash Bal', align: 'right', cell: (r) => <span className={cn('tabular-nums font-semibold', cashActive && 'bg-amber-50')}>{money(r.cashBal)}</span> },
+    { id: 'invDate', label: 'Inv Date', cell: (r) => <span className={cn(TEXT_CELL, 'whitespace-nowrap tabular-nums')}>{prettyDate(r.invDate)}</span> },
+    { id: 'invNo', label: 'Inv No', cell: (r) => <span className={cn(TEXT_CELL, 'font-mono')}>{r.invNo}</span> },
+    { id: 'party', label: 'Customer', cell: (r) => <span className={TEXT_CELL}>{r.customerName}</span> },
+    { id: 'billAmt', label: 'Bill Amt', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(r.billAmt)}</span> },
+    { id: 'billDisc', label: 'Bill Disc', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums', bankActive && 'bg-emerald-50 dark:bg-emerald-400/10')}>{money(r.billDisc)}</span> },
+    { id: 'billBal', label: 'Bill Bal', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums', bankActive && 'bg-amber-50 dark:bg-amber-400/10')}>{money(r.billBal)}</span> },
+    { id: 'cashAmt', label: 'Cash Amt', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(r.cashAmt)}</span> },
+    { id: 'cashDisc', label: 'Cash Disc', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums', cashActive && 'bg-emerald-50 dark:bg-emerald-400/10')}>{money(r.cashDisc)}</span> },
+    { id: 'cashBal', label: 'Cash Bal', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums', cashActive && 'bg-amber-50 dark:bg-amber-400/10')}>{money(r.cashBal)}</span> },
   ];
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
-          <BadgePercent className="size-5" />
-        </div>
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Sales Discount</h2>
-          <p className="text-muted-foreground text-sm">Give a discount on a pending invoice — it reduces the bank or cash balance and posts a ledger voucher.</p>
-        </div>
-      </div>
-
+    <div className="flex h-full min-h-0 flex-col gap-2 p-2.5 font-sans sm:gap-2.5 sm:p-3">
       {/* Filters */}
-      <div className="bg-card flex flex-wrap items-end gap-3 rounded-md border p-3 shadow-sm">
-        <div className="w-full space-y-1 sm:w-72">
-          <Label className="text-sm">Party Name</Label>
-          <NativeSelect value={party} onChange={setParty} options={['', ...partyOptions]} placeholder="All parties" />
+      <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
+        <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
+          <div className="w-full sm:w-64">
+            <NativeSelect value={party} onChange={setParty} options={['', ...partyOptions]} placeholder="All parties" className={cn(CONTROL, 'font-medium', party && CONTROL_ON)} />
+          </div>
+          <div className="w-40">
+            <NativeSelect value={mode} onChange={(v) => setMode(v as Mode)} options={['', 'BANK', 'CASH']} placeholder="BANK / CASH" className={cn(CONTROL, 'font-medium', mode && CONTROL_ON)} />
+          </div>
+          <div className="relative w-full sm:w-64">
+            <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
+            <Input
+              placeholder="Inv no / party / amount…"
+              className={cn(CONTROL, 'pl-8 font-medium', searchInput && CONTROL_ON)}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+            />
+          </div>
+          {hasFilters && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-9 rounded-[4px] text-[12.5px] font-semibold text-amber-700 hover:bg-amber-50 hover:text-amber-900 dark:text-amber-300 dark:hover:bg-amber-400/10"
+              onClick={resetFilters}
+            >
+              <X className="size-3.5" /> Reset
+            </Button>
+          )}
+          <p className="text-muted-foreground ml-auto text-[12.5px] font-medium">
+            {mode ? <>Click an invoice to discount its <b className="text-foreground">{mode}</b> balance.</> : 'Select a mode, then click an invoice.'}
+          </p>
         </div>
-        <div className="w-40 space-y-1">
-          <Label className="text-sm">Discount Mode *</Label>
-          <NativeSelect value={mode} onChange={(v) => setMode(v as Mode)} options={['', 'BANK', 'CASH']} placeholder="BANK / CASH" />
-        </div>
-        <div className="relative w-full sm:w-64">
-          <Label className="text-sm">Search</Label>
-          <Search className="text-muted-foreground pointer-events-none absolute left-3 top-[34px] size-4" />
-          <Input placeholder="Inv no / party / amount…" className="pl-9" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
-        </div>
-        <p className="text-muted-foreground ml-auto text-sm">
-          {mode ? <>Click an invoice to discount its <b className="text-foreground">{mode}</b> balance.</> : 'Select a mode, then click an invoice.'}
-        </p>
       </div>
 
-      <DataTable
-        columns={columns}
-        rows={rows}
-        rowKey={(r) => r.invNo}
-        isLoading={isLoading}
-        emptyText={mode ? `No pending invoices with a ${mode} balance.` : 'No pending invoices — choose a party or mode.'}
-        onRowClick={(r) => can('discount:create') && openDiscount(r)}
-        actions={(r) => (
-          <div className="flex justify-end gap-1">
-            <Button variant="ghost" size="icon" className="size-8" title="Discount history" onClick={() => setHistoryRow(r)} aria-label="History">
-              <History className="size-4" />
-            </Button>
-          </div>
-        )}
-      />
+      <div className={cn('flex min-h-0 flex-1 flex-col', '[&_[data-slot=table-container]]:overscroll-x-contain', '[&_[data-slot=table-container]]:[scrollbar-width:thin]', '[&_[data-slot=table-container]]:[scrollbar-color:var(--color-slate-400)_var(--color-slate-100)]')}>
+        <DataTable
+          columns={columns}
+          rows={rows}
+          rowKey={(r) => r.invNo}
+          isLoading={isLoading}
+          dense
+          fill
+          hideSortIcon
+          emptyText={mode ? `No pending invoices with a ${mode} balance.` : 'No pending invoices — choose a party or mode.'}
+          onRowClick={(r) => can('discount:create') && openDiscount(r)}
+          actions={(r) => (
+            <div className="flex justify-end gap-1">
+              <Button variant="ghost" size="icon" className="size-8" title="Discount history" onClick={() => setHistoryRow(r)} aria-label="History">
+                <History className="size-4" />
+              </Button>
+            </div>
+          )}
+          className={[
+            'font-sans text-[13px]',
+            '[&_tbody]:select-none',
+            '[&_thead_th]:text-[13.5px] [&_thead_th]:font-extrabold [&_thead_th]:uppercase [&_thead_th]:tracking-wide [&_thead_th]:py-1.5',
+            '[&_thead_th_button]:cursor-pointer',
+            '[&_thead_th:hover]:from-blue-900 [&_thead_th:hover]:to-indigo-900',
+            '[&_td]:py-1 [&_td]:px-3 [&_th]:px-3',
+            '[&_tbody_button:not([role=switch]):not([role=checkbox])]:size-7',
+            '[&_tbody_tr]:border-b [&_tbody_tr]:border-slate-200 dark:[&_tbody_tr]:border-white/10',
+            '[&_td]:border-r [&_td]:border-slate-200 dark:[&_td]:border-white/10 [&_td:last-child]:border-r-0',
+            '[&_tbody_tr:nth-child(even)_td]:bg-slate-100/80 dark:[&_tbody_tr:nth-child(even)_td]:bg-white/[0.04]',
+            '[&_tbody_tr:hover:hover_td]:bg-amber-100/70 dark:[&_tbody_tr:hover:hover_td]:bg-amber-400/10',
+          ].join(' ')}
+        />
+      </div>
 
       {target && (
         <DiscountDialog
@@ -177,6 +214,8 @@ function DiscountDialog({ target, onClose }: { target: DiscountTarget; onClose: 
     if (isEdit) update.mutate({ id: editing!.id, ...input }, opts);
     else save.mutate(input, opts);
   };
+
+  useSaveShortcut(submit);
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>

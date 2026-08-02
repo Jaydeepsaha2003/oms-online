@@ -39,3 +39,4 @@ export * from './types/note';
 export * from './types/notification';
 export * from './types/approval';
 export * from './types/party-ledger';
+export * from './types/daybook';

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { Response } from 'express';
+import { existsSync } from 'node:fs';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 
 // pdfmake's Node entry (PdfPrinter) ships without clean default-export typings;
@@ -18,6 +19,20 @@ const STANDARD_FONTS = {
     italics: 'Helvetica-Oblique',
     bolditalics: 'Helvetica-BoldOblique',
   },
+  Calibri: (() => {
+    const regular = 'C:/Windows/Fonts/calibri.ttf';
+    const bold = 'C:/Windows/Fonts/calibrib.ttf';
+    const italics = 'C:/Windows/Fonts/calibrii.ttf';
+    const bolditalics = 'C:/Windows/Fonts/calibriz.ttf';
+    return [regular, bold, italics, bolditalics].every(existsSync)
+      ? { normal: regular, bold, italics, bolditalics }
+      : {
+          normal: 'Helvetica',
+          bold: 'Helvetica-Bold',
+          italics: 'Helvetica-Oblique',
+          bolditalics: 'Helvetica-BoldOblique',
+        };
+  })(),
 };
 
 export interface TableDocOptions {

@@ -3,6 +3,7 @@ import { BellRing, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getApiErrorMessage } from '@/lib/api';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,7 +23,6 @@ export function CrmReminderCard() {
     if (data) setForm({ ...data } as unknown as Record<string, string | boolean>);
   }, [data]);
 
-  if (!can('crm:view')) return null;
   const num = (k: string) => (form[k] === '' || form[k] == null ? 0 : Number(form[k]));
   const set = (k: string, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -40,6 +40,10 @@ export function CrmReminderCard() {
       { onSuccess: () => toast.success('Reminder settings saved'), onError: (e) => toast.error(getApiErrorMessage(e, 'Save failed')) },
     );
   };
+
+  useSaveShortcut(onSave);
+
+  if (!can('crm:view')) return null;
 
   return (
     <Card>

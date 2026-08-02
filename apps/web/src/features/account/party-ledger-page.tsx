@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   CalendarRange,
+  ChevronLeft,
+  ChevronRight,
+  Download,
   Eye,
   FileSpreadsheet,
   Loader2,
@@ -9,9 +12,10 @@ import {
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { GlobalWorkerOptions, getDocument, type PDFDocumentProxy } from 'pdfjs-dist';
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import type { LedgerBalanceRow, LedgerReceiptLine, PartyLedgerQuery, PartyLedgerRow, PartyListStanding } from '@oms/shared';
-import { downloadFile, getApiErrorMessage } from '@/lib/api';
-import { openPdf } from '@/lib/pdf';
+import { api, downloadFile, getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -20,15 +24,27 @@ import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { fetchLedgerReceipts, usePartyLedger, usePartyLedgerLookups } from './use-party-ledger';
 
 const inr = (v: number) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+GlobalWorkerOptions.workerSrc = pdfWorker;
 /** Tally leaves a zero cell blank rather than printing 0. */
 const money = (v: number) => (v ? inr(v) : '');
+/** The 3 summary rows (Opening Balance / Current Total / Closing Balance) fill
+ *  a blank or zero cell with "-" instead — standard accounting-statement style,
+ *  as opposed to the transaction rows above which stay genuinely blank. */
+const moneyOrDash = (v: number) => (v ? inr(v) : '-');
 // Delegates to the shared formatter so this page follows the system-wide date format.
 const prettyDate = (iso: string | null) => formatDate(iso);
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const timestampedPdfName = (partyName: string) => {
+  const now = new Date();
+  const two = (value: number) => String(value).padStart(2, '0');
+  const stamp = `${two(now.getDate())}_${two(now.getMonth() + 1)}_${two(now.getFullYear() % 100)}_${two(now.getHours())}${two(now.getMinutes())}${two(now.getSeconds())}`;
+  return `${partyName.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-').trim()}_${stamp}.pdf`;
+};
 
 /** Compact, amber-bordered filter controls — the same language as every other list page. */
 const CONTROL =
@@ -37,18 +53,19 @@ const CONTROL_ON =
   'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
 
 /* ── Tally palette ──────────────────────────────────────────────────────────
-   Tally puts amber chrome around a plain white data grid, with dark navy bars
-   for the document header — so the ledger below follows that, rather than the
-   blue-gradient headers the rest of the app's list screens use. */
+   Tally puts amber chrome around a plain white data grid; the ledger keeps that
+   amber frame (borders, filters, opening/closing bands) but the column strip
+   itself uses the same dark navy→indigo gradient as every other list screen's
+   header, for one consistent look across the app. */
 
-/** Header cell: sticky, amber band, near-black type — Tally's column strip. */
+/** Header cell: sticky, navy→indigo band, white type — the app's column strip. */
 const TH =
-  'sticky bg-gradient-to-b from-amber-300 to-amber-400 px-2 text-[11px] font-extrabold tracking-wide text-amber-950 uppercase whitespace-nowrap dark:from-amber-500 dark:to-amber-600';
-/** The Bank / Cash banner sits a shade deeper so the two tiers read apart. */
-const TH_GROUP =
-  'sticky bg-gradient-to-b from-amber-400 to-amber-500 px-2 text-[11px] font-extrabold tracking-wide text-amber-950 uppercase whitespace-nowrap dark:from-amber-600 dark:to-amber-700';
-/** Rule between header cells — amber-on-amber, not white. */
-const TH_LINE = 'border-r border-amber-600/30 dark:border-amber-900/30';
+  'sticky bg-gradient-to-b from-blue-800 to-indigo-800 px-2 text-[11px] font-extrabold tracking-wide text-white uppercase whitespace-nowrap dark:from-blue-900 dark:to-indigo-900';
+/** The Bank / Cash banner — same band as the column strip below it, so the two
+ *  header tiers read as one continuous header rather than two different bars. */
+const TH_GROUP = TH;
+/** Rule between header cells — white-on-navy, not amber. */
+const TH_LINE = 'border-r border-white/15';
 /** Body cell: full grid lines, tight rows. The colour is scoped to the right edge
  *  so a row's own top/bottom rule (the totals band) isn't overridden by it. */
 const TD = 'border-r border-r-amber-200/80 px-2 py-[3px] align-middle dark:border-r-amber-400/15 last:border-r-0';
@@ -121,6 +138,7 @@ function Balance({ net, className }: { net: number; className?: string }) {
 export function PartyLedgerPage() {
   const navigate = useNavigate();
   const { can } = usePermissions();
+  const canPrintLedger = can('partyledger:print');
   const { data: lookups } = usePartyLedgerLookups();
 
   const [party, setParty] = useState('');
@@ -132,6 +150,10 @@ export function PartyLedgerPage() {
   const [receiptFor, setReceiptFor] = useState<PartyLedgerRow | null>(null);
   const [dateOpen, setDateOpen] = useState(false);
   const [preset, setPreset] = useState('');
+  // Off by default: the running Balance per transaction is a detail, not
+  // something every glance at the ledger needs — Closing Balance (the actual
+  // bottom line) always shows regardless of this toggle.
+  const [showBalance, setShowBalance] = useState(false);
 
   const custByName = useMemo(() => new Map((lookups?.customers ?? []).map((c) => [c.name, c.id])), [lookups]);
   const partyOptions = useMemo(() => (lookups?.customers ?? []).map((c) => c.name), [lookups]);
@@ -150,6 +172,10 @@ export function PartyLedgerPage() {
   const rows = data?.rows ?? [];
   const footer = data?.footer;
   const kpis = data?.kpis;
+  /** Signed closing net for whichever leg(s) the current mode shows — the one
+   *  number the ledger is actually for. Shared by the KPI rail and both
+   *  Closing Balance renderings (desktop footer row + mobile summary card). */
+  const closingNet = footer ? footer.closingBankNet * (mode === 'C' ? 0 : 1) + footer.closingCashNet * (mode === 'B' ? 0 : 1) : 0;
 
   const onReset = () => {
     setParty('');
@@ -179,17 +205,61 @@ export function PartyLedgerPage() {
     return `/party-ledger/export.${fmt}?${params.toString()}`;
   };
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [pdfPreview, setPdfPreview] = useState<{ url: string; filename: string } | null>(null);
+  const pdfFrameRef = useRef<HTMLIFrameElement>(null);
   const [excelLoading, setExcelLoading] = useState(false);
+  useEffect(
+    () => () => {
+      if (pdfPreview) URL.revokeObjectURL(pdfPreview.url);
+    },
+    [pdfPreview],
+  );
+  const pdfFilename = timestampedPdfName(data?.customerName || (data?.agentName ? `Agent-${data.agentName}` : 'All-Parties'));
   const onPdf = async () => {
     setPdfLoading(true);
     try {
-      await openPdf(exportUrl('pdf'), `${(data?.customerName || data?.agentName || 'party-ledger').replace(/[\\/:*?"<>|]/g, '-')}.pdf`);
+      const response = await api.get(exportUrl('pdf'), { responseType: 'blob' });
+      const disposition = response.headers['content-disposition'] as string | undefined;
+      const filename = disposition?.match(/filename="?([^";]+)"?/i)?.[1]?.trim() || pdfFilename;
+      setPdfPreview({ url: URL.createObjectURL(response.data as Blob), filename });
     } catch (e) {
       toast.error(getApiErrorMessage(e, 'PDF failed'));
     } finally {
       setPdfLoading(false);
     }
   };
+  const downloadPreview = () => {
+    if (!pdfPreview) return;
+    const link = document.createElement('a');
+    link.href = pdfPreview.url;
+    link.download = pdfPreview.filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  };
+  const printPreview = () => {
+    const frameWindow = pdfFrameRef.current?.contentWindow;
+    if (!frameWindow) return toast.error('PDF preview is not ready yet.');
+    frameWindow.focus();
+    frameWindow.print();
+  };
+  const printShortcutRef = useRef({ openPdf: onPdf, printPreview });
+  printShortcutRef.current = { openPdf: onPdf, printPreview };
+  useEffect(() => {
+    if (!canPrintLedger) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'p') return;
+      if (!pdfPreview && document.querySelector('[role="dialog"], [role="alertdialog"]')) return;
+      event.preventDefault();
+      if (pdfPreview) {
+        printShortcutRef.current.printPreview();
+      } else if (rows.length && !pdfLoading) {
+        void printShortcutRef.current.openPdf();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [canPrintLedger, pdfLoading, pdfPreview, rows.length]);
   const onExcel = async () => {
     setExcelLoading(true);
     try {
@@ -368,6 +438,12 @@ export function PartyLedgerPage() {
             ))}
           </div>
 
+          {/* Off by default — the running Balance per transaction is a detail most
+              glances at the ledger don't need; Closing Balance always shows regardless. */}
+          <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[12.5px] font-semibold text-amber-900/80 select-none dark:text-amber-200/80">
+            <Switch checked={showBalance} onCheckedChange={setShowBalance} /> Show Balance
+          </label>
+
           <Button variant="outline" className="h-9 rounded-[4px] text-[12.5px] font-semibold" onClick={onReset}>
             <X /> Reset
           </Button>
@@ -375,30 +451,34 @@ export function PartyLedgerPage() {
           <div className="ml-auto flex items-center gap-2">
             {data && (
               <p className="text-muted-foreground hidden text-[12px] font-medium lg:block">
-                <span className="text-foreground font-bold">{scopeLabel}</span> ·{' '}
-                <span className="text-foreground font-bold tabular-nums">{rows.length}</span> entr{rows.length === 1 ? 'y' : 'ies'}
+                <span className="text-foreground font-bold tabular-nums">{rows.length}</span> row{rows.length === 1 ? '' : 's'}
                 {isFetching && <Loader2 className="ml-1 inline size-3 animate-spin align-[-2px]" />}
               </p>
             )}
-            {can('partyledger:print') && (
+            {canPrintLedger && (
               <Button
                 variant="outline"
-                className="h-9 rounded-[4px] text-[12.5px] font-semibold"
+                size="icon"
+                className="size-9 rounded-[4px] border-rose-600 bg-rose-600 text-white shadow-sm hover:border-rose-700 hover:bg-rose-700 hover:text-white disabled:border-rose-300 disabled:bg-rose-300 disabled:text-white dark:border-rose-500 dark:bg-rose-600 dark:hover:border-rose-400 dark:hover:bg-rose-500"
                 onClick={onPdf}
                 disabled={!rows.length || pdfLoading}
-                title="Tally-style black & white statement"
+                aria-label="Open Party Ledger PDF"
+                title="Open PDF (Ctrl+P)"
               >
-                {pdfLoading ? <Loader2 className="animate-spin" /> : <Printer />} PDF
+                {pdfLoading ? <Loader2 className="animate-spin" /> : <Printer />}
               </Button>
             )}
             {can('partyledger:export') && (
               <Button
                 variant="outline"
-                className="h-9 rounded-[4px] text-[12.5px] font-semibold"
+                size="icon"
+                className="size-9 rounded-[4px] border-emerald-600 bg-emerald-600 text-white shadow-sm hover:border-emerald-700 hover:bg-emerald-700 hover:text-white disabled:border-emerald-300 disabled:bg-emerald-300 disabled:text-white dark:border-emerald-500 dark:bg-emerald-600 dark:hover:border-emerald-400 dark:hover:bg-emerald-500"
                 onClick={onExcel}
                 disabled={!rows.length || excelLoading}
+                aria-label="Download Party Ledger Excel"
+                title="Download Excel"
               >
-                {excelLoading ? <Loader2 className="animate-spin" /> : <FileSpreadsheet />} Excel
+                {excelLoading ? <Loader2 className="animate-spin" /> : <FileSpreadsheet />}
               </Button>
             )}
           </div>
@@ -407,12 +487,11 @@ export function PartyLedgerPage() {
 
       {/* ── Ageing rail ─────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-        <Kpi label="Inv Due From" value={kpis?.invDueFrom ?? '—'} />
+        <InvDueFromKpi text={kpis?.invDueFrom} />
         <Kpi
-          label="Payment DNA"
-          value={kpis?.paymentDNA ?? '—'}
-          tone={dnaTone(kpis?.paymentDNAKind)}
-          dot={kpis?.paymentDNAKind}
+          label="Total Outstanding"
+          value={footer ? `${inr(Math.abs(closingNet))}${closingNet !== 0 ? ` ${closingNet < 0 ? 'Cr' : 'Dr'}` : ''}` : '—'}
+          tone={!footer || closingNet === 0 ? 'slate' : closingNet < 0 ? 'emerald' : 'amber'}
         />
         <Kpi label="Over Due" value={kpis ? inr(kpis.overDue.amount) : '—'} note={kpis ? `${kpis.overDue.count} inv` : undefined} tone="rose" />
         <Kpi label="Past Due" value={kpis ? inr(kpis.pastDue.amount) : '—'} note={kpis ? `${kpis.pastDue.count} inv` : undefined} tone="amber" />
@@ -429,7 +508,7 @@ export function PartyLedgerPage() {
           </span>
           {/* Phones give the account name the full bar — the Date control above
               already states the period. */}
-          <span className="hidden shrink-0 text-[11px] font-bold tracking-wide text-amber-100/70 tabular-nums sm:inline">
+          <span className="hidden shrink-0 text-[11px] font-bold tracking-wide text-white tabular-nums sm:inline">
             {prettyDate(from)} — {prettyDate(to)} · {mode === 'BOTH' ? 'Bank & Cash' : mode === 'B' ? 'Bank' : 'Cash'}
           </span>
         </div>
@@ -495,27 +574,6 @@ export function PartyLedgerPage() {
             </thead>
 
             <tbody>
-              {/* Opening balance opens the statement, exactly as Tally prints it. */}
-              {footer && (
-                <tr className="bg-amber-100/80 font-bold dark:bg-amber-400/10">
-                  <td className={TD} />
-                  <td className={cn(TD, 'text-[13px] font-bold text-amber-950 dark:text-amber-100')}>Opening Balance</td>
-                  <td className={TD} />
-                  <td className={TD} />
-                  <td className={TD} />
-                  <td className={TD} />
-                  {balanceCells(footer.opening).map((v, i) => (
-                    <td key={i} className={cn(TD, NUM, 'font-bold')}>
-                      {money(v)}
-                    </td>
-                  ))}
-                  <td className={cn(TD, NUM)}>
-                    <Balance net={openingNet} />
-                  </td>
-                  {canViewChallan && <td className={TD} />}
-                </tr>
-              )}
-
               {isFetching && !data ? (
                 <tr>
                   <td colSpan={totalCols} className="text-muted-foreground h-24 text-center">
@@ -581,9 +639,7 @@ export function PartyLedgerPage() {
                           {money(r[l.cr])}
                         </td>,
                       ])}
-                      <td className={cn(TD, NUM)}>
-                        <Balance net={running[i]} />
-                      </td>
+                      <td className={cn(TD, NUM)}>{showBalance && <Balance net={running[i]} />}</td>
                       {canViewChallan && (
                         <td className={cn(TD, 'text-center')} onClick={(e) => e.stopPropagation()}>
                           {invoice && r.challanId ? (
@@ -605,10 +661,21 @@ export function PartyLedgerPage() {
               )}
             </tbody>
 
-            {/* Current total + closing balance ride at the foot of the grid and stay
-                visible while the body scrolls — Tally always shows you the closing. */}
+            {/* Opening balance + current total + closing balance ride together at the
+                foot of the grid and stay visible while the body scrolls — Tally
+                always shows you the closing, and grouping all 3 summary rows here
+                (rather than opening at the top) keeps them in one glance. */}
             {footer && (
               <tfoot className="sticky bottom-0 z-20">
+                <FootRow
+                  label="Opening Balance"
+                  cells={balanceCells(footer.opening)}
+                  lead={LEAD_COLS}
+                  trailing={canViewChallan}
+                  balance={openingNet}
+                  showBalance={showBalance}
+                  underline
+                />
                 <FootRow label="Current Total" cells={balanceCells(footer.current)} lead={LEAD_COLS} trailing={canViewChallan} />
                 <FootRow
                   label="Closing Balance"
@@ -616,7 +683,7 @@ export function PartyLedgerPage() {
                   lead={LEAD_COLS}
                   trailing={canViewChallan}
                   strong
-                  balance={footer.closingBankNet * (mode === 'C' ? 0 : 1) + footer.closingCashNet * (mode === 'B' ? 0 : 1)}
+                  balance={closingNet}
                 />
               </tfoot>
             )}
@@ -625,12 +692,6 @@ export function PartyLedgerPage() {
 
         {/* Phones: one card per voucher — the grid is unusable at this width. */}
         <div className="min-h-0 flex-1 overflow-y-auto p-2 sm:hidden">
-          {footer && (
-            <div className="mb-2 flex items-center justify-between rounded-[4px] border border-amber-300 bg-amber-100/80 px-3 py-2 dark:border-amber-400/30 dark:bg-amber-400/10">
-              <span className="text-[12px] font-bold uppercase tracking-wide text-amber-950 dark:text-amber-100">Opening Balance</span>
-              <Balance net={openingNet} className="text-[14px]" />
-            </div>
-          )}
           {isFetching && !data ? (
             <div className="text-muted-foreground flex h-24 items-center justify-center">
               <Loader2 className="size-5 animate-spin" />
@@ -694,7 +755,7 @@ export function PartyLedgerPage() {
                           ) : null,
                         ])}
                       </div>
-                      <Balance net={running[i]} className="shrink-0 text-[13px]" />
+                      {showBalance && <Balance net={running[i]} className="shrink-0 text-[13px]" />}
                     </div>
                     {invoice && r.challanId && canViewChallan && (
                       <div className="mt-2 flex justify-end border-t pt-2" onClick={(e) => e.stopPropagation()}>
@@ -713,25 +774,62 @@ export function PartyLedgerPage() {
               })}
             </div>
           )}
+          {/* All 3 summary rows grouped at the bottom, in statement order —
+              Opening, Current Total, Closing — rather than opening at the top. */}
           {footer && (
             <div className="mt-2 space-y-1.5 rounded-[4px] border-2 border-amber-600 bg-amber-100/80 px-3 py-2 dark:border-amber-400/60 dark:bg-amber-400/15">
               <div className="flex items-center justify-between">
+                <span className="text-[11.5px] font-semibold uppercase tracking-wide text-amber-950 dark:text-amber-100">Opening Balance</span>
+                <span className="text-[12.5px] font-bold tabular-nums">
+                  {balanceCells(footer.opening).map((v) => moneyOrDash(v)).join('  /  ')}
+                </span>
+              </div>
+              <div className="flex items-center justify-between border-t border-amber-600/30 pt-1.5 dark:border-amber-400/30">
                 <span className="text-[11.5px] font-semibold uppercase tracking-wide text-amber-950 dark:text-amber-100">Current Total</span>
                 <span className="text-[12.5px] font-bold tabular-nums">
-                  {balanceCells(footer.current).map((v) => inr(v)).join('  /  ')}
+                  {balanceCells(footer.current).map((v) => moneyOrDash(v)).join('  /  ')}
                 </span>
               </div>
               <div className="flex items-center justify-between border-t border-amber-600/30 pt-1.5 dark:border-amber-400/30">
                 <span className="text-[12px] font-extrabold uppercase tracking-wide text-amber-950 dark:text-amber-100">Closing Balance</span>
-                <Balance
-                  net={footer.closingBankNet * (mode === 'C' ? 0 : 1) + footer.closingCashNet * (mode === 'B' ? 0 : 1)}
-                  className="text-[15px]"
-                />
+                <Balance net={closingNet} className="text-[15px]" />
               </div>
             </div>
           )}
         </div>
       </div>
+
+      <Dialog open={!!pdfPreview} onOpenChange={(open) => !open && setPdfPreview(null)}>
+        <DialogContent className="flex h-[min(92vh,900px)] w-[min(96vw,920px)] max-w-none flex-col gap-0 overflow-hidden rounded-[6px] p-0">
+          <DialogHeader className="shrink-0 border-b px-4 py-3 pr-12 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <DialogTitle className="truncate text-base">Party Ledger PDF</DialogTitle>
+              <p className="text-muted-foreground truncate text-xs">{pdfPreview?.filename}</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2 pt-2 sm:pt-0">
+              <Button variant="outline" size="sm" onClick={printPreview} className="rounded-[4px]">
+                <Printer className="size-4" /> Print
+              </Button>
+              <Button
+                size="sm"
+                onClick={downloadPreview}
+                className="rounded-[4px] bg-rose-600 font-bold text-white hover:bg-rose-700 dark:bg-rose-600 dark:hover:bg-rose-500"
+              >
+                <Download className="size-4" /> Download PDF
+              </Button>
+            </div>
+          </DialogHeader>
+          {pdfPreview && <PdfCanvasPreview url={pdfPreview.url} />}
+          {pdfPreview && (
+            <iframe
+              ref={pdfFrameRef}
+              src={pdfPreview.url}
+              title="Party Ledger print source"
+              className="pointer-events-none fixed size-px opacity-0"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       <ReceiptDialog row={receiptFor} onClose={() => setReceiptFor(null)} />
     </div>
@@ -746,6 +844,8 @@ function FootRow({
   trailing,
   strong,
   balance,
+  showBalance = true,
+  underline,
 }: {
   label: string;
   cells: number[];
@@ -753,10 +853,26 @@ function FootRow({
   trailing: boolean;
   strong?: boolean;
   balance?: number;
+  /** Hide the Balance cell's VALUE (the column itself always stays, so the grid
+   *  keeps its column count) — used to respect the page's "Show Balance" toggle
+   *  for every summary row except Closing Balance, which always shows its figure. */
+  showBalance?: boolean;
+  /** A thick rule under this row — e.g. separating Opening Balance from the
+   *  Current Total/Closing Balance rows below it. Box-shadow for the same
+   *  sticky+border-collapse reason as the Closing Balance rule above. */
+  underline?: boolean;
 }) {
+  // The Closing Balance rule is a box-shadow, not a border: this row sits inside
+  // a `position: sticky` tfoot over a `border-collapse` table, a combination
+  // browsers are known to mis-render top borders on once the row is actually
+  // stuck mid-scroll (the border silently disappears). A box-shadow paints
+  // independently of border-collapse's border-resolution algorithm, so the rule
+  // stays visible the whole time the ledger is scrolled, not just at rest.
   const bg = strong
-    ? 'bg-amber-200/90 dark:bg-amber-400/20 border-t-2 border-t-amber-700 dark:border-t-amber-400/70'
-    : 'bg-amber-100/70 dark:bg-amber-400/10 border-t border-t-amber-300 dark:border-t-amber-400/30';
+    ? 'bg-amber-200/90 dark:bg-amber-400/20 shadow-[inset_0_2px_0_0_var(--color-amber-700)] dark:shadow-[inset_0_2px_0_0_var(--color-amber-400)]'
+    : underline
+      ? 'bg-amber-100/70 dark:bg-amber-400/10 shadow-[inset_0_-2px_0_0_var(--color-amber-700)] dark:shadow-[inset_0_-2px_0_0_var(--color-amber-400)]'
+      : 'bg-amber-100/70 dark:bg-amber-400/10 border-t border-t-amber-300 dark:border-t-amber-400/30';
   // The grid line is scoped to the RIGHT edge only — a blanket `border-amber-200`
   // also sets the top colour and would beat the totals rule above.
   const cell = cn('border-r border-r-amber-300/60 px-2 py-1 dark:border-r-amber-400/15 last:border-r-0', bg);
@@ -769,10 +885,16 @@ function FootRow({
       </td>
       {cells.map((v, i) => (
         <td key={i} className={cn(cell, NUM, strong ? 'text-[13.5px] font-extrabold' : 'font-bold')}>
-          {money(v)}
+          {moneyOrDash(v)}
         </td>
       ))}
-      <td className={cn(cell, NUM)}>{balance === undefined ? null : <Balance net={balance} className={strong ? 'text-[13.5px]' : undefined} />}</td>
+      <td className={cn(cell, NUM)}>
+        {/* Closing Balance ignores the toggle — it's the one figure this ledger
+            always needs, not an optional detail like the per-row running balance. */}
+        {balance === undefined || (!strong && !showBalance) ? null : (
+          <Balance net={balance} className={strong ? 'text-[13.5px]' : undefined} />
+        )}
+      </td>
       {trailing && <td className={cell} />}
     </tr>
   );
@@ -791,10 +913,10 @@ function StatusChip({ status }: { status: string }) {
       </span>
     );
   if (status === 'P')
-    // Deeper than the other two: the rows behind it are amber, so a pale amber
-    // chip would disappear into the banding.
+    // Pale like the other two, but sky rather than amber: the rows behind it
+    // are amber-banded, so a pale amber chip would disappear into the banding.
     return (
-      <span className="rounded bg-amber-500 px-1.5 text-[11.5px] font-bold text-amber-950 dark:bg-amber-500 dark:text-amber-950" title="Partially paid">
+      <span className="rounded bg-sky-100 px-1.5 text-[11.5px] font-bold text-sky-700 dark:bg-sky-400/15 dark:text-sky-300" title="Partially paid">
         P
       </span>
     );
@@ -821,36 +943,13 @@ function DueFrom({ text }: { text: string }) {
   return <span className={cn('text-[12px] font-semibold uppercase', dueTone(text))}>{text}</span>;
 }
 
-/** Payment DNA is now a Party-Lists standing, so it colours by list kind. */
-function dnaTone(kind?: PartyListStanding): Tone {
-  switch (kind) {
-    case 'GREEN':
-      return 'emerald';
-    case 'BLACK':
-      return 'black';
-    case 'CUSTOM':
-      return 'violet';
-    default:
-      return 'muted';
-  }
-}
-type Tone = 'slate' | 'muted' | 'rose' | 'amber' | 'emerald' | 'violet' | 'black';
+type Tone = 'slate' | 'muted' | 'rose' | 'amber' | 'emerald';
 const toneCls: Record<Tone, string> = {
   slate: 'text-slate-800 dark:text-slate-200',
   muted: 'text-muted-foreground',
   rose: 'text-rose-600 dark:text-rose-400',
   amber: 'text-amber-600 dark:text-amber-400',
   emerald: 'text-emerald-600 dark:text-emerald-400',
-  violet: 'text-violet-600 dark:text-violet-400',
-  black: 'text-slate-900 dark:text-white',
-};
-
-/** Green / Black list swatch, matching the CRM Party Lists palette. */
-const DOT_CLS: Record<PartyListStanding, string> = {
-  GREEN: 'bg-emerald-500',
-  BLACK: 'bg-slate-800 dark:bg-slate-100',
-  CUSTOM: 'bg-violet-500',
-  NONE: 'bg-slate-300 dark:bg-slate-600',
 };
 
 /** Compact ageing tile — label above, figure below, count trailing. */
@@ -859,25 +958,39 @@ function Kpi({
   value,
   note,
   tone = 'slate',
-  dot,
 }: {
   label: string;
   value: string;
   note?: string;
   tone?: Tone;
-  /** Renders a list-kind swatch before the value (Payment DNA only). */
-  dot?: PartyListStanding;
 }) {
   return (
     <div className="bg-card rounded-[4px] border border-amber-200 px-2.5 py-1.5 shadow-sm dark:border-amber-400/20">
       <div className="text-[9.5px] font-bold tracking-widest text-amber-900/70 uppercase dark:text-amber-200/60">{label}</div>
       <div className="flex items-baseline gap-1.5">
-        {dot && <span className={cn('mb-px size-2 shrink-0 self-center rounded-full ring-1 ring-black/10', DOT_CLS[dot])} aria-hidden />}
         <span className={cn('truncate text-[15px] font-bold tabular-nums', toneCls[tone])} title={value}>
           {value}
         </span>
         {note && <span className="text-muted-foreground shrink-0 text-[10.5px] font-medium tabular-nums">{note}</span>}
       </div>
+    </div>
+  );
+}
+
+/** "Inv Due From" gets its own two-line tile: the date reads as the headline
+ *  figure, the invoice code (and party, on a multi-party ledger) sits below as
+ *  a small mono line — cramming both onto one row (the old layout) truncated
+ *  the invoice code on anything but the widest screens. */
+function InvDueFromKpi({ text }: { text?: string }) {
+  const value = text ?? '—';
+  const m = /^(.+?)\s+\((.+)\)$/.exec(value);
+  const date = m ? m[1] : value;
+  const ref = m ? m[2] : null;
+  return (
+    <div className="bg-card rounded-[4px] border border-amber-200 px-2.5 py-1.5 shadow-sm dark:border-amber-400/20">
+      <div className="text-[9.5px] font-bold tracking-widest text-amber-900/70 uppercase dark:text-amber-200/60">Inv Due From</div>
+      <div className="truncate text-[15px] font-bold tabular-nums text-slate-800 dark:text-slate-200">{date}</div>
+      {ref && <div className="text-muted-foreground truncate text-[10.5px] font-mono font-medium">{ref}</div>}
     </div>
   );
 }
@@ -924,6 +1037,91 @@ function FitSelect({
           <X className="size-3" />
         </button>
       )}
+    </div>
+  );
+}
+
+/** Canvas-based PDF preview. Browser PDF plug-ins are inconsistent inside
+ * dialogs, while pdf.js renders the same server PDF reliably on every page. */
+function PdfCanvasPreview({ url }: { url: string }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [document, setDocument] = useState<PDFDocumentProxy | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageCount, setPageCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const task = getDocument({ url });
+    setLoading(true);
+    setError(false);
+    setDocument(null);
+    setPage(1);
+    task.promise
+      .then((pdf) => {
+        if (!active) return void pdf.cleanup();
+        setDocument(pdf);
+        setPageCount(pdf.numPages);
+      })
+      .catch(() => active && setError(true));
+    return () => {
+      active = false;
+      void task.destroy();
+    };
+  }, [url]);
+
+  useEffect(() => {
+    if (!document) return;
+    let active = true;
+    let renderTask: { promise: Promise<void>; cancel: () => void } | null = null;
+    setLoading(true);
+    document
+      .getPage(page)
+      .then((pdfPage) => {
+        if (!active || !canvasRef.current) return;
+        const viewport = pdfPage.getViewport({ scale: 1.35 });
+        const canvas = canvasRef.current;
+        canvas.width = Math.ceil(viewport.width);
+        canvas.height = Math.ceil(viewport.height);
+        renderTask = pdfPage.render({ canvas, viewport });
+        return renderTask.promise;
+      })
+      .then(() => active && setLoading(false))
+      .catch((reason: unknown) => {
+        if (active && (reason as { name?: string })?.name !== 'RenderingCancelledException') setError(true);
+      });
+    return () => {
+      active = false;
+      renderTask?.cancel();
+    };
+  }, [document, page]);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col bg-slate-100">
+      <div className="flex h-10 shrink-0 items-center justify-center gap-2 border-b bg-white px-3">
+        <Button variant="ghost" size="icon" className="size-7" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} title="Previous page">
+          <ChevronLeft className="size-4" />
+        </Button>
+        <span className="min-w-24 text-center text-xs font-semibold tabular-nums">
+          Page {page} of {pageCount || 1}
+        </span>
+        <Button variant="ghost" size="icon" className="size-7" onClick={() => setPage((p) => Math.min(pageCount, p + 1))} disabled={!pageCount || page >= pageCount} title="Next page">
+          <ChevronRight className="size-4" />
+        </Button>
+      </div>
+      <div className="relative min-h-0 flex-1 overflow-auto p-3 sm:p-5">
+        {loading && !error && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-100/80 text-sm font-medium text-slate-600">
+            <Loader2 className="mr-2 size-4 animate-spin" /> Rendering preview…
+          </div>
+        )}
+        {error ? (
+          <div className="flex h-full items-center justify-center text-sm font-medium text-rose-600">Could not render the PDF preview.</div>
+        ) : (
+          <canvas ref={canvasRef} className="mx-auto h-auto max-w-full bg-white shadow-md" />
+        )}
+      </div>
     </div>
   );
 }

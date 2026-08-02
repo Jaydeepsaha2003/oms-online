@@ -32,6 +32,20 @@ export const queryPersistOptions: Omit<PersistQueryClientOptions, 'queryClient'>
   }),
   maxAge: 24 * 60 * 60 * 1000,
   dehydrateOptions: {
-    shouldDehydrateQuery: (query) => query.state.status === 'success',
+    // Queries opted into `refetchOnMount: 'always'` (e.g. the Create Challan
+    // draft, which prices from master rate tables that can change any time —
+    // GST/Freight/Packing rates) are explicitly declaring "never trust a cached
+    // snapshot, always hit the server". Persisting them anyway defeats that: a
+    // cold reload restores the stale snapshot first and paints it before the
+    // background refetch lands, which is exactly the "doesn't reflect until I
+    // refresh 2-3 times" staleness users were seeing after editing a rate
+    // elsewhere and coming straight back to Create Challan.
+    shouldDehydrateQuery: (query) => {
+      if (query.state.status !== 'success') return false;
+      // `refetchOnMount` is a React-Query-layer option, not part of query-core's
+      // own QueryOptions type, but it's still present on the runtime object.
+      const refetchOnMount = (query.options as { refetchOnMount?: unknown }).refetchOnMount;
+      return refetchOnMount !== 'always';
+    },
   },
 };

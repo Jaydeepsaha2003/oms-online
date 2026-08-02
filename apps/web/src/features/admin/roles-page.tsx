@@ -5,6 +5,7 @@ import { ACTIONS, perm, RESOURCE_DEFINITIONS, type ResourceDef, type RoleDto } f
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useConfirm } from '@/components/common/confirm';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { Button } from '@/components/ui/button';
@@ -200,6 +201,8 @@ function RoleDialog({ role, onClose }: { role: RoleDto | null; onClose: () => vo
       create.mutate({ name: name.trim(), label: label.trim(), description: description.trim() || undefined, permissions: [...perms] }, opts);
     }
   };
+
+  useSaveShortcut(submit);
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>

@@ -20,6 +20,13 @@ export class ReportsController {
     return this.reports.filterOptions();
   }
 
+  /** Cross-report, plain-English actions for faster revenue and cash conversion. */
+  @Get('summary-analysis')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  summaryAnalysis(@Query() f: ReportFilterDto) {
+    return this.reports.summaryAnalysis(f);
+  }
+
   /** §8.5 — Business Overview. */
   @Get('business-overview')
   @Permissions(perm(R, ACTIONS.VIEW))

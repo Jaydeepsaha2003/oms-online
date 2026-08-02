@@ -42,37 +42,37 @@ export function BusinessOverviewPage() {
       <ReportSummary
         loading={isLoading}
         points={data ? [
-          { text: <>Revenue this FY is <strong>{inrCompact(data.revenue.current)}</strong>{data.revenue.deltaPct != null && <>, {data.revenue.deltaPct >= 0 ? 'up' : 'down'} <strong>{Math.abs(data.revenue.deltaPct).toFixed(0)}%</strong> vs last FY</>}.</>, tone: data.revenue.direction === 'down' ? 'warn' : 'good' },
-          { text: <>You've collected <strong>{data.collectionRate != null ? Math.round(data.collectionRate * 100) : '—'}%</strong> of what you billed this FY.</>, tone: (data.collectionRate ?? 0) >= 0.8 ? 'good' : 'warn' },
+          { text: <>Revenue in the selected period is <strong>{inrCompact(data.revenue.current)}</strong>{data.revenue.deltaPct != null && <>, {data.revenue.deltaPct >= 0 ? 'up' : 'down'} <strong>{Math.abs(data.revenue.deltaPct).toFixed(0)}%</strong> vs the previous equal period</>}.</>, tone: data.revenue.direction === 'down' ? 'warn' : 'good' },
+          { text: <>You've collected <strong>{data.collectionRate != null ? Math.round(data.collectionRate * 100) : '—'}%</strong> of what you billed in this period.</>, tone: (data.collectionRate ?? 0) >= 0.8 ? 'good' : 'warn' },
           { text: <>Outstanding receivable is <strong>{inrCompact(data.outstanding)}</strong>, roughly <strong>{data.dsoDays ?? '—'} days</strong> of sales (DSO).</>, tone: 'info' },
-          { text: <><strong>{data.topParties[0]?.name ?? '—'}</strong> is your biggest party at <strong>{inrCompact(data.topParties[0]?.value ?? 0)}</strong> this FY.</>, tone: 'info' },
+          { text: <><strong>{data.topParties[0]?.name ?? '—'}</strong> is your biggest party at <strong>{inrCompact(data.topParties[0]?.value ?? 0)}</strong> in this period.</>, tone: 'info' },
           { text: <><strong>{inrCompact(data.backlogValue)}</strong> is dispatched but not yet billed.</>, tone: data.backlogValue > 0 ? 'warn' : 'good' },
-          { text: <>Avg invoice <strong>{inrCompact(data.avgInvoiceValue)}</strong> across <strong>{data.activeParties}</strong> active parties.</>, tone: 'info' },
+          { text: <><strong>{data.activeParties}</strong> parties were billed in this period. <strong>{data.owingParties}</strong> parties owe money, including <strong>{data.olderOwingParties}</strong> not billed in this period.</>, tone: data.olderOwingParties > 0 ? 'warn' : 'info' },
         ] : []}
       />
 
       {/* Headline money KPIs */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Kpi label="Revenue (FY)" value={money(data?.revenue.current)} title={data ? inrFull(data.revenue.current) : undefined} hint="vs last FY" icon={TrendingUp} tone="blue" metric={data?.revenue} loading={isLoading} />
-        <Kpi label="Collections (FY)" value={money(data?.collections.current)} title={data ? inrFull(data.collections.current) : undefined} hint="vs last FY" icon={HandCoins} tone="emerald" metric={data?.collections} loading={isLoading} />
+        <Kpi label="Revenue (period)" value={money(data?.revenue.current)} title={data ? inrFull(data.revenue.current) : undefined} hint="vs previous period" icon={TrendingUp} tone="blue" metric={data?.revenue} loading={isLoading} />
+        <Kpi label="Collections (period)" value={money(data?.collections.current)} title={data ? inrFull(data.collections.current) : undefined} hint="vs previous period" icon={HandCoins} tone="emerald" metric={data?.collections} loading={isLoading} />
         <Kpi label="Outstanding" value={money(data?.outstanding)} title={data ? inrFull(data.outstanding) : undefined} hint="net receivable" icon={Wallet} tone="rose" loading={isLoading} />
         <Kpi label="To-bill backlog" value={money(data?.backlogValue)} title={data ? inrFull(data.backlogValue) : undefined} hint="dispatched, not challaned" icon={Package} tone="violet" loading={isLoading} />
       </div>
 
       {/* Operational + efficiency KPIs */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Kpi label="Orders (FY)" value={data ? Math.round(data.orders?.current ?? 0).toLocaleString('en-IN') : '—'} hint="vs last FY" icon={ReceiptText} tone="blue" metric={data?.orders} loading={isLoading} />
-        <Kpi label="Challans (FY)" value={data ? Math.round(data.challans?.current ?? 0).toLocaleString('en-IN') : '—'} hint="vs last FY" icon={ScrollText} tone="amber" metric={data?.challans} loading={isLoading} />
-        <Kpi label="Collection rate" value={data?.collectionRate != null ? `${Math.round(data.collectionRate * 100)}%` : '—'} hint="collected ÷ billed (FY)" icon={Banknote} tone="emerald" loading={isLoading} />
+        <Kpi label="Orders (period)" value={data ? Math.round(data.orders?.current ?? 0).toLocaleString('en-IN') : '—'} hint="vs previous period" icon={ReceiptText} tone="blue" metric={data?.orders} loading={isLoading} />
+        <Kpi label="Challans (period)" value={data ? Math.round(data.challans?.current ?? 0).toLocaleString('en-IN') : '—'} hint="vs previous period" icon={ScrollText} tone="amber" metric={data?.challans} loading={isLoading} />
+        <Kpi label="Collection rate" value={data?.collectionRate != null ? `${Math.round(data.collectionRate * 100)}%` : '—'} hint="collected ÷ billed (period)" icon={Banknote} tone="emerald" loading={isLoading} />
         <Kpi label="DSO" value={data?.dsoDays != null ? `${data.dsoDays} days` : '—'} hint="days sales outstanding" icon={Timer} tone="slate" loading={isLoading} />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Kpi label="Avg invoice value" value={money(data?.avgInvoiceValue)} title={data ? inrFull(data.avgInvoiceValue) : undefined} hint="per challan (FY)" icon={ReceiptText} tone="blue" loading={isLoading} />
-        <Kpi label="Active parties" value={data ? (data.activeParties ?? 0).toLocaleString('en-IN') : '—'} hint="billed this FY" icon={Users} tone="violet" loading={isLoading} />
+        <Kpi label="Avg invoice value" value={money(data?.avgInvoiceValue)} title={data ? inrFull(data.avgInvoiceValue) : undefined} hint="per challan (period)" icon={ReceiptText} tone="blue" loading={isLoading} />
+        <Kpi label="Billed parties" value={data ? (data.activeParties ?? 0).toLocaleString('en-IN') : '—'} hint="selected period" icon={Users} tone="violet" loading={isLoading} />
         <div className="sm:col-span-2">
-          <ReportCard title="Collections by mode (FY)">
-            {isLoading ? <div className="bg-muted h-16 animate-pulse rounded" /> : <RankedBars data={data?.collectionModes ?? []} emptyText="No receipts this FY." />}
+          <ReportCard title="Collections by mode (period)">
+            {isLoading ? <div className="bg-muted h-16 animate-pulse rounded" /> : <RankedBars data={data?.collectionModes ?? []} emptyText="No receipts in this period." />}
           </ReportCard>
         </div>
       </div>
@@ -102,7 +102,7 @@ export function BusinessOverviewPage() {
 
       {/* Category mix + top parties */}
       <div className="grid gap-4 lg:grid-cols-2">
-        <ReportCard title="Revenue by category (FY)">
+        <ReportCard title="Revenue by category (period)">
           {isLoading ? (
             <div className="bg-muted h-[280px] animate-pulse rounded-lg" />
           ) : catMix.length === 0 ? (
@@ -126,17 +126,17 @@ export function BusinessOverviewPage() {
           )}
         </ReportCard>
 
-        <ReportCard title="Top parties by revenue (FY)">
+        <ReportCard title="Top parties by revenue (period)">
           {isLoading ? <div className="bg-muted h-[280px] animate-pulse rounded-lg" /> : <RankedBars data={data?.topParties.slice(0, 8) ?? []} />}
         </ReportCard>
       </div>
 
       {/* Region + agent */}
       <div className="grid gap-4 lg:grid-cols-2">
-        <ReportCard title="Revenue by region (FY)">
+        <ReportCard title="Revenue by region (period)">
           {isLoading ? <div className="bg-muted h-[240px] animate-pulse rounded-lg" /> : <RankedBars data={data?.byRegion.slice(0, 8) ?? []} />}
         </ReportCard>
-        <ReportCard title="Revenue by agent (FY)" right={<PieIcon className="text-muted-foreground size-4" />}>
+        <ReportCard title="Revenue by agent (period)" right={<PieIcon className="text-muted-foreground size-4" />}>
           {isLoading ? <div className="bg-muted h-[240px] animate-pulse rounded-lg" /> : <RankedBars data={data?.byAgent.slice(0, 8) ?? []} />}
         </ReportCard>
       </div>

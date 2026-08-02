@@ -19,6 +19,7 @@ import { getApiErrorMessage } from '@/lib/api';
 import { parseExcelFile } from '@/lib/excel';
 import { cn, formatDateShort, formatDateTime } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useConfirm } from '@/components/common/confirm';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { ExportButton, ImportButton, TemplateButton } from '@/components/common/excel-actions';
@@ -433,6 +434,8 @@ function GstBulkRateDialog({ onClose }: { onClose: () => void }) {
     }
   };
 
+  useSaveShortcut(submit);
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-2xl">
@@ -528,6 +531,8 @@ function GstRateDialog({ rate, onClose }: { rate: GstRateDto | null; onClose: ()
       },
     );
   };
+
+  useSaveShortcut(submit);
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>

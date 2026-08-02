@@ -26,6 +26,7 @@ import { parseExcelFile } from '@/lib/excel';
 import { cn, formatDateShort, formatDateTime } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useColumnOrder } from '@/hooks/use-column-order';
+import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useConfirm } from '@/components/common/confirm';
 import { Combo, NativeSelect } from '@/components/common/combo';
 import { ColumnSettings } from '@/components/common/column-settings';
@@ -992,6 +993,8 @@ function DesignDialog({ design, onClose, onCreated }: { design: DesignDto | null
     }
   };
 
+  useSaveShortcut(submit);
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-md">
@@ -1135,6 +1138,8 @@ function CombinationDialog({
     );
   };
 
+  useSaveShortcut(submit);
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-lg">
@@ -1243,6 +1248,8 @@ function CombineWithDesignDialog({ base, onClose }: { base: DesignDto; onClose: 
       },
     );
   };
+
+  useSaveShortcut(submit);
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>

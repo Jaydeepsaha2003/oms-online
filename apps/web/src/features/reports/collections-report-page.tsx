@@ -48,9 +48,9 @@ export function CollectionsReportPage() {
           { text: <><strong>{(data.recovery ?? []).filter((r) => r.rank <= 3).length}</strong> parties need a call now; <strong>{data.recovery?.[0]?.party ?? '—'}</strong> tops the list at <strong>{inrCompact(data.recovery?.[0]?.outstanding ?? 0)}</strong>.</>, tone: 'bad' },
           ...((rk?.promisedValue ?? 0) > 0 ? [{ text: <><strong>{inrCompact(rk!.promisedValue)}</strong> is promised-to-pay across {rk!.promisedParties} parties — expected in.</>, tone: 'good' as const }] : []),
           ...((rk?.promisesOverdue ?? 0) > 0 ? [{ text: <><strong>{rk!.promisesOverdue}</strong> parties broke their promise ({inrCompact(rk!.brokenPromiseValue)}) — chase these first.</>, tone: 'bad' as const }] : []),
-          { text: <><strong>{rk?.neverContacted ?? 0}</strong> owing parties have no follow-up yet — start working them.</>, tone: (rk?.neverContacted ?? 0) > 0 ? 'warn' : 'good' },
-          { text: <>Collection efficiency is <strong>{data.collectionRate != null ? Math.round(data.collectionRate * 100) : '—'}%</strong> this FY (DSO {data.dsoDays ?? '—'} days).</>, tone: 'info' },
-          { text: <>Collections this FY are <strong>{Math.round((((data.collectedModes ?? []).find((m) => m.name === 'Cash')?.value ?? 0) / ((data.collectedModes ?? []).reduce((s, m) => s + m.value, 0) || 1)) * 100)}%</strong> cash vs bank.</>, tone: 'info' },
+          { text: <><strong>{rk?.neverContacted ?? 0}</strong> of <strong>{data.owingParties}</strong> owing parties have no follow-up. This includes <strong>{data.olderOwingParties}</strong> parties not billed in the selected period.</>, tone: (rk?.neverContacted ?? 0) > 0 ? 'warn' : 'good' },
+          { text: <>Collection efficiency is <strong>{data.collectionRate != null ? Math.round(data.collectionRate * 100) : '—'}%</strong> in the selected period (DSO {data.dsoDays ?? '—'} days).</>, tone: 'info' },
+          { text: <>Collections in the selected period are <strong>{Math.round((((data.collectedModes ?? []).find((m) => m.name === 'Cash')?.value ?? 0) / ((data.collectedModes ?? []).reduce((s, m) => s + m.value, 0) || 1)) * 100)}%</strong> cash vs bank.</>, tone: 'info' },
           ...(data.advanceHeld > 0 ? [{ text: <><strong>{inrCompact(data.advanceHeld)}</strong> is held as advances — net these before chasing.</>, tone: 'info' as const }] : []),
         ] : []}
       />
@@ -64,7 +64,7 @@ export function CollectionsReportPage() {
 
       {/* Recovery CRM KPIs */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
-        <Kpi label="Collection rate" value={data?.collectionRate != null ? `${Math.round(data.collectionRate * 100)}%` : '—'} hint="collected ÷ billed (FY)" loading={isLoading} tone="emerald" />
+        <Kpi label="Collection rate" value={data?.collectionRate != null ? `${Math.round(data.collectionRate * 100)}%` : '—'} hint="collected ÷ billed (period)" loading={isLoading} tone="emerald" />
         <Kpi label="DSO" value={data?.dsoDays != null ? `${data.dsoDays}d` : '—'} hint="days sales outstanding" loading={isLoading} tone="slate" />
         <Kpi label="Promised to pay" value={data ? inrCompact(rk?.promisedValue ?? 0) : '—'} title={data ? inrFull(rk?.promisedValue ?? 0) : undefined} hint={data ? `${rk?.promisedParties ?? 0} parties` : undefined} loading={isLoading} tone="violet" />
         <Kpi label="Broken promises" value={data ? inrCompact(rk?.brokenPromiseValue ?? 0) : '—'} title={data ? inrFull(rk?.brokenPromiseValue ?? 0) : undefined} hint={data ? `${rk?.promisesOverdue ?? 0} parties` : undefined} loading={isLoading} tone="rose" />
@@ -106,7 +106,7 @@ export function CollectionsReportPage() {
       </ReportCard>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <ReportCard title="Collected by mode (FY)">{isLoading ? <div className="bg-muted h-44 animate-pulse rounded-lg" /> : <RankedBars data={data?.collectedModes ?? []} emptyText="No receipts this FY." />}</ReportCard>
+        <ReportCard title="Collected by mode (period)">{isLoading ? <div className="bg-muted h-44 animate-pulse rounded-lg" /> : <RankedBars data={data?.collectedModes ?? []} emptyText="No receipts in this period." />}</ReportCard>
         <ReportCard title="Top overdue parties">{isLoading ? <div className="bg-muted h-44 animate-pulse rounded-lg" /> : <RankedBars data={data?.topOverdueParties ?? []} emptyText="Nothing overdue." />}</ReportCard>
       </div>
 

@@ -5,6 +5,7 @@ import type { UserDto, UserStatus } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn, formatDateShort, formatDateTime } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useConfirm } from '@/components/common/confirm';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { Button } from '@/components/ui/button';
@@ -324,6 +325,8 @@ function UserDialog({ user, onClose }: { user: UserDto | null; onClose: () => vo
       create.mutate({ email: email.trim(), name: name.trim(), password, status, roleIds: [...roleIds] }, opts);
     }
   };
+
+  useSaveShortcut(submit);
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>

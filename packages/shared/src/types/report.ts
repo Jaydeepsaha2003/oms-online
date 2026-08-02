@@ -78,6 +78,10 @@ export interface BusinessOverview {
   avgInvoiceValue: number;
   /** Distinct parties billed this FY. */
   activeParties: number;
+  /** Parties with an unpaid invoice balance (point-in-time). */
+  owingParties: number;
+  /** Owing parties that were not billed in the selected period. */
+  olderOwingParties: number;
   /** Collections this FY split by mode (Bank / Cash / Cheque). */
   collectionModes: ReportSlice[];
   asOf: string;
@@ -139,6 +143,10 @@ export interface CollectionsReport {
   overdue: number;
   dueSoon: number;
   advanceHeld: number;
+  /** Parties with an unpaid invoice balance (point-in-time). */
+  owingParties: number;
+  /** Owing parties not billed during the selected period. */
+  olderOwingParties: number;
   /** Collection efficiency this FY = collected ÷ billed (0–1). */
   collectionRate: number | null;
   /** Days Sales Outstanding. */
@@ -253,5 +261,41 @@ export interface FulfilmentReport {
   /** Value funnel: ordered → dispatched → billed (leakage between stages). */
   funnel: { stage: string; value: number }[];
   cancellationByParty: ReportSlice[];
+  asOf: string;
+}
+
+export type SummaryActionCategory = 'Cash' | 'Sales' | 'Margin' | 'Customers' | 'Operations';
+export type SummaryActionPriority = 'Do today' | 'This week' | 'Watch';
+
+/** One plain-English action generated from the currently filtered report data. */
+export interface SummaryAnalysisAction {
+  id: string;
+  category: SummaryActionCategory;
+  priority: SummaryActionPriority;
+  title: string;
+  detail: string;
+  evidence: string;
+  impact: string;
+  route: string;
+}
+
+/** Cross-report decision page for faster cash conversion in a low-margin business. */
+export interface SummaryAnalysisReport {
+  headline: {
+    revenue: number;
+    collections: number;
+    outstanding: number;
+    overdue: number;
+    backlog: number;
+    activeParties: number;
+    owingParties: number;
+  };
+  forecast: {
+    next30DayRevenue: number;
+    collectible30Days: number;
+    cashUnlockFromTenDsoDays: number;
+    confidence: 'Low' | 'Medium';
+  };
+  actions: SummaryAnalysisAction[];
   asOf: string;
 }
