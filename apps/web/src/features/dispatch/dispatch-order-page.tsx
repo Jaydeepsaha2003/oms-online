@@ -537,6 +537,9 @@ export function DispatchOrderPage() {
             onRowClick={(r) => setActive(r)}
             className={[
               'font-sans text-[13px]',
+              // Rows are click-to-dispatch, so block accidental text selection (a
+              // stray drag while scrolling otherwise highlights the row's text).
+              '[&_tbody]:select-none',
               '[&_thead_th]:text-[13.5px] [&_thead_th]:font-extrabold [&_thead_th]:uppercase [&_thead_th]:tracking-wide [&_thead_th]:py-1.5',
               '[&_thead_th_button]:cursor-pointer',
               '[&_thead_th:hover]:from-blue-900 [&_thead_th:hover]:to-indigo-900',
