@@ -62,8 +62,10 @@ export async function refreshAccessToken(): Promise<string | null> {
 // Unwrap the `{ success, data }` envelope on success; transparently refresh on 401.
 api.interceptors.response.use(
   (response: AxiosResponse) => {
+    const contentType = response.headers['content-type'] as string | undefined;
+    const isJson = contentType?.includes('application/json');
     const body = response.data;
-    if (body && typeof body === 'object' && body.success === true && 'data' in body) {
+    if (isJson && body && typeof body === 'object' && body.success === true && 'data' in body) {
       response.data = body.data;
     }
     return response;
