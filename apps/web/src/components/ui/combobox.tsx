@@ -401,7 +401,11 @@ export function Combobox({
                 ) : renderOption ? (
                   <div className="flex min-w-0 flex-1 items-center gap-2">{renderOption(o.value)}</div>
                 ) : (
-                  <span className="truncate">{o.label}</span>
+                  // The "clear this filter" row is usually a bare '' option with no
+                  // label (options={['', ...list]}) — display-only, fall back to the
+                  // placeholder ("All customers", etc.) instead of an empty row; the
+                  // field's own text/search state is untouched (still keys off '').
+                  <span className={cn('truncate', !o.label && 'text-muted-foreground')}>{o.label || placeholder}</span>
                 )}
               </div>
             ))

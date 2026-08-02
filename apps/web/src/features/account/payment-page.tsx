@@ -55,7 +55,7 @@ function fyStart(): string {
 
 /** Compact, amber-bordered controls — the house filter/input language. */
 const CONTROL =
-  'h-9 rounded-[4px] border-amber-300 dark:border-amber-400/40 text-[12.5px] focus-visible:border-amber-500 focus-visible:ring-amber-400/30';
+  'h-9 rounded-[4px] border-amber-400 dark:border-amber-400/60 text-[12.5px] focus-visible:border-amber-600 focus-visible:ring-amber-400/30';
 const CONTROL_ON = 'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
 /** Small caps field caption sitting above each control. */
 const FIELD_LABEL = 'text-[10px] font-bold tracking-widest text-amber-900/70 uppercase dark:text-amber-200/60';
@@ -66,7 +66,7 @@ const TH_LINE = 'border-r border-white/15';
 const TD = 'border-r border-r-amber-200/80 px-2 py-[3px] align-middle dark:border-r-amber-400/15 last:border-r-0';
 const NUM = 'text-right tabular-nums';
 /** The frame around each worksheet panel. */
-const PANEL = 'border-amber-300 dark:border-amber-400/30';
+const PANEL = 'border-amber-400 dark:border-amber-400/50';
 /** The dark document caption bar that tops each panel. */
 const DOC_BAR = 'flex shrink-0 items-center justify-between gap-3 bg-slate-800 px-2.5 py-1 dark:bg-slate-900';
 const DOC_TITLE = 'truncate text-[12px] font-extrabold tracking-wide text-amber-300 uppercase';
@@ -419,7 +419,7 @@ export function PaymentPage() {
                 as buttons than as a dropdown, and it's one tap instead of two. */}
             <div className="space-y-1">
               <span className={FIELD_LABEL}>Payment Mode *</span>
-              <div role="group" aria-label="Payment mode" className="grid grid-cols-3 gap-0.5 rounded-[4px] border border-amber-300 bg-amber-50/40 p-0.5 dark:border-amber-400/40 dark:bg-transparent">
+              <div role="group" aria-label="Payment mode" className="grid grid-cols-3 gap-0.5 rounded-[4px] border border-amber-400 bg-amber-50/40 p-0.5 dark:border-amber-400/60 dark:bg-transparent">
                 {(['BANK', 'CHEQUE', 'CASH'] as const).map((m) => (
                   <button
                     key={m}
@@ -604,7 +604,7 @@ export function PaymentPage() {
           </div>
 
           {/* The six figures the legacy form prints above its grid. */}
-          <dl className="grid shrink-0 grid-cols-2 gap-px border-b border-amber-300 bg-amber-200/60 sm:grid-cols-3 lg:grid-cols-6 dark:border-amber-400/30 dark:bg-amber-400/20">
+          <dl className="grid shrink-0 grid-cols-2 gap-px border-b border-amber-400 bg-amber-200/60 sm:grid-cols-3 lg:grid-cols-6 dark:border-amber-400/50 dark:bg-amber-400/20">
             <Fig label="Opening Bal" value={openingDisplay} />
             <Fig label="Invoices O/S" value={invoiceOutstanding} />
             <Fig label="Current O/S" value={currentOutstanding} strong />
@@ -865,7 +865,7 @@ export function PaymentPage() {
 function Fig({ label, value, strong, tone }: { label: string; value: number; strong?: boolean; tone?: 'amber' }) {
   return (
     <div className="bg-card min-w-0 px-2 py-1">
-      <dt className="truncate text-[9.5px] font-bold tracking-widest text-amber-900/70 uppercase dark:text-amber-200/60">{label}</dt>
+      <dt className="truncate text-[11px] font-bold tracking-widest text-amber-900/70 uppercase dark:text-amber-200/60">{label}</dt>
       <dd
         className={cn(
           'truncate tabular-nums',
