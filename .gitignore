@@ -65,3 +65,6 @@ certs/
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Rendered PDF design previews (scripts/render-rate-list-pdf.mjs) — build artefacts
+.design-preview*/

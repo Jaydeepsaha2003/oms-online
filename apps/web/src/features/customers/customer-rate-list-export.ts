@@ -22,23 +22,40 @@ const stampFull = (iso: string) =>
   new Date(iso).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 /* ─────────────────────────── palette ───────────────────────────
- * Brand three: navy #305496, peach #F4B084, white — everything else here is
- * a tint/shade of those two (plus neutral ink for body text/hairlines). */
+ * White-paper document in the brand's own three: BLUE (structure + identity),
+ * ORANGE and AMBER (accents, special rates). The KAVISH mark is itself blue +
+ * orange, so the sheet reads as an extension of the logo. Everything else is a
+ * neutral ink/slate for body text and hairlines — no heavy fills, so the page
+ * stays white and the very-light logo watermark can breathe through it. */
 
-const INK: [number, number, number] = [15, 23, 42]; // slate-900 — body text
-const MUTED: [number, number, number] = [100, 116, 139]; // slate-500
-const FAINT: [number, number, number] = [148, 163, 184]; // slate-400
-const HAIRLINE: [number, number, number] = [232, 224, 216]; // warm-neutral divider (peach-tinted)
-const WHITE: [number, number, number] = [255, 255, 255];
-const NAVY: [number, number, number] = [48, 84, 150]; // #305496
-const NAVY_DARK: [number, number, number] = [24, 42, 82]; // gradient top / deepest shade
-const PEACH: [number, number, number] = [244, 176, 132]; // #F4B084
-const PEACH_TINT: [number, number, number] = [251, 227, 212]; // pale peach column banding
-const NAVY_TEXT_ON_DARK: [number, number, number] = [253, 239, 230]; // warm off-white for secondary text on navy
+type RGB = [number, number, number];
 
-/** Load the KAVISH logo once as a base64 data URL (+ natural size) for the PDF
- *  watermark. Uses only fetch + jsPDF itself so it runs in the browser AND in
- *  Node (where the design harness renders the same document). */
+const INK: RGB = [15, 23, 42]; // slate-900 — body text
+const MUTED: RGB = [100, 116, 139]; // slate-500
+const FAINT: RGB = [148, 163, 184]; // slate-400
+const HAIRLINE: RGB = [226, 232, 240]; // slate-200 — row rules
+const WHITE: RGB = [255, 255, 255];
+
+const BLUE: RGB = [29, 78, 216]; // blue-700 — table headers, primary accent
+const BLUE_DEEP: RGB = [30, 58, 138]; // blue-900 — headings / wordmark
+const BLUE_ZEBRA: RGB = [243, 247, 255]; // barely-there blue banding for alt rows
+const BLUE_SOFT: RGB = [219, 234, 254]; // blue-100 — chip fills / keylines
+
+const ORANGE: RGB = [234, 88, 12]; // orange-600 — gradient start, section accents
+const AMBER: RGB = [245, 158, 11]; // amber-500 — gradient end, special-rate marker
+const AMBER_SOFT: RGB = [254, 243, 199]; // amber-100 — special-rate row wash
+
+/** Linear blend between two RGBs (used for the orange→amber accent rules). */
+const mix = (a: RGB, b: RGB, t: number): RGB => [
+  Math.round(a[0] + (b[0] - a[0]) * t),
+  Math.round(a[1] + (b[1] - a[1]) * t),
+  Math.round(a[2] + (b[2] - a[2]) * t),
+];
+
+/** Load the KAVISH logo once as a base64 data URL (+ natural size). Used twice —
+ *  as the masthead lockup and as the very-light page watermark. Uses only fetch +
+ *  jsPDF itself so it runs in the browser AND in Node (where the design harness
+ *  renders the same document). */
 let watermarkCache: Promise<{ data: string; w: number; h: number }> | null = null;
 function loadWatermark(doc: jsPDF): Promise<{ data: string; w: number; h: number }> {
   watermarkCache ??= (async () => {
@@ -113,80 +130,6 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
   const anySpecial = [...products, ...designs].some((t) => t.rows.some((r) => r.special));
 
   const wm = await loadWatermark(doc).catch(() => null);
-  const drawWatermark = () => {
-    if (!wm) return;
-    const wmW = usable * 0.66;
-    const wmH = (wmW * wm.h) / wm.w;
-    const x = margin + (usable - wmW) / 2;
-    const yy = headerH + (footerTop - headerH - wmH) / 2;
-    doc.saveGraphicsState();
-    // @ts-expect-error jsPDF GState typing isn't exported on the instance
-    doc.setGState(new doc.GState({ opacity: 0.06 }));
-    doc.addImage(wm.data, 'PNG', x, yy, wmW, wmH, 'kavish-wm', 'FAST');
-    doc.restoreGraphicsState();
-  };
-
-  /** Page-1 masthead: navy gradient band + peach keyline. */
-  const heroHeader = () => {
-    const heroH = 108;
-    const steps = 36;
-    for (let i = 0; i < steps; i++) {
-      const t = i / (steps - 1);
-      doc.setFillColor(
-        Math.round(NAVY_DARK[0] + (NAVY[0] - NAVY_DARK[0]) * t),
-        Math.round(NAVY_DARK[1] + (NAVY[1] - NAVY_DARK[1]) * t),
-        Math.round(NAVY_DARK[2] + (NAVY[2] - NAVY_DARK[2]) * t),
-      );
-      doc.rect(0, (heroH / steps) * i, pageW, heroH / steps + 1, 'F');
-    }
-    doc.setFillColor(...PEACH);
-    doc.rect(0, heroH, pageW, 2.5, 'F');
-
-    doc.setTextColor(...PEACH).setFont('helvetica', 'bold').setFontSize(8);
-    doc.text('KAVISH  ·  THE UNIQUE', margin, 28, { charSpace: 2 });
-    doc.setTextColor(...WHITE).setFontSize(27);
-    doc.text('RATE LIST', margin, 60, { charSpace: 4 });
-    doc.setFontSize(12.5);
-    doc.text(list.customerName, margin, 82);
-    doc.setFont('helvetica', 'normal').setFontSize(8).setTextColor(...NAVY_TEXT_ON_DARK);
-    doc.text('Effective rates for this customer  ·  base chart + special adjustments  ·  amounts in INR', margin, 96);
-
-    doc.setFont('helvetica', 'bold').setFontSize(7).setTextColor(...PEACH);
-    doc.text('GENERATED', pageW - margin, 30, { align: 'right', charSpace: 1.5 });
-    doc.setFontSize(10).setTextColor(...WHITE);
-    doc.text(stampFull(list.generatedAt), pageW - margin, 44, { align: 'right' });
-    doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...NAVY_TEXT_ON_DARK);
-    doc.text(`${productCount} products  ·  ${designCount} designs`, pageW - margin, 58, { align: 'right' });
-
-    headerH = heroH + 2.5;
-    y = headerH + 26;
-    drawWatermark();
-  };
-
-  /** Slim masthead for continuation pages. */
-  const contHeader = () => {
-    doc.setFillColor(...NAVY);
-    doc.rect(0, 0, pageW, 40, 'F');
-    doc.setFillColor(...PEACH);
-    doc.rect(0, 40, pageW, 2, 'F');
-    doc.setTextColor(...WHITE).setFont('helvetica', 'bold').setFontSize(9.5);
-    doc.text(`RATE LIST  ·  ${list.customerName}`, margin, 25, { charSpace: 1 });
-    doc.setFont('helvetica', 'normal').setFontSize(8).setTextColor(...NAVY_TEXT_ON_DARK);
-    doc.text(stampFull(list.generatedAt), pageW - margin, 25, { align: 'right' });
-    headerH = 42;
-    y = headerH + 22;
-    drawWatermark();
-  };
-
-  const breakPage = () => {
-    doc.addPage();
-    contHeader();
-  };
-  const ensure = (need: number) => {
-    if (y + need > footerTop - 6) breakPage();
-  };
-
-  heroHeader();
 
   /** Draw one line of text shrunk (then ellipsised) to fit `maxW` — rows never wrap. */
   const fitText = (txt: string, x: number, yy: number, maxW: number, size: number, opts?: { align?: 'right'; minSize?: number }) => {
@@ -201,6 +144,138 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
     doc.text(out, x, yy, opts?.align ? { align: opts.align } : undefined);
     doc.setFontSize(size);
   };
+
+  /** The brand mark, ghosted into the middle of the page. Deliberately faint
+   *  (4%) — it should read as watermarked stationery, never compete with rates. */
+  const drawWatermark = () => {
+    if (!wm) return;
+    const wmW = usable * 0.62;
+    const wmH = (wmW * wm.h) / wm.w;
+    const x = margin + (usable - wmW) / 2;
+    const yy = headerH + (footerTop - headerH - wmH) / 2;
+    doc.saveGraphicsState();
+    // @ts-expect-error jsPDF GState typing isn't exported on the instance
+    doc.setGState(new doc.GState({ opacity: 0.04 }));
+    doc.addImage(wm.data, 'PNG', x, yy, wmW, wmH, 'kavish-mark', 'FAST');
+    doc.restoreGraphicsState();
+  };
+
+  /** Measure-only sibling of {@link fitText}: ellipsise `txt` until it fits
+   *  `maxW` at the CURRENT font settings, and return the string. */
+  const truncate = (txt: string, maxW: number): string => {
+    let out = txt;
+    while (out.length > 2 && doc.getTextWidth(out) > maxW) out = `${out.slice(0, -2).trimEnd()}…`;
+    return out;
+  };
+
+  /** Right-align text that uses letter-spacing. jsPDF's `align: 'right'` measures
+   *  the string WITHOUT charSpace, so a tracked-out title silently overhangs the
+   *  right margin — we compute the true width and draw it left-aligned instead. */
+  const rightTracked = (txt: string, xRight: number, yy: number, charSpace: number) => {
+    const w = doc.getTextWidth(txt) + charSpace * Math.max(0, txt.length - 1);
+    doc.text(txt, xRight - w, yy, { charSpace });
+  };
+
+  /** Horizontal orange→amber gradient rule — the sheet's one signature flourish. */
+  const accentRule = (x: number, yy: number, w: number, h: number) => {
+    const steps = 72;
+    const seg = w / steps;
+    for (let i = 0; i < steps; i++) {
+      doc.setFillColor(...mix(ORANGE, AMBER, i / (steps - 1)));
+      doc.rect(x + seg * i, yy, seg + 0.7, h, 'F');
+    }
+  };
+
+  /** A small stat pill: coloured dot + label + value, on a soft tinted card. */
+  const statPill = (x: number, yy: number, label: string, value: string, dot: RGB, fill: RGB): number => {
+    doc.setFont('helvetica', 'bold').setFontSize(9);
+    const valW = doc.getTextWidth(value);
+    doc.setFont('helvetica', 'normal').setFontSize(7.5);
+    const labW = doc.getTextWidth(label.toUpperCase());
+    const w = Math.max(valW, labW) + 26;
+    doc.setFillColor(...fill);
+    doc.roundedRect(x, yy, w, 26, 3, 3, 'F');
+    doc.setFillColor(...dot);
+    doc.circle(x + 9, yy + 9.5, 2.4, 'F');
+    doc.setFont('helvetica', 'bold').setFontSize(9).setTextColor(...BLUE_DEEP);
+    doc.text(value, x + 15, yy + 12);
+    doc.setFont('helvetica', 'normal').setFontSize(7).setTextColor(...MUTED);
+    doc.text(label.toUpperCase(), x + 15, yy + 21, { charSpace: 0.6 });
+    return w;
+  };
+
+  /** Page-1 masthead — white stationery: logo lockup, blue wordmark, the
+   *  orange→amber rule, then the "prepared for" block and summary pills. */
+  const heroHeader = () => {
+    if (wm) {
+      const logoH = 42;
+      const logoW = (logoH * wm.w) / wm.h;
+      doc.addImage(wm.data, 'PNG', margin, 34, logoW, logoH, 'kavish-mark', 'FAST');
+    } else {
+      doc.setFont('helvetica', 'bold').setFontSize(15).setTextColor(...BLUE_DEEP);
+      doc.text('KAVISH', margin, 62);
+    }
+
+    doc.setFont('helvetica', 'bold').setFontSize(25).setTextColor(...BLUE_DEEP);
+    rightTracked('RATE LIST', pageW - margin, 62, 2.5);
+    doc.setFont('helvetica', 'normal').setFontSize(8).setTextColor(...MUTED);
+    doc.text(stampFull(list.generatedAt), pageW - margin, 78, { align: 'right' });
+
+    accentRule(margin, 92, usable, 3);
+
+    doc.setFont('helvetica', 'bold').setFontSize(7).setTextColor(...ORANGE);
+    doc.text('PREPARED FOR', margin, 116, { charSpace: 1.8 });
+    doc.setFontSize(15).setTextColor(...BLUE_DEEP);
+    fitText(list.customerName, margin, 135, usable, 15, { minSize: 10 });
+    doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...MUTED);
+    doc.text('Effective rates  ·  base chart rate + your special adjustments  ·  all amounts in INR', margin, 150);
+
+    let px = margin;
+    px += statPill(px, 162, 'Products', String(productCount), BLUE, BLUE_ZEBRA) + 8;
+    px += statPill(px, 162, 'Designs', String(designCount), BLUE, BLUE_ZEBRA) + 8;
+    statPill(px, 162, 'Categories', String(products.length + designs.length), ORANGE, BLUE_ZEBRA);
+
+    // The special-rate legend is stated once, here — not repeated under each table.
+    if (anySpecial) {
+      doc.setFillColor(...AMBER);
+      doc.rect(pageW - margin - 152, 172, 2.5, 8, 'F');
+      doc.setFont('helvetica', 'normal').setFontSize(7.5).setTextColor(...MUTED);
+      doc.text('Amber rows carry your special rate', pageW - margin, 179, { align: 'right' });
+    }
+
+    headerH = 196;
+    y = headerH + 20;
+    drawWatermark();
+  };
+
+  /** Slim masthead for continuation pages — same stationery, less of it. */
+  const contHeader = () => {
+    if (wm) {
+      const logoH = 22;
+      const logoW = (logoH * wm.w) / wm.h;
+      doc.addImage(wm.data, 'PNG', margin, 26, logoW, logoH, 'kavish-mark', 'FAST');
+    }
+    doc.setFont('helvetica', 'bold').setFontSize(10).setTextColor(...BLUE_DEEP);
+    rightTracked('RATE LIST', pageW - margin, 38, 1.5);
+    doc.setFont('helvetica', 'normal').setFontSize(7.5).setTextColor(...MUTED);
+    doc.text(list.customerName, pageW - margin, 50, { align: 'right' });
+    accentRule(margin, 58, usable, 2);
+    headerH = 60;
+    y = headerH + 24;
+    drawWatermark();
+  };
+
+  const breakPage = () => {
+    doc.addPage();
+    contHeader();
+  };
+  const ensure = (need: number) => {
+    if (y + need > footerTop - 6) breakPage();
+  };
+
+  // Draws page 1's masthead. Must run after `fitText` above is initialised —
+  // the "prepared for" name is shrink-to-fit.
+  heroHeader();
 
   const drawPivot = (t: PivotTable) => {
     const n = Math.max(1, t.columns.length);
@@ -221,44 +296,36 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
     const widths = [26, itemW, ...(showAvail ? [availW] : []), ...t.columns.map(() => rateW)];
     const headers = ['SR', 'ITEM', ...(showAvail ? ['AVAILABLE PCS'] : []), ...t.columns.map((c) => c.toUpperCase())];
     const firstRateCol = showAvail ? 3 : 2;
-    const hasSpecial = t.rows.some((r) => r.special);
 
-    ensure(rowH * 4 + 34);
+    ensure(rowH * 4 + 40);
 
-    // Section heading: peach accent bar + title, item count on the right.
-    doc.setFillColor(...PEACH);
-    doc.rect(margin, y - 10, 3.5, 13, 'F');
-    doc.setFont('helvetica', 'bold').setFontSize(11.5).setTextColor(...INK);
-    doc.text(t.title, margin + 10, y);
+    // Section heading: orange→amber accent bar + blue title, count on the right.
+    // The pivot's title carries a "— RATE LIST" suffix for the Excel/on-screen
+    // views; under a sheet already titled RATE LIST it's just noise, so the PDF
+    // drops it (display only — the shared title itself is untouched).
+    accentRule(margin, y - 10.5, 3.5, 14);
+    doc.setFont('helvetica', 'bold').setFontSize(11.5).setTextColor(...BLUE_DEEP);
+    doc.text(t.title.replace(/\s*—\s*RATE LIST\s*$/i, ''), margin + 11, y);
     doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...FAINT);
-    doc.text(`${t.rows.length} item${t.rows.length === 1 ? '' : 's'}${hasSpecial ? '   ·   • your special rate' : ''}`, margin + usable, y, {
-      align: 'right',
-    });
-    y += 10;
+    doc.text(`${t.rows.length} item${t.rows.length === 1 ? '' : 's'}`, margin + usable, y, { align: 'right' });
+    y += 11;
 
-    // Header row: navy block over SR+ITEM, peach block over AVAILABLE PCS, plain
-    // white over the rate columns — mirrors the printed sheet's column banding.
+    // Header row: one solid blue bar across the full table, white caps. Keeping
+    // it a single block (rather than the old two-tone navy/peach split) is what
+    // lets the white paper and the watermark carry the page.
     const identityW = widths[0] + widths[1] + (showAvail ? widths[2] : 0);
     const headerRow = () => {
-      doc.setFillColor(...NAVY);
-      doc.rect(margin, y, widths[0] + widths[1], rowH + 1, 'F');
-      if (showAvail) {
-        doc.setFillColor(...PEACH);
-        doc.rect(margin + widths[0] + widths[1], y, widths[2], rowH + 1, 'F');
-      }
-      doc.setDrawColor(...NAVY);
-      doc.setLineWidth(1);
-      doc.line(margin, y + rowH + 1, margin + usable, y + rowH + 1);
-
+      doc.setFillColor(...BLUE);
+      doc.roundedRect(margin, y, usable, rowH + 2, 2.5, 2.5, 'F');
       doc.setFont('helvetica', 'bold');
       let x = margin;
       headers.forEach((h, i) => {
         const right = i >= firstRateCol;
-        doc.setTextColor(...(i < 2 ? WHITE : i === 2 && showAvail ? INK : NAVY));
-        fitText(h, right ? x + widths[i] - 5 : x + 6, y + 12.5, widths[i] - 10, 8, right ? { align: 'right' } : undefined);
+        doc.setTextColor(...WHITE);
+        fitText(h, right ? x + widths[i] - 6 : x + 7, y + 13, widths[i] - 12, 7.5, right ? { align: 'right' } : undefined);
         x += widths[i];
       });
-      y += rowH + 3;
+      y += rowH + 5;
     };
     headerRow();
 
@@ -267,24 +334,25 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
         breakPage();
         headerRow();
       }
-      // Pale peach band behind the identity columns on every row (the rate
-      // columns stay plain white) — reproduces the printed sheet's look.
-      doc.setFillColor(...PEACH_TINT);
-      doc.rect(margin, y - 2, identityW, rowH, 'F');
+      // Zebra: a whisper of blue on alternate rows; special-rate rows get an
+      // amber wash + amber left tab so they're findable at a glance.
+      if (r.special) {
+        doc.setFillColor(...AMBER_SOFT);
+        doc.rect(margin, y - 2, usable, rowH, 'F');
+        doc.setFillColor(...AMBER);
+        doc.rect(margin, y - 2, 2.5, rowH, 'F');
+      } else if (idx % 2 === 1) {
+        doc.setFillColor(...BLUE_ZEBRA);
+        doc.rect(margin, y - 2, usable, rowH, 'F');
+      }
       let x = margin;
       // SR
-      doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...MUTED);
-      doc.text(String(r.sr), x + 6, y + 10);
+      doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...FAINT);
+      doc.text(String(r.sr), x + 7, y + 10);
       x += widths[0];
-      // ITEM (+ peach dot for special-rate items); single line, shrink-to-fit.
-      let itemX = x + 6;
-      if (r.special) {
-        doc.setFillColor(...NAVY);
-        doc.circle(x + 8.5, y + 7.5, 2, 'F');
-        itemX = x + 15;
-      }
-      doc.setFont('helvetica', 'bold').setTextColor(...INK);
-      fitText(r.item, itemX, y + 10, widths[1] - (itemX - x) - 4, 9.5, { minSize: 7.5 });
+      // ITEM — special-rate items read in blue so the eye pairs them with the tab.
+      doc.setFont('helvetica', 'bold').setTextColor(...(r.special ? BLUE_DEEP : INK));
+      fitText(r.item, x + 6, y + 10, widths[1] - 10, 9.5, { minSize: 7.5 });
       x += widths[1];
       // AVAILABLE PCS
       if (showAvail) {
@@ -292,43 +360,65 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
         doc.text(r.available, x + 6, y + 10);
         x += widths[2];
       }
+      // Hairline separating identity columns from the rate block — guides the
+      // eye across on wide tables without drawing a full grid.
+      doc.setDrawColor(...HAIRLINE);
+      doc.setLineWidth(0.5);
+      doc.line(margin + identityW, y - 2, margin + identityW, y + rowH - 2);
       // rate cells
       r.cells.forEach((cell, i) => {
         const w = widths[firstRateCol + i];
         if (cell) {
           doc.setFont('helvetica', 'bold').setTextColor(...INK);
-          fitText(cell, x + w - 5, y + 10, w - 10, 9.5, { align: 'right', minSize: 7 });
+          fitText(cell, x + w - 6, y + 10, w - 12, 9.5, { align: 'right', minSize: 7 });
         } else {
-          doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...HAIRLINE);
-          doc.text('—', x + w - 5, y + 10, { align: 'right' });
+          doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...FAINT);
+          doc.text('–', x + w - 6, y + 10, { align: 'right' });
         }
         x += w;
       });
       doc.setDrawColor(...HAIRLINE);
-      doc.setLineWidth(0.5);
+      doc.setLineWidth(0.4);
       doc.line(margin, y + rowH - 2, margin + usable, y + rowH - 2);
       y += rowH;
     });
-    y += 26;
+
+    // Close the section with a soft blue keyline, then breathe. (The special-rate
+    // legend is stated once in the masthead, not repeated under every table.)
+    doc.setDrawColor(...BLUE_SOFT);
+    doc.setLineWidth(1);
+    doc.line(margin, y - 1.5, margin + usable, y - 1.5);
+    y += 28;
   };
 
   products.forEach(drawPivot);
   designs.forEach(drawPivot);
 
-  // Footer on every page: keyline, brand, customer, page number.
+  // Footer on every page: orange→amber hairline, brand, customer, page number.
   const pages = doc.getNumberOfPages();
   for (let i = 1; i <= pages; i++) {
     doc.setPage(i);
-    doc.setDrawColor(...HAIRLINE);
-    doc.setLineWidth(0.75);
-    doc.line(margin, footerTop + 6, pageW - margin, footerTop + 6);
-    doc.setFont('helvetica', 'bold').setFontSize(7).setTextColor(...NAVY);
-    doc.text('KAVISH · THE UNIQUE', margin, footerTop + 18, { charSpace: 1 });
-    doc.setFont('helvetica', 'normal').setFontSize(7.5).setTextColor(...FAINT);
-    doc.text(`${list.customerName}  ·  ${stampFull(list.generatedAt)}${anySpecial ? '  ·  • special rate applied' : ''}`, pageW / 2, footerTop + 18, {
+    accentRule(margin, footerTop + 6, usable, 1.2);
+
+    const brand = 'KAVISH · THE UNIQUE';
+    const pageLabel = `Page ${i} of ${pages}`;
+    doc.setFont('helvetica', 'bold').setFontSize(7).setTextColor(...BLUE_DEEP);
+    const brandW = doc.getTextWidth(brand) + 1 * (brand.length - 1); // + charSpace
+    doc.text(brand, margin, footerTop + 19, { charSpace: 1 });
+
+    doc.setFont('helvetica', 'normal').setFontSize(7.5).setTextColor(...MUTED);
+    const pageW_ = doc.getTextWidth(pageLabel);
+    doc.text(pageLabel, pageW - margin, footerTop + 19, { align: 'right' });
+
+    // Centre the customer/date strip in the gap BETWEEN the brand and the page
+    // number, ellipsised to fit — a long party name would otherwise run straight
+    // through both of them.
+    const gapL = margin + brandW + 14;
+    const gapR = pageW - margin - pageW_ - 14;
+    doc.setTextColor(...FAINT);
+    doc.text(truncate(`${list.customerName}  ·  ${stampFull(list.generatedAt)}`, gapR - gapL), (gapL + gapR) / 2, footerTop + 19, {
       align: 'center',
     });
-    doc.text(`Page ${i} of ${pages}`, pageW - margin, footerTop + 18, { align: 'right' });
   }
 
   return doc;
