@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AlarmClock, Bell, CalendarClock, Check, ChevronDown, CircleCheck, Clock, Info, Loader2, Mic, Pencil, Plus, Search, Trash2, TriangleAlert } from 'lucide-react';
+import { AlarmClock, Bell, Check, ChevronDown, CircleCheck, Clock, HandCoins, Info, Loader2, Mic, Pencil, Plus, Search, Trash2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { type FollowupDto, type FollowupKind, type FollowupPartyGroup } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -89,15 +89,18 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
-          {isPay ? <CalendarClock className="size-5" /> : <Bell className="size-5" />}
+          {isPay ? <HandCoins className="size-5" /> : <Bell className="size-5" />}
         </div>
-        <div className="mr-auto flex items-center gap-1.5">
-          <h2 className="text-2xl font-semibold tracking-tight">{isPay ? 'Payment Follow-ups' : 'Follow-ups'}</h2>
-          <HelpTip text="Every promise to a party, tracked until it's done — the system keeps nudging." />
+        <div className="mr-auto min-w-0">
+          <div className="flex items-center gap-1.5">
+            <h2 className="text-2xl font-semibold tracking-tight">{isPay ? 'Payment Recovery Desk' : 'Follow-ups'}</h2>
+            <HelpTip text={isPay ? 'Every party who owes money, ranked worst-first — pick one and collect in one tap.' : "Every promise to a party, tracked until it's done — the system keeps nudging."} />
+          </div>
+          {isPay && <p className="text-muted-foreground text-sm">Who to call next, what they owe, and every promise made — all in one place.</p>}
         </div>
         {canEdit && (
           <Button onClick={() => openForm(null)}>
-            <Plus /> New follow-up
+            <Plus /> {isPay ? 'New payment follow-up' : 'New follow-up'}
           </Button>
         )}
       </div>
