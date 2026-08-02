@@ -49,7 +49,6 @@ import { TallyReconModule } from './tally-recon/tally-recon.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { ReportsModule } from './reports/reports.module';
 import { UploadsModule } from './uploads/uploads.module';
-import { AccessImportModule } from './access-import/access-import.module'; // MS Access connector — Access stays a live parallel data source
 import { SettingsModule } from './settings/settings.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { BackupModule } from './backup/backup.module';
@@ -108,7 +107,6 @@ import { ApprovalsModule } from './approvals/approvals.module';
     AnalyticsModule,
     ReportsModule,
     UploadsModule,
-    AccessImportModule, // MS Access → OMS connector — Access stays a live parallel data source
 
     SettingsModule,
     NotificationsModule,
