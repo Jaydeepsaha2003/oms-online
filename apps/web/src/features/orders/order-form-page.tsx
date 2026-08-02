@@ -142,6 +142,11 @@ const TAB_FIELDS = [
   { key: 'box', label: 'Box' },
   { key: 'comment', label: 'Remarks' },
 ] as const;
+// The four quantity fields' data-tabfield keys (Kgs uses 'gram'), in the fixed
+// default order. Tab walks these in the picked category's configured LAYOUT order
+// instead (see qtyTabOrderRef) so it stays serial with how they're displayed.
+const QTY_TABKEYS = ['bags', 'pcs', 'gram', 'box'];
+const qtyFieldToTabKey = (f: QtyField): string => (f === 'kgs' ? 'gram' : f);
 const TAB_PREF_KEY = 'oms:order-tab-order';
 // Saved "rows to show in the item panel" preference (0 = show all).
 // v2: reset everyone to the "All rows" default — the old key had many users
@@ -255,6 +260,10 @@ export function OrderFormPage() {
 
   // The enabled field keys, in the user's chosen order.
   const tabSequence = useMemo(() => tabOrder.filter((t) => t.enabled).map((t) => t.key), [tabOrder]);
+  // Live qty-field tab order = the picked category's layout order (Settings → Order
+  // quantity fields). Updated each render once `entry` exists; read by handleTabNav
+  // so Tab walks Bags/Box/Pcs/Kgs in the SAME order they're laid out.
+  const qtyTabOrderRef = useRef<string[]>([...QTY_TABKEYS]);
 
   // Mark excluded fields un-tabbable; included ones stay reachable.
   useLayoutEffect(() => {
@@ -286,12 +295,18 @@ export function OrderFormPage() {
     const pos = within.indexOf(e.target as HTMLElement);
     if (pos !== -1 && pos + step >= 0 && pos + step < within.length) return;
 
-    const i = tabSequence.indexOf(key);
+    // Re-sequence the qty slots (Bags/Pcs/Kgs/Box) into the category layout order
+    // so Tab is serial with the displayed order; everything else keeps its place.
+    const orderedQty = qtyTabOrderRef.current.filter((k) => tabSequence.includes(k));
+    let qi = 0;
+    const seq = tabSequence.map((k) => (QTY_TABKEYS.includes(k) ? (orderedQty[qi++] ?? k) : k));
+
+    const i = seq.indexOf(key);
     if (i === -1) return;
     // Advance to the next field that actually has a focusable control — skipping
     // ones that are disabled or hidden right now (so Tab never dead-ends).
-    for (let j = i + step; j >= 0 && j < tabSequence.length; j += step) {
-      if (focusField(root, tabSequence[j])) {
+    for (let j = i + step; j >= 0 && j < seq.length; j += step) {
+      if (focusField(root, seq[j])) {
         e.preventDefault();
         return;
       }
@@ -711,6 +726,10 @@ export function OrderFormPage() {
     if (sizePre) return setShowBy('SIZE');
   };
 
+  // Keep the qty-field Tab order live with the picked category's layout, so Tab
+  // walks Bags/Box/Pcs/Kgs in the same order they're displayed (read by handleTabNav).
+  qtyTabOrderRef.current = qtyOrderForCategory(qtyLayout, entry.category).map(qtyFieldToTabKey);
+
   // Auto-calc Kgs (= Bags × the customer's per-category bag weight) as bags are
   // typed — configured in Special Rates → "Bag weight (Kgs per bag)". The user
   // can still overtype Kgs afterwards; without a configured weight nothing changes.
@@ -728,32 +747,44 @@ export function OrderFormPage() {
     });
   };
 
-  // Auto-calc Kgs (= Pcs × weight) as Pcs is typed. Box is NOT auto-filled here —
-  // the user fills it on demand with the tick beside the Box field (fillBox).
+  // Pcs ⇄ Box are linked by the product's pieces-per-box (pcsBox): typing Pcs fills
+  // Box (= Pcs ÷ pcs-per-box) AND Kgs (= Pcs × weight). Fully dynamic — onBox does
+  // the reverse. With no pcs-per-box on the product, Box is left untouched.
   const onPcs = (value: string) => {
     setEntry((e) => {
       const pcs = n(value) ?? 0;
       const w = n(e.weight);
+      const per = n(e.pcsBox);
+      const has = value.trim() !== '';
       const round2 = (x: number) => String(Math.round(x * 100) / 100);
       return {
         ...e,
         pcs: value,
-        gram: w != null && value.trim() !== '' ? round2(pcs * w) : e.gram,
+        gram: w != null && has ? round2(pcs * w) : e.gram,
+        box: per != null && per > 0 && has ? round2(pcs / per) : e.box,
       };
     });
   };
 
-  // Boxes needed for the current Pcs (= Pcs ÷ pieces-per-box). Only meaningful
-  // once a product with a known pcs-per-box is picked and Pcs is entered.
-  const boxPreview = useMemo(() => {
-    const per = n(entry.pcsBox);
-    const pcs = n(entry.pcs);
-    if (per == null || per <= 0 || pcs == null || entry.pcs.trim() === '') return null;
-    return Math.round((pcs / per) * 100) / 100;
-  }, [entry.pcsBox, entry.pcs]);
-  const fillBox = () => {
-    if (boxPreview == null) return toast.error('Pick a product and enter Pcs first — pieces-per-box is needed.');
-    setEntryField({ box: String(boxPreview) });
+  // Box ⇄ Pcs reverse: typing Box fills Pcs (= Box × pcs-per-box) and cascades Kgs
+  // (= Pcs × weight). e.g. a cup with 6 pcs-per-box: Box 32 → Pcs 192. With no
+  // pcs-per-box, Box is just a plain number (nothing to derive).
+  const onBox = (value: string) => {
+    setEntry((e) => {
+      const per = n(e.pcsBox);
+      if (per == null || per <= 0) return { ...e, box: value };
+      const box = n(value) ?? 0;
+      const pcs = box * per;
+      const w = n(e.weight);
+      const has = value.trim() !== '';
+      const round2 = (x: number) => String(Math.round(x * 100) / 100);
+      return {
+        ...e,
+        box: value,
+        pcs: has ? round2(pcs) : e.pcs,
+        gram: w != null && has ? round2(pcs * w) : e.gram,
+      };
+    });
   };
 
   const designNameOptions = useMemo(
@@ -1423,28 +1454,9 @@ export function OrderFormPage() {
                   </div>
                 );
               return (
-                <div key="box" className="space-y-1 lg:col-span-2" data-tabfield="box">
+                <div key="box" className="space-y-1 lg:col-span-1" data-tabfield="box">
                   <Label className="text-base">Box</Label>
-                  <div className="flex gap-1">
-                    <Input type="number" step="any" min={0} value={entry.box} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ box: e.target.value })} />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="size-9 shrink-0 text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700 disabled:text-slate-300"
-                      disabled={boxPreview == null}
-                      onClick={fillBox}
-                      aria-label="Fill boxes required"
-                      title={boxPreview == null ? 'Enter Pcs (product needs pieces-per-box) to fill boxes' : `Fill boxes required — ${boxPreview} box (Pcs ÷ pcs-per-box)`}
-                    >
-                      <Check className="size-4" />
-                    </Button>
-                  </div>
-                  {boxPreview != null && Number(entry.box) !== boxPreview && (
-                    <button type="button" onClick={fillBox} className="text-[11px] font-medium text-emerald-600 hover:underline">
-                      {boxPreview} box required — tap ✓ to fill
-                    </button>
-                  )}
+                  <Input type="number" step="any" min={0} value={entry.box} onKeyDown={onlyNumericKey} onChange={(e) => onBox(e.target.value)} />
                 </div>
               );
             })}

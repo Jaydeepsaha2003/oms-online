@@ -49,13 +49,13 @@ export const MENU: MenuNode[] = [
   },
   {
     id: 'reports-group',
-    shortcut: 'R',
     label: 'Reports',
     icon: 'BarChart3',
     permission: perm(RESOURCES.REPORT, ACTIONS.VIEW),
     children: [
       {
         id: 'report-overview',
+        shortcut: 'R',
         label: 'Business Overview',
         to: '/reports/overview',
         icon: 'LayoutDashboard',
@@ -107,12 +107,12 @@ export const MENU: MenuNode[] = [
   },
   {
     id: 'customers-group',
-    shortcut: 'C',
     label: 'Customers',
     icon: 'Users',
     children: [
       {
         id: 'customers',
+        shortcut: 'C',
         label: 'Customers',
         to: '/customers',
         icon: 'Contact',
@@ -164,12 +164,12 @@ export const MENU: MenuNode[] = [
   },
   {
     id: 'products-group',
-    shortcut: 'P',
     label: 'Products',
     icon: 'Package',
     children: [
       {
         id: 'products',
+        shortcut: 'P',
         label: 'Products',
         to: '/products',
         icon: 'Box',
@@ -200,7 +200,6 @@ export const MENU: MenuNode[] = [
   },
   {
     id: 'orders-group',
-    shortcut: 'O',
     label: 'Orders',
     icon: 'ShoppingCart',
     anyPermission: [
@@ -212,6 +211,7 @@ export const MENU: MenuNode[] = [
     children: [
       {
         id: 'new-order',
+        shortcut: 'O',
         label: 'New Order',
         to: '/orders/new',
         icon: 'ReceiptText',
@@ -249,13 +249,13 @@ export const MENU: MenuNode[] = [
   },
   {
     id: 'dispatch-group',
-    shortcut: 'S',
     label: 'Dispatch',
     icon: 'Truck',
     anyPermission: [perm(RESOURCES.DISPATCH, ACTIONS.VIEW), perm(RESOURCES.DISPATCH, ACTIONS.CREATE)],
     children: [
       {
         id: 'dispatch-order',
+        shortcut: 'S',
         label: 'Dispatch Order',
         to: '/dispatch/new',
         icon: 'PackagePlus',
@@ -272,13 +272,13 @@ export const MENU: MenuNode[] = [
   },
   {
     id: 'challan-group',
-    shortcut: 'L',
     label: 'Challan',
     icon: 'ScrollText',
     anyPermission: [perm(RESOURCES.CHALLAN, ACTIONS.VIEW), perm(RESOURCES.CHALLAN, ACTIONS.CREATE)],
     children: [
       {
         id: 'pending-challan',
+        shortcut: 'L',
         label: 'Pending Challan',
         to: '/challans/pending',
         icon: 'ClipboardList',
@@ -309,13 +309,13 @@ export const MENU: MenuNode[] = [
   },
   {
     id: 'crm-group',
-    shortcut: 'M',
     label: 'CRM',
     icon: 'BellRing',
     anyPermission: [perm(RESOURCES.CRM, ACTIONS.VIEW), perm(RESOURCES.CRM, ACTIONS.CREATE)],
     children: [
       {
         id: 'crm-followups',
+        shortcut: 'M',
         label: 'Follow-ups',
         to: '/crm',
         icon: 'CalendarClock',
@@ -339,7 +339,6 @@ export const MENU: MenuNode[] = [
   },
   {
     id: 'account-group',
-    shortcut: 'A',
     label: 'Account',
     icon: 'Landmark',
     anyPermission: [
@@ -354,6 +353,7 @@ export const MENU: MenuNode[] = [
     children: [
       {
         id: 'payment',
+        shortcut: 'A',
         label: 'Receive Payment',
         to: '/account/payment',
         icon: 'HandCoins',
@@ -412,7 +412,6 @@ export const MENU: MenuNode[] = [
   },
   {
     id: 'administration',
-    shortcut: 'N',
     label: 'Administration',
     icon: 'ShieldCheck',
     anyPermission: [
@@ -424,6 +423,7 @@ export const MENU: MenuNode[] = [
     children: [
       {
         id: 'users',
+        shortcut: 'N',
         label: 'Users',
         to: '/admin/users',
         icon: 'Users',
@@ -511,16 +511,22 @@ function firstRoute(node: MenuNode): string | undefined {
 }
 
 /** The Alt+Shift+<letter> quick-nav targets for a (usually already permission-
- *  filtered) menu: each top-level node that declares a `shortcut`, mapped to the
- *  route it should jump to. Pass a filtered menu so a shortcut never targets a
+ *  filtered) menu: every node — at ANY depth — that declares a `shortcut`, mapped
+ *  to the page it opens. Shortcuts live on the sub-menu (leaf) items, so the key
+ *  jumps straight to that page. Pass a filtered menu so a shortcut never targets a
  *  page the user can't see. */
 export function menuShortcuts(menu: MenuNode[] = MENU): { key: string; to: string; label: string }[] {
   const out: { key: string; to: string; label: string }[] = [];
-  for (const node of menu) {
-    if (!node.shortcut) continue;
-    const to = firstRoute(node);
-    if (to) out.push({ key: node.shortcut.toUpperCase(), to, label: node.label });
-  }
+  const walk = (nodes: MenuNode[]) => {
+    for (const node of nodes) {
+      if (node.shortcut) {
+        const to = firstRoute(node);
+        if (to) out.push({ key: node.shortcut.toUpperCase(), to, label: node.label });
+      }
+      if (node.children) walk(node.children);
+    }
+  };
+  walk(menu);
   return out;
 }
 
