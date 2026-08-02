@@ -498,6 +498,16 @@ export class CustomersService {
       this.prisma.customerRate.findMany({ where: { customerId: id } }),
     ]);
 
+    // "MIX-<CATEGORY>" sub-categories (e.g. "MIX-CUP" → "MIX CUP SET") hold a
+    // single SKU sold as a bundle of several individual designs/sizes — a
+    // combination, not a rate any one design/size actually carries. The customer
+    // rate sheet is only meaningful per distinct item, so these never belong on it
+    // (SQLite's Prisma client has no case-insensitive `startsWith`, hence the
+    // in-memory filter rather than a WHERE clause).
+    const isCombination = (subCategory: string) => /^mix[\s-]?/i.test(subCategory.trim());
+    const ratedProducts = products.filter((p) => !isCombination(p.subCategory));
+    const ratedDesigns = designs.filter((d) => !isCombination(d.subCategory));
+
     // Snapshot the customer's special rates in the shape resolveSpecialRates expects.
     const snapshot = {
       rates: rates.map<CustomerRateDto>((r) => ({
@@ -515,7 +525,7 @@ export class CustomersService {
       logos: [],
     };
 
-    const productLines: CustomerRateListProduct[] = products.map((p) => {
+    const productLines: CustomerRateListProduct[] = ratedProducts.map((p) => {
       const res = resolveSpecialRates(snapshot, { category: p.category, subCategory: p.subCategory, product: p.product, designType: null });
       const base = p.rate ?? 0;
       return {
@@ -532,7 +542,7 @@ export class CustomersService {
       };
     });
 
-    const designLines: CustomerRateListDesign[] = designs.map((d) => {
+    const designLines: CustomerRateListDesign[] = ratedDesigns.map((d) => {
       const res = resolveSpecialRates(snapshot, { category: d.category, subCategory: d.subCategory, designType: d.designType });
       const base = d.rate ?? 0;
       return {

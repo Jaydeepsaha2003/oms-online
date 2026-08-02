@@ -1,13 +1,13 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Download, Loader2, Printer } from 'lucide-react';
+import { ArrowLeft, Download, Eye, Loader2, Printer } from 'lucide-react';
 import { toast } from 'sonner';
 import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useFitToWidth } from '@/hooks/use-fit-to-width';
 import { Button } from '@/components/ui/button';
-import { buildBillFilename, decodeImage, isIOS, preOpenPdfTab, savePdfBlob } from '@/lib/pdf';
+import { buildBillFilename, decodeImage, isIOS, preOpenPdfTab, savePdfBlob, takePendingPreviewTab } from '@/lib/pdf';
 import { formatDate } from '@/lib/date-format';
 import kavishLogo from '@/assets/kavish-logo-order.png';
 import { useChallanTerms, useCompany } from '@/features/settings/use-settings';
@@ -119,20 +119,22 @@ export function ChallanBillPage() {
   }, []);
 
   /**
-   * Arriving here straight from Ctrl+P in the challan form: print without a
-   * second click.
+   * Arriving here straight from Ctrl+P in the challan form, or from "Print / PDF"
+   * / "Preview PDF" in the challan list: run that action without a second click.
    *
    * The capture rasterises the live DOM, so it has to wait for the invoice to
    * actually be on screen with its fonts and logo resolved — firing on data
    * arrival alone yields a half-drawn page. Once fired, the flag is stripped from
-   * history so a refresh or a Back/Forward doesn't reprint.
+   * history so a refresh or a Back/Forward doesn't repeat it.
    */
-  const autoPrintFired = useRef(false);
-  const wantsAutoPrint = !!(location.state as { autoPrint?: boolean } | null)?.autoPrint;
+  const autoActionFired = useRef(false);
+  const autoState = location.state as { autoPrint?: boolean; autoPreview?: boolean; backTo?: string } | null;
+  const wantsAutoPrint = !!autoState?.autoPrint;
+  const wantsAutoPreview = !!autoState?.autoPreview;
   const challanReady = !!challan;
   useEffect(() => {
-    if (!wantsAutoPrint || !challanReady || autoPrintFired.current) return;
-    autoPrintFired.current = true;
+    if ((!wantsAutoPrint && !wantsAutoPreview) || !challanReady || autoActionFired.current) return;
+    autoActionFired.current = true;
     void (async () => {
       const node = document.getElementById('challan-invoice');
       const images = node ? [...node.querySelectorAll('img')] : [];
@@ -144,15 +146,18 @@ export function ChallanBillPage() {
         }))),
       ]);
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      await print();
-      // Drop the flag so a refresh or Back/Forward doesn't reprint.
-      navigate(location.pathname, { replace: true, state: { backTo: (location.state as { backTo?: string } | null)?.backTo } });
+      if (wantsAutoPrint) await print();
+      // The list's "Preview PDF" action reserved a tab before navigating here
+      // (inside the click, so it isn't blocked); hand it over now.
+      else await previewPdf(takePendingPreviewTab());
+      // Drop the flag so a refresh or Back/Forward doesn't repeat it.
+      navigate(location.pathname, { replace: true, state: { backTo: autoState?.backTo } });
     })();
     // Deps are booleans, and there is no cleanup that aborts the run: saving
     // invalidates the challan query, so a refetch lands mid-capture and would
-    // otherwise cancel the print a moment before it fired. The ref keeps it to once.
+    // otherwise cancel the action a moment before it fired. The ref keeps it to once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wantsAutoPrint, challanReady]);
+  }, [wantsAutoPrint, wantsAutoPreview, challanReady]);
 
   // Capture the challan at 960 px — wide enough to avoid over-wrapping but
   // narrow enough that fonts appear noticeably larger when scaled to A4.
@@ -172,6 +177,34 @@ export function ChallanBillPage() {
     return { dataURL: canvas.toDataURL('image/jpeg', 0.95), ratio: canvas.height / canvas.width };
   };
 
+  /** Captures the invoice and lays it out as an A4 jsPDF, paginating if it runs
+   *  long. Shared by Download (saves the result) and Preview (shows it in a tab). */
+  const buildPdf = async (): Promise<jsPDF | null> => {
+    const cap = await captureImage();
+    if (!cap) return null;
+    const pdf = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
+    // Very thin margin — just enough to avoid printer clip zones.
+    const margin = 4;
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const imgW = pageW - margin * 2;
+    const imgH = cap.ratio * imgW;
+    const contentH = pageH - margin * 2;
+    if (imgH <= contentH) {
+      pdf.addImage(cap.dataURL, 'JPEG', margin, margin, imgW, imgH);
+    } else {
+      let yOffset = 0;
+      let firstPage = true;
+      while (yOffset < imgH) {
+        if (!firstPage) pdf.addPage();
+        pdf.addImage(cap.dataURL, 'JPEG', margin, margin - yOffset, imgW, imgH);
+        yOffset += contentH;
+        firstPage = false;
+      }
+    }
+    return pdf;
+  };
+
   const download = async () => {
     if (!challan) return;
     // iOS Safari blocks a download/window.open that fires after the async capture
@@ -179,32 +212,41 @@ export function ChallanBillPage() {
     const iosTab = preOpenPdfTab();
     setBusy(true);
     try {
-      const cap = await captureImage();
-      if (!cap) { iosTab?.close(); return; }
-      const pdf = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
-      // Very thin margin — just enough to avoid printer clip zones.
-      const margin = 4;
-      const pageW = pdf.internal.pageSize.getWidth();
-      const pageH = pdf.internal.pageSize.getHeight();
-      const imgW = pageW - margin * 2;
-      const imgH = cap.ratio * imgW;
-      const contentH = pageH - margin * 2;
-      if (imgH <= contentH) {
-        pdf.addImage(cap.dataURL, 'JPEG', margin, margin, imgW, imgH);
-      } else {
-        let yOffset = 0;
-        let firstPage = true;
-        while (yOffset < imgH) {
-          if (!firstPage) pdf.addPage();
-          pdf.addImage(cap.dataURL, 'JPEG', margin, margin - yOffset, imgW, imgH);
-          yOffset += contentH;
-          firstPage = false;
-        }
-      }
+      const pdf = await buildPdf();
+      if (!pdf) { iosTab?.close(); return; }
       void savePdfBlob(pdf.output('blob'), buildBillFilename('Challan', challan.code, `challan-${challanId}`), iosTab);
     } catch {
       iosTab?.close();
       toast.error('Could not generate the PDF');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * Shows the actual generated PDF in a new tab — a quick look before deciding to
+   * print or download, not a save. Unlike Download, this never offers the mobile
+   * share sheet: the point is an inline look, so it always opens straight into the
+   * browser's own PDF viewer.
+   *
+   * `reservedTab` lets a caller that already navigated here (the challan list's
+   * "Preview PDF" action, reserved before the route change) hand over the tab it
+   * opened; a direct click on the on-page Preview button reserves its own.
+   */
+  const previewPdf = async (reservedTab?: Window | null) => {
+    if (!challan) return;
+    const tab = reservedTab ?? window.open('', '_blank');
+    setBusy(true);
+    try {
+      const pdf = await buildPdf();
+      if (!pdf) { tab?.close(); return; }
+      const url = URL.createObjectURL(pdf.output('blob'));
+      if (tab && !tab.closed) tab.location.href = url;
+      else window.location.href = url; // popup blocked → same-tab view
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch {
+      tab?.close();
+      toast.error('Could not preview the PDF');
     } finally {
       setBusy(false);
     }
@@ -288,6 +330,9 @@ export function ChallanBillPage() {
         <div className="ml-auto flex gap-2">
           <Button variant="outline" onClick={print} disabled={busy}>
             <Printer /> Print
+          </Button>
+          <Button variant="outline" onClick={() => void previewPdf()} disabled={busy}>
+            <Eye /> Preview
           </Button>
           <Button onClick={download} disabled={busy}>
             {busy ? <Loader2 className="animate-spin" /> : <Download />} Download PDF

@@ -51,6 +51,31 @@ export function preOpenPdfTab(): Window | null {
 }
 
 /**
+ * Holds a tab opened synchronously in a click handler so a page reached via
+ * client-side navigation right after can fill it in once its PDF is ready.
+ *
+ * Client-side routing (React Router) doesn't reload the document, so a tab
+ * opened here survives the `navigate()` call that follows it — only a full page
+ * reload would lose the reference. This is what lets "Preview PDF" in a list row
+ * open a real tab (avoiding the popup blocker) even though the PDF itself is only
+ * generated after navigating to and rendering the target page.
+ */
+let pendingPreviewTab: Window | null = null;
+
+/** Call SYNCHRONOUSLY inside the click handler that is about to navigate to a
+ *  page which will asynchronously build a PDF to preview there. */
+export function reservePreviewTab(): void {
+  pendingPreviewTab = window.open('', '_blank');
+}
+
+/** Consume the tab reserved by {@link reservePreviewTab}, if it's still open. */
+export function takePendingPreviewTab(): Window | null {
+  const tab = pendingPreviewTab;
+  pendingPreviewTab = null;
+  return tab && !tab.closed ? tab : null;
+}
+
+/**
  * Save/show a client-generated PDF blob (e.g. a jsPDF export).
  *
  * On mobile (iOS/Android) it first tries the native share sheet with a properly

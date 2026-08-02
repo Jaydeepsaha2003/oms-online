@@ -4,6 +4,7 @@ import type {
   ReconCreateReceiptResult,
   ReconRow,
   ReconRunResult,
+  ReconPartyBalance,
   ReconRunSummary,
   ReconReview,
   ReconStatus,
@@ -12,7 +13,7 @@ import type {
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaymentsService } from '../payments/payments.service';
-import { parseTallyRegister, type ParsedRegister } from './tally-register.parser';
+import { parseTallyRegister, type ParsedLedger, type ParsedRegister } from './tally-register.parser';
 import { exactKey, nameKey, reconcileParty, type MatchRow, type OmsParty } from './tally-recon.matcher';
 
 const DAY = 86_400_000;
@@ -26,6 +27,27 @@ const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
  * them back a day anywhere east of UTC — a register entry dated 22-Apr would post
  * as a 21-Apr receipt. Read the local components instead.
  */
+/** One row of the per-party balance comparison, before persistence. */
+interface BalanceRow {
+  runId: number;
+  ledgerName: string;
+  customerId: number | null;
+  customerName: string | null;
+  tallyOpening: number;
+  omsOpening: number;
+  tallyClosing: number;
+  omsClosing: number;
+  difference: number;
+  matched: boolean;
+  lastReceiptDate: Date | null;
+  lastReceiptRef: string | null;
+  tallyAtLastReceipt: number | null;
+  omsAtLastReceipt: number | null;
+  agreedAtLastReceipt: boolean | null;
+  firstDivergenceOn: Date | null;
+  divergedAfterLastReceipt: boolean;
+}
+
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 /**
@@ -40,6 +62,17 @@ const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart
 function issueKeyOf(r: { source: string; ledgerName: string; vchType: string; vchNo: string; dr: number; cr: number; txnDate: Date }): string {
   const paise = Math.round((r.dr - r.cr) * 100);
   return [r.source, r.ledgerName.trim().toUpperCase(), r.vchType, r.vchNo.trim().toUpperCase(), paise, ymd(r.txnDate)].join('|');
+}
+
+/**
+ * Start of the April–March financial year a date falls in — mirrors the party
+ * ledger. An opening balance belongs to a year, not to the day it was keyed, so a
+ * balance entered in Jul-2025 is in force from 01-Apr-2025.
+ */
+const FY_START_MONTH = 3; // April, 0-based
+function fyStart(d: Date): Date {
+  const y = d.getMonth() >= FY_START_MONTH ? d.getFullYear() : d.getFullYear() - 1;
+  return new Date(y, FY_START_MONTH, 1);
 }
 
 /** A challan that is a Debit Note rather than a sale — mirrors the party ledger. */
@@ -197,21 +230,25 @@ export class TallyReconService {
     if (!custIds.length) return;
     const EPOCH = new Date(1900, 0, 1);
 
+    // No date filter in SQL: an opening keyed mid-year is in force from that
+    // year's start, so `transDate <= from` would exclude it from its own year.
     const openings = await this.prisma.acctOpeningTrans.findMany({
-      where: { kind: 'OPENING', transDate: { lte: from }, custId: { in: custIds } },
+      where: { kind: 'OPENING', custId: { in: custIds } },
       select: { custId: true, bankAmt: true, cashAmt: true, transDate: true, drCr: true },
     });
-    /** custId → the date that party's opening figure is stated as at. */
+    /** custId → the start of the year that party's opening figure belongs to. */
     const anchor = new Map<number, Date>();
     for (const o of openings) {
       const book = books.get(o.custId);
       if (!book) continue;
+      const effective = fyStart(o.transDate);
+      if (effective > from) continue; // a later year's opening isn't in force yet
       const sign = (o.drCr ?? 'DEBIT').toUpperCase() === 'CREDIT' ? -1 : 1;
       book.openingBankNet += sign * (o.bankAmt ?? 0);
       book.openingCashNet += sign * (o.cashAmt ?? 0);
       book.hasOpening = true;
       const prev = anchor.get(o.custId);
-      if (!prev || o.transDate > prev) anchor.set(o.custId, o.transDate);
+      if (!prev || effective > prev) anchor.set(o.custId, effective);
     }
 
     const [challans, ledger] = await Promise.all([
@@ -251,6 +288,99 @@ export class TallyReconService {
     }
   }
 
+  /* ── per-party balance comparison ────────────────────────────────────────── */
+
+  /**
+   * Compares each party's *balance* against the register and works out where the
+   * two stopped agreeing.
+   *
+   * The row report already says which vouchers differ, but a user reconciling by
+   * hand asks a blunter question: does this party's bottom line agree, and if not,
+   * from when? So both sides are walked as a running balance over the union of
+   * their dates, and the first date they part company is recorded.
+   *
+   * The headline checkpoint is the **last receipt recorded in OMS**: if both sides
+   * still agree as at that date, then nothing before it is at fault and the user
+   * only has to look at what came after.
+   *
+   * Bank leg only, like everything else here — the register has no cash side.
+   */
+  private balanceFor(
+    ledger: ParsedLedger,
+    oms: OmsParty,
+    from: Date,
+    toExclusive: Date,
+  ): Omit<BalanceRow, 'runId'> {
+    const TOL = 1.0; // same rupee tolerance the row matcher uses
+
+    const tallyOpening = r2(ledger.openingNet ?? 0);
+    const omsOpening = r2(oms.openingBankNet);
+
+    /** Dated bank movements, Dr positive. */
+    const tallyMoves = ledger.vouchers.map((v) => ({ on: v.txnDate, amt: r2(v.debit - v.credit) }));
+    const omsMoves = [
+      ...oms.invoices.filter((i) => Math.abs(i.bank) > 0.004).map((i) => ({ on: i.invDate, amt: r2(i.bank) })),
+      ...oms.vouchers.map((v) => ({ on: v.transDate, amt: r2(v.bankDr - v.bankCr) })),
+    ].filter((m) => Math.abs(m.amt) > 0.004);
+
+    const sum = (moves: { on: Date; amt: number }[], upto?: Date) =>
+      r2(moves.reduce((t, m) => (upto && m.on > upto ? t : t + m.amt), 0));
+
+    // Prefer the closing Tally itself states; fall back to arithmetic when the
+    // register omits it.
+    const tallyClosing = r2(ledger.closingNet ?? tallyOpening + sum(tallyMoves));
+    const omsClosing = r2(omsOpening + sum(omsMoves));
+    const difference = r2(tallyClosing - omsClosing);
+
+    // The last receipt the user recorded inside the period.
+    const receipts = oms.vouchers
+      .filter((v) => v.voucherType.trim().toUpperCase() === 'RECEIPT' && Math.abs(v.bankDr - v.bankCr) > 0.004)
+      .filter((v) => v.transDate >= from && v.transDate < toExclusive)
+      .sort((a, b) => a.transDate.getTime() - b.transDate.getTime());
+    const last = receipts.length ? receipts[receipts.length - 1] : null;
+
+    const tallyAtLastReceipt = last ? r2(tallyOpening + sum(tallyMoves, last.transDate)) : null;
+    const omsAtLastReceipt = last ? r2(omsOpening + sum(omsMoves, last.transDate)) : null;
+    const agreedAtLastReceipt =
+      tallyAtLastReceipt == null || omsAtLastReceipt == null ? null : Math.abs(tallyAtLastReceipt - omsAtLastReceipt) <= TOL;
+
+    // Where they first part company. A difference already present in the opening
+    // means they never agreed inside this period at all.
+    let firstDivergenceOn: Date | null = null;
+    if (Math.abs(tallyOpening - omsOpening) > TOL) {
+      firstDivergenceOn = from;
+    } else {
+      const dates = [...new Set([...tallyMoves, ...omsMoves].map((m) => m.on.getTime()))].sort((a, b) => a - b);
+      for (const t of dates) {
+        const d = new Date(t);
+        if (Math.abs(r2(tallyOpening + sum(tallyMoves, d)) - r2(omsOpening + sum(omsMoves, d))) > TOL) {
+          firstDivergenceOn = d;
+          break;
+        }
+      }
+    }
+
+    return {
+      ledgerName: ledger.ledgerName,
+      customerId: oms.customerId,
+      customerName: oms.customerName,
+      tallyOpening,
+      omsOpening,
+      tallyClosing,
+      omsClosing,
+      difference,
+      matched: Math.abs(difference) <= TOL,
+      lastReceiptDate: last?.transDate ?? null,
+      lastReceiptRef: last?.voucherNo ?? null,
+      tallyAtLastReceipt,
+      omsAtLastReceipt,
+      agreedAtLastReceipt,
+      firstDivergenceOn,
+      divergedAfterLastReceipt:
+        !!last && !!firstDivergenceOn && agreedAtLastReceipt === true && firstDivergenceOn > last.transDate,
+    };
+  }
+
   /* ── run a reconciliation ────────────────────────────────────────────────── */
 
   async run(file: { buffer: Buffer; originalname: string }, userName?: string | null): Promise<ReconRunResult> {
@@ -273,6 +403,16 @@ export class TallyReconService {
       rows.push(...reconcileParty(ledger, hit ? books.get(hit.id) ?? null : null, from));
     }
 
+    // Per-party balance verdicts — only possible where the ledger maps to a customer.
+    const balances = register.ledgers
+      .map((ledger) => {
+        const hit = resolved.get(ledger.ledgerName) ?? null;
+        const book = hit ? books.get(hit.id) : null;
+        return book ? this.balanceFor(ledger, book, from, toExclusive) : null;
+      })
+      .filter((b): b is Omit<BalanceRow, 'runId'> => b !== null)
+      .sort((a, b) => Math.abs(b.difference) - Math.abs(a.difference));
+
     // Carry forward whatever the user already decided about these same lines.
     const keyed = rows.map((r) => ({ row: r, issueKey: issueKeyOf(r) }));
     const marks = await this.marksFor(keyed.map((k) => k.issueKey));
@@ -293,6 +433,8 @@ export class TallyReconService {
       unmatchedParty: count('UNMATCHED_PARTY'),
       pendingCount: reviewCount('PENDING'),
       solvedCount: reviewCount('SOLVED'),
+      balanceCheckedCount: balances.length,
+      balanceMismatchCount: balances.filter((b) => !b.matched).length,
     };
 
     const run = await this.prisma.tallyReconRun.create({
@@ -322,6 +464,7 @@ export class TallyReconService {
             note: r.note,
           })),
         },
+        balances: { create: balances },
       },
       select: { id: true },
     });
@@ -342,7 +485,11 @@ export class TallyReconService {
   async result(id: number): Promise<ReconRunResult> {
     const run = await this.prisma.tallyReconRun.findUnique({
       where: { id },
-      include: { rows: { orderBy: [{ ledgerName: 'asc' }, { txnDate: 'asc' }, { id: 'asc' }] } },
+      include: {
+        rows: { orderBy: [{ ledgerName: 'asc' }, { txnDate: 'asc' }, { id: 'asc' }] },
+        // Worst difference first, so the parties needing attention lead.
+        balances: { orderBy: [{ matched: 'asc' }, { id: 'asc' }] },
+      },
     });
     if (!run) throw new NotFoundException('That reconciliation run no longer exists.');
     const unmatchedLedgers = [...new Set(run.rows.filter((r) => r.status === 'UNMATCHED_PARTY').map((r) => r.ledgerName))].sort();
@@ -350,6 +497,27 @@ export class TallyReconService {
       ...this.toSummary(run),
       unmatchedLedgers,
       rows: run.rows.map((r) => this.toRow(run.uploadedAt, r)),
+      balances: run.balances.map(
+        (b): ReconPartyBalance => ({
+          id: b.id,
+          ledgerName: b.ledgerName,
+          customerId: b.customerId,
+          customerName: b.customerName,
+          tallyOpening: b.tallyOpening,
+          omsOpening: b.omsOpening,
+          tallyClosing: b.tallyClosing,
+          omsClosing: b.omsClosing,
+          difference: b.difference,
+          matched: b.matched,
+          lastReceiptDate: iso(b.lastReceiptDate),
+          lastReceiptRef: b.lastReceiptRef,
+          tallyAtLastReceipt: b.tallyAtLastReceipt,
+          omsAtLastReceipt: b.omsAtLastReceipt,
+          agreedAtLastReceipt: b.agreedAtLastReceipt,
+          firstDivergenceOn: iso(b.firstDivergenceOn),
+          divergedAfterLastReceipt: b.divergedAfterLastReceipt,
+        }),
+      ),
     };
   }
 
@@ -375,6 +543,8 @@ export class TallyReconService {
     unmatchedParty: number;
     pendingCount: number;
     solvedCount: number;
+    balanceMismatchCount: number;
+    balanceCheckedCount: number;
   }): ReconRunSummary {
     return {
       id: r.id,
@@ -392,6 +562,8 @@ export class TallyReconService {
       unmatchedParty: r.unmatchedParty,
       pendingCount: r.pendingCount,
       solvedCount: r.solvedCount,
+      balanceMismatchCount: r.balanceMismatchCount,
+      balanceCheckedCount: r.balanceCheckedCount,
     };
   }
 

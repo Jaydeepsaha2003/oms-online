@@ -139,6 +139,20 @@ export class ProductsService {
     return this.toDto(row);
   }
 
+  /** Same flip, applied to every id in one statement — the Products page's bulk
+   *  row-selection actions (e.g. deactivating a batch of discontinued items). */
+  async bulkSetFlags(ids: number[], dto: SetProductFlagsDto): Promise<{ updated: number }> {
+    if (dto.active === undefined && dto.showOnRateList === undefined) return { updated: 0 };
+    const { count } = await this.prisma.product.updateMany({
+      where: { id: { in: ids } },
+      data: {
+        ...(dto.active !== undefined ? { active: dto.active } : {}),
+        ...(dto.showOnRateList !== undefined ? { showOnRateList: dto.showOnRateList } : {}),
+      },
+    });
+    return { updated: count };
+  }
+
   async remove(id: number): Promise<void> {
     await this.ensureExists(id);
     await this.prisma.product.delete({ where: { id } });

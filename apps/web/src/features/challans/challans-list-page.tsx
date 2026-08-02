@@ -8,6 +8,8 @@ import {
   ChevronLeft,
   ChevronRight,
   EllipsisVertical,
+  Eye,
+  FileSearch,
   FileSpreadsheet,
   Filter,
   Layers,
@@ -24,6 +26,7 @@ import {
 import { toast } from 'sonner';
 import type { ChallanDto } from '@oms/shared';
 import { cn } from '@/lib/utils';
+import { reservePreviewTab } from '@/lib/pdf';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -356,24 +359,41 @@ export function ChallansListPage() {
             </DropdownMenuLabel>
             <div className="p-1.5">
             {canPrint && (
-              <DropdownMenuItem className="rounded-md px-2.5 py-2 font-medium" onSelect={() => navigate(`/challans/${r.id}/bill`)}>
-                <Printer className="text-blue-600" /> Print / PDF
-              </DropdownMenuItem>
+              <>
+                <DropdownMenuItem className="rounded-md px-2.5 py-1.5 font-medium" onSelect={() => navigate(`/challans/${r.id}/bill`)}>
+                  <Eye className="text-slate-600" /> View challan
+                </DropdownMenuItem>
+                <DropdownMenuItem className="rounded-md px-2.5 py-1.5 font-medium" onSelect={() => navigate(`/challans/${r.id}/bill`)}>
+                  <Printer className="text-blue-600" /> Print / PDF
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="rounded-md px-2.5 py-1.5 font-medium"
+                  onSelect={() => {
+                    // Opened synchronously here (still inside the click) so the
+                    // popup blocker doesn't catch it once the bill page navigates
+                    // to and asynchronously builds the PDF a moment later.
+                    reservePreviewTab();
+                    navigate(`/challans/${r.id}/bill`, { state: { autoPreview: true } });
+                  }}
+                >
+                  <FileSearch className="text-violet-600" /> Preview PDF
+                </DropdownMenuItem>
+              </>
             )}
             {canUpdate && (
-              <DropdownMenuItem className="rounded-md px-2.5 py-2 font-medium" onSelect={() => navigate(`/challans/${r.id}/edit`)}>
+              <DropdownMenuItem className="rounded-md px-2.5 py-1.5 font-medium" onSelect={() => navigate(`/challans/${r.id}/edit`)}>
                 <Pencil className="text-amber-600" /> Edit challan
               </DropdownMenuItem>
             )}
             {canUpdate && (
               <>
-                <DropdownMenuSeparator className="my-1.5" />
+                <DropdownMenuSeparator className="my-1" />
                 {confirmed ? (
-                  <DropdownMenuItem className="rounded-md px-2.5 py-2 font-medium" variant="destructive" onSelect={() => setRowStatus(r, 'CANCELLED')}>
+                  <DropdownMenuItem className="rounded-md px-2.5 py-1.5 font-medium" variant="destructive" onSelect={() => setRowStatus(r, 'CANCELLED')}>
                     <XCircle /> Mark cancelled
                   </DropdownMenuItem>
                 ) : (
-                  <DropdownMenuItem className="rounded-md px-2.5 py-2 font-medium text-emerald-700 focus:bg-emerald-50 focus:text-emerald-800" onSelect={() => setRowStatus(r, 'CONFIRMED')}>
+                  <DropdownMenuItem className="rounded-md px-2.5 py-1.5 font-medium text-emerald-700 focus:bg-emerald-50 focus:text-emerald-800" onSelect={() => setRowStatus(r, 'CONFIRMED')}>
                     <CheckCircle2 className="text-emerald-600" /> Mark confirmed
                   </DropdownMenuItem>
                 )}
@@ -381,8 +401,8 @@ export function ChallansListPage() {
             )}
             {canDelete && (
               <>
-                {(canPrint || canUpdate) && <DropdownMenuSeparator className="my-1.5" />}
-                <DropdownMenuItem className="rounded-md px-2.5 py-2 font-medium" variant="destructive" onSelect={() => remove(r)}>
+                {(canPrint || canUpdate) && <DropdownMenuSeparator className="my-1" />}
+                <DropdownMenuItem className="rounded-md px-2.5 py-1.5 font-medium" variant="destructive" onSelect={() => remove(r)}>
                   <Trash2 /> Delete permanently
                 </DropdownMenuItem>
               </>

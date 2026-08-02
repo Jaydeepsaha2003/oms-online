@@ -26,6 +26,21 @@ const DAY = 86_400_000;
 const isDebitNoteChallan = (prefix: string | null, transaction: string) =>
   (prefix ?? '').trim().toUpperCase() === 'DN' || transaction.trim().toUpperCase() === 'DEBIT NOTE';
 
+/**
+ * Start of the April–March financial year a date falls in.
+ *
+ * An opening balance belongs to a *year*, not to the day it happened to be keyed
+ * in — that is how Tally treats it, and it is what makes one year's closing equal
+ * the next year's opening. Every opening in this database was keyed mid-year
+ * (Jun-2025 … Jan-2026), so without this the figure was invisible in the year it
+ * belonged to and then appeared out of nowhere at the next year's boundary.
+ */
+const FY_START_MONTH = 3; // April, 0-based
+function fyStart(d: Date): Date {
+  const y = d.getMonth() >= FY_START_MONTH ? d.getFullYear() : d.getFullYear() - 1;
+  return new Date(y, FY_START_MONTH, 1);
+}
+
 function parseDay(s: string, label: string): Date {
   const d = new Date(s);
   if (Number.isNaN(d.getTime())) throw new BadRequestException(`${label} is not valid.`);
@@ -282,6 +297,41 @@ export class PartyLedgerService {
         sortRank: 5,
       });
     }
+    // An opening balance normally lands in the brought-forward figure. But when the
+    // window *starts before* the year that balance belongs to, its effective date
+    // (that year's 1-April) falls inside the window instead — so it has to appear
+    // as a line here, or a range like 31-Mar-2025 → 15-May-2025 would close at nil
+    // and the next range would open with the balance out of nowhere.
+    const openRows = await this.prisma.acctOpeningTrans.findMany({
+      where: {
+        kind: 'OPENING',
+        ...(custIds ? { custId: { in: custIds } } : {}),
+      },
+      select: { custId: true, customerName: true, transDate: true, bankAmt: true, cashAmt: true, drCr: true },
+    });
+    for (const o of openRows) {
+      const effective = fyStart(o.transDate);
+      // `<= from` is already counted in openingAsOf — emitting it again would double it.
+      if (effective <= from || effective >= toExclusive) continue;
+      const credit = (o.drCr ?? 'DEBIT').toUpperCase() === 'CREDIT';
+      const bank = r0(o.bankAmt ?? 0);
+      const cash = r0(o.cashAmt ?? 0);
+      if (bank === 0 && cash === 0) continue;
+      raw.push({
+        txnDate: effective,
+        particulars: 'Opening Balance',
+        customerName: o.customerName,
+        voucherType: 'OPENING BALANCE',
+        voucherNo: 'Opening Balance',
+        bankDr: credit ? 0 : bank,
+        bankCr: credit ? bank : 0,
+        cashDr: credit ? 0 : cash,
+        cashCr: credit ? cash : 0,
+        dueDate: null,
+        sortRank: 0, // the year's very first line
+      });
+    }
+
     raw.sort((a, b) => a.txnDate.getTime() - b.txnDate.getTime() || a.sortRank - b.sortRank || a.voucherNo.localeCompare(b.voucherNo));
 
     // SALES INVOICE / DEBIT NOTE rows are both backed by a real Challan record (Debit
@@ -437,7 +487,11 @@ export class PartyLedgerService {
    * came out massively understated and the closing balance could flip to Cr.
    */
   private async openingAsOf(from: Date, custIds: number[] | null, agentName: string | null): Promise<{ bankNet: number; cashNet: number }> {
-    const openWhere: Prisma.AcctOpeningTransWhereInput = { kind: 'OPENING', transDate: { lte: from } };
+    // Fetched without a date filter: an opening keyed in Jul-2025 counts from
+    // 01-Apr-2025, so `transDate <= from` would wrongly exclude it from its own
+    // year. The FY test below is what decides. (One row per party per year — a
+    // few dozen rows, so there is nothing to gain from narrowing this in SQL.)
+    const openWhere: Prisma.AcctOpeningTransWhereInput = { kind: 'OPENING' };
     if (custIds) openWhere.custId = { in: custIds };
     const openings = await this.prisma.acctOpeningTrans.findMany({
       where: openWhere,
@@ -445,16 +499,19 @@ export class PartyLedgerService {
     });
 
     const EPOCH = new Date(1900, 0, 1);
-    /** custId → the date that customer's opening figure is stated as at. */
+    /** custId → the start of the year that customer's opening figure belongs to. */
     const anchor = new Map<number, Date>();
     let bankNet = 0;
     let cashNet = 0;
     for (const o of openings) {
+      const effective = fyStart(o.transDate);
+      // A later year's opening is not yet in force for this period.
+      if (effective > from) continue;
       const sign = (o.drCr ?? 'DEBIT').toUpperCase() === 'CREDIT' ? -1 : 1;
       bankNet += sign * (o.bankAmt ?? 0);
       cashNet += sign * (o.cashAmt ?? 0);
       const prev = anchor.get(o.custId);
-      if (!prev || o.transDate > prev) anchor.set(o.custId, o.transDate);
+      if (!prev || effective > prev) anchor.set(o.custId, effective);
     }
 
     // Everything before `from`, kept only when it falls on/after its own party's

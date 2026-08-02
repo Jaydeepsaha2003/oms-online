@@ -100,12 +100,52 @@ export interface ReconRunSummary {
   /** How many flagged lines the user has marked, of each kind. */
   pendingCount: number;
   solvedCount: number;
+  /** Parties whose closing balance disagrees with the register, and how many were
+   *  comparable at all (an unmapped ledger can't be). */
+  balanceMismatchCount: number;
+  balanceCheckedCount: number;
+}
+
+/**
+ * Whether one party's *balance* agrees with the register, and where it stopped
+ * agreeing.
+ *
+ * The row report tells you which vouchers differ; this tells you whether the
+ * party's bottom line differs — and pins the divergence against the last receipt
+ * you recorded, because if both sides still agree at that point then everything
+ * that went wrong happened after it.
+ */
+export interface ReconPartyBalance {
+  id: number;
+  ledgerName: string;
+  customerId: number | null;
+  customerName: string | null;
+  /** Signed, Dr positive. Bank leg only. */
+  tallyOpening: number;
+  omsOpening: number;
+  tallyClosing: number;
+  omsClosing: number;
+  /** tallyClosing − omsClosing. */
+  difference: number;
+  matched: boolean;
+  /** Latest OMS receipt inside the period, and both balances as at that date. */
+  lastReceiptDate: string | null;
+  lastReceiptRef: string | null;
+  tallyAtLastReceipt: number | null;
+  omsAtLastReceipt: number | null;
+  agreedAtLastReceipt: boolean | null;
+  /** First date the running balances part company. Null when they never do. */
+  firstDivergenceOn: string | null;
+  /** The divergence begins only after the last recorded receipt. */
+  divergedAfterLastReceipt: boolean;
 }
 
 export interface ReconRunResult extends ReconRunSummary {
   rows: ReconRow[];
   /** Ledger names in the register with no OMS customer, for the alias screen. */
   unmatchedLedgers: string[];
+  /** Per-party balance verdicts, worst difference first. */
+  balances: ReconPartyBalance[];
 }
 
 /** One saved Tally-name → OMS-customer pin. */

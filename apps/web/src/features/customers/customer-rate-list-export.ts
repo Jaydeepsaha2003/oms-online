@@ -45,6 +45,7 @@ const BLUE_SOFT: RGB = [219, 234, 254]; // blue-100 — chip fills / keylines
 const ORANGE: RGB = [234, 88, 12]; // orange-600 — gradient start, section accents
 const AMBER: RGB = [245, 158, 11]; // amber-500 — gradient end, special-rate marker
 const AMBER_SOFT: RGB = [254, 243, 199]; // amber-100 — special-rate row wash
+const AMBER_ITEM_BG: RGB = [255, 251, 235]; // amber-50 — Item column's own band, every row
 
 /** Linear blend between two RGBs (used for the orange→amber accent rules). */
 const mix = (a: RGB, b: RGB, t: number): RGB => [
@@ -359,6 +360,13 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
         doc.setFillColor(...BLUE_ZEBRA);
         doc.rect(margin, y - 2, usable, rowH, 'F');
       }
+      // ITEM gets its own soft amber band on every row, so the name reads as a
+      // distinct column instead of blending into SR/Available Pcs. Special rows
+      // already carry a full amber wash — skip the extra layer there.
+      if (!r.special) {
+        doc.setFillColor(...AMBER_ITEM_BG);
+        doc.rect(margin + widths[0], y - 2, widths[1], rowH, 'F');
+      }
       // Baseline that centres the text in the (now taller) row.
       const ty = y + rowH / 2 + DATA_SIZE * 0.34;
       let x = margin;
@@ -366,14 +374,23 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
       doc.setFont(TABLE_FONT, 'normal').setFontSize(META_SIZE).setTextColor(...FAINT);
       doc.text(String(r.sr), x + 7, ty);
       x += widths[0];
+      // Hairline boxing in the ITEM column on its left (SR | ITEM).
+      doc.setDrawColor(...HAIRLINE);
+      doc.setLineWidth(0.5);
+      doc.line(x, y - 2, x, y + rowH - 2);
       // ITEM — special-rate items read in blue so the eye pairs them with the tab.
       doc.setFont(TABLE_FONT, 'bold').setTextColor(...(r.special ? BLUE_DEEP : INK));
       fitText(r.item, x + 6, ty, widths[1] - 10, DATA_SIZE, { minSize: 8 });
       x += widths[1];
-      // AVAILABLE PCS
+      // Hairline boxing in the ITEM column on its right (ITEM | Available Pcs).
+      doc.setDrawColor(...HAIRLINE);
+      doc.setLineWidth(0.5);
+      doc.line(x, y - 2, x, y + rowH - 2);
+      // AVAILABLE PCS — same size as the rate figures, so it reads as data
+      // rather than a faint footnote next to them.
       if (showAvail) {
-        doc.setFont(TABLE_FONT, 'normal').setFontSize(META_SIZE).setTextColor(...MUTED);
-        doc.text(r.available, x + 6, ty);
+        doc.setFont(TABLE_FONT, 'normal').setTextColor(...MUTED);
+        fitText(r.available, x + 6, ty, widths[2] - 10, DATA_SIZE, { minSize: 8 });
         x += widths[2];
       }
       // Hairline separating identity columns from the rate block — guides the

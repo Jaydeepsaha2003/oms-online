@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
+  BulkCatalogFlagsInput,
+  BulkCatalogFlagsResult,
   CatalogFlagsInput,
   CategoryFieldDto,
   ProductDto,
@@ -76,6 +78,19 @@ export function useSetProductFlags() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });
       // Order item pickers depend on active; the rate list depends on showOnRateList.
+      qc.invalidateQueries({ queryKey: ['orders', 'lookups'] });
+    },
+  });
+}
+
+/** Bulk row-selection flag toggle — e.g. deactivating a batch of ticked products
+ *  in one request instead of one PATCH per row. */
+export function useBulkSetProductFlags() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BulkCatalogFlagsInput) => http.patch<BulkCatalogFlagsResult>('/products/bulk-flags', input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEY });
       qc.invalidateQueries({ queryKey: ['orders', 'lookups'] });
     },
   });

@@ -8,9 +8,11 @@ import {
   Clock,
   FileSpreadsheet,
   History,
+  Landmark,
   Link2,
   Loader2,
   RotateCcw,
+  Scale,
   Square,
   SquareCheckBig,
   Trash2,
@@ -18,7 +20,7 @@ import {
   UserRoundX,
   X,
 } from 'lucide-react';
-import type { ReconReview, ReconRow, ReconStatus } from '@oms/shared';
+import type { ReconPartyBalance, ReconReview, ReconRow, ReconStatus } from '@oms/shared';
 import { RECON_PROBLEM_STATUSES } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
@@ -199,6 +201,220 @@ function Tile({
   );
 }
 
+/**
+ * Plain-language verdict for one party's balance.
+ *
+ * The whole point of this view is to answer "from when did we stop agreeing?", so
+ * the wording leads with the last receipt: if both sides still matched there, the
+ * user only has to look at what came after it.
+ */
+function balanceVerdict(b: ReconPartyBalance, periodFrom: string): { text: string; tone: string } {
+  if (b.matched) {
+    return { text: 'Agrees with the register', tone: 'text-emerald-700 dark:text-emerald-400' };
+  }
+  const openingDiffers = !!b.firstDivergenceOn && b.firstDivergenceOn.slice(0, 10) === periodFrom.slice(0, 10);
+  if (openingDiffers) {
+    return {
+      text: `Opening balances already differ (Tally ${inr(b.tallyOpening)} vs OMS ${inr(b.omsOpening)}) — nothing in this period can reconcile it.`,
+      tone: 'text-rose-700 dark:text-rose-400',
+    };
+  }
+  if (b.divergedAfterLastReceipt && b.lastReceiptDate) {
+    return {
+      text: `Agreed up to ${prettyDate(b.lastReceiptDate)} (your last receipt${b.lastReceiptRef ? ` ${b.lastReceiptRef}` : ''}) — the difference starts ${b.firstDivergenceOn ? `on ${prettyDate(b.firstDivergenceOn)}` : 'after that'}.`,
+      tone: 'text-emerald-700 dark:text-emerald-400',
+    };
+  }
+  if (b.agreedAtLastReceipt === false && b.lastReceiptDate) {
+    return {
+      text: `Already differed by ${inr(Math.abs((b.tallyAtLastReceipt ?? 0) - (b.omsAtLastReceipt ?? 0)))} at your last receipt on ${prettyDate(b.lastReceiptDate)}${b.firstDivergenceOn ? ` — first parts company ${prettyDate(b.firstDivergenceOn)}` : ''}.`,
+      tone: 'text-rose-700 dark:text-rose-400',
+    };
+  }
+  if (!b.lastReceiptDate) {
+    return {
+      text: `No receipt recorded in this period${b.firstDivergenceOn ? ` — differs from ${prettyDate(b.firstDivergenceOn)}` : ''}.`,
+      tone: 'text-amber-700 dark:text-amber-300',
+    };
+  }
+  return {
+    text: `Diverged ${b.firstDivergenceOn ? prettyDate(b.firstDivergenceOn) : 'mid-period'} but back in step by your last receipt on ${prettyDate(b.lastReceiptDate)}.`,
+    tone: 'text-sky-700 dark:text-sky-400',
+  };
+}
+
+/** Dr / Cr the way an accountant reads it, from a signed figure. */
+const drCr = (v: number) => (v === 0 ? '-' : `${inr(Math.abs(v))} ${v > 0 ? 'Dr' : 'Cr'}`);
+
+/**
+ * Per-party balance comparison — whose bottom line disagrees, and from when.
+ *
+ * Clicking a party drops back into the voucher report filtered to it, which is
+ * where the actual differing documents are.
+ */
+function BalancesView({
+  run,
+  onlyDiffering,
+  setOnlyDiffering,
+  onPickParty,
+}: {
+  run: {
+    fromDate: string;
+    balances: ReconPartyBalance[];
+    balanceCheckedCount: number;
+    balanceMismatchCount: number;
+  };
+  onlyDiffering: boolean;
+  setOnlyDiffering: (v: boolean) => void;
+  onPickParty: (ledgerName: string) => void;
+}) {
+  const list = onlyDiffering ? run.balances.filter((b) => !b.matched) : run.balances;
+  const agreeing = run.balanceCheckedCount - run.balanceMismatchCount;
+
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-2 border-b border-amber-200 bg-amber-50/70 px-2.5 py-1.5 dark:border-amber-400/20 dark:bg-amber-400/5">
+        <span className="text-[12px] font-semibold">
+          <span className="font-extrabold text-rose-700 tabular-nums dark:text-rose-400">{inr(run.balanceMismatchCount)}</span> of{' '}
+          <span className="font-extrabold tabular-nums">{inr(run.balanceCheckedCount)}</span> parties disagree
+          <span className="text-muted-foreground"> · {inr(agreeing)} agree</span>
+        </span>
+        <button
+          type="button"
+          onClick={() => setOnlyDiffering(!onlyDiffering)}
+          aria-pressed={onlyDiffering}
+          className={cn(
+            'ml-auto cursor-pointer rounded-[3px] border px-2 py-[2px] text-[11.5px] font-semibold transition-colors',
+            onlyDiffering ? CONTROL_ON : 'border-amber-300 hover:bg-amber-100 dark:border-amber-400/40',
+          )}
+        >
+          {onlyDiffering ? 'Showing only differences' : 'Showing every party'}
+        </button>
+      </div>
+
+      {/* Desktop */}
+      <div
+        className={cn(
+          'hidden min-h-0 flex-1 overflow-auto overscroll-x-contain sm:block',
+          '[scrollbar-width:thin] [scrollbar-color:var(--color-amber-400)_var(--color-amber-100)]',
+          '[&_tbody]:select-none',
+        )}
+      >
+        <table className="w-full border-collapse text-[13px]">
+          <caption className="sr-only">Closing balance per party, Tally against OMS</caption>
+          <thead>
+            <tr>
+              <th scope="col" className={cn(TH, TH_LINE)}>Party</th>
+              <th scope="col" className={cn(TH, TH_LINE, 'w-32 text-right')}>Tally Closing</th>
+              <th scope="col" className={cn(TH, TH_LINE, 'w-32 text-right')}>OMS Closing</th>
+              <th scope="col" className={cn(TH, TH_LINE, 'w-32 text-right')}>Difference</th>
+              <th scope="col" className={cn(TH, TH_LINE, 'w-28')}>Last Receipt</th>
+              <th scope="col" className={cn(TH, 'min-w-[22rem]')}>What it means</th>
+            </tr>
+          </thead>
+          <tbody>
+            {!list.length ? (
+              <tr>
+                <td colSpan={6} className="text-muted-foreground h-24 text-center text-[13px] font-medium">
+                  {onlyDiffering ? 'Every closing balance agrees with the register.' : 'No parties could be compared.'}
+                </td>
+              </tr>
+            ) : (
+              list.map((b) => {
+                const v = balanceVerdict(b, run.fromDate);
+                return (
+                  <tr
+                    key={b.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onPickParty(b.ledgerName)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onPickParty(b.ledgerName);
+                      }
+                    }}
+                    title="Show this party's vouchers"
+                    className={cn(
+                      'group cursor-pointer border-b border-amber-200/70 outline-none dark:border-amber-400/10',
+                      'even:bg-amber-50/70 dark:even:bg-amber-400/[0.05]',
+                      'hover:bg-amber-200/80 dark:hover:bg-amber-400/20',
+                      'focus-visible:ring-2 focus-visible:ring-amber-600 focus-visible:ring-inset',
+                    )}
+                  >
+                    <td className={cn(TD, 'font-bold text-slate-900 group-hover:underline dark:text-slate-100')}>
+                      {b.ledgerName}
+                      {b.customerName && b.customerName !== b.ledgerName && (
+                        <span className="text-muted-foreground ml-1.5 text-[11.5px] font-semibold">-&gt; {b.customerName}</span>
+                      )}
+                    </td>
+                    <td className={cn(TD, NUM, 'font-semibold')}>{drCr(b.tallyClosing)}</td>
+                    <td className={cn(TD, NUM, 'font-semibold')}>{drCr(b.omsClosing)}</td>
+                    <td
+                      className={cn(
+                        TD,
+                        NUM,
+                        'font-extrabold',
+                        b.matched ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400',
+                      )}
+                    >
+                      {b.matched ? '-' : drCr(b.difference)}
+                    </td>
+                    <td className={cn(TD, 'text-[12.5px] font-semibold whitespace-nowrap tabular-nums')}>
+                      {b.lastReceiptDate ? prettyDate(b.lastReceiptDate) : '-'}
+                    </td>
+                    <td className={cn(TD, 'text-[11.5px] font-medium', v.tone)}>{v.text}</td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Phones */}
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2 sm:hidden">
+        {!list.length ? (
+          <p className="text-muted-foreground px-4 py-10 text-center text-[13px] font-medium">
+            {onlyDiffering ? 'Every balance agrees.' : 'No parties could be compared.'}
+          </p>
+        ) : (
+          list.map((b) => {
+            const v = balanceVerdict(b, run.fromDate);
+            return (
+              <button
+                key={b.id}
+                type="button"
+                onClick={() => onPickParty(b.ledgerName)}
+                className="bg-card block w-full overflow-hidden rounded-[4px] border border-amber-200 p-2.5 text-left shadow-sm dark:border-amber-400/20"
+              >
+                <p className="truncate text-[13.5px] font-bold">{b.ledgerName}</p>
+                <div className="mt-1 grid grid-cols-3 gap-1 text-[11.5px]">
+                  <span>
+                    <span className="text-muted-foreground block text-[10px] font-bold uppercase">Tally</span>
+                    <span className="font-semibold tabular-nums">{drCr(b.tallyClosing)}</span>
+                  </span>
+                  <span>
+                    <span className="text-muted-foreground block text-[10px] font-bold uppercase">OMS</span>
+                    <span className="font-semibold tabular-nums">{drCr(b.omsClosing)}</span>
+                  </span>
+                  <span>
+                    <span className="text-muted-foreground block text-[10px] font-bold uppercase">Difference</span>
+                    <span className={cn('font-extrabold tabular-nums', b.matched ? 'text-emerald-700' : 'text-rose-700')}>
+                      {b.matched ? '-' : drCr(b.difference)}
+                    </span>
+                  </span>
+                </div>
+                <p className={cn('mt-1.5 text-[11.5px] font-medium', v.tone)}>{v.text}</p>
+              </button>
+            );
+          })
+        )}
+      </div>
+    </>
+  );
+}
+
 /* ── the page ─────────────────────────────────────────────────────────────── */
 
 export function TallyReconPage() {
@@ -214,6 +430,8 @@ export function TallyReconPage() {
 
   const [status, setStatus] = useState<ReconStatus | 'PROBLEMS' | ''>('PROBLEMS');
   const [review, setReview] = useState<ReconReview | ''>('');
+  const [view, setView] = useState<'VOUCHERS' | 'BALANCES'>('VOUCHERS');
+  const [onlyDiffering, setOnlyDiffering] = useState(true);
   const [vchType, setVchType] = useState('');
   const [party, setParty] = useState('');
   const [picked, setPicked] = useState<Set<number>>(new Set());
@@ -557,6 +775,14 @@ export function TallyReconPage() {
             {/* Review progress. A mark never removes a line from the counts above —
                 it records what has been done about it. */}
             <Tile
+              label="Balances differ"
+              blurb={`of ${inr(run.balanceCheckedCount)} parties`}
+              value={run.balanceMismatchCount}
+              tone="border-rose-400 bg-rose-100 text-rose-900 dark:border-rose-400/50 dark:bg-rose-400/15 dark:text-rose-200"
+              active={view === 'BALANCES'}
+              onClick={() => setView(view === 'BALANCES' ? 'VOUCHERS' : 'BALANCES')}
+            />
+            <Tile
               label="Marked pending"
               blurb="Still being chased"
               value={run.pendingCount}
@@ -676,9 +902,34 @@ export function TallyReconPage() {
       {/* ── the report ────────────────────────────────────────────────────── */}
       <div className={cn('bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[4px] border shadow-sm', PANEL)}>
         <div className="flex items-center justify-between gap-3 bg-slate-800 px-2.5 py-1 dark:bg-slate-900">
-          <span className="truncate text-[12px] font-extrabold tracking-wide text-amber-300 uppercase">
-            Tally Reconciliation{run ? ` — ${run.fileName}` : ''}
-          </span>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-[12px] font-extrabold tracking-wide text-amber-300 uppercase">
+              Tally Reconciliation{run ? ` — ${run.fileName}` : ''}
+            </span>
+            {run && (
+              <span className="flex shrink-0 overflow-hidden rounded-[3px] border border-white/25">
+                {(
+                  [
+                    ['VOUCHERS', 'Vouchers', Scale],
+                    ['BALANCES', 'Party balances', Landmark],
+                  ] as const
+                ).map(([key, label, Icon]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setView(key)}
+                    aria-pressed={view === key}
+                    className={cn(
+                      'flex cursor-pointer items-center gap-1 px-2 py-[3px] text-[11px] font-bold tracking-wide uppercase transition-colors',
+                      view === key ? 'bg-amber-300 text-slate-900' : 'text-amber-200 hover:bg-white/10',
+                    )}
+                  >
+                    <Icon className="size-3" /> <span className="hidden sm:inline">{label}</span>
+                  </button>
+                ))}
+              </span>
+            )}
+          </div>
           {run && (
             <span className="hidden shrink-0 text-[11px] font-bold tracking-wide text-white tabular-nums sm:inline">
               {prettyDate(run.fromDate)} — {prettyDate(run.toDate)} · Bank
@@ -702,6 +953,8 @@ export function TallyReconPage() {
               </Button>
             )}
           </div>
+        ) : view === 'BALANCES' ? (
+          <BalancesView run={run} onlyDiffering={onlyDiffering} setOnlyDiffering={setOnlyDiffering} onPickParty={(name) => { setParty(name); setView('VOUCHERS'); setStatus(''); }} />
         ) : (
           <>
             {/* Desktop grid. */}

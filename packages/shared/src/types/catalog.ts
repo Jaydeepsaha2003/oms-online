@@ -39,6 +39,15 @@ export interface CatalogFlagsInput {
   showOnRateList?: boolean;
 }
 
+/** Same flags, applied to a whole bulk row-selection at once. */
+export interface BulkCatalogFlagsInput extends CatalogFlagsInput {
+  ids: number[];
+}
+
+export interface BulkCatalogFlagsResult {
+  updated: number;
+}
+
 export interface DesignDto {
   id: number;
   code: string | null;

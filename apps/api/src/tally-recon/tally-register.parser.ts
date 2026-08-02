@@ -46,6 +46,15 @@ export interface ParsedLedger {
   /** Signed opening as Tally states it: + = Dr (party owes), − = Cr. */
   openingNet: number | null;
   openingDate: Date | null;
+  /**
+   * Signed closing as Tally states it, + = Dr.
+   *
+   * Tally prints the closing as the figure that *balances* the account, so a
+   * party who owes money appears as "By Closing Balance" in the CREDIT column,
+   * and one we owe appears as "To Closing Balance" in the DEBIT column. The sign
+   * is therefore taken from the side, not from which column holds the number.
+   */
+  closingNet: number | null;
   vouchers: ParsedVoucher[];
 }
 
@@ -174,7 +183,7 @@ export async function parseTallyRegister(buffer: Buffer, fileName: string): Prom
     }
 
     if (/^ledger:?$/i.test(c1)) {
-      cur = { ledgerName: c2, openingNet: null, openingDate: null, vouchers: [] };
+      cur = { ledgerName: c2, openingNet: null, openingDate: null, closingNet: null, vouchers: [] };
       ledgers.push(cur);
       inBlock = false;
       return;
@@ -204,7 +213,15 @@ export async function parseTallyRegister(buffer: Buffer, fileName: string): Prom
       }
       return;
     }
-    if (/closing balance/i.test(particulars)) return;
+    if (/closing balance/i.test(particulars)) {
+      // "By" = the party owes us (Dr balance); "To" = we owe them (Cr balance).
+      // Merged cells can smear the figure leftwards, so take whichever of the
+      // money columns actually holds it.
+      const side = (c2 || '').trim().toLowerCase();
+      const val = amount(row, crCol) ?? amount(row, drCol) ?? amount(row, drCol - 1);
+      if (val != null) cur.closingNet = side.startsWith('by') ? Math.abs(val) : -Math.abs(val);
+      return;
+    }
     // Totals rows at the foot of a block repeat figures across every column, so
     // only a recognised Vch Type marks a real voucher.
     if (!KNOWN_VCH.has(vchType)) return;

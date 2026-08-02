@@ -21,6 +21,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ExcelService } from '../excel/excel.service';
 import { ProductsService } from './products.service';
 import {
+  BulkSetProductFlagsDto,
   CreateProductDto,
   ImportProductsDto,
   ProductQueryDto,
@@ -81,6 +82,16 @@ export class ProductsController {
   @Audit({ action: ACTIONS.IMPORT, resource: R, description: 'Imported products' })
   import(@Body() dto: ImportProductsDto) {
     return this.products.importRows(dto);
+  }
+
+  /** Bulk row-selection actions (e.g. "deactivate the ticked products"). Declared
+   *  before the `:id` routes so it isn't swallowed as a (non-numeric) id param. */
+  @Patch('bulk-flags')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Bulk-toggled product active / rate-list flag' })
+  bulkSetFlags(@Body() dto: BulkSetProductFlagsDto) {
+    const { ids, ...flags } = dto;
+    return this.products.bulkSetFlags(ids, flags);
   }
 
   @Get(':id')

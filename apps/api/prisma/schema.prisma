@@ -1464,8 +1464,12 @@ model TallyReconRun {
   /// list can show review progress without loading every row.
   pendingCount   Int @default(0)
   solvedCount    Int @default(0)
+  /// Parties whose closing balance disagrees with the register.
+  balanceMismatchCount Int @default(0)
+  balanceCheckedCount  Int @default(0)
 
-  rows TallyReconRow[]
+  rows     TallyReconRow[]
+  balances TallyReconBalance[]
 
   @@index([uploadedAt])
   @@map("tally_recon_run")
@@ -1523,6 +1527,47 @@ model TallyReconRow {
   @@index([runId, review])
   @@index([issueKey])
   @@map("tally_recon_row")
+}
+
+/// Per-party closing-balance comparison for one run.
+///
+/// The row-by-row report says which vouchers disagree; this says whether the
+/// party's *balance* agrees, and if not, how far back the agreement survived.
+/// The useful checkpoint is the last receipt the user recorded: if both sides
+/// still agree there, then everything that went wrong happened after it.
+model TallyReconBalance {
+  id    Int           @id @default(autoincrement())
+  runId Int
+  run   TallyReconRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  ledgerName   String
+  customerId   Int?
+  customerName String?
+
+  /// Signed, Dr positive. Bank leg only — all the register carries.
+  tallyOpening Float   @default(0)
+  omsOpening   Float   @default(0)
+  tallyClosing Float   @default(0)
+  omsClosing   Float   @default(0)
+  /// tallyClosing − omsClosing.
+  difference   Float   @default(0)
+  matched      Boolean @default(false)
+
+  /// Latest OMS receipt in the period, and both balances as at that date.
+  lastReceiptDate     DateTime?
+  lastReceiptRef      String?
+  tallyAtLastReceipt  Float?
+  omsAtLastReceipt    Float?
+  agreedAtLastReceipt Boolean?
+
+  /// First date the two running balances part company (null when they never do).
+  firstDivergenceOn DateTime?
+  /// True when the divergence begins only after the last recorded receipt.
+  divergedAfterLastReceipt Boolean @default(false)
+
+  @@index([runId])
+  @@index([runId, matched])
+  @@map("tally_recon_balance")
 }
 
 /// A review mark that outlives the run it was made on.

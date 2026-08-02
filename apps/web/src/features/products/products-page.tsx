@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { ChevronLeft, ChevronRight, Filter, Loader2, Pencil, Plus, RotateCcw, Scale, Search, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { ChevronLeft, ChevronRight, Filter, Loader2, Pencil, Plus, PowerOff, RotateCcw, Scale, Search, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { CategoryFieldDto, ProductDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -26,6 +26,7 @@ import {
   useCreateProduct,
   useDeleteProduct,
   useImportProducts,
+  useBulkSetProductFlags,
   useProductLookups,
   useProducts,
   useSaveCategoryFields,
@@ -45,7 +46,9 @@ const CONTROL =
   'h-9 rounded-[4px] border-amber-300 dark:border-amber-400/40 text-[12.5px] focus-visible:border-amber-500 focus-visible:ring-amber-400/30';
 const CONTROL_ON = 'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
 
-const COLUMNS: DataColumn<ProductDto>[] = [
+/** Columns that never depend on component state — the selection column is built
+ *  separately inside the page (its cell needs `selected`/`toggle`) and prepended. */
+const BASE_COLUMNS: DataColumn<ProductDto>[] = [
   { id: 'category', label: 'Category', pin: 'left0', fixed: true, cell: (p) => <span className={cn(TEXT_CELL, !p.active && 'text-muted-foreground line-through')}>{p.category}</span> },
   { id: 'subCategory', label: 'Sub category', cell: (p) => <span className={cn(TEXT_CELL, !p.active && 'text-muted-foreground')}>{p.subCategory}</span> },
   { id: 'product', label: 'Product', cell: (p) => <span className={cn(TEXT_CELL, !p.active && 'text-muted-foreground line-through')}>{p.product}</span> },
@@ -119,6 +122,16 @@ export function ProductsPage() {
   const [creating, setCreating] = useState(false);
   const [showFields, setShowFields] = useState(false);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  // Bulk row selection — kept across page turns / filter changes so the user can
+  // build up a set spanning more than one page before acting on it.
+  const [selected, setSelected] = useState<Map<number, ProductDto>>(new Map());
+  const toggleSelect = (p: ProductDto) =>
+    setSelected((m) => {
+      const n = new Map(m);
+      if (n.has(p.id)) n.delete(p.id);
+      else n.set(p.id, p);
+      return n;
+    });
   const activeFilterCount = (category ? 1 : 0) + (subCategory ? 1 : 0);
   const resetFilters = () => {
     setCategory('');
@@ -147,7 +160,28 @@ export function ProductsPage() {
   const { data, isLoading } = useProducts(query);
   const del = useDeleteProduct();
   const importMut = useImportProducts();
-  const cols = useColumnOrder('products', COLUMNS);
+  const bulkSetFlags = useBulkSetProductFlags();
+
+  // The 'sel' cell reads `selected`, so it's built per-render alongside the rest
+  // of the (otherwise static) column set — same pattern as the Designs page.
+  const columns = useMemo<DataColumn<ProductDto>[]>(
+    () => [
+      {
+        id: 'sel',
+        label: '',
+        fixed: true,
+        noSort: true,
+        cell: (p) => (
+          <span onClick={(e) => e.stopPropagation()}>
+            <RowCheckbox checked={selected.has(p.id)} onChange={() => toggleSelect(p)} label={`Select ${p.product}`} />
+          </span>
+        ),
+      },
+      ...BASE_COLUMNS,
+    ],
+    [selected],
+  );
+  const cols = useColumnOrder('products', columns);
 
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
@@ -166,6 +200,28 @@ export function ProductsPage() {
     });
   };
 
+  const handleBulkDeactivate = async () => {
+    const ids = [...selected.keys()];
+    if (!ids.length) return;
+    const ok = await confirm({
+      title: `Deactivate ${ids.length} product${ids.length === 1 ? '' : 's'}?`,
+      description: 'They stay in the catalog but drop out of order item pickers until switched active again.',
+      confirmText: 'Deactivate',
+      destructive: true,
+    });
+    if (!ok) return;
+    bulkSetFlags.mutate(
+      { ids, active: false },
+      {
+        onSuccess: (res) => {
+          toast.success(`Deactivated ${res.updated} product${res.updated === 1 ? '' : 's'}`);
+          setSelected(new Map());
+        },
+        onError: (e) => toast.error(getApiErrorMessage(e, 'Bulk update failed')),
+      },
+    );
+  };
+
   const handleImport = async (file: File) => {
     try {
       const rows = await parseExcelFile(file);
@@ -179,13 +235,18 @@ export function ProductsPage() {
 
   // Phones: one stacked card per product instead of a horizontally-scrolling table.
   const productMobileCard = (p: ProductDto) => (
-    <div className="space-y-2">
+    <div className={cn('-m-3 space-y-2 border-l-4 p-3 transition-colors', selected.has(p.id) ? 'border-l-primary bg-primary/5' : 'border-l-transparent')}>
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className={cn('truncate text-[14px] leading-tight font-bold text-slate-900 dark:text-slate-100', !p.active && 'text-muted-foreground line-through')}>{p.product}</p>
-          <p className="text-muted-foreground truncate text-[11.5px] font-medium">
-            {p.category} · {p.subCategory}
-          </p>
+        <div className="flex min-w-0 items-start gap-2">
+          <span className="mt-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+            <RowCheckbox checked={selected.has(p.id)} onChange={() => toggleSelect(p)} label={`Select ${p.product}`} />
+          </span>
+          <div className="min-w-0">
+            <p className={cn('truncate text-[14px] leading-tight font-bold text-slate-900 dark:text-slate-100', !p.active && 'text-muted-foreground line-through')}>{p.product}</p>
+            <p className="text-muted-foreground truncate text-[11.5px] font-medium">
+              {p.category} · {p.subCategory}
+            </p>
+          </div>
         </div>
         <ProductActiveToggle product={p} />
       </div>
@@ -293,6 +354,32 @@ export function ProductsPage() {
           <p className="text-muted-foreground shrink-0 text-[12px] font-medium tabular-nums">
             <span className="font-bold text-foreground">{(data?.total ?? 0).toLocaleString('en-IN')}</span> records
           </p>
+
+          {selected.size > 0 && (
+            <div className="flex items-center gap-2 rounded-[4px] bg-sky-50 px-3 py-1.5 text-[12.5px] font-semibold text-sky-700 ring-1 ring-sky-200 ring-inset dark:bg-sky-400/10 dark:text-sky-300 dark:ring-sky-400/25">
+              <span className="tabular-nums">{selected.size} selected</span>
+              {can('product:update') && (
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="h-7 rounded-[4px] text-[12px] font-bold"
+                  onClick={() => void handleBulkDeactivate()}
+                  disabled={bulkSetFlags.isPending}
+                >
+                  <PowerOff className="size-3.5" /> Deactivate selected
+                </Button>
+              )}
+              <button
+                type="button"
+                onClick={() => setSelected(new Map())}
+                className="cursor-pointer text-sky-700/70 transition-colors hover:text-sky-900 dark:text-sky-300/70 dark:hover:text-sky-200"
+                title="Clear selection"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+          )}
+
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <ColumnSettings
               columns={cols.orderedReorderable}
