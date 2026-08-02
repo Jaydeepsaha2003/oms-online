@@ -23,7 +23,8 @@ const webSrc = path.join(root, 'apps', 'web', 'src');
 const outDir = path.resolve(process.argv[2] ?? path.join(root, '.design-preview'));
 mkdirSync(outDir, { recursive: true });
 
-const ASSET_RE = /\.(png|jpe?g|svg)$/i;
+const ASSET_RE = /\.(png|jpe?g|svg|ttf|otf|woff2?)$/i;
+const MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', svg: 'image/svg+xml', ttf: 'font/ttf', otf: 'font/otf', woff: 'font/woff', woff2: 'font/woff2' };
 /** Resolve an extensionless import the way the bundler would (.ts/.tsx/…). */
 const withExt = (p) => {
   if (path.extname(p)) return p;
@@ -58,9 +59,8 @@ const shim = {
     }));
     build.onLoad({ filter: /.*/, namespace: 'asset' }, (a) => {
       const ext = path.extname(a.path).slice(1).toLowerCase();
-      const mime = ext === 'svg' ? 'image/svg+xml' : ext === 'png' ? 'image/png' : 'image/jpeg';
       const b64 = readFileSync(a.path).toString('base64');
-      return { contents: `export default "data:${mime};base64,${b64}"`, loader: 'js' };
+      return { contents: `export default "data:${MIME[ext] ?? 'application/octet-stream'};base64,${b64}"`, loader: 'js' };
     });
   },
 };

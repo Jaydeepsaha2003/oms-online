@@ -14,6 +14,7 @@ import * as XLSX from 'xlsx';
 import type { CustomerRateList } from '@oms/shared';
 import { dateStamp } from '@/lib/utils';
 import { preOpenPdfTab, savePdfBlob } from '@/lib/pdf';
+import { CALIBRI_FONT, registerCalibriFont } from '@/lib/pdf-fonts';
 import kavishLogo from '@/assets/kavish-logo.png';
 import { buildSections, type PivotTable } from './customer-rate-list-pivot';
 
@@ -119,7 +120,6 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   const usable = pageW - margin * 2;
-  const rowH = 18;
   const footerTop = pageH - 34;
   let y = 0;
   let headerH = 0;
@@ -130,6 +130,20 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
   const anySpecial = [...products, ...designs].some((t) => t.rows.some((r) => r.special));
 
   const wm = await loadWatermark(doc).catch(() => null);
+
+  /* ── Items-table typography ─────────────────────────────────────────────
+   * The rate grid is set in Calibri (Carlito — see lib/pdf-fonts) at 14pt bold,
+   * which is what the printed sheet uses. Calibri runs visually smaller than
+   * Helvetica at the same size, but 14pt still needs a taller row than the old
+   * 9.5pt text did, so the row grows with it. If the font fails to load we fall
+   * back to Helvetica at a size that suits its larger appearance, and keep the
+   * compact row — the document degrades rather than breaks. */
+  const hasCalibri = await registerCalibriFont(doc);
+  const TABLE_FONT = hasCalibri ? CALIBRI_FONT : 'helvetica';
+  const DATA_SIZE = hasCalibri ? 14 : 10.5;
+  const META_SIZE = hasCalibri ? 11 : 8.5;
+  const HEAD_SIZE = hasCalibri ? 10 : 8;
+  const rowH = hasCalibri ? 24 : 18;
 
   /** Draw one line of text shrunk (then ellipsised) to fit `maxW` — rows never wrap. */
   const fitText = (txt: string, x: number, yy: number, maxW: number, size: number, opts?: { align?: 'right'; minSize?: number }) => {
@@ -317,12 +331,12 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
     const headerRow = () => {
       doc.setFillColor(...BLUE);
       doc.roundedRect(margin, y, usable, rowH + 2, 2.5, 2.5, 'F');
-      doc.setFont('helvetica', 'bold');
+      doc.setFont(TABLE_FONT, 'bold');
       let x = margin;
       headers.forEach((h, i) => {
         const right = i >= firstRateCol;
         doc.setTextColor(...WHITE);
-        fitText(h, right ? x + widths[i] - 6 : x + 7, y + 13, widths[i] - 12, 7.5, right ? { align: 'right' } : undefined);
+        fitText(h, right ? x + widths[i] - 6 : x + 7, y + rowH / 2 + 4, widths[i] - 12, HEAD_SIZE, right ? { align: 'right' } : undefined);
         x += widths[i];
       });
       y += rowH + 5;
@@ -345,19 +359,21 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
         doc.setFillColor(...BLUE_ZEBRA);
         doc.rect(margin, y - 2, usable, rowH, 'F');
       }
+      // Baseline that centres the text in the (now taller) row.
+      const ty = y + rowH / 2 + DATA_SIZE * 0.34;
       let x = margin;
       // SR
-      doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...FAINT);
-      doc.text(String(r.sr), x + 7, y + 10);
+      doc.setFont(TABLE_FONT, 'normal').setFontSize(META_SIZE).setTextColor(...FAINT);
+      doc.text(String(r.sr), x + 7, ty);
       x += widths[0];
       // ITEM — special-rate items read in blue so the eye pairs them with the tab.
-      doc.setFont('helvetica', 'bold').setTextColor(...(r.special ? BLUE_DEEP : INK));
-      fitText(r.item, x + 6, y + 10, widths[1] - 10, 9.5, { minSize: 7.5 });
+      doc.setFont(TABLE_FONT, 'bold').setTextColor(...(r.special ? BLUE_DEEP : INK));
+      fitText(r.item, x + 6, ty, widths[1] - 10, DATA_SIZE, { minSize: 8 });
       x += widths[1];
       // AVAILABLE PCS
       if (showAvail) {
-        doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...MUTED);
-        doc.text(r.available, x + 6, y + 10);
+        doc.setFont(TABLE_FONT, 'normal').setFontSize(META_SIZE).setTextColor(...MUTED);
+        doc.text(r.available, x + 6, ty);
         x += widths[2];
       }
       // Hairline separating identity columns from the rate block — guides the
@@ -369,11 +385,11 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
       r.cells.forEach((cell, i) => {
         const w = widths[firstRateCol + i];
         if (cell) {
-          doc.setFont('helvetica', 'bold').setTextColor(...INK);
-          fitText(cell, x + w - 6, y + 10, w - 12, 9.5, { align: 'right', minSize: 7 });
+          doc.setFont(TABLE_FONT, 'bold').setTextColor(...INK);
+          fitText(cell, x + w - 6, ty, w - 12, DATA_SIZE, { align: 'right', minSize: 7.5 });
         } else {
-          doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...FAINT);
-          doc.text('–', x + w - 6, y + 10, { align: 'right' });
+          doc.setFont(TABLE_FONT, 'normal').setFontSize(META_SIZE).setTextColor(...FAINT);
+          doc.text('–', x + w - 6, ty, { align: 'right' });
         }
         x += w;
       });
