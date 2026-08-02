@@ -17,7 +17,7 @@ import { memoryStorage } from 'multer';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
-import { CreateReceiptsDto, ReconRunsQueryDto, SaveAliasDto } from './dto/tally-recon.dto';
+import { CreateReceiptsDto, MarkRowsDto, ReconRunsQueryDto, SaveAliasDto } from './dto/tally-recon.dto';
 import { TallyReconService } from './tally-recon.service';
 
 const R = RESOURCES.TALLY_RECON;
@@ -81,6 +81,16 @@ export class TallyReconController {
   async removeAlias(@Param('id', ParseIntPipe) id: number) {
     await this.svc.removeAlias(id);
     return { ok: true };
+  }
+
+  /**
+   * Mark flagged lines as pending or solved (or clear the mark). Only annotates a
+   * review — it posts nothing — so recon-create is enough.
+   */
+  @Post('rows/mark')
+  @Permissions(perm(R, ACTIONS.CREATE))
+  markRows(@Body() dto: MarkRowsDto, @CurrentUser('name') userName?: string) {
+    return this.svc.markRows(dto, userName ?? null);
   }
 
   /**

@@ -1460,6 +1460,10 @@ model TallyReconRun {
   missingInTally Int @default(0)
   mismatchCount  Int @default(0)
   unmatchedParty Int @default(0)
+  /// How many flagged lines the user has marked. Kept on the run so the history
+  /// list can show review progress without loading every row.
+  pendingCount   Int @default(0)
+  solvedCount    Int @default(0)
 
   rows TallyReconRow[]
 
@@ -1501,8 +1505,47 @@ model TallyReconRow {
   resolvedAt  DateTime?
   resolvedRef String?
 
+  /// The user's own review of this discrepancy: OPEN (untouched) | PENDING |
+  /// SOLVED. A mark never suppresses the row — it still counts as a problem —
+  /// it records what the user has done about it.
+  review     String    @default("OPEN")
+  reviewNote String?
+  reviewedAt DateTime?
+  reviewedBy String?
+
+  /// Stable identity for "the same discrepancy" across uploads, so a mark made
+  /// on one register carries onto the next one that still reports it.
+  issueKey String
+
   @@index([runId])
   @@index([runId, status])
   @@index([runId, vchType])
+  @@index([runId, review])
+  @@index([issueKey])
   @@map("tally_recon_row")
+}
+
+/// A review mark that outlives the run it was made on.
+///
+/// Recon rows are rewritten wholesale on every upload, so the marks live here
+/// keyed by `issueKey` and are re-applied to any new row describing the same
+/// discrepancy. Fixing something for real makes it stop being reported at all,
+/// which is what retires a mark — nothing needs to delete it.
+model TallyReconMark {
+  id       Int    @id @default(autoincrement())
+  issueKey String @unique
+
+  /// PENDING | SOLVED. Clearing a mark deletes the row rather than storing OPEN.
+  review     String
+  note       String?
+  reviewedAt DateTime @default(now())
+  reviewedBy String?
+
+  /// Denormalised so the mark is legible on its own.
+  ledgerName String
+  vchType    String
+  vchNo      String
+
+  @@index([review])
+  @@map("tally_recon_mark")
 }

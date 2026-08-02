@@ -5,7 +5,9 @@ import type {
   ReconRow,
   ReconRunResult,
   ReconRunSummary,
+  ReconReview,
   ReconStatus,
+  MarkReconRowsResult,
   TallyAliasDto,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
@@ -25,6 +27,20 @@ const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
  * as a 21-Apr receipt. Read the local components instead.
  */
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/**
+ * Stable identity for "the same discrepancy", so a review mark made on one
+ * upload is recognised on the next.
+ *
+ * Rows are rewritten wholesale on every run, so identity has to come from the
+ * voucher itself. The amount is part of the key on purpose: if the figure moves,
+ * it is a *different* difference and last month's "solved" should not follow it.
+ * Paise are folded into an integer so float noise can't split a key in two.
+ */
+function issueKeyOf(r: { source: string; ledgerName: string; vchType: string; vchNo: string; dr: number; cr: number; txnDate: Date }): string {
+  const paise = Math.round((r.dr - r.cr) * 100);
+  return [r.source, r.ledgerName.trim().toUpperCase(), r.vchType, r.vchNo.trim().toUpperCase(), paise, ymd(r.txnDate)].join('|');
+}
 
 /** A challan that is a Debit Note rather than a sale — mirrors the party ledger. */
 function isDebitNoteChallan(prefix: string | null, transaction: string | null): boolean {
@@ -257,7 +273,12 @@ export class TallyReconService {
       rows.push(...reconcileParty(ledger, hit ? books.get(hit.id) ?? null : null, from));
     }
 
+    // Carry forward whatever the user already decided about these same lines.
+    const keyed = rows.map((r) => ({ row: r, issueKey: issueKeyOf(r) }));
+    const marks = await this.marksFor(keyed.map((k) => k.issueKey));
+
     const count = (s: ReconStatus) => rows.filter((r) => r.status === s).length;
+    const reviewCount = (v: string) => keyed.filter((k) => (marks.get(k.issueKey)?.review ?? 'OPEN') === v).length;
     const summary = {
       fileName: file.originalname,
       fromDate: from,
@@ -270,13 +291,20 @@ export class TallyReconService {
       missingInTally: count('MISSING_IN_TALLY'),
       mismatchCount: count('AMOUNT_MISMATCH') + count('DATE_MISMATCH'),
       unmatchedParty: count('UNMATCHED_PARTY'),
+      pendingCount: reviewCount('PENDING'),
+      solvedCount: reviewCount('SOLVED'),
     };
 
     const run = await this.prisma.tallyReconRun.create({
       data: {
         ...summary,
         rows: {
-          create: rows.map((r) => ({
+          create: keyed.map(({ row: r, issueKey }) => ({
+            issueKey,
+            review: marks.get(issueKey)?.review ?? 'OPEN',
+            reviewNote: marks.get(issueKey)?.note ?? null,
+            reviewedAt: marks.get(issueKey)?.reviewedAt ?? null,
+            reviewedBy: marks.get(issueKey)?.reviewedBy ?? null,
             source: r.source,
             ledgerName: r.ledgerName,
             customerId: r.customerId,
@@ -321,7 +349,7 @@ export class TallyReconService {
     return {
       ...this.toSummary(run),
       unmatchedLedgers,
-      rows: run.rows.map((r) => this.toRow(r)),
+      rows: run.rows.map((r) => this.toRow(run.uploadedAt, r)),
     };
   }
 
@@ -345,6 +373,8 @@ export class TallyReconService {
     missingInTally: number;
     mismatchCount: number;
     unmatchedParty: number;
+    pendingCount: number;
+    solvedCount: number;
   }): ReconRunSummary {
     return {
       id: r.id,
@@ -360,10 +390,12 @@ export class TallyReconService {
       missingInTally: r.missingInTally,
       mismatchCount: r.mismatchCount,
       unmatchedParty: r.unmatchedParty,
+      pendingCount: r.pendingCount,
+      solvedCount: r.solvedCount,
     };
   }
 
-  private toRow(r: {
+  private toRow(runUploadedAt: Date | null, r: {
     id: number;
     source: string;
     ledgerName: string;
@@ -382,6 +414,10 @@ export class TallyReconService {
     note: string | null;
     resolvedAt: Date | null;
     resolvedRef: string | null;
+    review: string;
+    reviewNote: string | null;
+    reviewedAt: Date | null;
+    reviewedBy: string | null;
   }): ReconRow {
     return {
       id: r.id,
@@ -402,7 +438,100 @@ export class TallyReconService {
       note: r.note,
       resolvedAt: iso(r.resolvedAt),
       resolvedRef: r.resolvedRef,
+      review: (r.review || 'OPEN') as ReconRow['review'],
+      reviewNote: r.reviewNote,
+      reviewedAt: iso(r.reviewedAt),
+      reviewedBy: r.reviewedBy,
+      // A mark predating this run's upload was inherited from an earlier one.
+      reviewCarried: !!r.reviewedAt && !!runUploadedAt && r.reviewedAt < runUploadedAt,
     };
+  }
+
+  /* ── review marks ────────────────────────────────────────────────────────── */
+
+  /** Existing marks for a batch of issue keys, keyed for O(1) lookup. */
+  private async marksFor(
+    issueKeys: string[],
+  ): Promise<Map<string, { review: string; note: string | null; reviewedAt: Date; reviewedBy: string | null }>> {
+    const out = new Map<string, { review: string; note: string | null; reviewedAt: Date; reviewedBy: string | null }>();
+    const keys = [...new Set(issueKeys)];
+    if (!keys.length) return out;
+    // SQLite caps parameters per statement, so ask in chunks rather than one
+    // 800-key IN clause.
+    const CHUNK = 400;
+    for (let i = 0; i < keys.length; i += CHUNK) {
+      const found = await this.prisma.tallyReconMark.findMany({
+        where: { issueKey: { in: keys.slice(i, i + CHUNK) } },
+        select: { issueKey: true, review: true, note: true, reviewedAt: true, reviewedBy: true },
+      });
+      for (const m of found) out.set(m.issueKey, { review: m.review, note: m.note, reviewedAt: m.reviewedAt, reviewedBy: m.reviewedBy });
+    }
+    return out;
+  }
+
+  /**
+   * Records the user's verdict on a set of report lines.
+   *
+   * The mark is written twice: onto the rows of this run (so the report reflects
+   * it at once) and into `TallyReconMark` keyed by issue identity, which is what
+   * makes it survive the next upload. Clearing deletes the durable mark instead of
+   * storing OPEN, so a cleared issue genuinely starts fresh next time.
+   */
+  async markRows(input: { rowIds: number[]; review: string; note?: string | null }, userName?: string | null): Promise<MarkReconRowsResult> {
+    const ids = [...new Set(input.rowIds ?? [])];
+    if (!ids.length) throw new BadRequestException('Select at least one line to mark.');
+    const review = (input.review ?? '').toUpperCase() as ReconReview;
+    if (!['OPEN', 'PENDING', 'SOLVED'].includes(review)) throw new BadRequestException('Unknown review state.');
+
+    const rows = await this.prisma.tallyReconRow.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, runId: true, issueKey: true, ledgerName: true, vchType: true, vchNo: true, status: true },
+    });
+    if (!rows.length) throw new NotFoundException('Those report lines no longer exist.');
+
+    // Marking a line that isn't a discrepancy is meaningless — there is nothing
+    // to resolve — so those are skipped rather than silently accepted.
+    const markable = rows.filter((r) => r.status !== 'MATCHED' && r.status !== 'NOT_APPLICABLE');
+    if (!markable.length) throw new BadRequestException('Only flagged lines can be marked.');
+
+    const note = input.note?.trim() ? input.note.trim() : null;
+    const now = new Date();
+
+    await this.prisma.$transaction(async (tx) => {
+      if (review === 'OPEN') {
+        await tx.tallyReconRow.updateMany({
+          where: { id: { in: markable.map((r) => r.id) } },
+          data: { review: 'OPEN', reviewNote: null, reviewedAt: null, reviewedBy: null },
+        });
+        await tx.tallyReconMark.deleteMany({ where: { issueKey: { in: markable.map((r) => r.issueKey) } } });
+        return;
+      }
+      await tx.tallyReconRow.updateMany({
+        where: { id: { in: markable.map((r) => r.id) } },
+        data: { review, reviewNote: note, reviewedAt: now, reviewedBy: userName ?? null },
+      });
+      // One issue key can appear on several rows only if the register repeats a
+      // voucher verbatim; upsert keeps that harmless.
+      for (const r of markable) {
+        await tx.tallyReconMark.upsert({
+          where: { issueKey: r.issueKey },
+          create: {
+            issueKey: r.issueKey,
+            review,
+            note,
+            reviewedAt: now,
+            reviewedBy: userName ?? null,
+            ledgerName: r.ledgerName,
+            vchType: r.vchType,
+            vchNo: r.vchNo,
+          },
+          update: { review, note, reviewedAt: now, reviewedBy: userName ?? null },
+        });
+      }
+    });
+
+    for (const runId of [...new Set(markable.map((r) => r.runId))]) await this.refreshCounts(runId);
+    return { updated: markable.length };
   }
 
   /* ── aliases ─────────────────────────────────────────────────────────────── */
@@ -520,6 +649,13 @@ export class TallyReconService {
             status: 'MATCHED',
             resolvedAt: new Date(),
             resolvedRef: voucherNo || 'entered',
+            // Genuinely dealt with, so it reads as solved in the report. No durable
+            // mark is needed: the receipt now exists, so the next upload matches it
+            // and never flags it again.
+            review: 'SOLVED',
+            reviewNote: `Receipt entered from the report${voucherNo ? ` as ${voucherNo}` : ''}.`,
+            reviewedAt: new Date(),
+            reviewedBy: userName ?? null,
             omsRef: voucherNo || row.omsRef,
             omsAmount: amount,
             omsDate: row.txnDate,
@@ -548,6 +684,12 @@ export class TallyReconService {
       _count: { _all: true },
     });
     const of = (s: string) => grouped.find((g) => g.status === s)?._count._all ?? 0;
+    const byReview = await this.prisma.tallyReconRow.groupBy({
+      by: ['review'],
+      where: { runId },
+      _count: { _all: true },
+    });
+    const reviewed = (v: string) => byReview.find((g) => g.review === v)?._count._all ?? 0;
     await this.prisma.tallyReconRun.update({
       where: { id: runId },
       data: {
@@ -556,6 +698,8 @@ export class TallyReconService {
         missingInTally: of('MISSING_IN_TALLY'),
         mismatchCount: of('AMOUNT_MISMATCH') + of('DATE_MISMATCH'),
         unmatchedParty: of('UNMATCHED_PARTY'),
+        pendingCount: reviewed('PENDING'),
+        solvedCount: reviewed('SOLVED'),
       },
     });
   }

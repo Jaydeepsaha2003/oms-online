@@ -2,17 +2,23 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   AlertTriangle,
+  Check,
   CheckCheck,
   CircleCheck,
+  Clock,
   FileSpreadsheet,
+  History,
   Link2,
   Loader2,
+  RotateCcw,
+  Square,
+  SquareCheckBig,
   Trash2,
   Upload,
   UserRoundX,
   X,
 } from 'lucide-react';
-import type { ReconRow, ReconStatus } from '@oms/shared';
+import type { ReconReview, ReconRow, ReconStatus } from '@oms/shared';
 import { RECON_PROBLEM_STATUSES } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
@@ -27,6 +33,7 @@ import {
   useDeleteReconRun,
   useReconRun,
   useReconRuns,
+  useMarkReconRows,
   useSaveTallyAlias,
 } from './use-tally-recon';
 import { useTallyReconRun } from './tally-recon-run-context';
@@ -100,6 +107,55 @@ const STATUS: Record<ReconStatus, StatusMeta> = {
 
 const VCH_ORDER = ['OPENING', 'SALES', 'RECEIPT', 'CREDIT NOTE', 'DEBIT NOTE', 'DISCOUNT', 'OTHER'];
 
+/** A line the user could have to do something about — the only kind worth marking. */
+const isFlagged = (r: ReconRow) => r.status !== 'MATCHED' && r.status !== 'NOT_APPLICABLE';
+
+/** A missing receipt that can be posted straight from the report. */
+const canEnterAsReceipt = (r: ReconRow) =>
+  r.vchType === 'RECEIPT' && r.status === 'MISSING_IN_OMS' && !r.resolvedAt && !!r.customerId;
+
+const REVIEW: Record<Exclude<ReconReview, 'OPEN'>, { label: string; chip: string }> = {
+  PENDING: {
+    label: 'Pending',
+    chip: 'border-amber-500 bg-amber-100 text-amber-900 dark:border-amber-400/60 dark:bg-amber-400/15 dark:text-amber-200',
+  },
+  SOLVED: {
+    label: 'Solved',
+    chip: 'border-emerald-500 bg-emerald-100 text-emerald-900 dark:border-emerald-400/60 dark:bg-emerald-400/15 dark:text-emerald-200',
+  },
+};
+
+/**
+ * The user's mark on a line, with a hairline "carried" cue when it was inherited
+ * from an earlier upload — otherwise a mark made months ago looks like one made
+ * against today's figures.
+ */
+function ReviewBadge({ row }: { row: ReconRow }) {
+  if (row.review === 'OPEN') return null;
+  const m = REVIEW[row.review];
+  const title = [
+    row.reviewNote,
+    row.reviewedBy ? `Marked by ${row.reviewedBy}` : null,
+    row.reviewedAt ? prettyDate(row.reviewedAt) : null,
+    row.reviewCarried ? 'Carried over from an earlier upload' : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return (
+    <span
+      title={title || undefined}
+      className={cn(
+        'inline-flex items-center gap-1 rounded-[3px] border px-1.5 py-[1px] text-[10.5px] font-bold tracking-wide uppercase',
+        m.chip,
+      )}
+    >
+      {row.review === 'SOLVED' ? <Check className="size-3" /> : <Clock className="size-3" />}
+      {m.label}
+      {row.reviewCarried && <History className="size-3 opacity-70" />}
+    </span>
+  );
+}
+
 function StatusChip({ status }: { status: ReconStatus }) {
   const m = STATUS[status];
   return (
@@ -150,11 +206,14 @@ export function TallyReconPage() {
   const canRun = can('tallyrecon:create');
   const canDelete = can('tallyrecon:delete');
   const canEnterReceipt = canRun && can('payment:create');
+  /** Marking is an annotation, so recon-create alone is enough for it. */
+  const canMark = canRun;
 
   const fileRef = useRef<HTMLInputElement>(null);
   const [runId, setRunId] = useState<number | null>(null);
 
   const [status, setStatus] = useState<ReconStatus | 'PROBLEMS' | ''>('PROBLEMS');
+  const [review, setReview] = useState<ReconReview | ''>('');
   const [vchType, setVchType] = useState('');
   const [party, setParty] = useState('');
   const [picked, setPicked] = useState<Set<number>>(new Set());
@@ -176,6 +235,7 @@ export function TallyReconPage() {
   const removeRun = useDeleteReconRun();
   const saveAlias = useSaveTallyAlias();
   const createReceipts = useCreateReconReceipts();
+  const markRows = useMarkReconRows();
 
   const custByName = useMemo(() => new Map((lookups?.customers ?? []).map((c) => [c.name, c.id])), [lookups]);
   const customerOptions = useMemo(() => [...custByName.keys()].sort((a, b) => a.localeCompare(b)), [custByName]);
@@ -189,11 +249,12 @@ export function TallyReconPage() {
       rows.filter((r) => {
         if (status === 'PROBLEMS' && !RECON_PROBLEM_STATUSES.includes(r.status)) return false;
         if (status && status !== 'PROBLEMS' && r.status !== status) return false;
+        if (review && r.review !== review) return false;
         if (vchType && r.vchType !== vchType) return false;
         if (party && r.ledgerName !== party) return false;
         return true;
       }),
-    [rows, status, vchType, party],
+    [rows, status, review, vchType, party],
   );
 
   /** Party blocks, Tally-style: a heading per ledger with its rows beneath. */
@@ -207,13 +268,14 @@ export function TallyReconPage() {
     return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [visible]);
 
-  /** Rows the user can turn into a receipt with one click. */
-  const entryable = useMemo(
-    () => visible.filter((r) => r.vchType === 'RECEIPT' && r.status === 'MISSING_IN_OMS' && !r.resolvedAt && r.customerId),
-    [visible],
-  );
+  /** Every flagged line can be selected, so one selection drives every bulk action. */
+  const selectable = useMemo(() => visible.filter(isFlagged), [visible]);
+  const selectedRows = useMemo(() => selectable.filter((r) => picked.has(r.id)), [selectable, picked]);
+
+  /** Of those, the ones that are a missing receipt we can actually post. */
+  const entryable = useMemo(() => visible.filter(canEnterAsReceipt), [visible]);
   const entryableIds = useMemo(() => new Set(entryable.map((r) => r.id)), [entryable]);
-  const pickedRows = useMemo(() => entryable.filter((r) => picked.has(r.id)), [entryable, picked]);
+  const pickedRows = useMemo(() => selectedRows.filter((r) => entryableIds.has(r.id)), [selectedRows, entryableIds]);
   const pickedTotal = pickedRows.reduce((s, r) => s + (r.cr || r.dr), 0);
 
   const isEntryable = (r: ReconRow) => entryableIds.has(r.id);
@@ -225,7 +287,7 @@ export function TallyReconPage() {
       return next;
     });
   const toggleAll = () =>
-    setPicked((prev) => (entryable.every((r) => prev.has(r.id)) ? new Set() : new Set(entryable.map((r) => r.id))));
+    setPicked((prev) => (selectable.length > 0 && selectable.every((r) => prev.has(r.id)) ? new Set() : new Set(selectable.map((r) => r.id))));
 
   /* ── actions ────────────────────────────────────────────────────────────── */
 
@@ -248,6 +310,7 @@ export function TallyReconPage() {
     setRunId(fresh);
     setPicked(new Set());
     setStatus('PROBLEMS');
+    setReview('');
     setVchType('');
     setParty('');
   }, [recon.phase, recon.takeFreshRunId]);
@@ -277,6 +340,22 @@ export function TallyReconPage() {
     }
   };
 
+  const onMark = async (next: ReconReview) => {
+    if (!selectedRows.length) return;
+    try {
+      const res = await markRows.mutateAsync({ rowIds: selectedRows.map((r) => r.id), review: next });
+      setPicked(new Set());
+      const n = res.updated;
+      toast.success(
+        next === 'OPEN'
+          ? `Cleared ${n} mark${n === 1 ? '' : 's'}.`
+          : `Marked ${n} line${n === 1 ? '' : 's'} as ${next === 'SOLVED' ? 'solved' : 'pending'}.`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not save that mark.');
+    }
+  };
+
   const onCreateReceipts = async () => {
     if (!pickedRows.length) return;
     try {
@@ -295,7 +374,7 @@ export function TallyReconPage() {
   };
 
   const problemCount = run ? run.missingInOms + run.missingInTally + run.mismatchCount + run.unmatchedParty : 0;
-  const hasFilters = !!vchType || !!party || status !== 'PROBLEMS';
+  const hasFilters = !!vchType || !!party || !!review || status !== 'PROBLEMS';
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2 p-2.5 font-sans sm:gap-2.5 sm:p-3">
@@ -368,6 +447,25 @@ export function TallyReconPage() {
             />
           </div>
 
+          <div className="w-full sm:w-40">
+            <Label className="sr-only" htmlFor="recon-review">
+              Review
+            </Label>
+            <NativeSelect
+              id="recon-review"
+              value={review}
+              onChange={(v) => setReview(v as ReconReview | '')}
+              options={[
+                { value: '', label: 'Any review' },
+                { value: 'OPEN', label: 'Unmarked' },
+                { value: 'PENDING', label: 'Pending' },
+                { value: 'SOLVED', label: 'Solved' },
+              ]}
+              placeholder="Review"
+              className={cn(CONTROL, 'font-medium', review && CONTROL_ON)}
+            />
+          </div>
+
           {hasFilters && (
             <Button
               variant="ghost"
@@ -375,6 +473,7 @@ export function TallyReconPage() {
               className="h-9 rounded-[4px] text-[12.5px] font-semibold text-amber-700 hover:bg-amber-50 hover:text-amber-900 dark:text-amber-300 dark:hover:bg-amber-400/10"
               onClick={() => {
                 setStatus('PROBLEMS');
+                setReview('');
                 setVchType('');
                 setParty('');
               }}
@@ -454,6 +553,30 @@ export function TallyReconPage() {
               tone={STATUS.UNMATCHED_PARTY.chip}
               active={status === 'UNMATCHED_PARTY'}
               onClick={() => setStatus(status === 'UNMATCHED_PARTY' ? '' : 'UNMATCHED_PARTY')}
+            />
+            {/* Review progress. A mark never removes a line from the counts above —
+                it records what has been done about it. */}
+            <Tile
+              label="Marked pending"
+              blurb="Still being chased"
+              value={run.pendingCount}
+              tone={REVIEW.PENDING.chip}
+              active={review === 'PENDING'}
+              onClick={() => {
+                setReview(review === 'PENDING' ? '' : 'PENDING');
+                setStatus('');
+              }}
+            />
+            <Tile
+              label="Marked solved"
+              blurb="Dealt with"
+              value={run.solvedCount}
+              tone={REVIEW.SOLVED.chip}
+              active={review === 'SOLVED'}
+              onClick={() => {
+                setReview(review === 'SOLVED' ? '' : 'SOLVED');
+                setStatus('');
+              }}
             />
           </div>
         )}
@@ -596,17 +719,17 @@ export function TallyReconPage() {
                 <thead>
                   <tr>
                     <th scope="col" className={cn(TH, TH_LINE, 'w-9 text-center')}>
-                      {canEnterReceipt && entryable.length > 0 ? (
+                      {canMark && selectable.length > 0 ? (
                         <button
                           type="button"
                           onClick={toggleAll}
-                          title="Select every missing receipt shown"
+                          title="Select every flagged line shown"
                           className="cursor-pointer align-middle text-amber-300 hover:text-white"
                         >
                           <CheckCheck className="size-3.5" />
                         </button>
                       ) : (
-                        <span className="sr-only">Enter</span>
+                        <span className="sr-only">Select</span>
                       )}
                     </th>
                     <th scope="col" className={cn(TH, TH_LINE, 'w-24')}>Date</th>
@@ -616,6 +739,7 @@ export function TallyReconPage() {
                     <th scope="col" className={cn(TH, TH_LINE, 'w-28 text-right')}>Debit</th>
                     <th scope="col" className={cn(TH, TH_LINE, 'w-28 text-right')}>Credit</th>
                     <th scope="col" className={cn(TH, TH_LINE, 'w-32')}>Status</th>
+                    <th scope="col" className={cn(TH, TH_LINE, 'w-28')}>Review</th>
                     <th scope="col" className={cn(TH, TH_LINE, 'w-28')}>OMS Ref</th>
                     <th scope="col" className={cn(TH, TH_LINE, 'w-28 text-right')}>OMS Amt</th>
                     <th scope="col" className={cn(TH, 'min-w-[16rem]')}>Remark</th>
@@ -624,13 +748,13 @@ export function TallyReconPage() {
                 <tbody>
                   {isFetching && !blocks.length ? (
                     <tr>
-                      <td colSpan={11} className="text-muted-foreground h-24 text-center">
+                      <td colSpan={12} className="text-muted-foreground h-24 text-center">
                         <Loader2 className="mx-auto size-5 animate-spin" />
                       </td>
                     </tr>
                   ) : !blocks.length ? (
                     <tr>
-                      <td colSpan={11} className="text-muted-foreground h-24 text-center text-[13px] font-medium">
+                      <td colSpan={12} className="text-muted-foreground h-24 text-center text-[13px] font-medium">
                         {status === 'PROBLEMS'
                           ? 'Nothing needs attention — every register entry agrees with OMS.'
                           : 'No rows for these filters.'}
@@ -647,12 +771,12 @@ export function TallyReconPage() {
                               <span className="ml-1.5 font-semibold normal-case opacity-70">→ {list[0].customerName}</span>
                             )}
                           </td>
-                          <td className={cn(TD, 'text-[11px] font-bold text-amber-900 dark:text-amber-200')} colSpan={4}>
+                          <td className={cn(TD, 'text-[11px] font-bold text-amber-900 dark:text-amber-200')} colSpan={5}>
                             {list.length} row{list.length === 1 ? '' : 's'}
                           </td>
                         </tr>
                         {list.map((r) => {
-                          const tickable = canEnterReceipt && isEntryable(r);
+                          const pickable = canMark && isFlagged(r);
                           const on = picked.has(r.id);
                           return (
                             <tr
@@ -665,18 +789,22 @@ export function TallyReconPage() {
                               )}
                             >
                               <td className={cn(TD, 'text-center')}>
-                                {tickable ? (
+                                {pickable ? (
                                   <button
                                     type="button"
                                     onClick={() => toggle(r.id)}
                                     aria-pressed={on}
-                                    title={`Enter this ${inr(r.cr || r.dr)} receipt in OMS`}
+                                    title={
+                                      isEntryable(r)
+                                        ? `Select — this ${inr(r.cr || r.dr)} receipt can be entered in OMS`
+                                        : 'Select to mark solved or pending'
+                                    }
                                     className={cn(
                                       'cursor-pointer align-middle transition-colors',
-                                      on ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-400 hover:text-emerald-700 dark:hover:text-emerald-300',
+                                      on ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200',
                                     )}
                                   >
-                                    <CircleCheck className={cn('size-4', on && 'fill-emerald-200 dark:fill-emerald-900')} />
+                                    {on ? <SquareCheckBig className="size-4" /> : <Square className="size-4" />}
                                   </button>
                                 ) : r.resolvedAt ? (
                                   <CircleCheck className="mx-auto size-4 fill-emerald-200 text-emerald-700 dark:fill-emerald-900 dark:text-emerald-300" />
@@ -699,6 +827,13 @@ export function TallyReconPage() {
                               <td className={cn(TD, NUM, 'font-semibold text-emerald-700 dark:text-emerald-400')}>{moneyOrDash(r.cr)}</td>
                               <td className={TD}>
                                 <StatusChip status={r.status} />
+                              </td>
+                              <td className={cn(TD, 'whitespace-nowrap')}>
+                                {r.review !== 'OPEN' ? (
+                                  <ReviewBadge row={r} />
+                                ) : canMark && isFlagged(r) ? (
+                                  <span className="text-muted-foreground text-[11px] font-medium">—</span>
+                                ) : null}
                               </td>
                               <td className={cn(TD, 'text-[12.5px] font-semibold whitespace-nowrap')}>{r.omsRef || '-'}</td>
                               <td className={cn(TD, NUM, 'font-semibold')}>{moneyOrDash(r.omsAmount)}</td>
@@ -727,7 +862,7 @@ export function TallyReconPage() {
                     </div>
                     <div className="divide-y divide-amber-200/70 dark:divide-amber-400/10">
                       {list.map((r) => {
-                        const tickable = canEnterReceipt && isEntryable(r);
+                        const pickable = canMark && isFlagged(r);
                         const on = picked.has(r.id);
                         return (
                           <div key={r.id} className={cn('p-2.5', on && 'bg-emerald-100/70 dark:bg-emerald-400/15')}>
@@ -738,19 +873,22 @@ export function TallyReconPage() {
                                 </p>
                                 <p className="truncate text-[13px] font-semibold text-slate-800 dark:text-slate-200">{r.particulars || '-'}</p>
                               </div>
-                              {tickable && (
+                              {pickable && (
                                 <button
                                   type="button"
                                   onClick={() => toggle(r.id)}
                                   aria-pressed={on}
                                   className={cn('shrink-0 cursor-pointer', on ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-400')}
                                 >
-                                  <CircleCheck className={cn('size-5', on && 'fill-emerald-200 dark:fill-emerald-900')} />
+                                  {on ? <SquareCheckBig className="size-5" /> : <Square className="size-5" />}
                                 </button>
                               )}
                             </div>
-                            <div className="mt-1.5 flex items-center justify-between gap-2">
-                              <StatusChip status={r.status} />
+                            <div className="mt-1.5 flex flex-wrap items-center justify-between gap-1.5">
+                              <span className="flex flex-wrap items-center gap-1.5">
+                                <StatusChip status={r.status} />
+                                <ReviewBadge row={r} />
+                              </span>
                               <span className="text-[12.5px] font-bold tabular-nums">
                                 {prettyDate(r.txnDate)} · {moneyOrDash(r.dr || r.cr)}
                               </span>
@@ -767,27 +905,61 @@ export function TallyReconPage() {
           </>
         )}
 
-        {/* ── quick receipt entry bar ──────────────────────────────────────── */}
-        {canEnterReceipt && pickedRows.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 border-t-2 border-emerald-500 bg-emerald-50 px-2.5 py-2 sm:px-3 dark:border-emerald-400/60 dark:bg-emerald-400/10">
+        {/* ── bulk actions on the selection ────────────────────────────────── */}
+        {canMark && selectedRows.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 border-t-2 border-emerald-500 bg-emerald-50 px-2.5 py-2 sm:gap-2 sm:px-3 dark:border-emerald-400/60 dark:bg-emerald-400/10">
             <span className="text-[12.5px] font-bold text-emerald-900 dark:text-emerald-200">
-              {pickedRows.length} receipt{pickedRows.length === 1 ? '' : 's'} selected ·{' '}
-              <span className="tabular-nums">{inr(pickedTotal)}</span>
+              {selectedRows.length} line{selectedRows.length === 1 ? '' : 's'} selected
+              {pickedRows.length > 0 && (
+                <span className="font-semibold opacity-80">
+                  {' '}
+                  · {pickedRows.length} enterable receipt{pickedRows.length === 1 ? '' : 's'} ({inr(pickedTotal)})
+                </span>
+              )}
             </span>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 rounded-[4px] text-[12px] font-semibold"
-              onClick={() => setPicked(new Set())}
-            >
-              Clear
+            <Button variant="ghost" size="sm" className="h-8 rounded-[4px] text-[12px] font-semibold" onClick={() => setPicked(new Set())}>
+              Clear selection
             </Button>
-            <Button
-              className="ml-auto h-8 gap-1.5 rounded-[4px] bg-emerald-700 text-[12.5px] font-bold text-white hover:bg-emerald-800"
-              onClick={() => setConfirmOpen(true)}
-            >
-              <CircleCheck className="size-3.5" /> Enter receipts in OMS
-            </Button>
+
+            <div className="ml-auto flex flex-wrap items-center gap-1.5">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 gap-1.5 rounded-[4px] border-amber-500 bg-amber-100 text-[12px] font-bold text-amber-900 hover:bg-amber-200 dark:border-amber-400/60 dark:bg-amber-400/15 dark:text-amber-200"
+                onClick={() => void onMark('PENDING')}
+                disabled={markRows.isPending}
+              >
+                <Clock className="size-3.5" /> Mark pending
+              </Button>
+              <Button
+                size="sm"
+                className="h-8 gap-1.5 rounded-[4px] bg-emerald-700 text-[12px] font-bold text-white hover:bg-emerald-800"
+                onClick={() => void onMark('SOLVED')}
+                disabled={markRows.isPending}
+              >
+                <Check className="size-3.5" /> Mark solved
+              </Button>
+              {selectedRows.some((r) => r.review !== 'OPEN') && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-8 gap-1.5 rounded-[4px] text-[12px] font-semibold"
+                  onClick={() => void onMark('OPEN')}
+                  disabled={markRows.isPending}
+                >
+                  <RotateCcw className="size-3.5" /> Clear mark
+                </Button>
+              )}
+              {canEnterReceipt && pickedRows.length > 0 && (
+                <Button
+                  size="sm"
+                  className="h-8 gap-1.5 rounded-[4px] bg-blue-800 text-[12px] font-bold text-white hover:bg-blue-900"
+                  onClick={() => setConfirmOpen(true)}
+                >
+                  <CircleCheck className="size-3.5" /> Enter {pickedRows.length} receipt{pickedRows.length === 1 ? '' : 's'}
+                </Button>
+              )}
+            </div>
           </div>
         )}
       </div>

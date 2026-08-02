@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
+  MarkReconRowsInput,
+  MarkReconRowsResult,
   ReconCreateReceiptInput,
   ReconCreateReceiptResult,
   ReconRunResult,
@@ -95,6 +97,22 @@ export function useCreateReconReceipts() {
       void qc.invalidateQueries({ queryKey: ['party-ledger'] });
       void qc.invalidateQueries({ queryKey: ['payments'] });
       void qc.invalidateQueries({ queryKey: ['daybook'] });
+    },
+  });
+}
+
+/**
+ * Marks flagged lines as pending or solved (or clears the mark).
+ *
+ * Only the run is refetched: a mark annotates the report and posts nothing, so
+ * no ledger or payment cache is affected.
+ */
+export function useMarkReconRows() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: MarkReconRowsInput) => http.post<MarkReconRowsResult>('/tally-recon/rows/mark', input),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: RUNS });
     },
   });
 }
