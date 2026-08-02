@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ChevronLeft, ChevronRight, Filter, Loader2, Pencil, Plus, PowerOff, RotateCcw, Scale, Search, Trash2, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Filter, ListX, Loader2, Pencil, Plus, PowerOff, RotateCcw, Scale, Search, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { CategoryFieldDto, ProductDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -26,6 +26,7 @@ import {
   useCreateProduct,
   useDeleteProduct,
   useImportProducts,
+  fetchAllMatchingProducts,
   useBulkSetProductFlags,
   useProductLookups,
   useProducts,
@@ -162,6 +163,40 @@ export function ProductsPage() {
   const importMut = useImportProducts();
   const bulkSetFlags = useBulkSetProductFlags();
 
+  const items = data?.items ?? [];
+  const totalPages = data?.totalPages ?? 1;
+
+  // The header checkbox selects/deselects every row on THIS page; "Select all N
+  // matching" (below, next to the record count) reaches across every page the
+  // current search/filters match, fetched on demand rather than kept loaded.
+  const allOnPageSelected = items.length > 0 && items.every((p) => selected.has(p.id));
+  const toggleSelectPage = (checked: boolean) =>
+    setSelected((m) => {
+      const n = new Map(m);
+      for (const p of items) {
+        if (checked) n.set(p.id, p);
+        else n.delete(p.id);
+      }
+      return n;
+    });
+  const [selectingAll, setSelectingAll] = useState(false);
+  const selectAllMatching = async () => {
+    if (!data || selectingAll) return;
+    setSelectingAll(true);
+    try {
+      const all = await fetchAllMatchingProducts(query, data.total);
+      setSelected((m) => {
+        const n = new Map(m);
+        for (const p of all) n.set(p.id, p);
+        return n;
+      });
+    } catch (e) {
+      toast.error(getApiErrorMessage(e, 'Could not select all matching products'));
+    } finally {
+      setSelectingAll(false);
+    }
+  };
+
   // The 'sel' cell reads `selected`, so it's built per-render alongside the rest
   // of the (otherwise static) column set — same pattern as the Designs page.
   const columns = useMemo<DataColumn<ProductDto>[]>(
@@ -169,6 +204,11 @@ export function ProductsPage() {
       {
         id: 'sel',
         label: '',
+        header: (
+          <span onClick={(e) => e.stopPropagation()}>
+            <RowCheckbox checked={allOnPageSelected} onChange={toggleSelectPage} label="Select all on this page" />
+          </span>
+        ),
         fixed: true,
         noSort: true,
         cell: (p) => (
@@ -179,12 +219,9 @@ export function ProductsPage() {
       },
       ...BASE_COLUMNS,
     ],
-    [selected],
+    [selected, items, allOnPageSelected],
   );
   const cols = useColumnOrder('products', columns);
-
-  const items = data?.items ?? [];
-  const totalPages = data?.totalPages ?? 1;
 
   const handleDelete = async (p: ProductDto) => {
     const ok = await confirm({
@@ -215,6 +252,31 @@ export function ProductsPage() {
       {
         onSuccess: (res) => {
           toast.success(`Deactivated ${res.updated} product${res.updated === 1 ? '' : 's'}`);
+          setSelected(new Map());
+        },
+        onError: (e) => toast.error(getApiErrorMessage(e, 'Bulk update failed')),
+      },
+    );
+  };
+
+  /** Turns off "show on rate list" for every selected product — the same flag
+   *  the per-row RowCheckbox toggles, just applied in bulk. Unlike deactivating,
+   *  this leaves the product fully active and orderable; it only stops it from
+   *  appearing on the customer-facing Rate List. */
+  const handleBulkRemoveFromRateList = async () => {
+    const ids = [...selected.keys()];
+    if (!ids.length) return;
+    const ok = await confirm({
+      title: `Remove ${ids.length} product${ids.length === 1 ? '' : 's'} from the rate list?`,
+      description: 'They stay active and orderable — they just stop appearing on the customer Rate List.',
+      confirmText: 'Remove',
+    });
+    if (!ok) return;
+    bulkSetFlags.mutate(
+      { ids, showOnRateList: false },
+      {
+        onSuccess: (res) => {
+          toast.success(`Removed ${res.updated} product${res.updated === 1 ? '' : 's'} from the rate list`);
           setSelected(new Map());
         },
         onError: (e) => toast.error(getApiErrorMessage(e, 'Bulk update failed')),
@@ -355,9 +417,34 @@ export function ProductsPage() {
             <span className="font-bold text-foreground">{(data?.total ?? 0).toLocaleString('en-IN')}</span> records
           </p>
 
+          {/* Ticks every row on this page individually; when the filter spans more
+              than one page, this reaches the rest without paging through by hand. */}
+          {!!data && data.total > items.length && (
+            <button
+              type="button"
+              onClick={() => void selectAllMatching()}
+              disabled={selectingAll}
+              className="text-primary shrink-0 cursor-pointer text-[12px] font-semibold whitespace-nowrap hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {selectingAll ? 'Selecting…' : `Select all ${data.total.toLocaleString('en-IN')} matching`}
+            </button>
+          )}
+
           {selected.size > 0 && (
             <div className="flex items-center gap-2 rounded-[4px] bg-sky-50 px-3 py-1.5 text-[12.5px] font-semibold text-sky-700 ring-1 ring-sky-200 ring-inset dark:bg-sky-400/10 dark:text-sky-300 dark:ring-sky-400/25">
               <span className="tabular-nums">{selected.size} selected</span>
+              {can('product:update') && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 rounded-[4px] border-sky-300 bg-white text-[12px] font-bold text-sky-700 hover:bg-sky-100 dark:border-sky-400/40 dark:bg-transparent dark:text-sky-300"
+                  onClick={() => void handleBulkRemoveFromRateList()}
+                  disabled={bulkSetFlags.isPending}
+                  title="Stops these appearing on the customer Rate List — they stay active and orderable"
+                >
+                  <ListX className="size-3.5" /> Remove from rate list
+                </Button>
+              )}
               {can('product:update') && (
                 <Button
                   size="sm"

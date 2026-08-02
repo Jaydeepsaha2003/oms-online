@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import kavishLogo from '@/assets/kavish-logo.png';
 import { fetchCustomerRateList, useCustomerRateHistory, useCustomerRateList, useCustomers } from './use-customers';
 import { exportRateListExcel, exportRateListPdf } from './customer-rate-list-export';
-import { buildSections, type PivotTable } from './customer-rate-list-pivot';
+import { buildSections, type DesignPivotTable, type PivotTable } from './customer-rate-list-pivot';
 
 /** Rapid successive rate saves (same editing session) collapse into one version. */
 const VERSION_WINDOW_MS = 30_000;
@@ -152,6 +152,51 @@ function PivotCard({ t }: { t: PivotTable }) {
   );
 }
 
+/**
+ * Design rates, presented as a plain "design type → rate" list rather than a
+ * pcs-by-pcs grid — a design almost always charges the same fee no matter the
+ * pcs count or size, so pivoting it into several near-identical columns (like
+ * products get) was mostly repeated numbers. Each row shows the ONE rate the
+ * design is billed at most often; showing every minor variant as a
+ * slash-separated combination was more confusing than useful (a size with no
+ * pcs recorded at all could end up listed twice at two different prices, both
+ * labelled identically, which reads as a contradiction rather than a fact).
+ */
+function DesignPivotCard({ t }: { t: DesignPivotTable }) {
+  return (
+    <div className="bg-card overflow-hidden rounded-[4px] border shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 bg-gradient-to-b from-blue-800 to-indigo-800 px-3 py-2 text-[13.5px] font-extrabold tracking-wide text-white uppercase">
+        <span>{t.title}</span>
+        <span className="text-[11px] font-semibold tracking-normal text-blue-100 normal-case">
+          {t.rows.length} design{t.rows.length === 1 ? '' : 's'}
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[13px] [&_td]:border-r [&_td]:border-slate-200 dark:[&_td]:border-white/10 [&_td:last-child]:border-r-0 [&_th]:border-r [&_th]:border-white/20 [&_th:last-child]:border-r-0">
+          <thead>
+            <tr className="bg-gradient-to-b from-blue-800 to-indigo-800 text-[11.5px] text-white uppercase">
+              <th className="w-12 px-3 py-1.5 text-left font-extrabold">SR</th>
+              <th className="px-3 py-1.5 text-left font-extrabold">Design type</th>
+              <th className="w-28 px-3 py-1.5 text-left font-extrabold">Available pcs</th>
+              <th className="w-28 px-3 py-1.5 text-right font-extrabold">Rate</th>
+            </tr>
+          </thead>
+          <tbody className="[&_td]:border-t [&_td]:border-slate-200 [&_td]:px-3 [&_td]:py-1 dark:[&_td]:border-white/10">
+            {t.rows.map((r) => (
+              <tr key={r.sr} className="even:bg-slate-100/80 dark:even:bg-white/[0.04]">
+                <td className="text-muted-foreground text-[12px] font-medium tabular-nums">{r.sr}</td>
+                <td className={TEXT_CELL}>{r.item}</td>
+                <td className="text-muted-foreground text-[11.5px] font-medium tabular-nums">{r.available || '—'}</td>
+                <td className="text-right text-[13.5px] font-bold tabular-nums text-slate-900 dark:text-slate-100">{r.rate}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 type Tab = 'list' | 'history';
 
 export function RateListPage() {
@@ -175,7 +220,7 @@ export function RateListPage() {
 
   const { data: rateList, isLoading: listLoading, isFetching: listFetching } = useCustomerRateList(customerId);
   const sections = useMemo(() => (rateList ? buildSections(rateList) : null), [rateList]);
-  const allTables = useMemo(() => (sections ? [...sections.products, ...sections.designs] : []), [sections]);
+  const totalTableCount = (sections?.products.length ?? 0) + (sections?.designs.length ?? 0);
 
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [busy, setBusy] = useState<'pdf' | 'excel' | null>(null);
@@ -254,7 +299,7 @@ export function RateListPage() {
               <div className="grid place-items-center py-20">
                 <Loader2 className="text-muted-foreground size-6 animate-spin" />
               </div>
-            ) : allTables.length === 0 ? (
+            ) : totalTableCount === 0 ? (
               <div className="text-muted-foreground grid place-items-center rounded-[4px] border border-dashed py-20 text-[13px] font-medium">
                 <TableProperties className="mb-2 size-8 opacity-40" />
                 No products or designs to rate yet.
@@ -273,9 +318,8 @@ export function RateListPage() {
                     {listFetching && <Loader2 className="size-3.5 animate-spin" />}
                     Current effective rates for <b className="text-foreground">{customerLabel}</b> — base chart rate + this customer’s special-rate adjustments.
                   </p>
-                  {allTables.map((t) => (
-                    <PivotCard key={t.title} t={t} />
-                  ))}
+                  {sections?.products.map((t) => <PivotCard key={t.title} t={t} />)}
+                  {sections?.designs.map((t) => <DesignPivotCard key={t.title} t={t} />)}
                 </div>
               </div>
             )

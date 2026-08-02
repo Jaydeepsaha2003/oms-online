@@ -16,7 +16,7 @@ import { dateStamp } from '@/lib/utils';
 import { preOpenPdfTab, savePdfBlob } from '@/lib/pdf';
 import { CALIBRI_FONT, registerCalibriFont } from '@/lib/pdf-fonts';
 import kavishLogo from '@/assets/kavish-logo.png';
-import { buildSections, type PivotTable } from './customer-rate-list-pivot';
+import { buildSections, type DesignPivotTable, type PivotTable } from './customer-rate-list-pivot';
 
 const sanitize = (s: string) => s.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, '_').slice(0, 40);
 const stampFull = (iso: string) =>
@@ -45,7 +45,6 @@ const BLUE_SOFT: RGB = [219, 234, 254]; // blue-100 — chip fills / keylines
 const ORANGE: RGB = [234, 88, 12]; // orange-600 — gradient start, section accents
 const AMBER: RGB = [245, 158, 11]; // amber-500 — gradient end, special-rate marker
 const AMBER_SOFT: RGB = [254, 243, 199]; // amber-100 — special-rate row wash
-const AMBER_ITEM_BG: RGB = [255, 251, 235]; // amber-50 — Item column's own band, every row
 
 /** Linear blend between two RGBs (used for the orange→amber accent rules). */
 const mix = (a: RGB, b: RGB, t: number): RGB => [
@@ -98,8 +97,21 @@ export function exportRateListExcel(list: CustomerRateList): void {
     }
     aoa.push([]);
   };
+  // Designs get their own single-Rate-column table instead of the pcs-pivoted
+  // grid: one design type almost always charges one rate regardless of pcs, so
+  // spelling that rate out per pcs would just repeat the same number several
+  // times over.
+  const pushDesignTable = (t: DesignPivotTable) => {
+    aoa.push([`${t.title}  (${t.rows.length} design${t.rows.length === 1 ? '' : 's'})`]);
+    aoa.push(['SR', 'DESIGN TYPE', 'AVAILABLE PCS', 'RATE']);
+    maxCols = Math.max(maxCols, 4);
+    for (const r of t.rows) {
+      aoa.push([r.sr, r.special ? `${r.item} *` : r.item, r.available, r.rate]);
+    }
+    aoa.push([]);
+  };
   products.forEach(pushTable);
-  designs.forEach(pushTable);
+  designs.forEach(pushDesignTable);
   aoa.push(['* item includes your special-rate adjustment']);
 
   const ws = XLSX.utils.aoa_to_sheet(aoa);
@@ -247,8 +259,7 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
 
     let px = margin;
     px += statPill(px, 162, 'Products', String(productCount), BLUE, BLUE_ZEBRA) + 8;
-    px += statPill(px, 162, 'Designs', String(designCount), BLUE, BLUE_ZEBRA) + 8;
-    statPill(px, 162, 'Categories', String(products.length + designs.length), ORANGE, BLUE_ZEBRA);
+    statPill(px, 162, 'Designs', String(designCount), BLUE, BLUE_ZEBRA);
 
     // The special-rate legend is stated once, here — not repeated under each table.
     if (anySpecial) {
@@ -360,13 +371,6 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
         doc.setFillColor(...BLUE_ZEBRA);
         doc.rect(margin, y - 2, usable, rowH, 'F');
       }
-      // ITEM gets its own soft amber band on every row, so the name reads as a
-      // distinct column instead of blending into SR/Available Pcs. Special rows
-      // already carry a full amber wash — skip the extra layer there.
-      if (!r.special) {
-        doc.setFillColor(...AMBER_ITEM_BG);
-        doc.rect(margin + widths[0], y - 2, widths[1], rowH, 'F');
-      }
       // Baseline that centres the text in the (now taller) row.
       const ty = y + rowH / 2 + DATA_SIZE * 0.34;
       let x = margin;
@@ -424,8 +428,101 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
     y += 28;
   };
 
+  /**
+   * Designs get their own drawer instead of `drawPivot`: a design type almost
+   * always charges one rate regardless of pcs/size, so the pcs-pivoted grid
+   * products use would mostly repeat the same figure across several columns.
+   * One wide RATE column holds it instead, showing the one rate each design
+   * type is billed at most often.
+   */
+  const drawDesignPivot = (t: DesignPivotTable) => {
+    const showAvail = t.rows.some((r) => r.available !== '');
+    const availW = showAvail ? 78 : 0;
+    const itemW = 210;
+    const rateW = usable - 26 - availW - itemW;
+    const widths = [26, itemW, ...(showAvail ? [availW] : []), rateW];
+    const headers = ['SR', 'DESIGN TYPE', ...(showAvail ? ['AVAILABLE PCS'] : []), 'RATE'];
+    const rateColIdx = showAvail ? 3 : 2;
+    const identityW = widths[0] + widths[1] + (showAvail ? widths[2] : 0);
+
+    ensure(rowH * 4 + 40);
+
+    accentRule(margin, y - 10.5, 3.5, 14);
+    doc.setFont('helvetica', 'bold').setFontSize(11.5).setTextColor(...BLUE_DEEP);
+    doc.text(t.title.replace(/\s*—\s*RATE LIST\s*$/i, ''), margin + 11, y);
+    doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...FAINT);
+    const note = `${t.rows.length} design${t.rows.length === 1 ? '' : 's'}`;
+    doc.text(note, margin + usable, y, { align: 'right' });
+    y += 11;
+
+    const headerRow = () => {
+      doc.setFillColor(...BLUE);
+      doc.roundedRect(margin, y, usable, rowH + 2, 2.5, 2.5, 'F');
+      doc.setFont(TABLE_FONT, 'bold');
+      let x = margin;
+      headers.forEach((h, i) => {
+        const right = i >= rateColIdx;
+        doc.setTextColor(...WHITE);
+        fitText(h, right ? x + widths[i] - 6 : x + 7, y + rowH / 2 + 4, widths[i] - 12, HEAD_SIZE, right ? { align: 'right' } : undefined);
+        x += widths[i];
+      });
+      y += rowH + 5;
+    };
+    headerRow();
+
+    t.rows.forEach((r, idx) => {
+      if (y + rowH > footerTop - 4) {
+        breakPage();
+        headerRow();
+      }
+      if (r.special) {
+        doc.setFillColor(...AMBER_SOFT);
+        doc.rect(margin, y - 2, usable, rowH, 'F');
+        doc.setFillColor(...AMBER);
+        doc.rect(margin, y - 2, 2.5, rowH, 'F');
+      } else if (idx % 2 === 1) {
+        doc.setFillColor(...BLUE_ZEBRA);
+        doc.rect(margin, y - 2, usable, rowH, 'F');
+      }
+      const ty = y + rowH / 2 + DATA_SIZE * 0.34;
+      let x = margin;
+      doc.setFont(TABLE_FONT, 'normal').setFontSize(META_SIZE).setTextColor(...FAINT);
+      doc.text(String(r.sr), x + 7, ty);
+      x += widths[0];
+      doc.setDrawColor(...HAIRLINE);
+      doc.setLineWidth(0.5);
+      doc.line(x, y - 2, x, y + rowH - 2);
+      doc.setFont(TABLE_FONT, 'bold').setTextColor(...(r.special ? BLUE_DEEP : INK));
+      fitText(r.item, x + 6, ty, widths[1] - 10, DATA_SIZE, { minSize: 8 });
+      x += widths[1];
+      doc.setDrawColor(...HAIRLINE);
+      doc.setLineWidth(0.5);
+      doc.line(x, y - 2, x, y + rowH - 2);
+      if (showAvail) {
+        doc.setFont(TABLE_FONT, 'normal').setTextColor(...MUTED);
+        fitText(r.available, x + 6, ty, widths[2] - 10, DATA_SIZE, { minSize: 8 });
+        x += widths[2];
+      }
+      doc.setDrawColor(...HAIRLINE);
+      doc.setLineWidth(0.5);
+      doc.line(margin + identityW, y - 2, margin + identityW, y + rowH - 2);
+      const rateW2 = widths[rateColIdx];
+      doc.setFont(TABLE_FONT, 'bold').setTextColor(...INK);
+      fitText(String(r.rate), x + rateW2 - 6, ty, rateW2 - 12, DATA_SIZE, { align: 'right', minSize: 7 });
+      doc.setDrawColor(...HAIRLINE);
+      doc.setLineWidth(0.4);
+      doc.line(margin, y + rowH - 2, margin + usable, y + rowH - 2);
+      y += rowH;
+    });
+
+    doc.setDrawColor(...BLUE_SOFT);
+    doc.setLineWidth(1);
+    doc.line(margin, y - 1.5, margin + usable, y - 1.5);
+    y += 28;
+  };
+
   products.forEach(drawPivot);
-  designs.forEach(drawPivot);
+  designs.forEach(drawDesignPivot);
 
   // Footer on every page: orange→amber hairline, brand, customer, page number.
   const pages = doc.getNumberOfPages();

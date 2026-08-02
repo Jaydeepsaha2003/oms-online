@@ -121,3 +121,15 @@ export function exportProducts(query: ProductQuery) {
   const qs = query.search ? `?search=${encodeURIComponent(query.search)}` : '';
   return downloadFile(`/products/export${qs}`, 'products.xlsx');
 }
+
+/**
+ * Every product matching the current filters, across all pages — not just the
+ * one on screen. Backs "Select all N matching" on the Products page, so a bulk
+ * action (like deactivating) can act on the whole filtered set in one click
+ * instead of paging through and ticking rows by hand. `MAX_PAGE_SIZE` (2000) on
+ * the API comfortably covers any real filtered result.
+ */
+export async function fetchAllMatchingProducts(query: ProductQuery, total: number): Promise<ProductDto[]> {
+  const res = await http.get<ProductList>('/products', { params: { ...query, page: 1, pageSize: Math.min(total, 2000) } });
+  return res.items;
+}

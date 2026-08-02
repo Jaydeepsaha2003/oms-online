@@ -114,7 +114,80 @@ const pcsFromSub = (sub: string): number | null => {
   return m ? Number(m[1]) : null;
 };
 
-export function buildSections(list: CustomerRateList): { products: PivotTable[]; designs: PivotTable[] } {
+/**
+ * Design rates, pivoted a different way than products.
+ *
+ * A product's price genuinely tends to move with pcs/size, so the wide
+ * pcs-by-pcs grid earns its columns there. A design almost always charges ONE
+ * rate no matter how many pieces or what size it's printed on — the design fee
+ * is per kg, not per pcs — so pivoting it into 4+ near-identical pcs columns is
+ * mostly repetition. Each design type collapses to ONE row with ONE rate: the
+ * one it's billed at most often across its pcs/size variants (ties go to the
+ * cheaper one).
+ *
+ * Earlier this showed every distinct rate as its own labelled group instead —
+ * but pcs is only ever recorded when the sub-category spells out "N-PCS"; sizes
+ * that don't (different weights, say) all fall through to the SAME "no pcs
+ * recorded" bucket while still carrying genuinely different rates. That printed
+ * as two identically-labelled "kg" entries at two different prices on the same
+ * row — nothing pcs-related actually explained the split, so it just read as a
+ * contradiction. One representative rate avoids manufacturing an explanation
+ * the data doesn't have.
+ */
+export interface DesignRateRow {
+  sr: number;
+  item: string;
+  /** Every pcs/size this design type is available in, cheapest-ordering re-used
+   *  from the product pivot so the two sections read consistently. */
+  available: string;
+  /** The rate this design is billed at most often. */
+  rate: number;
+  minRate: number;
+  special: boolean;
+}
+export interface DesignPivotTable {
+  title: string;
+  rows: DesignRateRow[];
+}
+
+function pivotDesigns(title: string, lines: { name: string; pcs: number | null; rate: number; special?: boolean }[]): DesignPivotTable {
+  const byItem = new Map<string, { pcs: number | null; rate: number }[]>();
+  const specials = new Map<string, boolean>();
+  for (const l of lines) {
+    const arr = byItem.get(l.name) ?? [];
+    arr.push({ pcs: l.pcs, rate: r0(l.rate) });
+    byItem.set(l.name, arr);
+    if (l.special) specials.set(l.name, true);
+  }
+
+  const rows: DesignRateRow[] = [...byItem.entries()].map(([name, entries]) => {
+    const available = orderPcs(entries.map((e) => e.pcs))
+      .filter((p): p is number => p != null)
+      .join(',');
+    // Most common rate wins. Tallying in ascending-rate order and only
+    // replacing on a STRICTLY higher count means a tie keeps whichever rate was
+    // seen first — the cheaper one.
+    const counts = new Map<number, number>();
+    for (const e of entries) counts.set(e.rate, (counts.get(e.rate) ?? 0) + 1);
+    let rate = entries[0].rate;
+    let bestCount = 0;
+    for (const candidate of [...counts.keys()].sort((a, b) => a - b)) {
+      const count = counts.get(candidate)!;
+      if (count > bestCount) {
+        rate = candidate;
+        bestCount = count;
+      }
+    }
+    const minRate = Math.min(...entries.map((e) => e.rate));
+    return { sr: 0, item: name, available, rate, minRate, special: specials.get(name) ?? false };
+  });
+
+  rows.sort((a, b) => a.minRate - b.minRate || a.item.localeCompare(b.item));
+  rows.forEach((r, i) => (r.sr = i + 1));
+  return { title, rows };
+}
+
+export function buildSections(list: CustomerRateList): { products: PivotTable[]; designs: DesignPivotTable[] } {
   const byCat = <T>(rows: T[], cat: (r: T) => string) => {
     const m = new Map<string, T[]>();
     for (const r of rows) {
@@ -128,7 +201,7 @@ export function buildSections(list: CustomerRateList): { products: PivotTable[];
     pivot(`${cat} — RATE LIST`, rows.map((p) => ({ name: p.product, pcs: p.pcs, rate: p.rate, special: p.delta !== 0 }))),
   );
   const designs = byCat(list.designs, (d: CustomerRateListDesign) => d.category).map(([cat, rows]) =>
-    pivot(
+    pivotDesigns(
       `RATE OF DESIGNS ON ${cat} (per kg)`,
       rows.map((d) => ({ name: d.designType, pcs: pcsFromSub(d.subCategory), rate: d.rate, special: d.delta !== 0 })),
     ),
