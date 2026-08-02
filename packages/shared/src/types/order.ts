@@ -161,6 +161,9 @@ export interface OrderInput {
 
 export type OrderQuery = PaginationQuery & {
   status?: string;
+  /** Filter to orders for this customer (exact match, values come from
+   *  {@link OrderFilterOptions}). */
+  customer?: string;
   /** Filter to orders for this sales agent (exact match). */
   agent?: string;
   /** Keep orders that contain this product / design on any line (exact match,
@@ -170,8 +173,10 @@ export type OrderQuery = PaginationQuery & {
 };
 export type OrderList = Paginated<OrderDto>;
 
-/** Distinct agent / product / design values present on orders, for the Orders page filters. */
+/** Distinct customer / agent / product / design values present on orders, for the
+ *  Orders and Order Modify page filters. */
 export interface OrderFilterOptions {
+  customers: string[];
   agents: string[];
   products: string[];
   designs: string[];

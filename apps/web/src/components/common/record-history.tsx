@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { History as HistoryIcon, Loader2 } from 'lucide-react';
 import { ACTIONS, RESOURCES, perm, type AuditLogList } from '@oms/shared';
@@ -19,6 +19,7 @@ export function RecordHistory({
   resource,
   resourceId,
   label,
+  summary,
   className,
 }: {
   /** A `RESOURCES` value, e.g. RESOURCES.ORDER. */
@@ -26,6 +27,14 @@ export function RecordHistory({
   resourceId: string | number | null | undefined;
   /** Shown in the panel title, e.g. the record's code — "#1132". */
   label?: string | null;
+  /**
+   * Optional "where this record stands right now" strip, rendered above the
+   * timeline. The audit log only records events, so current state that was never
+   * an event on this record (e.g. the challan a dispatch ended up billed on)
+   * has no entry to show — the caller passes it in rather than this shared
+   * component having to know about any one screen's domain.
+   */
+  summary?: ReactNode;
   className?: string;
 }) {
   const { can } = usePermissions();
@@ -61,6 +70,7 @@ export function RecordHistory({
             <SheetTitle>Activity history{label ? ` — ${label}` : ''}</SheetTitle>
           </SheetHeader>
           <div className="space-y-2.5">
+            {summary && <div className="bg-muted/40 rounded-md border p-2.5 text-sm">{summary}</div>}
             {isLoading ? (
               <div className="text-muted-foreground flex h-32 items-center justify-center">
                 <Loader2 className="size-5 animate-spin" />

@@ -46,6 +46,8 @@ export class OrderQueryDto extends PaginationDto {
   @IsString()
   status?: string;
 
+  /** Filter to one customer (exact match) — Order Modify's customer dropdown. */
+  @IsOptional() @IsString() customer?: string;
   @IsOptional() @IsString() agent?: string;
   /** Keep orders containing this product / design on any line (exact match). */
   @IsOptional() @IsString() product?: string;

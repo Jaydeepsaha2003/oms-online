@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Download, Loader2, Printer } from 'lucide-react';
 import { toast } from 'sonner';
@@ -117,6 +117,42 @@ export function ChallanBillPage() {
     window.addEventListener('afterprint', clear);
     return () => window.removeEventListener('afterprint', clear);
   }, []);
+
+  /**
+   * Arriving here straight from Ctrl+P in the challan form: print without a
+   * second click.
+   *
+   * The capture rasterises the live DOM, so it has to wait for the invoice to
+   * actually be on screen with its fonts and logo resolved — firing on data
+   * arrival alone yields a half-drawn page. Once fired, the flag is stripped from
+   * history so a refresh or a Back/Forward doesn't reprint.
+   */
+  const autoPrintFired = useRef(false);
+  const wantsAutoPrint = !!(location.state as { autoPrint?: boolean } | null)?.autoPrint;
+  const challanReady = !!challan;
+  useEffect(() => {
+    if (!wantsAutoPrint || !challanReady || autoPrintFired.current) return;
+    autoPrintFired.current = true;
+    void (async () => {
+      const node = document.getElementById('challan-invoice');
+      const images = node ? [...node.querySelectorAll('img')] : [];
+      await Promise.all([
+        document.fonts?.ready ?? Promise.resolve(),
+        ...images.map((img) => (img.complete ? Promise.resolve() : new Promise<void>((res) => {
+          img.addEventListener('load', () => res(), { once: true });
+          img.addEventListener('error', () => res(), { once: true });
+        }))),
+      ]);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      await print();
+      // Drop the flag so a refresh or Back/Forward doesn't reprint.
+      navigate(location.pathname, { replace: true, state: { backTo: (location.state as { backTo?: string } | null)?.backTo } });
+    })();
+    // Deps are booleans, and there is no cleanup that aborts the run: saving
+    // invalidates the challan query, so a refetch lands mid-capture and would
+    // otherwise cancel the print a moment before it fired. The ref keeps it to once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantsAutoPrint, challanReady]);
 
   // Capture the challan at 960 px — wide enough to avoid over-wrapping but
   // narrow enough that fonts appear noticeably larger when scaled to A4.

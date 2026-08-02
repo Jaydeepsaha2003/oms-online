@@ -77,6 +77,8 @@ export const RESOURCES = {
   /** Daybook — every voucher of every type across all parties, in chronological
    *  order, Tally-style (legacy Day Book report). */
   DAYBOOK: 'daybook',
+  /** Accounts → Reconciliation with Tally: upload a register, compare, fix gaps. */
+  TALLY_RECON: 'tallyrecon',
   SUPPLIER: 'supplier',
   INVENTORY: 'inventory',
   PRODUCTION: 'production',
@@ -227,6 +229,12 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
     label: 'Daybook',
     group: 'Accounts',
     actions: [ACTIONS.VIEW, ACTIONS.EXPORT, ACTIONS.PRINT],
+  },
+  {
+    resource: RESOURCES.TALLY_RECON,
+    label: 'Tally Reconciliation',
+    group: 'Accounts',
+    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.DELETE, ACTIONS.EXPORT],
   },
   {
     resource: RESOURCES.SHIPMENT,

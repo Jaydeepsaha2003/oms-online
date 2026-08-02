@@ -31,6 +31,24 @@ const STATUS_DOT: Record<string, string> = {
   'PARTIALLY DISPATCH': 'bg-amber-500',
   'FULLY DISPATCH': 'bg-emerald-500',
 };
+/**
+ * Whether this dispatch has been billed yet, and on which invoice. A dispatch
+ * drops out of Pending Challan the moment a challan bills it, so without this
+ * the row gives no clue why it's no longer there.
+ */
+const ChallanBadge = ({ d }: { d: DispatchDto }) =>
+  d.challanCode ? (
+    <span className="inline-flex items-center gap-1.5 rounded-[4px] bg-emerald-50 px-1.5 py-0.5 text-[11.5px] font-bold text-emerald-700 ring-1 ring-emerald-200 ring-inset dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/25">
+      <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />
+      {d.challanCode}
+    </span>
+  ) : (
+    <span className="text-muted-foreground inline-flex items-center gap-1.5 text-[11.5px] font-semibold">
+      <span className="bg-muted-foreground/40 size-1.5 shrink-0 rounded-full" />
+      Not billed
+    </span>
+  );
+
 /** A status pill with a coloured dot — carries the state alongside the word. */
 const StatusBadge = ({ s }: { s: string }) => (
   <span className={cn('inline-flex items-center gap-1.5 rounded-[4px] px-1.5 py-0.5 text-[11.5px] font-bold ring-1 ring-inset', STATUS_STYLE[s] ?? 'bg-muted text-muted-foreground ring-border')}>
@@ -58,6 +76,7 @@ const COLUMNS: DataColumn<DispatchDto>[] = [
   { id: 'kgs', label: 'Kgs', align: 'right', cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(d.gram)}</span> },
   { id: 'box', label: 'Box', align: 'right', cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(d.box)}</span> },
   { id: 'status', label: 'Status', cell: (d) => <StatusBadge s={d.dispatchStatus} /> },
+  { id: 'challan', label: 'Challan Status', cell: (d) => <ChallanBadge d={d} /> },
   { id: 'remarks', label: 'Remarks', cell: (d) => <span className="text-muted-foreground text-[13px] font-medium">{d.comment || '—'}</span> },
 ];
 
@@ -125,9 +144,12 @@ function ModifyDispatchCard({
           <StatusBadge s={d.dispatchStatus} />
         </div>
 
-        <div>
-          <p className="truncate text-[16px] font-semibold leading-tight">{d.customerName}</p>
-          <p className="text-muted-foreground mt-0.5 text-[12px]">{formatDate(d.dispatchDate)}</p>
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="truncate text-[16px] font-semibold leading-tight">{d.customerName}</p>
+            <p className="text-muted-foreground mt-0.5 text-[12px]">{formatDate(d.dispatchDate)}</p>
+          </div>
+          <ChallanBadge d={d} />
         </div>
 
         <div className="bg-muted/50 rounded-lg px-3 py-1.5">
@@ -333,7 +355,23 @@ export function ModifyDispatchPage() {
             ].join(' ')}
             actions={(d) => (
               <div className="flex justify-end gap-1">
-                <RecordHistory resource={RESOURCES.DISPATCH} resourceId={d.id} label={d.code ?? `#${d.id}`} />
+                <RecordHistory
+                  resource={RESOURCES.DISPATCH}
+                  resourceId={d.id}
+                  label={d.code ?? `#${d.id}`}
+                  // Billing never happens *on* the dispatch, so it leaves no audit
+                  // entry here — state the current position explicitly instead.
+                  summary={
+                    d.challanCode ? (
+                      <span>
+                        Billed on challan <span className="font-semibold">{d.challanCode}</span>
+                        {d.challanStatus ? ` · ${d.challanStatus}` : ''}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">Not billed yet — still pending challan.</span>
+                    )
+                  }
+                />
                 {can('dispatch:update') && (
                   <Button variant="ghost" size="icon" className="size-7" onClick={() => setEditing(d)} aria-label="Edit" title="Edit">
                     <Pencil className="size-4" />

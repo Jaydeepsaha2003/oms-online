@@ -13,9 +13,6 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useAutoSizePcs } from '@/lib/auto-size-pcs';
 import { useOrderLookups } from '@/features/orders/use-orders';
-// MS Access connector hidden from Settings for now — re-enable the import and the
-// <AccessImportCard /> render below to bring it back.
-// import { AccessImportCard } from './access-import-card';
 import { CrmReminderCard } from '@/features/crm/crm-settings-card';
 import { MyDevicesCard } from './my-devices-card';
 import { TestNotificationCard } from './test-notification-card';
@@ -65,8 +62,6 @@ export function SettingsPage() {
       <OrderFooterCard canEdit={canEdit} />
 
       <ChallanTermsCard canEdit={canEdit} />
-
-      {/* MS Access connector hidden for now — restore with: {canEdit && <AccessImportCard />} */}
 
       <PreferencesCard />
 

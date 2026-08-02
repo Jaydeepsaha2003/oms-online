@@ -80,7 +80,7 @@ oms/
 
 ### Data & migrations
 - Prisma schema + migrations; seed script loads the permission catalog, system roles and a bootstrap admin.
-- **Temporary MS Access connector** (data migration): uploads a legacy `.accdb`, exports each table to JSON via the Windows **ACE OLEDB** provider (spawned **PowerShell**), then imports in-process with Prisma. Scoped so it can be deleted cleanly later.
+- SQLite is the single source of truth. The legacy MS Access data was migrated in, and the temporary `.accdb` connector that did it has since been removed — there is no external data source to sync from.
 
 ---
 

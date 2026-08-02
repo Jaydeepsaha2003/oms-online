@@ -412,8 +412,9 @@ export class DispatchService implements OnModuleInit {
       }),
       this.prisma.dispatch.count({ where }),
     ]);
+    const challans = await this.challanByDispatch(rows.map((r) => r.id));
     return {
-      items: rows.map((r) => this.toDto(r)),
+      items: rows.map((r) => this.toDto(r, challans.get(r.id))),
       total,
       page: query.page,
       pageSize: query.pageSize,
@@ -468,7 +469,7 @@ export class DispatchService implements OnModuleInit {
       include: { orderItem: { select: { design: true, designType: true, productName: true } } },
     });
     if (!row) throw new NotFoundException('Dispatch not found.');
-    return this.toDto(row);
+    return this.toDto(row, (await this.challanByDispatch([row.id])).get(row.id));
   }
 
   /**
@@ -911,7 +912,37 @@ export class DispatchService implements OnModuleInit {
     return this.prisma.dispatch.update({ where: { id: row.id }, data: { code: this.codeFor(row.id) } });
   }
 
-  private toDto(r: Dispatch & { orderItem?: { design: string | null; designType: string | null; productName: string | null } }): DispatchDto {
+  /**
+   * Which challan each of these dispatches has been billed on.
+   *
+   * `ChallanItem.dispatchId` is a plain int with no relation (see schema), so this
+   * is one keyed lookup per page rather than a join. A dispatch can appear on more
+   * than one challan — the original invoice plus a later debit note against the
+   * same shipment — so the lowest challan id wins, which is the invoice. Cancelled
+   * challans are ignored: they no longer bill anything, and the dispatch is back in
+   * the pending pool (same rule as the Pending Challan query).
+   */
+  private async challanByDispatch(
+    dispatchIds: number[],
+  ): Promise<Map<number, { id: number; code: string; challanStatus: string | null }>> {
+    const out = new Map<number, { id: number; code: string; challanStatus: string | null }>();
+    if (!dispatchIds.length) return out;
+    const rows = await this.prisma.challanItem.findMany({
+      where: { dispatchId: { in: dispatchIds }, challan: { challanStatus: { not: 'CANCELLED' } } },
+      select: { dispatchId: true, challan: { select: { id: true, code: true, challanStatus: true } } },
+      orderBy: { challanId: 'asc' },
+    });
+    for (const r of rows) {
+      if (r.dispatchId == null || !r.challan) continue;
+      if (!out.has(r.dispatchId)) out.set(r.dispatchId, r.challan); // asc order => invoice before debit note
+    }
+    return out;
+  }
+
+  private toDto(
+    r: Dispatch & { orderItem?: { design: string | null; designType: string | null; productName: string | null } },
+    challan?: { id: number; code: string; challanStatus: string | null } | null,
+  ): DispatchDto {
     return {
       id: r.id,
       code: r.code ?? this.codeFor(r.id),
@@ -945,6 +976,9 @@ export class DispatchService implements OnModuleInit {
       userName: r.userName,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
+      challanId: challan?.id ?? null,
+      challanCode: challan?.code ?? null,
+      challanStatus: challan?.challanStatus ?? null,
     };
   }
 }

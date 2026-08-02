@@ -22,6 +22,7 @@ apps/web/dist/
 
 # Prisma
 apps/api/prisma/*.db
+apps/api/prisma/*.db.bak*
 apps/api/prisma/migrations/dev.db*
 
 # Logs
@@ -35,7 +36,7 @@ pnpm-debug.log*
 # Generated / uploads / temp artifacts
 apps/api/uploads/
 apps/api/generated/
-data/access-import/
+data/
 coverage/
 .nyc_output/
 

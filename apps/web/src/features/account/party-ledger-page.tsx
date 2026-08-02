@@ -14,7 +14,7 @@ import {
 import { toast } from 'sonner';
 import { GlobalWorkerOptions, getDocument, type PDFDocumentProxy } from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import type { LedgerBalanceRow, LedgerReceiptLine, PartyLedgerQuery, PartyLedgerRow, PartyListStanding } from '@oms/shared';
+import type { LedgerBalanceRow, LedgerReceiptLine, PartyLedgerFooter, PartyLedgerQuery, PartyLedgerRow, PartyListStanding } from '@oms/shared';
 import { api, downloadFile, getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
@@ -116,8 +116,9 @@ interface Leg {
   group: 'Bank' | 'Cash';
   dr: 'bankDr' | 'cashDr';
   cr: 'bankCr' | 'cashCr';
-  /** Signed opening net for this leg, used to seed the running balance. */
-  openNet: (f: { openingBankNet: number; openingCashNet: number }) => number;
+  /** Signed opening net for this leg, used to seed the running balance. Null when
+   *  the server withholds balances under a voucher-type filter. */
+  openNet: (f: PartyLedgerFooter) => number | null;
 }
 const BANK_LEG: Leg = { group: 'Bank', dr: 'bankDr', cr: 'bankCr', openNet: (f) => f.openingBankNet };
 const CASH_LEG: Leg = { group: 'Cash', dr: 'cashDr', cr: 'cashCr', openNet: (f) => f.openingCashNet };
@@ -174,8 +175,14 @@ export function PartyLedgerPage() {
   const kpis = data?.kpis;
   /** Signed closing net for whichever leg(s) the current mode shows — the one
    *  number the ledger is actually for. Shared by the KPI rail and both
-   *  Closing Balance renderings (desktop footer row + mobile summary card). */
-  const closingNet = footer ? footer.closingBankNet * (mode === 'C' ? 0 : 1) + footer.closingCashNet * (mode === 'B' ? 0 : 1) : 0;
+   *  Closing Balance renderings (desktop footer row + mobile summary card).
+   *  Null when a voucher-type filter is on: the server withholds opening and
+   *  closing there, because a full-ledger opening plus a one-type Current Total
+   *  isn't this party's position. */
+  const closingNet =
+    footer && footer.closingBankNet != null && footer.closingCashNet != null
+      ? footer.closingBankNet * (mode === 'C' ? 0 : 1) + footer.closingCashNet * (mode === 'B' ? 0 : 1)
+      : null;
 
   const onReset = () => {
     setParty('');
@@ -291,8 +298,11 @@ export function PartyLedgerPage() {
   /* Running balance, Tally's defining column. Seeded from the opening net of the
      legs on screen and walked forward in the server's chronological order, so the
      last row lands exactly on the Closing Balance the footer reports. */
-  const openingNet = footer ? legs.reduce((sum, l) => sum + l.openNet(footer), 0) : 0;
+  const openingNet = footer && footer.opening ? legs.reduce((sum, l) => sum + (l.openNet(footer) ?? 0), 0) : null;
+  // No opening to seed from (voucher-type filter) → there is no running balance to
+  // walk, so the column stays empty rather than counting up from a made-up zero.
   const running = useMemo(() => {
+    if (openingNet == null) return null;
     let bal = openingNet;
     return rows.map((r) => {
       bal += legs.reduce((sum, l) => sum + r[l.dr] - r[l.cr], 0);
@@ -439,9 +449,17 @@ export function PartyLedgerPage() {
           </div>
 
           {/* Off by default — the running Balance per transaction is a detail most
-              glances at the ledger don't need; Closing Balance always shows regardless. */}
-          <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[12.5px] font-semibold text-amber-900/80 select-none dark:text-amber-200/80">
-            <Switch checked={showBalance} onCheckedChange={setShowBalance} /> Show Balance
+              glances at the ledger don't need; Closing Balance always shows regardless.
+              Disabled under a voucher-type filter: with no opening to seed from there
+              is no running balance to show. */}
+          <label
+            className={cn(
+              'flex shrink-0 items-center gap-1.5 text-[12.5px] font-semibold text-amber-900/80 select-none dark:text-amber-200/80',
+              running ? 'cursor-pointer' : 'cursor-not-allowed opacity-50',
+            )}
+            title={running ? undefined : 'Clear the voucher type filter to see running balances'}
+          >
+            <Switch checked={showBalance && !!running} onCheckedChange={setShowBalance} disabled={!running} /> Show Balance
           </label>
 
           <Button variant="outline" className="h-9 rounded-[4px] text-[12.5px] font-semibold" onClick={onReset}>
@@ -490,8 +508,9 @@ export function PartyLedgerPage() {
         <InvDueFromKpi text={kpis?.invDueFrom} />
         <Kpi
           label="Total Outstanding"
-          value={footer ? `${inr(Math.abs(closingNet))}${closingNet !== 0 ? ` ${closingNet < 0 ? 'Cr' : 'Dr'}` : ''}` : '—'}
-          tone={!footer || closingNet === 0 ? 'slate' : closingNet < 0 ? 'emerald' : 'amber'}
+          value={closingNet != null ? `${inr(Math.abs(closingNet))}${closingNet !== 0 ? ` ${closingNet < 0 ? 'Cr' : 'Dr'}` : ''}` : '—'}
+          note={closingNet == null && footer ? 'clear voucher type' : undefined}
+          tone={closingNet == null || closingNet === 0 ? 'slate' : closingNet < 0 ? 'emerald' : 'amber'}
         />
         <Kpi label="Over Due" value={kpis ? inr(kpis.overDue.amount) : '—'} note={kpis ? `${kpis.overDue.count} inv` : undefined} tone="rose" />
         <Kpi label="Past Due" value={kpis ? inr(kpis.pastDue.amount) : '—'} note={kpis ? `${kpis.pastDue.count} inv` : undefined} tone="amber" />
@@ -639,7 +658,7 @@ export function PartyLedgerPage() {
                           {money(r[l.cr])}
                         </td>,
                       ])}
-                      <td className={cn(TD, NUM)}>{showBalance && <Balance net={running[i]} />}</td>
+                      <td className={cn(TD, NUM)}>{showBalance && running && <Balance net={running[i]} />}</td>
                       {canViewChallan && (
                         <td className={cn(TD, 'text-center')} onClick={(e) => e.stopPropagation()}>
                           {invoice && r.challanId ? (
@@ -667,24 +686,36 @@ export function PartyLedgerPage() {
                 (rather than opening at the top) keeps them in one glance. */}
             {footer && (
               <tfoot className="sticky bottom-0 z-20">
+                {footer.opening && (
+                  <FootRow
+                    label="Opening Balance"
+                    cells={balanceCells(footer.opening)}
+                    lead={LEAD_COLS}
+                    trailing={canViewChallan}
+                    balance={openingNet ?? undefined}
+                    showBalance={showBalance}
+                    underline
+                  />
+                )}
+                {/* Under a voucher-type filter this is the only honest line left, so it
+                    carries the filter in its label and takes the bottom-line styling. */}
                 <FootRow
-                  label="Opening Balance"
-                  cells={balanceCells(footer.opening)}
+                  label={footer.closing ? 'Current Total' : `Current Total · ${voucherType} only`}
+                  cells={balanceCells(footer.current)}
                   lead={LEAD_COLS}
                   trailing={canViewChallan}
-                  balance={openingNet}
-                  showBalance={showBalance}
-                  underline
+                  strong={!footer.closing}
                 />
-                <FootRow label="Current Total" cells={balanceCells(footer.current)} lead={LEAD_COLS} trailing={canViewChallan} />
-                <FootRow
-                  label="Closing Balance"
-                  cells={balanceCells(footer.closing)}
-                  lead={LEAD_COLS}
-                  trailing={canViewChallan}
-                  strong
-                  balance={closingNet}
-                />
+                {footer.closing && closingNet != null && (
+                  <FootRow
+                    label="Closing Balance"
+                    cells={balanceCells(footer.closing)}
+                    lead={LEAD_COLS}
+                    trailing={canViewChallan}
+                    strong
+                    balance={closingNet}
+                  />
+                )}
               </tfoot>
             )}
           </table>
@@ -755,7 +786,7 @@ export function PartyLedgerPage() {
                           ) : null,
                         ])}
                       </div>
-                      {showBalance && <Balance net={running[i]} className="shrink-0 text-[13px]" />}
+                      {showBalance && running && <Balance net={running[i]} className="shrink-0 text-[13px]" />}
                     </div>
                     {invoice && r.challanId && canViewChallan && (
                       <div className="mt-2 flex justify-end border-t pt-2" onClick={(e) => e.stopPropagation()}>
@@ -778,22 +809,28 @@ export function PartyLedgerPage() {
               Opening, Current Total, Closing — rather than opening at the top. */}
           {footer && (
             <div className="mt-2 space-y-1.5 rounded-[4px] border-2 border-amber-600 bg-amber-100/80 px-3 py-2 dark:border-amber-400/60 dark:bg-amber-400/15">
-              <div className="flex items-center justify-between">
-                <span className="text-[11.5px] font-semibold uppercase tracking-wide text-amber-950 dark:text-amber-100">Opening Balance</span>
-                <span className="text-[12.5px] font-bold tabular-nums">
-                  {balanceCells(footer.opening).map((v) => moneyOrDash(v)).join('  /  ')}
+              {footer.opening && (
+                <div className="flex items-center justify-between">
+                  <span className="text-[11.5px] font-semibold uppercase tracking-wide text-amber-950 dark:text-amber-100">Opening Balance</span>
+                  <span className="text-[12.5px] font-bold tabular-nums">
+                    {balanceCells(footer.opening).map((v) => moneyOrDash(v)).join('  /  ')}
+                  </span>
+                </div>
+              )}
+              <div className={cn('flex items-center justify-between', footer.opening && 'border-t border-amber-600/30 pt-1.5 dark:border-amber-400/30')}>
+                <span className="text-[11.5px] font-semibold uppercase tracking-wide text-amber-950 dark:text-amber-100">
+                  {footer.closing ? 'Current Total' : `Current Total · ${voucherType} only`}
                 </span>
-              </div>
-              <div className="flex items-center justify-between border-t border-amber-600/30 pt-1.5 dark:border-amber-400/30">
-                <span className="text-[11.5px] font-semibold uppercase tracking-wide text-amber-950 dark:text-amber-100">Current Total</span>
                 <span className="text-[12.5px] font-bold tabular-nums">
                   {balanceCells(footer.current).map((v) => moneyOrDash(v)).join('  /  ')}
                 </span>
               </div>
-              <div className="flex items-center justify-between border-t border-amber-600/30 pt-1.5 dark:border-amber-400/30">
-                <span className="text-[12px] font-extrabold uppercase tracking-wide text-amber-950 dark:text-amber-100">Closing Balance</span>
-                <Balance net={closingNet} className="text-[15px]" />
-              </div>
+              {footer.closing && closingNet != null && (
+                <div className="flex items-center justify-between border-t border-amber-600/30 pt-1.5 dark:border-amber-400/30">
+                  <span className="text-[12px] font-extrabold uppercase tracking-wide text-amber-950 dark:text-amber-100">Closing Balance</span>
+                  <Balance net={closingNet} className="text-[15px]" />
+                </div>
+              )}
             </div>
           )}
         </div>
