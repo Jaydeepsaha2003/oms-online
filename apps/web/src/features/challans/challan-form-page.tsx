@@ -507,7 +507,12 @@ export function ChallanFormPage() {
     }
   };
 
-  const save = async () => {
+  /**
+   * @param thenPrint after a successful save, go straight to the bill view and
+   *   open the print dialog there (Ctrl+P). The bill page owns printing, so this
+   *   hands off rather than duplicating the capture logic.
+   */
+  const save = async ({ thenPrint = false }: { thenPrint?: boolean } = {}) => {
     if (!draft || rows.length === 0) return toast.error('Add at least one item.');
     if (status === 'CANCELLED') {
       const ok = await confirm({
@@ -569,14 +574,17 @@ export function ChallanFormPage() {
       setSavedId(c.id);
       setSavedCode(c.code);
       toast.success(`Challan ${c.code} ${isEdit ? 'updated' : 'saved'}`);
+      if (thenPrint) {
+        navigate(`/challans/${c.id}/bill`, { state: { backTo: 'challan-pending-or-list', autoPrint: true } });
+      }
     };
     const onError = (e: unknown) => toast.error(e instanceof Error ? e.message : 'Failed to save challan');
     if (isEdit) updateChallan.mutate({ id: editId!, ...payload }, { onSuccess, onError });
     else createChallan.mutate(payload, { onSuccess, onError });
   };
 
-  // Ctrl/Cmd+S saves the challan; Esc cancels (bound once; always call the
-  // latest closures via refs).
+  // Ctrl/Cmd+S saves the challan; Ctrl/Cmd+P saves and then prints it; Esc
+  // cancels (bound once; always call the latest closures via refs).
   const saveRef = useRef(save);
   saveRef.current = save;
   const cancelRef = useRef(handleCancel);
@@ -585,7 +593,12 @@ export function ChallanFormPage() {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
-        saveRef.current();
+        void saveRef.current();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+        // Take over the browser's own print — printing this form would put the
+        // editor on paper, not the challan.
+        e.preventDefault();
+        void saveRef.current({ thenPrint: true });
       } else if (e.key === 'Escape') {
         // Let an open dropdown / dialog swallow Esc first; only cancel when none is open.
         if (!document.querySelector('[data-slot="popover-content"], [role="dialog"], [role="alertdialog"]')) {
@@ -751,14 +764,8 @@ export function ChallanFormPage() {
                 <MetaCell label="Invoice Date" icon={CalendarDays}>
                   <DatePicker value={invDate} onChange={setInvDate} clearable={false} className="bg-background h-8 w-full rounded-[4px] text-[13px]" />
                 </MetaCell>
-                <MetaCell label="Due Date" icon={CalendarCheck2}>
-                  <Input
-                    readOnly
-                    value={dueDate ? formatDate(dueDate) : ''}
-                    placeholder="—"
-                    className="bg-muted/40 h-8 w-full cursor-default rounded-[4px] text-[13px] tabular-nums"
-                  />
-                </MetaCell>
+                {/* Second row mirrors the first: Status under Invoice No, Due Date
+                    under Invoice Date — each date sits below the other date. */}
                 <MetaCell label="Status">
                   {isEdit ? (
                     <NativeSelect value={status} onChange={setStatus} options={[...CHALLAN_STATUSES]} className="bg-background h-8 w-full rounded-[4px] text-[13px]" />
@@ -767,6 +774,14 @@ export function ChallanFormPage() {
                       <span className="size-1.5 rounded-full bg-emerald-500" /> CONFIRMED
                     </span>
                   )}
+                </MetaCell>
+                <MetaCell label="Due Date" icon={CalendarCheck2}>
+                  <Input
+                    readOnly
+                    value={dueDate ? formatDate(dueDate) : ''}
+                    placeholder="—"
+                    className="bg-muted/40 h-8 w-full cursor-default rounded-[4px] text-[13px] tabular-nums"
+                  />
                 </MetaCell>
               </div>
               <Button
@@ -1075,7 +1090,12 @@ export function ChallanFormPage() {
             <RotateCcw /> Reset
           </Button>
           {draft && (
-            <Button onClick={save} disabled={saving || rows.length === 0} title={`${isEdit ? 'Update' : 'Create'} challan (Ctrl+S)`} className="flex-[2] sm:flex-none">
+            <Button
+              onClick={() => void save()}
+              disabled={saving || rows.length === 0}
+              title={`${isEdit ? 'Update' : 'Create'} challan (Ctrl+S) — Ctrl+P saves and prints`}
+              className="flex-[2] sm:flex-none"
+            >
               {saving ? <Loader2 className="animate-spin" /> : <Check />} {isEdit ? 'Update Challan' : 'Create Challan'}
               <kbd className="ml-1 hidden rounded bg-white/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold sm:inline">Ctrl+S</kbd>
             </Button>
