@@ -33,6 +33,7 @@ export class OrdersService {
     if (query.design) lineFilters.push({ items: { some: { designType: query.design } } });
     const where: Prisma.OrderWhereInput = {
       ...(query.status ? { status: uc(query.status)! } : {}),
+      ...(query.customer ? { customerName: query.customer } : {}),
       ...(query.agent ? { agentName: query.agent } : {}),
       ...(lineFilters.length ? { AND: lineFilters } : {}),
       ...(search
@@ -349,9 +350,12 @@ export class OrdersService {
   /** Distinct product / design values present on order lines, for the Orders
    *  page filter dropdowns (only values that can actually match something). */
   async filterOptions(): Promise<OrderFilterOptions> {
-    const [rows, orderRows] = await Promise.all([
+    const [rows, orderRows, customerRows] = await Promise.all([
       this.prisma.orderItem.findMany({ select: { productName: true, product: true, designType: true } }),
       this.prisma.order.findMany({ select: { agentName: true }, distinct: ['agentName'], orderBy: { agentName: 'asc' } }),
+      // Names actually present on orders — not the full customer master, so the
+      // dropdown can't offer a party that would return an empty list.
+      this.prisma.order.findMany({ select: { customerName: true }, distinct: ['customerName'], orderBy: { customerName: 'asc' } }),
     ]);
     const products = new Set<string>();
     const designs = new Set<string>();
@@ -362,7 +366,8 @@ export class OrdersService {
     }
     const sorted = (s: Set<string>) => [...s].sort((a, b) => a.localeCompare(b));
     const agents = orderRows.map((o) => o.agentName).filter((a): a is string => !!a).sort((a, b) => a.localeCompare(b));
-    return { agents, products: sorted(products), designs: sorted(designs) };
+    const customers = customerRows.map((o) => o.customerName).filter((c): c is string => !!c).sort((a, b) => a.localeCompare(b));
+    return { customers, agents, products: sorted(products), designs: sorted(designs) };
   }
 
   async lookups(): Promise<OrderLookupsWire> {

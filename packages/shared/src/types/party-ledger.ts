@@ -48,14 +48,22 @@ export interface LedgerBalanceRow {
 }
 
 export interface PartyLedgerFooter {
-  opening: LedgerBalanceRow;
+  /**
+   * Opening and closing are `null` while a voucher-type filter is active.
+   *
+   * The opening balance always spans EVERY voucher type, so adding it to a
+   * Current Total that holds only (say) receipts reports a closing balance the
+   * party never owed. Rather than publish that figure the server withholds both,
+   * leaving Current Total — the only line the filter doesn't invalidate.
+   */
+  opening: LedgerBalanceRow | null;
   current: LedgerBalanceRow;
-  closing: LedgerBalanceRow;
-  /** Signed nets (+ = Debit / party owes us, − = Credit). */
-  openingBankNet: number;
-  openingCashNet: number;
-  closingBankNet: number;
-  closingCashNet: number;
+  closing: LedgerBalanceRow | null;
+  /** Signed nets (+ = Debit / party owes us, − = Credit); null alongside the rows above. */
+  openingBankNet: number | null;
+  openingCashNet: number | null;
+  closingBankNet: number | null;
+  closingCashNet: number | null;
 }
 
 /** A party's Party-Lists standing, as reported by the Payment DNA KPI. */

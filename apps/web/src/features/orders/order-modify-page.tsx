@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, ExternalLink, Loader2, RotateCcw, Save, Search, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ExternalLink, Loader2, RotateCcw, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { OrderDto, OrderInput, OrderItemDto, QtyField } from '@oms/shared';
 import { ORDER_PRIORITIES, qtyOrderForCategory, resolveSpecialRates } from '@oms/shared';
@@ -152,7 +152,7 @@ export function OrderModifyPage() {
   // Deliberately NOT persisted (unlike most other list pages): these filters
   // should start fresh every time you arrive here, rather than still be applied
   // from whatever you were last looking for after stepping away to another page.
-  const [search, setSearch] = useState('');
+  const [customer, setCustomer] = useState('');
   const [agent, setAgent] = useState('');
   const [product, setProduct] = useState('');
   const [design, setDesign] = useState('');
@@ -162,7 +162,7 @@ export function OrderModifyPage() {
   const { data, isLoading } = useOrders({
     page,
     pageSize: PAGE_SIZE,
-    search: search || undefined,
+    customer: customer || undefined,
     agent: agent || undefined,
     product: product || undefined,
     design: design || undefined,
@@ -175,9 +175,9 @@ export function OrderModifyPage() {
   const { format, setFormat } = useDateFormat();
 
   const [edit, setEdit] = useState<Row | null>(null);
-  const hasFilters = !!search || !!agent || !!product || !!design || !!priority;
+  const hasFilters = !!customer || !!agent || !!product || !!design || !!priority;
   const resetFilters = () => {
-    setSearch('');
+    setCustomer('');
     setAgent('');
     setProduct('');
     setDesign('');
@@ -255,20 +255,16 @@ export function OrderModifyPage() {
       {/* ── Toolbar: search + filters, then column settings — one card. */}
       <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
         <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
-          <div className="relative w-full flex-1 sm:max-w-56 sm:flex-none">
-            <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
-            <Input
-              placeholder="Search order #, customer or agent…"
-              className={cn(CONTROL, 'pl-8 font-medium', search && CONTROL_ON)}
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value.trim());
-                setPage(1);
-              }}
+          {/* Filter order follows the house pattern: Customer, Item Name, Agent, Design. */}
+          <div className="w-full sm:w-56">
+            <NativeSelect
+              value={customer}
+              onChange={(v) => { setCustomer(v); setPage(1); }}
+              options={['', ...(filterOptions?.customers ?? [])]}
+              placeholder="All customers"
+              className={cn(CONTROL, 'font-medium', customer && CONTROL_ON)}
             />
           </div>
-          {/* Filter order follows the house pattern: Item Name, Agent, Design (no
-              Customer filter on this screen, so it starts from Product). */}
           <div className="w-40">
             <NativeSelect
               value={product}

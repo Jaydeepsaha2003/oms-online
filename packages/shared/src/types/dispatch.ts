@@ -80,6 +80,14 @@ export interface DispatchDto {
   userName: string | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * The challan (tax invoice) this dispatch has been billed on, or null while it
+   * is still pending challan. A dispatch billed on both an invoice and a later
+   * debit note reports the invoice — see DispatchService.challanByDispatch.
+   */
+  challanId: number | null;
+  challanCode: string | null;
+  challanStatus: string | null;
 }
 
 export interface CreateDispatchInput {

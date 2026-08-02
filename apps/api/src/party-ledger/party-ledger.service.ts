@@ -150,7 +150,16 @@ export class PartyLedgerService {
     const rows = inMode.filter((row) => !q.voucherType || row.voucherType.toUpperCase() === q.voucherType.toUpperCase());
 
     // ── 3) Opening as-of `from` ───────────────────────────────────────────────
-    const { bankNet: openingBankNet, cashNet: openingCashNet } = await this.openingAsOf(from, custIds, agentName);
+    // Only meaningful when the grid holds every voucher type. The opening spans
+    // them all, so `opening + one-type Current Total` would report a closing
+    // balance the party never owed — withhold both rather than publish a figure
+    // that reads authoritative and isn't. The Bank/Cash mode filter is fine here:
+    // the two legs carry their own opening, and dropping cash-only rows removes
+    // no bank movement.
+    const balancesApply = !q.voucherType;
+    const { bankNet: openingBankNet, cashNet: openingCashNet } = balancesApply
+      ? await this.openingAsOf(from, custIds, agentName)
+      : { bankNet: 0, cashNet: 0 };
 
     // ── 4) Footer (opening / current / closing) ───────────────────────────────
     const cur = rows.reduce(
@@ -175,13 +184,13 @@ export class PartyLedgerService {
     return {
       rows,
       footer: {
-        opening: { bankDr: obDr, bankCr: obCr, cashDr: ocDr, cashCr: ocCr },
+        opening: balancesApply ? { bankDr: obDr, bankCr: obCr, cashDr: ocDr, cashCr: ocCr } : null,
         current: { bankDr: r0(cur.bankDr), bankCr: r0(cur.bankCr), cashDr: r0(cur.cashDr), cashCr: r0(cur.cashCr) },
-        closing: { bankDr: cbDr, bankCr: cbCr, cashDr: ccDr, cashCr: ccCr },
-        openingBankNet: r0(openingBankNet),
-        openingCashNet: r0(openingCashNet),
-        closingBankNet: r0(closingBankNet),
-        closingCashNet: r0(closingCashNet),
+        closing: balancesApply ? { bankDr: cbDr, bankCr: cbCr, cashDr: ccDr, cashCr: ccCr } : null,
+        openingBankNet: balancesApply ? r0(openingBankNet) : null,
+        openingCashNet: balancesApply ? r0(openingCashNet) : null,
+        closingBankNet: balancesApply ? r0(closingBankNet) : null,
+        closingCashNet: balancesApply ? r0(closingCashNet) : null,
       },
       kpis,
       voucherTypes,
@@ -780,16 +789,18 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
     ...legs.flatMap((l) => [num(b[l.dr], { bold: true }), num(b[l.cr], { bold: true })]),
   ].map((c, index) => (strong ? { ...c, fontSize: index === 1 ? BODY - 0.5 : BODY + 0.5 } : c));
 
+  // Opening/Closing are withheld under a voucher-type filter (see PartyLedgerFooter),
+  // so the grid drops those two lines and Current Total becomes the bottom line.
   const body = [
     ...heads,
-    balRow('Opening Balance', f.opening, false),
+    ...(f.opening ? [balRow('Opening Balance', f.opening, false)] : []),
     ...res.rows.map(dataRow),
-    balRow('Current Total', f.current, false),
-    balRow('Closing Balance', f.closing, true),
+    balRow('Current Total', f.current, !f.closing),
+    ...(f.closing ? [balRow('Closing Balance', f.closing, true)] : []),
   ];
   const headerRows = heads.length;
   /** Row index of the first totals line — the grid rules key off these. */
-  const totalsAt = body.length - 2;
+  const totalsAt = body.length - (f.closing ? 2 : 1);
   /* Column widths are CONTENT widths — pdfmake adds the 10pt cell padding on top
      of whatever is declared here. Each is the measured Helvetica width of that
      column's widest real value at this size ("SALES DISCOUNT", "SSS/26-27/140",
@@ -834,6 +845,11 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
             : []),
           { text: `${d(res.from)}  to  ${d(res.to)}`, fontSize: 10.5, bold: true, alignment: 'center', margin: [0, res.customerAddress ? 6 : 4, 0, 0] },
           { text: `${modeLabel(mode)}   ·   Amounts in INR`, fontSize: 9, alignment: 'center', margin: [0, 2, 0, 0] },
+          // Says why the statement stops at Current Total, so a filtered print is
+          // never mistaken for the party's full position.
+          ...(f.opening
+            ? []
+            : [{ text: 'Filtered to a single voucher type — opening and closing balances not applicable', fontSize: 8.5, italics: true, alignment: 'center', margin: [0, 2, 0, 0] }]),
         ],
         margin: [0, 0, 0, 5],
       },
@@ -852,7 +868,7 @@ function buildLedgerDoc(res: PartyLedgerResult, mode: string): TDocumentDefiniti
                 ? 0.8
                 : i === 0 || i === headerRows
                   ? 1
-                  : i === headerRows + 1 || (grouped && i === 1)
+                  : (!!f.opening && i === headerRows + 1) || (grouped && i === 1)
                     ? 0.5
                     : 0,
           vLineWidth: () => 0.5,
@@ -1036,7 +1052,8 @@ async function buildLedgerXlsx(res: PartyLedgerResult, mode: string, company: st
     rIdx++;
   };
 
-  balanceRow('Opening Balance', res.footer.opening, false);
+  // Opening/Closing are withheld under a voucher-type filter (see PartyLedgerFooter).
+  if (res.footer.opening) balanceRow('Opening Balance', res.footer.opening, false);
   res.rows.forEach((r) => {
     const row = ws.getRow(rIdx);
     cols.forEach((c, ci) => {
@@ -1049,8 +1066,8 @@ async function buildLedgerXlsx(res: PartyLedgerResult, mode: string, company: st
     });
     rIdx++;
   });
-  balanceRow('Current Total', res.footer.current, false);
-  balanceRow('Closing Balance', res.footer.closing, true);
+  balanceRow('Current Total', res.footer.current, !res.footer.closing);
+  if (res.footer.closing) balanceRow('Closing Balance', res.footer.closing, true);
 
   // Ageing summary, two rows below the grid.
   rIdx += 1;
