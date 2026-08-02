@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
+import axios from 'axios';
 import { toast } from 'sonner';
 import type { ReconRunResult } from '@oms/shared';
 import { api } from '@/lib/api';
@@ -47,6 +48,22 @@ const IDLE: ReconRunState = { phase: 'idle', uploadPct: 0, fileName: null, elaps
 const Ctx = createContext<ReconRunApi | null>(null);
 
 const inr = (v: number) => (v ?? 0).toLocaleString('en-IN');
+
+/**
+ * The API's own wording, not axios's "Request failed with status code 400".
+ * Failures here are almost always something the user can act on — wrong file
+ * type, an unreadable workbook, a register with no ledgers — so the server's
+ * message is the useful one.
+ */
+function apiMessage(e: unknown, fallback: string): string {
+  if (axios.isAxiosError(e)) {
+    const body = e.response?.data as { message?: string | string[] } | undefined;
+    const m = body?.message;
+    if (Array.isArray(m) && m.length) return m.join(' ');
+    if (typeof m === 'string' && m.trim()) return m;
+  }
+  return e instanceof Error && e.message ? e.message : fallback;
+}
 
 /** Problems worth pulling the user back to the report for. */
 export const problemsOf = (r: ReconRunResult | null): number =>
@@ -138,7 +155,7 @@ export function TallyReconRunProvider({ children }: { children: ReactNode }) {
           toast.info('Reconciliation cancelled.');
           return null;
         }
-        const message = e instanceof Error ? e.message : 'Could not reconcile that register.';
+        const message = apiMessage(e, 'Could not reconcile that register.');
         setState({
           phase: 'error',
           uploadPct: 0,
