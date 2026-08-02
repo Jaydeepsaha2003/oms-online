@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check, FolderOpen, Hash, Loader2, NotebookPen, Plus, Printer, RotateCcw, Trash2, UserSearch } from 'lucide-react';
+import { Check, FolderOpen, Loader2, Plus, Printer, RotateCcw, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   computeNoteBreakup,
@@ -56,6 +56,23 @@ const GRID_CLASSES = [
 const DIRECTORY_GRID_CLASSES =
   GRID_CLASSES +
   ' [&_thead_th:hover]:from-blue-900 [&_thead_th:hover]:to-indigo-900 [&_tbody]:select-none [&_tbody_tr:hover:hover_td]:bg-amber-100/70 dark:[&_tbody_tr:hover:hover_td]:bg-amber-400/10';
+
+/* ── Tally worksheet chrome — the same tokens the Party Ledger, Daybook and
+   Receive Payment screens use, so this voucher reads as one of the family. ─── */
+
+/** Small-caps caption above each control. */
+const FIELD_LABEL = 'text-[10px] font-bold tracking-widest text-amber-900/70 uppercase dark:text-amber-200/60';
+/** Sticky navy→indigo column strip. */
+const TH =
+  'sticky top-0 z-10 bg-gradient-to-b from-blue-800 to-indigo-800 px-2 py-1.5 text-left text-[11px] font-extrabold tracking-wide text-white uppercase whitespace-nowrap dark:from-blue-900 dark:to-indigo-900';
+const TH_LINE = 'border-r border-white/15';
+const TD = 'border-r border-r-amber-200/80 px-2 py-[3px] align-middle dark:border-r-amber-400/15 last:border-r-0';
+const NUM = 'text-right tabular-nums';
+/** The frame around each worksheet pane. */
+const PANEL = 'border-amber-300 dark:border-amber-400/30';
+/** The dark document caption bar that tops each pane. */
+const DOC_BAR = 'flex shrink-0 items-center justify-between gap-3 bg-slate-800 px-2.5 py-1 dark:bg-slate-900';
+const DOC_TITLE = 'truncate text-[12px] font-extrabold tracking-wide text-amber-300 uppercase';
 
 /** An item on the working note (input + the fields the grid shows). */
 type Line = NoteItemInput & { gstRate?: number; invDate?: string };
@@ -290,81 +307,122 @@ export function NotesPage() {
 
   const noteLabel = mode === 'CREDIT' ? 'Credit Note' : 'Debit Note';
 
-  const lineCols: DataColumn<Line>[] = [
-    { id: 'ref', label: 'Ref Inv', cell: (l) => <span className={cn(TEXT_CELL, 'font-mono')}>{l.refInvNo ?? '—'}</span> },
-    { id: 'product', label: 'Product', cell: (l) => <span className={TEXT_CELL}>{l.productName}</span> },
-    { id: 'design', label: 'Design', cell: (l) => <span className={TEXT_CELL}>{l.design ?? '—'}</span> },
-    { id: 'bags', label: 'Bags', align: 'right', cell: (l) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{l.bags ?? '—'}</span> },
-    { id: 'pcs', label: 'Pcs', align: 'right', cell: (l) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{l.pcs ?? '—'}</span> },
-    { id: 'kgs', label: 'Kgs', align: 'right', cell: (l) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{l.kgs ?? '—'}</span> },
-    { id: 'box', label: 'Box', align: 'right', cell: (l) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{l.box ?? '—'}</span> },
-    { id: 'unit', label: 'Unit', cell: (l) => <span className={TEXT_CELL}>{l.unit ?? '—'}</span> },
-    { id: 'price', label: 'Price', align: 'right', cell: (l) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(l.price ?? 0)}</span> },
-    { id: 'amount', label: 'Amount', align: 'right', cell: (l) => <span className={cn(TEXT_CELL, 'tabular-nums font-bold')}>{money(noteItemAmount(l))}</span> },
-    { id: 'gst', label: 'GST %', align: 'right', cell: (l) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{l.gstRate ?? 0}</span> },
-  ];
 
   return (
-    <div className="flex w-full flex-col gap-2 sm:gap-3">
-      {/* Header — same compact bar as Create Challan: brand icon + title, mode
-          toggle and Directory sit on the right instead of Save/Cancel (which
-          live in the bottom action bar here, same as challan). */}
-      <div className="bg-background/85 z-20 -mt-1 flex shrink-0 flex-wrap items-center gap-1.5 rounded-md py-1 backdrop-blur sm:gap-2">
-        <div className="bg-gradient-brand flex size-8 items-center justify-center rounded-md text-white shadow-sm ring-1 ring-white/20">
-          <NotebookPen className="size-4" />
-        </div>
-        <span className="text-muted-foreground shrink-0 text-sm font-semibold whitespace-nowrap">
-          {editingCode ? `Edit ${noteLabel}` : `Create ${noteLabel}`} <span className="text-muted-foreground/60 hidden sm:inline">—</span>
-        </span>
-        {party && <span className="min-w-0 flex-1 truncate text-base font-bold tracking-tight">{party}</span>}
-        <div className="ml-auto flex items-center gap-2">
-          <div className="bg-muted inline-flex items-center gap-0.5 rounded-md p-0.5">
-            {(['DEBIT', 'CREDIT'] as const).map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => switchMode(m)}
-                className={cn('rounded px-3 py-1 text-xs font-semibold capitalize transition-colors', mode === m ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
-              >
-                {m === 'DEBIT' ? 'Debit Note' : 'Credit Note'}
-              </button>
-            ))}
+    // Fills the viewport on desktop: the voucher pane stays put while only the
+    // item grid scrolls. Below `lg` it falls back to a normal scrolling page.
+    <div className="flex h-full min-h-0 flex-col gap-2 overflow-y-auto p-2.5 font-sans sm:gap-2.5 sm:p-3 lg:overflow-hidden">
+      <div className="grid gap-2 sm:gap-2.5 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(19rem,21rem)_1fr]">
+        {/* ── Voucher pane: identity → charges → totals → commit ──────────── */}
+        <section className={cn('bg-card flex flex-col overflow-hidden rounded-[4px] border shadow-sm lg:min-h-0', PANEL)}>
+          <div className={DOC_BAR}>
+            <span className={DOC_TITLE}>{editingCode ? `Edit ${noteLabel}` : noteLabel}</span>
+            <span className="shrink-0 font-mono text-[11px] font-bold text-white tabular-nums">{voucherNo}</span>
           </div>
-          <Button variant="outline" size="sm" onClick={() => setDirOpen(true)}>
-            <FolderOpen /> Directory
-          </Button>
-        </div>
-      </div>
 
-      {/* Note paper — same shell as the Create Challan invoice: a Bill-To block
-          (party + its meta) beside a bordered 2×2 document-info panel. */}
-      <div className="bg-card flex flex-col overflow-hidden rounded-md border shadow-sm">
-        <div className="from-primary/[0.06] dark:from-primary/[0.12] shrink-0 border-b bg-gradient-to-br via-transparent to-sky-50/40 px-3 py-2.5 sm:px-4 dark:to-sky-500/[0.05]">
-          <div className="flex flex-col gap-2.5 lg:flex-row lg:items-stretch lg:gap-4">
-            {/* Bill To */}
-            <div className="bg-background/50 min-w-0 flex-1 space-y-1.5 rounded-md border border-l-[3px] border-border/50 border-l-primary/50 px-3 py-2 dark:bg-white/[0.03]">
-              <span className="text-primary/70 flex items-center gap-1 text-[10px] font-bold tracking-widest uppercase">
-                <UserSearch className="size-3.5" /> Bill To
-              </span>
-              <NativeSelect value={party} onChange={onPartyChange} options={partyOptions} placeholder="Select party…" className="bg-background h-9 w-full rounded-md text-base font-semibold" />
-              {party && (
-                <p className="text-muted-foreground truncate text-[12px]">
-                  {[category, transName].filter(Boolean).join(' · ') || '—'}
-                </p>
+          <div className="space-y-2.5 p-2.5 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+            {/* Debit vs Credit is the most consequential choice on this screen — it
+                flips the sign of the whole voucher — so it leads, as a segmented
+                control rather than a dropdown. */}
+            <div className="space-y-1">
+              <span className={FIELD_LABEL}>Note Type *</span>
+              <div role="group" aria-label="Note type" className="grid grid-cols-2 gap-0.5 rounded-[4px] border border-amber-300 bg-amber-50/40 p-0.5 dark:border-amber-400/40 dark:bg-transparent">
+                {(['DEBIT', 'CREDIT'] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    aria-pressed={mode === m}
+                    onClick={() => switchMode(m)}
+                    className={cn(
+                      'min-h-11 cursor-pointer rounded-[3px] py-1.5 text-[11.5px] font-bold tracking-wide uppercase transition-colors duration-150 lg:min-h-8',
+                      mode === m
+                        ? m === 'DEBIT'
+                          ? 'bg-slate-800 text-white shadow-sm dark:bg-slate-700'
+                          : 'bg-emerald-600 text-white shadow-sm'
+                        : 'text-amber-900/70 hover:bg-amber-100 hover:text-amber-900 dark:text-amber-200/70 dark:hover:bg-amber-400/10',
+                    )}
+                  >
+                    {m === 'DEBIT' ? 'Debit' : 'Credit'}
+                  </button>
+                ))}
+              </div>
+              <p className="text-muted-foreground text-[11px] leading-snug">
+                {mode === 'DEBIT'
+                  ? 'Debit note — the party owes MORE (squares off advances).'
+                  : 'Credit note — the party owes LESS (clears opening, then invoices).'}
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              <Label htmlFor="n-date" className={FIELD_LABEL}>Date *</Label>
+              <DatePicker id="n-date" value={invDate} onChange={(v) => v && setInvDate(v)} clearable={false} className={cn(CONTROL, 'w-full')} />
+            </div>
+
+            <div className="space-y-1">
+              <Label htmlFor="n-party" className={FIELD_LABEL}>Party Name *</Label>
+              <NativeSelect
+                id="n-party"
+                value={party}
+                onChange={onPartyChange}
+                options={partyOptions}
+                placeholder="Select party…"
+                className={cn(CONTROL, 'font-medium', party && CONTROL_ON)}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <Label htmlFor="n-cat" className={FIELD_LABEL}>Category</Label>
+                <Input id="n-cat" value={category} onChange={(e) => setCategory(e.target.value)} className={cn(CONTROL, 'uppercase')} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="n-term" className={FIELD_LABEL}>Term (days)</Label>
+                <Input id="n-term" value={paymentTerm} onChange={(e) => setPaymentTerm(e.target.value)} inputMode="numeric" className={cn(CONTROL, 'text-right tabular-nums')} />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <Label htmlFor="n-trans" className={FIELD_LABEL}>Transport</Label>
+              <Input id="n-trans" value={transName} onChange={(e) => setTransName(e.target.value)} className={cn(CONTROL, 'uppercase')} />
+            </div>
+
+            {/* ── Charges ── */}
+            <div className="space-y-2 rounded-[4px] border border-amber-300 bg-amber-50/50 p-2 dark:border-amber-400/30 dark:bg-amber-400/[0.07]">
+              <span className="text-[10px] font-extrabold tracking-widest text-amber-900/80 uppercase dark:text-amber-200/70">Charges</span>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label htmlFor="n-pack" className={FIELD_LABEL}>Packing</Label>
+                  <Input id="n-pack" value={packing} onChange={(e) => setPacking(e.target.value)} inputMode="decimal" className={cn(CONTROL, 'bg-background text-right tabular-nums')} />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="n-freight" className={FIELD_LABEL}>Freight</Label>
+                  <Input id="n-freight" value={freight} onChange={(e) => setFreight(e.target.value)} inputMode="decimal" className={cn(CONTROL, 'bg-background text-right tabular-nums')} />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="n-pouch" className={FIELD_LABEL}>Box / Pouch</Label>
+                  <Input id="n-pouch" value={pouch} onChange={(e) => setPouch(e.target.value)} inputMode="decimal" className={cn(CONTROL, 'bg-background text-right tabular-nums')} />
+                </div>
+                {mode === 'DEBIT' ? (
+                  <div className="space-y-1">
+                    <Label htmlFor="n-tcs" className={FIELD_LABEL}>TCS</Label>
+                    <Input id="n-tcs" value={tcs} onChange={(e) => setTcs(e.target.value)} inputMode="decimal" className={cn(CONTROL, 'bg-background text-right tabular-nums')} />
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <Label htmlFor="n-brate" className={FIELD_LABEL}>Billing Rate</Label>
+                    <Input id="n-brate" value={billingRate} onChange={(e) => setBillingRate(e.target.value)} inputMode="decimal" placeholder="0 = full" className={cn(CONTROL, 'bg-background text-right tabular-nums')} />
+                  </div>
+                )}
+              </div>
+              {mode === 'DEBIT' && (
+                <div className="space-y-1">
+                  <Label htmlFor="n-brate2" className={FIELD_LABEL}>Billing Rate</Label>
+                  <Input id="n-brate2" value={billingRate} onChange={(e) => setBillingRate(e.target.value)} inputMode="decimal" placeholder="0 = full bill" className={cn(CONTROL, 'bg-background text-right tabular-nums')} />
+                </div>
               )}
-
-              {/* No Bill — same settlement row as the Bill-To card on Create Challan. */}
-              <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border/50 pt-1.5">
-                <label
-                  className={cn(
-                    'flex cursor-pointer items-center gap-1.5 rounded-[4px] px-2 py-1 text-[13px] font-semibold transition-colors select-none',
-                    noBill ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted/60',
-                  )}
-                  title="Bill without a tax invoice"
-                >
-                  <input type="checkbox" checked={noBill} onChange={(e) => { setNoBill(e.target.checked); if (!e.target.checked) setNoBillWithoutGst(false); }} className="size-3.5 accent-blue-600" />
-                  No Bill
-                  {noBill && <span className="text-[11px] font-medium text-amber-600 dark:text-amber-300">{noBillWithoutGst ? '(GST removed)' : '(GST kept)'}</span>}
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-amber-600/25 pt-1.5 dark:border-amber-400/25">
+                <label className="flex cursor-pointer items-center gap-1.5 text-[12px] font-semibold select-none">
+                  <Switch checked={noBill} onCheckedChange={(v) => { setNoBill(v); if (!v) setNoBillWithoutGst(false); }} /> No Bill
                 </label>
                 {noBill && (
                   <label className="text-muted-foreground flex cursor-pointer items-center gap-1.5 text-[12px] font-medium select-none">
@@ -374,179 +432,194 @@ export function NotesPage() {
               </div>
             </div>
 
-            {/* 2×2 document-info panel */}
-            <div className="grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-md border bg-border/70 sm:w-[26rem] dark:bg-white/10">
-              <MetaCell label="Voucher No" icon={Hash}>
-                <span className="font-mono font-bold">{voucherNo}</span>
-              </MetaCell>
-              <MetaCell label="Date">
-                <DatePicker value={invDate} onChange={setInvDate} clearable={false} className="bg-background h-8 w-full rounded-[4px] text-[13px]" />
-              </MetaCell>
-              <MetaCell label="Category">
-                <Input value={category} onChange={(e) => setCategory(e.target.value)} className="h-8 rounded-[4px] text-[13px]" />
-              </MetaCell>
-              <MetaCell label="Payment Term (days)">
-                <Input value={paymentTerm} onChange={(e) => setPaymentTerm(e.target.value)} inputMode="numeric" className="h-8 rounded-[4px] text-[13px]" />
-              </MetaCell>
-            </div>
-          </div>
-        </div>
-
-        {/* Add-line toolbar — same treated block as challan's, just with the
-            recent-sold picker + manual fields always visible (there's no
-            separate dispatched pool to pick from here). */}
-        <div className="bg-muted/30 shrink-0 space-y-2 border-y px-3 py-2 sm:px-4 sm:py-2.5">
-          <div className="grid grid-cols-2 gap-2 md:grid-cols-4 lg:grid-cols-6">
-            <div className="col-span-2 space-y-1 lg:col-span-2">
-              <Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Product (from last 12 months' sales)</Label>
-              <Combobox
-                value=""
-                onChange={pickRecent}
-                options={recentSold.map((r: RecentSoldRow, i) => ({ value: String(i), label: `${r.invNo} · ${r.productName}${r.design ? ` · ${r.design}` : ''} · ${money(r.price)}` }))}
-                placeholder={customerId ? 'Search a past sale…' : 'Select a party first'}
-                className="h-9"
-              />
-            </div>
-            <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Product Name</Label><Input value={entry.product} onChange={(e) => setEntry((s) => ({ ...s, product: e.target.value }))} className="h-8 rounded-[4px] text-[13px]" /></div>
-            <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Design</Label><Input value={entry.design} onChange={(e) => setEntry((s) => ({ ...s, design: e.target.value }))} className="h-8 rounded-[4px] text-[13px]" /></div>
-            <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Unit</Label><Input value={entry.unit} onChange={(e) => setEntry((s) => ({ ...s, unit: e.target.value }))} placeholder="KGS / PCS" className="h-8 rounded-[4px] text-[13px]" /></div>
-            <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Ref Inv No</Label><Input value={entry.refInvNo} onChange={(e) => setEntry((s) => ({ ...s, refInvNo: e.target.value }))} className="h-8 rounded-[4px] font-mono text-[13px]" /></div>
-            <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Bags</Label><Input value={entry.bags} onChange={(e) => setEntry((s) => ({ ...s, bags: e.target.value }))} inputMode="decimal" className="h-8 rounded-[4px] text-right text-[13px] tabular-nums" /></div>
-            <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Pcs</Label><Input value={entry.pcs} onChange={(e) => setEntry((s) => ({ ...s, pcs: e.target.value }))} inputMode="decimal" className="h-8 rounded-[4px] text-right text-[13px] tabular-nums" /></div>
-            <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Kgs</Label><Input value={entry.kgs} onChange={(e) => setEntry((s) => ({ ...s, kgs: e.target.value }))} inputMode="decimal" className="h-8 rounded-[4px] text-right text-[13px] tabular-nums" /></div>
-            <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Box</Label><Input value={entry.box} onChange={(e) => setEntry((s) => ({ ...s, box: e.target.value }))} inputMode="decimal" className="h-8 rounded-[4px] text-right text-[13px] tabular-nums" /></div>
-            <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Price</Label><Input value={entry.price} onChange={(e) => setEntry((s) => ({ ...s, price: e.target.value }))} inputMode="decimal" className="h-8 rounded-[4px] text-right text-[13px] tabular-nums" /></div>
-            <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Amount</Label><Input value={money(entryAmount)} readOnly className="h-8 rounded-[4px] bg-muted/40 text-right text-[13px] tabular-nums" /></div>
-            <div className="col-span-2 space-y-1 lg:col-span-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Comment</Label><Input value={entry.comment} onChange={(e) => setEntry((s) => ({ ...s, comment: e.target.value }))} className="h-8 rounded-[4px] text-[13px]" /></div>
-            <div className="flex items-end">
-              <Button type="button" onClick={addLine} className="h-8 w-full rounded-[4px]"><Plus className="size-3.5" /> Add</Button>
-            </div>
-          </div>
-        </div>
-
-        {/* Line items — grows to show every row, page scrolls when long (same as challan). */}
-        <div className="hidden sm:block">
-          <DataTable
-            columns={lineCols}
-            rows={lines}
-            rowKey={(l) => String(lines.indexOf(l))}
-            dense
-            emptyText="No items yet — pick a product above and click Add."
-            className={cn(GRID_CLASSES, '[&_thead_th]:bg-gradient-to-b [&_thead_th]:from-blue-800 [&_thead_th]:to-indigo-800 [&_thead_th]:text-white')}
-            actions={(l) => {
-              const i = lines.indexOf(l);
-              return (
-                <Button variant="ghost" size="icon" className="size-7 text-destructive hover:text-destructive" onClick={() => removeLine(i)} aria-label="Remove">
-                  <Trash2 className="size-4" />
-                </Button>
-              );
-            }}
-          />
-        </div>
-
-        {/* Phones: one card per line (the grid above is desktop/tablet only). */}
-        <div className="space-y-2 p-2.5 sm:hidden">
-          {lines.length === 0 ? (
-            <p className="text-muted-foreground rounded-md border border-dashed px-4 py-8 text-center text-sm">No items yet — pick a product above and tap Add.</p>
-          ) : (
-            lines.map((l, i) => (
-              <div key={i} className="bg-card flex items-start justify-between gap-2 rounded-md border p-2.5 shadow-sm">
-                <div className="min-w-0">
-                  <p className="truncate text-[13.5px] font-bold text-slate-900 dark:text-slate-100">{l.productName}{l.design ? ` · ${l.design}` : ''}</p>
-                  <p className="text-muted-foreground text-[11.5px]">
-                    {[l.bags ? `${l.bags} bags` : null, l.pcs ? `${l.pcs} pcs` : null, l.kgs ? `${l.kgs} kgs` : null, l.box ? `${l.box} box` : null].filter(Boolean).join(' · ') || '—'}
-                    {' · '}{money(l.price ?? 0)}
-                  </p>
-                  {l.refInvNo && <p className="text-muted-foreground font-mono text-[11px]">Ref {l.refInvNo}</p>}
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <span className="text-[13.5px] font-bold tabular-nums">{money(noteItemAmount(l))}</span>
-                  <Button variant="ghost" size="icon" className="size-7 text-destructive hover:text-destructive" onClick={() => removeLine(i)} aria-label="Remove"><Trash2 className="size-4" /></Button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-
-        {/* Charges + breakup — same two-column layout (charges left, totals card right). */}
-        <div className="grid grid-cols-1 gap-3 border-t p-3 sm:p-4 lg:grid-cols-3">
-          <div className="space-y-2.5 lg:col-span-2">
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Packing</Label><Input value={packing} onChange={(e) => setPacking(e.target.value)} inputMode="decimal" className="h-8 rounded-[4px] text-right text-[13px] tabular-nums" /></div>
-              <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Freight</Label><Input value={freight} onChange={(e) => setFreight(e.target.value)} inputMode="decimal" className="h-8 rounded-[4px] text-right text-[13px] tabular-nums" /></div>
-              <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Box / Pouch</Label><Input value={pouch} onChange={(e) => setPouch(e.target.value)} inputMode="decimal" className="h-8 rounded-[4px] text-right text-[13px] tabular-nums" /></div>
-              <div className="space-y-1">
-                <Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Billing Rate</Label>
-                <Input value={billingRate} onChange={(e) => setBillingRate(e.target.value)} inputMode="decimal" placeholder="0 = full bill" className="h-8 rounded-[4px] text-right text-[13px] tabular-nums" />
-              </div>
-              {mode === 'DEBIT' && (
-                <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">TCS</Label><Input value={tcs} onChange={(e) => setTcs(e.target.value)} inputMode="decimal" className="h-8 rounded-[4px] text-right text-[13px] tabular-nums" /></div>
-              )}
-            </div>
             <div className="space-y-1">
-              <Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Remarks</Label>
-              <textarea
-                className="border-input bg-background min-h-10 w-full rounded-[4px] border px-3 py-1.5 text-[13px]"
-                placeholder="Remarks…"
-                value={remarks}
-                onChange={(e) => setRemarks(e.target.value)}
-              />
+              <Label htmlFor="n-rem" className={FIELD_LABEL}>Remarks</Label>
+              <Input id="n-rem" value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Optional" className={cn(CONTROL, 'uppercase')} />
             </div>
           </div>
 
-          <div className="order-1 self-start overflow-hidden rounded-[4px] border shadow-sm lg:order-2">
-            <div className="bg-card space-y-0.5 p-2.5">
+          {/* Totals + commit, pinned to the foot so they're always reachable. */}
+          <div className="shrink-0 border-t border-amber-300 dark:border-amber-400/30">
+            <div className="space-y-0.5 bg-amber-50/60 px-2.5 py-2 dark:bg-amber-400/[0.07]">
               <Row2 label="Items total" value={money(breakup.tAmt)} />
               <Row2 label={`GST${breakup.gstPercent ? ` @ ${breakup.gstPercent}%` : ''}`} value={money(breakup.tax)} />
             </div>
-            <div className="bg-gradient-brand flex items-center justify-between px-3 py-2 text-base font-bold text-white">
-              <span className="tracking-wide">TOTAL</span>
-              <span className="tabular-nums">{money0(breakup.total)}</span>
+            <div className={cn('flex items-center justify-between px-2.5 py-2 text-white', mode === 'DEBIT' ? 'bg-slate-800 dark:bg-slate-700' : 'bg-emerald-600')}>
+              <span className="text-[11px] font-extrabold tracking-widest uppercase">{mode === 'DEBIT' ? 'Total Dr' : 'Total Cr'}</span>
+              <span className="text-[16px] font-extrabold tabular-nums">{money0(breakup.total)}</span>
             </div>
-            <div className="bg-card space-y-1 p-2.5">
-              <Row2 label="B (bank)" value={money0(breakup.b)} className="text-blue-600 dark:text-blue-400" />
-              <Row2 label="C (cash)" value={money0(breakup.c)} className="text-emerald-600 dark:text-emerald-400" />
+            <div className="space-y-0.5 bg-amber-50/60 px-2.5 py-2 dark:bg-amber-400/[0.07]">
+              <Row2 label="B (bank)" value={money0(breakup.b)} className="text-blue-700 dark:text-blue-400" />
+              <Row2 label="C (cash)" value={money0(breakup.c)} className="text-emerald-700 dark:text-emerald-400" />
+              <div className="mt-2 flex gap-2">
+                <Button
+                  onClick={onSave}
+                  disabled={saveMut.isPending || !can('note:create')}
+                  title={`${editingCode ? 'Update' : 'Save'} ${noteLabel} (Ctrl+S)`}
+                  className="h-11 flex-[2] bg-emerald-600 font-bold text-white hover:bg-emerald-700 lg:h-10"
+                >
+                  {saveMut.isPending ? <Loader2 className="animate-spin" /> : <Check />} {editingCode ? 'UPDATE' : 'SAVE'}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={resetForNew}
+                  className="h-11 flex-1 border-rose-200 font-semibold text-rose-600 hover:bg-rose-50 lg:h-10 dark:border-rose-400/40 dark:text-rose-400 dark:hover:bg-rose-400/10"
+                >
+                  <RotateCcw /> {editingCode ? 'CANCEL' : 'CLEAR'}
+                </Button>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
+        </section>
 
-      {/* Bottom action bar — flows after the content, same as Create Challan. */}
-      <div className="bg-background/95 z-30 -mx-1 mt-0.5 flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1.5 border-t px-2 py-2 backdrop-blur sm:mt-1 sm:gap-y-2 sm:py-3">
-        <p className="text-sm">
-          {lines.length} item(s)
-          {lines.length > 0 && (
-            <>
-              {' '}· total <span className="font-bold tabular-nums text-emerald-600">{money0(breakup.total)}</span>
-            </>
-          )}
-        </p>
-        <div className="ml-auto flex w-full flex-wrap justify-end gap-2 sm:w-auto">
-          {editingCode && (
-            <Button type="button" variant="outline" onClick={resetForNew} className="flex-1 sm:flex-none">
-              <RotateCcw /> Cancel edit
-            </Button>
-          )}
-          <Button onClick={onSave} disabled={saveMut.isPending || !can('note:create')} title={`${editingCode ? 'Update' : 'Save'} ${noteLabel} (Ctrl+S)`} className="flex-[2] sm:flex-none">
-            {saveMut.isPending ? <Loader2 className="animate-spin" /> : <Check />} {editingCode ? `Update ${noteLabel}` : `Save ${noteLabel}`}
-            <kbd className="ml-1 hidden rounded bg-white/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold sm:inline">Ctrl+S</kbd>
-          </Button>
-        </div>
+        {/* ── Item workspace: add-line bar + the note's lines ─────────────── */}
+        <section className={cn('bg-card flex flex-col overflow-hidden rounded-[4px] border shadow-sm lg:min-h-0', PANEL)}>
+          <div className={DOC_BAR}>
+            <span className={DOC_TITLE}>Items — {party || 'no party selected'}</span>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <span className="hidden text-[11px] font-bold tracking-wide text-white uppercase tabular-nums lg:inline">
+                {lines.length} line{lines.length === 1 ? '' : 's'}
+              </span>
+              <button
+                type="button"
+                onClick={() => setDirOpen(true)}
+                title={`Browse past ${noteLabel}s`}
+                className="flex cursor-pointer items-center gap-1 rounded-[3px] px-1.5 py-1 text-[11px] font-bold tracking-wide text-amber-200 uppercase transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:outline-none"
+              >
+                <FolderOpen className="size-3.5" /> <span className="hidden sm:inline">Directory</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Add-line bar — the recent-sale picker leads, the figures sit in a
+              tight strip beneath it, ADD closes the row. */}
+          <div className="shrink-0 space-y-2 border-b border-amber-300 bg-amber-50/40 p-2 dark:border-amber-400/30 dark:bg-amber-400/[0.05]">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+              <div className="col-span-2 space-y-1 lg:col-span-3">
+                <Label className={FIELD_LABEL}>Pick a past sale (last 12 months)</Label>
+                <Combobox
+                  value=""
+                  onChange={pickRecent}
+                  options={recentSold.map((r: RecentSoldRow, i) => ({ value: String(i), label: `${r.invNo} · ${r.productName}${r.design ? ` · ${r.design}` : ''} · ${money(r.price)}` }))}
+                  placeholder={customerId ? 'Search a past sale…' : 'Select a party first'}
+                  className={cn(CONTROL, 'w-full')}
+                />
+              </div>
+              <div className="space-y-1"><Label className={FIELD_LABEL}>Product *</Label><Input value={entry.product} onChange={(e) => setEntry((s) => ({ ...s, product: e.target.value }))} className={cn(CONTROL, 'bg-background')} /></div>
+              <div className="space-y-1"><Label className={FIELD_LABEL}>Design</Label><Input value={entry.design} onChange={(e) => setEntry((s) => ({ ...s, design: e.target.value }))} className={cn(CONTROL, 'bg-background')} /></div>
+              <div className="space-y-1"><Label className={FIELD_LABEL}>Ref Inv</Label><Input value={entry.refInvNo} onChange={(e) => setEntry((s) => ({ ...s, refInvNo: e.target.value }))} className={cn(CONTROL, 'bg-background font-mono')} /></div>
+            </div>
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-8">
+              <div className="space-y-1"><Label className={FIELD_LABEL}>Unit</Label><Input value={entry.unit} onChange={(e) => setEntry((s) => ({ ...s, unit: e.target.value }))} placeholder="KGS" className={cn(CONTROL, 'bg-background uppercase')} /></div>
+              <div className="space-y-1"><Label className={FIELD_LABEL}>Bags</Label><Input value={entry.bags} onChange={(e) => setEntry((s) => ({ ...s, bags: e.target.value }))} inputMode="decimal" className={cn(CONTROL, 'bg-background text-right tabular-nums')} /></div>
+              <div className="space-y-1"><Label className={FIELD_LABEL}>Pcs</Label><Input value={entry.pcs} onChange={(e) => setEntry((s) => ({ ...s, pcs: e.target.value }))} inputMode="decimal" className={cn(CONTROL, 'bg-background text-right tabular-nums')} /></div>
+              <div className="space-y-1"><Label className={FIELD_LABEL}>Kgs</Label><Input value={entry.kgs} onChange={(e) => setEntry((s) => ({ ...s, kgs: e.target.value }))} inputMode="decimal" className={cn(CONTROL, 'bg-background text-right tabular-nums')} /></div>
+              <div className="space-y-1"><Label className={FIELD_LABEL}>Box</Label><Input value={entry.box} onChange={(e) => setEntry((s) => ({ ...s, box: e.target.value }))} inputMode="decimal" className={cn(CONTROL, 'bg-background text-right tabular-nums')} /></div>
+              <div className="space-y-1"><Label className={FIELD_LABEL}>Price</Label><Input value={entry.price} onChange={(e) => setEntry((s) => ({ ...s, price: e.target.value }))} inputMode="decimal" className={cn(CONTROL, 'bg-background text-right tabular-nums')} /></div>
+              <div className="space-y-1"><Label className={FIELD_LABEL}>Amount</Label><Input value={money(entryAmount)} readOnly tabIndex={-1} className={cn(CONTROL, 'bg-muted/50 cursor-default text-right font-bold tabular-nums')} /></div>
+              <div className="flex items-end">
+                <Button type="button" onClick={addLine} className="h-9 w-full rounded-[4px] font-bold"><Plus className="size-3.5" /> ADD</Button>
+              </div>
+            </div>
+            <Input value={entry.comment} onChange={(e) => setEntry((s) => ({ ...s, comment: e.target.value }))} placeholder="Line comment (optional)" className={cn(CONTROL, 'bg-background')} />
+          </div>
+
+          {/* Desktop line grid. */}
+          <div className={cn('hidden overflow-x-auto overscroll-x-contain sm:block lg:min-h-0 lg:flex-1 lg:overflow-auto', '[scrollbar-width:thin] [scrollbar-color:var(--color-amber-400)_var(--color-amber-100)]')}>
+            <table className="w-full border-collapse text-[13px]">
+              <caption className="sr-only">Lines on this {noteLabel}</caption>
+              <thead>
+                <tr>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-9 text-center')}>#</th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-28')}>Ref Inv</th>
+                  <th scope="col" className={cn(TH, TH_LINE)}>Product</th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-24')}>Design</th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-16 text-right')}>Bags</th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-16 text-right')}>Pcs</th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-16 text-right')}>Kgs</th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-16 text-right')}>Box</th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-14')}>Unit</th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-24 text-right')}>Price</th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-28 text-right')}>Amount</th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-14 text-right')}>GST%</th>
+                  <th scope="col" className={cn(TH, 'w-10')} aria-label="Remove" />
+                </tr>
+              </thead>
+              <tbody>
+                {lines.length === 0 ? (
+                  <tr>
+                    <td colSpan={13} className="text-muted-foreground h-28 text-center text-[13px] font-medium">
+                      {party ? 'No lines yet — pick a past sale or type a product above, then press ADD.' : 'Select a party to begin.'}
+                    </td>
+                  </tr>
+                ) : (
+                  lines.map((l, i) => (
+                    <tr key={i} className="border-b border-amber-200/70 even:bg-amber-50/70 hover:bg-amber-200/70 dark:border-amber-400/10 dark:even:bg-amber-400/[0.05] dark:hover:bg-amber-400/20">
+                      <td className={cn(TD, 'text-center text-[12px] font-bold text-slate-500 tabular-nums dark:text-slate-400')}>{i + 1}</td>
+                      <td className={cn(TD, 'font-mono text-[12.5px] font-bold whitespace-nowrap')}>{l.refInvNo ?? '—'}</td>
+                      <td className={cn(TD, 'font-semibold text-slate-800 dark:text-slate-200')}>{l.productName}</td>
+                      <td className={cn(TD, 'text-[12px] font-medium text-slate-600 dark:text-slate-400')}>{l.design ?? '—'}</td>
+                      <td className={cn(TD, NUM, 'font-semibold')}>{l.bags ?? '-'}</td>
+                      <td className={cn(TD, NUM, 'font-semibold')}>{l.pcs ?? '-'}</td>
+                      <td className={cn(TD, NUM, 'font-semibold')}>{l.kgs ?? '-'}</td>
+                      <td className={cn(TD, NUM, 'font-semibold')}>{l.box ?? '-'}</td>
+                      <td className={cn(TD, 'text-[11.5px] font-bold tracking-wide uppercase text-slate-500 dark:text-slate-400')}>{l.unit ?? '—'}</td>
+                      <td className={cn(TD, NUM, 'font-semibold')}>{money(l.price ?? 0)}</td>
+                      <td className={cn(TD, NUM, 'font-bold text-slate-900 dark:text-slate-100')}>{money(noteItemAmount(l))}</td>
+                      <td className={cn(TD, NUM, 'text-[12px] font-medium text-slate-600 dark:text-slate-400')}>{l.gstRate ?? 0}</td>
+                      <td className={cn(TD, 'text-center')}>
+                        <Button variant="ghost" size="icon" className="size-7 text-destructive hover:text-destructive" onClick={() => removeLine(i)} aria-label={`Remove line ${i + 1}`}>
+                          <Trash2 className="size-4" />
+                        </Button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+              {lines.length > 0 && (
+                <tfoot className="sticky bottom-0 z-20">
+                  <tr className="bg-amber-200/90 font-bold shadow-[inset_0_2px_0_0_var(--color-amber-700)] dark:bg-amber-400/20 dark:shadow-[inset_0_2px_0_0_var(--color-amber-400)]">
+                    <td className={TD} colSpan={9} />
+                    <td className={cn(TD, 'text-[11px] font-extrabold tracking-wide text-amber-950 uppercase dark:text-amber-100')}>Total</td>
+                    <td className={cn(TD, NUM, 'text-[13.5px] font-extrabold')}>{money(breakup.tAmt)}</td>
+                    <td className={TD} colSpan={2} />
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+
+          {/* Phones: one card per line. */}
+          <div className="space-y-2 p-2 sm:hidden">
+            {lines.length === 0 ? (
+              <p className="text-muted-foreground px-4 py-8 text-center text-[13px] font-medium">
+                {party ? 'No lines yet — add one above.' : 'Select a party to begin.'}
+              </p>
+            ) : (
+              lines.map((l, i) => (
+                <div key={i} className="rounded-[4px] border border-amber-200 bg-amber-50/60 p-2.5 shadow-sm dark:border-amber-400/20 dark:bg-amber-400/[0.06]">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-[13.5px] font-bold text-slate-900 dark:text-slate-100">{l.productName}{l.design ? ` · ${l.design}` : ''}</p>
+                      {l.refInvNo && <p className="text-muted-foreground font-mono text-[11px]">Ref {l.refInvNo}</p>}
+                      <p className="text-muted-foreground text-[11.5px]">
+                        {[l.bags ? `${l.bags} bags` : null, l.pcs ? `${l.pcs} pcs` : null, l.kgs ? `${l.kgs} kgs` : null, l.box ? `${l.box} box` : null].filter(Boolean).join(' · ') || '—'}
+                        {' · '}{money(l.price ?? 0)}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <span className="text-[13.5px] font-extrabold tabular-nums">{money(noteItemAmount(l))}</span>
+                      <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => removeLine(i)} aria-label={`Remove line ${i + 1}`}><Trash2 className="size-4" /></Button>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
       </div>
 
       <NoteDirectoryDialog open={dirOpen} onOpenChange={setDirOpen} mode={mode} onEdit={loadForEdit} onDelete={del} canDelete={can('note:delete')} canPrint={can('note:print')} confirm={confirm} />
-    </div>
-  );
-}
-
-/** A single field inside the 2×2 document-info panel — same shape as Create Challan's. */
-function MetaCell({ label, children, icon: Icon }: { label: string; children: React.ReactNode; icon?: React.ComponentType<{ className?: string }> }) {
-  return (
-    <div className="bg-card flex min-w-0 flex-col justify-center gap-1 px-3 py-2.5">
-      <div className="text-muted-foreground flex items-center gap-1 text-[10px] font-bold tracking-widest uppercase">
-        {Icon && <Icon className="size-3 opacity-70" />} {label}
-      </div>
-      <div className="text-[13px] leading-tight font-semibold">{children}</div>
     </div>
   );
 }

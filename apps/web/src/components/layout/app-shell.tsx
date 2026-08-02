@@ -38,6 +38,7 @@ const FLUSH_ROUTES = [
   /^\/transporters$/,
   /^\/account\/party-ledger$/,
   /^\/account\/payment$/,
+  /^\/account\/notes$/,
   /^\/account\/advances$/,
   /^\/account\/discount$/,
   /^\/account\/bank-accounts$/,

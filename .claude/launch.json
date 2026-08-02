@@ -9,6 +9,14 @@
       "autoPort": true
     },
     {
+      "name": "web5199",
+      "runtimeExecutable": "cmd.exe",
+      "runtimeArgs": ["/c", "scripts\\preview-web-5199.cmd"],
+      "port": 5199,
+      "autoPort": false,
+      "url": "http://127.0.0.1:5199"
+    },
+    {
       "name": "api",
       "runtimeExecutable": "cmd.exe",
       "runtimeArgs": ["/c", "scripts\\preview-api.cmd"],
