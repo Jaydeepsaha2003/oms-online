@@ -552,7 +552,7 @@ export function ChallanBillPage() {
                     ['Freight Charges', challan.freight ? money(challan.freight) : '-'],
                     ['Box/Pouch', money(challan.pouch)],
                     ['Tax Amount', money(challan.tax)],
-                    ...(isScrap || tcs ? [['TCS @ 1%', money(tcs)]] : []),
+                    ...(isScrap || tcs ? [[`TCS${challan.tcsPercent ? ` @ ${challan.tcsPercent}%` : ''}`, money(tcs)]] : []),
                     ...(tds ? [[`Less: TDS${challan.tdsPercent ? ` @ ${challan.tdsPercent}%` : ''}`, `-${money(tds)}`]] : []),
                   ] as [string, string][]
                 ).map(([label, value]) => (

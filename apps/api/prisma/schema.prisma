@@ -757,6 +757,8 @@ model Challan {
   freight         Float?
   pouch           Float?
   tcs             Float?
+  // % used to compute `tcs` on SCRAP challans (Settings → SCRAP TCS Rate at save time).
+  tcsPercent      Float?
   // TDS deducted at source (when the party is TDS-applicable): amount + the % used.
   tds             Float?
   tdsPercent      Float?

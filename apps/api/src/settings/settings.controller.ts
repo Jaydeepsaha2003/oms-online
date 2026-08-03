@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
-import { Audit } from '../common/decorators/audit.decorator';
+import { Audit, SkipAudit } from '../common/decorators/audit.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { Public } from '../common/decorators/public.decorator';
+import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { SettingsService } from './settings.service';
 import { CreateOrderOptionDto } from './dto/order-option.dto';
 import { UpdateCompanyDto } from './dto/company.dto';
@@ -11,6 +13,7 @@ import { UpdateOrderTermsDto } from './dto/order-terms.dto';
 import { UpdateOrderFooterDto } from './dto/order-footer.dto';
 import { UpdateChallanTermsDto } from './dto/challan-terms.dto';
 import { UpdateOrderQtyLayoutDto } from './dto/order-qty-layout.dto';
+import { UpdateTcsSettingDto } from './dto/tcs-setting.dto';
 
 const R = RESOURCES.SETTING;
 
@@ -81,6 +84,21 @@ export class SettingsController {
   @Audit({ action: ACTIONS.UPDATE, resource: R })
   updateChallanTerms(@Body() dto: UpdateChallanTermsDto) {
     return this.settings.updateChallanTerms(dto);
+  }
+
+  // SCRAP challans' TCS % — readable by any authenticated user (used when
+  // computing challan totals), editable only with setting:update. The service
+  // writes its own audit entry (with old → new %) instead of the generic one.
+  @Get('tcs-percent')
+  getTcsPercent() {
+    return this.settings.getTcsPercent();
+  }
+
+  @Put('tcs-percent')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @SkipAudit()
+  updateTcsPercent(@Body() dto: UpdateTcsSettingDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.settings.updateTcsPercent(dto, user);
   }
 
   // Order quantity-field layout — read by the New Order form (any authenticated

@@ -87,6 +87,16 @@ export interface ChallanTermsInput {
   terms: string[];
 }
 
+/** Global TCS % applied to SCRAP-category challans — editable in Settings, with
+ *  every change recorded to the audit log (resourceId 'TCS_PERCENT'). */
+export interface TcsSettingDto {
+  tcsPercent: number;
+}
+
+export interface TcsSettingInput {
+  tcsPercent: number;
+}
+
 export interface OrderOptionInput {
   group: string;
   value: string;

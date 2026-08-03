@@ -16,12 +16,16 @@ import { PrismaService } from '../prisma/prisma.service';
 import { formatDate } from '../common/date.util';
 import { PdfService } from '../pdf/pdf.service';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
+import { SettingsService } from '../settings/settings.service';
 import { CreateChallanDto, DraftChallanDto, ItemHistoryQueryDto, PendingChallanQueryDto, ChallanQueryDto } from './dto/challan.dto';
 
 const PREFIX_KEY = 'CHALLAN_PREFIXES';
 const FALLBACK_PREFIX = 'SSS';
 const round5 = (x: number) => Math.round(x / 5) * 5;
 const n = (v: number | null | undefined) => (Number.isFinite(v as number) ? (v as number) : 0);
+/** SCRAP parties are TCS-only — this guards against a stale client ever
+ *  persisting a TDS deduction alongside it. */
+const isScrapCategory = (category: string | null | undefined) => (category ?? '').toUpperCase() === 'SCRAP';
 
 @Injectable()
 export class ChallansService {
@@ -29,6 +33,7 @@ export class ChallansService {
     private readonly prisma: PrismaService,
     private readonly pdf: PdfService,
     private readonly notifications: NotificationsGateway,
+    private readonly settings: SettingsService,
   ) {}
 
   /** Dispatch lines still awaiting a challan (mirrors the legacy PendChallan query:
@@ -230,6 +235,7 @@ export class ChallansService {
     const pouch = Math.round(tBox * n(customer?.boxRate) * 100) / 100;
     const gst = Math.max(0, ...items.map((i) => n(i.gstRate)));
     const isScrap = (customer?.category ?? '').toUpperCase() === 'SCRAP';
+    const { tcsPercent } = await this.settings.getTcsPercent();
 
     const billingAddress = [customer?.partyName, customer?.city, customer?.state, customer?.region]
       .map((s) => (s ?? '').trim())
@@ -253,14 +259,19 @@ export class ChallansService {
       freight,
       packing,
       pouch,
-      tdsApplicable: customer?.tdsApplicable ?? false,
+      // SCRAP parties are TCS-only — never surface TDS as applicable for them,
+      // even if the customer record separately carries tdsApplicable.
+      tdsApplicable: isScrap ? false : (customer?.tdsApplicable ?? false),
       tdsPercent: customer?.tdsPercent ?? null,
       isScrap,
+      tcsPercent,
       items,
     };
   }
 
   async create(dto: CreateChallanDto): Promise<ChallanDto> {
+    const scrap = isScrapCategory(dto.category);
+    const { tcsPercent } = await this.settings.getTcsPercent();
     const invDate = dto.invDate ? new Date(dto.invDate) : new Date();
     const cfg = await this.getPrefixSettings();
     const wanted = dto.prefix?.trim().toUpperCase();
@@ -291,8 +302,9 @@ export class ChallansService {
         freight: dto.freight ?? null,
         pouch: dto.pouch ?? null,
         tcs: dto.tcs ?? null,
-        tds: dto.tds ?? null,
-        tdsPercent: dto.tdsPercent ?? null,
+        tcsPercent: scrap ? tcsPercent : null,
+        tds: scrap ? null : (dto.tds ?? null),
+        tdsPercent: scrap ? null : (dto.tdsPercent ?? null),
         tax: dto.tax ?? null,
         total: dto.total ?? null,
         b: dto.b ?? null,
@@ -513,6 +525,8 @@ export class ChallansService {
   async update(id: number, dto: CreateChallanDto): Promise<ChallanDto> {
     const existing = await this.prisma.challan.findUnique({ where: { id }, select: { id: true, code: true } });
     if (!existing) throw new NotFoundException('Challan not found');
+    const scrap = isScrapCategory(dto.category);
+    const { tcsPercent } = await this.settings.getTcsPercent();
     const invDate = dto.invDate ? new Date(dto.invDate) : undefined;
     const paymentTerm = dto.paymentTerm ?? null;
     const dueDate = dto.dueDate ? new Date(dto.dueDate) : paymentTerm != null && invDate ? new Date(invDate.getTime() + paymentTerm * 86_400_000) : null;
@@ -542,8 +556,9 @@ export class ChallansService {
           freight: dto.freight ?? null,
           pouch: dto.pouch ?? null,
           tcs: dto.tcs ?? null,
-          tds: dto.tds ?? null,
-          tdsPercent: dto.tdsPercent ?? null,
+          tcsPercent: scrap ? tcsPercent : null,
+          tds: scrap ? null : (dto.tds ?? null),
+          tdsPercent: scrap ? null : (dto.tdsPercent ?? null),
           tax: dto.tax ?? null,
           total: dto.total ?? null,
           b: dto.b ?? null,
@@ -890,6 +905,7 @@ export class ChallansService {
       freight: row.freight,
       pouch: row.pouch,
       tcs: row.tcs,
+      tcsPercent: row.tcsPercent,
       tds: row.tds,
       tdsPercent: row.tdsPercent,
       tax: row.tax,
@@ -1208,7 +1224,7 @@ export class ChallansService {
       line('Box/Pouch', money(c.pouch)),
       line('Tax Amount', money(tax)),
     ];
-    if (isScrap || tcs) totalsBody.push(line('TCS @ 1%', money(tcs)));
+    if (isScrap || tcs) totalsBody.push(line(`TCS${c.tcsPercent ? ` @ ${c.tcsPercent}%` : ''}`, money(tcs)));
     if (tds) totalsBody.push(line(`Less: TDS${c.tdsPercent ? ` @ ${c.tdsPercent}%` : ''}`, `-${money(tds)}`));
     totalsBody.push(line(tds ? 'Net Receivable' : 'Grand Total Amount', money(tds ? total - tds : total), { emphasize: true }));
 

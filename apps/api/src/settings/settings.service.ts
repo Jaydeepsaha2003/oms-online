@@ -1,13 +1,16 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { DEFAULT_ORDER_QTY_LAYOUT, normalizeQtyOrder, type ChallanTermsDto, type CompanyProfileDto, type OrderFooterDto, type OrderOptionDto, type OrderQtyLayout, type OrderTermsDto } from '@oms/shared';
+import { ACTIONS, DEFAULT_ORDER_QTY_LAYOUT, normalizeQtyOrder, RESOURCES, type ChallanTermsDto, type CompanyProfileDto, type OrderFooterDto, type OrderOptionDto, type OrderQtyLayout, type OrderTermsDto, type TcsSettingDto } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { uc } from '../common/coerce';
+import { AuditService } from '../audit/audit.service';
+import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { CreateOrderOptionDto } from './dto/order-option.dto';
 import { UpdateCompanyDto } from './dto/company.dto';
 import { UpdateOrderTermsDto } from './dto/order-terms.dto';
 import { UpdateOrderFooterDto } from './dto/order-footer.dto';
 import { UpdateChallanTermsDto } from './dto/challan-terms.dto';
+import { UpdateTcsSettingDto } from './dto/tcs-setting.dto';
 
 type Row = Prisma.OrderOptionGetPayload<object>;
 
@@ -17,6 +20,9 @@ const ORDER_TERMS = 'ORDER_TERMS';
 const ORDER_FOOTER = 'ORDER_FOOTER';
 const CHALLAN_TERMS = 'CHALLAN_TERMS';
 const ORDER_QTY_LAYOUT = 'ORDER_QTY_LAYOUT';
+const TCS_PERCENT = 'TCS_PERCENT';
+// Matches the legacy Form14 rate, kept until the business saves its own %.
+const DEFAULT_TCS_PERCENT = 1;
 // Shown until the business saves their own list from Settings.
 const DEFAULT_ORDER_TERMS = [
   'Payment Should Be Made Within 30 Days',
@@ -32,7 +38,10 @@ const DEFAULT_CHALLAN_TERMS: string[] = [];
 
 @Injectable()
 export class SettingsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async findAll(): Promise<OrderOptionDto[]> {
     const rows = await this.prisma.orderOption.findMany({
@@ -162,6 +171,38 @@ export class SettingsService {
     const value = JSON.stringify(terms);
     await this.prisma.appConfig.upsert({ where: { key: CHALLAN_TERMS }, update: { value }, create: { key: CHALLAN_TERMS, value } });
     return { terms };
+  }
+
+  /* ── SCRAP challans' TCS % ────────────────────────────────────────────────
+   * Global, editable rate applied instead of TDS on SCRAP-category challans.
+   * Changes are recorded manually (not via the generic @Audit interceptor) so
+   * the entry states the actual old → new % rather than a generic "Updated". */
+
+  async getTcsPercent(): Promise<TcsSettingDto> {
+    const row = await this.prisma.appConfig.findUnique({ where: { key: TCS_PERCENT } });
+    const parsed = row?.value != null ? Number(row.value) : NaN;
+    return { tcsPercent: Number.isFinite(parsed) ? parsed : DEFAULT_TCS_PERCENT };
+  }
+
+  async updateTcsPercent(dto: UpdateTcsSettingDto, actor?: AuthenticatedUser): Promise<TcsSettingDto> {
+    const before = await this.getTcsPercent();
+    const tcsPercent = dto.tcsPercent;
+    await this.prisma.appConfig.upsert({
+      where: { key: TCS_PERCENT },
+      update: { value: String(tcsPercent) },
+      create: { key: TCS_PERCENT, value: String(tcsPercent) },
+    });
+    void this.audit.record({
+      userId: actor?.id ?? null,
+      userEmail: actor?.email ?? null,
+      action: ACTIONS.UPDATE,
+      resource: RESOURCES.SETTING,
+      resourceId: TCS_PERCENT,
+      description: `Changed SCRAP TCS rate from ${before.tcsPercent}% to ${tcsPercent}%`,
+      statusCode: 200,
+      metadata: { before: before.tcsPercent, after: tcsPercent },
+    });
+    return { tcsPercent };
   }
 
   /* ── Order quantity-field layout (per-category Bags/Pcs/Kgs/Box order) ────── */

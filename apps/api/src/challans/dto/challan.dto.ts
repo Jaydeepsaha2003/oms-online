@@ -88,6 +88,7 @@ export class CreateChallanDto {
   @IsOptional() @IsNumber() freight?: number | null;
   @IsOptional() @IsNumber() pouch?: number | null;
   @IsOptional() @IsNumber() tcs?: number | null;
+  @IsOptional() @IsNumber() tcsPercent?: number | null;
   @IsOptional() @IsNumber() tds?: number | null;
   @IsOptional() @IsNumber() tdsPercent?: number | null;
   @IsOptional() @IsNumber() tax?: number | null;

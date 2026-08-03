@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ChallanTermsDto, ChallanTermsInput, CompanyProfileDto, CompanyProfileInput, OrderFooterDto, OrderFooterInput, OrderOptionDto, OrderOptionInput, OrderQtyLayout, OrderTermsDto, OrderTermsInput } from '@oms/shared';
+import type { ChallanTermsDto, ChallanTermsInput, CompanyProfileDto, CompanyProfileInput, OrderFooterDto, OrderFooterInput, OrderOptionDto, OrderOptionInput, OrderQtyLayout, OrderTermsDto, OrderTermsInput, TcsSettingDto, TcsSettingInput } from '@oms/shared';
 import { http } from '@/lib/api';
 
 const KEY = ['settings'] as const;
@@ -8,6 +8,7 @@ const ORDER_TERMS_KEY = ['order-terms'] as const;
 const ORDER_FOOTER_KEY = ['order-footer'] as const;
 const CHALLAN_TERMS_KEY = ['challan-terms'] as const;
 const ORDER_QTY_LAYOUT_KEY = ['order-qty-layout'] as const;
+const TCS_PERCENT_KEY = ['tcs-percent'] as const;
 
 export function useCompany() {
   return useQuery({
@@ -89,6 +90,23 @@ export function useUpdateOrderQtyLayout() {
   return useMutation({
     mutationFn: (input: OrderQtyLayout) => http.put<OrderQtyLayout>('/settings/order-qty-layout', input),
     onSuccess: () => qc.invalidateQueries({ queryKey: ORDER_QTY_LAYOUT_KEY }),
+  });
+}
+
+/** Global TCS % applied to SCRAP-category challans. */
+export function useTcsPercent() {
+  return useQuery({
+    queryKey: TCS_PERCENT_KEY,
+    queryFn: () => http.get<TcsSettingDto>('/settings/tcs-percent'),
+    staleTime: 60_000,
+  });
+}
+
+export function useUpdateTcsPercent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: TcsSettingInput) => http.put<TcsSettingDto>('/settings/tcs-percent', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: TCS_PERCENT_KEY }),
   });
 }
 

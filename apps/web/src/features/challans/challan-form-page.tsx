@@ -446,6 +446,7 @@ export function ChallanFormPage() {
         noBill,
         noBillRemoveGst,
         isScrap: draft?.isScrap ?? false,
+        tcsPercent: draft?.tcsPercent ?? 1,
         tdsApplicable: draft?.tdsApplicable ?? false,
         tdsPercent: draft?.tdsPercent ?? 0,
         taxOverride: manualTax.trim() === '' ? null : numOr(manualTax),
@@ -701,7 +702,7 @@ export function ChallanFormPage() {
                 </span>
                 {draft?.category && <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-700 dark:bg-sky-500/15 dark:text-sky-300">{draft.category}</span>}
                 {draft?.tdsApplicable && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">TDS {draft.tdsPercent ?? 0}%</span>}
-                {draft?.isScrap && <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-bold text-purple-700 dark:bg-purple-500/15 dark:text-purple-300">SCRAP · 1% TCS</span>}
+                {draft?.isScrap && <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-bold text-purple-700 dark:bg-purple-500/15 dark:text-purple-300">SCRAP · {draft.tcsPercent}% TCS</span>}
               </div>
               {/* Customer is chosen in the top header now — shown here read-only so
                   the invoice still reads its bill-to. */}
@@ -1047,7 +1048,7 @@ export function ChallanFormPage() {
                   <Row2 label="Packing" value={inr(numOr(packing))} />
                   <Row2 label="Box / Pouch" value={inr(numOr(pouch))} />
                   <Row2 label={`GST${totals.gstRatePct ? ` @ ${totals.gstRatePct}%` : ''}`} value={inr(totals.tax)} />
-                  {(draft.isScrap || totals.tcs > 0) && <Row2 label="TCS @ 1%" value={inr(totals.tcs)} />}
+                  {(draft.isScrap || totals.tcs > 0) && <Row2 label={`TCS @ ${draft.tcsPercent}%`} value={inr(totals.tcs)} />}
                 </div>
                 <div className="bg-gradient-brand flex items-center justify-between px-3 py-2 text-base font-bold text-white">
                   <span className="tracking-wide">TOTAL</span>

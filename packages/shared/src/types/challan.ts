@@ -87,6 +87,8 @@ export interface ChallanDto {
   freight: number | null;
   pouch: number | null;
   tcs: number | null;
+  /** % `tcs` was computed at (Settings → SCRAP TCS Rate at save time). */
+  tcsPercent: number | null;
   tds: number | null;
   tdsPercent: number | null;
   tax: number | null;
@@ -236,10 +238,13 @@ export interface ChallanDraft {
   freight: number;
   packing: number;
   pouch: number;
-  /** Customer TDS settings (drives the TDS deduction on the challan). */
+  /** Customer TDS settings (drives the TDS deduction on the challan). Ignored
+   *  when isScrap — SCRAP parties carry TCS only, never TDS. */
   tdsApplicable: boolean;
   tdsPercent: number | null;
   isScrap: boolean;
+  /** Globally configured TCS % (Settings → SCRAP TCS Rate), applied when isScrap. */
+  tcsPercent: number;
   items: ChallanDraftItem[];
 }
 
@@ -275,6 +280,7 @@ export interface CreateChallanInput {
   freight?: number | null;
   pouch?: number | null;
   tcs?: number | null;
+  tcsPercent?: number | null;
   tds?: number | null;
   tdsPercent?: number | null;
   tax?: number | null;
@@ -347,8 +353,10 @@ export interface ChallanTotalsInput {
   billingRate?: number | null;
   noBill?: boolean;
   noBillRemoveGst?: boolean;
-  /** SCRAP parties add 1% TCS. */
+  /** SCRAP parties add TCS (at `tcsPercent`) instead of TDS. */
   isScrap?: boolean;
+  /** Globally configured TCS %, fetched from settings. Defaults to 1. */
+  tcsPercent?: number | null;
   tdsApplicable?: boolean;
   tdsPercent?: number | null;
   /** Manual overrides (Form14 Button2/Editbtn): typed Tax back-derives GST%, typed B/C are kept as-is. */
@@ -387,7 +395,8 @@ const num = (v: number | null | undefined) => (Number.isFinite(v as number) ? (v
  * GST base differs by mode: full-bill taxes (amount + freight + packing + pouch),
  * half-bill taxes only the billed KGS value, no-bill can drop GST entirely.
  * TDS (when the party is TDS-applicable) is deducted on the taxable goods value
- * (TAmt, before GST) and yields the net receivable.
+ * (TAmt, before GST) and yields the net receivable — except for SCRAP parties,
+ * which carry TCS instead and never TDS.
  */
 export function computeChallanTotals(input: ChallanTotalsInput): ChallanTotals {
   const items = input.items ?? [];
@@ -402,7 +411,8 @@ export function computeChallanTotals(input: ChallanTotalsInput): ChallanTotals {
   const pouch = num(input.pouch);
   let gstRatePct = input.gstRatePct != null ? num(input.gstRatePct) : Math.max(0, ...items.map((i) => num(i.gstRate)));
   const billingRate = num(input.billingRate);
-  const tcs = input.isScrap ? r2(tAmt * 0.01) : 0;
+  const tcsPercent = input.tcsPercent != null ? num(input.tcsPercent) : 1;
+  const tcs = input.isScrap ? r2((tAmt * tcsPercent) / 100) : 0;
 
   // Tax base + auto GST amount per billing mode.
   let taxableBase: number;
@@ -443,7 +453,9 @@ export function computeChallanTotals(input: ChallanTotalsInput): ChallanTotals {
 
   let c = r0(total - b);
   if (input.cOverride != null) c = num(input.cOverride);
-  const tdsAmount = input.tdsApplicable ? r0((tAmt * num(input.tdsPercent)) / 100) : 0;
+  // SCRAP parties are TCS-only — TDS never applies here even if the customer
+  // record separately carries tdsApplicable (e.g. from a prior non-scrap use).
+  const tdsAmount = input.tdsApplicable && !input.isScrap ? r0((tAmt * num(input.tdsPercent)) / 100) : 0;
   const netReceivable = r0(total - tdsAmount);
 
   return { tBags, tPcs, tKgs, tBox, tAmt, gstRatePct, taxableBase, tax, tcs, total, b, c, tdsAmount, netReceivable };

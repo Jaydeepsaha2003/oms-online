@@ -5,6 +5,8 @@ import { DEFAULT_ORDER_QTY_LAYOUT, normalizeQtyOrder, QTY_FIELD_LABEL, SETTING_G
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
+import { RESOURCES } from '@oms/shared';
+import { RecordHistory } from '@/components/common/record-history';
 import { useChallanPrefixSettings, useSaveChallanPrefixSettings } from '@/features/challans/use-challans';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -26,11 +28,13 @@ import {
   useOrderTerms,
   useSettings,
   useOrderQtyLayout,
+  useTcsPercent,
   useUpdateChallanTerms,
   useUpdateCompany,
   useUpdateOrderFooter,
   useUpdateOrderQtyLayout,
   useUpdateOrderTerms,
+  useUpdateTcsPercent,
 } from './use-settings';
 
 export function SettingsPage() {
@@ -62,6 +66,8 @@ export function SettingsPage() {
       <OrderFooterCard canEdit={canEdit} />
 
       <ChallanTermsCard canEdit={canEdit} />
+
+      <TcsPercentCard canEdit={canEdit} />
 
       <PreferencesCard />
 
@@ -466,6 +472,64 @@ function ChallanTermsCard({ canEdit }: { canEdit: boolean }) {
               {save.isPending ? <Loader2 className="animate-spin" /> : null} Save terms
             </Button>
           </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Global TCS % applied instead of TDS on SCRAP-category challans. Every save
+ *  is recorded to the audit log with the old → new % (RecordHistory below). */
+function TcsPercentCard({ canEdit }: { canEdit: boolean }) {
+  const { data } = useTcsPercent();
+  const save = useUpdateTcsPercent();
+  const [value, setValue] = useState('');
+
+  useEffect(() => {
+    if (data) setValue(String(data.tcsPercent));
+  }, [data]);
+
+  const onSave = () => {
+    const tcsPercent = Number(value);
+    if (!Number.isFinite(tcsPercent) || tcsPercent < 0 || tcsPercent > 100) {
+      toast.error('Enter a % between 0 and 100');
+      return;
+    }
+    save.mutate(
+      { tcsPercent },
+      { onSuccess: () => toast.success('SCRAP TCS rate saved'), onError: (e) => toast.error(getApiErrorMessage(e, 'Save failed')) },
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-start justify-between gap-3 pb-3">
+        <div>
+          <CardTitle className="text-base">SCRAP TCS Rate</CardTitle>
+          <p className="text-muted-foreground text-xs">
+            Applied instead of TDS on challans for SCRAP-category customers. Changing it only affects challans saved afterwards.
+          </p>
+        </div>
+        <RecordHistory resource={RESOURCES.SETTING} resourceId="TCS_PERCENT" label="SCRAP TCS Rate" />
+      </CardHeader>
+      <CardContent className="flex items-center gap-2">
+        <div className="relative w-32">
+          <Input
+            type="number"
+            min={0}
+            max={100}
+            step={0.01}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            disabled={!canEdit}
+            className="pr-7"
+          />
+          <span className="text-muted-foreground pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-sm">%</span>
+        </div>
+        {canEdit && (
+          <Button onClick={onSave} disabled={save.isPending}>
+            {save.isPending ? <Loader2 className="animate-spin" /> : null} Save
+          </Button>
         )}
       </CardContent>
     </Card>
