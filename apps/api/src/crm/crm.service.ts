@@ -194,10 +194,16 @@ export class CrmService {
     return this.findOne(id);
   }
 
-  async resolve(id: number, userName?: string): Promise<FollowupDto> {
+  /** Mark a follow-up done. `note` is the optional closing comment the user types
+   *  when completing it (how it was settled, what was collected, …) — it's kept on
+   *  the timeline so the Completed view can show WHY it closed, not just that it did. */
+  async resolve(id: number, userName?: string, note?: string): Promise<FollowupDto> {
     await this.ensure(id);
+    const comment = (note ?? '').trim();
     await this.prisma.$transaction([
-      this.prisma.followupLog.create({ data: { followupId: id, kind: 'STATUS', note: 'Resolved', userName: userName ?? null } }),
+      this.prisma.followupLog.create({
+        data: { followupId: id, kind: 'STATUS', note: comment ? `Resolved — ${comment}` : 'Resolved', userName: userName ?? null },
+      }),
       this.prisma.followup.update({ where: { id }, data: { status: 'DONE', resolvedAt: new Date(), resolvedByName: userName ?? null } }),
     ]);
     return this.findOne(id);
@@ -236,28 +242,42 @@ export class CrmService {
     return { items, total, page: q.page, pageSize: q.pageSize, totalPages: Math.max(1, Math.ceil(total / q.pageSize)) };
   }
 
-  /** Party-wise board of OPEN follow-ups. */
+  /**
+   * Party-wise board. Defaults to OPEN work; pass `status: 'DONE'` to review what
+   * has already been completed (the Completed tab). The urgency buckets describe
+   * outstanding work — "overdue", "due today" — so they're only applied to OPEN;
+   * a resolved follow-up has no urgency left to filter on.
+   */
   async board(q: FollowupQueryDto): Promise<FollowupPartyGroup[]> {
-    const where: Prisma.FollowupWhereInput = { status: 'OPEN', ...(q.kind ? { kind: uc(q.kind)! } : {}), ...(q.party ? { partyName: q.party } : {}) };
+    const status = uc(q.status) || 'OPEN';
+    const isOpen = status === 'OPEN';
+    const where: Prisma.FollowupWhereInput = { status, ...(q.kind ? { kind: uc(q.kind)! } : {}), ...(q.party ? { partyName: q.party } : {}) };
     const rows = await this.prisma.followup.findMany({ where, include: INCLUDE, orderBy: this.listOrder() });
     const now = new Date();
     const settings = await this.getSettings();
     const groups = new Map<string, FollowupPartyGroup>();
     for (const r of rows) {
       const dto = this.toDto(r);
-      if (!this.matchesBucket(dto, q.bucket)) continue;
+      if (isOpen && !this.matchesBucket(dto, q.bucket)) continue;
       const key = dto.partyName;
       const g = groups.get(key) ?? { partyName: key, customerId: dto.customerId, openCount: 0, overdueCount: 0, activeNudges: 0, nextPromiseAt: null, items: [] };
       const st = computeFollowupState(dto, now, settings.leadDays);
       g.openCount += 1;
-      if (st.urgency === 'OVERDUE') g.overdueCount += 1;
-      if (st.isActiveNudge) g.activeNudges += 1;
+      if (isOpen && st.urgency === 'OVERDUE') g.overdueCount += 1;
+      if (isOpen && st.isActiveNudge) g.activeNudges += 1;
       if (dto.promisedAt && (!g.nextPromiseAt || dto.promisedAt < g.nextPromiseAt)) g.nextPromiseAt = dto.promisedAt;
       g.items.push(dto);
       groups.set(key, g);
     }
+    const out = [...groups.values()];
+    // Completed work reads best newest-first (what was just finished); open work
+    // leads with whoever is most overdue / actively nudging.
+    if (!isOpen) {
+      const done = (g: FollowupPartyGroup) => g.items.reduce((max, i) => (i.resolvedAt && i.resolvedAt > max ? i.resolvedAt : max), '');
+      return out.sort((a, b) => (done(b) < done(a) ? -1 : 1));
+    }
     // Sort: parties with overdue / active first, then by soonest promise.
-    return [...groups.values()].sort(
+    return out.sort(
       (a, b) => b.overdueCount - a.overdueCount || b.activeNudges - a.activeNudges || (a.nextPromiseAt ?? '9999') < (b.nextPromiseAt ?? '9999') ? -1 : 1,
     );
   }

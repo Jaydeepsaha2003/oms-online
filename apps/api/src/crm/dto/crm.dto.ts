@@ -52,6 +52,11 @@ export class AddFollowupLogDto {
   @IsOptional() @IsNumber() @Min(0) newPromisedAmount?: number | null;
 }
 
+/** Closing a follow-up: an optional note on how it was settled. */
+export class ResolveFollowupDto {
+  @IsOptional() @IsString() @MaxLength(2000) note?: string | null;
+}
+
 export class FollowupQueryDto extends PaginationDto {
   @IsOptional() @IsString() kind?: string;
   @IsOptional() @IsString() status?: string;

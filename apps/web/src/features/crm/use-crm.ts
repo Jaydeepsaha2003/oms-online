@@ -164,9 +164,15 @@ export function useSnoozeFollowup() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (id: number) => http.post<FollowupDto>(`/crm/followups/${id}/snooze`, {}), onSuccess: () => invalidate(qc) });
 }
+/** Mark a follow-up done, optionally recording HOW it was settled — the note is
+ *  appended to its timeline and shown in the Completed view. */
 export function useResolveFollowup() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (id: number) => http.post<FollowupDto>(`/crm/followups/${id}/resolve`, {}), onSuccess: () => invalidate(qc) });
+  return useMutation({
+    mutationFn: ({ id, note }: { id: number; note?: string }) =>
+      http.post<FollowupDto>(`/crm/followups/${id}/resolve`, { note: note?.trim() || undefined }),
+    onSuccess: () => invalidate(qc),
+  });
 }
 export function useReopenFollowup() {
   const qc = useQueryClient();

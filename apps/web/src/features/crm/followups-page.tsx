@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AlarmClock, Bell, Check, ChevronDown, CircleCheck, Clock, HandCoins, Info, Loader2, Mic, Pencil, Plus, Search, Trash2, TriangleAlert } from 'lucide-react';
+import { AlarmClock, Bell, Check, ChevronDown, CircleCheck, Clock, HandCoins, Info, Loader2, Mic, Pencil, Plus, RotateCcw, Search, Trash2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { type FollowupDto, type FollowupKind, type FollowupPartyGroup } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -26,6 +26,7 @@ import {
   useOrderItemSuggest,
   useOrderSuggest,
   usePartySuggest,
+  useReopenFollowup,
   useResolveFollowup,
   useSnoozeFollowup,
   useUpdateChecklistItem,
@@ -53,7 +54,14 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
   const canEdit = can('crm:update') || can('crm:create');
   const [bucket, setBucket] = useState('');
   const [search, setSearch] = useState('');
-  const query = useMemo(() => ({ kind, bucket: bucket || undefined, search: search || undefined }), [kind, bucket, search]);
+  // Open vs Completed. The urgency buckets only describe outstanding work, so
+  // they're cleared (and hidden) while reviewing what's already been closed.
+  const [status, setStatus] = useState<'OPEN' | 'DONE'>('OPEN');
+  const showingDone = status === 'DONE';
+  const query = useMemo(
+    () => ({ kind, status, bucket: showingDone ? undefined : bucket || undefined, search: search || undefined }),
+    [kind, status, showingDone, bucket, search],
+  );
   const { data: groups = [], isLoading } = useFollowupBoard(query);
   const { data: summary } = useFollowupSummary(kind);
 
@@ -111,13 +119,34 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
       {/* Owing-parties worklist — pick a party and collect (payment recovery) */}
       {isPay && <OwingPartiesWorklist onCollect={openCollect} onOpenParty={(p) => setSearch(p)} />}
 
-      {/* Follow-up KPI strip */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Kpi label="Overdue" value={summary?.overdue ?? 0} tone="rose" icon={<TriangleAlert className="size-4" />} active={bucket === 'overdue'} onClick={() => setBucket(bucket === 'overdue' ? '' : 'overdue')} />
-        <Kpi label="Due today" value={summary?.dueToday ?? 0} tone="amber" icon={<Clock className="size-4" />} active={bucket === 'today'} onClick={() => setBucket(bucket === 'today' ? '' : 'today')} />
-        <Kpi label="Nudging now" value={summary?.activeNudges ?? 0} tone="violet" icon={<AlarmClock className="size-4" />} active={bucket === 'attention'} onClick={() => setBucket(bucket === 'attention' ? '' : 'attention')} />
-        <Kpi label="Open total" value={summary?.openTotal ?? 0} tone="sky" icon={<Bell className="size-4" />} active={bucket === ''} onClick={() => setBucket('')} />
+      {/* Open ⇄ Completed. Completed is a review view — it answers "what did we
+          actually close, and what was said when we closed it". */}
+      <div className="bg-muted inline-flex rounded-lg p-1">
+        {([['OPEN', 'Open'], ['DONE', 'Completed']] as const).map(([v, label]) => (
+          <button
+            key={v}
+            type="button"
+            onClick={() => setStatus(v)}
+            className={cn(
+              'inline-flex cursor-pointer items-center gap-1.5 rounded-md px-3.5 py-1.5 text-sm font-semibold transition-colors',
+              status === v ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {v === 'OPEN' ? <Bell className="size-3.5" /> : <CircleCheck className="size-3.5" />}
+            {label}
+          </button>
+        ))}
       </div>
+
+      {/* Follow-up KPI strip — open work only; nothing here applies to closed items. */}
+      {!showingDone && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Kpi label="Overdue" value={summary?.overdue ?? 0} tone="rose" icon={<TriangleAlert className="size-4" />} active={bucket === 'overdue'} onClick={() => setBucket(bucket === 'overdue' ? '' : 'overdue')} />
+          <Kpi label="Due today" value={summary?.dueToday ?? 0} tone="amber" icon={<Clock className="size-4" />} active={bucket === 'today'} onClick={() => setBucket(bucket === 'today' ? '' : 'today')} />
+          <Kpi label="Nudging now" value={summary?.activeNudges ?? 0} tone="violet" icon={<AlarmClock className="size-4" />} active={bucket === 'attention'} onClick={() => setBucket(bucket === 'attention' ? '' : 'attention')} />
+          <Kpi label="Open total" value={summary?.openTotal ?? 0} tone="sky" icon={<Bell className="size-4" />} active={bucket === ''} onClick={() => setBucket('')} />
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2">
@@ -125,9 +154,11 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
           <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
           <Input placeholder="Search party, title, order…" className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-        <div className="w-48">
-          <NativeSelect value={bucket} onChange={setBucket} options={BUCKETS.map((b) => b.v)} renderOption={(v) => <span>{BUCKETS.find((b) => b.v === v)?.label ?? 'All open'}</span>} placeholder="All open" />
-        </div>
+        {!showingDone && (
+          <div className="w-48">
+            <NativeSelect value={bucket} onChange={setBucket} options={BUCKETS.map((b) => b.v)} renderOption={(v) => <span>{BUCKETS.find((b) => b.v === v)?.label ?? 'All open'}</span>} placeholder="All open" />
+          </div>
+        )}
       </div>
 
       {/* Party-wise board */}
@@ -135,12 +166,16 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
         <div className="text-muted-foreground flex items-center justify-center gap-2 py-16 text-sm"><Loader2 className="size-4 animate-spin" /> Loading follow-ups…</div>
       ) : groups.length === 0 ? (
         <div className="text-muted-foreground rounded-xl border border-dashed p-12 text-center text-sm">
-          <CircleCheck className="text-emerald-400 mx-auto mb-3 size-10" />
-          Nothing pending here. {canEdit && 'Log a new commitment with “New follow-up”.'}
+          <CircleCheck className="mx-auto mb-3 size-10 text-emerald-500" />
+          {showingDone
+            ? 'Nothing completed yet — finished follow-ups will collect here.'
+            : `Nothing pending here. ${canEdit ? 'Log a new commitment with “New follow-up”.' : ''}`}
         </div>
       ) : (
         <div className="grid gap-3 lg:grid-cols-2">
-          {groups.map((g) => <PartyCard key={g.partyName} group={g} canEdit={canEdit} onEdit={openForm} balance={balByParty.get(g.partyName.trim().toUpperCase())} />)}
+          {groups.map((g) => (
+            <PartyCard key={g.partyName} group={g} canEdit={canEdit} onEdit={openForm} balance={balByParty.get(g.partyName.trim().toUpperCase())} done={showingDone} />
+          ))}
         </div>
       )}
 
@@ -166,43 +201,70 @@ function Kpi({ label, value, tone, icon, active, onClick }: { label: string; val
 
 /* ── Party card ──────────────────────────────────────────────────────────────── */
 
-function PartyCard({ group, canEdit, onEdit, balance }: { group: FollowupPartyGroup; canEdit: boolean; onEdit: (f: FollowupDto) => void; balance?: PartyBalanceSummary }) {
+function PartyCard({ group, canEdit, onEdit, balance, done }: { group: FollowupPartyGroup; canEdit: boolean; onEdit: (f: FollowupDto) => void; balance?: PartyBalanceSummary; done?: boolean }) {
+  // The card's temperature: red when something is overdue, violet while a nudge
+  // is actively running, emerald once the work is closed, else a calm slate.
+  const tone = done ? 'emerald' : group.overdueCount > 0 ? 'rose' : group.activeNudges > 0 ? 'violet' : 'slate';
+  const RAIL: Record<string, string> = {
+    rose: 'bg-rose-500', violet: 'bg-violet-500', emerald: 'bg-emerald-500', slate: 'bg-slate-300 dark:bg-slate-600',
+  };
+  const AVATAR: Record<string, string> = {
+    rose: 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300',
+    violet: 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300',
+    emerald: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
+    slate: 'bg-primary/10 text-primary',
+  };
+  // Newest completion in this group — the headline fact of a Completed card.
+  const lastDone = done ? group.items.reduce((max, i) => (i.resolvedAt && i.resolvedAt > max ? i.resolvedAt : max), '') : '';
+
   return (
-    <section className="bg-card overflow-hidden rounded-xl border shadow-sm">
-      <div className="flex items-center gap-2 border-b bg-gradient-to-r from-slate-50 to-transparent px-3 py-2.5">
-        <span className="bg-primary/10 text-primary flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-bold">{initials(group.partyName)}</span>
+    <section className="bg-card relative overflow-hidden rounded-xl border shadow-sm transition-shadow duration-200 hover:shadow-md">
+      <span className={cn('absolute inset-y-0 left-0 w-1', RAIL[tone])} aria-hidden />
+      <div className="flex items-center gap-2.5 border-b bg-gradient-to-r from-slate-50/80 to-transparent py-2.5 pr-3 pl-4 dark:from-white/[0.03]">
+        <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-full text-xs font-bold', AVATAR[tone])}>
+          {initials(group.partyName)}
+        </span>
         <div className="min-w-0 flex-1">
           <div className="truncate font-semibold">{group.partyName}</div>
-          <div className="text-muted-foreground text-xs">{group.openCount} open{group.nextPromiseAt ? ` · next ${formatDate(group.nextPromiseAt)}` : ''}</div>
+          <div className="text-muted-foreground mt-0.5 truncate text-xs">
+            {done
+              ? `${group.items.length} completed${lastDone ? ` · last ${formatDate(lastDone)}` : ''}`
+              : `${group.openCount} open${group.nextPromiseAt ? ` · next ${formatDate(group.nextPromiseAt)}` : ''}`}
+          </div>
         </div>
-        {balance && balance.outstanding > 0 && (
-          <Chip tone={balance.overdue > 0 ? 'rose' : 'amber'} className="tabular-nums" >
-            <span title={inrFull(balance.outstanding)}>{inrCompact(balance.outstanding)} due</span>
-          </Chip>
-        )}
-        {group.overdueCount > 0 && <Chip tone="rose">{group.overdueCount} overdue</Chip>}
-        {group.activeNudges > 0 && <Chip tone="violet"><AlarmClock className="size-3" /> {group.activeNudges}</Chip>}
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+          {balance && balance.outstanding > 0 && (
+            <Chip tone={balance.overdue > 0 ? 'rose' : 'amber'} className="tabular-nums">
+              <span title={inrFull(balance.outstanding)}>{inrCompact(balance.outstanding)} due</span>
+            </Chip>
+          )}
+          {done ? (
+            <Chip tone="emerald"><CircleCheck className="size-3" /> Done</Chip>
+          ) : (
+            <>
+              {group.overdueCount > 0 && <Chip tone="rose">{group.overdueCount} overdue</Chip>}
+              {group.activeNudges > 0 && <Chip tone="violet"><AlarmClock className="size-3" /> {group.activeNudges}</Chip>}
+            </>
+          )}
+        </div>
       </div>
       <div className="divide-y">
-        {group.items.map((f) => <FollowupRow key={f.id} f={f} canEdit={canEdit} onEdit={onEdit} />)}
+        {group.items.map((f) => <FollowupRow key={f.id} f={f} canEdit={canEdit} onEdit={onEdit} done={done} />)}
       </div>
     </section>
   );
 }
 
-function FollowupRow({ f, canEdit, onEdit }: { f: FollowupDto; canEdit: boolean; onEdit: (f: FollowupDto) => void }) {
+function FollowupRow({ f, canEdit, onEdit, done }: { f: FollowupDto; canEdit: boolean; onEdit: (f: FollowupDto) => void; done?: boolean }) {
   const [open, setOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
+  const [doneOpen, setDoneOpen] = useState(false);
   const confirm = useConfirm();
   const snooze = useSnoozeFollowup();
-  const resolve = useResolveFollowup();
+  const reopen = useReopenFollowup();
   const del = useDeleteFollowup();
   const { can } = usePermissions();
   const line = itemLine(f);
-
-  const doResolve = async () => {
-    resolve.mutate(f.id, { onSuccess: () => toast.success('Marked done'), onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) });
-  };
   const doDelete = async () => {
     if (!(await confirm({ title: 'Delete this follow-up?', description: `“${f.title}” for ${f.partyName} will be removed.`, confirmText: 'Delete', destructive: true }))) return;
     del.mutate(f.id, { onSuccess: () => toast.success('Deleted'), onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) });
@@ -218,10 +280,21 @@ function FollowupRow({ f, canEdit, onEdit }: { f: FollowupDto; canEdit: boolean;
             {f.stage && <Chip tone="slate">{f.stage}</Chip>}
           </div>
           <div className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
-            <UrgencyChip f={f} />
+            {done ? (
+              <Chip tone="emerald"><CircleCheck className="size-3" /> Completed{f.resolvedAt ? ` ${formatDate(f.resolvedAt)}` : ''}</Chip>
+            ) : (
+              <UrgencyChip f={f} />
+            )}
             {line && <span className="font-mono">{line}</span>}
             {f.detail && <span className="truncate">· {f.detail}</span>}
           </div>
+          {/* Why it closed — the optional comment captured on "Done", plus who closed it. */}
+          {done && (
+            <div className="mt-1.5 rounded-lg border border-emerald-200 bg-emerald-50/70 px-2.5 py-1.5 text-xs text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200">
+              <span className="font-semibold">{resolutionNote(f) ?? 'Closed with no comment.'}</span>
+              {f.resolvedByName && <span className="opacity-70"> — {f.resolvedByName}</span>}
+            </div>
+          )}
         </div>
         <button type="button" onClick={() => setOpen((o) => !o)} className="text-muted-foreground hover:text-foreground shrink-0 rounded p-1" aria-label="Timeline">
           <ChevronDown className={cn('size-4 transition-transform', open && 'rotate-180')} />
@@ -255,12 +328,27 @@ function FollowupRow({ f, canEdit, onEdit }: { f: FollowupDto; canEdit: boolean;
 
       {canEdit && (
         <div className="mt-2 flex flex-wrap gap-1.5">
-          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setLogOpen(true)}><Pencil className="size-3" /> Update</Button>
-          <Button size="sm" variant="outline" className="h-7 text-xs text-amber-700" onClick={() => snooze.mutate(f.id, { onSuccess: () => toast.success('Snoozed — will nudge again later'), onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) })} disabled={snooze.isPending}>
-            <AlarmClock className="size-3" /> Snooze
-          </Button>
-          <Button size="sm" variant="outline" className="h-7 text-xs text-emerald-700" onClick={doResolve} disabled={resolve.isPending}><Check className="size-3" /> Done</Button>
-          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onEdit(f)}><Pencil className="size-3" /> Edit</Button>
+          {done ? (
+            // Completed rows stay reviewable: reopen if it was closed too early.
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs"
+              disabled={reopen.isPending}
+              onClick={() => reopen.mutate(f.id, { onSuccess: () => toast.success('Reopened'), onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) })}
+            >
+              <RotateCcw className="size-3" /> Reopen
+            </Button>
+          ) : (
+            <>
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setLogOpen(true)}><Pencil className="size-3" /> Update</Button>
+              <Button size="sm" variant="outline" className="h-7 text-xs text-amber-700" onClick={() => snooze.mutate(f.id, { onSuccess: () => toast.success('Snoozed — will nudge again later'), onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) })} disabled={snooze.isPending}>
+                <AlarmClock className="size-3" /> Snooze
+              </Button>
+              <Button size="sm" variant="outline" className="h-7 text-xs text-emerald-700" onClick={() => setDoneOpen(true)}><Check className="size-3" /> Done</Button>
+              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onEdit(f)}><Pencil className="size-3" /> Edit</Button>
+            </>
+          )}
           {can('crm:delete') && <Button size="sm" variant="ghost" className="text-destructive h-7 text-xs" onClick={doDelete}><Trash2 className="size-3" /></Button>}
         </div>
       )}
@@ -294,7 +382,64 @@ function FollowupRow({ f, canEdit, onEdit }: { f: FollowupDto; canEdit: boolean;
       )}
 
       {logOpen && <LogDialog f={f} onClose={() => setLogOpen(false)} />}
+      {doneOpen && <ResolveDialog f={f} onClose={() => setDoneOpen(false)} />}
     </div>
+  );
+}
+
+/** The closing comment stored on the STATUS log when a follow-up was resolved
+ *  ("Resolved — collected in full" → "collected in full"). Returns null when it
+ *  was closed without one. */
+function resolutionNote(f: FollowupDto): string | null {
+  const log = [...(f.logs ?? [])].reverse().find((l) => l.kind === 'STATUS' && (l.note ?? '').startsWith('Resolved'));
+  const note = (log?.note ?? '').replace(/^Resolved\s*—\s*/, '').trim();
+  return note && note !== 'Resolved' ? note : null;
+}
+
+/** "Mark done" — captures an OPTIONAL closing comment (how it was settled) that
+ *  lands on the timeline and headlines the Completed card. Enter submits. */
+function ResolveDialog({ f, onClose }: { f: FollowupDto; onClose: () => void }) {
+  const [note, setNote] = useState('');
+  const resolve = useResolveFollowup();
+  const submit = () => {
+    if (resolve.isPending) return;
+    resolve.mutate(
+      { id: f.id, note },
+      { onSuccess: () => { toast.success('Marked done'); onClose(); }, onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) },
+    );
+  };
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <CircleCheck className="size-5 text-emerald-600" /> Mark as done
+          </DialogTitle>
+          <DialogDescription>
+            “{f.title}” for {f.partyName}. Add a closing comment if it helps — it's optional.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-1.5">
+          <Label className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">Comment (optional)</Label>
+          <textarea
+            autoFocus
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } }}
+            rows={3}
+            placeholder="e.g. collected in full by cheque · settled on call"
+            className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 w-full rounded-md border px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-[3px]"
+          />
+          <p className="text-muted-foreground text-[11px]">Saved to this follow-up's timeline. Enter to save, Shift+Enter for a new line.</p>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={resolve.isPending}>Cancel</Button>
+          <Button onClick={submit} disabled={resolve.isPending} className="bg-emerald-600 text-white hover:bg-emerald-700">
+            {resolve.isPending ? <Loader2 className="animate-spin" /> : <Check />} Mark done
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -11,6 +11,7 @@ import {
   CreateFollowupDto,
   CrmSettingsDto,
   FollowupQueryDto,
+  ResolveFollowupDto,
   UpdateChecklistItemDto,
   UpdateFollowupDto,
 } from './dto/crm.dto';
@@ -130,8 +131,8 @@ export class CrmController {
   @Post(':id/resolve')
   @Permissions(perm(R, ACTIONS.UPDATE))
   @Audit({ action: ACTIONS.UPDATE, resource: R })
-  resolve(@Param('id', ParseIntPipe) id: number, @CurrentUser('name') userName: string) {
-    return this.crm.resolve(id, userName);
+  resolve(@Param('id', ParseIntPipe) id: number, @Body() dto: ResolveFollowupDto, @CurrentUser('name') userName: string) {
+    return this.crm.resolve(id, userName, dto?.note ?? undefined);
   }
 
   @Post(':id/reopen')

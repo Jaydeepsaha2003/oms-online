@@ -207,7 +207,7 @@ function FollowupBannerNotification({
           className="h-8 flex-1 text-xs justify-center text-emerald-600 dark:text-emerald-500 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/20 font-semibold transition-colors"
           disabled={resolve.isPending}
           onClick={() =>
-            resolve.mutate(f.id, {
+            resolve.mutate({ id: f.id }, {
               onSuccess: () => {
                 toast.success('Resolved');
                 onDismiss();

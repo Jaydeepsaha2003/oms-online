@@ -105,7 +105,7 @@ export function NotificationsBell() {
                     className="h-7 text-xs text-emerald-700"
                     disabled={resolve.isPending}
                     onClick={() =>
-                      resolve.mutate(f.id, {
+                      resolve.mutate({ id: f.id }, {
                         onSuccess: () => toast.success('Done'),
                         onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')),
                       })
