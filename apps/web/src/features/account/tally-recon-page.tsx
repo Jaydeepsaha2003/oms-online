@@ -134,7 +134,10 @@ const REVIEW: Record<Exclude<ReconReview, 'OPEN'>, { label: string; chip: string
  */
 function ReviewBadge({ row }: { row: ReconRow }) {
   if (row.review === 'OPEN') return null;
-  const m = REVIEW[row.review];
+  // A mark this build has no entry for — what a payload written by a different
+  // build looks like — is treated as no mark rather than taking the page down.
+  const m: { label: string; chip: string } | undefined = REVIEW[row.review];
+  if (!m) return null;
   const title = [
     row.reviewNote,
     row.reviewedBy ? `Marked by ${row.reviewedBy}` : null,
@@ -158,8 +161,17 @@ function ReviewBadge({ row }: { row: ReconRow }) {
   );
 }
 
+/** A status this build has no entry for — an older or newer payload than the
+ *  code reading it. Shown plainly, because losing one chip's colour beats
+ *  losing the whole report. */
+const UNKNOWN_STATUS: StatusMeta = {
+  label: 'Unknown',
+  chip: 'border-slate-300 bg-slate-100 text-slate-600 dark:border-slate-500/40 dark:bg-slate-500/10 dark:text-slate-400',
+  blurb: '',
+};
+
 function StatusChip({ status }: { status: ReconStatus }) {
-  const m = STATUS[status];
+  const m = STATUS[status] ?? UNKNOWN_STATUS;
   return (
     <span className={cn('inline-block rounded-[3px] border px-1.5 py-[1px] text-[10.5px] font-bold tracking-wide whitespace-nowrap uppercase', m.chip)}>
       {m.label}

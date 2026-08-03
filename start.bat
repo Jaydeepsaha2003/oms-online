@@ -108,18 +108,30 @@ REM In buildonly mode (restart.bat's build-first step) the servers are still
 REM running and holding the SQLite database open, so we skip the DB-modifying sync
 REM (migrate/push/seed) to avoid lock contention - it runs safely once, after the
 REM stop, in the real start.bat that follows. BUT if the schema changed, the API
-REM must be compiled against a fresh Prisma client, so regenerate that here first:
-REM `prisma generate` only reads schema.prisma and writes node_modules\.prisma -
-REM no database connection, so it is safe while the servers are running.
+REM must be compiled against a fresh Prisma client, so regenerate that here first.
 REM (Kept out of a parenthesised block: the paren-heavy PowerShell one-liner below
 REM would confuse cmd's block-paren matching, so this uses a goto instead.)
 if not defined SKIPLAUNCH goto realsync
 powershell -NoProfile -Command "$c='node_modules\.prisma\client\index.js'; $s='apps\api\prisma\schema.prisma'; if((Test-Path $c) -and (Test-Path $s) -and ((Get-Item $c).LastWriteTimeUtc -ge (Get-Item $s).LastWriteTimeUtc)){ exit 0 } else { exit 1 }"
-if errorlevel 1 (
-    echo Schema changed - regenerating the Prisma client for the build...
-    call npm run db:generate
-    echo.
-)
+if not errorlevel 1 goto dbsync_done
+echo Schema changed - regenerating the Prisma client for the build...
+call npm run db:generate
+REM Do NOT trust that exit code. On Windows `prisma generate` also rewrites
+REM node_modules\.prisma\client\query_engine-windows.dll.node, and the running
+REM API holds that file open - so it dies with "EPERM ... rename" even though
+REM the generated client (the part the API actually compiles against) was
+REM written just before it, and the engine on disk is the same version anyway.
+REM Re-check the client instead: current means carry on, genuinely stale means
+REM stop here rather than compile the API against an outdated client.
+powershell -NoProfile -Command "$c='node_modules\.prisma\client\index.js'; $s='apps\api\prisma\schema.prisma'; if((Test-Path $c) -and (Test-Path $s) -and ((Get-Item $c).LastWriteTimeUtc -ge (Get-Item $s).LastWriteTimeUtc)){ exit 0 } else { exit 1 }"
+if not errorlevel 1 goto generate_ok
+echo.
+echo The Prisma client is still older than schema.prisma, so the API cannot be
+echo built against it. Run stop.bat first, then restart.bat again.
+echo.
+exit /b 1
+:generate_ok
+echo.
 goto dbsync_done
 
 :realsync
@@ -207,14 +219,28 @@ if not errorlevel 1 (
 )
 
 echo [1/2] Syncing dependencies (npm install)...
-call npm install --no-audit --no-fund
-if errorlevel 1 (
+call npm install --no-audit --no-fund --prefer-offline
+if not errorlevel 1 goto build
+REM This box may have no internet at all (see OFFLINE-SETUP.md), and the check
+REM above fires on a TIMESTAMP, not on content - a git pull that merely rewrites
+REM package-lock.json is enough to trigger it, with every dependency already
+REM installed. Refusing to build a working app because a registry is unreachable
+REM is the wrong trade, so fall back to what is on disk and say so plainly. A
+REM dependency that really is missing will fail the build a few lines below.
+if exist "node_modules" (
     echo.
-    echo npm install failed - fix the error above, then run start.bat again.
+    echo   [warning] npm install failed ^(no network?^) - continuing with the
+    echo   packages already in node_modules. If the build then fails on a
+    echo   missing module, get this machine online and run start.bat again.
     echo.
-    pause
-    exit /b 1
+    goto build
 )
+echo.
+echo npm install failed and there is no node_modules to fall back on.
+echo Fix the error above, then run start.bat again.
+echo.
+pause
+exit /b 1
 
 :build
 echo.

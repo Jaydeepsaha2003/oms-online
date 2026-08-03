@@ -18,21 +18,36 @@ echo   Restarting OMS - building first, servers stay up...
 echo ============================================================
 echo.
 
-echo [1/3] Building the latest changes (current servers keep running)...
+REM ── Can this build actually happen while the servers are up? ───────────────
+REM Only if the Prisma client is already current. When schema.prisma is newer,
+REM the build needs `prisma generate`, which on Windows also replaces
+REM node_modules\.prisma\client\query_engine-windows.dll.node - a file the
+REM running API holds open, so the rename fails with EPERM. There is no way
+REM around that lock other than not running: stop first and accept the downtime
+REM for this one case. Every other restart keeps building while serving.
+set "STOPPEDFIRST="
+powershell -NoProfile -Command "$c='node_modules\.prisma\client\index.js'; $s='apps\api\prisma\schema.prisma'; if((Test-Path $c) -and (Test-Path $s) -and ((Get-Item $c).LastWriteTimeUtc -ge (Get-Item $s).LastWriteTimeUtc)){ exit 0 } else { exit 1 }"
+if not errorlevel 1 goto buildstep
+
+echo Schema changed, so the Prisma client has to be regenerated - and Windows
+echo keeps its query engine locked while the API is running. Stopping the
+echo servers first: the app is DOWN until the new build is up.
+echo.
+call "%~dp0stop.bat" nopause
+echo.
+echo Waiting for ports 4000 / 6173 to be released...
+powershell -NoProfile -Command "$d=(Get-Date).AddSeconds(10); while((Get-Date) -lt $d){ if(-not (Get-NetTCPConnection -State Listen -LocalPort 4000,6173 -ErrorAction SilentlyContinue)){ break }; Start-Sleep -Milliseconds 200 }" >nul 2>&1
+set "STOPPEDFIRST=1"
+echo.
+
+:buildstep
+echo [1/3] Building the latest changes...
 echo.
 call "%~dp0start.bat" buildonly
-if errorlevel 1 (
-    echo.
-    echo ============================================================
-    echo   Build failed - the running servers were LEFT UNTOUCHED.
-    echo   Fix the error above and run restart.bat again.
-    echo ============================================================
-    echo.
-    pause
-    exit /b 1
-)
+if errorlevel 1 goto buildfailed
 
 echo.
+if defined STOPPEDFIRST goto launchstep
 echo [2/3] Stopping the running servers...
 call "%~dp0stop.bat" nopause
 
@@ -40,6 +55,7 @@ echo.
 echo Waiting for ports 4000 / 6173 to be released...
 powershell -NoProfile -Command "$d=(Get-Date).AddSeconds(10); while((Get-Date) -lt $d){ if(-not (Get-NetTCPConnection -State Listen -LocalPort 4000,6173 -ErrorAction SilentlyContinue)){ break }; Start-Sleep -Milliseconds 200 }" >nul 2>&1
 
+:launchstep
 echo.
 echo [3/3] Launching the freshly built servers...
 echo.
@@ -50,3 +66,20 @@ REM start.bat never has it set.
 set "OMS_PREBUILT=1"
 call "%~dp0start.bat"
 exit /b
+
+:buildfailed
+echo.
+echo ============================================================
+if defined STOPPEDFIRST (
+    echo   Build failed - and the servers were already stopped for it,
+    echo   so the app is DOWN. Fix the error above, then run
+    echo   restart.bat again ^(or start.bat to come back up on the
+    echo   previous build^).
+) else (
+    echo   Build failed - the running servers were LEFT UNTOUCHED.
+    echo   Fix the error above and run restart.bat again.
+)
+echo ============================================================
+echo.
+pause
+exit /b 1
