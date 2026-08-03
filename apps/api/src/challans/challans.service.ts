@@ -242,6 +242,38 @@ export class ChallansService {
       .filter(Boolean)
       .join(', ');
 
+    // Manual-line Product picker: every ACTIVE catalogue product, de-duplicated
+    // by name. Sourced here (rather than from /products, which needs product:view)
+    // so anyone who can build a challan gets the list. A SCRAP party sees its
+    // SCRAP-category products first, and the first of those becomes the default —
+    // so adding "S.S. SCRAP" to Products under the SCRAP category is all it takes
+    // for it to appear here pre-selected.
+    const productRows = await this.prisma.product.findMany({
+      where: { active: true },
+      select: { product: true, category: true },
+      orderBy: [{ product: 'asc' }],
+    });
+    const scrapNames: string[] = [];
+    const otherNames: string[] = [];
+    const seenProduct = new Set<string>();
+    for (const p of productRows) {
+      const name = (p.product ?? '').trim();
+      if (!name) continue;
+      const key = name.toUpperCase();
+      if (seenProduct.has(key)) continue;
+      seenProduct.add(key);
+      (isScrapCategory(p.category) ? scrapNames : otherNames).push(name);
+    }
+    const manualProducts = isScrap ? [...scrapNames, ...otherNames] : [...otherNames, ...scrapNames];
+    // Until a SCRAP-category product exists in the catalogue, keep pre-filling the
+    // name the form has always used — otherwise scrap parties would suddenly get a
+    // blank Product box. The moment one is added it takes over automatically.
+    const LEGACY_SCRAP_PRODUCT = 'S.S. SCRAP';
+    const defaultManualProduct = isScrap ? (scrapNames[0] ?? LEGACY_SCRAP_PRODUCT) : null;
+    if (isScrap && !scrapNames.length && !manualProducts.includes(LEGACY_SCRAP_PRODUCT)) {
+      manualProducts.unshift(LEGACY_SCRAP_PRODUCT);
+    }
+
     const prefixCfg = await this.getPrefixSettings();
     return {
       code: await this.nextCode(prefixCfg.default, new Date()),
@@ -265,6 +297,8 @@ export class ChallansService {
       tdsPercent: customer?.tdsPercent ?? null,
       isScrap,
       tcsPercent,
+      manualProducts,
+      defaultManualProduct,
       items,
     };
   }

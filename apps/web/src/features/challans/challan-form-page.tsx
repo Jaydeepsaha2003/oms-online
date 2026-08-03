@@ -37,7 +37,7 @@ import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { useConfirm } from '@/components/common/confirm';
 import { RecordHistory } from '@/components/common/record-history';
-import { NativeSelect } from '@/components/common/combo';
+import { Combo, NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
@@ -255,7 +255,7 @@ export function ChallanFormPage() {
       setNoBillRemoveGst(!!c.noBill && n(c.tax) === 0);
       setShippingAddress(c.shippingAddress || c.billingAddress || draft.billingAddress || '');
       setRemarks(c.remarks ?? '');
-      if (draft.isScrap) setM((x) => ({ ...x, product: 'S.S. SCRAP', unit: 'KGS' }));
+      if (draft.isScrap) setM((x) => ({ ...x, product: draft.defaultManualProduct ?? '', unit: 'KGS' }));
     } else if (!isEdit) {
       const restore = restoreRef.current;
       if (restore && restore.customer === draft.customerName) {
@@ -278,7 +278,7 @@ export function ChallanFormPage() {
         setManualC(restore.manualC || '');
         setShippingAddress(restore.shippingAddress || draft.billingAddress || '');
         setRemarks(restore.remarks || '');
-        if (draft.isScrap) setM((x) => ({ ...x, product: 'S.S. SCRAP', unit: 'KGS' }));
+        if (draft.isScrap) setM((x) => ({ ...x, product: draft.defaultManualProduct ?? '', unit: 'KGS' }));
         draftReady.current = true;
         return;
       }
@@ -289,7 +289,7 @@ export function ChallanFormPage() {
       setShippingAddress(draft.billingAddress ?? '');
       recalc(next, draft);
       if (preset.length) warnMissingRates(preset);
-      if (draft.isScrap) setM((x) => ({ ...x, product: 'S.S. SCRAP', unit: 'KGS' }));
+      if (draft.isScrap) setM((x) => ({ ...x, product: draft.defaultManualProduct ?? '', unit: 'KGS' }));
       draftReady.current = true;
     }
   }, [draft, savedChallan, editQ.data]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -396,7 +396,9 @@ export function ChallanFormPage() {
     const next = [...rows, row];
     setRows(next);
     recalc(next);
-    setM({ product: draft.isScrap ? 'S.S. SCRAP' : '', design: 'NA', unit: 'KGS', qty: '', price: '' });
+    // Scrap parties keep billing the same scrap item line after line, so re-arm
+    // the picker with the category's default instead of clearing it.
+    setM({ product: draft.isScrap ? (draft.defaultManualProduct ?? '') : '', design: 'NA', unit: 'KGS', qty: '', price: '' });
   };
   const removeRow = (key: string) => {
     const next = rows.filter((r) => r.key !== key);
@@ -848,7 +850,21 @@ export function ChallanFormPage() {
               </div>
               {showManual && (
                 <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-6">
-                  <div className="col-span-2 space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Product</Label><Input value={m.product} onChange={(e) => setM({ ...m, product: e.target.value })} placeholder="e.g. S.S. SCRAP" className="h-8 rounded-[4px] text-[13px]" /></div>
+                  {/* Product picker over the ACTIVE catalogue (draft.manualProducts).
+                      A SCRAP party gets its SCRAP-category items first and the first
+                      one pre-selected — so adding "S.S. SCRAP" to Products under the
+                      SCRAP category is all that's needed. Creatable, so a one-off
+                      item that isn't in the catalogue can still be typed in. */}
+                  <div className="col-span-2 space-y-1">
+                    <Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Product</Label>
+                    <Combo
+                      value={m.product}
+                      onChange={(v) => setM({ ...m, product: v })}
+                      options={draft.manualProducts}
+                      placeholder={draft.manualProducts.length ? 'Pick an item or type one…' : 'e.g. S.S. SCRAP'}
+                      className="h-8 rounded-[4px] text-[13px]"
+                    />
+                  </div>
                   <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Design</Label><Input value={m.design} onChange={(e) => setM({ ...m, design: e.target.value })} disabled={draft.isScrap} title={draft.isScrap ? 'Scrap items carry no design' : undefined} className={cn('h-8 rounded-[4px] text-[13px]', draft.isScrap && 'bg-muted/40 cursor-not-allowed')} /></div>
                   <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Unit</Label><NativeSelect value={m.unit} onChange={(v) => setM({ ...m, unit: v })} options={['KGS', 'PCS']} className="h-8 rounded-[4px] text-[13px]" /></div>
                   <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Qty</Label><Input value={m.qty} onChange={(e) => setM({ ...m, qty: e.target.value })} className="h-8 rounded-[4px] text-right text-[13px] tabular-nums" /></div>

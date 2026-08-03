@@ -245,6 +245,13 @@ export interface ChallanDraft {
   isScrap: boolean;
   /** Globally configured TCS % (Settings → SCRAP TCS Rate), applied when isScrap. */
   tcsPercent: number;
+  /** Active catalogue products offered by the manual-line Product picker, so a
+   *  manual line names a real item instead of free-typed text. For a SCRAP party
+   *  the SCRAP-category products are listed first. */
+  manualProducts: string[];
+  /** The SCRAP-category product to pre-select on the manual line for a SCRAP
+   *  party (null when the party isn't scrap, or no scrap product is set up yet). */
+  defaultManualProduct: string | null;
   items: ChallanDraftItem[];
 }
 
