@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Res, StreamableFile } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
-import { ACTIONS, hasPermission, perm, RESOURCES } from '@oms/shared';
+import { ACTIONS, DISPATCH_EXPORT_COLUMNS, hasPermission, perm, RESOURCES } from '@oms/shared';
 import { Audit, SkipAudit } from '../common/decorators/audit.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -63,13 +63,14 @@ export class DispatchController {
       Box: l.remBox,
       Comment: l.comment ?? '',
     }));
+    // Which columns the user picked in the "Choose columns to export" dialog —
+    // json_to_sheet only writes keys named in `headers`, so an unrecognised or
+    // empty request just falls back to every column rather than an empty sheet.
+    const requested = new Set((query.columns ?? '').split(',').map((s) => s.trim()).filter(Boolean));
+    const active = requested.size ? DISPATCH_EXPORT_COLUMNS.filter((c) => requested.has(c.id)) : DISPATCH_EXPORT_COLUMNS;
+    const headers = (active.length ? active : DISPATCH_EXPORT_COLUMNS).map((c) => c.header);
     this.excel.setDownloadHeaders(res, 'pending-dispatch');
-    return new StreamableFile(
-      this.excel.jsonToBuffer(rows, {
-        sheetName: 'Pending Dispatch',
-        headers: ['Order #', 'Order Date', 'Due Date', 'Due', 'Customer', 'Product', 'Design', 'Sub Category', 'Priority', 'Bags', 'Pcs', 'Kgs', 'Box', 'Comment'],
-      }),
-    );
+    return new StreamableFile(this.excel.jsonToBuffer(rows, { sheetName: 'Pending Dispatch', headers }));
   }
 
   @Get('filter-options')

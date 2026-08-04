@@ -6,6 +6,27 @@ import type { Paginated, PaginationQuery } from './common';
 export const DISPATCH_STATUSES = ['PARTIALLY DISPATCH', 'FULLY DISPATCH'] as const;
 export type DispatchStatus = (typeof DISPATCH_STATUSES)[number];
 
+/** Columns offered by the pending-dispatch Excel export, in the order they're
+ *  written to the sheet. Shared so the "which columns?" picker on the frontend
+ *  and the xlsx builder on the backend can never drift apart. */
+export const DISPATCH_EXPORT_COLUMNS = [
+  { id: 'orderNo', header: 'Order #' },
+  { id: 'orderDate', header: 'Order Date' },
+  { id: 'dueDate', header: 'Due Date' },
+  { id: 'due', header: 'Due' },
+  { id: 'customer', header: 'Customer' },
+  { id: 'product', header: 'Product' },
+  { id: 'design', header: 'Design' },
+  { id: 'subCategory', header: 'Sub Category' },
+  { id: 'priority', header: 'Priority' },
+  { id: 'bags', header: 'Bags' },
+  { id: 'pcs', header: 'Pcs' },
+  { id: 'kgs', header: 'Kgs' },
+  { id: 'box', header: 'Box' },
+  { id: 'comment', header: 'Comment' },
+] as const;
+export type DispatchExportColumnId = (typeof DISPATCH_EXPORT_COLUMNS)[number]['id'];
+
 /** An order line with its still-to-dispatch (remaining) quantities. */
 export interface PendingLineDto {
   orderItemId: number;
@@ -168,5 +189,8 @@ export type PendingQuery = PaginationQuery & {
    *  when true the `product` value is matched as a base-name prefix so every design
    *  variant is included; when false/omitted it's an exact match. */
   all?: boolean;
+  /** Excel export only: comma-separated column ids to include (see
+   *  `DISPATCH_EXPORT_COLUMNS`). Omitted/empty means every column. */
+  columns?: string;
 };
 export type PendingList = Paginated<PendingLineDto>;

@@ -14,9 +14,15 @@ import { downloadFile, http } from '@/lib/api';
 
 const KEY = ['dispatch'] as const;
 
-/** Download the current pending-dispatch list (with the active filters) as .xlsx. */
-export function exportPendingDispatch(query: Omit<PendingQuery, 'page' | 'pageSize'>): Promise<void> {
-  const entries = Object.entries(query).filter(([, v]) => v != null && v !== '') as [string, string][];
+/** Download the current pending-dispatch list (with the active filters) as .xlsx.
+ *  `columns`, if given, limits the sheet to those column ids (see
+ *  `DISPATCH_EXPORT_COLUMNS`) — omitted means every column. */
+export function exportPendingDispatch(
+  query: Omit<PendingQuery, 'page' | 'pageSize' | 'columns'>,
+  columns?: string[],
+): Promise<void> {
+  const full = { ...query, columns: columns?.length ? columns.join(',') : undefined };
+  const entries = Object.entries(full).filter(([, v]) => v != null && v !== '') as [string, string][];
   const qs = new URLSearchParams(entries).toString();
   return downloadFile(`/dispatch/pending/export${qs ? `?${qs}` : ''}`, 'pending-dispatch.xlsx');
 }
