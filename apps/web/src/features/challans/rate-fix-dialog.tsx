@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Loader2 } from 'lucide-react';
 import { http, getApiErrorMessage } from '@/lib/api';
+import { invalidateChallanRateDependants } from './use-challans';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -47,6 +49,7 @@ const blank = (groups: MissingRateGroup[]): Draft =>
 export function RateFixDialog({ open, onOpenChange, customerName, transportName, groups, onSaved }: Props) {
   const [values, setValues] = useState<Draft>(() => blank(groups));
   const [busy, setBusy] = useState(false);
+  const qc = useQueryClient();
 
   // Re-arm whenever a different set of categories comes in, so a previous
   // dialog's typing never leaks into the next one.
@@ -86,6 +89,12 @@ export function RateFixDialog({ open, onOpenChange, customerName, transportName,
         }
       }
       toast.success('Rates saved');
+      // This posts to the masters directly (not via the rate mutation hooks),
+      // so refresh the same caches those hooks would: the rate lists, and the
+      // challan screens that embed resolved rates (Pending Challan + drafts).
+      qc.invalidateQueries({ queryKey: ['gst-rates'] });
+      qc.invalidateQueries({ queryKey: ['trans-rates'] });
+      invalidateChallanRateDependants(qc);
       await onSaved();
       onOpenChange(false);
     } catch (e) {

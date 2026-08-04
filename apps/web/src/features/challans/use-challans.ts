@@ -34,14 +34,52 @@ const invalidateChallans = (qc: ReturnType<typeof useQueryClient>) => {
   qc.invalidateQueries({ queryKey: ['orders'] });
 };
 
-/** Dispatch lines still awaiting a challan, with search + date-range filters. */
+/**
+ * Dispatch lines still awaiting a challan, with search + date-range filters.
+ *
+ * Same "never trust a cached snapshot" contract as {@link useChallanDraft}, and
+ * for the same reason: each row carries the GST/Freight/Packing rate resolved
+ * from the master tables (that's what drives the unpriced-line badges), and
+ * those masters can be edited at any time from another screen. On the global
+ * 30s staleTime this page would open onto a snapshot taken before the edit and
+ * still show "No GST rate" for a party that now has one — while Create Challan,
+ * which already opts in here, showed the correct rate. Two screens disagreeing
+ * about the same party is worse than a slightly slower load.
+ *
+ * `refetchOnMount: 'always'` also keeps this OUT of the persisted localStorage
+ * cache (see `shouldDehydrateQuery` in lib/query.ts), so a cold reload can't
+ * rehydrate stale badges either. `placeholderData` keeps the previous rows on
+ * screen while the refetch runs, so landing here still paints instantly.
+ */
 export function usePendingChallans(query: PendingChallanQuery, opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: [...KEY, 'pending', query],
     queryFn: () => http.get<PendingChallanList>('/challans/pending', { params: query }),
     placeholderData: (prev) => prev,
     enabled: opts?.enabled ?? true,
+    staleTime: 0,
+    refetchOnMount: 'always',
   });
+}
+
+/**
+ * Refresh every challan cache that embeds master-rate data.
+ *
+ * Pending Challan and the Create/Edit draft carry the GST/Freight/Packing rate
+ * resolved from the rate masters, so editing those masters must refresh these
+ * too — otherwise Pending Challan keeps flagging a party that now has rates.
+ *
+ * Exported so the gst-rates / trans-rates features call one shared function
+ * instead of each restating this dependency. Mirrors `invalidateDispatch`.
+ */
+export function invalidateChallanRateDependants(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: KEY });
+  // Pending Challan is usually NOT mounted while rates are being edited, and a
+  // plain invalidate only marks an inactive query stale rather than refetching
+  // it. Pull it now (`type: 'all'` covers inactive queries) so the rows are
+  // already correct the moment the user navigates over, instead of correcting
+  // themselves a beat after the page paints.
+  void qc.refetchQueries({ queryKey: [...KEY, 'pending'], type: 'all' });
 }
 
 /** Customer / product / design options for the Pending Challan filter bar. Only

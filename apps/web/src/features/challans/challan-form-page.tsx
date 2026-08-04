@@ -161,8 +161,30 @@ export function ChallanFormPage() {
 
   const draft = isEdit ? editQ.data?.draft : createDraftQ.data;
   const savedChallan = editQ.data?.challan;
-  const isLoading = isEdit ? editQ.isLoading : !!customer && createDraftQ.isLoading;
   const isError = isEdit ? editQ.isError : createDraftQ.isError;
+
+  // Tracks which screen the one-time init below has already run for. Declared
+  // here (not beside its effect) because `isLoading` has to know whether that
+  // init has happened yet.
+  const initedRef = useRef('');
+
+  // A draft served from cache is NOT the data this screen may act on.
+  //
+  // Both draft queries are `staleTime: Infinity` + `refetchOnMount: 'always'`,
+  // so re-opening a party already fetched this session hands the component the
+  // OLD pool immediately and the fresh one a moment later. The one-shot init
+  // effect latched onto that first snapshot and then ignored the real response
+  // — so lines dispatched (or rates fixed) since the last visit were missing
+  // from Create Challan until a hard reload, the one thing that empties the
+  // in-memory cache. Waiting for the fetch to settle removes the race: the form
+  // is only ever built from what the server just said.
+  const draftSettling = isEdit ? editQ.isFetching : createDraftQ.isFetching;
+
+  // Show the spinner while that first fetch settles instead of an empty item
+  // table. Only until the init runs — a later background refetch (a rate edit
+  // invalidating this cache, say) must not blank out a form being worked on.
+  const isLoading =
+    (isEdit ? editQ.isLoading : !!customer && createDraftQ.isLoading) || (draftSettling && !initedRef.current);
 
   // Working state.
   const [rows, setRows] = useState<Row[]>([]);
@@ -249,10 +271,10 @@ export function ChallanFormPage() {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // One-time init when the data arrives.
-  const initedRef = useRef('');
+  // One-time init when the data arrives — from the SETTLED fetch, never from a
+  // cached snapshot still being revalidated (see `draftSettling`).
   useEffect(() => {
-    if (!draft) return;
+    if (!draft || draftSettling) return;
     const key = isEdit ? `edit:${editId}` : `create:${draft.customerName}`;
     if (initedRef.current === key) return;
     initedRef.current = key;
@@ -316,7 +338,7 @@ export function ChallanFormPage() {
       if (draft.isScrap) setM((x) => ({ ...x, product: draft.defaultManualProduct ?? '', unit: 'KGS' }));
       draftReady.current = true;
     }
-  }, [draft, savedChallan, editQ.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [draft, draftSettling, savedChallan, editQ.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Scrap parties bill as manual lines (there's no dispatched pool), so open the
   // manual entry automatically — its design field is locked (scrap carries no design).

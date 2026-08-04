@@ -9,6 +9,7 @@ import type {
   TransRateQuery,
 } from '@oms/shared';
 import { downloadFile, http } from '@/lib/api';
+import { invalidateChallanRateDependants } from '@/features/challans/use-challans';
 
 export interface ImportResult {
   total: number;
@@ -18,6 +19,14 @@ export interface ImportResult {
 }
 
 const KEY = ['trans-rates'] as const;
+
+// The challan screens embed the freight/packing rate resolved from this master
+// (to flag unpriced lines), so a rate change has to refresh those too —
+// otherwise Pending Challan keeps flagging a party that now has rates.
+const invalidateTransRates = (qc: ReturnType<typeof useQueryClient>) => {
+  qc.invalidateQueries({ queryKey: KEY });
+  invalidateChallanRateDependants(qc);
+};
 
 export function useTransRates(query: TransRateQuery) {
   return useQuery({
@@ -56,7 +65,7 @@ export function useUpsertTransRate() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: TransRateInput) => http.post<TransRateDto>('/transport-rates', input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateTransRates(qc),
   });
 }
 
@@ -64,7 +73,7 @@ export function useBulkTransRates() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: TransRateBulkInput) => http.post<{ saved: number }>('/transport-rates/bulk', input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateTransRates(qc),
   });
 }
 
@@ -72,7 +81,7 @@ export function useDeleteTransRate() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => http.delete(`/transport-rates/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateTransRates(qc),
   });
 }
 
@@ -81,7 +90,7 @@ export function useImportTransRates() {
   return useMutation({
     mutationFn: (rows: Record<string, unknown>[]) =>
       http.post<ImportResult>('/transport-rates/import', { rows }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateTransRates(qc),
   });
 }
 

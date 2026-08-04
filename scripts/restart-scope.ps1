@@ -46,6 +46,24 @@ $webOut    = Newest @('apps\web\dist')
 # Shared feeds both, so treat any change to it as a full relaunch.
 if ($sharedSrc -gt $sharedOut) { Write-Output 'full'; exit 0 }
 
+# A build output being current does NOT mean it is the code that is running.
+# The API is a long-lived node process that reads dist once, at launch; the web
+# server re-reads apps\web\dist per request, which is why only the API can drift
+# this way. Build the API without bouncing it - or bounce it and have the launch
+# quietly fail - and the previous build serves indefinitely while every
+# timestamp here says 'none'. That is invisible from the outside: the page is
+# current, dist is current, only the responses are stale, and no rebuild will
+# ever dislodge it. So compare the RUNNING process against the build it is
+# meant to be serving, not just source against output.
+$apiPid = (Get-NetTCPConnection -State Listen -LocalPort 4000 -EA SilentlyContinue | Select-Object -First 1).OwningProcess
+if ($apiPid) {
+  # StartTime is local; $apiOut is UTC. Access to another user's process can be
+  # denied, in which case we simply learn nothing and fall through to the
+  # timestamp comparison below.
+  $started = (Get-Process -Id $apiPid -EA SilentlyContinue).StartTime
+  if ($started -and $started.ToUniversalTime() -lt $apiOut) { Write-Output 'api'; exit 0 }
+}
+
 $apiChanged = $apiSrc -gt $apiOut
 $webChanged = $webSrc -gt $webOut
 

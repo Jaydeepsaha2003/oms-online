@@ -9,6 +9,7 @@ import type {
   RateHistoryEntry,
 } from '@oms/shared';
 import { downloadFile, http } from '@/lib/api';
+import { invalidateChallanRateDependants } from '@/features/challans/use-challans';
 
 export interface ImportResult {
   total: number;
@@ -18,6 +19,14 @@ export interface ImportResult {
 }
 
 const KEY = ['gst-rates'] as const;
+
+// The challan screens embed the rate resolved from this master (to flag
+// unpriced lines), so a rate change has to refresh those too — otherwise
+// Pending Challan keeps showing "No GST rate" for a party that now has one.
+const invalidateGstRates = (qc: ReturnType<typeof useQueryClient>) => {
+  qc.invalidateQueries({ queryKey: KEY });
+  invalidateChallanRateDependants(qc);
+};
 
 export function useGstRates(query: GstRateQuery) {
   return useQuery({
@@ -56,7 +65,7 @@ export function useUpsertGstRate() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: GstRateInput) => http.post<GstRateDto>('/gst-rates', input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateGstRates(qc),
   });
 }
 
@@ -64,7 +73,7 @@ export function useBulkGstRates() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: GstRateBulkInput) => http.post<{ saved: number }>('/gst-rates/bulk', input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateGstRates(qc),
   });
 }
 
@@ -72,7 +81,7 @@ export function useDeleteGstRate() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => http.delete(`/gst-rates/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateGstRates(qc),
   });
 }
 
@@ -81,7 +90,7 @@ export function useImportGstRates() {
   return useMutation({
     mutationFn: (rows: Record<string, unknown>[]) =>
       http.post<ImportResult>('/gst-rates/import', { rows }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateGstRates(qc),
   });
 }
 
