@@ -7,7 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
-import type { ApiError } from '@oms/shared';
+import type { ApiError, DuplicateMatch } from '@oms/shared';
 
 /**
  * Converts any thrown error into the standard `ApiError` envelope so the web
@@ -27,6 +27,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     let message = 'Internal server error';
     let error: string | undefined;
     let details: Record<string, string[]> | undefined;
+    let duplicate: DuplicateMatch | undefined;
 
     if (exception instanceof HttpException) {
       statusCode = exception.getStatus();
@@ -45,6 +46,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
         } else if (typeof rawMessage === 'string') {
           message = rawMessage;
         }
+        // A duplicate conflict carries the matched record so the client can
+        // offer "open the existing one" rather than just refusing the save.
+        if (body.duplicate) duplicate = body.duplicate as DuplicateMatch;
       }
     } else if (exception instanceof Error) {
       message = exception.message;
@@ -69,6 +73,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       message,
       error,
       details,
+      duplicate,
       path: request.url,
       timestamp: new Date().toISOString(),
     };

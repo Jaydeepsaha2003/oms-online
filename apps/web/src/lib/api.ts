@@ -1,5 +1,5 @@
 import axios, { AxiosError, type AxiosRequestConfig, type AxiosResponse } from 'axios';
-import type { AuthResult, UploadedFileDto } from '@oms/shared';
+import type { AuthResult, DuplicateMatch, UploadedFileDto } from '@oms/shared';
 import { useAuthStore } from '@/stores/auth-store';
 
 // Resolve the API base URL. By default we call the same origin the page was
@@ -186,6 +186,15 @@ export async function downloadFile(
   link.click();
   link.remove();
   URL.revokeObjectURL(blobUrl);
+}
+
+/** The already-saved record a 409 duplicate conflict pointed at, or null when
+ *  this error is anything else. Lets a caller offer "open the existing one"
+ *  instead of just reporting a failure. */
+export function getDuplicateMatch(error: unknown): DuplicateMatch | null {
+  if (!axios.isAxiosError(error) || error.response?.status !== 409) return null;
+  const data = error.response?.data as { error?: string; duplicate?: DuplicateMatch } | undefined;
+  return data?.error === 'DUPLICATE_CHALLAN' && data.duplicate ? data.duplicate : null;
 }
 
 /** Extract a human-readable message from an API error. */

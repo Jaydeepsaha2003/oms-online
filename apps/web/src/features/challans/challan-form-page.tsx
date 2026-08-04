@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowLeftRight,
   CalendarCheck2,
@@ -24,17 +25,21 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
+  ACTIONS,
   CHALLAN_STATUSES,
   computeChallanTotals,
+  perm,
   qtyOrderForCategory,
   RESOURCES,
+  type ChallanDraft,
   type ChallanDraftItem,
   type CreateChallanInput,
+  type DuplicateMatch,
   type PendingChallanLine,
   type QtyField,
 } from '@oms/shared';
 import { cn } from '@/lib/utils';
-import { getApiErrorMessage } from '@/lib/api';
+import { getApiErrorMessage, getDuplicateMatch } from '@/lib/api';
 import { formatDate } from '@/lib/date-format';
 import { useConfirm } from '@/components/common/confirm';
 import { RecordHistory } from '@/components/common/record-history';
@@ -43,6 +48,7 @@ import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { usePermissions } from '@/hooks/use-permissions';
 import { useOrderQtyLayout } from '@/features/settings/use-settings';
 import {
   useAllChallanCustomers,
@@ -55,6 +61,8 @@ import {
 } from './use-challans';
 import { clearChallanDraft, loadChallanDraft, saveChallanDraft, type ChallanDraftData } from './challan-draft';
 import { MissingChallanDialog } from './missing-challan-dialog';
+import { RateFixDialog } from './rate-fix-dialog';
+import { MissingRateBadge, missingRatesFor } from './rate-status';
 
 type NavState = { customerName?: string; lines?: PendingChallanLine[]; returnTo?: string };
 type Row = ChallanDraftItem & { key: string };
@@ -100,10 +108,7 @@ const SHOW_SHIPPING_ADDRESS = false;
 const warnMissingRates = (items: ChallanDraftItem[]) => {
   const missing = new Map<string, Set<string>>(); // category → which rates are missing
   for (const it of items) {
-    const miss: string[] = [];
-    if (it.gstRate == null) miss.push('GST');
-    if (it.freightRate == null) miss.push('Freight');
-    if (it.packingRate == null) miss.push('Packing');
+    const miss = missingRatesFor(it);
     if (!miss.length) continue;
     const cat = it.pCategory || 'this item';
     const set = missing.get(cat) ?? new Set<string>();
@@ -186,6 +191,11 @@ export function ChallanFormPage() {
   const [m, setM] = useState({ product: '', design: 'NA', unit: 'KGS', qty: '', price: '' });
   const [savedId, setSavedId] = useState<number | null>(null);
   const [savedCode, setSavedCode] = useState('');
+  const [rateFixOpen, setRateFixOpen] = useState(false);
+  // Writing the masters needs create rights on BOTH — the dialog may have to
+  // write a GST row and a transport row for the same category.
+  const { can } = usePermissions();
+  const canFixRates = can(perm(RESOURCES.GST_RATE, ACTIONS.CREATE)) && can(perm(RESOURCES.TRANS_RATE, ACTIONS.CREATE));
 
   // ── Work-in-progress local draft (Form14 TempChallanTbl): persist a half-built
   // challan across refresh/navigation and offer it back. New challan only. ──
@@ -445,6 +455,15 @@ export function ChallanFormPage() {
     return dt;
   }, [invDate, draft, savedChallan, isEdit]);
 
+  // Lines whose category has no rate configured. Persistent row state — the
+  // old toast named a CATEGORY and vanished, leaving the operator to work out
+  // which row it meant.
+  const unpricedRows = useMemo(
+    () => rows.map((r, idx) => ({ key: r.key, idx, pCategory: r.pCategory, missing: missingRatesFor(r) })).filter((x) => x.missing.length > 0),
+    [rows],
+  );
+  const unpricedByKey = useMemo(() => new Map(unpricedRows.map((u) => [u.key, u.missing])), [unpricedRows]);
+
   const totals = useMemo(
     () =>
       computeChallanTotals({
@@ -526,6 +545,13 @@ export function ChallanFormPage() {
    */
   const save = async ({ thenPrint = false }: { thenPrint?: boolean } = {}) => {
     if (!draft || rows.length === 0) return toast.error('Add at least one item.');
+    // An unpriced line silently inherits the highest GST rate on the challan
+    // (the server takes Math.max across lines), so a wrong rate is invisible in
+    // the totals. Block rather than let that ship.
+    if (unpricedRows.length > 0) {
+      const ok = await confirmUnpriced();
+      if (!ok) return;
+    }
     if (status === 'CANCELLED') {
       const ok = await confirm({
         title: 'Save as CANCELLED?',
@@ -590,12 +616,161 @@ export function ChallanFormPage() {
         navigate(`/challans/${c.id}/bill`, { state: { backTo: 'challan-pending-or-list', autoPrint: true } });
       }
     };
-    // An AxiosError IS an Error, so `e.message` here was only ever "Request
-    // failed with status code 400" — the server's actual reason (a rejected
-    // field, a duplicate invoice number) lives in the response body.
-    const onError = (e: unknown) => toast.error(getApiErrorMessage(e, 'Failed to save challan'));
-    if (isEdit) updateChallan.mutate({ id: editId!, ...payload }, { onSuccess, onError });
-    else createChallan.mutate(payload, { onSuccess, onError });
+    // Submits `body`; re-runnable so a confirmed near-duplicate can be resent
+    // verbatim plus the flag, without recomputing totals (the operator must get
+    // exactly what they reviewed).
+    const submit = (body: CreateChallanInput) => {
+      // An AxiosError IS an Error, so `e.message` here was only ever "Request
+      // failed with status code 400" — the server's actual reason (a rejected
+      // field, a duplicate invoice number) lives in the response body.
+      const onError = (e: unknown) => {
+        const dup = getDuplicateMatch(e);
+        if (dup) return void askDuplicate(dup, body, submit);
+        toast.error(getApiErrorMessage(e, 'Failed to save challan'));
+      };
+      if (isEdit) updateChallan.mutate({ id: editId!, ...body }, { onSuccess, onError });
+      else createChallan.mutate(body, { onSuccess, onError });
+    };
+    submit(payload);
+  };
+
+  /** One entry per unpriced category, for the rate dialog. */
+  const missingRateGroups = useMemo(() => {
+    const by = new Map<string, Set<string>>();
+    for (const u of unpricedRows) {
+      const cat = u.pCategory || '';
+      if (!cat) continue; // no category → nothing to key a rate row on
+      const set = by.get(cat) ?? new Set<string>();
+      u.missing.forEach((m) => set.add(m));
+      by.set(cat, set);
+    }
+    return [...by.entries()].map(([pCategory, missing]) => ({ pCategory, missing: [...missing] }));
+  }, [unpricedRows]);
+
+  /**
+   * Pull the freshly-configured rates back onto the existing lines.
+   *
+   * Only the three rate fields are touched, so quantity and price edits made
+   * before the fix survive. Keyed by category because that is what the rate
+   * masters are keyed by.
+   */
+  const applyFreshRates = async () => {
+    // Split the branches: the two queries return different shapes, and a
+    // union'd result loses `draft` on the create side.
+    let fresh: ChallanDraft | undefined;
+    if (isEdit) fresh = (await editQ.refetch()).data?.draft;
+    else fresh = (await createDraftQ.refetch()).data;
+    const byCat = new Map<string, { g: number | null; f: number | null; p: number | null }>();
+    for (const it of fresh?.items ?? []) {
+      const c = (it.pCategory ?? '').toUpperCase();
+      if (!byCat.has(c)) byCat.set(c, { g: it.gstRate, f: it.freightRate, p: it.packingRate });
+    }
+    const next = rows.map((r) => {
+      const m = byCat.get((r.pCategory ?? '').toUpperCase());
+      if (!m) return r;
+      return { ...r, gstRate: r.gstRate ?? m.g, freightRate: r.freightRate ?? m.f, packingRate: r.packingRate ?? m.p };
+    });
+    setRows(next);
+    recalc(next);
+  };
+
+  /**
+   * Saving is blocked while any line is unpriced.
+   *
+   * Returns true only when the operator may proceed anyway — which is the
+   * permission fallback below. Otherwise it opens the rate dialog and returns
+   * false; once the rates are in, the lines re-price and Save works normally.
+   */
+  const confirmUnpriced = async (): Promise<boolean> => {
+    const lines = (
+      <ul className="list-disc space-y-0.5 pl-4 text-sm">
+        {unpricedRows.map((u) => (
+          <li key={u.key}>
+            Line {u.idx + 1}
+            {u.pCategory ? ` · ${u.pCategory}` : ''} — no {u.missing.join(' · ')} rate
+          </li>
+        ))}
+      </ul>
+    );
+
+    // Two cases must never hard-block:
+    //  - Editing an already-billed challan. Those lines went out under the
+    //    rates of the day (the server even falls back to the challan's own GST),
+    //    so refusing the save would strand a correction to something else.
+    //  - An operator without rights on the rate masters, who would be trapped:
+    //    unable to save, unable to fix.
+    if (isEdit || !canFixRates) {
+      return confirm({
+        title: 'Some lines have no rate configured',
+        description: (
+          <div className="space-y-2">
+            {lines}
+            <p className="text-muted-foreground text-xs">
+              {canFixRates
+                ? 'Add them under Customer GST Rates / Transport Rates.'
+                : 'Ask an admin to add these under Customer GST Rates / Transport Rates.'}{' '}
+              Saving now bills them at the highest GST rate on this challan.
+            </p>
+          </div>
+        ),
+        confirmText: 'Save anyway',
+      });
+    }
+
+    const ok = await confirm({
+      title: 'Set the missing rates before saving',
+      description: (
+        <div className="space-y-2">
+          {lines}
+          <p className="text-muted-foreground text-xs">
+            An unpriced line takes the highest GST rate on this challan, so a wrong rate would not show in the
+            totals.
+          </p>
+        </div>
+      ),
+      confirmText: 'Set rates now',
+      cancelText: 'Back to challan',
+      autoFocusConfirm: true,
+    });
+    if (ok) setRateFixOpen(true);
+    return false;
+  };
+
+  /**
+   * A near-duplicate came back from the server (409). The matched challan is
+   * usually a save that already succeeded and whose response was lost, so
+   * "Open existing challan" leads — offering only "save anyway" would push the
+   * operator into creating the very duplicate this is meant to prevent.
+   */
+  const askDuplicate = async (
+    dup: DuplicateMatch,
+    body: CreateChallanInput,
+    submit: (b: CreateChallanInput) => void,
+  ) => {
+    const ok = await confirm({
+      title: 'A matching challan already exists',
+      description: (
+        <div className="space-y-3">
+          <p className="text-sm">
+            <span className="font-semibold">{dup.code}</span> · {dup.customerName} · same items · total {inr(dup.total)}
+          </p>
+          <p className="text-muted-foreground text-xs">
+            This is usually a save that already went through. Open it and check before saving another.
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => navigate(`/challans/${dup.id}/bill`, { state: { backTo: 'challan-pending-or-list' } })}
+          >
+            Open existing challan
+          </Button>
+        </div>
+      ),
+      confirmText: 'Save anyway',
+      cancelText: 'Cancel',
+    });
+    // Cancel keeps the form and its WIP draft intact so editing can continue.
+    if (ok) submit({ ...body, confirmDuplicate: true });
   };
 
   // Ctrl/Cmd+S saves the challan; Ctrl/Cmd+P saves and then prints it; Esc
@@ -912,10 +1087,19 @@ export function ChallanFormPage() {
                   {rows.map((r, idx) => (
                     <tr
                       key={r.key}
-                      className="border-b border-slate-200 transition-colors odd:bg-slate-100/70 hover:bg-amber-100/70 dark:border-white/10 dark:odd:bg-white/[0.04] dark:hover:bg-amber-400/10 [&>td]:px-3 [&>td]:py-1"
+                      className={cn(
+                        'border-b border-slate-200 transition-colors odd:bg-slate-100/70 hover:bg-amber-100/70 dark:border-white/10 dark:odd:bg-white/[0.04] dark:hover:bg-amber-400/10 [&>td]:px-3 [&>td]:py-1',
+                        // `odd:` outranks a plain class, so the tint has to win in
+                        // both variants or banded rows would swallow it.
+                        unpricedByKey.has(r.key) && 'bg-amber-50 odd:bg-amber-50 dark:bg-amber-400/10 dark:odd:bg-amber-400/10',
+                      )}
                     >
                       <td className="w-10 text-center text-slate-500 tabular-nums dark:text-slate-400">{idx + 1}</td>
-                      <td className="font-semibold text-slate-800 dark:text-slate-200">{r.productName || '—'}{r.dispatchId == null && <span className="bg-muted text-muted-foreground ml-1 rounded px-1 text-[10px]">manual</span>}</td>
+                      <td className="font-semibold text-slate-800 dark:text-slate-200">
+                        {r.productName || '—'}
+                        {r.dispatchId == null && <span className="bg-muted text-muted-foreground ml-1 rounded px-1 text-[10px]">manual</span>}
+                        <MissingRateBadge missing={unpricedByKey.get(r.key) ?? []} pCategory={r.pCategory} className="ml-1.5" />
+                      </td>
                       <td className="w-24 font-medium text-slate-600 dark:text-slate-300">{r.design || '—'}</td>
                       {qtyOrder.map((f) => (
                         <td key={f} className="w-16 text-right font-semibold tabular-nums text-slate-800 dark:text-slate-200">{qty(qtyCell(r, f)) ?? '—'}</td>
@@ -923,7 +1107,11 @@ export function ChallanFormPage() {
                       <td className="w-14 font-bold text-[11px] uppercase tracking-wider text-slate-500">{r.unit || '—'}</td>
                       <td className="w-24 text-right font-semibold tabular-nums text-slate-800 dark:text-slate-200">₹{(r.price ?? 0).toLocaleString('en-IN')}</td>
                       <td className="w-24 text-right font-bold tabular-nums text-slate-900 dark:text-slate-100">{(r.amount ?? 0).toLocaleString('en-IN')}</td>
-                      <td className="w-14 text-right font-medium tabular-nums text-slate-500 dark:text-slate-400">{r.gstRate || 0}</td>
+                      {/* An unconfigured rate must not read as a real 0% — that
+                          ambiguity is what hid this problem in the first place. */}
+                      <td className="w-14 text-right font-medium tabular-nums text-slate-500 dark:text-slate-400">
+                        {r.gstRate == null ? <span className="font-bold text-amber-700 dark:text-amber-300" title="Not configured">—</span> : r.gstRate}
+                      </td>
                       <td className="w-9 text-right"><button onClick={() => removeRow(r.key)} className="text-slate-400 transition-colors hover:text-destructive" title="Remove line"><Trash2 className="size-4" /></button></td>
                     </tr>
                   ))}
@@ -971,7 +1159,13 @@ export function ChallanFormPage() {
                 <>
                   <div className="divide-y divide-slate-200 dark:divide-white/10">
                     {rows.map((r, idx) => (
-                      <div key={r.key} className="px-2.5 py-1.5 odd:bg-slate-100/70 dark:odd:bg-white/[0.04]">
+                      <div
+                        key={r.key}
+                        className={cn(
+                          'px-2.5 py-1.5 odd:bg-slate-100/70 dark:odd:bg-white/[0.04]',
+                          unpricedByKey.has(r.key) && 'bg-amber-50 odd:bg-amber-50 dark:bg-amber-400/10 dark:odd:bg-amber-400/10',
+                        )}
+                      >
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <p className="truncate text-[13px] font-bold text-slate-800 dark:text-slate-200">
@@ -983,6 +1177,7 @@ export function ChallanFormPage() {
                               {r.design || '—'} · {r.unit || '—'} · ₹{(r.price ?? 0).toLocaleString('en-IN')}
                               {r.gstRate ? ` · GST ${r.gstRate}%` : ''}
                             </p>
+                            <MissingRateBadge missing={unpricedByKey.get(r.key) ?? []} pCategory={r.pCategory} className="mt-1" showCategory />
                           </div>
                           <div className="flex shrink-0 items-center gap-1.5">
                             <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">₹{(r.amount ?? 0).toLocaleString('en-IN')}</span>
@@ -1139,6 +1334,15 @@ export function ChallanFormPage() {
           onClose={() => setMissingChallanOpen(false)}
         />
       )}
+
+      <RateFixDialog
+        open={rateFixOpen}
+        onOpenChange={setRateFixOpen}
+        customerName={draft?.customerName ?? customer}
+        transportName={draft?.transName}
+        groups={missingRateGroups}
+        onSaved={applyFreshRates}
+      />
     </div>
   );
 }

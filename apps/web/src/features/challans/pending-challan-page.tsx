@@ -17,6 +17,7 @@ import { toast } from 'sonner';
 import type { PendingChallanLine } from '@oms/shared';
 import { cn, shortOrderCode } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
+import { MissingRateBadge, missingRatesFor } from './rate-status';
 import { usePermissions } from '@/hooks/use-permissions';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { DateRangeCalendar } from '@/components/common/date-range-calendar';
@@ -434,7 +435,14 @@ export function PendingChallanPage() {
       id: 'product',
       label: 'Product',
       sortValue: (r) => r.productName ?? '',
-      cell: (r) => <span className={cn(TEXT_CELL, cellTone(r))}>{r.productName || '—'}</span>,
+      cell: (r) => (
+        <span className={cn(TEXT_CELL, cellTone(r))}>
+          {r.productName || '—'}
+          {/* Flagged here so an unpriced line is caught before any time is
+              spent pulling it into a challan. */}
+          <MissingRateBadge missing={missingRatesFor(r)} pCategory={r.pCategory} className="ml-1.5" />
+        </span>
+      ),
     },
     {
       id: 'design',
@@ -535,6 +543,7 @@ export function PendingChallanPage() {
             <p className={cn(NUM, 'text-muted-foreground text-[11px] font-bold uppercase tracking-widest')}>{shortOrderCode(r.orderCode, r.orderId)}</p>
             <p className="truncate text-[14.5px] leading-tight font-bold text-slate-900">{r.customerName}</p>
             <p className="text-muted-foreground truncate text-[11.5px] font-medium">{r.productName || '—'}{r.design ? ` · ${r.design}` : ''}</p>
+            <MissingRateBadge missing={missingRatesFor(r)} pCategory={r.pCategory} className="mt-1" showCategory />
           </div>
           <span
             className={cn(

@@ -100,6 +100,10 @@ export class CreateChallanDto {
   @IsOptional() @IsNumber() billingRate?: number | null;
   @IsOptional() @IsBoolean() noBill?: boolean;
   @IsOptional() @IsIn(CHALLAN_STATUSES as unknown as string[]) challanStatus?: string;
+  /** Operator confirmed the near-duplicate warning — skip the content check.
+   *  MUST stay declared: the global ValidationPipe runs `whitelist: true`, so an
+   *  undeclared property is silently stripped and the confirm would never land. */
+  @IsOptional() @Transform(toBool) @IsBoolean() confirmDuplicate?: boolean;
 
   @IsArray() @ArrayNotEmpty() @ValidateNested({ each: true }) @Type(() => CreateChallanItemDto)
   items!: CreateChallanItemDto[];

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import { Prisma } from '@prisma/client';
 import {
@@ -109,23 +109,34 @@ export class ChallansService {
     const byId = new Map(rows.map((r) => [r.id, r]));
     const ordered = ids.map((id) => byId.get(id)).filter((d): d is (typeof rows)[number] => !!d);
 
+    // Resolve the masters for this page so an unpriced line is flagged here,
+    // before the operator has spent time building a challan around it.
+    const rates = await this.rateMapsMulti(ordered.map((d) => d.customerName));
+
     return {
-      items: ordered.map((d) => ({
-        dispatchId: d.id,
-        dispatchDate: d.dispatchDate.toISOString(),
-        orderId: d.orderId,
-        orderCode: d.orderCode,
-        customerId: d.customerId,
-        customerName: d.customerName,
-        productName: d.productName,
-        design: d.designType,
-        bags: d.bags,
-        kgs: d.gram,
-        pcs: d.pcs,
-        box: d.box,
-        unit: d.calField,
-        rate: d.rate,
-      })),
+      items: ordered.map((d) => {
+        const cat = (d.pCategory ?? '').toUpperCase();
+        return {
+          dispatchId: d.id,
+          dispatchDate: d.dispatchDate.toISOString(),
+          orderId: d.orderId,
+          orderCode: d.orderCode,
+          customerId: d.customerId,
+          customerName: d.customerName,
+          productName: d.productName,
+          design: d.designType,
+          bags: d.bags,
+          kgs: d.gram,
+          pcs: d.pcs,
+          box: d.box,
+          unit: d.calField,
+          rate: d.rate,
+          pCategory: d.pCategory,
+          gstRate: rates.gstFor(d.customerName, cat),
+          freightRate: rates.rateFor(d.customerName, cat, 'FREIGHT'),
+          packingRate: rates.rateFor(d.customerName, cat, 'PACKING'),
+        };
+      }),
       total,
       page: q.page,
       pageSize: q.pageSize,
@@ -317,6 +328,7 @@ export class ChallansService {
     const manualCode = dto.code?.trim().toUpperCase();
     const code = manualCode || (await this.nextCode(prefix, invDate));
     if (manualCode) await this.assertCodeAvailable(manualCode);
+    await this.assertNotDuplicate(dto);
     const paymentTerm = dto.paymentTerm ?? null;
     const dueDate = dto.dueDate ? new Date(dto.dueDate) : paymentTerm != null ? new Date(invDate.getTime() + paymentTerm * 86_400_000) : null;
 
@@ -501,6 +513,52 @@ export class ChallansService {
   }
 
   /** Customer GST-by-category + freight/packing rate resolver (Form14 grid subqueries). */
+  /**
+   * Rate resolvers for MANY parties at once.
+   *
+   * The pending list spans customers and is paginated, so calling
+   * {@link rateMaps} per line would be an N+1. This stays three queries no
+   * matter the page size. Resolution rules mirror `rateMaps` exactly — including
+   * preferring the party's own transport for freight/packing.
+   */
+  private async rateMapsMulti(customerNames: string[]) {
+    const names = [...new Set(customerNames.filter(Boolean))];
+    const [gstRates, transRates, customers] = names.length
+      ? await Promise.all([
+          this.prisma.gstRate.findMany({ where: { customerName: { in: names } } }),
+          this.prisma.transRate.findMany({ where: { customerName: { in: names }, type: { in: ['FREIGHT', 'PACKING'] } } }),
+          this.prisma.customer.findMany({ where: { partyName: { in: names } }, select: { partyName: true, transportName: true } }),
+        ])
+      : [[], [], []];
+
+    const transNameBy = new Map(customers.map((c) => [c.partyName, c.transportName ?? null]));
+    const gstByCust = new Map<string, Map<string, number>>();
+    for (const g of gstRates) {
+      const m = gstByCust.get(g.customerName) ?? new Map<string, number>();
+      m.set((g.category ?? '').toUpperCase(), n(g.rate));
+      gstByCust.set(g.customerName, m);
+    }
+    const transByCust = new Map<string, typeof transRates>();
+    for (const t of transRates) {
+      const arr = transByCust.get(t.customerName) ?? [];
+      arr.push(t);
+      transByCust.set(t.customerName, arr);
+    }
+
+    return {
+      gstFor: (cust: string, cat: string): number | null => {
+        const m = gstByCust.get(cust);
+        return m?.has(cat) ? m.get(cat)! : null;
+      },
+      rateFor: (cust: string, cat: string, type: string): number | null => {
+        const transName = transNameBy.get(cust);
+        const matches = (transByCust.get(cust) ?? []).filter((t) => (t.category ?? '').toUpperCase() === cat && t.type === type);
+        const preferred = matches.find((t) => transName && t.transportName === transName) ?? matches[0];
+        return preferred ? n(preferred.rate) : null;
+      },
+    };
+  }
+
   private async rateMaps(customerName: string, transName: string | null) {
     const [gstRates, transRates] = await Promise.all([
       this.prisma.gstRate.findMany({ where: { customerName } }),
@@ -572,6 +630,8 @@ export class ChallansService {
     const manualCode = dto.code?.trim().toUpperCase();
     const code = manualCode && manualCode !== existing.code ? manualCode : undefined;
     if (code) await this.assertCodeAvailable(code, id);
+    // Exclude the challan being edited, or every save would flag itself.
+    await this.assertNotDuplicate(dto, id);
 
     await this.prisma.$transaction([
       this.prisma.challanItem.deleteMany({ where: { challanId: id } }),
@@ -815,6 +875,99 @@ export class ChallansService {
   private async assertCodeAvailable(code: string, excludeId?: number): Promise<void> {
     const dup = await this.prisma.challan.findUnique({ where: { code }, select: { id: true } });
     if (dup && dup.id !== excludeId) throw new BadRequestException(`Invoice number "${code}" is already used by another challan.`);
+  }
+
+  // ── Near-duplicate detection ────────────────────────────────────────────────
+  // A lost response over the shop's VPN looks exactly like a failed save, so an
+  // operator re-enters a challan that is already in the database. The invoice
+  // number only catches it when typed by hand — an auto-assigned retry sails
+  // through. So compare the CONTENT: same party, same invoice date, same lines,
+  // same totals. Deliberately NOT keyed on the invoice number, which is the one
+  // field a genuine re-entry is guaranteed to differ on.
+
+  /** 2dp compare — totals are money, and float noise must not hide a match. */
+  private static sameMoney(a: number | null | undefined, b: number | null | undefined): boolean {
+    return Math.round(n(a) * 100) === Math.round(n(b) * 100);
+  }
+
+  /** True when a saved challan's lines and totals match the incoming payload.
+   *  Lines are matched as a MULTISET — reordering the same goods is still the
+   *  same challan, but a repeated line must be consumed only once. */
+  private contentMatches(
+    saved: { total: number | null; b: number | null; c: number | null; items: { productName: string | null; design: string | null; bags: number | null; pcs: number | null; kgs: number | null; box: number | null; price: number | null; amount: number | null }[] },
+    dto: CreateChallanDto,
+  ): boolean {
+    const S = ChallansService;
+    if (!S.sameMoney(saved.total, dto.total) || !S.sameMoney(saved.b, dto.b) || !S.sameMoney(saved.c, dto.c)) return false;
+    const incoming = dto.items ?? [];
+    if (saved.items.length !== incoming.length) return false;
+    const norm = (v: string | null | undefined) => (v ?? '').trim().toUpperCase();
+    const unmatched = [...saved.items];
+    for (const line of incoming) {
+      const idx = unmatched.findIndex(
+        (s) =>
+          norm(s.productName) === norm(line.productName) &&
+          norm(s.design) === norm(line.design) &&
+          S.sameMoney(s.bags, line.bags) &&
+          S.sameMoney(s.pcs, line.pcs) &&
+          S.sameMoney(s.kgs, line.kgs) &&
+          S.sameMoney(s.box, line.box) &&
+          S.sameMoney(s.price, line.price) &&
+          S.sameMoney(s.amount, line.amount),
+      );
+      if (idx === -1) return false;
+      unmatched.splice(idx, 1);
+    }
+    return true;
+  }
+
+  /** The already-saved challan this payload duplicates, or null. Scoped to the
+   *  same party and the same invoice DAY — accidental re-entry is always
+   *  same-day, and a wider window would nag on regular repeat orders. */
+  private async findDuplicate(dto: CreateChallanDto, excludeId?: number) {
+    const customerName = dto.customerName?.trim();
+    if (!customerName) return null;
+    const day = dto.invDate ? new Date(dto.invDate) : new Date();
+    if (Number.isNaN(day.getTime())) return null;
+    const start = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate()));
+    const end = new Date(start.getTime() + 86_400_000);
+
+    const candidates = await this.prisma.challan.findMany({
+      where: {
+        customerName: { equals: customerName },
+        invDate: { gte: start, lt: end },
+        // Re-entering after a cancellation is legitimate, not a duplicate.
+        challanStatus: { not: 'CANCELLED' },
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+      },
+      include: { items: true },
+    });
+    return candidates.find((c) => this.contentMatches(c, dto)) ?? null;
+  }
+
+  /** Throws 409 when this payload duplicates an existing challan, unless the
+   *  operator already confirmed. Detection failing must never block invoicing,
+   *  so any unexpected error here lets the save through. */
+  private async assertNotDuplicate(dto: CreateChallanDto, excludeId?: number): Promise<void> {
+    if (dto.confirmDuplicate) return;
+    let match: Awaited<ReturnType<typeof this.findDuplicate>> = null;
+    try {
+      match = await this.findDuplicate(dto, excludeId);
+    } catch {
+      return; // fail open
+    }
+    if (!match) return;
+    throw new ConflictException({
+      message: `A matching challan already exists — ${match.code} for ${match.customerName}, same items and total.`,
+      error: 'DUPLICATE_CHALLAN',
+      duplicate: {
+        id: match.id,
+        code: match.code,
+        customerName: match.customerName,
+        invDate: match.invDate.toISOString(),
+        total: n(match.total),
+      },
+    });
   }
 
   // ── Missing Challan (legacy MissingChallanForm) ─────────────────────────────

@@ -7,6 +7,18 @@ export interface ApiResponse<T> {
   message?: string;
 }
 
+/** The already-saved record that made a create/update look like a duplicate.
+ *  Sent on a 409 so the client can offer "open the existing one" instead of
+ *  leaving the user guessing whether their save landed. */
+export interface DuplicateMatch {
+  id: number;
+  code: string;
+  customerName: string;
+  /** ISO date of the matched document. */
+  invDate: string;
+  total: number;
+}
+
 /** Standard error envelope returned by the API exception filter. */
 export interface ApiError {
   success: false;
@@ -16,6 +28,8 @@ export interface ApiError {
   error?: string;
   /** Field-level validation messages, keyed by field name. */
   details?: Record<string, string[]>;
+  /** Set when `error === 'DUPLICATE_CHALLAN'` (409). */
+  duplicate?: DuplicateMatch;
   path?: string;
   timestamp?: string;
 }

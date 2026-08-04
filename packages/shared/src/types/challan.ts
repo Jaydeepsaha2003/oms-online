@@ -30,6 +30,15 @@ export interface PendingChallanLine {
   /** Pricing unit (legacy CAL FIELD): KGS / PCS. */
   unit: string | null;
   rate: number | null;
+  /** Product category the rates are keyed by — named in the unpriced-line warning. */
+  pCategory: string | null;
+  /** Rates resolved from the masters for this line's category, so an unpriced
+   *  line is visible BEFORE it is pulled into a challan. `null` = no master row
+   *  at all; `0` = configured and genuinely zero. Same meaning as on
+   *  {@link ChallanDraftItem}. */
+  gstRate: number | null;
+  freightRate: number | null;
+  packingRate: number | null;
 }
 
 export type PendingChallanQuery = PaginationQuery & {
@@ -301,6 +310,9 @@ export interface CreateChallanInput {
   billingRate?: number | null;
   noBill?: boolean;
   challanStatus?: ChallanStatus;
+  /** Set by the client after the operator confirms a near-duplicate warning, to
+   *  save it anyway. Omitted on a first attempt so the server can check. */
+  confirmDuplicate?: boolean;
   items: CreateChallanItemInput[];
 }
 
