@@ -7,7 +7,7 @@ import { jsPDF } from 'jspdf';
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useFitToWidth } from '@/hooks/use-fit-to-width';
 import { Button } from '@/components/ui/button';
-import { buildBillFilename, decodeImage, isIOS, preOpenPdfTab, savePdfBlob, takePendingPreviewTab } from '@/lib/pdf';
+import { buildBillFilename, captureScale, decodeImage, isIOS, savePdfBlob, takePendingPreviewTab } from '@/lib/pdf';
 import { formatDate } from '@/lib/date-format';
 import kavishLogo from '@/assets/kavish-logo-order.png';
 import { useChallanTerms, useCompany } from '@/features/settings/use-settings';
@@ -107,6 +107,9 @@ export function ChallanBillPage() {
   const logoSrc = company?.logo || kavishLogo;
   const [busy, setBusy] = useState(false);
   const [printImg, setPrintImg] = useState<string | null>(null);
+  // iOS only: a finished PDF waiting for a fresh tap to hand it to the share
+  // sheet (see `download`). Null everywhere else.
+  const [readyPdf, setReadyPdf] = useState<{ blob: Blob; filename: string } | null>(null);
   // On phones, shrink the fixed-width A4 challan to fit the screen (see hook).
   const isMobile = useIsMobile();
   const fit = useFitToWidth(CHALLAN_DESIGN_W, isMobile);
@@ -172,9 +175,13 @@ export function ChallanBillPage() {
     holder.style.cssText = `position:fixed;left:-10000px;top:0;width:${PDF_RENDER_W}px;background:#ffffff`;
     holder.appendChild(clone);
     document.body.appendChild(holder);
-    const canvas = await html2canvas(clone, { scale: 3, backgroundColor: '#ffffff' });
+    const canvas = await html2canvas(clone, { scale: captureScale(), backgroundColor: '#ffffff' });
     holder.remove();
-    return { dataURL: canvas.toDataURL('image/jpeg', 0.95), ratio: canvas.height / canvas.width };
+    const dataURL = canvas.toDataURL('image/jpeg', 0.95);
+    // Safari returns a stub ("data:,") instead of throwing when it gives up on a
+    // canvas. Catch it here rather than silently embedding a blank page.
+    if (!dataURL.startsWith('data:image/')) throw new Error('Canvas capture failed');
+    return { dataURL, ratio: canvas.height / canvas.width };
   };
 
   /** Captures the invoice and lays it out as an A4 jsPDF, paginating if it runs
@@ -207,20 +214,31 @@ export function ChallanBillPage() {
 
   const download = async () => {
     if (!challan) return;
-    // iOS Safari blocks a download/window.open that fires after the async capture
-    // below — so reserve a tab NOW, inside the tap gesture (no-op off iOS).
-    const iosTab = preOpenPdfTab();
     setBusy(true);
     try {
       const pdf = await buildPdf();
-      if (!pdf) { iosTab?.close(); return; }
-      void savePdfBlob(pdf.output('blob'), buildBillFilename('Challan', challan.code, `challan-${challanId}`), iosTab);
+      if (!pdf) return;
+      const filename = buildBillFilename('Challan', challan.code, `challan-${challanId}`);
+      const blob = pdf.output('blob');
+      // iOS: rasterising the challan takes seconds, which outlives this tap's
+      // transient activation — so the share sheet would be refused and we'd
+      // strand the user on the blank fallback tab. Park the finished PDF and
+      // let a fresh tap hand it over instead. Android/desktop are unaffected:
+      // their fallback is an <a download>, which needs no activation.
+      if (isIOS()) setReadyPdf({ blob, filename });
+      else void savePdfBlob(blob, filename);
     } catch {
-      iosTab?.close();
       toast.error('Could not generate the PDF');
     } finally {
       setBusy(false);
     }
+  };
+
+  /** Deliver the parked PDF from a live tap, so `navigator.share()` is allowed. */
+  const deliverReadyPdf = () => {
+    if (!readyPdf) return;
+    void savePdfBlob(readyPdf.blob, readyPdf.filename);
+    setReadyPdf(null);
   };
 
   /**
@@ -339,6 +357,20 @@ export function ChallanBillPage() {
           </Button>
         </div>
       </div>
+
+      {/* iOS only — see `download`. The capture outlives the tap that started it,
+          so the finished PDF is handed over on a fresh tap. */}
+      {readyPdf && (
+        <div className="no-print border-primary/30 bg-primary/5 flex items-center gap-3 rounded-md border px-4 py-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold">Your PDF is ready</p>
+            <p className="text-muted-foreground truncate text-xs">{readyPdf.filename}</p>
+          </div>
+          <Button size="sm" onClick={deliverReadyPdf}>
+            <Download /> Save / Share
+          </Button>
+        </div>
+      )}
 
       {/* ── Printable Challan (matches the Sales Order / Quotation letterhead format) ── */}
       {/* Mobile: outer measures the available width + reserves the scaled height;
