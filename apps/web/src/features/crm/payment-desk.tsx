@@ -44,6 +44,16 @@ const promiseChip = (s: PromiseState) => {
 
 const ageTone = (days: number) => (days >= 60 ? 'rose' : days >= 30 ? 'amber' : days > 0 ? 'sky' : 'slate');
 
+/**
+ * The age badge sits next to the overdue AMOUNT, which makes it read as "all of
+ * this has been overdue that long". It isn't — it's the age of the single OLDEST
+ * unpaid invoice, and a tiny leftover balance on one old bill (a short payment, a
+ * rounding remainder) will age a party whose real debt is weeks old. Spell that
+ * out on hover so the number can't be misread.
+ */
+const agingHint = (days: number) =>
+  `Oldest unpaid invoice is ${days} day${days === 1 ? '' : 's'} past due. This is the age of that ONE invoice — even a small leftover balance on an old bill shows here, so newer invoices may make up most of the overdue amount. Tap Collect and open the invoice list to see the ageing bill by bill.`;
+
 // A party row's overall priority, worst-first — drives the left accent rail,
 // the quick-filter chips, and the sort order (highest-risk parties surface
 // first so a collector always works the worst debt first).
@@ -286,7 +296,7 @@ export function OwingPartiesWorklist({ onCollect, onOpenParty }: { onCollect: (p
                         {p.overdue > 0 ? (
                           <span className="inline-flex items-center gap-1">
                             <span className="text-rose-600 dark:text-rose-400" title={inrFull(p.overdue)}>{inrCompact(p.overdue)}</span>
-                            <Chip tone={ageTone(p.oldestDays)}>{p.oldestDays}d</Chip>
+                            <Chip tone={ageTone(p.oldestDays)} title={agingHint(p.oldestDays)}>{p.oldestDays}d</Chip>
                           </span>
                         ) : p.dueSoon > 0 ? (
                           <span className="text-sky-600 dark:text-sky-400 text-xs font-medium">{inrCompact(p.dueSoon)} soon</span>
@@ -330,7 +340,7 @@ export function OwingPartiesWorklist({ onCollect, onOpenParty }: { onCollect: (p
                     <div className="text-right">
                       <div className="font-semibold tabular-nums" title={inrFull(p.outstanding)}>{inrCompact(p.outstanding)}</div>
                       {p.overdue > 0 ? (
-                        <div className="text-rose-600 dark:text-rose-400 text-xs tabular-nums">{inrCompact(p.overdue)} · {p.oldestDays}d</div>
+                        <div className="text-rose-600 dark:text-rose-400 text-xs tabular-nums" title={agingHint(p.oldestDays)}>{inrCompact(p.overdue)} · {p.oldestDays}d</div>
                       ) : p.dueSoon > 0 ? (
                         <div className="text-sky-600 dark:text-sky-400 text-xs tabular-nums">{inrCompact(p.dueSoon)} soon</div>
                       ) : null}
@@ -387,7 +397,7 @@ export function PartyBalancePanel({ customerId, party, onPickAmount, onPickInvoi
       <div className="grid grid-cols-2 gap-px bg-indigo-200/60 sm:grid-cols-4 dark:bg-indigo-500/20">
         <Stat icon={Wallet} label="Outstanding" value={inrCompact(data.outstanding)} title={inrFull(data.outstanding)} strong />
         <Stat icon={TrendingDown} label="Overdue" value={data.overdue > 0 ? inrCompact(data.overdue) : '—'} title={inrFull(data.overdue)} tone={data.overdue > 0 ? 'rose' : undefined} />
-        <Stat icon={Clock3} label="Oldest" value={data.oldestDays > 0 ? `${data.oldestDays}d` : '—'} />
+        <Stat icon={Clock3} label="Oldest" value={data.oldestDays > 0 ? `${data.oldestDays}d` : '—'} title={data.oldestDays > 0 ? agingHint(data.oldestDays) : undefined} />
         <Stat icon={CalendarClock} label="Last receipt" value={data.lastReceiptAt ? formatDate(data.lastReceiptAt) : 'never'} />
       </div>
 

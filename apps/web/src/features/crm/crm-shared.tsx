@@ -28,9 +28,9 @@ const TONES: Record<string, string> = {
   emerald: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
 };
 
-export function Chip({ tone, className, children }: { tone: keyof typeof TONES | string; className?: string; children: React.ReactNode }) {
+export function Chip({ tone, className, title, children }: { tone: keyof typeof TONES | string; className?: string; title?: string; children: React.ReactNode }) {
   return (
-    <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap ring-1 ring-inset', TONES[tone] ?? TONES.slate, className)}>
+    <span title={title} className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap ring-1 ring-inset', TONES[tone] ?? TONES.slate, className)}>
       {children}
     </span>
   );

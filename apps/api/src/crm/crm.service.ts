@@ -502,10 +502,15 @@ export class CrmService {
     const SALES = new Set(['SALES INVOICE', 'DEBIT NOTE']);
     const r0 = (x: number) => Math.round(x);
     const num = (v: unknown) => toNum(v) ?? 0;
-    const [challans, custRows, receipts, advances, payFollowups] = await Promise.all([
+    const [challans, custRows, receipts, discounts, advances, payFollowups] = await Promise.all([
       this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { code: true, total: true, invDate: true, dueDate: true, customerId: true, customerName: true, transaction: true } }),
       this.prisma.customer.findMany({ select: { id: true, agentName: true } }),
       this.prisma.acctPaymentReceipt.findMany({ select: { custId: true, invNo: true, recAmt: true, recDate: true } }),
+      // Sales Discounts settle an invoice just as truly as cash does (Account →
+      // Sales Discount). Without them a written-off remainder is never cleared
+      // here, so the invoice ages forever and the party can't be taken off the
+      // recovery worklist from the UI at all.
+      this.prisma.acctPartyDiscount.findMany({ select: { invNo: true, disAmt: true } }),
       this.prisma.acctPartyAdvance.findMany({ select: { custId: true, bankAmt: true, cashAmt: true } }),
       this.prisma.followup.findMany({ where: { kind: 'PAYMENT' }, select: { customerId: true, partyName: true, status: true, promisedAt: true, promisedAmount: true, updatedAt: true } }),
     ]);
@@ -516,6 +521,8 @@ export class CrmService {
       const c = lastRecByCust.get(r.custId);
       if (!c || r.recDate > c) lastRecByCust.set(r.custId, r.recDate);
     }
+    const discByInv = new Map<string, number>();
+    for (const d of discounts) discByInv.set(d.invNo, (discByInv.get(d.invNo) ?? 0) + num(d.disAmt));
     const advByCust = new Map<number, number>();
     for (const a of advances) advByCust.set(a.custId, (advByCust.get(a.custId) ?? 0) + num(a.bankAmt) + num(a.cashAmt));
     const custMap = new Map(custRows.map((c) => [c.id, c]));
@@ -524,7 +531,8 @@ export class CrmService {
     for (const c of challans) {
       if (!SALES.has((c.transaction ?? '').trim().toUpperCase())) continue;
       const received = recvByInv.get(c.code) ?? 0;
-      const bal = Math.max(0, num(c.total) - received);
+      // Settled = money received + anything written off as a Sales Discount.
+      const bal = Math.max(0, num(c.total) - received - (discByInv.get(c.code) ?? 0));
       if (bal <= 0) continue;
       const key = c.customerName || '—';
       let p = map.get(key);
