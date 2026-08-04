@@ -96,11 +96,17 @@ exit /b 0
 REM ---------------------------------------------------------------- api only
 :apionly
 echo [2/3] Backend only - bouncing just the API ^(web server keeps serving^)...
+REM Tell the watchdog this half-dead moment is deliberate. Without it, its
+REM 60s tick would start a second API alongside the one we are about to
+REM launch and one of them would die on EADDRINUSE. Cleared in every exit
+REM path below, and the watchdog ignores it after 3 minutes anyway.
+echo restarting>".oms-restarting"
 call "%~dp0stop.bat" api
 REM Never launch on a port the old server still holds: the new process would
 REM die on EADDRINUSE and the OLD build would carry on serving, which looks
 REM exactly like a successful restart while quietly running stale code.
 if errorlevel 1 (
+    if exist ".oms-restarting" del ".oms-restarting" >nul 2>&1
     echo.
     echo ============================================================
     echo   Could not stop the old API - port 4000 is still held.
@@ -118,10 +124,17 @@ echo [3/3] Starting the API...
 if exist ".oms-stopped" del ".oms-stopped" >nul 2>&1
 wscript.exe "%~dp0run-server-hidden.vbs" api
 powershell -NoProfile -Command "$d=(Get-Date).AddSeconds(45); while((Get-Date) -lt $d){ if(Get-NetTCPConnection -State Listen -LocalPort 4000 -EA SilentlyContinue){ exit 0 }; Start-Sleep -Milliseconds 400 }; exit 1"
-if errorlevel 1 (
+REM Capture the result BEFORE anything else runs - `del` below would reset
+REM errorlevel and the success check would then always read 0.
+set "APIUP=1"
+if errorlevel 1 set "APIUP="
+REM Hand the watchdog back its job before reporting, either way: if the API
+REM really did fail to come up, we WANT it healing that within the minute.
+if exist ".oms-restarting" del ".oms-restarting" >nul 2>&1
+if not defined APIUP (
     echo.
-    echo   The API did not come back within 45s - check logs.bat, or run
-    echo   start.bat to bring everything up cleanly.
+    echo   The API did not come back within 45s. The watchdog will try to
+    echo   start it within a minute; check logs.bat if it stays down.
 ) else (
     echo.
     echo ============================================================

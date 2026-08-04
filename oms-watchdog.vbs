@@ -5,9 +5,14 @@
 '  Every 60 seconds it checks the production ports (web 6173 / API 4000):
 '    - If stop.bat was used (marker file .oms-stopped exists), it waits -
 '      an intentional stop stays stopped until start.bat clears the marker.
+'    - If restart.bat is mid-flight (.oms-restarting), it waits too, so it
+'      never races a deliberate one-server bounce.
 '    - If both servers are up, it does nothing.
-'    - Otherwise it relaunches them via run-prod-hidden.vbs (no rebuild -
-'      uses whatever build is on disk; run restart.bat after code changes).
+'    - If ONE is down, it starts just that one - the healthy one keeps serving.
+'    - If both are down, it relaunches the pair via run-prod-hidden.vbs (no
+'      rebuild - uses whatever build is on disk; run restart.bat for new code).
+'  So the servers stay up by themselves after a crash or a reboot, and only
+'  stay down when stop.bat was used deliberately.
 '  This replaces the Task Scheduler task ("OMS Auto Start"), which this
 '  machine's user account is not allowed to create. stop.bat never kills
 '  this process (it only kills node/cmd), so healing resumes automatically
@@ -49,54 +54,43 @@ Function PortUp(port)
   PortUp = Len(Trim(output)) > 0
 End Function
 
-' Free BOTH production ports before relaunching. `npm run start` brings up the
-' API and the web server together, so when only one of them has died the
-' survivor still holds its port and the relaunch fails to bind - the instance
-' stayed half-dead forever. Killing the leftover first makes the heal actually
-' work. Only ever called when a port is already down, so a healthy server (or a
-' dev server occupying these ports) is never touched.
-Sub FreePorts()
-  Dim tmp, f, line, parts, i, pid
-  tmp = sh.ExpandEnvironmentStrings("%TEMP%") & "\oms-freeports.txt"
-  sh.Run "cmd /c netstat -aon | findstr "":6173 "" > """ & tmp & """ & netstat -aon | findstr "":4000 "" >> """ & tmp & """", 0, True
+' restart.bat bounces ONE server on purpose (a backend-only change restarts the
+' API and leaves the web server serving). For those few seconds the machine
+' looks half-dead, and healing it here would race restart.bat's own relaunch -
+' whichever lost would die on EADDRINUSE. The marker says "leave this alone".
+' It is ignored once stale, so a restart that crashes half-way can never
+' disable healing permanently.
+Function RestartInFlight()
+  Dim f
+  RestartInFlight = False
+  If Not fso.FileExists(dir & "\.oms-restarting") Then Exit Function
   On Error Resume Next
-  Set f = fso.OpenTextFile(tmp, 1)
-  Do While Not f.AtEndOfStream
-    line = Trim(f.ReadLine)
-    If InStr(line, "LISTENING") > 0 Then
-      parts = Split(line, " ")
-      pid = ""
-      For i = UBound(parts) To 0 Step -1
-        If Len(Trim(parts(i))) > 0 Then
-          pid = Trim(parts(i))
-          Exit For
-        End If
-      Next
-      If IsNumeric(pid) And pid <> "0" Then
-        sh.Run "cmd /c taskkill /F /PID " & pid, 0, True
-      End If
-    End If
-  Loop
-  f.Close
-  fso.DeleteFile tmp
+  Set f = fso.GetFile(dir & "\.oms-restarting")
+  If Err.Number = 0 Then
+    If DateDiff("s", f.DateLastModified, Now) < 180 Then RestartInFlight = True
+  End If
   On Error Goto 0
-End Sub
+End Function
 
 Do While True
-  If Not fso.FileExists(dir & "\.oms-stopped") Then
+  If (Not fso.FileExists(dir & "\.oms-stopped")) And (Not RestartInFlight()) Then
     webUp = PortUp(6173)
     apiUp = PortUp(4000)
-    If (Not webUp) Or (Not apiUp) Then
-      ' Half-dead (exactly one side still listening) - clear the survivor so the
-      ' relaunch can bind both ports.
-      If webUp Or apiUp Then
-        FreePorts
-        WScript.Sleep 3000
-      End If
+    If (Not webUp) And (Not apiUp) Then
+      ' Both gone (crash, or the PC came back up) - bring the pair back.
       sh.Run "wscript.exe " & Chr(34) & dir & "\run-prod-hidden.vbs" & Chr(34), 0, True
       ' Give npm + both servers time to boot before re-checking, so a slow
       ' start is never mistaken for a failure and double-launched.
       WScript.Sleep 120000
+    ElseIf Not apiUp Then
+      ' Only one side died: start JUST that one. This used to kill the healthy
+      ' survivor as well and relaunch the pair, which turned one dead server
+      ' into a full outage - the opposite of what a watchdog is for.
+      sh.Run "wscript.exe " & Chr(34) & dir & "\run-server-hidden.vbs" & Chr(34) & " api", 0, True
+      WScript.Sleep 60000
+    ElseIf Not webUp Then
+      sh.Run "wscript.exe " & Chr(34) & dir & "\run-server-hidden.vbs" & Chr(34) & " web", 0, True
+      WScript.Sleep 60000
     End If
   End If
   WScript.Sleep 60000

@@ -62,6 +62,10 @@ certs/
 # stop.bat's "stopped on purpose" marker for the auto-start watchdog
 .oms-stopped
 
+# restart.bat's "bouncing one server on purpose" marker - keeps the watchdog
+# from racing a deliberate restart. Transient, per-machine.
+.oms-restarting
+
 # SQLite transient files
 *.db-journal
 *.db-wal
