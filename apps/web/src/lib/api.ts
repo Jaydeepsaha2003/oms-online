@@ -191,7 +191,12 @@ export async function downloadFile(
 /** Extract a human-readable message from an API error. */
 export function getApiErrorMessage(error: unknown, fallback = 'Something went wrong'): string {
   if (axios.isAxiosError(error)) {
-    const data = error.response?.data as { message?: string } | undefined;
+    const data = error.response?.data as { message?: string; details?: Record<string, string[]> } | undefined;
+    // A validation failure puts the useful part in `details` — its top-level
+    // message is only ever "Validation failed", which tells the user nothing
+    // about WHICH field the server rejected.
+    const fieldErrors = data?.details ? Object.values(data.details).flat() : [];
+    if (fieldErrors.length) return fieldErrors.join('; ');
     return data?.message ?? error.message ?? fallback;
   }
   if (error instanceof Error) return error.message;

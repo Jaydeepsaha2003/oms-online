@@ -53,6 +53,14 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     if (statusCode >= 500) {
       this.logger.error(`${request.method} ${request.url} → ${statusCode}: ${message}`);
+    } else if (statusCode >= 400 && statusCode !== 401) {
+      // 4xx used to be silent, which made a client-reported "it just says error
+      // 400" impossible to diagnose from the server side. Log the reason —
+      // including the class-validator field errors, which are the whole point of
+      // a 400 and are otherwise buried in `details`. 401 is skipped: the token
+      // refresh flow produces them routinely and they'd drown out the rest.
+      const fields = details?._?.length ? ` · ${details._.join('; ')}` : '';
+      this.logger.warn(`${request.method} ${request.url} → ${statusCode}: ${message}${fields}`);
     }
 
     const payload: ApiError = {

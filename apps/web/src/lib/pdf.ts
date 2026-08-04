@@ -45,9 +45,27 @@ async function tryShareFile(file: File, title: string): Promise<boolean> {
 
 /** Call this SYNCHRONOUSLY inside a click handler (before any await) to reserve a
  *  tab iOS will trust for a PDF that's generated a moment later. Returns null off
- *  iOS (not needed there) or if the popup was blocked. */
+ *  iOS (not needed there) or if the popup was blocked.
+ *
+ *  NOTE: only safe when the PDF is ready within a second or so. For the
+ *  html2canvas bill captures it is NOT — see {@link savePdfBlob} — because the
+ *  reserved tab outlives the transient activation and strands the user on a
+ *  blank page. Those pages hand the finished blob to a fresh tap instead. */
 export function preOpenPdfTab(): Window | null {
   return isIOS() ? window.open('', '_blank') : null;
+}
+
+/**
+ * html2canvas scale factor for the bill captures.
+ *
+ * Desktop keeps 3× for maximum crispness. Phones drop to 2×: rasterising is
+ * ~2× cheaper in both time and peak memory, which matters because an iPhone
+ * takes seconds to rasterise a bill and Safari is quick to bin a large canvas
+ * under memory pressure. 960 px × 2 = 1920 px across A4's ~587 pt of usable
+ * width is still ~235 DPI, well beyond what any printer resolves.
+ */
+export function captureScale(): number {
+  return isMobile() ? 2 : 3;
 }
 
 /**
@@ -84,13 +102,20 @@ export function takePendingPreviewTab(): Window | null {
  * If file-sharing isn't available it falls back to the previous behaviour:
  * iOS shows the PDF in `iosTab` (reserved via {@link preOpenPdfTab} inside the
  * tap); Android/desktop trigger a normal named download.
+ *
+ * MUST be called inside a live user gesture on iOS. `navigator.share()` needs
+ * transient activation, which expires ~5 s after the tap — far less than the
+ * 5–13 s an iPhone needs to rasterise a bill with html2canvas. Calling this
+ * straight after a capture means share() throws NotAllowedError, we fall
+ * through to the `blob:` tab, and the user is left staring at a blank page.
+ * Callers that build the PDF asynchronously must therefore park the finished
+ * blob and deliver it from a *fresh* tap.
  */
 export async function savePdfBlob(blob: Blob, filename: string, iosTab?: Window | null): Promise<void> {
   const file = new File([blob], filename, { type: 'application/pdf' });
 
-  // Mobile: the share sheet carries the file's real name. Transient activation
-  // (the original tap) survives short async work (~5s), so a jsPDF/html2canvas
-  // capture that finished a moment ago is still allowed to call share().
+  // Mobile: the share sheet carries the file's real name. Only reachable while
+  // the caller's tap is still "live" — see the transient-activation note above.
   if (isMobile() && (await tryShareFile(file, filename))) {
     iosTab?.close(); // the reserved tab is no longer needed
     return;

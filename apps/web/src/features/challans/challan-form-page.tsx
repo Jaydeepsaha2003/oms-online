@@ -34,6 +34,7 @@ import {
   type QtyField,
 } from '@oms/shared';
 import { cn } from '@/lib/utils';
+import { getApiErrorMessage } from '@/lib/api';
 import { formatDate } from '@/lib/date-format';
 import { useConfirm } from '@/components/common/confirm';
 import { RecordHistory } from '@/components/common/record-history';
@@ -314,8 +315,16 @@ export function ChallanFormPage() {
   }, [draft?.isScrap]);
 
   // Auto-save the WIP challan (debounced) whenever it has content; clear when empty.
+  //
+  // `savedId` stops it dead once the challan is persisted. Without that guard the
+  // 800ms debounce loses a race: a save that lands within 800ms of the last edit
+  // leaves a timer pending, which then fires AFTER onSuccess called
+  // clearChallanDraft() and rewrites the draft — resurrecting a challan that is
+  // already in the database. The form then offers it back on the next visit and
+  // every save attempt is rejected as a duplicate invoice number. Listing it in
+  // the deps also runs the cleanup, cancelling that in-flight timer.
   useEffect(() => {
-    if (!draftEnabled || !draftReady.current) return;
+    if (!draftEnabled || !draftReady.current || savedId) return;
     const t = setTimeout(() => {
       if (customer && rows.length) {
         saveChallanDraft({ customer, invDate, prefix, manualCode, status, freight, packing, pouch, billingRate, gstPct, noBill, noBillRemoveGst, manualTax, manualB, manualC, shippingAddress, remarks, rows });
@@ -325,7 +334,7 @@ export function ChallanFormPage() {
     }, 800);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftEnabled, customer, invDate, prefix, manualCode, status, freight, packing, pouch, billingRate, gstPct, noBill, noBillRemoveGst, manualTax, manualB, manualC, shippingAddress, remarks, rows]);
+  }, [draftEnabled, savedId, customer, invDate, prefix, manualCode, status, freight, packing, pouch, billingRate, gstPct, noBill, noBillRemoveGst, manualTax, manualB, manualC, shippingAddress, remarks, rows]);
 
   // Throw away the restored draft and start blank.
   const discardDraft = () => {
@@ -594,7 +603,10 @@ export function ChallanFormPage() {
         navigate(`/challans/${c.id}/bill`, { state: { backTo: 'challan-pending-or-list', autoPrint: true } });
       }
     };
-    const onError = (e: unknown) => toast.error(e instanceof Error ? e.message : 'Failed to save challan');
+    // An AxiosError IS an Error, so `e.message` here was only ever "Request
+    // failed with status code 400" — the server's actual reason (a rejected
+    // field, a duplicate invoice number) lives in the response body.
+    const onError = (e: unknown) => toast.error(getApiErrorMessage(e, 'Failed to save challan'));
     if (isEdit) updateChallan.mutate({ id: editId!, ...payload }, { onSuccess, onError });
     else createChallan.mutate(payload, { onSuccess, onError });
   };
