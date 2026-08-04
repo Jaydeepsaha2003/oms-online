@@ -132,7 +132,13 @@ export function ChallanFormPage() {
 
   const { state } = useLocation() as { state: NavState | null };
   const navCustomer = state?.customerName ?? '';
-  const navIds = useMemo(() => new Set((state?.lines ?? []).map((l) => l.dispatchId)), [state]);
+  // Position of each dispatchId in the order rows were ticked on Pending Challan —
+  // a Map (not a Set) so that click order survives the trip here (see below).
+  const navOrder = useMemo(() => {
+    const m = new Map<number, number>();
+    (state?.lines ?? []).forEach((l, i) => m.set(l.dispatchId, i));
+    return m;
+  }, [state]);
   // Callers (e.g. Party Ledger's "view challan") can override where Back/Cancel
   // return to, so closing this form lands back on the exact view the user came from.
   const backTo = state?.returnTo ?? (isEdit ? '/challans' : '/challans/pending');
@@ -293,7 +299,14 @@ export function ChallanFormPage() {
         draftReady.current = true;
         return;
       }
-      const preset = customer === navCustomer && navIds.size ? draft.items.filter((i) => i.dispatchId != null && navIds.has(i.dispatchId)) : [];
+      // Filtered by the picked ids, then re-sorted to match the order they were
+      // ticked in on Pending Challan (`filter` alone would keep the pool's own order).
+      const preset =
+        customer === navCustomer && navOrder.size
+          ? draft.items
+              .filter((i) => i.dispatchId != null && navOrder.has(i.dispatchId))
+              .sort((a, b) => (navOrder.get(a.dispatchId!) ?? 0) - (navOrder.get(b.dispatchId!) ?? 0))
+          : [];
       const next = preset.map((it, i) => ({ ...it, key: `${it.dispatchId ?? 'm'}-${i}` }));
       setRows(next);
       setBillingRate(String(draft.billingRate ?? 0));
