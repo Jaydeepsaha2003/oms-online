@@ -243,6 +243,8 @@ export interface ChallanDraft {
   tdsApplicable: boolean;
   tdsPercent: number | null;
   isScrap: boolean;
+  /** Resolved GST rate for the SCRAP category if this is a scrap party. */
+  scrapGstRate: number | null;
   /** Globally configured TCS % (Settings → SCRAP TCS Rate), applied when isScrap. */
   tcsPercent: number;
   /** Active catalogue products offered by the manual-line Product picker, so a

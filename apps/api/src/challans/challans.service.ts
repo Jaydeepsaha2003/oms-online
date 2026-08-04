@@ -296,6 +296,7 @@ export class ChallansService {
       tdsApplicable: isScrap ? false : (customer?.tdsApplicable ?? false),
       tdsPercent: customer?.tdsPercent ?? null,
       isScrap,
+      scrapGstRate: isScrap ? gstFor('SCRAP') : null,
       tcsPercent,
       manualProducts,
       defaultManualProduct,

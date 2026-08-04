@@ -389,7 +389,7 @@ export function ChallanFormPage() {
       amount: round2(qty * price),
       pCategory: draft.isScrap ? 'SCRAP' : null,
       comment: null,
-      gstRate: draft.isScrap ? 0 : n(draft.gst),
+      gstRate: draft.isScrap ? (draft.scrapGstRate ?? 0) : n(draft.gst),
       freightRate: 0,
       packingRate: 0,
     };
