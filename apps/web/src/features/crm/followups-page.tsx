@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AlarmClock, Bell, Check, ChevronDown, CircleCheck, Clock, HandCoins, Info, Loader2, Mic, Pencil, Plus, RotateCcw, Search, Trash2, TriangleAlert } from 'lucide-react';
+import { AlarmClock, Bell, Check, ChevronDown, CircleCheck, Clock, Eye, HandCoins, Info, Loader2, Mic, Pencil, Plus, RotateCcw, Search, Trash2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { type FollowupDto, type FollowupKind, type FollowupPartyGroup } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -28,6 +28,7 @@ import {
   usePartySuggest,
   useReopenFollowup,
   useResolveFollowup,
+  useSeenFollowup,
   useSnoozeFollowup,
   useUpdateChecklistItem,
   useUpdateFollowup,
@@ -268,6 +269,7 @@ function FollowupRow({ f, canEdit, onEdit, done }: { f: FollowupDto; canEdit: bo
   const [doneOpen, setDoneOpen] = useState(false);
   const confirm = useConfirm();
   const snooze = useSnoozeFollowup();
+  const seen = useSeenFollowup();
   const reopen = useReopenFollowup();
   const del = useDeleteFollowup();
   const { can } = usePermissions();
@@ -352,7 +354,11 @@ function FollowupRow({ f, canEdit, onEdit, done }: { f: FollowupDto; canEdit: bo
               <Button size="sm" variant="outline" className="h-7 text-xs text-amber-700" onClick={() => snooze.mutate(f.id, { onSuccess: () => toast.success('Snoozed — will nudge again later'), onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) })} disabled={snooze.isPending}>
                 <AlarmClock className="size-3" /> Snooze
               </Button>
-              <Button size="sm" variant="outline" className="h-7 text-xs text-emerald-700" onClick={() => setDoneOpen(true)}><Check className="size-3" /> Done</Button>
+              {/* Seen acknowledges the nudge; Resolved is what actually closes it. */}
+              <Button size="sm" variant="outline" className="h-7 text-xs text-sky-700" onClick={() => seen.mutate(f.id, { onSuccess: () => toast.success('Marked seen — quiet until it’s due again'), onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) })} disabled={seen.isPending}>
+                <Eye className="size-3" /> Seen
+              </Button>
+              <Button size="sm" variant="outline" className="h-7 text-xs text-emerald-700" onClick={() => setDoneOpen(true)}><Check className="size-3" /> Resolved</Button>
               <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onEdit(f)}><Pencil className="size-3" /> Edit</Button>
             </>
           )}

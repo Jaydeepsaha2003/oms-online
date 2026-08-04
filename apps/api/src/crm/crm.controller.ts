@@ -128,6 +128,12 @@ export class CrmController {
     return this.crm.snooze(id, userName);
   }
 
+  @Post(':id/seen')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  seen(@Param('id', ParseIntPipe) id: number, @CurrentUser('name') userName: string) {
+    return this.crm.seen(id, userName);
+  }
+
   @Post(':id/resolve')
   @Permissions(perm(R, ACTIONS.UPDATE))
   @Audit({ action: ACTIONS.UPDATE, resource: R })

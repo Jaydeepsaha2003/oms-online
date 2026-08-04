@@ -6,6 +6,29 @@ REM  (or dev.bat, which manages its own console window).
 REM ============================================================
 cd /d "%~dp0"
 
+REM ---------- SCOPED STOP: bounce ONE server, leave the other serving --------
+REM restart.bat uses this so a backend-only change never takes the web server
+REM (or the page the user is looking at) down with it. Deliberately does NOT
+REM write .oms-stopped: that marker tells the watchdog the shutdown was
+REM intentional, and here we relaunch a second later - the watchdog healing us
+REM in the meantime is fine. Only the port is freed; the broad project-wide
+REM kill below would take out the OTHER server too.
+REM Returns 0 only when the port is genuinely free. Callers MUST check: a
+REM server left holding the port means the replacement dies on EADDRINUSE and
+REM the OLD build keeps serving, which looks like a successful restart.
+if /i "%~1"=="api" (
+    echo Stopping the API only - the web server keeps serving...
+    call :freeport 4000 API
+    call :ensurefree 4000 api
+    exit /b %ERRORLEVEL%
+)
+if /i "%~1"=="web" (
+    echo Stopping the web server only - the API keeps serving...
+    call :freeport 6173 Web
+    call :ensurefree 6173 web
+    exit /b %ERRORLEVEL%
+)
+
 echo ============================================================
 echo   Stopping OMS servers...
 echo ============================================================
@@ -70,6 +93,34 @@ echo.
 REM Skip the prompt when called from restart.bat (passes "nopause").
 if /i not "%~1"=="nopause" pause
 exit /b
+
+REM ----------------------------------------------------------------
+:ensurefree
+REM %1 = port, %2 = the scope argument to re-invoke this script with.
+REM Confirms the port actually released, and escalates if it did not.
+REM
+REM taskkill silently fails on a server started by the boot-time autostart task
+REM (it runs as SYSTEM, and a normal window has no rights over it) - the port
+REM simply stays bound. The full-stop path below already re-runs itself as
+REM administrator for this; the scoped path needs the same, or the caller
+REM launches a replacement straight into EADDRINUSE.
+powershell -NoProfile -Command "$d=(Get-Date).AddSeconds(5); while((Get-Date) -lt $d){ if(-not (Get-NetTCPConnection -State Listen -LocalPort %~1 -EA SilentlyContinue)){ exit 0 }; Start-Sleep -Milliseconds 200 }; exit 1" >nul 2>&1
+if not errorlevel 1 exit /b 0
+
+net session >nul 2>&1
+if not errorlevel 1 (
+    echo   Port %~1 is still held even with administrator rights.
+    exit /b 1
+)
+echo   Port %~1 is held by a SYSTEM-owned server ^(boot autostart^) - asking
+echo   for administrator rights to stop it...
+powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -ArgumentList '%~2' -Verb RunAs -Wait" >nul 2>&1
+powershell -NoProfile -Command "if(Get-NetTCPConnection -State Listen -LocalPort %~1 -EA SilentlyContinue){ exit 1 }; exit 0" >nul 2>&1
+if errorlevel 1 (
+    echo   Could not free port %~1.
+    exit /b 1
+)
+exit /b 0
 
 REM ----------------------------------------------------------------
 :freeport

@@ -9,6 +9,31 @@ import { useAuthStore } from '@/stores/auth-store';
 // bypass the proxy and hit the API directly.
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
+/**
+ * Backoff for a request that never reached the API. The API is ready ~3s after
+ * it relaunches, so these five attempts (~14s total) cover a routine restart
+ * without the user seeing anything; past that the call fails for real.
+ */
+const NET_RETRY_DELAYS = [400, 900, 1800, 3500, 7000];
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Safe to send twice: no server state changes if the first one did land. */
+const isRead = (cfg: AxiosRequestConfig) => (cfg.method ?? 'get').toLowerCase() === 'get';
+
+/** A dropped connection or timeout — not a cancelled request, which is ours. */
+const isTransient = (e: AxiosError) => e.code !== 'ERR_CANCELED' && e.code !== 'ECONNABORTED' && !e.response;
+
+/**
+ * Set by the API-status provider so a failed call can raise the "updating"
+ * banner. A plain module-level hook keeps `api.ts` free of React imports and
+ * avoids a circular dependency with the provider.
+ */
+let onUnreachable: (() => void) | null = null;
+export const setApiUnreachableHandler = (fn: (() => void) | null) => {
+  onUnreachable = fn;
+};
+const reportApiUnreachable = () => onUnreachable?.();
+
 /** Shared axios instance. `withCredentials` sends the httpOnly refresh cookie. */
 export const api = axios.create({
   baseURL: API_URL,
@@ -71,7 +96,7 @@ api.interceptors.response.use(
     return response;
   },
   async (error: AxiosError) => {
-    const original = error.config as (AxiosRequestConfig & { _retry?: boolean }) | undefined;
+    const original = error.config as (AxiosRequestConfig & { _retry?: boolean; _netTries?: number }) | undefined;
     const status = error.response?.status;
     const isAuthCall = original?.url?.includes('/auth/');
 
@@ -83,6 +108,24 @@ api.interceptors.response.use(
         return api(original);
       }
     }
+
+    // No `response` at all means the request never reached the API — nearly
+    // always the few seconds where it is being restarted for a new build (the
+    // dev proxy answers ECONNREFUSED). Ride that out instead of surfacing it.
+    //
+    // READS ONLY. A write may well have been applied before the connection
+    // dropped, and replaying it would post a second challan or receipt — so
+    // writes fail normally and the user re-submits deliberately.
+    if (!error.response && original && isTransient(error) && isRead(original)) {
+      const tries = original._netTries ?? 0;
+      if (tries < NET_RETRY_DELAYS.length) {
+        original._netTries = tries + 1;
+        reportApiUnreachable();
+        await sleep(NET_RETRY_DELAYS[tries]);
+        return api(original);
+      }
+    }
+    if (!error.response && isTransient(error)) reportApiUnreachable();
     return Promise.reject(error);
   },
 );

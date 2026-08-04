@@ -35,6 +35,20 @@ REM    [5] npm run build          (build shared -> api -> web, bundled+minified)
 REM ============================================================
 cd /d "%~dp0"
 
+REM ── Start with no internet ────────────────────────────────────────────────
+REM Nothing here NEEDS the network: dependencies are already in node_modules,
+REM the database is a local SQLite file, and mkcert generates certificates from
+REM the root CA cached in %USERPROFILE%\.vite-plugin-mkcert (it only downloads
+REM when that binary is missing). What DOES hurt offline is the background
+REM "is there a newer version?" chatter - each call sits waiting on DNS that
+REM will never resolve, adding a stall to every npm and prisma step for
+REM information nobody asked for. Switch both off so an offline start is as
+REM quick as an online one.
+set "CHECKPOINT_DISABLE=1"
+set "npm_config_update_notifier=false"
+set "npm_config_fund=false"
+set "npm_config_audit=false"
+
 REM "buildonly" (used by restart.bat) builds the latest code WITHOUT touching the
 REM running servers: it skips the already-running check, the stale-process cleanup,
 REM the DB sync and the launch - just install (if needed) + the incremental build,
@@ -219,6 +233,20 @@ if not errorlevel 1 (
 )
 
 echo [1/2] Syncing dependencies (npm install)...
+REM Ask DNS once, with a 2s ceiling, before handing over to npm. Left to
+REM itself npm retries a dead registry three times with backoff, so a machine
+REM with no internet waits ~30s to be told what one lookup answers instantly.
+REM Only a shortcut to the fallback below - never a reason to fail.
+if exist "node_modules" (
+    powershell -NoProfile -Command "try{ $t=[System.Net.Dns]::GetHostEntryAsync('registry.npmjs.org'); if($t.Wait(2000) -and $t.Result){ exit 0 }; exit 1 }catch{ exit 1 }" >nul 2>&1
+    if errorlevel 1 (
+        echo.
+        echo   No internet - keeping the packages already in node_modules.
+        echo   Nothing the servers need at runtime comes from the network.
+        echo.
+        goto build
+    )
+)
 call npm install --no-audit --no-fund --prefer-offline
 if not errorlevel 1 goto build
 REM This box may have no internet at all (see OFFLINE-SETUP.md), and the check

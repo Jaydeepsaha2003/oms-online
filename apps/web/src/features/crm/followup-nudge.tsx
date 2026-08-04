@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlarmClock, ArrowRight, BellRing, Check, Loader2, X } from 'lucide-react';
+import { AlarmClock, ArrowRight, BellRing, Check, Eye, Loader2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { FollowupDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { buzz, playChime } from '@/lib/chime';
 import { formatDate } from '@/lib/date-format';
 import { Button } from '@/components/ui/button';
-import { useCrmSettings, useFollowupDue, useResolveFollowup, useSnoozeFollowup } from './use-crm';
+import { useCrmSettings, useFollowupDue, useResolveFollowup, useSeenFollowup, useSnoozeFollowup } from './use-crm';
 import { Chip, itemLine, UrgencyChip } from './crm-shared';
 
 /**
@@ -23,6 +23,9 @@ export function FollowupNudge() {
   const { data: due = [] } = useFollowupDue();
   const { data: settings } = useCrmSettings();
   const snooze = useSnoozeFollowup();
+  // Not `seen` — that name is already the ref below tracking which banners
+  // have been shown this session.
+  const markSeen = useSeenFollowup();
   const resolve = useResolveFollowup();
 
   const [activeBanners, setActiveBanners] = useState<{ id: number; followup: FollowupDto }[]>([]);
@@ -98,6 +101,7 @@ export function FollowupNudge() {
             key={id}
             f={followup}
             snooze={snooze}
+            markSeen={markSeen}
             resolve={resolve}
             onOpen={() => {
               setActiveBanners((prev) => prev.filter((b) => b.id !== id));
@@ -120,12 +124,14 @@ export function FollowupNudge() {
 function FollowupBannerNotification({
   f,
   snooze,
+  markSeen,
   resolve,
   onOpen,
   onDismiss,
 }: {
   f: FollowupDto;
   snooze: ReturnType<typeof useSnoozeFollowup>;
+  markSeen: ReturnType<typeof useSeenFollowup>;
   resolve: ReturnType<typeof useResolveFollowup>;
   onOpen: () => void;
   onDismiss: () => void;
@@ -201,6 +207,21 @@ function FollowupBannerNotification({
         >
           {snooze.isPending ? <Loader2 className="size-3 animate-spin" /> : <AlarmClock className="size-3.5 mr-1" />} Snooze
         </Button>
+        {/* Seen just acknowledges the nudge — the follow-up stays open. */}
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-8 flex-1 text-xs justify-center text-sky-600 dark:text-sky-500 hover:bg-sky-50/50 dark:hover:bg-sky-950/20 font-semibold transition-colors"
+          disabled={markSeen.isPending}
+          onClick={() =>
+            markSeen.mutate(f.id, {
+              onSuccess: onDismiss,
+              onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')),
+            })
+          }
+        >
+          {markSeen.isPending ? <Loader2 className="size-3 animate-spin" /> : <Eye className="size-3.5 mr-1" />} Seen
+        </Button>
         <Button
           size="sm"
           variant="ghost"
@@ -216,7 +237,7 @@ function FollowupBannerNotification({
             })
           }
         >
-          <Check className="size-3.5 mr-1" /> Done
+          <Check className="size-3.5 mr-1" /> Resolved
         </Button>
       </div>
     </div>

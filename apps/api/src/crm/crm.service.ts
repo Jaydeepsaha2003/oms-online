@@ -194,6 +194,35 @@ export class CrmService {
     return this.findOne(id);
   }
 
+  /**
+   * Acknowledge a nudge without resolving anything.
+   *
+   * Snooze says "remind me shortly"; this says "I've seen it, stop pinging me
+   * until it's due again". Both silence the loop through the same field —
+   * `isActiveNudge` needs `nextRemindAt` to have passed — so parking it at
+   * tomorrow's work-start quietens today and lets the follow-up start nudging
+   * on its own again if it is still outstanding. No new state to keep in sync.
+   */
+  async seen(id: number, userName?: string): Promise<FollowupDto> {
+    const f = await this.ensure(id);
+    if (f.status !== 'OPEN') throw new BadRequestException('Only an open follow-up can be marked seen.');
+    const settings = await this.getSettings();
+    const now = new Date();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(0, 0, 0, 0);
+    await this.prisma.$transaction([
+      this.prisma.followupLog.create({ data: { followupId: id, kind: 'SEEN', note: 'Marked seen', userName: userName ?? null } }),
+      this.prisma.followup.update({
+        where: { id },
+        // remindersToday is left alone: the daily cap is moot once the next
+        // reminder is parked past midnight, and it resets on the date change.
+        data: { nextRemindAt: this.clampToWorkHours(tomorrow, settings), lastRemindedAt: now, pushSentAt: null },
+      }),
+    ]);
+    return this.findOne(id);
+  }
+
   /** Mark a follow-up done. `note` is the optional closing comment the user types
    *  when completing it (how it was settled, what was collected, …) — it's kept on
    *  the timeline so the Completed view can show WHY it closed, not just that it did. */

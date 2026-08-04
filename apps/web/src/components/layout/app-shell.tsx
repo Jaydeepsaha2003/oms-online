@@ -5,6 +5,8 @@ import { armAudioUnlock } from '@/lib/chime';
 import { connectNotificationsSocket } from '@/lib/notifications-socket';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useMenuShortcuts } from '@/hooks/use-menu-shortcuts';
+import { ApiStatusBanner } from '@/components/common/api-status-banner';
+import { UpdateReadyPill } from '@/components/common/update-ready-pill';
 import { FollowupNudge } from '@/features/crm/followup-nudge';
 import { TallyReconRunProvider } from '@/features/account/tally-recon-run-context';
 import { TallyReconDock } from '@/features/account/tally-recon-dock';
@@ -173,6 +175,9 @@ export function AppShell() {
               onToggleCollapse={() => setPinned((v) => !v)}
             />
           )}
+          {/* Sits above every screen while the server is being updated. Outside
+              <main> so a flush route's own scroll region can't hide it. */}
+          <ApiStatusBanner />
           {/* Tight padding on phones (more width for cards/tables), roomier on desktop.
               Flush routes get no padding and own their whole scroll region. */}
           <main
@@ -184,6 +189,9 @@ export function AppShell() {
             <Outlet />
           </main>
         </div>
+
+        {/* Waits for a quiet moment before applying a new build. */}
+        <UpdateReadyPill />
 
         {/* Global "anti-forget" reminder — only for users who can see CRM. */}
         {canViewCrm && <FollowupNudge />}

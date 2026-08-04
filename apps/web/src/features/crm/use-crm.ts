@@ -164,6 +164,11 @@ export function useSnoozeFollowup() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (id: number) => http.post<FollowupDto>(`/crm/followups/${id}/snooze`, {}), onSuccess: () => invalidate(qc) });
 }
+/** Acknowledge a nudge — goes quiet until it's due again, but stays open. */
+export function useSeenFollowup() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (id: number) => http.post<FollowupDto>(`/crm/followups/${id}/seen`, {}), onSuccess: () => invalidate(qc) });
+}
 /** Mark a follow-up done, optionally recording HOW it was settled — the note is
  *  appended to its timeline and shown in the Completed view. */
 export function useResolveFollowup() {

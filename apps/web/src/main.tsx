@@ -14,10 +14,21 @@ import '@fontsource/poppins/700.css';
 import App from '@/App';
 import { AppProviders } from '@/app/providers';
 import { watchForAppUpdates } from '@/lib/pwa-update';
+import { startApiStatusWatch } from '@/lib/api-status';
 // Applies the saved light/dark/system theme on load (keeps in step with the
 // no-flash inline script in index.html).
 import '@/lib/theme';
 import '@/index.css';
+
+// Lets a failed request raise the "updating" banner instead of an error toast.
+// Registered before render so even a first paint's fetches are covered.
+startApiStatusWatch();
+
+// Clear the ErrorBoundary's one-shot stale-chunk reload guard once this build
+// has run cleanly for a while. Without this the guard sticks for the whole
+// session and a SECOND deploy couldn't self-heal; clearing it immediately
+// would instead let a genuinely broken build reload forever.
+window.setTimeout(() => sessionStorage.removeItem('oms:chunk-reloaded'), 10_000);
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

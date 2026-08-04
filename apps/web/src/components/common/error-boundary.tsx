@@ -14,6 +14,21 @@ interface State {
   error: Error | null;
 }
 
+const CHUNK_RELOAD_KEY = 'oms:chunk-reloaded';
+
+/** A lazy route whose chunk no longer exists — i.e. a build shipped under us.
+ *  Browsers word this differently, so match on the shapes they all use. */
+function isStaleChunkError(error: Error): boolean {
+  const msg = `${error?.name ?? ''} ${error?.message ?? ''}`.toLowerCase();
+  return (
+    msg.includes('dynamically imported module') || // Chrome/Edge
+    msg.includes('error loading dynamically') ||
+    msg.includes('importing a module script failed') || // Safari
+    msg.includes('chunkloaderror') ||
+    (msg.includes('failed to fetch') && msg.includes('module'))
+  );
+}
+
 export class ErrorBoundary extends Component<Props, State> {
   state: State = { error: null };
 
@@ -24,6 +39,16 @@ export class ErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error) {
     // Surface it in the console too (visible via remote debugging if needed).
     console.error('App crashed:', error);
+
+    // A tab open across a deploy still references the OLD hashed chunk names,
+    // and the build has deleted them — so the first navigation to a page it
+    // hasn't loaded yet fails on the import, not on anything the user did.
+    // Reloading picks up the new index and its chunks. Guarded by a session
+    // flag so a genuine, reproducible crash can't reload in a loop.
+    if (isStaleChunkError(error) && !sessionStorage.getItem(CHUNK_RELOAD_KEY)) {
+      sessionStorage.setItem(CHUNK_RELOAD_KEY, '1');
+      window.location.reload();
+    }
   }
 
   private handleReload = () => {

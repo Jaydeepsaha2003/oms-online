@@ -68,9 +68,58 @@ async function reloadIfNewBuildDeployed(): Promise<void> {
     if (!latest) return;
     // Compare just the filenames so a differing origin/base can't cause a loop.
     const name = (p: string) => p.split('/').pop();
-    if (name(latest) !== name(current)) window.location.reload();
+    if (name(latest) !== name(current)) announceUpdate();
   } catch {
     /* offline / server down — keep running the current build */
+  }
+}
+
+/* ── Applying a new build without eating someone's work ────────────────────── */
+
+/**
+ * A reload mid-entry throws away whatever is typed but not yet saved, which is
+ * exactly when it hurts most. So a new build waits: it applies itself the
+ * moment the screen looks idle, and until then it's just a pill the user can
+ * tap when they're ready.
+ */
+let updatePending = false;
+const updateListeners = new Set<(pending: boolean) => void>();
+
+/** True when reloading now would cost the user nothing. */
+function safeToReloadNow(): boolean {
+  // Mid-typing, or a dialog is open (a form, a confirm) — their work is on screen.
+  const el = document.activeElement;
+  const typing = !!el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
+  const isEditable = !!el && (el as HTMLElement).isContentEditable;
+  const dialogOpen = !!document.querySelector('[role="dialog"], [data-sonner-toast]');
+  return !typing && !isEditable && !dialogOpen;
+}
+
+export function applyUpdateNow(): void {
+  window.location.reload();
+}
+
+export function subscribeToUpdates(fn: (pending: boolean) => void): () => void {
+  updateListeners.add(fn);
+  fn(updatePending);
+  return () => updateListeners.delete(fn);
+}
+
+function announceUpdate(): void {
+  if (updatePending) return;
+  updatePending = true;
+  updateListeners.forEach((fn) => fn(true));
+  // Re-check periodically: the user will finish the form eventually, and we
+  // apply it the first quiet moment after that without them doing anything.
+  const timer = window.setInterval(() => {
+    if (safeToReloadNow()) {
+      window.clearInterval(timer);
+      applyUpdateNow();
+    }
+  }, 5_000);
+  if (safeToReloadNow()) {
+    window.clearInterval(timer);
+    applyUpdateNow();
   }
 }
 
