@@ -247,6 +247,11 @@ export class CrmService {
    * has already been completed (the Completed tab). The urgency buckets describe
    * outstanding work — "overdue", "due today" — so they're only applied to OPEN;
    * a resolved follow-up has no urgency left to filter on.
+   *
+   * Resolving a follow-up used to put it beyond reach of every screen — the
+   * board was OPEN-only and no filter could ask for anything else — so one
+   * stray "Done" was indistinguishable from the follow-up being deleted. The
+   * Completed view passes `status=DONE` here to get them back.
    */
   async board(q: FollowupQueryDto): Promise<FollowupPartyGroup[]> {
     const status = uc(q.status) || 'OPEN';
@@ -429,6 +434,11 @@ export class CrmService {
     return items
       .map((it) => {
         const sum = (k: 'bags' | 'pcs' | 'gram' | 'box') => it.dispatches.reduce((s, d) => s + (d[k] ?? 0), 0);
+        // Ordered minus dispatched in binary floating point leaves artefacts
+        // (80.5 - 18.2 = 62.30000000000001), which reach the picker as a wall of
+        // decimals. Quantities are never finer than 3 places, so settle the
+        // subtraction here rather than papering over it at each display site.
+        const rem = (ordered: number | null, dispatched: number) => Math.max(0, Math.round(((ordered ?? 0) - dispatched) * 1000) / 1000);
         return {
           orderItemId: it.id,
           orderId: it.orderId,
@@ -437,10 +447,10 @@ export class CrmService {
           productName: it.productName,
           design: it.design,
           pCategory: it.pCategory,
-          remBags: Math.max(0, (it.bags ?? 0) - sum('bags')),
-          remPcs: Math.max(0, (it.pcs ?? 0) - sum('pcs')),
-          remGram: Math.max(0, (it.gram ?? 0) - sum('gram')),
-          remBox: Math.max(0, (it.box ?? 0) - sum('box')),
+          remBags: rem(it.bags, sum('bags')),
+          remPcs: rem(it.pcs, sum('pcs')),
+          remGram: rem(it.gram, sum('gram')),
+          remBox: rem(it.box, sum('box')),
         };
       })
       .filter((it) => it.remBags > 0 || it.remPcs > 0 || it.remGram > 0 || it.remBox > 0)

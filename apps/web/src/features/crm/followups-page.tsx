@@ -9,7 +9,7 @@ import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useConfirm } from '@/components/common/confirm';
-import { Combobox } from '@/components/ui/combobox';
+import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -36,17 +36,23 @@ import {
 import { Chip, initials, itemLine, UrgencyChip } from './crm-shared';
 import { ChecklistInput, type ChecklistDraftItem } from './checklist-input';
 import { OwingPartiesWorklist, PartyBalancePanel, RecoveryMoneyStrip, type CollectPrefill } from './payment-desk';
+import { useOrderLookups } from '@/features/orders/use-orders';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { usePartyBalances } from './use-crm';
 import type { PartyBalanceSummary } from '@oms/shared';
 
 const STAGES = ['POLISHING', 'SUPPLIER', 'DISPATCH', 'READY'];
+/** `done` is not a server-side bucket — it swaps the board over to resolved
+ *  follow-ups. Without it a completed follow-up is invisible everywhere, so
+ *  marking one done by mistake looks exactly like losing it. */
+const DONE_BUCKET = 'done';
 const BUCKETS = [
   { v: '', label: 'All open' },
   { v: 'attention', label: 'Needs attention' },
   { v: 'overdue', label: 'Overdue' },
   { v: 'today', label: 'Due today' },
   { v: 'upcoming', label: 'Upcoming' },
+  { v: DONE_BUCKET, label: 'Completed' },
 ];
 
 export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
@@ -156,7 +162,10 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
         </div>
         {!showingDone && (
           <div className="w-48">
-            <NativeSelect value={bucket} onChange={setBucket} options={BUCKETS.map((b) => b.v)} renderOption={(v) => <span>{BUCKETS.find((b) => b.v === v)?.label ?? 'All open'}</span>} placeholder="All open" />
+            {/* Labelled options, not bare keys: the combobox shows the raw value in
+                its field unless the option carries a label, so picking a filter
+                used to read "attention" / "today" back at you. */}
+            <NativeSelect value={bucket} onChange={setBucket} options={BUCKETS.map((b) => ({ value: b.v, label: b.label }))} placeholder="All open" />
           </div>
         )}
       </div>
@@ -167,9 +176,7 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
       ) : groups.length === 0 ? (
         <div className="text-muted-foreground rounded-xl border border-dashed p-12 text-center text-sm">
           <CircleCheck className="mx-auto mb-3 size-10 text-emerald-500" />
-          {showingDone
-            ? 'Nothing completed yet — finished follow-ups will collect here.'
-            : `Nothing pending here. ${canEdit ? 'Log a new commitment with “New follow-up”.' : ''}`}
+          {showingDone ? 'Nothing completed yet — finished follow-ups will collect here.' : <>Nothing pending here. {canEdit && 'Log a new commitment with “New follow-up”.'}</>}
         </div>
       ) : (
         <div className="grid gap-3 lg:grid-cols-2">
@@ -591,13 +598,16 @@ function Block({ emoji, title, hint, children }: { emoji: string; title: string;
 
 const BIG_FIELD = 'h-12 text-base';
 
-/** Formats the still-open quantity of an order line, e.g. "5 bags, 40 kg". */
+/** Formats the still-open quantity of an order line, e.g. "5 bags, 40 kg".
+ *  `toLocaleString` is the app's usual quantity format: thousands grouped, at
+ *  most 3 decimals, and no trailing zeros on a whole number. */
+const qty = (v: number) => v.toLocaleString('en-IN');
 const remLabel = (it: OpenOrderItemHit) => {
   const parts: string[] = [];
-  if (it.remBags) parts.push(`${it.remBags} bag${it.remBags === 1 ? '' : 's'}`);
-  if (it.remPcs) parts.push(`${it.remPcs} pcs`);
-  if (it.remGram) parts.push(`${it.remGram} kg`);
-  if (it.remBox) parts.push(`${it.remBox} box`);
+  if (it.remBags) parts.push(`${qty(it.remBags)} bag${it.remBags === 1 ? '' : 's'}`);
+  if (it.remPcs) parts.push(`${qty(it.remPcs)} pcs`);
+  if (it.remGram) parts.push(`${qty(it.remGram)} kg`);
+  if (it.remBox) parts.push(`${qty(it.remBox)} box`);
   return parts.join(', ') || 'open';
 };
 const openItemLabel = (it: OpenOrderItemHit) =>
@@ -631,12 +641,16 @@ function ItemLinesEditor({
   rows,
   onChange,
   openItems,
+  catalog,
 }: {
   rows: FollowupLineRow[];
   onChange: (rows: FollowupLineRow[]) => void;
   openItems: OpenOrderItemHit[];
+  /** Master-list items, for a follow-up on something with no open order line.
+   *  Empty once an order is linked — then only that order's lines make sense. */
+  catalog: ComboboxOption[];
 }) {
-  const options = openItems.map(openItemLabel);
+  const options = useMemo(() => [...openItems.map(openItemLabel), ...catalog], [openItems, catalog]);
   const patch = (i: number, p: Partial<FollowupLineRow>) => onChange(rows.map((r, j) => (j === i ? { ...r, ...p } : r)));
   const pick = (i: number, label: string) => {
     const it = openItems.find((x) => openItemLabel(x) === label);
@@ -654,7 +668,7 @@ function ItemLinesEditor({
           <div className="flex items-center gap-2">
             <span className="bg-primary/10 text-primary flex size-6 shrink-0 items-center justify-center rounded-md text-[11px] font-bold tabular-nums">{i + 1}</span>
             <div className="min-w-0 flex-1">
-              <Combobox value={r.productName} onChange={(v) => pick(i, v)} options={options} creatable placeholder="Pick an open item, or type…" />
+              <Combobox value={r.productName} onChange={(v) => pick(i, v)} options={options} creatable placeholder={catalog.length ? 'Pick an item, or type…' : 'Pick an open item, or type…'} />
             </div>
             <Button type="button" variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive hover:bg-rose-50 size-8 shrink-0" onClick={() => onChange(rows.filter((_, j) => j !== i))} aria-label="Remove item">
               <Trash2 className="size-4" />
@@ -724,6 +738,7 @@ function FollowupForm({ kind, editing, prefill, onClose }: { kind: FollowupKind;
   const { data: orders = [] } = useOrderSuggest(orderQuery, party || undefined);
   // …and this lists their actual open order LINE ITEMS, so a delivery can be linked precisely.
   const { data: openItems = [] } = useOrderItemSuggest(customerId, party);
+  const { data: lookups } = useOrderLookups();
 
   const onPickParty = (v: string) => {
     setParty(v);
@@ -754,21 +769,32 @@ function FollowupForm({ kind, editing, prefill, onClose }: { kind: FollowupKind;
 
   // Once an order is linked, the item picker narrows to JUST that order's open
   // lines; with no order linked it lists all of the party's open lines.
-  const itemOptions = useMemo(() => {
-    const pool = orderId ? openItems.filter((it) => it.orderId === orderId) : openItems;
-    return pool.map(openItemLabel);
-  }, [openItems, orderId]);
-  const onPickItem = (label: string) => {
-    setItemText(label);
-    const match = openItems.find((it) => openItemLabel(it) === label);
-    if (match) {
-      setOrderItemId(match.orderItemId);
-      setOrderId(match.orderId);
-      setOrderCode(match.orderCode);
-    } else {
-      setOrderItemId(null);
+  const itemPool = useMemo(() => (orderId ? openItems.filter((it) => it.orderId === orderId) : openItems), [openItems, orderId]);
+
+  /**
+   * The product master, named the way the order form names an item
+   * ("10 RDX · GLASS") so the list reads the same whether a row came from an
+   * open order line or was added by hand. Only offered when NO order is linked:
+   * once one is, the only sensible items are that order's own open lines.
+   *
+   * A follow-up item stores just a product NAME (see `FollowupItem`), so this
+   * fills that one field rather than carrying category/design separately.
+   */
+  const catalogOptions = useMemo<ComboboxOption[]>(() => {
+    if (orderId) return [];
+    const seen = new Set<string>();
+    const out: ComboboxOption[] = [];
+    for (const it of lookups?.items ?? []) {
+      const name = [it.size == null ? '' : String(it.size), it.product, it.designType ?? ''].filter(Boolean).join(' ');
+      if (!name) continue;
+      const label = it.category ? `${name} · ${it.category}` : name;
+      if (seen.has(label)) continue;
+      seen.add(label);
+      // Findable by pcs / sub-category too, exactly like the order form's picker.
+      out.push({ value: label, label, keywords: [it.pcs == null ? '' : String(it.pcs), it.subCategory ?? ''].filter(Boolean).join(' ') });
     }
-  };
+    return out;
+  }, [lookups, orderId]);
 
   const isPay = kind === 'PAYMENT';
   const submit = () => {
@@ -939,7 +965,7 @@ function FollowupForm({ kind, editing, prefill, onClose }: { kind: FollowupKind;
             /* ── Delivery layout: items → notes → checklist → when → stage + urgency ── */
             <>
               <Block emoji="📦" title="Items & quantities" hint="Add each item on this follow-up with how much to deliver.">
-                <ItemLinesEditor rows={lineItems} onChange={setLineItems} openItems={openItems} />
+                <ItemLinesEditor rows={lineItems} onChange={setLineItems} openItems={itemPool} catalog={catalogOptions} />
               </Block>
 
               <Block emoji="💬" title="Notes" hint="Any details or discussion — one line or many.">
