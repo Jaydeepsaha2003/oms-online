@@ -7,9 +7,11 @@ import { cn, shortDispatchCode, shortOrderCode } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useColumnOrder } from '@/hooks/use-column-order';
+import { usePageSize } from '@/hooks/use-page-size';
 import { useOrderQtyLayout } from '@/features/settings/use-settings';
 import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
+import { PageSizeSelect } from '@/components/common/page-size-select';
 import { RecordHistory } from '@/components/common/record-history';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { NativeSelect } from '@/components/common/combo';
@@ -23,7 +25,6 @@ import { DateRangeCalendar } from '@/components/common/date-range-calendar';
 import { PRESETS, presetRange } from '@/features/challans/date-presets';
 import { useDeleteDispatch, useDispatches, useDispatchFilterOptions, useUpdateDispatch } from './use-dispatch';
 
-const PAGE_SIZE = 50;
 const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? 0 : Number(s));
 const qty = (v: number | null) => (v ? v.toLocaleString('en-IN') : '—');
 
@@ -566,7 +567,7 @@ export function ModifyDispatchPage() {
       next.has(key) ? next.delete(key) : next.add(key);
       return next;
     });
-  const [page, setPage] = useState(1);
+  const { page, setPage, pageSize, setPageSize } = usePageSize('dispatch-modify');
   const [editing, setEditing] = useState<DispatchDto | null>(null);
   const canViewRates = can('dispatch:viewrates');
   const columns = useMemo(() => (canViewRates ? withRates(COLUMNS) : COLUMNS), [canViewRates]);
@@ -595,7 +596,7 @@ export function ModifyDispatchPage() {
     // page — MAX_PAGE_SIZE comfortably covers a day's (or a filtered range's)
     // dispatch volume. Ungrouped keeps the normal paged table untouched.
     page: grouped ? 1 : page,
-    pageSize: grouped ? MAX_PAGE_SIZE : PAGE_SIZE,
+    pageSize: grouped ? MAX_PAGE_SIZE : pageSize,
     search: search || undefined,
     status: statusFilter || undefined,
     customer: customerFilter || undefined,
@@ -949,13 +950,16 @@ export function ModifyDispatchPage() {
             <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
           </p>
         )}
-        <div className={cn('flex gap-2', grouped && 'hidden')}>
-          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-            <ChevronLeft /> Prev
-          </Button>
-          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
-            Next <ChevronRight />
-          </Button>
+        <div className={cn('flex items-center gap-3', grouped && 'hidden')}>
+          <PageSizeSelect value={pageSize} onChange={setPageSize} />
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+              <ChevronLeft /> Prev
+            </Button>
+            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+              Next <ChevronRight />
+            </Button>
+          </div>
         </div>
       </div>
 

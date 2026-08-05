@@ -23,10 +23,12 @@ import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
+import { usePageSize } from '@/hooks/use-page-size';
 import { useConfirm } from '@/components/common/confirm';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { Combo, NativeSelect } from '@/components/common/combo';
 import { CancelReasonFields } from '@/components/common/cancel-reason';
+import { PageSizeSelect } from '@/components/common/page-size-select';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -40,8 +42,6 @@ import {
   useMarkQuotationSent,
   useQuotations,
 } from './use-quotations';
-
-const PAGE_SIZE = 50;
 
 const STATUS_STYLE: Record<string, string> = {
   DRAFT: 'bg-slate-100 text-slate-700 ring-slate-200',
@@ -88,7 +88,7 @@ export function QuotationsPage() {
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
-  const [page, setPage] = useState(1);
+  const { page, setPage, pageSize, setPageSize } = usePageSize('quotations');
   const [acting, setActing] = useState<QuotationDto | null>(null);
   const [cancelling, setCancelling] = useState<QuotationDto | null>(null);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
@@ -106,7 +106,7 @@ export function QuotationsPage() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  const query = { page, pageSize: PAGE_SIZE, search: search || undefined, status: statusFilter || undefined };
+  const query = { page, pageSize, search: search || undefined, status: statusFilter || undefined };
   const { data, isLoading } = useQuotations(query);
   const convert = useConvertQuotation();
   const markSent = useMarkQuotationSent();
@@ -311,17 +311,20 @@ export function QuotationsPage() {
         )}
       />
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <p className="text-muted-foreground text-sm">
           Page {data?.page ?? page} of {totalPages}
         </p>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-            <ChevronLeft /> Prev
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
-            Next <ChevronRight />
-          </Button>
+        <div className="flex items-center gap-3">
+          <PageSizeSelect value={pageSize} onChange={setPageSize} />
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+              <ChevronLeft /> Prev
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+              Next <ChevronRight />
+            </Button>
+          </div>
         </div>
       </div>
 

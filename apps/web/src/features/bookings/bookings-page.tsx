@@ -7,6 +7,7 @@ import { getApiErrorMessage } from '@/lib/api';
 import { cn, shortOrderCode } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
+import { usePageSize } from '@/hooks/use-page-size';
 import { useConfirm } from '@/components/common/confirm';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { Button } from '@/components/ui/button';
@@ -15,9 +16,8 @@ import { Label } from '@/components/ui/label';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { NativeSelect } from '@/components/common/combo';
+import { PageSizeSelect } from '@/components/common/page-size-select';
 import { useBookings, useCancelBooking, useDeleteBooking } from './use-bookings';
-
-const PAGE_SIZE = 50;
 
 const STATUS_STYLE: Record<BookingStatus, string> = {
   OPEN: 'bg-amber-50 text-amber-700 ring-amber-200',
@@ -89,7 +89,7 @@ export function BookingsPage() {
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
-  const [page, setPage] = useState(1);
+  const { page, setPage, pageSize, setPageSize } = usePageSize('bookings-main');
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const activeFilterCount = status ? 1 : 0;
   const resetFilters = () => {
@@ -98,7 +98,7 @@ export function BookingsPage() {
   };
   const { data, isLoading } = useBookings({
     page,
-    pageSize: PAGE_SIZE,
+    pageSize,
     search: search || undefined,
     status: status || undefined,
   });
@@ -395,17 +395,20 @@ export function BookingsPage() {
         }}
       />
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <p className="text-muted-foreground text-sm">
           {data?.total ?? 0} booking(s) · page {data?.page ?? page} of {totalPages}
         </p>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-            <ChevronLeft /> Prev
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
-            Next <ChevronRight />
-          </Button>
+        <div className="flex items-center gap-3">
+          <PageSizeSelect value={pageSize} onChange={setPageSize} />
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+              <ChevronLeft /> Prev
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+              Next <ChevronRight />
+            </Button>
+          </div>
         </div>
       </div>
     </div>

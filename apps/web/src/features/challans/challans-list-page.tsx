@@ -31,8 +31,10 @@ import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useColumnOrder } from '@/hooks/use-column-order';
+import { usePageSize } from '@/hooks/use-page-size';
 import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
+import { PageSizeSelect } from '@/components/common/page-size-select';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { DateRangeCalendar } from '@/components/common/date-range-calendar';
 import { Button } from '@/components/ui/button';
@@ -47,7 +49,6 @@ import { ChallanAnalyticsDialog } from './challan-analytics-dialog';
 import { ReportDownloadOverlay, type ReportPhase } from './report-download-overlay';
 import { exportDetailedReport, exportSummaryReport, type ReportMeta } from './challan-report';
 
-const PAGE_SIZE = 50;
 const money = (v: number | null) => `₹ ${(v ?? 0).toLocaleString('en-IN')}`;
 
 /** Matches the Pending Challan grid: Inter, semibold, near-black. */
@@ -118,7 +119,7 @@ export function ChallansListPage() {
   const [dateTo, setDateTo] = useState(() => initialFilters.dateTo ?? defaultFy.to);
   const [preset, setPreset] = useState(() => initialFilters.preset ?? DEFAULT_PRESET);
   const [status, setStatus] = useState(() => initialFilters.status ?? '');
-  const [page, setPage] = useState(() => initialFilters.page ?? 1);
+  const { page, setPage, pageSize, setPageSize } = usePageSize('challans-list', undefined, initialFilters.page ?? 1);
   // Phones: date range / quick range / status live behind this Filter icon.
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [dateOpen, setDateOpen] = useState(false);
@@ -140,7 +141,7 @@ export function ChallansListPage() {
 
   const query = {
     page,
-    pageSize: PAGE_SIZE,
+    pageSize,
     search: search || undefined,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
@@ -570,8 +571,8 @@ export function ChallansListPage() {
     </div>
   );
 
-  const from = totalRows === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
-  const to = Math.min(page * PAGE_SIZE, totalRows);
+  const from = totalRows === 0 ? 0 : (page - 1) * pageSize + 1;
+  const to = Math.min(page * pageSize, totalRows);
 
   return (
     // Fills the viewport: header, KPI rail and filters pinned on top, footer pinned
@@ -795,17 +796,20 @@ export function ChallansListPage() {
             </>
           )}
         </p>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-3">
           <p className="text-muted-foreground text-[12px] font-medium">
             Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
             <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
           </p>
-          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-            <ChevronLeft /> Prev
-          </Button>
-          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
-            Next <ChevronRight />
-          </Button>
+          <div className="flex items-center gap-2">
+            <PageSizeSelect value={pageSize} onChange={setPageSize} />
+            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+              <ChevronLeft /> Prev
+            </Button>
+            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+              Next <ChevronRight />
+            </Button>
+          </div>
         </div>
       </div>
 

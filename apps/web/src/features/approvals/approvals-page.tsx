@@ -8,6 +8,8 @@ import { formatDateTime } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { getApiErrorMessage } from '@/lib/api';
 import { usePermissions } from '@/hooks/use-permissions';
+import { usePageSize } from '@/hooks/use-page-size';
+import { PageSizeSelect } from '@/components/common/page-size-select';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
@@ -15,8 +17,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useApprovals, useApproveRequest, useRejectRequest } from './use-approvals';
-
-const PAGE_SIZE = 50;
 
 /** Compact, amber-bordered filter controls — the same language as every list page. */
 const CONTROL =
@@ -68,10 +68,10 @@ export function ApprovalsPage() {
   const [status, setStatus] = useState<ApprovalStatus | 'ALL'>('PENDING');
   const [type, setType] = useState('');
   const [searchInput, setSearchInput] = useState('');
-  const [page, setPage] = useState(1);
+  const { page, setPage, pageSize, setPageSize } = usePageSize('approvals');
   const [active, setActive] = useState<ApprovalRequestDto | null>(null);
 
-  const query = { page, pageSize: PAGE_SIZE, status, type: type || undefined, search: searchInput.trim() || undefined };
+  const query = { page, pageSize, status, type: type || undefined, search: searchInput.trim() || undefined };
   const { data, isLoading, isFetching } = useApprovals(query);
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
@@ -240,13 +240,16 @@ export function ApprovalsPage() {
           Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
           <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
         </p>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-            <ChevronLeft /> Prev
-          </Button>
-          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
-            Next <ChevronRight />
-          </Button>
+        <div className="flex items-center gap-3">
+          <PageSizeSelect value={pageSize} onChange={setPageSize} />
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+              <ChevronLeft /> Prev
+            </Button>
+            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+              Next <ChevronRight />
+            </Button>
+          </div>
         </div>
       </div>
 

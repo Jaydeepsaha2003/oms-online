@@ -3,13 +3,13 @@ import { useSearchParams } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, History, Search, TrendingDown, TrendingUp } from 'lucide-react';
 import type { RateChangeEntry, RateHistoryKind } from '@oms/shared';
 import { cn, formatDateTime } from '@/lib/utils';
+import { usePageSize } from '@/hooks/use-page-size';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/common/combo';
+import { PageSizeSelect } from '@/components/common/page-size-select';
 import { usePriceHistory } from './use-bookings';
-
-const PAGE_SIZE = 50;
 
 const KIND_STYLE: Record<RateHistoryKind, string> = {
   PRODUCT: 'bg-indigo-50 text-indigo-700 ring-indigo-200',
@@ -71,10 +71,10 @@ export function PriceHistoryPage() {
   const [searchInput, setSearchInput] = useState(params.get('search') ?? '');
   const [search, setSearch] = useState((params.get('search') ?? '').trim());
   const [kind, setKind] = useState(params.get('kind') ?? '');
-  const [page, setPage] = useState(1);
+  const { page, setPage, pageSize, setPageSize } = usePageSize('price-history');
   const { data, isLoading } = usePriceHistory({
     page,
-    pageSize: PAGE_SIZE,
+    pageSize,
     search: search || undefined,
     kind: (kind || undefined) as RateHistoryKind | undefined,
   });
@@ -161,17 +161,20 @@ export function PriceHistoryPage() {
         mobileCard={historyMobileCard}
       />
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <p className="text-muted-foreground text-sm">
           {data?.total ?? 0} change(s) · page {data?.page ?? page} of {totalPages}
         </p>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-            <ChevronLeft /> Prev
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
-            Next <ChevronRight />
-          </Button>
+        <div className="flex items-center gap-3">
+          <PageSizeSelect value={pageSize} onChange={setPageSize} />
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+              <ChevronLeft /> Prev
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+              Next <ChevronRight />
+            </Button>
+          </div>
         </div>
       </div>
     </div>

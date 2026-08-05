@@ -8,8 +8,10 @@ import { cn, formatDateShort, formatDateTime } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useColumnOrder } from '@/hooks/use-column-order';
+import { usePageSize } from '@/hooks/use-page-size';
 import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
+import { PageSizeSelect } from '@/components/common/page-size-select';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { ExportButton, ImportButton } from '@/components/common/excel-actions';
 import { Button } from '@/components/ui/button';
@@ -39,8 +41,6 @@ import {
   useUpdateAgent,
 } from './use-agents';
 
-const PAGE_SIZE = 50;
-
 const dt = (s: string) => (
   <span className="text-muted-foreground whitespace-nowrap font-mono text-xs" title={formatDateTime(s)}>
     {formatDateShort(s)}
@@ -60,7 +60,7 @@ export function AgentsPage() {
   const confirm = useConfirm();
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
+  const { page, setPage, pageSize, setPageSize } = usePageSize('agents');
   const [editing, setEditing] = useState<AgentDto | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -72,7 +72,7 @@ export function AgentsPage() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  const query = { page, pageSize: PAGE_SIZE, search: search || undefined };
+  const query = { page, pageSize, search: search || undefined };
   const { data, isLoading } = useAgents(query);
   const del = useDeleteAgent();
   const importMut = useImportAgents();
@@ -216,27 +216,30 @@ export function AgentsPage() {
         )}
       />
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <p className="text-muted-foreground text-sm">
           Page {data?.page ?? page} of {totalPages}
         </p>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={page <= 1}
-          >
-            <ChevronLeft /> Prev
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            disabled={page >= totalPages}
-          >
-            Next <ChevronRight />
-          </Button>
+        <div className="flex items-center gap-3">
+          <PageSizeSelect value={pageSize} onChange={setPageSize} />
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+            >
+              <ChevronLeft /> Prev
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+            >
+              Next <ChevronRight />
+            </Button>
+          </div>
         </div>
       </div>
 

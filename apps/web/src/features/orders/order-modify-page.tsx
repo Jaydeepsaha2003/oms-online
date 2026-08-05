@@ -3,16 +3,19 @@ import { useNavigate } from 'react-router-dom';
 import { Ban, ChevronLeft, ChevronRight, ExternalLink, Loader2, RotateCcw, Save, Trash2, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { OrderDto, OrderInput, OrderItemDto, QtyField } from '@oms/shared';
-import { ORDER_PRIORITIES, qtyOrderForCategory, resolveSpecialRates } from '@oms/shared';
+import { ORDER_LINE_EXPORT_COLUMNS, ORDER_PRIORITIES, qtyOrderForCategory, resolveSpecialRates } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn, shortOrderCode } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
 import { useAutoSizePcs } from '@/lib/auto-size-pcs';
 import { useColumnOrder } from '@/hooks/use-column-order';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
+import { usePageSize } from '@/hooks/use-page-size';
 import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
 import { CancelReasonFields } from '@/components/common/cancel-reason';
+import { PageSizeSelect } from '@/components/common/page-size-select';
+import { ExportButton, ExportColumnsDialog } from '@/components/common/excel-actions';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,11 +26,12 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { settingValues, useOrderQtyLayout, useSettings } from '@/features/settings/use-settings';
 import { useCustomerSpecialRates } from '@/features/special-rates/use-special-rates';
 import { usePermissions } from '@/hooks/use-permissions';
-import { useOrderFilterOptions, useOrderLookups, useOrders, useSaveOrder } from './use-orders';
+import { exportOrderLines, useOrderFilterOptions, useOrderLookups, useOrders, useSaveOrder } from './use-orders';
 import { LiveLinePhotos } from './line-photos';
 import { DesignNamePicker, resolveDesignNameChoices } from './design-name-picker';
 
-const PAGE_SIZE = 50;
+/** {@link ORDER_LINE_EXPORT_COLUMNS} reshaped for the export dialog's `{id, label}` prop. */
+const EXPORT_COLUMN_OPTIONS = ORDER_LINE_EXPORT_COLUMNS.map((c) => ({ id: c.id, label: c.header }));
 
 const STATUS_STYLE: Record<string, string> = {
   CONFIRMED: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/25',
@@ -151,6 +155,7 @@ const COLUMNS: DataColumn<Row>[] = [
 export function OrderModifyPage() {
   const navigate = useNavigate();
   const confirm = useConfirm();
+  const { can } = usePermissions();
   // Deliberately NOT persisted (unlike most other list pages): these filters
   // should start fresh every time you arrive here, rather than still be applied
   // from whatever you were last looking for after stepping away to another page.
@@ -160,11 +165,11 @@ export function OrderModifyPage() {
   const [design, setDesign] = useState('');
   const [priority, setPriority] = useState('');
   const [orderId, setOrderId] = useState('');
-  const [page, setPage] = useState(1);
+  const { page, setPage, pageSize, setPageSize } = usePageSize('order-modify');
 
   const { data, isLoading } = useOrders({
     page,
-    pageSize: PAGE_SIZE,
+    pageSize,
     customer: customer || undefined,
     agent: agent || undefined,
     product: product || undefined,
@@ -186,6 +191,28 @@ export function OrderModifyPage() {
   );
 
   const [edit, setEdit] = useState<Row | null>(null);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const onExport = async (columns: string[]) => {
+    setExporting(true);
+    try {
+      await exportOrderLines(
+        {
+          customer: customer || undefined,
+          agent: agent || undefined,
+          product: product || undefined,
+          design: design || undefined,
+          orderId: orderId ? Number(orderId) : undefined,
+          priority: priority || undefined,
+        },
+        columns,
+      );
+    } catch (e) {
+      toast.error(getApiErrorMessage(e, 'Excel export failed'));
+    } finally {
+      setExporting(false);
+    }
+  };
   const hasFilters = !!customer || !!agent || !!product || !!design || !!priority || !!orderId;
   const resetFilters = () => {
     setCustomer('');
@@ -356,7 +383,8 @@ export function OrderModifyPage() {
               <RotateCcw className="size-3.5" /> Reset
             </Button>
           )}
-          <div className="ml-auto shrink-0">
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            {can('order:export') && <ExportButton onClick={() => setExportDialogOpen(true)} disabled={exporting} label="Export order lines to Excel" />}
             <ColumnSettings
               columns={cols.orderedReorderable}
               hidden={cols.hidden}
@@ -483,17 +511,20 @@ export function OrderModifyPage() {
           <span className="font-bold tabular-nums text-foreground">{rows.length}</span> line(s) across{' '}
           <span className="font-bold tabular-nums text-foreground">{new Set(rows.map((r) => r.order.id)).size}</span> order(s)
         </p>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-3">
           <p className="text-muted-foreground text-[12px] font-medium">
             Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
             <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
           </p>
-          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-            <ChevronLeft /> Prev
-          </Button>
-          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
-            Next <ChevronRight />
-          </Button>
+          <PageSizeSelect value={pageSize} onChange={setPageSize} />
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+              <ChevronLeft /> Prev
+            </Button>
+            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+              Next <ChevronRight />
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -514,6 +545,17 @@ export function OrderModifyPage() {
           />
         )}
       </Sheet>
+
+      <ExportColumnsDialog
+        open={exportDialogOpen}
+        onOpenChange={setExportDialogOpen}
+        columns={EXPORT_COLUMN_OPTIONS}
+        storageKey="oms:order-modify-export-columns:v1"
+        onExport={onExport}
+        exporting={exporting}
+        title="Choose columns to export"
+        description="Pick which columns go into the order-lines Excel file — matches your current filters."
+      />
     </div>
   );
 }

@@ -20,8 +20,10 @@ import { parseExcelFile } from '@/lib/excel';
 import { cn, formatDateShort, formatDateTime } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
+import { usePageSize } from '@/hooks/use-page-size';
 import { useConfirm } from '@/components/common/confirm';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
+import { PageSizeSelect } from '@/components/common/page-size-select';
 import { ExportButton, ImportButton, TemplateButton } from '@/components/common/excel-actions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -43,7 +45,6 @@ import {
 import { CustomerGstRates } from './customer-gst-rates';
 import { RateHistoryDialog } from '@/components/common/rate-history-dialog';
 
-const PAGE_SIZE = 50;
 const pct = (n: number | null) => (n == null ? '—' : `${n.toLocaleString('en-IN')}%`);
 
 /** Matches the Products / Orders / Challans grids: Inter, semibold, near-black. */
@@ -119,8 +120,8 @@ function RatesList() {
   const confirm = useConfirm();
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
-  const { data, isLoading } = useGstRates({ page, pageSize: PAGE_SIZE, search: search || undefined });
+  const { page, setPage, pageSize, setPageSize } = usePageSize('gst-rates');
+  const { data, isLoading } = useGstRates({ page, pageSize, search: search || undefined });
   const del = useDeleteGstRate();
   const [editing, setEditing] = useState<GstRateDto | null>(null);
   const [historyFor, setHistoryFor] = useState<GstRateDto | null>(null);
@@ -199,8 +200,8 @@ function RatesList() {
   ];
 
   const totalRows = data?.total ?? 0;
-  const from = totalRows === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
-  const to = Math.min(page * PAGE_SIZE, totalRows);
+  const from = totalRows === 0 ? 0 : (page - 1) * pageSize + 1;
+  const to = Math.min(page * pageSize, totalRows);
 
   return (
     <div className="space-y-2.5">
@@ -345,23 +346,26 @@ function RatesList() {
             </>
           )}
         </p>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-3">
           <p className="text-muted-foreground text-[12px] font-medium">
             Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
             <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
           </p>
-          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-            <ChevronLeft /> Prev
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="rounded-[4px] font-semibold"
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            disabled={page >= totalPages}
-          >
-            Next <ChevronRight />
-          </Button>
+          <div className="flex items-center gap-2">
+            <PageSizeSelect value={pageSize} onChange={setPageSize} />
+            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+              <ChevronLeft /> Prev
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-[4px] font-semibold"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+            >
+              Next <ChevronRight />
+            </Button>
+          </div>
         </div>
       </div>
 

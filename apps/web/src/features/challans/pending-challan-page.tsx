@@ -22,6 +22,8 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { DateRangeCalendar } from '@/components/common/date-range-calendar';
 import { NativeSelect } from '@/components/common/combo';
+import { usePageSize } from '@/hooks/use-page-size';
+import { PageSizeSelect } from '@/components/common/page-size-select';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -30,8 +32,6 @@ import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/com
 import { useConfirm } from '@/components/common/confirm';
 import { usePendingChallanFilters, usePendingChallans } from './use-challans';
 import { presetRange } from './date-presets';
-
-const PAGE_SIZE = 50;
 
 /**
  * Figures keep `tabular-nums` so columns of numbers stay optically aligned and don't
@@ -150,7 +150,7 @@ export function PendingChallanPage() {
   const [dateTo, setDateTo] = useState(saved.dateTo);
   const [preset, setPreset] = useState(saved.preset);
   const [dateOpen, setDateOpen] = useState(false);
-  const [page, setPage] = useState(1);
+  const { page, setPage, pageSize, setPageSize } = usePageSize('pending-challan');
   // Selection preserves insertion order (= the order rows were ticked).
   const [selected, setSelected] = useState<Map<number, PendingChallanLine>>(new Map());
   // Phones: the field + date filters live behind this Filter icon (see the sheet below).
@@ -182,7 +182,7 @@ export function PendingChallanPage() {
 
   const query = {
     page,
-    pageSize: PAGE_SIZE,
+    pageSize,
     search: search || undefined,
     customerName: customer || undefined,
     productName: product || undefined,
@@ -576,8 +576,8 @@ export function PendingChallanPage() {
     );
   };
 
-  const from = totalRows === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
-  const to = Math.min(page * PAGE_SIZE, totalRows);
+  const from = totalRows === 0 ? 0 : (page - 1) * pageSize + 1;
+  const to = Math.min(page * pageSize, totalRows);
 
   /** Quick ranges — a compact wrapping row of pills. "All" isn't a range: it drops
    *  the date filter entirely, and shows as the active pill whenever no dates are set. */
@@ -899,17 +899,20 @@ export function PendingChallanPage() {
           </p>
         )}
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-3">
           <p className="text-muted-foreground text-[12px] font-medium">
             Page <span className={cn(NUM, 'text-foreground font-bold')}>{data?.page ?? page}</span> of{' '}
             <span className={cn(NUM, 'text-foreground font-bold')}>{totalPages}</span>
           </p>
-          <Button variant="outline" size="sm" className="font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-            <ChevronLeft /> Prev
-          </Button>
-          <Button variant="outline" size="sm" className="font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
-            Next <ChevronRight />
-          </Button>
+          <PageSizeSelect value={pageSize} onChange={setPageSize} />
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" className="font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+              <ChevronLeft /> Prev
+            </Button>
+            <Button variant="outline" size="sm" className="font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+              Next <ChevronRight />
+            </Button>
+          </div>
         </div>
       </div>
     </div>

@@ -3,6 +3,7 @@ import type {
   CreateDispatchInput,
   DispatchFilterOptions,
   DispatchList,
+  DispatchPhotoCheckDto,
   DispatchQuery,
   PendingList,
   PendingQuery,
@@ -60,6 +61,16 @@ export function useDispatchFilterOptions(query: Partial<DispatchQuery> = {}) {
     queryFn: () => http.get<DispatchFilterOptions>('/dispatch/filter-options', { params }),
     staleTime: 60_000,
     placeholderData: (prev) => prev,
+  });
+}
+
+/** Has this party + item + design ever been documented with a reference photo?
+ *  Gates the Dispatch form's Save — see DispatchService.photoCheck. */
+export function useDispatchPhotoCheck(orderItemId?: number) {
+  return useQuery({
+    queryKey: [...KEY, 'photo-check', orderItemId],
+    queryFn: () => http.get<DispatchPhotoCheckDto>(`/dispatch/photo-check/${orderItemId}`),
+    enabled: orderItemId != null,
   });
 }
 

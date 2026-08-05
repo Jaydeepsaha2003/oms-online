@@ -17,6 +17,25 @@ const INCLUDE = { items: { include: { photos: { orderBy: { id: 'asc' } } } } } a
 type Row = Prisma.OrderGetPayload<{ include: typeof INCLUDE }>;
 type PhotoRow = Prisma.OrderItemPhotoGetPayload<object>;
 
+/** One flattened order-line row for the Order Modify Excel export. */
+export interface OrderLineExportRow {
+  orderId: number;
+  orderCode: string | null;
+  orderDate: Date;
+  dueDate: Date | null;
+  customerName: string;
+  productName: string;
+  designType: string;
+  priority: string;
+  bags: number | null;
+  pcs: number | null;
+  gram: number | null;
+  box: number | null;
+  rate: number | null;
+  comment: string;
+  status: string;
+}
+
 @Injectable()
 export class OrdersService {
   constructor(
@@ -25,13 +44,15 @@ export class OrdersService {
     private readonly bookings: BookingsService,
   ) {}
 
-  async findMany(query: OrderQueryDto): Promise<Paginated<OrderDto>> {
+  /** Shared where-builder for the order list and the Order Modify export —
+   *  every exact-match / search filter both screens offer. */
+  private buildWhere(query: OrderQueryDto): Prisma.OrderWhereInput {
     const search = query.search?.trim();
     // Product / design filters keep an order when ANY of its lines matches.
     const lineFilters: Prisma.OrderWhereInput[] = [];
     if (query.product) lineFilters.push({ items: { some: { OR: [{ productName: query.product }, { product: query.product }] } } });
     if (query.design) lineFilters.push({ items: { some: { designType: query.design } } });
-    const where: Prisma.OrderWhereInput = {
+    return {
       ...(query.status ? { status: uc(query.status)! } : {}),
       ...(query.customer ? { customerName: query.customer } : {}),
       ...(query.agent ? { agentName: query.agent } : {}),
@@ -47,6 +68,10 @@ export class OrdersService {
           }
         : {}),
     };
+  }
+
+  async findMany(query: OrderQueryDto): Promise<Paginated<OrderDto>> {
+    const where = this.buildWhere(query);
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.order.findMany({
         where,
@@ -89,6 +114,41 @@ export class OrdersService {
       pageSize: query.pageSize,
       totalPages: Math.max(1, Math.ceil(total / query.pageSize)),
     };
+  }
+
+  /**
+   * Every order LINE matching Order Modify's current filters, flattened —
+   * mirrors exactly what that screen shows (drafts excluded, same as its own
+   * client-side filter) plus the priority filter, which only this export
+   * endpoint applies server-side.
+   */
+  async exportLines(query: OrderQueryDto): Promise<OrderLineExportRow[]> {
+    const where: Prisma.OrderWhereInput = { ...this.buildWhere(query), status: { not: 'DRAFT' } };
+    const rows = await this.prisma.order.findMany({ where, include: INCLUDE, orderBy: [{ id: 'desc' }] });
+    const out: OrderLineExportRow[] = [];
+    for (const o of rows) {
+      for (const it of o.items) {
+        if (query.priority && (it.priority ?? '') !== query.priority) continue;
+        out.push({
+          orderId: o.id,
+          orderCode: o.code,
+          orderDate: o.orderDate,
+          dueDate: o.completionDate,
+          customerName: o.customerName,
+          productName: it.productName || it.product || '',
+          designType: it.designType && it.designType.toUpperCase() !== 'NA' ? it.designType : '',
+          priority: it.priority ?? '',
+          bags: it.bags,
+          pcs: it.pcs,
+          gram: it.gram,
+          box: it.box,
+          rate: it.rate,
+          comment: it.comment ?? '',
+          status: it.status === 'CANCELLED' ? 'CANCELLED' : o.status,
+        });
+      }
+    }
+    return out;
   }
 
   async findOne(id: number): Promise<OrderDto> {

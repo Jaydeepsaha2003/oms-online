@@ -27,11 +27,13 @@ import { cn, formatDateShort, formatDateTime } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useColumnOrder } from '@/hooks/use-column-order';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
+import { usePageSize } from '@/hooks/use-page-size';
 import { useConfirm } from '@/components/common/confirm';
 import { Combo, NativeSelect } from '@/components/common/combo';
 import { ColumnSettings } from '@/components/common/column-settings';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { RowCheckbox } from '@/components/common/row-checkbox';
+import { PageSizeSelect } from '@/components/common/page-size-select';
 import { ExportButton, ImportButton } from '@/components/common/excel-actions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -57,7 +59,6 @@ import {
   useImportCombinations,
 } from '../combinations/use-combinations';
 
-const PAGE_SIZE = 50;
 const num = (n: number | null) => (n == null ? '—' : n.toLocaleString('en-IN'));
 /** Amount prefixed with the rupee symbol; dash when unknown. */
 const money = (n: number | null) => (n == null ? '—' : `₹${n.toLocaleString('en-IN')}`);
@@ -136,7 +137,7 @@ export function DesignsPage() {
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
   const [subCategory, setSubCategory] = useState('');
-  const [page, setPage] = useState(1);
+  const { page, setPage, pageSize, setPageSize } = usePageSize('designs-merged');
   const [editing, setEditing] = useState<DesignDto | null>(null);
   const [creating, setCreating] = useState(false);
   const [selected, setSelected] = useState<Map<number, DesignDto>>(new Map());
@@ -153,7 +154,7 @@ export function DesignsPage() {
 
   const query = {
     page,
-    pageSize: PAGE_SIZE,
+    pageSize,
     search: search || undefined,
     category: category || undefined,
     subCategory: subCategory || undefined,
@@ -178,7 +179,7 @@ export function DesignsPage() {
   const [comboSearch, setComboSearch] = useState('');
   const [comboCategory, setComboCategory] = useState('');
   const [comboSubCategory, setComboSubCategory] = useState('');
-  const [comboPage, setComboPage] = useState(1);
+  const { page: comboPage, setPage: setComboPage, pageSize: comboPageSize, setPageSize: setComboPageSize } = usePageSize('combinations-merged-v2');
   const [comboMobileFiltersOpen, setComboMobileFiltersOpen] = useState(false);
   const comboActiveFilterCount = (comboCategory ? 1 : 0) + (comboSubCategory ? 1 : 0);
   const resetComboFilters = () => {
@@ -188,7 +189,7 @@ export function DesignsPage() {
   };
   const comboQuery = {
     page: comboPage,
-    pageSize: PAGE_SIZE,
+    pageSize: comboPageSize,
     search: comboSearch || undefined,
     category: comboCategory || undefined,
     subCategory: comboSubCategory || undefined,
@@ -637,24 +638,27 @@ export function DesignsPage() {
         </div>
 
         {totalPages > 1 && (
-          <div className="bg-card flex items-center justify-between rounded-[4px] border px-3 py-2 shadow-sm">
+          <div className="bg-card flex items-center justify-between gap-3 rounded-[4px] border px-3 py-2 shadow-sm">
             <p className="text-muted-foreground text-[12px] font-medium">
               Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
               <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
             </p>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-                <ChevronLeft /> Prev
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="rounded-[4px] font-semibold"
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page >= totalPages}
-              >
-                Next <ChevronRight />
-              </Button>
+            <div className="flex items-center gap-3">
+              <PageSizeSelect value={pageSize} onChange={setPageSize} />
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+                  <ChevronLeft /> Prev
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-[4px] font-semibold"
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={page >= totalPages}
+                >
+                  Next <ChevronRight />
+                </Button>
+              </div>
             </div>
           </div>
         )}
@@ -845,24 +849,27 @@ export function DesignsPage() {
         </div>
 
         {comboTotalPages > 1 && (
-          <div className="bg-card flex items-center justify-between rounded-[4px] border px-3 py-2 shadow-sm">
+          <div className="bg-card flex items-center justify-between gap-3 rounded-[4px] border px-3 py-2 shadow-sm">
             <p className="text-muted-foreground text-[12px] font-medium">
               Page <span className="font-bold tabular-nums text-foreground">{comboData?.page ?? comboPage}</span> of{' '}
               <span className="font-bold tabular-nums text-foreground">{comboTotalPages}</span>
             </p>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setComboPage((p) => Math.max(1, p - 1))} disabled={comboPage <= 1}>
-                <ChevronLeft /> Prev
-              </Button>
-              <Button
-                variant="outline"
-                className="rounded-[4px] font-semibold"
-                size="sm"
-                onClick={() => setComboPage((p) => Math.min(comboTotalPages, p + 1))}
-                disabled={comboPage >= comboTotalPages}
-              >
-                Next <ChevronRight />
-              </Button>
+            <div className="flex items-center gap-3">
+              <PageSizeSelect value={comboPageSize} onChange={setComboPageSize} />
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setComboPage((p) => Math.max(1, p - 1))} disabled={comboPage <= 1}>
+                  <ChevronLeft /> Prev
+                </Button>
+                <Button
+                  variant="outline"
+                  className="rounded-[4px] font-semibold"
+                  size="sm"
+                  onClick={() => setComboPage((p) => Math.min(comboTotalPages, p + 1))}
+                  disabled={comboPage >= comboTotalPages}
+                >
+                  Next <ChevronRight />
+                </Button>
+              </div>
             </div>
           </div>
         )}

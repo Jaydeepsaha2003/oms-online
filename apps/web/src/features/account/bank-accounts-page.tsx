@@ -7,16 +7,16 @@ import { getApiErrorMessage } from '@/lib/api';
 import { cn, formatDateShort, formatDateTime } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
+import { usePageSize } from '@/hooks/use-page-size';
 import { useConfirm } from '@/components/common/confirm';
 import { RecordHistory } from '@/components/common/record-history';
+import { PageSizeSelect } from '@/components/common/page-size-select';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useBankAccounts, useCreateBankAccount, useDeleteBankAccount, useUpdateBankAccount } from './use-account';
-
-const PAGE_SIZE = 50;
 
 /** Matches the Pending Challan / Challans / Orders grids: Inter, semibold, near-black. */
 const TEXT_CELL = 'text-[13px] font-semibold text-slate-800 dark:text-slate-200';
@@ -36,7 +36,7 @@ export function BankAccountsPage() {
   const confirm = useConfirm();
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
+  const { page, setPage, pageSize, setPageSize } = usePageSize('bank-accounts');
   const [editing, setEditing] = useState<BankAccountDto | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -48,7 +48,7 @@ export function BankAccountsPage() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  const query = { page, pageSize: PAGE_SIZE, search: search || undefined };
+  const query = { page, pageSize, search: search || undefined };
   const { data, isLoading } = useBankAccounts(query);
   const del = useDeleteBankAccount();
 
@@ -179,13 +179,16 @@ export function BankAccountsPage() {
           Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
           <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
         </p>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-            <ChevronLeft /> Prev
-          </Button>
-          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
-            Next <ChevronRight />
-          </Button>
+        <div className="flex items-center gap-3">
+          <PageSizeSelect value={pageSize} onChange={setPageSize} />
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+              <ChevronLeft /> Prev
+            </Button>
+            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+              Next <ChevronRight />
+            </Button>
+          </div>
         </div>
       </div>
 

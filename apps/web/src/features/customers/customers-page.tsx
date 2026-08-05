@@ -8,8 +8,10 @@ import { parseExcelFile } from '@/lib/excel';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useColumnOrder } from '@/hooks/use-column-order';
+import { usePageSize } from '@/hooks/use-page-size';
 import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
+import { PageSizeSelect } from '@/components/common/page-size-select';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { ExportButton, ImportButton } from '@/components/common/excel-actions';
 import { Button } from '@/components/ui/button';
@@ -21,7 +23,6 @@ import {
   useImportCustomers,
 } from './use-customers';
 
-const PAGE_SIZE = 50;
 const num = (n: number | null) => (n == null ? '—' : n.toLocaleString('en-IN'));
 /** Amount prefixed with the rupee symbol; dash when unknown. */
 const money = (n: number | null) => (n == null ? '—' : `₹${n.toLocaleString('en-IN')}`);
@@ -85,7 +86,7 @@ export function CustomersPage() {
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<CustomerStatus>('ALL');
-  const [page, setPage] = useState(1);
+  const { page, setPage, pageSize, setPageSize } = usePageSize('customers');
 
   // Debounce the search box.
   useEffect(() => {
@@ -96,7 +97,7 @@ export function CustomersPage() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  const query = { page, pageSize: PAGE_SIZE, search: search || undefined, status };
+  const query = { page, pageSize, search: search || undefined, status };
   const { data, isLoading, isFetching } = useCustomers(query);
   const del = useDeleteCustomer();
   const importMut = useImportCustomers();
@@ -332,25 +333,28 @@ export function CustomersPage() {
           Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
           <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
         </p>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="rounded-[4px] font-semibold"
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={page <= 1}
-          >
-            <ChevronLeft /> Prev
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="rounded-[4px] font-semibold"
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            disabled={page >= totalPages}
-          >
-            Next <ChevronRight />
-          </Button>
+        <div className="flex items-center gap-3">
+          <PageSizeSelect value={pageSize} onChange={setPageSize} />
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-[4px] font-semibold"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+            >
+              <ChevronLeft /> Prev
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-[4px] font-semibold"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+            >
+              Next <ChevronRight />
+            </Button>
+          </div>
         </div>
       </div>
     </div>

@@ -55,4 +55,9 @@ export class OrderQueryDto extends PaginationDto {
   @IsOptional() @IsString() design?: string;
   /** Exact match on the order's numeric id (Order Modify's Order ID picker). */
   @IsOptional() @Transform(({ value }) => (value === '' || value == null ? undefined : parseInt(value, 10))) @IsInt() orderId?: number;
+  /** Line priority filter — 'URGENT' / 'NORMAL' (Order Modify's Priority dropdown;
+   *  not applied by the main list, only by the export endpoint). */
+  @IsOptional() @IsString() priority?: string;
+  /** Excel export only: comma-separated column ids (see ORDER_LINE_EXPORT_COLUMNS). */
+  @IsOptional() @IsString() columns?: string;
 }

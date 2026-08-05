@@ -34,7 +34,9 @@ export interface PendingLineDto {
   orderCode: string | null;
   orderDate: string;
   dueDate: string | null;
-  /** 'Over Due' (past the due date) or 'Due'. */
+  /** Where this line sits in its completion window: 'Due' (first half), 'Past
+   *  Due' (second half), or 'Over Due' (past the actual due date). See
+   *  DispatchService.dueBucket. */
   dueType: string;
   customerId: number | null;
   customerName: string;
@@ -66,6 +68,21 @@ export interface PendingLineDto {
   /** True when this line already has an open back-date approval request — lets
    *  the pending list show "Pending approval" instead of looking untouched. */
   hasPendingApproval?: boolean;
+}
+
+/**
+ * Whether this party + item + design combination has ever been documented
+ * with a reference photo — checked before a dispatch is allowed to save (see
+ * DispatchController.photoCheck). `hasPhoto` is true when either a PRIOR
+ * dispatched line of the same customer + product + design has a photo on
+ * file, or this exact line already has one attached.
+ */
+export interface DispatchPhotoCheckDto {
+  hasPhoto: boolean;
+  /** True when the photo came from an earlier dispatched line (not this one). */
+  fromHistory: boolean;
+  /** A representative photo URL to show as proof, when one exists. */
+  sampleUrl: string | null;
 }
 
 export interface DispatchDto {

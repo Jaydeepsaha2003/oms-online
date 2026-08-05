@@ -7,6 +7,28 @@ export const ORDER_STATUSES = ['PENDING', 'CONFIRMED', 'CANCELLED'] as const;
 export type OrderPriority = (typeof ORDER_PRIORITIES)[number];
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
+/** Columns offered by Order Modify's Excel export, in the order they're written
+ *  to the sheet. Shared so the "which columns?" picker on the frontend and the
+ *  xlsx builder on the backend can never drift apart (mirrors
+ *  DISPATCH_EXPORT_COLUMNS in dispatch.ts). */
+export const ORDER_LINE_EXPORT_COLUMNS = [
+  { id: 'orderId', header: 'Order ID' },
+  { id: 'orderDate', header: 'Order Date' },
+  { id: 'dueDate', header: 'Due Date' },
+  { id: 'customer', header: 'Customer Name' },
+  { id: 'product', header: 'Product Name' },
+  { id: 'design', header: 'Design Type' },
+  { id: 'priority', header: 'Priority' },
+  { id: 'bags', header: 'Bags' },
+  { id: 'pcs', header: 'Pcs' },
+  { id: 'kgs', header: 'Kgs' },
+  { id: 'box', header: 'Box' },
+  { id: 'rate', header: 'Rate' },
+  { id: 'comment', header: 'Comment' },
+  { id: 'status', header: 'Status' },
+] as const;
+export type OrderLineExportColumnId = (typeof ORDER_LINE_EXPORT_COLUMNS)[number]['id'];
+
 /** A file the upload endpoint stored — path + served URL, ready to attach to a line. */
 export interface UploadedFileDto {
   /** Path relative to the /uploads root, e.g. "order-items/<uuid>.jpg". */

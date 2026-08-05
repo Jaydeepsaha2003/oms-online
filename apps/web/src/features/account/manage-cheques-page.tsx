@@ -24,8 +24,10 @@ import { formatDate } from '@/lib/date-format';
 import { getApiErrorMessage } from '@/lib/api';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
+import { usePageSize } from '@/hooks/use-page-size';
 import { useConfirm } from '@/components/common/confirm';
 import { RecordHistory } from '@/components/common/record-history';
+import { PageSizeSelect } from '@/components/common/page-size-select';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
@@ -47,7 +49,6 @@ import {
   useUpdateCheque,
 } from './use-account';
 
-const PAGE_SIZE = 50;
 const money = (v: number | null | undefined) => `₹ ${(v ?? 0).toLocaleString('en-IN')}`;
 
 /** Compact, amber-bordered filter controls — same language as the challan/orders screens. */
@@ -104,8 +105,8 @@ export function ManageChequesPage() {
   // grid filters
   const [status, setStatus] = useState('');
   const [searchInput, setSearchInput] = useState('');
-  const [page, setPage] = useState(1);
-  const query = { page, pageSize: PAGE_SIZE, status: status || undefined, search: searchInput.trim() || undefined };
+  const { page, setPage, pageSize, setPageSize } = usePageSize('manage-cheques');
+  const query = { page, pageSize, status: status || undefined, search: searchInput.trim() || undefined };
   const { data: gridData, isLoading } = useCheques(query);
   const totalPages = gridData?.totalPages ?? 1;
   const hasFilters = !!(status || searchInput);
@@ -313,13 +314,16 @@ export function ManageChequesPage() {
                 Page <span className="font-bold tabular-nums text-foreground">{gridData?.page ?? page}</span> of{' '}
                 <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
               </p>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-                  <ChevronLeft /> Prev
-                </Button>
-                <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
-                  Next <ChevronRight />
-                </Button>
+              <div className="flex items-center gap-3">
+                <PageSizeSelect value={pageSize} onChange={setPageSize} />
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+                    <ChevronLeft /> Prev
+                  </Button>
+                  <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+                    Next <ChevronRight />
+                  </Button>
+                </div>
               </div>
             </div>
           )}

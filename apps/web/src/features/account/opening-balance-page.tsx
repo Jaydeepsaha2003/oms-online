@@ -7,7 +7,9 @@ import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
+import { usePageSize } from '@/hooks/use-page-size';
 import { useConfirm } from '@/components/common/confirm';
+import { PageSizeSelect } from '@/components/common/page-size-select';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
@@ -17,7 +19,6 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { useCustomers } from '@/features/customers/use-customers';
 import { useCreateOpeningBalance, useDeleteOpeningBalance, useOpeningBalances, useUpdateOpeningBalance } from './use-account';
 
-const PAGE_SIZE = 50;
 /** Matches the Pending Challan / Challans / Orders grids: Inter, semibold, near-black. */
 const TEXT_CELL = 'text-[13px] font-semibold text-slate-800 dark:text-slate-200';
 /** Compact, amber-bordered filter controls — same language as the other list pages. */
@@ -37,7 +38,7 @@ export function OpeningBalancePage() {
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [drCr, setDrCr] = useState('');
-  const [page, setPage] = useState(1);
+  const { page, setPage, pageSize, setPageSize } = usePageSize('opening-balance');
   const [editing, setEditing] = useState<OpeningBalanceDto | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -49,7 +50,7 @@ export function OpeningBalancePage() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  const query = { page, pageSize: PAGE_SIZE, search: search || undefined, drCr: drCr || undefined };
+  const query = { page, pageSize, search: search || undefined, drCr: drCr || undefined };
   const { data, isLoading } = useOpeningBalances(query);
   const del = useDeleteOpeningBalance();
 
@@ -189,13 +190,16 @@ export function OpeningBalancePage() {
           Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
           <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
         </p>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-            <ChevronLeft /> Prev
-          </Button>
-          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
-            Next <ChevronRight />
-          </Button>
+        <div className="flex items-center gap-3">
+          <PageSizeSelect value={pageSize} onChange={setPageSize} />
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+              <ChevronLeft /> Prev
+            </Button>
+            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+              Next <ChevronRight />
+            </Button>
+          </div>
         </div>
       </div>
 

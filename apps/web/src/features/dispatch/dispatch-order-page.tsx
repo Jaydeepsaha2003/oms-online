@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Camera, CalendarClock, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Filter, Flame, Hourglass, Loader2, Package, PackageCheck, RotateCcw, TriangleAlert, Truck, X } from 'lucide-react';
+import { Camera, CalendarClock, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Filter, Flame, Hourglass, Loader2, Package, PackageCheck, RotateCcw, TriangleAlert, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { DISPATCH_EXPORT_COLUMNS, qtyOrderForCategory, type DispatchStatus, type PendingLineDto, type QtyField } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -8,11 +8,13 @@ import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useColumnOrder } from '@/hooks/use-column-order';
+import { usePageSize } from '@/hooks/use-page-size';
 import { useOrderQtyLayout } from '@/features/settings/use-settings';
 import { LiveLinePhotos } from '../orders/line-photos';
 import { useOrderItemPhotos } from '../orders/use-orders';
 import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
+import { PageSizeSelect } from '@/components/common/page-size-select';
 import { ExportButton, ExportColumnsDialog } from '@/components/common/excel-actions';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { NativeSelect } from '@/components/common/combo';
@@ -21,17 +23,24 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Switch } from '@/components/ui/switch';
-import { exportPendingDispatch, useCreateDispatch, usePendingFilterOptions, usePendingOrders } from './use-dispatch';
+import { exportPendingDispatch, useCreateDispatch, useDispatchPhotoCheck, usePendingFilterOptions, usePendingOrders } from './use-dispatch';
 import { useDispatchDate } from './use-dispatch-date';
 
-const PAGE_SIZE = 50;
 /** {@link DISPATCH_EXPORT_COLUMNS} reshaped for the export dialog's `{id, label}` prop. */
 const EXPORT_COLUMN_OPTIONS = DISPATCH_EXPORT_COLUMNS.map((c) => ({ id: c.id, label: c.header }));
 const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? 0 : Number(s));
 const qty = (v: number | null) => (v ? v.toLocaleString('en-IN') : '—');
 
+/** Due-severity tone, shared by the badge and the mobile card's rail — 'Due' (on
+ *  track, first half of the completion window) reads green, 'Past Due' (second
+ *  half) amber, 'Over Due' (past the actual date) red. See dueBucket on the API. */
+const DUE_TONE: Record<string, string> = {
+  Due: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+  'Past Due': 'bg-amber-50 text-amber-800 ring-amber-200',
+  'Over Due': 'bg-rose-50 text-rose-700 ring-rose-200',
+};
 const DueBadge = ({ t }: { t: string }) => (
-  <span className={cn('inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset', t === 'Over Due' ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-blue-50 text-blue-800 ring-blue-200')}>
+  <span className={cn('inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset', DUE_TONE[t] ?? DUE_TONE.Due)}>
     <CalendarClock className="size-3" />
     {t}
   </span>
@@ -65,20 +74,27 @@ const DISPATCH_CARD_CSS = `
 @media (prefers-reduced-motion: reduce) { .dispatch-card-in { animation: none; } }
 `;
 
+/** Left rail colour: URGENT priority gets a deep, unmissable red regardless of
+ *  due status; NORMAL priority reads the due bucket's own tone (green/amber/red). */
+const RAIL_TONE: Record<string, string> = { Due: 'bg-emerald-500', 'Past Due': 'bg-amber-500', 'Over Due': 'bg-rose-500' };
+
 /** A tactile, native-feeling pending-line card for phones. Tap anywhere to dispatch. */
 function DispatchCard({ line, index, showRates, onClick }: { line: PendingLineDto; index: number; showRates: boolean; onClick: () => void }) {
   const urgent = line.priority === 'URGENT';
-  const overdue = line.dueType === 'Over Due';
   const qtys = ([['Bags', line.remBags], ['Pcs', line.remPcs], ['Kgs', line.remKgs], ['Box', line.remBox]] as const).filter(([, v]) => v > 0);
   const pendingAmt = line.rate != null ? Math.round(line.rate * ((line.calField ?? '').toUpperCase() === 'PCS' ? line.remPcs : line.remKgs)) : null;
   return (
     <button
       type="button"
       onClick={onClick}
-      className="group bg-card relative block w-full overflow-hidden rounded-2xl border text-left shadow-sm transition-transform duration-150 ease-out active:scale-[0.98] [touch-action:manipulation]"
+      className={cn(
+        'group bg-card relative block w-full overflow-hidden rounded-2xl border text-left shadow-sm transition-transform duration-150 ease-out active:scale-[0.98] [touch-action:manipulation]',
+        // URGENT also gets a faint red wash + ring across the whole card, not just
+        // the rail — "deep red" should be impossible to miss while scanning.
+        urgent && 'border-rose-300 bg-rose-50/60 ring-1 ring-rose-200 dark:border-rose-400/30 dark:bg-rose-500/[0.06] dark:ring-rose-400/20',
+      )}
     >
-      {/* Urgency rail — rose when overdue/urgent, navy otherwise. */}
-      <span className={cn('absolute inset-y-0 left-0 w-1.5', overdue || urgent ? 'bg-rose-500' : 'bg-blue-900')} aria-hidden />
+      <span className={cn('absolute inset-y-0 left-0 w-1.5', urgent ? 'bg-rose-800' : (RAIL_TONE[line.dueType] ?? 'bg-blue-900'))} aria-hidden />
       <div className="dispatch-card-in space-y-2.5 py-3.5 pr-3.5 pl-5 text-[13px]" style={{ animationDelay: `${Math.min(index, 10) * 45}ms` }}>
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
@@ -152,10 +168,22 @@ const COLUMNS: DataColumn<PendingLineDto>[] = [
   { id: 'order', label: 'ORD#', pin: 'left0', pinWidthClass: 'sm:w-16 sm:min-w-16', fixed: true, cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{shortOrderCode(r.orderCode, r.orderId)}</span> },
   { id: 'orderDate', label: 'Order date', cell: (r) => <span className={cn(TEXT_CELL, 'whitespace-nowrap tabular-nums')}>{formatDate(r.orderDate)}</span> },
   { id: 'due', label: 'Due', cell: (r) => <span className={cn(TEXT_CELL, 'flex items-center gap-1.5 whitespace-nowrap tabular-nums')}>{formatDate(r.dueDate)} <DueBadge t={r.dueType} /> {r.hasPendingApproval && <PendingApprovalBadge />}</span> },
-  { id: 'customer', label: 'Customer', cell: (r) => <span className={TEXT_CELL}>{r.customerName}</span> },
+  {
+    id: 'customer',
+    label: 'Customer',
+    cell: (r) => (
+      <span className="flex items-center gap-1.5">
+        <span className={TEXT_CELL}>{r.customerName}</span>
+        {r.priority === 'URGENT' && (
+          <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-rose-100 px-1.5 py-[1px] text-[10px] font-bold text-rose-700 ring-1 ring-rose-200 ring-inset dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-400/25">
+            <Flame className="size-2.5" /> URGENT
+          </span>
+        )}
+      </span>
+    ),
+  },
   { id: 'product', label: 'Product', cell: (r) => <span className={TEXT_CELL}>{r.productName || r.product || '—'}</span> },
   { id: 'design', label: 'Design', cell: (r) => <span className={TEXT_CELL}>{r.designType || '—'}</span> },
-  { id: 'priority', label: 'Priority', cell: (r) => (r.priority === 'URGENT' ? <span className="text-[11.5px] font-bold text-rose-600 dark:text-rose-400">URGENT</span> : <span className={TEXT_CELL}>{r.priority || '—'}</span>) },
   { id: 'bags', label: 'Bags', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(r.remBags)}</span> },
   { id: 'pcs', label: 'Pcs', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(r.remPcs)}</span> },
   { id: 'kgs', label: 'Kgs', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(r.remKgs)}</span> },
@@ -196,7 +224,7 @@ export function DispatchOrderPage() {
   const [product, setProduct] = useState('');
   const [design, setDesign] = useState('');
   const [subCategory, setSubCategory] = useState('');
-  const [page, setPage] = useState(1);
+  const { page, setPage, pageSize, setPageSize } = usePageSize('dispatch-pending');
   const [active, setActive] = useState<PendingLineDto | null>(null);
   const [shipped, setShipped] = useState<string | null>(null); // dispatch code → plays the truck animation
   // Phones: the dropdown filters live behind a Filter icon (in the sheet below) so the
@@ -216,7 +244,7 @@ export function DispatchOrderPage() {
 
   const query = {
     page,
-    pageSize: PAGE_SIZE,
+    pageSize,
     dueType: dueType || undefined,
     customer: customer || undefined,
     agent: agent || undefined,
@@ -431,7 +459,7 @@ export function DispatchOrderPage() {
           {/* Desktop: filters inline. */}
           <div className="hidden flex-wrap items-center gap-2 sm:flex">
             <div className="w-36">
-              <NativeSelect value={dueType} onChange={(v) => { setDueType(v); setPage(1); }} options={['', 'Due', 'Over Due']} placeholder="All due" className={cn(CONTROL, 'font-medium', dueType && CONTROL_ON)} />
+              <NativeSelect value={dueType} onChange={(v) => { setDueType(v); setPage(1); }} options={['', 'Due', 'Past Due', 'Over Due']} placeholder="All due" className={cn(CONTROL, 'font-medium', dueType && CONTROL_ON)} />
             </div>
             {/* Filter order follows the house pattern: Customer, Item Name, Agent,
                 Category, Sub Category, Design (no separate top-level Category
@@ -505,7 +533,7 @@ export function DispatchOrderPage() {
             </div>
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-xs font-medium uppercase">Due</Label>
-              <NativeSelect value={draftDue} onChange={setDraftDue} options={['', 'Due', 'Over Due']} placeholder="All due" />
+              <NativeSelect value={draftDue} onChange={setDraftDue} options={['', 'Due', 'Past Due', 'Over Due']} placeholder="All due" />
             </div>
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-xs font-medium uppercase">Sub category</Label>
@@ -594,13 +622,16 @@ export function DispatchOrderPage() {
           Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
           <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
         </p>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-            <ChevronLeft /> Prev
-          </Button>
-          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
-            Next <ChevronRight />
-          </Button>
+        <div className="flex items-center gap-3">
+          <PageSizeSelect value={pageSize} onChange={setPageSize} />
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+              <ChevronLeft /> Prev
+            </Button>
+            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+              Next <ChevronRight />
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -721,10 +752,21 @@ function DispatchSheet({
   const confirm = useConfirm();
   const { can } = usePermissions();
   const isMobile = useIsMobile();
+  const { data: existingPhotos } = useOrderItemPhotos(line.orderItemId);
+  // Has this party + item + design ever been documented with a photo? Combined
+  // with `existingPhotos` (not just the check's own snapshot) so Save unlocks
+  // the instant a photo finishes uploading, without waiting on this query to
+  // refetch — see the note on useDispatchPhotoCheck.
+  const photoCheck = useDispatchPhotoCheck(line.orderItemId);
+  const hasPhotoOnFile = !!photoCheck.data?.hasPhoto || (existingPhotos?.length ?? 0) > 0;
+  const photoCheckReady = !photoCheck.isLoading;
   // Photos default collapsed on phones — packing staff mainly need qty entry,
   // and the sheet should fit with minimal scrolling. Desktop keeps it open.
-  const [photosOpen, setPhotosOpen] = useState(!isMobile);
-  const { data: existingPhotos } = useOrderItemPhotos(line.orderItemId);
+  // Forced open once we know there's nothing on file yet, on either platform,
+  // so the requirement is impossible to miss.
+  const [photosOpenManual, setPhotosOpenManual] = useState<boolean | null>(null);
+  const photosOpen = photosOpenManual ?? (!photoCheckReady ? !isMobile : !hasPhotoOnFile || !isMobile);
+  const setPhotosOpen = (v: boolean) => setPhotosOpenManual(v);
   // Bags/Pcs/Kgs/Box entry order follows this line's product category, per
   // Settings → Order quantity fields — same layout as the New Order form.
   const { data: qtyLayout } = useOrderQtyLayout();
@@ -752,6 +794,14 @@ function DispatchSheet({
     // Guard against a double-fire (fast double-tap, or the Ctrl+S shortcut pressed
     // while a save is already in flight) creating two dispatch records.
     if (create.isPending) return;
+    // Hard requirement, no override: this item + design has never been
+    // documented with a photo for this party. The backend enforces the same
+    // rule, so this is purely about surfacing it before a wasted round trip.
+    if (!photoCheckReady) return toast.error('Still checking photo history — try again in a moment.');
+    if (!hasPhotoOnFile) {
+      setPhotosOpen(true);
+      return toast.error('Attach a reference photo before dispatching this item + design.');
+    }
     const bags = num(form.bags), pcs = num(form.pcs), gram = num(form.gram), box = num(form.box);
     const cf = (line.calField ?? '').toUpperCase();
     if (cf === 'PCS' && pcs <= 0) return toast.error('Pcs is required — this item is priced by PCS.');
@@ -946,12 +996,37 @@ function DispatchSheet({
           <Input value={form.comment} onChange={(e) => set({ comment: e.target.value })} placeholder="Dispatch remark…" />
         </div>
 
+        {/* Reference-photo requirement: this party + item + design must have a
+            photo on file (from history, or attached right here) before Save
+            unlocks — see useDispatchPhotoCheck. No override; the backend
+            enforces the same rule if this is somehow bypassed client-side. */}
+        {photoCheckReady && (
+          <div
+            className={cn(
+              'flex items-start gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold',
+              hasPhotoOnFile
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-400/25 dark:bg-emerald-500/10 dark:text-emerald-300'
+                : 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-400/25 dark:bg-rose-500/10 dark:text-rose-300',
+            )}
+          >
+            {hasPhotoOnFile ? <CheckCircle2 className="mt-[1px] size-3.5 shrink-0" /> : <TriangleAlert className="mt-[1px] size-3.5 shrink-0" />}
+            <span>
+              {hasPhotoOnFile
+                ? photoCheck.data?.fromHistory
+                  ? 'Documented before — a reference photo is on file for this item + design.'
+                  : 'Photo attached — this dispatch can be saved.'
+                : `No reference photo yet for this item + design for ${line.customerName} — attach one below to continue.`}
+            </span>
+          </div>
+        )}
+
         {/* This order line's photos — collapsed by default on phones so the
-            sheet stays short; tap to view/add from the shop floor. */}
+            sheet stays short; tap to view/add from the shop floor. Forced open
+            (see photosOpen above) whenever nothing is on file yet. */}
         <div className="rounded-xl border border-slate-200 bg-slate-50/70">
           <button
             type="button"
-            onClick={() => setPhotosOpen((o) => !o)}
+            onClick={() => setPhotosOpen(!photosOpen)}
             className="flex w-full items-center justify-between gap-2 px-3 py-2.5"
           >
             <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
@@ -980,7 +1055,12 @@ function DispatchSheet({
           <Button type="button" variant="outline" className="flex-1 transition-transform active:scale-[0.98] sm:flex-none" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={create.isPending} className="flex-1 transition-transform active:scale-[0.98] sm:flex-none" title="Save dispatch (Ctrl+S)">
+          <Button
+            onClick={submit}
+            disabled={create.isPending || !photoCheckReady || !hasPhotoOnFile}
+            className="flex-1 transition-transform active:scale-[0.98] sm:flex-none"
+            title={!photoCheckReady ? 'Checking photo history…' : !hasPhotoOnFile ? 'Attach a reference photo to continue' : 'Save dispatch (Ctrl+S)'}
+          >
             {create.isPending ? <Loader2 className="animate-spin" /> : <Truck />} Save dispatch
           </Button>
         </div>

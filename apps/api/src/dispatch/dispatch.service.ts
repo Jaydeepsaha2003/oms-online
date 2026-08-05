@@ -5,6 +5,7 @@ import {
   type DispatchDateChangePayload,
   type DispatchDto,
   type DispatchFilterOptions,
+  type DispatchPhotoCheckDto,
   type DispatchStatus,
   type PendingLineDto,
   type Paginated,
@@ -41,6 +42,23 @@ function qtyText(q: { bags?: number | null; pcs?: number | null; gram?: number |
 // otherwise surfaces artifacts like 71.60000000000001 into the remaining qty, which
 // then leaks into the dispatch form's pre-filled / MAX-filled inputs.
 const round3 = (x: number) => Math.round(x * 1000) / 1000;
+const DAY_MS = 86_400_000;
+
+/**
+ * A line's due status, on a percentage-of-completion-window basis rather than
+ * a flat "past the date or not" check: for an order given N days to complete
+ * (order date → due date), the first half of that window is `Due`, the second
+ * half is `Past Due`, and anything past the actual due date is `Over Due`.
+ * E.g. a 30-day window: 0-15 days elapsed = Due, 15-30 = Past Due, 30+ = Over Due.
+ * No due date at all keeps the line as `Due` (nothing to measure against).
+ */
+function dueBucket(orderDate: Date, due: Date | null, today: Date): 'Due' | 'Past Due' | 'Over Due' {
+  if (!due) return 'Due';
+  if (due < today) return 'Over Due';
+  const completionDays = Math.max(1, Math.round((due.getTime() - orderDate.getTime()) / DAY_MS));
+  const elapsedDays = Math.max(0, Math.round((today.getTime() - orderDate.getTime()) / DAY_MS));
+  return elapsedDays / completionDays >= 0.5 ? 'Past Due' : 'Due';
+}
 
 // Dispatch and challan screens label this snapshot simply as "Design". Prefer
 // the human-readable name chosen on the order line, falling back for older rows.
@@ -201,8 +219,8 @@ export class DispatchService implements OnModuleInit {
       // Cancelled lines (and cancelled/draft orders) are not dispatchable.
       where: { status: { not: 'CANCELLED' }, order: { status: { notIn: ['CANCELLED', 'DRAFT'] } } },
       include: { order: true, dispatches: true },
-      // Oldest order first (ascending) so the earliest ORD# sits at the top of the
-      // pending list and the newest at the bottom — the shop-floor picking order.
+      // Fetched in ORD# order; the list is re-sorted below (URGENT first, then by
+      // due severity) — this orderBy only decides the tiebreak within a bucket.
       orderBy: [{ orderId: 'asc' }, { id: 'asc' }],
     });
     const today = new Date();
@@ -227,7 +245,7 @@ export class DispatchService implements OnModuleInit {
         orderCode: it.order.code ?? this.orderCodeFor(it.orderId),
         orderDate: it.order.orderDate.toISOString(),
         dueDate: due ? due.toISOString() : null,
-        dueType: due && due < today ? 'Over Due' : 'Due',
+        dueType: dueBucket(it.order.orderDate, due, today),
         customerId: it.order.customerId,
         customerName: it.order.customerName,
         agentName: it.order.agentName,
@@ -255,6 +273,13 @@ export class DispatchService implements OnModuleInit {
         remBox,
       });
     }
+    // URGENT lines first, then NORMAL; within each, worst due-severity first
+    // (Over Due, then Past Due, then Due) — the shop floor should see what
+    // needs attention soonest at the top of both groups. Ties keep the
+    // fetch order (ORD# ascending) so the list stays stable page to page.
+    const priorityRank = (p: string | null) => (p === 'URGENT' ? 0 : 1);
+    const dueRank: Record<string, number> = { 'Over Due': 0, 'Past Due': 1, Due: 2 };
+    lines.sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority) || (dueRank[a.dueType] ?? 2) - (dueRank[b.dueType] ?? 2));
     this.pendingCache = { at: Date.now(), lines };
     return lines;
   }
@@ -469,6 +494,59 @@ export class DispatchService implements OnModuleInit {
     };
   }
 
+  /**
+   * Has this party + item + design ever been documented with a photo? Checked
+   * before the Dispatch form allows Save. "Documented" means either this exact
+   * line already has a photo attached, or an earlier line for the SAME customer
+   * + product + design that has actually been dispatched does.
+   */
+  async photoCheck(orderItemId: number): Promise<DispatchPhotoCheckDto> {
+    const it = await this.prisma.orderItem.findUnique({
+      where: { id: orderItemId },
+      select: {
+        product: true,
+        designType: true,
+        order: { select: { customerId: true } },
+        photos: { select: { url: true }, take: 1, orderBy: { createdAt: 'desc' } },
+      },
+    });
+    if (!it) throw new NotFoundException('Order line not found.');
+
+    if (it.photos.length) {
+      return { hasPhoto: true, fromHistory: false, sampleUrl: it.photos[0].url };
+    }
+    if (!it.order.customerId) return { hasPhoto: false, fromHistory: false, sampleUrl: null };
+
+    const historic = await this.prisma.orderItemPhoto.findFirst({
+      where: {
+        orderItem: {
+          id: { not: orderItemId },
+          product: it.product,
+          designType: it.designType,
+          order: { customerId: it.order.customerId },
+          dispatches: { some: {} },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { url: true },
+    });
+    return historic ? { hasPhoto: true, fromHistory: true, sampleUrl: historic.url } : { hasPhoto: false, fromHistory: false, sampleUrl: null };
+  }
+
+  /** Server-side twin of {@link photoCheck} — a hard, unconditional block (no
+   *  override permission) so the rule holds even against a direct API call,
+   *  not just the Dispatch form's own gating. Scoped to the per-line dispatch
+   *  entry point only; the "dispatch entire order" bulk shortcut has no photo
+   *  UI at all, so it deliberately isn't run through this check. */
+  private async assertPhotoDocumented(orderItemId: number): Promise<void> {
+    const status = await this.photoCheck(orderItemId);
+    if (!status.hasPhoto) {
+      throw new BadRequestException(
+        'This item + design has never been documented with a reference photo for this party. Attach a photo before dispatching.',
+      );
+    }
+  }
+
   async findOne(id: number): Promise<DispatchDto> {
     const row = await this.prisma.dispatch.findUnique({
       where: { id },
@@ -491,6 +569,7 @@ export class DispatchService implements OnModuleInit {
     user: { id?: string | null; name?: string | null; canApprove: boolean; canOverrideThreshold: boolean },
   ): Promise<SubmitDispatchResult> {
     if (!user.canOverrideThreshold) await this.assertBagThreshold(dto.orderItemId, toNum(dto.bags) ?? 0);
+    await this.assertPhotoDocumented(dto.orderItemId);
 
     if (this.isToday(dto.dispatchDate) || user.canApprove) {
       return { status: 'CREATED', dispatch: await this.create(dto, user.name ?? undefined, user) };

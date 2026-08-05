@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { OrderDto, OrderFilterOptions, OrderInput, OrderItemOption, OrderItemPhotoDto, OrderList, OrderLookups, OrderLookupsWire, OrderQuery, OrderTimeline, UploadedFileDto } from '@oms/shared';
-import { http } from '@/lib/api';
+import { downloadFile, http } from '@/lib/api';
 
 const KEY = ['orders'] as const;
 
@@ -21,6 +21,19 @@ export function useOrders(query: OrderQuery) {
     queryFn: () => http.get<OrderList>('/orders', { params: query }),
     placeholderData: (prev) => prev,
   });
+}
+
+/** Download every order line matching Order Modify's current filters as .xlsx.
+ *  `columns`, if given, limits the sheet to those column ids (see
+ *  `ORDER_LINE_EXPORT_COLUMNS`) — omitted means every column. */
+export function exportOrderLines(
+  query: Omit<OrderQuery, 'page' | 'pageSize'> & { priority?: string },
+  columns?: string[],
+): Promise<void> {
+  const full = { ...query, columns: columns?.length ? columns.join(',') : undefined };
+  const entries = Object.entries(full).filter(([, v]) => v != null && v !== '') as [string, string][];
+  const qs = new URLSearchParams(entries).toString();
+  return downloadFile(`/orders/export/lines${qs ? `?${qs}` : ''}`, 'order-lines.xlsx');
 }
 
 export function useOrder(id?: number) {

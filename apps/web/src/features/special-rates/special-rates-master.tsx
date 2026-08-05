@@ -5,9 +5,11 @@ import type { SpecialRateMasterRow } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
+import { usePageSize } from '@/hooks/use-page-size';
 import { useConfirm } from '@/components/common/confirm';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { NativeSelect } from '@/components/common/combo';
+import { PageSizeSelect } from '@/components/common/page-size-select';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -15,7 +17,6 @@ import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/com
 import { useCustomers } from '@/features/customers/use-customers';
 import { useAllSpecialRates, useDeleteCustomerLogo, useDeleteCustomerRate, useSpecialRateAgents, useSpecialRateLookups } from './use-special-rates';
 
-const PAGE_SIZE = 50;
 const TYPE_OPTS = [
   { value: 'PRODUCT', label: 'Product rate' },
   { value: 'DESIGN', label: 'Design rate' },
@@ -65,7 +66,7 @@ export function SpecialRatesMaster() {
   const [scope, setScope] = useState('');
   const [category, setCategory] = useState('');
   const [subCategory, setSubCategory] = useState('');
-  const [page, setPage] = useState(1);
+  const { page, setPage, pageSize, setPageSize } = usePageSize('special-rates');
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
   useEffect(() => {
@@ -86,7 +87,7 @@ export function SpecialRatesMaster() {
     [lookups, category],
   );
 
-  const query = { page, pageSize: PAGE_SIZE, search: search || undefined, customer: customer || undefined, agent: agent || undefined, type: type || undefined, scope: scope || undefined, category: category || undefined, subCategory: subCategory || undefined };
+  const query = { page, pageSize, search: search || undefined, customer: customer || undefined, agent: agent || undefined, type: type || undefined, scope: scope || undefined, category: category || undefined, subCategory: subCategory || undefined };
   const { data, isLoading } = useAllSpecialRates(query);
   const rows = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
@@ -329,15 +330,18 @@ export function SpecialRatesMaster() {
         </div>
       ) : undefined} />
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <p className="text-muted-foreground text-sm">Page {data?.page ?? page} of {totalPages}</p>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-            <ChevronLeft /> Prev
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
-            Next <ChevronRight />
-          </Button>
+        <div className="flex items-center gap-3">
+          <PageSizeSelect value={pageSize} onChange={setPageSize} />
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+              <ChevronLeft /> Prev
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+              Next <ChevronRight />
+            </Button>
+          </div>
         </div>
       </div>
     </div>

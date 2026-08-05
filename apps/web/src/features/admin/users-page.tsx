@@ -8,6 +8,8 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useConfirm } from '@/components/common/confirm';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
+import { PageSizeSelect } from '@/components/common/page-size-select';
+import { usePageSize } from '@/hooks/use-page-size';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -16,7 +18,6 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogD
 import { useCreateUser, useDeleteUser, useRoles, useUpdateUser, useUsers } from './use-admin';
 import { UserSessionsDialog } from './user-sessions-dialog';
 
-const PAGE_SIZE = 50;
 const STATUSES: UserStatus[] = ['active', 'disabled', 'invited'];
 const STATUS_STYLE: Record<string, string> = {
   active: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
@@ -68,7 +69,7 @@ export function UsersPage() {
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
-  const [page, setPage] = useState(1);
+  const { page, setPage, pageSize, setPageSize } = usePageSize('users');
   const [editing, setEditing] = useState<UserDto | null>(null);
   const [creating, setCreating] = useState(false);
   const [sessionsUser, setSessionsUser] = useState<UserDto | null>(null);
@@ -81,7 +82,7 @@ export function UsersPage() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  const query = { page, pageSize: PAGE_SIZE, search: search || undefined, status: (status || undefined) as UserStatus | undefined };
+  const query = { page, pageSize, search: search || undefined, status: (status || undefined) as UserStatus | undefined };
   const { data, isLoading } = useUsers(query);
   const del = useDeleteUser();
 
@@ -259,17 +260,20 @@ export function UsersPage() {
         )}
       />
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <p className="text-muted-foreground text-sm">
           Page {data?.page ?? page} of {totalPages}
         </p>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-            <ChevronLeft /> Prev
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
-            Next <ChevronRight />
-          </Button>
+        <div className="flex items-center gap-3">
+          <PageSizeSelect value={pageSize} onChange={setPageSize} />
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+              <ChevronLeft /> Prev
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+              Next <ChevronRight />
+            </Button>
+          </div>
         </div>
       </div>
 

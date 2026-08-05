@@ -85,6 +85,14 @@ export class DispatchController {
     return this.dispatch.pendingFilterOptions(query);
   }
 
+  /** Has this party + item + design ever been documented with a photo? Gates
+   *  the Dispatch form's photo requirement — see DispatchService.photoCheck. */
+  @Get('photo-check/:orderItemId')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  photoCheck(@Param('orderItemId', ParseIntPipe) orderItemId: number) {
+    return this.dispatch.photoCheck(orderItemId);
+  }
+
   @Get()
   @Permissions(perm(R, ACTIONS.VIEW))
   async list(@Query() query: DispatchQueryDto, @CurrentUser() user: AuthenticatedUser) {

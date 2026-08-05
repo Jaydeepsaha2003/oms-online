@@ -1,26 +1,62 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Res, StreamableFile } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { ACTIONS, perm, RESOURCES } from '@oms/shared';
+import { ACTIONS, ORDER_LINE_EXPORT_COLUMNS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
+import { ExcelService } from '../excel/excel.service';
+import { formatDate } from '../common/date.util';
 import { OrdersService } from './orders.service';
 import { AddOrderItemPhotoDto, CreateOrderDto, OrderQueryDto, UpdateOrderDto, UpdateOrderStatusDto } from './dto/order.dto';
 
 const R = RESOURCES.ORDER;
+const fmtDate = (d?: Date | null): string => formatDate(d, '');
 
 @ApiTags('Orders')
 @ApiBearerAuth()
 @Controller('orders')
 export class OrdersController {
-  constructor(private readonly orders: OrdersService) {}
+  constructor(
+    private readonly orders: OrdersService,
+    private readonly excel: ExcelService,
+  ) {}
 
   @Get()
   @Permissions(perm(R, ACTIONS.VIEW))
   list(@Query() query: OrderQueryDto) {
     return this.orders.findMany(query);
+  }
+
+  /** Order Modify's Excel export — every line matching the screen's current
+   *  filters, with a user-chosen column subset (see ORDER_LINE_EXPORT_COLUMNS). */
+  @Get('export/lines')
+  @Permissions(perm(R, ACTIONS.EXPORT))
+  @Audit({ action: ACTIONS.EXPORT, resource: R, description: 'Exported order lines' })
+  async exportLines(@Query() query: OrderQueryDto, @Res({ passthrough: true }) res: Response) {
+    const lines = await this.orders.exportLines(query);
+    const rows = lines.map((l) => ({
+      'Order ID': l.orderCode ?? `#${l.orderId}`,
+      'Order Date': fmtDate(l.orderDate),
+      'Due Date': fmtDate(l.dueDate),
+      'Customer Name': l.customerName,
+      'Product Name': l.productName,
+      'Design Type': l.designType,
+      Priority: l.priority,
+      Bags: l.bags,
+      Pcs: l.pcs,
+      Kgs: l.gram,
+      Box: l.box,
+      Rate: l.rate,
+      Comment: l.comment,
+      Status: l.status,
+    }));
+    const requested = new Set((query.columns ?? '').split(',').map((s) => s.trim()).filter(Boolean));
+    const active = requested.size ? ORDER_LINE_EXPORT_COLUMNS.filter((c) => requested.has(c.id)) : ORDER_LINE_EXPORT_COLUMNS;
+    const headers = (active.length ? active : ORDER_LINE_EXPORT_COLUMNS).map((c) => c.header);
+    this.excel.setDownloadHeaders(res, 'order-lines');
+    return new StreamableFile(this.excel.jsonToBuffer(rows, { sheetName: 'Order Lines', headers }));
   }
 
   @Get('lookups')

@@ -6,16 +6,16 @@ import { cn } from '@/lib/utils';
 import { downloadFile, getApiErrorMessage } from '@/lib/api';
 import { actionColor, actionLabel, fmtWhen, resourceLabel, statusColor } from '@/lib/audit-format';
 import { usePermissions } from '@/hooks/use-permissions';
+import { usePageSize } from '@/hooks/use-page-size';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { NativeSelect } from '@/components/common/combo';
+import { PageSizeSelect } from '@/components/common/page-size-select';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { useAuditActors, useAuditFacets, useAuditLog } from './use-audit-log';
 import { PRESETS, presetRange } from './date-presets';
-
-const PAGE_SIZE = 50;
 
 // Persist filters so they survive navigating away and back.
 const FILTER_KEY = 'oms:audit-log-filters';
@@ -50,6 +50,7 @@ export function AuditLogPage() {
   const [resource, setResource] = useState(() => loadFilters().resource ?? '');
   const [action, setAction] = useState(() => loadFilters().action ?? '');
   const [page, setPage] = useState(() => loadFilters().page ?? 1);
+  const { pageSize, setPageSize } = usePageSize('audit-log');
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -74,7 +75,7 @@ export function AuditLogPage() {
 
   const query = {
     page,
-    pageSize: PAGE_SIZE,
+    pageSize,
     search: search || undefined,
     from: dateFrom || undefined,
     to: dateTo || undefined,
@@ -336,15 +337,18 @@ export function AuditLogPage() {
         emptyText="No activity recorded for these filters."
       />
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <p className="text-muted-foreground text-sm">Page {data?.page ?? page} of {totalPages}</p>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-            <ChevronLeft /> Prev
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
-            Next <ChevronRight />
-          </Button>
+        <div className="flex items-center gap-3">
+          <PageSizeSelect value={pageSize} onChange={(n) => { setPageSize(n); setPage(1); }} />
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+              <ChevronLeft /> Prev
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+              Next <ChevronRight />
+            </Button>
+          </div>
         </div>
       </div>
     </div>

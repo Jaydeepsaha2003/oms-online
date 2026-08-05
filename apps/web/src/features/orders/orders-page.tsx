@@ -8,8 +8,10 @@ import { cn, formatDateTime, shortOrderCode } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useColumnOrder } from '@/hooks/use-column-order';
+import { usePageSize } from '@/hooks/use-page-size';
 import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
+import { PageSizeSelect } from '@/components/common/page-size-select';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,8 +24,6 @@ import { CancelReasonFields } from '@/components/common/cancel-reason';
 import { settingValues, useSettings } from '@/features/settings/use-settings';
 import { useCancelOrder, useDeleteOrder, useOrderFilterOptions, useOrders } from './use-orders';
 import { OrderTimelineModal } from './order-timeline-modal';
-
-const PAGE_SIZE = 50;
 
 /** Matches the Pending Challan / Challans grids: Inter, semibold, near-black. */
 const TEXT_CELL = 'text-[13px] font-semibold text-slate-800 dark:text-slate-200';
@@ -109,7 +109,7 @@ export function OrdersPage() {
   const [agent, setAgent] = useState('');
   const [product, setProduct] = useState('');
   const [design, setDesign] = useState('');
-  const [page, setPage] = useState(1);
+  const { page, setPage, pageSize, setPageSize } = usePageSize('orders');
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const activeFilterCount = (agent ? 1 : 0) + (product ? 1 : 0) + (design ? 1 : 0);
   const resetFilters = () => {
@@ -121,7 +121,7 @@ export function OrdersPage() {
   const { data: filterOptions } = useOrderFilterOptions();
   const { data, isLoading } = useOrders({
     page,
-    pageSize: PAGE_SIZE,
+    pageSize,
     search: search || undefined,
     agent: agent || undefined,
     product: product || undefined,
@@ -137,8 +137,8 @@ export function OrdersPage() {
   const items = data?.items ?? [];
   const totalRows = data?.total ?? 0;
   const totalPages = data?.totalPages ?? 1;
-  const from = totalRows === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
-  const to = Math.min(page * PAGE_SIZE, totalRows);
+  const from = totalRows === 0 ? 0 : (page - 1) * pageSize + 1;
+  const to = Math.min(page * pageSize, totalRows);
 
   const handleCancel = (o: OrderDto) => setCancelling(o);
 
@@ -465,17 +465,20 @@ export function OrdersPage() {
             </>
           )}
         </p>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-3">
           <p className="text-muted-foreground text-[12px] font-medium">
             Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
             <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
           </p>
-          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-            <ChevronLeft /> Prev
-          </Button>
-          <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
-            Next <ChevronRight />
-          </Button>
+          <div className="flex items-center gap-2">
+            <PageSizeSelect value={pageSize} onChange={setPageSize} />
+            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+              <ChevronLeft /> Prev
+            </Button>
+            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+              Next <ChevronRight />
+            </Button>
+          </div>
         </div>
       </div>
 
