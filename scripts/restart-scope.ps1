@@ -17,7 +17,16 @@ $ErrorActionPreference = 'SilentlyContinue'
 function Newest([string[]]$paths) {
   $newest = [datetime]::MinValue
   foreach ($p in $paths) {
-    if (Test-Path $p -PathType Container) { $items = Get-ChildItem $p -Recurse -File -EA SilentlyContinue }
+    if (Test-Path $p -PathType Container) {
+      # *.tsbuildinfo is TypeScript's own incremental-build bookkeeping, not
+      # served output — and critically, `tsc --noEmit` (a plain typecheck,
+      # touching none of the compiled .js) still rewrites it. Counting it here
+      # made "did I just typecheck?" indistinguishable from "did I just build?":
+      # the bookkeeping file's timestamp alone made a dist folder whose real
+      # .js hadn't moved in a day look freshly built, and the verdict flipped
+      # to 'none' — silently discarding a real, uncompiled API change.
+      $items = Get-ChildItem $p -Recurse -File -Exclude '*.tsbuildinfo' -EA SilentlyContinue
+    }
     elseif (Test-Path $p) { $items = Get-Item $p -EA SilentlyContinue }
     else { $items = @() }
     foreach ($i in $items) { if ($i.LastWriteTimeUtc -gt $newest) { $newest = $i.LastWriteTimeUtc } }
@@ -63,10 +72,13 @@ if ($sharedSrc -gt $sharedOut) { Write-Output 'full'; exit 0 }
 # meant to be serving, not just source against output.
 $apiPid = (Get-NetTCPConnection -State Listen -LocalPort 4000 -EA SilentlyContinue | Select-Object -First 1).OwningProcess
 if ($apiPid) {
-  # StartTime is local; $apiOut is UTC. Access to another user's process can be
-  # denied, in which case we simply learn nothing and fall through to the
-  # timestamp comparison below.
-  $started = (Get-Process -Id $apiPid -EA SilentlyContinue).StartTime
+  # Get-Process's own .StartTime is unreliable here: on this machine it silently
+  # returns nothing for a live, listening node.exe (observed directly, not a
+  # guess) — a non-terminating property-access failure that $ErrorActionPreference
+  # swallows, so the check below would just never fire, no error, no output.
+  # Get-CimInstance's CreationDate reads the same information via WMI instead of
+  # the .NET Process class and has been reliable where StartTime was not.
+  $started = (Get-CimInstance Win32_Process -Filter "ProcessId=$apiPid" -EA SilentlyContinue).CreationDate
   if ($started -and $started.ToUniversalTime() -lt $apiOut) { Write-Output 'api'; exit 0 }
 }
 

@@ -38,6 +38,14 @@ export class ExcelService {
    * exact column order and even when `rows` is empty. This keeps an export with
    * no data usable as a fill-in import template. Without `headers`, the object
    * keys become the headers (and an empty array yields an empty sheet).
+   *
+   * `headers` also RESTRICTS the sheet to exactly those keys. SheetJS's own
+   * `header` option on `json_to_sheet` only reorders columns — any key on a row
+   * that isn't listed still gets written, appended after the ones that are. A
+   * caller asking for a 5-of-14-column export got all 14 back, the 5 just
+   * pushed to the front. Every other caller here passes its row objects' full,
+   * exact key set as `headers` anyway (for ordering, not restriction), so this
+   * filter is a no-op for them and only changes behaviour for a genuine subset.
    */
   jsonToBuffer(
     rows: Record<string, unknown>[],
@@ -46,9 +54,16 @@ export class ExcelService {
     if (opts.headers && rows.length === 0) {
       return this.aoaToBuffer([opts.headers], opts.sheetName);
     }
+    const restricted = opts.headers
+      ? rows.map((row) => {
+          const picked: Record<string, unknown> = {};
+          for (const h of opts.headers!) picked[h] = row[h];
+          return picked;
+        })
+      : rows;
     const worksheet = opts.headers
-      ? XLSX.utils.json_to_sheet(rows, { header: opts.headers })
-      : XLSX.utils.json_to_sheet(rows);
+      ? XLSX.utils.json_to_sheet(restricted, { header: opts.headers })
+      : XLSX.utils.json_to_sheet(restricted);
     return this.workbookToBuffer(worksheet, opts.sheetName);
   }
 

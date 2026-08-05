@@ -813,6 +813,8 @@ function LineEditor({
           </Field>
         )}
         <Field label="Item name">
+          {/* Same composite "{size|pcs} {product} {design}" list as the new-order
+              form, so it gets the same digits-first keyboard and auto-space. */}
           <NativeSelect
             value={form.itemName}
             onChange={onItemPick}
@@ -821,6 +823,7 @@ function LineEditor({
             placeholder="Item name"
             className="text-left"
             onInvalidEntry={() => toast.error('Please select a correct item')}
+            digitsFirst
           />
         </Field>
         <Field label="Design Name">
