@@ -32,7 +32,13 @@ foreach ($m in $markers) { if (-not (Test-Path $m)) { Write-Output 'full'; exit 
 
 $sharedSrc = Newest @('packages\shared\src', 'packages\shared\package.json', 'package.json')
 $apiSrc    = Newest @('apps\api\src', 'apps\api\prisma\schema.prisma', 'apps\api\package.json')
-$webSrc    = Newest @('apps\web\src', 'apps\web\vite.config.ts', 'apps\web\package.json', 'apps\web\index.html')
+# `apps\web\public` belongs here as much as `src`: the service worker, the PWA
+# manifest and the icons are shipped from it, and they are copied into dist by
+# the build like any other source. Leaving it out meant a service-worker fix
+# looked like "nothing changed", was never rebuilt, and every client stayed on
+# the old worker — the failure mode is silent and indefinite, because the thing
+# that would have shipped the fix is the thing that decided not to.
+$webSrc    = Newest @('apps\web\src', 'apps\web\public', 'apps\web\vite.config.ts', 'apps\web\package.json', 'apps\web\index.html')
 
 # Compare against the NEWEST file in each dist, not one fixed file. `nest build`
 # and `tsc` only re-emit sources that actually changed, so dist\src\main.js keeps

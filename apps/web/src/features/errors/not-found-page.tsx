@@ -10,7 +10,9 @@ export function NotFoundPage() {
         <p className="text-sm text-muted-foreground">The page you’re looking for doesn’t exist.</p>
       </div>
       <Button asChild variant="outline">
-        <Link to="/">Back to dashboard</Link>
+        {/* "/" resolves to each user's own landing page, so the label stays
+            neutral — it isn't the dashboard for everyone. */}
+        <Link to="/">Back to home</Link>
       </Button>
     </div>
   );

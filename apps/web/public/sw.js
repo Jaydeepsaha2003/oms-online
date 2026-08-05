@@ -1,7 +1,10 @@
 /* OMS service worker — makes the app installable and adds a light offline layer.
  * Strategy: network-first with cache fallback for same-origin GET static assets
  * and navigations. NEVER caches /api (live data) or the Vite dev internals. */
-const CACHE = 'oms-v10';
+// Bumping this name is what evicts a poisoned cache: `activate` deletes every
+// cache whose key isn't the current one. Bump it whenever the caching rules
+// below change, or to force stranded clients onto a fresh copy.
+const CACHE = 'oms-v11';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -46,7 +49,13 @@ self.addEventListener('fetch', (event) => {
         try {
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), 2500);
-          const res = await fetch('/', { signal: controller.signal });
+          // `no-store` matters: without it this revalidation can be answered
+          // from the HTTP cache, so the shell we store — and then serve to
+          // every future load — can be older than what the server has. Paired
+          // with the cache-first rule for /assets/ below, one stale snapshot
+          // pins the app to a build whose chunks the next deploy deletes, and
+          // the app stops booting entirely.
+          const res = await fetch('/', { signal: controller.signal, cache: 'no-store' });
           clearTimeout(timer);
           if (res && res.ok) {
             cache.put('/', res.clone()).catch(() => {});

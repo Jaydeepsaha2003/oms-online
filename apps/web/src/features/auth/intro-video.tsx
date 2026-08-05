@@ -11,19 +11,37 @@ export function IntroVideo({ onFinish }: { onFinish: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const finishedRef = useRef(false);
   const stuckTimerRef = useRef<number | undefined>(undefined);
+  const capTimerRef = useRef<number | undefined>(undefined);
   const [fading, setFading] = useState(false);
 
   const finish = useCallback(() => {
     if (finishedRef.current) return;
     finishedRef.current = true;
     window.clearTimeout(stuckTimerRef.current);
+    window.clearTimeout(capTimerRef.current);
     setFading(true);
     window.setTimeout(onFinish, 300);
   }, [onFinish]);
 
-  // Once the video actually reaches the "playing" state, cancel the safety
-  // timer below so a normally-playing intro runs through to the end.
+  // Once the video actually reaches the "playing" state, cancel both safety
+  // timers below so a normally-playing intro runs through to the end.
   const handlePlaying = useCallback(() => {
+    window.clearTimeout(stuckTimerRef.current);
+    window.clearTimeout(capTimerRef.current);
+  }, []);
+
+  /**
+   * The video is alive — metadata parsed, or bytes arriving.
+   *
+   * This is what separates "blocked" from "merely slow", and the original flat
+   * deadline could not tell them apart: it gave the video 2s from mount to
+   * reach `playing` or be skipped. This file is 2.3 MB, so on a phone over the
+   * VPN that deadline is missed routinely and the intro silently never plays —
+   * the failure looks identical to the video being broken. Any sign of progress
+   * now hands over to the longer cap, which still guarantees nobody is ever
+   * trapped on a black screen.
+   */
+  const handleProgress = useCallback(() => {
     window.clearTimeout(stuckTimerRef.current);
   }, []);
 
@@ -33,13 +51,21 @@ export function IntroVideo({ onFinish }: { onFinish: () => void }) {
     // screen if it's rejected instead of leaving a frozen black screen.
     videoRef.current?.play().catch(finish);
 
-    // Safety net for the cases play()'s promise never settles: on iOS a
-    // still-buffering or Low-Power-Mode-blocked video leaves us on the black
-    // container with neither onError nor onEnded ever firing. If it hasn't
-    // started playing within this window, jump to the login form. onPlaying
-    // clears this, so a video that does start is never cut off early.
+    // Stage 1 — nothing at all has happened: no metadata, not a single byte.
+    // That's the genuinely stuck case the original timer was written for (iOS
+    // Low Power Mode silently refusing to start), and it stays short.
     stuckTimerRef.current = window.setTimeout(finish, 2000);
-    return () => window.clearTimeout(stuckTimerRef.current);
+    // Stage 2 — a hard ceiling, so "slow" can never become "hangs forever" no
+    // matter what stage 1 saw. Kept short deliberately: this is time spent
+    // looking at a black screen, and the file is fast-start (its moov sits in
+    // the first 14 KB), so playback begins on the first chunks rather than
+    // needing all 2.3 MB. A link that can't manage that in six seconds is
+    // better served by going straight to the login form.
+    capTimerRef.current = window.setTimeout(finish, 6_000);
+    return () => {
+      window.clearTimeout(stuckTimerRef.current);
+      window.clearTimeout(capTimerRef.current);
+    };
   }, [finish]);
 
   return (
@@ -56,7 +82,11 @@ export function IntroVideo({ onFinish }: { onFinish: () => void }) {
         autoPlay
         muted
         playsInline
+        preload="auto"
         onPlaying={handlePlaying}
+        onLoadedMetadata={handleProgress}
+        onLoadedData={handleProgress}
+        onProgress={handleProgress}
         onEnded={finish}
         onError={finish}
       />

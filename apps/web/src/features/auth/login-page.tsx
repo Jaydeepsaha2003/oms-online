@@ -3,6 +3,8 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, KeyRound, Loader2, Lock, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 import { getApiErrorMessage } from '@/lib/api';
+import { isInstalledApp } from '@/lib/app-session';
+import { isTouchPrimary } from '@/lib/device';
 import { useLogin, usePinLogin } from '@/hooks/use-auth';
 import { useAuthStore } from '@/stores/auth-store';
 import { cn } from '@/lib/utils';
@@ -28,12 +30,23 @@ export function LoginPage() {
   const pinLogin = usePinLogin();
   const pending = login.isPending || pinLogin.isPending;
 
-  const [mode, setMode] = useState<Mode>('password');
+  // On the installed app the login screen is now reached on every launch, so it
+  // opens on the PIN pad for the remembered account — a four-digit re-entry
+  // rather than a full password, with the password form one tap away. A browser
+  // tab is reached far less often and keeps opening on the password form.
+  const [mode, setMode] = useState<Mode>(() =>
+    isInstalledApp() && localStorage.getItem(LAST_EMAIL_KEY) ? 'pin' : 'password',
+  );
   const [email, setEmail] = useState(() => localStorage.getItem(LAST_EMAIL_KEY) ?? '');
   const [password, setPassword] = useState('');
   const [pin, setPin] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [showIntro, setShowIntro] = useState(true);
+  // Desktop only. On a phone the login screen is now reached on every launch of
+  // the app, and a 2.3 MB video in front of it each time is a toll on the one
+  // path the user cannot avoid — worse over the VPN, where it is also the part
+  // most likely to stall. Desktop sees the login screen rarely, so it keeps the
+  // intro.
+  const [showIntro, setShowIntro] = useState(() => !isTouchPrimary());
   const { data: company } = useCompany();
 
   // The account PIN sign-in applies to — the last account used on this device.

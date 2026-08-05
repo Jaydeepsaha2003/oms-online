@@ -42,9 +42,14 @@
       // are harmless, and deleting them here used to wipe every prefetched
       // chunk whenever a slow VPN link made a legitimate load take longer
       // than the timer — turning one slow start into a catastrophically
-      // slower fully-uncached second load. 30s is a pure backstop: the shell
-      // is served from cache instantly now, so a healthy app mounts long
-      // before this fires even on a dead-slow connection.
+      // slower fully-uncached second load.
+      //
+      // 12s, not 30s. This is the ONLY recovery available when the cached shell
+      // points at an entry chunk a later deploy deleted: that shell loads, its
+      // script 404s, no app code ever runs, and the screen stays blank. Nobody
+      // waits half a minute at a blank screen — they force-quit, which throws
+      // away the one thing that would have fixed it. Unregistering costs a
+      // healthy-but-slow load one reload; a stranded client gets its app back.
       window.setTimeout(function () {
         var root = document.getElementById('root');
         if (root && root.childElementCount > 0) return;
@@ -56,7 +61,7 @@
         }).finally(function () {
           location.reload();
         });
-      }, 30000);
+      }, 12000);
     </script>
 
     <script type="module" src="/src/main.tsx"></script>

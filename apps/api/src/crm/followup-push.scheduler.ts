@@ -1,7 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
-import type { FollowupDto } from '@oms/shared';
+import { ACTIONS, type FollowupDto, perm, RESOURCES } from '@oms/shared';
 import { formatDate } from '../common/date.util';
+import { NotificationAudienceService } from '../notifications/notification-audience.service';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
 import { PushService } from '../notifications/push.service';
 import { CrmService } from './crm.service';
@@ -14,6 +15,7 @@ export class FollowupPushScheduler {
     private readonly crm: CrmService,
     private readonly gateway: NotificationsGateway,
     private readonly pushService: PushService,
+    private readonly audience: NotificationAudienceService,
   ) {}
 
   @Interval(60_000)
@@ -27,11 +29,19 @@ export class FollowupPushScheduler {
       if (!settings.desktopNotifications) return;
 
       const due = await this.crm.dueUnpushed();
+      if (!due.length) return;
+
+      // Follow-up reminders are only useful to people who can open the CRM, so
+      // the audience is the page's own permission — resolved once per tick, not
+      // per follow-up, and only when something is actually due.
+      const recipients = await this.audience.userIdsWith(perm(RESOURCES.CRM, ACTIONS.VIEW));
+      if (!recipients.length) return;
+
       for (const f of due) {
         try {
           const notification = this.buildNotification(f);
-          this.gateway.broadcast(notification);
-          await this.pushService.broadcastGeneric(notification);
+          this.gateway.notifyUsers(recipients, notification);
+          await this.pushService.sendToUsers(recipients, notification);
           await this.crm.markPushed(f.id);
         } catch (err) {
           this.logger.warn(`Failed to push followup ${f.id}: ${(err as Error).message}`);

@@ -24,7 +24,19 @@ export class NotificationsGateway implements OnGatewayConnection {
     const userId = token ? await this.verifyToken(token) : null;
     if (!userId) {
       client.disconnect(true);
+      return;
     }
+    // The connection already proves who this is; keep it so a notification can
+    // be addressed to particular people instead of everyone. One room per user
+    // (rather than per permission) means a role change takes effect on the next
+    // send, with no need to re-shuffle live sockets.
+    client.data.userId = userId;
+    await client.join(NotificationsGateway.userRoom(userId));
+  }
+
+  /** Socket.IO room carrying every live connection belonging to one user. */
+  private static userRoom(userId: string): string {
+    return `user:${userId}`;
   }
 
   /** Same checks as JwtStrategy.validate: active user, current token version, session not revoked. */
@@ -59,10 +71,22 @@ export class NotificationsGateway implements OnGatewayConnection {
     return this.server.sockets.sockets.size;
   }
 
-  /** Generic broadcast for features beyond the test button (e.g. CRM followup reminders). */
-  broadcast(notification: { title: string; body: string; data?: Record<string, unknown> }): number {
-    this.server.emit('notification', notification);
-    return this.server.sockets.sockets.size;
+  /**
+   * Same notification, delivered only to the given users' live sockets.
+   *
+   * Returns how many connections were reached, counted from the rooms rather
+   * than assumed — a listed user with nothing open simply contributes zero.
+   */
+  notifyUsers(userIds: string[], notification: { title: string; body: string; data?: Record<string, unknown> }): number {
+    if (!userIds.length) return 0;
+    const rooms = userIds.map((id) => NotificationsGateway.userRoom(id));
+    this.server.to(rooms).emit('notification', notification);
+
+    let reached = 0;
+    for (const socket of this.server.sockets.sockets.values()) {
+      if (userIds.includes(socket.data.userId as string)) reached += 1;
+    }
+    return reached;
   }
 
   /** Silent data-changed ping: tells every open client the un-challaned pool moved
