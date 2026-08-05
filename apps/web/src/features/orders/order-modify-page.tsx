@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, ExternalLink, Loader2, RotateCcw, Save, Trash2 } from 'lucide-react';
+import { Ban, ChevronLeft, ChevronRight, ExternalLink, Loader2, RotateCcw, Save, Trash2, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { OrderDto, OrderInput, OrderItemDto, QtyField } from '@oms/shared';
 import { ORDER_PRIORITIES, qtyOrderForCategory, resolveSpecialRates } from '@oms/shared';
@@ -12,12 +12,14 @@ import { useColumnOrder } from '@/hooks/use-column-order';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
+import { CancelReasonFields } from '@/components/common/cancel-reason';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Combo, NativeSelect } from '@/components/common/combo';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { settingValues, useOrderQtyLayout, useSettings } from '@/features/settings/use-settings';
 import { useCustomerSpecialRates } from '@/features/special-rates/use-special-rates';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -157,6 +159,7 @@ export function OrderModifyPage() {
   const [product, setProduct] = useState('');
   const [design, setDesign] = useState('');
   const [priority, setPriority] = useState('');
+  const [orderId, setOrderId] = useState('');
   const [page, setPage] = useState(1);
 
   const { data, isLoading } = useOrders({
@@ -166,22 +169,31 @@ export function OrderModifyPage() {
     agent: agent || undefined,
     product: product || undefined,
     design: design || undefined,
+    orderId: orderId ? Number(orderId) : undefined,
   });
   const { data: filterOptions } = useOrderFilterOptions();
   const save = useSaveOrder();
   const { data: settings } = useSettings();
   const orderTypeOptions = useMemo(() => settingValues(settings, 'ORDER_TYPE'), [settings]);
+  const cancelReasons = useMemo(() => settingValues(settings, 'QUOTATION_CANCEL_REASON'), [settings]);
   const cols = useColumnOrder('order-modify', COLUMNS);
   const { format, setFormat } = useDateFormat();
+  // Order ID picker: value = order id (as string), label = its short code —
+  // newest orders first, matching the picker's own default sort.
+  const orderIdOptions = useMemo(
+    () => (filterOptions?.orders ?? []).map((o) => ({ value: String(o.id), label: shortOrderCode(o.code, o.id) })),
+    [filterOptions],
+  );
 
   const [edit, setEdit] = useState<Row | null>(null);
-  const hasFilters = !!customer || !!agent || !!product || !!design || !!priority;
+  const hasFilters = !!customer || !!agent || !!product || !!design || !!priority || !!orderId;
   const resetFilters = () => {
     setCustomer('');
     setAgent('');
     setProduct('');
     setDesign('');
     setPriority('');
+    setOrderId('');
     setPage(1);
   };
 
@@ -239,6 +251,29 @@ export function OrderModifyPage() {
     setEdit(null);
   };
 
+  // Cancel keeps the line on record (status=CANCELLED) instead of removing it —
+  // the backend already relies on this for lines that have dispatches (a hard
+  // delete is rejected there), and it's the reversible choice either way.
+  const cancelLine = (order: OrderDto, line: OrderItemDto, reason: string, note: string) => {
+    if (line.status === 'CANCELLED') return; // already cancelled — nothing to do
+    const tag = `Cancelled — ${reason}${note.trim() ? `: ${note.trim()}` : ''}`;
+    const updated: OrderItemDto = { ...line, status: 'CANCELLED', comment: [line.comment, tag].filter(Boolean).join(' | ') };
+    saveItems(order, order.items.map((i) => (i.id === line.id ? updated : i)), 'Item cancelled');
+    setEdit(null);
+  };
+
+  const restoreLine = async (order: OrderDto, line: OrderItemDto) => {
+    const ok = await confirm({
+      title: 'Restore this item?',
+      description: `${line.productName || line.product || 'Item'} will be active again on ${order.code ?? `#${order.id}`} and count toward its totals.`,
+      confirmText: 'Restore',
+    });
+    if (!ok) return;
+    const updated: OrderItemDto = { ...line, status: 'CONFIRMED' };
+    saveItems(order, order.items.map((i) => (i.id === line.id ? updated : i)), 'Item restored');
+    setEdit(null);
+  };
+
   // A dispatched line's quantity/rate/product details are frozen (the backend
   // rejects that edit outright) — this appends the edited details as a brand
   // new line instead, leaving the original dispatched line untouched.
@@ -255,7 +290,16 @@ export function OrderModifyPage() {
       {/* ── Toolbar: search + filters, then column settings — one card. */}
       <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
         <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
-          {/* Filter order follows the house pattern: Customer, Item Name, Agent, Design. */}
+          {/* Filter order follows the house pattern: Order ID, Customer, Item Name, Agent, Design. */}
+          <div className="w-full sm:w-36">
+            <NativeSelect
+              value={orderId}
+              onChange={(v) => { setOrderId(v); setPage(1); }}
+              options={['', ...orderIdOptions]}
+              placeholder="All order IDs"
+              className={cn(CONTROL, 'font-medium tabular-nums', orderId && CONTROL_ON)}
+            />
+          </div>
           <div className="w-full sm:w-56">
             <NativeSelect
               value={customer}
@@ -458,10 +502,13 @@ export function OrderModifyPage() {
           <LineEditor
             row={edit}
             orderTypes={orderTypeOptions}
+            cancelReasons={cancelReasons}
             saving={save.isPending}
             onSave={(updated) => saveLine(edit.order, updated)}
             onAddAsNew={(newItem) => addLineAsNew(edit.order, newItem)}
             onDelete={() => deleteLine(edit.order, edit.line)}
+            onCancelItem={(reason, note) => cancelLine(edit.order, edit.line, reason, note)}
+            onRestoreItem={() => restoreLine(edit.order, edit.line)}
             onViewFull={() => navigate(`/orders/${edit.order.id}/edit`)}
             onClose={() => setEdit(null)}
           />
@@ -475,21 +522,29 @@ export function OrderModifyPage() {
 function LineEditor({
   row,
   orderTypes,
+  cancelReasons,
   saving,
   onSave,
   onAddAsNew,
   onDelete,
+  onCancelItem,
+  onRestoreItem,
   onViewFull,
   onClose,
 }: {
   row: Row;
   orderTypes: string[];
+  cancelReasons: string[];
   saving: boolean;
   onSave: (updated: OrderItemDto) => void;
   /** Dispatched-line detour: append the edited details as a brand new line
    *  instead of touching the original (which the backend won't allow anyway). */
   onAddAsNew: (newItem: OrderItemDto) => void;
   onDelete: () => void;
+  /** Soft-cancel: keeps the line on record instead of removing it. Required for
+   *  a line with dispatches — the backend rejects a hard delete there. */
+  onCancelItem: (reason: string, note: string) => void;
+  onRestoreItem: () => void;
   onViewFull: () => void;
   onClose: () => void;
 }) {
@@ -501,6 +556,15 @@ function LineEditor({
   const { data: qtyLayout } = useOrderQtyLayout();
   const { autoSizePcs } = useAutoSizePcs();
   const [showBy, setShowBy] = useState<'PCS' | 'SIZE'>('SIZE');
+  const isCancelled = line.status === 'CANCELLED';
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelNote, setCancelNote] = useState('');
+  const submitCancel = () => {
+    if (!cancelReason.trim()) return toast.error('Please choose a reason.');
+    onCancelItem(cancelReason.trim(), cancelNote);
+    setCancelOpen(false);
+  };
   // Once the user has confirmed "add as a new item" (see submit()), the form
   // keeps whatever they typed but Save now creates a fresh line instead of
   // touching the dispatched original — it does NOT auto-submit on its own.
@@ -724,6 +788,12 @@ function LineEditor({
       </SheetHeader>
 
       <div className="flex-1 space-y-3 overflow-y-auto pr-1">
+        {isCancelled && (
+          <div className="flex items-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-400/25 dark:bg-rose-500/10 dark:text-rose-300">
+            <Ban className="size-4 shrink-0" />
+            This item is cancelled — it's kept on record but excluded from the order's totals.
+          </div>
+        )}
         {addNewMode && (
           <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
             The original dispatched line stays untouched — review the details below and click{' '}
@@ -801,19 +871,64 @@ function LineEditor({
         </button>
       </div>
 
-      <SheetFooter className="justify-between">
-        <Button variant="ghost" className="text-destructive hover:text-destructive" onClick={onDelete} disabled={saving || addNewMode}>
-          <Trash2 /> Delete
-        </Button>
+      <SheetFooter className="flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex gap-2">
+          {isCancelled ? (
+            <Button variant="outline" onClick={onRestoreItem} disabled={saving || addNewMode}>
+              <Undo2 /> Restore item
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              className="text-rose-700 hover:text-rose-800 dark:text-rose-300"
+              onClick={() => setCancelOpen(true)}
+              disabled={saving || addNewMode}
+              title="Marks the item CANCELLED — kept on record and reversible, unlike Delete"
+            >
+              <Ban /> Cancel item
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            className="text-destructive hover:text-destructive"
+            onClick={onDelete}
+            disabled={saving || addNewMode || !!line.dispatched}
+            title={line.dispatched ? 'Already dispatched — use Cancel item instead, which keeps the dispatch record intact' : 'Permanently remove this line'}
+          >
+            <Trash2 /> Delete
+          </Button>
+        </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={addNewMode ? () => setAddNewMode(false) : onClose} disabled={saving}>
-            {addNewMode ? 'Back to editing' : 'Cancel'}
+            {addNewMode ? 'Back to editing' : 'Close'}
           </Button>
           <Button onClick={submit} disabled={saving || (!addNewMode && !dirty)}>
             {saving ? <Loader2 className="animate-spin" /> : <Save />} {addNewMode ? 'Add as New Item' : 'Save'}
           </Button>
         </div>
       </SheetFooter>
+
+      <Dialog open={cancelOpen} onOpenChange={setCancelOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Cancel this item?</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4">
+            <p className="text-muted-foreground text-sm">
+              “{line.productName || line.product || 'This item'}” will be marked CANCELLED on {order.code ?? `#${order.id}`}. It
+              stays on record and excludes from the order's totals, but can no longer be dispatched — restore it any time to
+              undo.
+            </p>
+            <CancelReasonFields reasons={cancelReasons} reason={cancelReason} note={cancelNote} onReason={setCancelReason} onNote={setCancelNote} />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setCancelOpen(false)}>Keep item</Button>
+            <Button type="button" variant="destructive" onClick={submitCancel} disabled={saving}>
+              {saving ? <Loader2 className="animate-spin" /> : <Ban />} Cancel item
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </SheetContent>
   );
 }

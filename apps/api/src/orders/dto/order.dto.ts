@@ -1,4 +1,5 @@
 import { PartialType } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import { IsArray, IsIn, IsInt, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
@@ -52,4 +53,6 @@ export class OrderQueryDto extends PaginationDto {
   /** Keep orders containing this product / design on any line (exact match). */
   @IsOptional() @IsString() product?: string;
   @IsOptional() @IsString() design?: string;
+  /** Exact match on the order's numeric id (Order Modify's Order ID picker). */
+  @IsOptional() @Transform(({ value }) => (value === '' || value == null ? undefined : parseInt(value, 10))) @IsInt() orderId?: number;
 }

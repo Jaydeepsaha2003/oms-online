@@ -776,6 +776,7 @@ export class DispatchService implements OnModuleInit {
   async update(id: number, dto: UpdateDispatchDto, actor?: Actor): Promise<DispatchDto> {
     const cur = await this.prisma.dispatch.findUnique({ where: { id } });
     if (!cur) throw new NotFoundException('Dispatch not found.');
+    await this.assertNotBilled(id);
     const it = await this.prisma.orderItem.findUnique({ where: { id: cur.orderItemId }, include: { dispatches: true } });
     if (!it) throw new NotFoundException('Order line not found.');
 
@@ -841,8 +842,26 @@ export class DispatchService implements OnModuleInit {
   async remove(id: number): Promise<void> {
     const c = await this.prisma.dispatch.count({ where: { id } });
     if (!c) throw new NotFoundException('Dispatch not found.');
+    await this.assertNotBilled(id);
     await this.prisma.dispatch.delete({ where: { id } });
     this.invalidatePendingCache(); // a deleted dispatch puts its qty back in the pool
+  }
+
+  /** Blocks edit/delete once a dispatch has been billed onto a live challan — the
+   *  challan already carries this line's qty as an invoiced fact, so changing or
+   *  removing the dispatch underneath it would silently desync the two. A
+   *  CANCELLED challan doesn't count: cancelling puts the dispatch back in the
+   *  pending pool, exactly like {@link challanByDispatch} treats it elsewhere. */
+  private async assertNotBilled(id: number): Promise<void> {
+    const billed = await this.prisma.challanItem.findFirst({
+      where: { dispatchId: id, challan: { challanStatus: { not: 'CANCELLED' } } },
+      select: { challan: { select: { code: true } } },
+    });
+    if (billed) {
+      throw new BadRequestException(
+        `This dispatch is already billed on challan ${billed.challan?.code ?? ''} and can no longer be edited or deleted.`,
+      );
+    }
   }
 
   /* ── helpers ─────────────────────────────────────────────────────────────── */

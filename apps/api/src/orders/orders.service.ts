@@ -35,6 +35,7 @@ export class OrdersService {
       ...(query.status ? { status: uc(query.status)! } : {}),
       ...(query.customer ? { customerName: query.customer } : {}),
       ...(query.agent ? { agentName: query.agent } : {}),
+      ...(query.orderId ? { id: query.orderId } : {}),
       ...(lineFilters.length ? { AND: lineFilters } : {}),
       ...(search
         ? {
@@ -350,12 +351,16 @@ export class OrdersService {
   /** Distinct product / design values present on order lines, for the Orders
    *  page filter dropdowns (only values that can actually match something). */
   async filterOptions(): Promise<OrderFilterOptions> {
-    const [rows, orderRows, customerRows] = await Promise.all([
+    const [rows, orderRows, customerRows, idRows] = await Promise.all([
       this.prisma.orderItem.findMany({ select: { productName: true, product: true, designType: true } }),
       this.prisma.order.findMany({ select: { agentName: true }, distinct: ['agentName'], orderBy: { agentName: 'asc' } }),
       // Names actually present on orders — not the full customer master, so the
       // dropdown can't offer a party that would return an empty list.
       this.prisma.order.findMany({ select: { customerName: true }, distinct: ['customerName'], orderBy: { customerName: 'asc' } }),
+      // Drafts never show on Order Modify (see the client's own filter), so the
+      // Order ID picker excludes them too — picking one would otherwise land on
+      // an id the visible list can never match.
+      this.prisma.order.findMany({ where: { status: { not: 'DRAFT' } }, select: { id: true, code: true }, orderBy: { id: 'desc' } }),
     ]);
     const products = new Set<string>();
     const designs = new Set<string>();
@@ -367,7 +372,7 @@ export class OrdersService {
     const sorted = (s: Set<string>) => [...s].sort((a, b) => a.localeCompare(b));
     const agents = orderRows.map((o) => o.agentName).filter((a): a is string => !!a).sort((a, b) => a.localeCompare(b));
     const customers = customerRows.map((o) => o.customerName).filter((c): c is string => !!c).sort((a, b) => a.localeCompare(b));
-    return { customers, agents, products: sorted(products), designs: sorted(designs) };
+    return { customers, agents, products: sorted(products), designs: sorted(designs), orders: idRows };
   }
 
   async lookups(): Promise<OrderLookupsWire> {

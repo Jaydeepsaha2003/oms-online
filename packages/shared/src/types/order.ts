@@ -170,6 +170,8 @@ export type OrderQuery = PaginationQuery & {
    *  values come from {@link OrderFilterOptions}). */
   product?: string;
   design?: string;
+  /** Exact match on the order's numeric id (the Order ID picker). */
+  orderId?: number;
 };
 export type OrderList = Paginated<OrderDto>;
 
@@ -180,6 +182,9 @@ export interface OrderFilterOptions {
   agents: string[];
   products: string[];
   designs: string[];
+  /** Every non-draft order's id + code, newest first — backs the Order ID filter
+   *  picker on Order Modify. */
+  orders: { id: number; code: string | null }[];
 }
 
 /** A product available to order, with its master category/sub-category and rate. */

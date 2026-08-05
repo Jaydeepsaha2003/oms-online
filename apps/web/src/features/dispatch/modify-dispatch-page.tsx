@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Loader2, Pencil, Search, Trash2, TriangleAlert } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2, Lock, Pencil, Search, Trash2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { DISPATCH_STATUSES, RESOURCES, qtyOrderForCategory, type DispatchDto, type QtyField } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -133,6 +133,8 @@ function ModifyDispatchCard({
 }) {
   const qtys = ([['Bags', d.bags], ['Pcs', d.pcs], ['Kgs', d.gram], ['Box', d.box]] as const).filter(([, v]) => v && v > 0);
   const amount = d.rate != null ? Math.round(d.rate * ((d.calField ?? '').toUpperCase() === 'PCS' ? (d.pcs ?? 0) : (d.gram ?? 0))) : null;
+  // Billed lines are read-only — see the note on assertNotBilled in dispatch.service.ts.
+  const locked = !!d.challanCode;
   return (
     <div className="mdisp-card-in bg-card relative overflow-hidden rounded-2xl border shadow-sm" style={{ animationDelay: `${Math.min(index, 10) * 40}ms` }}>
       <div className="space-y-2.5 p-3.5 text-[13px]">
@@ -180,20 +182,28 @@ function ModifyDispatchCard({
         {d.comment && <p className="text-muted-foreground text-[12.5px] leading-snug">{d.comment}</p>}
       </div>
 
-      {(canEdit || canDelete) && (
-        <div className="flex border-t text-[13px] font-semibold">
-          {canEdit && (
-            <button type="button" onClick={onEdit} className="text-primary active:bg-primary/5 flex flex-1 items-center justify-center gap-1.5 py-2.5 transition-colors">
-              <Pencil className="size-4" /> Edit
-            </button>
-          )}
-          {canEdit && canDelete && <div className="bg-border w-px" />}
-          {canDelete && (
-            <button type="button" onClick={onDelete} className="text-destructive active:bg-destructive/5 flex flex-1 items-center justify-center gap-1.5 py-2.5 transition-colors">
-              <Trash2 className="size-4" /> Delete
-            </button>
-          )}
-        </div>
+      {locked ? (
+        (canEdit || canDelete) && (
+          <div className="text-muted-foreground flex items-center justify-center gap-1.5 border-t py-2.5 text-[12.5px] font-semibold">
+            <Lock className="size-3.5" /> Billed on {d.challanCode} — read-only
+          </div>
+        )
+      ) : (
+        (canEdit || canDelete) && (
+          <div className="flex border-t text-[13px] font-semibold">
+            {canEdit && (
+              <button type="button" onClick={onEdit} className="text-primary active:bg-primary/5 flex flex-1 items-center justify-center gap-1.5 py-2.5 transition-colors">
+                <Pencil className="size-4" /> Edit
+              </button>
+            )}
+            {canEdit && canDelete && <div className="bg-border w-px" />}
+            {canDelete && (
+              <button type="button" onClick={onDelete} className="text-destructive active:bg-destructive/5 flex flex-1 items-center justify-center gap-1.5 py-2.5 transition-colors">
+                <Trash2 className="size-4" /> Delete
+              </button>
+            )}
+          </div>
+        )
       )}
     </div>
   );
@@ -249,6 +259,7 @@ export function ModifyDispatchPage() {
   const totalPages = data?.totalPages ?? 1;
 
   const handleDelete = async (d: DispatchDto) => {
+    if (d.challanCode) return toast.error(`Billed on ${d.challanCode} — cannot be deleted.`);
     const ok = await confirm({
       title: 'Delete dispatch?',
       description: `${d.code ?? `#${d.id}`} will be removed and its quantity returned to the pending list.`,
@@ -337,7 +348,10 @@ export function ModifyDispatchPage() {
             fill
             hideSortIcon
             emptyText="No dispatch records yet."
-            onRowClick={(d) => can('dispatch:update') && setEditing(d)}
+            // Once a challan has billed this line, its qty is an invoiced fact —
+            // editing/deleting it here would silently desync the two, so it's
+            // read-only from this point on (backend enforces the same rule).
+            onRowClick={(d) => can('dispatch:update') && !d.challanCode && setEditing(d)}
             className={[
               'font-sans text-[13px]',
               // Rows are click-to-edit, so block accidental text selection (a
@@ -373,12 +387,28 @@ export function ModifyDispatchPage() {
                   }
                 />
                 {can('dispatch:update') && (
-                  <Button variant="ghost" size="icon" className="size-7" onClick={() => setEditing(d)} aria-label="Edit" title="Edit">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7"
+                    onClick={() => setEditing(d)}
+                    disabled={!!d.challanCode}
+                    aria-label="Edit"
+                    title={d.challanCode ? `Billed on ${d.challanCode} — no longer editable` : 'Edit'}
+                  >
                     <Pencil className="size-4" />
                   </Button>
                 )}
                 {can('dispatch:delete') && (
-                  <Button variant="ghost" size="icon" className="size-7 text-destructive hover:text-destructive" onClick={() => handleDelete(d)} aria-label="Delete" title="Delete">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 text-destructive hover:text-destructive"
+                    onClick={() => handleDelete(d)}
+                    disabled={!!d.challanCode}
+                    aria-label="Delete"
+                    title={d.challanCode ? `Billed on ${d.challanCode} — cannot be deleted` : 'Delete'}
+                  >
                     <Trash2 className="size-4" />
                   </Button>
                 )}
