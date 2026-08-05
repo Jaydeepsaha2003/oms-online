@@ -40,14 +40,27 @@ export class PushService {
     );
   }
 
-  /** Same delivery mechanism as broadcastPush, for any feature that needs its own title/body/data. */
-  async broadcastGeneric(notification: { title: string; body: string; data?: Record<string, unknown> }): Promise<number> {
-    return this.sendToAll(JSON.stringify(notification));
+  /**
+   * Sends a notification to the devices belonging to the given users.
+   *
+   * A push notification outlives the session that triggered it — it sits on the
+   * lock screen — so sending one to somebody who can't open the page it links to
+   * is worse than a stray toast. An empty list sends nothing rather than
+   * falling back to everyone: "nobody is allowed" must never mean "tell all".
+   */
+  async sendToUsers(
+    userIds: string[],
+    notification: { title: string; body: string; data?: Record<string, unknown> },
+  ): Promise<number> {
+    if (!userIds.length) return 0;
+    return this.sendToAll(JSON.stringify(notification), userIds);
   }
 
-  private async sendToAll(body: string): Promise<number> {
+  private async sendToAll(body: string, userIds?: string[]): Promise<number> {
     this.ensureVapidConfigured();
-    const subscriptions = await this.prisma.pushSubscription.findMany();
+    const subscriptions = await this.prisma.pushSubscription.findMany(
+      userIds ? { where: { userId: { in: userIds } } } : undefined,
+    );
 
     await Promise.all(
       subscriptions.map(async (sub) => {

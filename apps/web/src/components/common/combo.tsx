@@ -43,6 +43,7 @@ export function NativeSelect({
   onType,
   renderOption,
   listHeader,
+  digitsFirst,
 }: {
   /** Passed to the underlying field so a `<Label htmlFor>` can point at it. */
   id?: string;
@@ -56,6 +57,8 @@ export function NativeSelect({
   onType?: (text: string) => void;
   renderOption?: (value: string) => ReactNode;
   listHeader?: ReactNode;
+  /** Digits-first keyboard, extent decided by the options — see {@link Combobox}. */
+  digitsFirst?: boolean;
 }) {
   return (
     <Combobox
@@ -70,6 +73,7 @@ export function NativeSelect({
       onType={onType}
       renderOption={renderOption}
       listHeader={listHeader}
+      digitsFirst={digitsFirst}
     />
   );
 }

@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { Route, Routes } from 'react-router-dom';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
+import { HomeRoute } from '@/components/auth/home-route';
 import { ProtectedRoute } from '@/components/auth/protected-route';
 import { RequirePermission } from '@/components/auth/require-permission';
 import { AppShell } from '@/components/layout/app-shell';
@@ -119,14 +120,9 @@ export function AppRoutes() {
 
       <Route element={<ProtectedRoute />}>
         <Route element={<AppShell />}>
-          <Route
-            path="/"
-            element={
-              <RequirePermission permission={perm(RESOURCES.DASHBOARD, ACTIONS.VIEW)}>
-                <DashboardPage />
-              </RequirePermission>
-            }
-          />
+          {/* "/" is every user's landing spot, so it resolves per-permission
+              rather than hard-failing on dashboard access. */}
+          <Route path="/" element={<HomeRoute dashboard={<DashboardPage />} />} />
           <Route
             path="/customers"
             element={

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Check, ChevronsUpDown, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { isTouchPrimary } from '@/lib/device';
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 
 export interface ComboboxOption {
@@ -31,6 +32,23 @@ export interface ComboboxProps {
   renderOption?: (value: string) => React.ReactNode;
   /** Optional sticky header shown above the option list (e.g. column titles). */
   listHeader?: React.ReactNode;
+  /**
+   * Open the on-screen keyboard on digits, and hand over to the letter keyboard
+   * at the point the OPTIONS stop being numeric.
+   *
+   * For lists whose entries begin with a size and continue in words — dispatch
+   * item names are "15 MIRROR (26 G) LASER", "6 JUCY", "5.5 NEW ANAND LOGO" —
+   * this removes a keyboard switch from every search. How far the keypad stays
+   * up is decided by the data, not by a fixed count, because no fixed count
+   * works: of 730 item names, 519 turn to words after one character, 204 after
+   * two, and 5 only after three ("1234 MAAP SET"). Typing "12" keeps the keypad
+   * because "123…"/"1234…" exist; typing "15" gives up letters immediately
+   * because nothing continues "15" with a digit.
+   *
+   * Omit for every other field: on a list that does not start with numbers this
+   * would open a keypad that cannot type the first letter.
+   */
+  digitsFirst?: boolean;
 }
 
 // Looks exactly like our <Input>; the field itself is the search box.
@@ -67,6 +85,7 @@ export function Combobox({
   onType,
   renderOption,
   listHeader,
+  digitsFirst,
 }: ComboboxProps) {
   const opts = React.useMemo<Row[]>(
     () =>
@@ -92,6 +111,15 @@ export function Combobox({
   // scrollbar) — that steals focus from the field, and without this flag the
   // blur handler would close the dropdown mid-drag.
   const draggingList = React.useRef(false);
+  // True only for the instant the keyboard is being swapped (see below), so the
+  // field's own focus/blur handling can tell that apart from the user leaving.
+  const swappingKeyboard = React.useRef(false);
+  // Manual "give me letters" override (see the ABC button). Reset whenever the
+  // search starts over, so the next lookup opens on digits again.
+  const [forceText, setForceText] = React.useState(false);
+  // Fixed for the life of the field: the ABC button is pointless where there is
+  // no on-screen keyboard to switch.
+  const [touchDevice] = React.useState(isTouchPrimary);
 
   // The blur handler runs on a 120ms timer, so anything it reads from the render
   // closure is stale by the time it fires. These refs give it the CURRENT value —
@@ -217,14 +245,76 @@ export function Combobox({
     return () => window.removeEventListener('scroll', onScroll, { capture: true });
   }, [open]);
 
+  // ── Digits-first keyboard (opt-in via `digitsFirst`) ──────────────────────
+  // Stay on the keypad only while BOTH hold:
+  //   1. everything typed so far is part of a leading number, and
+  //   2. some option continues that exact prefix with another number character.
+  //
+  // Rule 2 is what makes this self-limiting: the keypad is offered only while
+  // the list can still be advanced with it, so the user can never be left
+  // holding a keypad that cannot type the character they need. A fixed
+  // threshold could not do this — at two digits it stranded the 519 names that
+  // become words after one ("6 JUCY": the space and the "J" are both
+  // unreachable from a numeric pad), and cut off the ones that need more.
+  //
+  // Derived from `text` rather than stored, so backspacing is governed by the
+  // same rule as typing and needs no separate handling.
+  //
+  // `decimal` rather than `numeric`: 131 item names carry a decimal size
+  // ("5.5 NEW ANAND LOGO"), and the plain numeric pad has no ".".
+  //
+  // `forceText` is the manual override behind the ABC button. Where a short
+  // number is ambiguous the keypad has to stay up — at "7" both "7 DECENT" and
+  // "70 …" are still live, so the app cannot know that a space is wanted next.
+  // Nine prefixes do this across 285 of the 730 item names, and without a way
+  // out the only recourse is picking from the list.
+  const isNumberChar = (c: string) => c !== '' && /[\d.]/.test(c);
+  const wantsDigits =
+    !!digitsFirst &&
+    !forceText &&
+    /^[\d.]*$/.test(text) &&
+    opts.some((o) => o.label.startsWith(text) && isNumberChar(o.label.charAt(text.length)));
+  const inputMode = !digitsFirst ? undefined : wantsDigits ? 'decimal' : 'text';
+
+  // Android re-reads `inputMode` on the focused field and swaps the keyboard on
+  // its own. iOS only looks when the field GAINS focus, so the change is
+  // invisible there until the field is re-entered — bounce the focus to force
+  // it. Skipped where no on-screen keyboard exists: on desktop `inputMode` does
+  // nothing anyway, and blur/focus would only make the caret flicker.
+  const prevWantsDigits = React.useRef(wantsDigits);
+  React.useEffect(() => {
+    if (!digitsFirst || prevWantsDigits.current === wantsDigits) return;
+    prevWantsDigits.current = wantsDigits;
+
+    const el = inputRef.current;
+    if (!el || document.activeElement !== el) return;
+    if (!window.matchMedia?.('(pointer: coarse)').matches) return;
+
+    // The flag stops onBlur from starting its close-and-revert timer and stops
+    // onFocus from re-selecting the text — this is the same field mid-edit, not
+    // the user arriving or leaving. Both handlers run synchronously inside the
+    // two calls below, so clearing it straight after is safe.
+    const caret = el.selectionStart;
+    swappingKeyboard.current = true;
+    el.blur();
+    el.focus();
+    swappingKeyboard.current = false;
+    // Re-entering a field puts the caret at the end; typing continues where it
+    // left off only if we put it back.
+    if (caret != null) el.setSelectionRange(caret, caret);
+  }, [wantsDigits, digitsFirst]);
+
   const commit = (v: string) => {
     onChange(v);
     setText(labelFor(v));
     setDirty(false);
     setOpen(false);
+    setForceText(false);
   };
 
   const onInputChange = (next: string) => {
+    // Cleared the field — this is a new search, so digits lead again.
+    if (next === '') setForceText(false);
     setText(next);
     setDirty(true);
     setOpen(true);
@@ -233,6 +323,7 @@ export function Combobox({
   };
 
   const onFocus = () => {
+    if (swappingKeyboard.current) return; // mid-edit keyboard swap, not a real focus
     focused.current = true;
     setDirty(false);
     setOpen(true);
@@ -240,6 +331,7 @@ export function Combobox({
   };
 
   const onBlur = () => {
+    if (swappingKeyboard.current) return; // mid-edit keyboard swap, not a real blur
     blurTimer.current = setTimeout(() => {
       // Blur caused by pressing inside the list (scrollbar drag, etc.): keep the
       // dropdown open and hand focus straight back to the field.
@@ -335,8 +427,28 @@ export function Combobox({
             aria-expanded={open}
             aria-autocomplete="list"
             autoComplete="off"
-            className={cn(FIELD, className)}
+            inputMode={inputMode}
+            className={cn(FIELD, wantsDigits && touchDevice && 'pr-16', className)}
           />
+          {/* Escape hatch out of the keypad. Only while the keypad is actually
+              up, and only where one exists — on desktop the letter keys are
+              already under the user's hands. `onMouseDown` is prevented so the
+              tap never blurs the field: a real blur would close the list and
+              revert what has been typed. */}
+          {wantsDigits && touchDevice && (
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setForceText(true);
+                inputRef.current?.focus();
+              }}
+              aria-label="Switch to the letter keyboard"
+              className="text-muted-foreground hover:text-foreground absolute top-1/2 right-7 -translate-y-1/2 rounded-[3px] border px-1.5 py-0.5 text-[10px] font-bold tracking-wide"
+            >
+              ABC
+            </button>
+          )}
           <ChevronsUpDown className="pointer-events-none absolute top-1/2 right-2 size-4 -translate-y-1/2 opacity-50" />
         </div>
       </PopoverAnchor>

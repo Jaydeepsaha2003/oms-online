@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import axios from 'axios';
 import type { AuthResult, AuthUser, LoginDto, PinLoginDto } from '@oms/shared';
 import { http, refreshAccessToken } from '@/lib/api';
+import { appWasKilled, markAppRunning } from '@/lib/app-session';
 import { useAuthStore } from '@/stores/auth-store';
 
 /** Log in with email + password; stores the session on success. */
@@ -39,6 +40,22 @@ export function useLogout() {
 export function useBootstrapAuth(): void {
   useEffect(() => {
     let active = true;
+
+    // The installed app was closed since the last run: end the session before
+    // anything can restore it. Clearing the local store alone is not enough —
+    // the branch below would still trade the 15-day refresh cookie for a fresh
+    // session and walk straight past the login screen — so the cookie is
+    // revoked server-side too, and this returns without attempting a refresh.
+    if (appWasKilled()) {
+      useAuthStore.getState().clear();
+      // Best-effort: an offline relaunch still shows the login screen, and the
+      // stale refresh token expires on its own.
+      void http.post('/auth/logout').catch(() => {});
+      useAuthStore.getState().setBootstrapping(false);
+      return markAppRunning();
+    }
+
+    const stopHeartbeat = markAppRunning();
     const { accessToken, user } = useAuthStore.getState();
 
     // A device with a persisted session renders the app IMMEDIATELY — no
@@ -62,6 +79,7 @@ export function useBootstrapAuth(): void {
       })();
       return () => {
         active = false;
+        stopHeartbeat();
       };
     }
 
@@ -80,6 +98,7 @@ export function useBootstrapAuth(): void {
 
     return () => {
       active = false;
+      stopHeartbeat();
     };
   }, []);
 }

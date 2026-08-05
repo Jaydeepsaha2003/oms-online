@@ -532,6 +532,28 @@ function firstRoute(node: MenuNode): string | undefined {
   return undefined;
 }
 
+/**
+ * The page to open a user on: the first route in THEIR filtered menu.
+ *
+ * Sending everyone to the dashboard means a user without `dashboard:view` signs
+ * in to "Access denied" — a wall where their home page should be, even though
+ * the sidebar beside it lists pages they can use. Landing them on the first
+ * thing they CAN open makes the entry point follow the permissions, exactly as
+ * the sidebar already does.
+ *
+ * The order is the MENU order, so this stays predictable: whatever sits at the
+ * top of a user's sidebar is where they land. `undefined` means the account has
+ * no accessible page at all — a permission set worth surfacing rather than
+ * silently redirecting somewhere.
+ */
+export function landingRoute(granted: Iterable<string>, menu: MenuNode[] = MENU): string | undefined {
+  for (const node of filterMenu(granted, menu)) {
+    const to = firstRoute(node);
+    if (to) return to;
+  }
+  return undefined;
+}
+
 /** The Alt+Shift+<letter> quick-nav targets for a (usually already permission-
  *  filtered) menu: every node — at ANY depth — that declares a `shortcut`, mapped
  *  to the page it opens. Shortcuts live on the sub-menu (leaf) items, so the key
