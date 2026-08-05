@@ -269,11 +269,13 @@ export function Combobox({
   // Nine prefixes do this across 285 of the 730 item names, and without a way
   // out the only recourse is picking from the list.
   const isNumberChar = (c: string) => c !== '' && /[\d.]/.test(c);
-  const wantsDigits =
-    !!digitsFirst &&
-    !forceText &&
-    /^[\d.]*$/.test(text) &&
-    opts.some((o) => o.label.startsWith(text) && isNumberChar(o.label.charAt(text.length)));
+  // Extracted to a function (not just the inline `text` check) because the
+  // auto-space logic in `onInputChange` below needs the SAME rule evaluated
+  // against both the old and the about-to-be-typed text, to detect the exact
+  // keystroke where one flips to the other.
+  const computeWantsDigits = (t: string): boolean =>
+    !!digitsFirst && !forceText && /^[\d.]*$/.test(t) && opts.some((o) => o.label.startsWith(t) && isNumberChar(o.label.charAt(t.length)));
+  const wantsDigits = computeWantsDigits(text);
   const inputMode = !digitsFirst ? undefined : wantsDigits ? 'decimal' : 'text';
 
   // Android re-reads `inputMode` on the focused field and swaps the keyboard on
@@ -312,14 +314,42 @@ export function Combobox({
     setForceText(false);
   };
 
+  // Auto-space right where the number ends. Every one of the 730 dispatch item
+  // names is "<number> <words>" — the character straight after the leading
+  // number run is a space, always (verified against the live list, not
+  // assumed) — so the same keystroke that ends the numeric run can also
+  // supply the space the user would otherwise have to type by hand, on
+  // desktop and phone alike (the digits-first keypad is what makes this most
+  // visible on a phone, but the underlying typing rule doesn't care which
+  // keyboard produced the keystroke).
+  //
+  // Guarded to fire on exactly the ONE keystroke that ends the number: one
+  // digit/period typed forward — not a paste, not a backspace, not a re-render
+  // — that flips `computeWantsDigits` from true to false. Re-derived from the
+  // OPTIONS every time (`allWantSpace`) rather than hardcoded, so a future item
+  // name that breaks the "number space words" pattern is simply left alone
+  // instead of getting a wrong space forced into it.
   const onInputChange = (next: string) => {
     // Cleared the field — this is a new search, so digits lead again.
     if (next === '') setForceText(false);
-    setText(next);
+
+    let value = next;
+    if (digitsFirst && next.length === text.length + 1 && next.endsWith(' ') && text.endsWith(' ')) {
+      // The space was already auto-inserted below on an earlier keystroke; a
+      // user who doesn't realise that and presses space anyway would otherwise
+      // end up with two. Swallow their keystroke instead of adding to it.
+      value = text;
+    } else if (next.length === text.length + 1 && next.startsWith(text) && isNumberChar(next.charAt(text.length)) && computeWantsDigits(text) && !computeWantsDigits(next)) {
+      const stillMatching = opts.filter((o) => o.label.startsWith(next));
+      const allWantSpace = stillMatching.length > 0 && stillMatching.every((o) => o.label.charAt(next.length) === ' ');
+      if (allWantSpace) value = next + ' ';
+    }
+
+    setText(value);
     setDirty(true);
     setOpen(true);
-    onType?.(next);
-    if (creatable) onChange(next); // free text is the value, live
+    onType?.(value);
+    if (creatable) onChange(value); // free text is the value, live
   };
 
   const onFocus = () => {
@@ -348,14 +378,21 @@ export function Combobox({
         // and reverting to the stale label would put a filter back on screen that
         // is no longer applied to the data.
         const committed = labelForRef.current(valueRef.current);
-        if (
-          typed &&
-          typed.toLowerCase() !== committed.toLowerCase() &&
-          !opts.some((o) => o.label.toLowerCase() === typed.toLowerCase())
-        ) {
-          onInvalidEntry?.(typed);
+        if (typed === '') {
+          // Backspaced the field empty, then clicked away: this is exactly how a
+          // user clears a filter — but a pick-only field's typed text was never
+          // wired to `onChange` (only actually SELECTING a row is), so this used
+          // to just silently revert to the old label on blur. Backspace it out,
+          // look away, and the value you just deleted would reappear — clearing
+          // the box did nothing. Treat it the same as picking the blank option.
+          if (valueRef.current !== '') onChange('');
+          setText(''); // normalizes whitespace-only input too, not just a literal ''
+        } else {
+          if (typed.toLowerCase() !== committed.toLowerCase() && !opts.some((o) => o.label.toLowerCase() === typed.toLowerCase())) {
+            onInvalidEntry?.(typed);
+          }
+          setText(committed); // revert filter text to the chosen value
         }
-        setText(committed); // revert filter text to the chosen value
       }
       setDirty(false);
     }, 120);

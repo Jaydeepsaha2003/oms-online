@@ -1378,6 +1378,11 @@ export function OrderFormPage() {
             )}
             <div className={cn('col-span-2 space-y-1 sm:col-span-2', autoSizePcs ? 'lg:col-span-7' : 'lg:col-span-5')} data-tabfield="itemName">
               <Label className="text-base">Item name</Label>
+              {/* Item labels are "{size|pcs} {product} {design}", so the keyboard
+                  opens on digits and hands over to letters — plus the space —
+                  the moment no item continues the typed number. The one item
+                  with no leading number ("S.S.STEEL SCRAP") is reachable via the
+                  field's ABC button. See `digitsFirst`. */}
               <NativeSelect
                 value={entry.itemName}
                 onChange={onItemPick}
@@ -1386,6 +1391,7 @@ export function OrderFormPage() {
                 placeholder={noCustomer ? 'Select a customer first' : 'Item name'}
                 className="text-left"
                 disabled={noCustomer}
+                digitsFirst
                 onInvalidEntry={() => {
                   toast.error('Please select a correct item');
                   requestAnimationFrame(() => focusField(formRef.current, 'itemName'));
