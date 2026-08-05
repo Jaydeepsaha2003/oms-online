@@ -27,6 +27,10 @@ export class DispatchQueryDto extends PaginationDto {
   @IsOptional() @IsString() agent?: string;
   @IsOptional() @IsString() product?: string;
   @IsOptional() @IsString() design?: string;
+  /** Dispatch-date range (inclusive), 'YYYY-MM-DD' — Modify Dispatch's Date filter
+   *  and the Group-by-Date-&-Party view. */
+  @IsOptional() @IsString() dateFrom?: string;
+  @IsOptional() @IsString() dateTo?: string;
 }
 
 export class PendingQueryDto extends PaginationDto {

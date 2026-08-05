@@ -97,6 +97,17 @@ export interface TcsSettingInput {
   tcsPercent: number;
 }
 
+/** Global fallback bag threshold used when a party has no specific one set in
+ *  Special Rates — editable in Settings. Null = no default limit (only a
+ *  party-specific threshold, if any, applies). */
+export interface DispatchBagThresholdDto {
+  maxBagsPerDispatch: number | null;
+}
+
+export interface DispatchBagThresholdInput {
+  maxBagsPerDispatch: number | null;
+}
+
 export interface OrderOptionInput {
   group: string;
   value: string;

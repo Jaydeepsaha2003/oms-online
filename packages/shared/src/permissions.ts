@@ -29,6 +29,9 @@ export const ACTIONS = {
   CONVERT: 'convert',
   /** Cancel a quotation (with a tracked reason). */
   CANCEL: 'cancel',
+  /** Exceed a configured guardrail that would otherwise block the action outright
+   *  (first use: a per-party/default dispatch bag threshold). */
+  OVERRIDE: 'override',
   /** Full control of a resource — implies every other action on it. */
   MANAGE: 'manage',
 } as const;
@@ -155,7 +158,9 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
     group: 'Sales',
     // `approve` here means "may set a dispatch date other than today without a
     // sign-off". Anyone without it who back-dates raises an approval request.
-    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.EXPORT, ACTIONS.VIEWRATES, ACTIONS.APPROVE, ACTIONS.MANAGE],
+    // `override` means "may exceed a party's (or the default) dispatch bag
+    // threshold" — everyone else is hard-blocked at that line.
+    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.EXPORT, ACTIONS.VIEWRATES, ACTIONS.APPROVE, ACTIONS.OVERRIDE, ACTIONS.MANAGE],
   },
   {
     resource: RESOURCES.CHALLAN,

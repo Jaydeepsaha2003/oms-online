@@ -388,6 +388,12 @@ export class DispatchService implements OnModuleInit {
     if (query.design) {
       and.push({ OR: [{ orderItem: { design: query.design } }, { designType: query.design }] });
     }
+    if (query.dateFrom) and.push({ dispatchDate: { gte: new Date(query.dateFrom) } });
+    if (query.dateTo) {
+      const end = new Date(query.dateTo);
+      end.setHours(23, 59, 59, 999);
+      and.push({ dispatchDate: { lte: end } });
+    }
     if (search) {
       and.push({
         OR: [
@@ -482,8 +488,10 @@ export class DispatchService implements OnModuleInit {
    */
   async submit(
     dto: CreateDispatchDto,
-    user: { id?: string | null; name?: string | null; canApprove: boolean },
+    user: { id?: string | null; name?: string | null; canApprove: boolean; canOverrideThreshold: boolean },
   ): Promise<SubmitDispatchResult> {
+    if (!user.canOverrideThreshold) await this.assertBagThreshold(dto.orderItemId, toNum(dto.bags) ?? 0);
+
     if (this.isToday(dto.dispatchDate) || user.canApprove) {
       return { status: 'CREATED', dispatch: await this.create(dto, user.name ?? undefined, user) };
     }
@@ -860,6 +868,41 @@ export class DispatchService implements OnModuleInit {
     if (billed) {
       throw new BadRequestException(
         `This dispatch is already billed on challan ${billed.challan?.code ?? ''} and can no longer be edited or deleted.`,
+      );
+    }
+  }
+
+  /**
+   * Hard-blocks a single dispatch line's Bags from exceeding a configured
+   * threshold — the party's own (Special Rates → Bag weight, per customer +
+   * category) if set, else the global default (Settings), else no limit.
+   * Skipped entirely for a user with dispatch:override.
+   */
+  private async assertBagThreshold(orderItemId: number, bags: number): Promise<void> {
+    if (!(bags > 0)) return; // nothing to check on a Kgs/Pcs-only line
+    const it = await this.prisma.orderItem.findUnique({
+      where: { id: orderItemId },
+      select: { pCategory: true, order: { select: { customerId: true, customerName: true } } },
+    });
+    if (!it?.order.customerId) return; // no customer to key a party threshold on
+
+    const category = (it.pCategory ?? '').trim().toUpperCase();
+    let threshold: number | null = null;
+    if (category) {
+      const rows = await this.prisma.customerBagWeight.findMany({
+        where: { customerId: it.order.customerId },
+        select: { category: true, maxBagsPerDispatch: true },
+      });
+      threshold = rows.find((r) => r.category.trim().toUpperCase() === category)?.maxBagsPerDispatch ?? null;
+    }
+    if (threshold == null) {
+      const def = await this.prisma.appConfig.findUnique({ where: { key: 'DISPATCH_BAG_THRESHOLD' } });
+      const parsed = def?.value != null ? Number(def.value) : NaN;
+      threshold = Number.isFinite(parsed) ? parsed : null;
+    }
+    if (threshold != null && bags > threshold + EPS) {
+      throw new BadRequestException(
+        `${bags} bags exceeds the dispatch threshold of ${threshold} for ${it.order.customerName} — lower the quantity or ask an admin to override.`,
       );
     }
   }

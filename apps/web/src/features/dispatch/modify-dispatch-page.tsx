@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Loader2, Lock, Pencil, Search, Trash2, TriangleAlert } from 'lucide-react';
+import { CalendarRange, ChevronDown, ChevronLeft, ChevronRight, Layers, Loader2, Lock, Pencil, Search, Trash2, TriangleAlert, Users } from 'lucide-react';
 import { toast } from 'sonner';
-import { DISPATCH_STATUSES, RESOURCES, qtyOrderForCategory, type DispatchDto, type QtyField } from '@oms/shared';
+import { DISPATCH_STATUSES, MAX_PAGE_SIZE, RESOURCES, qtyOrderForCategory, type DispatchDto, type QtyField } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn, shortDispatchCode, shortOrderCode } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
@@ -16,7 +16,11 @@ import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { DateRangeCalendar } from '@/components/common/date-range-calendar';
+import { PRESETS, presetRange } from '@/features/challans/date-presets';
 import { useDeleteDispatch, useDispatches, useDispatchFilterOptions, useUpdateDispatch } from './use-dispatch';
 
 const PAGE_SIZE = 50;
@@ -77,6 +81,7 @@ const COLUMNS: DataColumn<DispatchDto>[] = [
   { id: 'box', label: 'Box', align: 'right', cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(d.box)}</span> },
   { id: 'status', label: 'Status', cell: (d) => <StatusBadge s={d.dispatchStatus} /> },
   { id: 'challan', label: 'Challan Status', cell: (d) => <ChallanBadge d={d} /> },
+  { id: 'dispatchedBy', label: 'Dispatched By', cell: (d) => <span className={TEXT_CELL}>{d.userName || '—'}</span> },
   { id: 'remarks', label: 'Remarks', cell: (d) => <span className="text-muted-foreground text-[13px] font-medium">{d.comment || '—'}</span> },
 ];
 
@@ -111,6 +116,332 @@ const MODIFY_CARD_CSS = `
 @keyframes mdispIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .mdisp-card-in { animation: none; } }
 `;
+
+/* ── Group by Date & Party (subtotal view) ────────────────────────────────────
+ * Built for the labour floor: "how many bags/kgs/pcs/box do I load for THIS
+ * party on THIS date" is a subtotal question, not a row-by-row one. Grouping
+ * happens entirely client-side over whatever the current filters + date range
+ * already fetched (the query switches to a much larger page size while this
+ * view is on — see `grouped` in ModifyDispatchPage — so a subtotal is never
+ * silently short by a page boundary). */
+
+interface PartyGroup {
+  party: string;
+  lines: DispatchDto[];
+  bags: number;
+  pcs: number;
+  kgs: number;
+  box: number;
+}
+interface DateGroup {
+  dateKey: string;
+  parties: PartyGroup[];
+  bags: number;
+  pcs: number;
+  kgs: number;
+  box: number;
+  lineCount: number;
+}
+
+/** ISO datetime → local YYYY-MM-DD, matching `toDateInput` below — the grouping key. */
+function dayKey(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** "Today" / "Yesterday" — the quick-scan label a labourer reads first; falls
+ *  back to the formatted date for anything further out. */
+function dayLabel(key: string): string {
+  const [y, m, d] = key.split('-').map(Number);
+  const day = new Date(y, m - 1, d);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diff = Math.round((today.getTime() - day.getTime()) / 86_400_000);
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Yesterday';
+  if (diff === -1) return 'Tomorrow';
+  return formatDate(key);
+}
+
+function buildDateGroups(items: DispatchDto[]): DateGroup[] {
+  const byDate = new Map<string, Map<string, PartyGroup>>();
+  for (const d of items) {
+    const dk = dayKey(d.dispatchDate);
+    if (!byDate.has(dk)) byDate.set(dk, new Map());
+    const parties = byDate.get(dk)!;
+    const party = d.customerName?.trim() || '—';
+    if (!parties.has(party)) parties.set(party, { party, lines: [], bags: 0, pcs: 0, kgs: 0, box: 0 });
+    const p = parties.get(party)!;
+    p.lines.push(d);
+    p.bags += d.bags ?? 0;
+    p.pcs += d.pcs ?? 0;
+    p.kgs += d.gram ?? 0;
+    p.box += d.box ?? 0;
+  }
+  return [...byDate.entries()]
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([dateKey, partiesMap]) => {
+      const parties = [...partiesMap.values()].sort((a, b) => a.party.localeCompare(b.party));
+      const totals = parties.reduce(
+        (acc, p) => ({ bags: acc.bags + p.bags, pcs: acc.pcs + p.pcs, kgs: acc.kgs + p.kgs, box: acc.box + p.box }),
+        { bags: 0, pcs: 0, kgs: 0, box: 0 },
+      );
+      return { dateKey, parties, ...totals, lineCount: parties.reduce((a, p) => a + p.lines.length, 0) };
+    });
+}
+
+/** Subtotal pills — only the units actually in play, so a Bags-only party
+ *  never shows three dashes. `lg` + `light` power the mobile date banner. */
+function GroupQtyBadges({
+  bags,
+  pcs,
+  kgs,
+  box,
+  size = 'sm',
+  tone = 'default',
+}: {
+  bags: number;
+  pcs: number;
+  kgs: number;
+  box: number;
+  size?: 'sm' | 'lg';
+  tone?: 'default' | 'light';
+}) {
+  const vals = ([['Bags', bags], ['Pcs', pcs], ['Kgs', kgs], ['Box', box]] as const).filter(([, v]) => v > 0);
+  if (!vals.length) return <span className={cn('text-xs', tone === 'light' ? 'text-white/70' : 'text-muted-foreground')}>No quantities</span>;
+  return (
+    <div className={cn('flex flex-wrap', size === 'lg' ? 'gap-2' : 'gap-1.5')}>
+      {vals.map(([label, v]) => (
+        <span
+          key={label}
+          className={cn(
+            'inline-flex items-baseline gap-1 rounded-full border',
+            tone === 'light' ? 'border-white/25 bg-white/10 text-white' : 'border-primary/15 bg-primary/5 text-primary',
+            size === 'lg' ? 'px-3 py-1.5' : 'px-2 py-0.5',
+          )}
+        >
+          <span className={cn('font-semibold uppercase', size === 'lg' ? 'text-[11px]' : 'text-[10px]', tone === 'light' ? 'opacity-80' : 'opacity-70')}>{label}</span>
+          <span className={cn('font-bold tabular-nums', size === 'lg' ? 'text-[17px]' : 'text-[12.5px]')}>{qty(v)}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** One dispatch line, compact enough to sit inside an expanded desktop party
+ *  group — the same facts as the flat table's row, in a single wrapped line. */
+function GroupedLineRow({
+  d,
+  canEdit,
+  canDelete,
+  showRates,
+  onEdit,
+  onDelete,
+}: {
+  d: DispatchDto;
+  canEdit: boolean;
+  canDelete: boolean;
+  showRates: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const locked = !!d.challanCode;
+  const amount = d.rate != null ? Math.round(d.rate * ((d.calField ?? '').toUpperCase() === 'PCS' ? (d.pcs ?? 0) : (d.gram ?? 0))) : null;
+  const qtyText = ([['B', d.bags], ['P', d.pcs], ['K', d.gram], ['X', d.box]] as const)
+    .filter(([, v]) => v && v > 0)
+    .map(([u, v]) => `${qty(v)}${u}`)
+    .join(' · ');
+  return (
+    <div className="bg-card flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border px-2.5 py-1.5 text-[12.5px]">
+      <span className="font-mono font-bold text-indigo-700 dark:text-indigo-300">{shortDispatchCode(d.code, d.id)}</span>
+      <span className="text-muted-foreground font-mono text-[11px]">{shortOrderCode(d.orderCode, d.orderId)}</span>
+      <span className="min-w-0 flex-1 truncate font-semibold text-slate-800 dark:text-slate-200">
+        {d.productName || d.product || '—'}
+        {d.designType && d.designType.toUpperCase() !== 'NA' ? ` · ${d.designType}` : ''}
+      </span>
+      <span className="text-muted-foreground tabular-nums">{qtyText || '—'}</span>
+      <StatusBadge s={d.dispatchStatus} />
+      <ChallanBadge d={d} />
+      {showRates && <span className="font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(amount)}</span>}
+      <div className="ml-auto flex items-center gap-1">
+        {canEdit && (
+          <Button variant="ghost" size="icon" className="size-6" onClick={onEdit} disabled={locked} aria-label="Edit" title={locked ? `Billed on ${d.challanCode} — no longer editable` : 'Edit'}>
+            <Pencil className="size-3.5" />
+          </Button>
+        )}
+        {canDelete && (
+          <Button variant="ghost" size="icon" className="size-6 text-destructive hover:text-destructive" onClick={onDelete} disabled={locked} aria-label="Delete" title={locked ? `Billed on ${d.challanCode} — cannot be deleted` : 'Delete'}>
+            <Trash2 className="size-3.5" />
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Desktop grouped view: a banner per date, a collapsible subtotal bar per
+ *  party underneath, individual lines only on demand. */
+function GroupedDesktopView({
+  groups,
+  expanded,
+  onToggle,
+  canEdit,
+  canDelete,
+  showRates,
+  onEdit,
+  onDelete,
+}: {
+  groups: DateGroup[];
+  expanded: Set<string>;
+  onToggle: (key: string) => void;
+  canEdit: boolean;
+  canDelete: boolean;
+  showRates: boolean;
+  onEdit: (d: DispatchDto) => void;
+  onDelete: (d: DispatchDto) => void;
+}) {
+  if (!groups.length) {
+    return (
+      <div className="text-muted-foreground flex flex-1 items-center justify-center rounded-[4px] border border-dashed text-sm">
+        No dispatch records match these filters.
+      </div>
+    );
+  }
+  return (
+    <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+      {groups.map((g) => (
+        <div key={g.dateKey} className="overflow-hidden rounded-[4px] border shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2 bg-gradient-to-r from-blue-900 to-indigo-900 px-3.5 py-2.5 text-white">
+            <div className="flex items-center gap-2">
+              <CalendarRange className="size-4 opacity-80" />
+              <span className="text-[15px] font-extrabold tracking-wide">{dayLabel(g.dateKey)}</span>
+              <span className="text-[12px] font-medium text-white/70 tabular-nums">{formatDate(g.dateKey)}</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="flex items-center gap-1 text-[12px] font-semibold text-white/80">
+                <Users className="size-3.5" /> {g.parties.length} part{g.parties.length === 1 ? 'y' : 'ies'}
+              </span>
+              <GroupQtyBadges bags={g.bags} pcs={g.pcs} kgs={g.kgs} box={g.box} tone="light" />
+            </div>
+          </div>
+
+          <div className="divide-y divide-slate-200 dark:divide-white/10">
+            {g.parties.map((p) => {
+              const key = `${g.dateKey}|${p.party}`;
+              const open = expanded.has(key);
+              return (
+                <div key={key} className="bg-card">
+                  <button
+                    type="button"
+                    onClick={() => onToggle(key)}
+                    className="flex w-full flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 text-left transition-colors hover:bg-amber-50 dark:hover:bg-amber-400/5"
+                  >
+                    <div className="flex min-w-0 items-center gap-2">
+                      <ChevronDown className={cn('text-muted-foreground size-4 shrink-0 transition-transform', open && 'rotate-180')} />
+                      <span className="truncate text-[14px] font-bold text-slate-900 dark:text-slate-100">{p.party}</span>
+                      <span className="text-muted-foreground shrink-0 text-[11.5px] font-semibold">
+                        {p.lines.length} line{p.lines.length === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                    <GroupQtyBadges bags={p.bags} pcs={p.pcs} kgs={p.kgs} box={p.box} />
+                  </button>
+
+                  {open && (
+                    <div className="space-y-1.5 border-t bg-slate-50/60 px-3.5 py-2 dark:bg-white/[0.02]">
+                      {p.lines.map((d) => (
+                        <GroupedLineRow key={d.id} d={d} canEdit={canEdit} canDelete={canDelete} showRates={showRates} onEdit={() => onEdit(d)} onDelete={() => onDelete(d)} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Mobile grouped view — the labour-floor screen: a bold date banner, then one
+ *  big tap card per party with the four subtotals as large stat tiles. Tap a
+ *  party to reveal its individual lines (still fully editable). */
+function GroupedMobileView({
+  groups,
+  expanded,
+  onToggle,
+  canEdit,
+  canDelete,
+  showRates,
+  onEdit,
+  onDelete,
+}: {
+  groups: DateGroup[];
+  expanded: Set<string>;
+  onToggle: (key: string) => void;
+  canEdit: boolean;
+  canDelete: boolean;
+  showRates: boolean;
+  onEdit: (d: DispatchDto) => void;
+  onDelete: (d: DispatchDto) => void;
+}) {
+  if (!groups.length) {
+    return <div className="text-muted-foreground rounded-2xl border border-dashed bg-card px-4 py-12 text-center text-sm">No dispatch records match these filters.</div>;
+  }
+  return (
+    <div className="space-y-5">
+      {groups.map((g) => (
+        <div key={g.dateKey} className="space-y-2.5">
+          <div className="flex items-center justify-between gap-2 rounded-2xl bg-gradient-to-r from-blue-900 to-indigo-900 px-4 py-3 text-white shadow-md">
+            <div className="min-w-0">
+              <p className="text-[18px] font-extrabold leading-tight">{dayLabel(g.dateKey)}</p>
+              <p className="text-[11.5px] font-medium text-white/70">
+                {formatDate(g.dateKey)} · {g.parties.length} part{g.parties.length === 1 ? 'y' : 'ies'}
+              </p>
+            </div>
+            <GroupQtyBadges bags={g.bags} pcs={g.pcs} kgs={g.kgs} box={g.box} size="lg" tone="light" />
+          </div>
+
+          <div className="space-y-2.5">
+            {g.parties.map((p) => {
+              const key = `${g.dateKey}|${p.party}`;
+              const open = expanded.has(key);
+              return (
+                <div key={key} className="bg-card overflow-hidden rounded-2xl border shadow-sm">
+                  <button type="button" onClick={() => onToggle(key)} className="active:bg-muted/60 flex w-full flex-col gap-2.5 p-4 text-left transition-colors [touch-action:manipulation]">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate text-[17px] leading-tight font-bold">{p.party}</p>
+                      <ChevronDown className={cn('text-muted-foreground size-5 shrink-0 transition-transform', open && 'rotate-180')} />
+                    </div>
+                    <div className="grid grid-cols-4 gap-2">
+                      {([['Bags', p.bags], ['Pcs', p.pcs], ['Kgs', p.kgs], ['Box', p.box]] as const).map(([label, v]) => (
+                        <div key={label} className={cn('rounded-xl px-1 py-2 text-center', v > 0 ? 'bg-primary/[0.07]' : 'bg-muted/40 opacity-50')}>
+                          <p className="text-muted-foreground text-[9.5px] font-bold tracking-widest uppercase">{label}</p>
+                          <p className="text-[18px] leading-tight font-extrabold tabular-nums">{v > 0 ? qty(v) : '—'}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-muted-foreground text-[11.5px] font-semibold">
+                      {p.lines.length} line{p.lines.length === 1 ? '' : 's'} · tap to {open ? 'collapse' : 'view'}
+                    </p>
+                  </button>
+
+                  {open && (
+                    <div className="space-y-2 border-t bg-slate-50/60 p-3 dark:bg-white/[0.02]">
+                      {p.lines.map((d, i) => (
+                        <ModifyDispatchCard key={d.id} d={d} index={i} canEdit={canEdit} canDelete={canDelete} showRates={showRates} onEdit={() => onEdit(d)} onDelete={() => onDelete(d)} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 /** Phone card for one dispatch record — the readable, tappable equivalent of a
  *  table row, with inline Edit / Delete actions matching the user's permissions. */
@@ -179,6 +510,7 @@ function ModifyDispatchCard({
           </div>
         )}
 
+        {d.userName && <p className="text-muted-foreground text-[11.5px]">Dispatched by <span className="text-foreground font-semibold">{d.userName}</span></p>}
         {d.comment && <p className="text-muted-foreground text-[12.5px] leading-snug">{d.comment}</p>}
       </div>
 
@@ -219,6 +551,21 @@ export function ModifyDispatchPage() {
   const [agentFilter, setAgentFilter] = useState('');
   const [productFilter, setProductFilter] = useState('');
   const [designFilter, setDesignFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [datePreset, setDatePreset] = useState('');
+  const [dateOpen, setDateOpen] = useState(false);
+  // Subtotal view: groups the current filtered set by Date then Party. Off by
+  // default (keeps today's flat-table behaviour); switching it on pulls a much
+  // larger page so a subtotal is never short by a page boundary (see `query`).
+  const [grouped, setGrouped] = useState(false);
+  const [expandedParties, setExpandedParties] = useState<Set<string>>(new Set());
+  const toggleParty = (key: string) =>
+    setExpandedParties((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<DispatchDto | null>(null);
   const canViewRates = can('dispatch:viewrates');
@@ -244,19 +591,51 @@ export function ModifyDispatchPage() {
   }, [searchInput]);
 
   const query = {
-    page,
-    pageSize: PAGE_SIZE,
+    // Grouped mode needs every matching row to subtotal correctly, not just one
+    // page — MAX_PAGE_SIZE comfortably covers a day's (or a filtered range's)
+    // dispatch volume. Ungrouped keeps the normal paged table untouched.
+    page: grouped ? 1 : page,
+    pageSize: grouped ? MAX_PAGE_SIZE : PAGE_SIZE,
     search: search || undefined,
     status: statusFilter || undefined,
     customer: customerFilter || undefined,
     agent: agentFilter || undefined,
     product: productFilter || undefined,
     design: designFilter || undefined,
+    dateFrom: dateFrom || undefined,
+    dateTo: dateTo || undefined,
   };
   const { data, isLoading } = useDispatches(query);
   const del = useDeleteDispatch();
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
+  const dateActive = !!(dateFrom || dateTo || datePreset);
+  const dateGroups = useMemo(() => (grouped ? buildDateGroups(items) : []), [grouped, items]);
+  const partyCount = useMemo(() => new Set(items.map((d) => d.customerName?.trim() || '—')).size, [items]);
+
+  const applyDatePreset = (p: string) => {
+    if (p === datePreset) {
+      setDatePreset('');
+      setDateFrom('');
+      setDateTo('');
+      setPage(1);
+      return;
+    }
+    setDatePreset(p);
+    const r = presetRange(p);
+    if (r) {
+      setDateFrom(r.from);
+      setDateTo(r.to);
+      setPage(1);
+    }
+  };
+  const clearDates = () => {
+    setDateFrom('');
+    setDateTo('');
+    setDatePreset('');
+    setPage(1);
+  };
+  const dateLabel = datePreset || (dateFrom || dateTo ? `${dateFrom ? formatDate(dateFrom) : '…'} → ${dateTo ? formatDate(dateTo) : '…'}` : 'Any date');
 
   const handleDelete = async (d: DispatchDto) => {
     if (d.challanCode) return toast.error(`Billed on ${d.challanCode} — cannot be deleted.`);
@@ -309,6 +688,87 @@ export function ModifyDispatchPage() {
           <div className="sm:w-36">
             <NativeSelect value={statusFilter} onChange={(v) => { setStatusFilter(v); setPage(1); }} options={['', ...DISPATCH_STATUSES]} placeholder="All statuses" className={cn(CONTROL, 'font-medium', statusFilter && CONTROL_ON)} />
           </div>
+
+          {/* Dispatch-date range — scopes the Group by Date & Party view (and the
+              flat table too, when set). */}
+          <Popover open={dateOpen} onOpenChange={setDateOpen}>
+            <PopoverTrigger asChild>
+              <Button variant="outline" className={cn(CONTROL, 'max-w-52 font-medium', dateActive && CONTROL_ON)} title="Filter by dispatch date">
+                <CalendarRange className="size-3.5 shrink-0" />
+                <span className="truncate">{dateLabel}</span>
+                <ChevronDown className="size-3 shrink-0 opacity-60" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="font-poppins w-auto max-w-[calc(100vw-1.5rem)] p-2.5">
+              <div className="w-[15.5rem] space-y-2">
+                <div className="flex flex-wrap items-center gap-1">
+                  {PRESETS.map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => applyDatePreset(p)}
+                      aria-pressed={datePreset === p}
+                      className={cn(
+                        'cursor-pointer rounded-[4px] border px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap transition-colors duration-150',
+                        datePreset === p
+                          ? 'border-primary bg-primary text-primary-foreground shadow-sm'
+                          : 'border-border bg-muted/40 text-slate-600 hover:border-primary/40 hover:bg-accent hover:text-accent-foreground',
+                      )}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+                <div className="border-t pt-2">
+                  <DateRangeCalendar
+                    from={dateFrom}
+                    to={dateTo}
+                    onChange={(f, t) => {
+                      setDateFrom(f);
+                      setDateTo(t);
+                      setDatePreset('');
+                      setPage(1);
+                    }}
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-2 border-t pt-2">
+                  <span className="min-w-0 truncate text-[11.5px] font-semibold">
+                    {dateActive ? (
+                      <>
+                        {dateFrom ? formatDate(dateFrom) : '…'} <span className="text-muted-foreground">→</span> {dateTo ? formatDate(dateTo) : '…'}
+                      </>
+                    ) : (
+                      <span className="text-muted-foreground font-medium">All dates</span>
+                    )}
+                  </span>
+                  <div className="flex shrink-0 gap-1.5">
+                    {dateActive && (
+                      <Button variant="ghost" size="sm" className="h-7 px-2 text-[12px] font-semibold" onClick={clearDates}>
+                        Clear
+                      </Button>
+                    )}
+                    <Button size="sm" className="h-7 shrink-0 px-3 text-[12px] font-semibold" onClick={() => setDateOpen(false)}>
+                      Done
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
+
+          {/* The subtotal view — see GroupedDesktopView / GroupedMobileView below. */}
+          <label
+            className={cn(
+              'flex h-9 shrink-0 cursor-pointer items-center gap-2 rounded-[4px] border px-2.5 text-[12.5px] font-semibold whitespace-nowrap select-none',
+              grouped ? 'border-primary/40 bg-primary/5 text-primary' : 'border-amber-300 text-slate-600 dark:border-amber-400/40',
+            )}
+            title="Group the current list by Date, then Party — with a running subtotal of Bags/Pcs/Kgs/Box for each"
+          >
+            <Layers className="size-3.5" />
+            <Switch checked={grouped} onCheckedChange={setGrouped} />
+            Group by Date &amp; Party
+          </label>
+
           <div className="col-span-2 ml-auto sm:col-span-1">
             <ColumnSettings
               columns={cols.orderedReorderable}
@@ -335,8 +795,26 @@ export function ModifyDispatchPage() {
           '[&_[data-slot=table-container]]:[scrollbar-color:var(--color-slate-400)_var(--color-slate-100)]',
         )}
       >
-        {/* Desktop: the data table. */}
+        {/* Desktop: the grouped subtotal view, or the flat data table. */}
         <div className="hidden min-h-0 flex-1 sm:flex sm:flex-col">
+          {grouped ? (
+            isLoading ? (
+              <div className="text-muted-foreground flex flex-1 items-center justify-center gap-2 text-sm">
+                <Loader2 className="size-4 animate-spin" /> Loading…
+              </div>
+            ) : (
+              <GroupedDesktopView
+                groups={dateGroups}
+                expanded={expandedParties}
+                onToggle={toggleParty}
+                canEdit={can('dispatch:update')}
+                canDelete={can('dispatch:delete')}
+                showRates={canViewRates}
+                onEdit={(d) => setEditing(d)}
+                onDelete={(d) => handleDelete(d)}
+              />
+            )
+          ) : (
           <DataTable
             columns={cols.visibleColumns}
             rows={items}
@@ -416,15 +894,27 @@ export function ModifyDispatchPage() {
               </div>
             )}
           />
+          )}
         </div>
 
-        {/* Phones: card list mirroring the dispatch-order cards. Own scroll region
-            now that the outer wrapper doesn't scroll (that's the desktop table's
-            job via `fill` above). */}
+        {/* Phones: the grouped subtotal view, or the flat tap-to-edit card list.
+            Own scroll region now that the outer wrapper doesn't scroll (that's
+            the desktop table's job via `fill` above). */}
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto sm:hidden">
           <style>{MODIFY_CARD_CSS}</style>
           {isLoading ? (
             [0, 1, 2, 3].map((i) => <div key={i} className="bg-muted/40 h-44 animate-pulse rounded-2xl border" />)
+          ) : grouped ? (
+            <GroupedMobileView
+              groups={dateGroups}
+              expanded={expandedParties}
+              onToggle={toggleParty}
+              canEdit={can('dispatch:update')}
+              canDelete={can('dispatch:delete')}
+              showRates={canViewRates}
+              onEdit={(d) => setEditing(d)}
+              onDelete={(d) => handleDelete(d)}
+            />
           ) : items.length === 0 ? (
             <div className="text-muted-foreground rounded-2xl border border-dashed bg-card px-4 py-12 text-center text-sm">No dispatch records yet.</div>
           ) : (
@@ -444,13 +934,22 @@ export function ModifyDispatchPage() {
         </div>
       </div>
 
-      {/* ── Footer: paging ─────────────────────────────────────────────────────── */}
+      {/* ── Footer: paging, or (grouped) a quick summary — there's no paging to do
+          once every matching row has already been fetched for the subtotal. ── */}
       <div className="bg-card flex items-center justify-between rounded-[4px] border px-3 py-2 shadow-sm">
-        <p className="text-muted-foreground text-[12px] font-medium">
-          Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
-          <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
-        </p>
-        <div className="flex gap-2">
+        {grouped ? (
+          <p className="text-muted-foreground text-[12px] font-medium">
+            <span className="font-bold tabular-nums text-foreground">{items.length}</span> line{items.length === 1 ? '' : 's'} ·{' '}
+            <span className="font-bold tabular-nums text-foreground">{partyCount}</span> part{partyCount === 1 ? 'y' : 'ies'} ·{' '}
+            <span className="font-bold tabular-nums text-foreground">{dateGroups.length}</span> date{dateGroups.length === 1 ? '' : 's'}
+          </p>
+        ) : (
+          <p className="text-muted-foreground text-[12px] font-medium">
+            Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
+            <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
+          </p>
+        )}
+        <div className={cn('flex gap-2', grouped && 'hidden')}>
           <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
             <ChevronLeft /> Prev
           </Button>

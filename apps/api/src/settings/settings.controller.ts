@@ -14,6 +14,7 @@ import { UpdateOrderFooterDto } from './dto/order-footer.dto';
 import { UpdateChallanTermsDto } from './dto/challan-terms.dto';
 import { UpdateOrderQtyLayoutDto } from './dto/order-qty-layout.dto';
 import { UpdateTcsSettingDto } from './dto/tcs-setting.dto';
+import { UpdateDispatchBagThresholdDto } from './dto/dispatch-bag-threshold.dto';
 
 const R = RESOURCES.SETTING;
 
@@ -99,6 +100,21 @@ export class SettingsController {
   @SkipAudit()
   updateTcsPercent(@Body() dto: UpdateTcsSettingDto, @CurrentUser() user: AuthenticatedUser) {
     return this.settings.updateTcsPercent(dto, user);
+  }
+
+  // Default dispatch bag threshold — readable by any authenticated user (the
+  // Dispatch form needs it to enforce the guardrail), editable only with
+  // setting:update. The service writes its own audit entry (old → new).
+  @Get('dispatch-bag-threshold')
+  getDispatchBagThreshold() {
+    return this.settings.getDispatchBagThreshold();
+  }
+
+  @Put('dispatch-bag-threshold')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @SkipAudit()
+  updateDispatchBagThreshold(@Body() dto: UpdateDispatchBagThresholdDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.settings.updateDispatchBagThreshold(dto, user);
   }
 
   // Order quantity-field layout — read by the New Order form (any authenticated

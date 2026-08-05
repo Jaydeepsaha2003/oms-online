@@ -113,6 +113,7 @@ export class DispatchController {
       id: user.id ?? null,
       name: user.name,
       canApprove: hasPermission(user.permissions, perm(R, ACTIONS.APPROVE)),
+      canOverrideThreshold: hasPermission(user.permissions, perm(R, ACTIONS.OVERRIDE)),
     });
   }
 

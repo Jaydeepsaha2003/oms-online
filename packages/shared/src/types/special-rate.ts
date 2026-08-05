@@ -76,6 +76,9 @@ export interface CustomerBagWeightDto {
   customerId: number;
   category: string;
   kgsPerBag: number;
+  /** Max bags a non-admin (no dispatch:override) may dispatch at once for this
+   *  customer + category. Null = falls back to the global default threshold. */
+  maxBagsPerDispatch: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -85,6 +88,7 @@ export interface SaveCustomerBagWeightInput {
   customerId: number;
   category: string;
   kgsPerBag: number;
+  maxBagsPerDispatch?: number | null;
 }
 
 /** Apply one bag weight to many customers at once. */
@@ -92,6 +96,7 @@ export interface BulkSaveCustomerBagWeightInput {
   customerIds: number[];
   category: string;
   kgsPerBag: number;
+  maxBagsPerDispatch?: number | null;
 }
 
 /** Everything configured for one customer. */

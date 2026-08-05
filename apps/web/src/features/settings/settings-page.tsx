@@ -24,6 +24,7 @@ import {
   useCompany,
   useCreateOrderOption,
   useDeleteOrderOption,
+  useDispatchBagThreshold,
   useOrderFooter,
   useOrderTerms,
   useSettings,
@@ -31,6 +32,7 @@ import {
   useTcsPercent,
   useUpdateChallanTerms,
   useUpdateCompany,
+  useUpdateDispatchBagThreshold,
   useUpdateOrderFooter,
   useUpdateOrderQtyLayout,
   useUpdateOrderTerms,
@@ -68,6 +70,8 @@ export function SettingsPage() {
       <ChallanTermsCard canEdit={canEdit} />
 
       <TcsPercentCard canEdit={canEdit} />
+
+      <DispatchBagThresholdCard canEdit={canEdit} />
 
       <PreferencesCard />
 
@@ -525,6 +529,59 @@ function TcsPercentCard({ canEdit }: { canEdit: boolean }) {
             className="pr-7"
           />
           <span className="text-muted-foreground pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-sm">%</span>
+        </div>
+        {canEdit && (
+          <Button onClick={onSave} disabled={save.isPending}>
+            {save.isPending ? <Loader2 className="animate-spin" /> : null} Save
+          </Button>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Default bag threshold: how many bags a non-admin (no dispatch:override) may
+ *  dispatch at once when the party has no threshold of its own set in Special
+ *  Rates → Bag weight. Blank = no default limit. Every save is audit-logged. */
+function DispatchBagThresholdCard({ canEdit }: { canEdit: boolean }) {
+  const { data } = useDispatchBagThreshold();
+  const save = useUpdateDispatchBagThreshold();
+  const [value, setValue] = useState('');
+
+  useEffect(() => {
+    setValue(data?.maxBagsPerDispatch != null ? String(data.maxBagsPerDispatch) : '');
+  }, [data]);
+
+  const onSave = () => {
+    let maxBagsPerDispatch: number | null = null;
+    if (value.trim() !== '') {
+      maxBagsPerDispatch = Number(value);
+      if (!Number.isFinite(maxBagsPerDispatch) || maxBagsPerDispatch <= 0) {
+        toast.error('Enter a positive number of bags, or leave it blank for no default limit');
+        return;
+      }
+    }
+    save.mutate(
+      { maxBagsPerDispatch },
+      { onSuccess: () => toast.success('Default dispatch bag threshold saved'), onError: (e) => toast.error(getApiErrorMessage(e, 'Save failed')) },
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-start justify-between gap-3 pb-3">
+        <div>
+          <CardTitle className="text-base">Default Dispatch Bag Threshold</CardTitle>
+          <p className="text-muted-foreground text-xs">
+            Max bags a non-admin may dispatch in one go, when the party has no threshold of its own (Special Rates → Bag
+            weight). Leave blank for no default limit — only party-specific thresholds would then apply.
+          </p>
+        </div>
+        <RecordHistory resource={RESOURCES.SETTING} resourceId="DISPATCH_BAG_THRESHOLD" label="Default Dispatch Bag Threshold" />
+      </CardHeader>
+      <CardContent className="flex items-center gap-2">
+        <div className="w-32">
+          <Input type="number" min={0} step="any" value={value} onChange={(e) => setValue(e.target.value)} disabled={!canEdit} placeholder="No limit" />
         </div>
         {canEdit && (
           <Button onClick={onSave} disabled={save.isPending}>

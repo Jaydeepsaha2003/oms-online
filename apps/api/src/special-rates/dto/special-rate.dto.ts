@@ -57,10 +57,14 @@ export class SaveCustomerBagWeightDto {
   @IsInt() customerId!: number;
   @IsString() @MaxLength(255) category!: string;
   @IsNumber() @Min(0.001) kgsPerBag!: number;
+  /** Omit to leave any existing threshold untouched is NOT supported — this is
+   *  a full upsert, so pass null explicitly to clear a previously-set one. */
+  @IsOptional() @IsNumber() @Min(0.001) maxBagsPerDispatch?: number | null;
 }
 
 export class BulkSaveCustomerBagWeightDto {
   @IsArray() @ArrayNotEmpty() @IsInt({ each: true }) customerIds!: number[];
   @IsString() @MaxLength(255) category!: string;
   @IsNumber() @Min(0.001) kgsPerBag!: number;
+  @IsOptional() @IsNumber() @Min(0.001) maxBagsPerDispatch?: number | null;
 }

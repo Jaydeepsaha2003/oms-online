@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ChallanTermsDto, ChallanTermsInput, CompanyProfileDto, CompanyProfileInput, OrderFooterDto, OrderFooterInput, OrderOptionDto, OrderOptionInput, OrderQtyLayout, OrderTermsDto, OrderTermsInput, TcsSettingDto, TcsSettingInput } from '@oms/shared';
+import type { ChallanTermsDto, ChallanTermsInput, CompanyProfileDto, CompanyProfileInput, DispatchBagThresholdDto, DispatchBagThresholdInput, OrderFooterDto, OrderFooterInput, OrderOptionDto, OrderOptionInput, OrderQtyLayout, OrderTermsDto, OrderTermsInput, TcsSettingDto, TcsSettingInput } from '@oms/shared';
 import { http } from '@/lib/api';
 
 const KEY = ['settings'] as const;
@@ -9,6 +9,7 @@ const ORDER_FOOTER_KEY = ['order-footer'] as const;
 const CHALLAN_TERMS_KEY = ['challan-terms'] as const;
 const ORDER_QTY_LAYOUT_KEY = ['order-qty-layout'] as const;
 const TCS_PERCENT_KEY = ['tcs-percent'] as const;
+const DISPATCH_BAG_THRESHOLD_KEY = ['dispatch-bag-threshold'] as const;
 
 export function useCompany() {
   return useQuery({
@@ -107,6 +108,24 @@ export function useUpdateTcsPercent() {
   return useMutation({
     mutationFn: (input: TcsSettingInput) => http.put<TcsSettingDto>('/settings/tcs-percent', input),
     onSuccess: () => qc.invalidateQueries({ queryKey: TCS_PERCENT_KEY }),
+  });
+}
+
+/** Global fallback for the dispatch bag threshold — used when a party has no
+ *  threshold of its own set in Special Rates. */
+export function useDispatchBagThreshold() {
+  return useQuery({
+    queryKey: DISPATCH_BAG_THRESHOLD_KEY,
+    queryFn: () => http.get<DispatchBagThresholdDto>('/settings/dispatch-bag-threshold'),
+    staleTime: 60_000,
+  });
+}
+
+export function useUpdateDispatchBagThreshold() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: DispatchBagThresholdInput) => http.put<DispatchBagThresholdDto>('/settings/dispatch-bag-threshold', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: DISPATCH_BAG_THRESHOLD_KEY }),
   });
 }
 

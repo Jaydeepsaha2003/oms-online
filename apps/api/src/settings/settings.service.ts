@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { ACTIONS, DEFAULT_ORDER_QTY_LAYOUT, normalizeQtyOrder, RESOURCES, type ChallanTermsDto, type CompanyProfileDto, type OrderFooterDto, type OrderOptionDto, type OrderQtyLayout, type OrderTermsDto, type TcsSettingDto } from '@oms/shared';
+import { ACTIONS, DEFAULT_ORDER_QTY_LAYOUT, normalizeQtyOrder, RESOURCES, type ChallanTermsDto, type CompanyProfileDto, type DispatchBagThresholdDto, type OrderFooterDto, type OrderOptionDto, type OrderQtyLayout, type OrderTermsDto, type TcsSettingDto } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { uc } from '../common/coerce';
 import { AuditService } from '../audit/audit.service';
@@ -11,6 +11,7 @@ import { UpdateOrderTermsDto } from './dto/order-terms.dto';
 import { UpdateOrderFooterDto } from './dto/order-footer.dto';
 import { UpdateChallanTermsDto } from './dto/challan-terms.dto';
 import { UpdateTcsSettingDto } from './dto/tcs-setting.dto';
+import { UpdateDispatchBagThresholdDto } from './dto/dispatch-bag-threshold.dto';
 
 type Row = Prisma.OrderOptionGetPayload<object>;
 
@@ -21,6 +22,7 @@ const ORDER_FOOTER = 'ORDER_FOOTER';
 const CHALLAN_TERMS = 'CHALLAN_TERMS';
 const ORDER_QTY_LAYOUT = 'ORDER_QTY_LAYOUT';
 const TCS_PERCENT = 'TCS_PERCENT';
+const DISPATCH_BAG_THRESHOLD = 'DISPATCH_BAG_THRESHOLD';
 // Matches the legacy Form14 rate, kept until the business saves its own %.
 const DEFAULT_TCS_PERCENT = 1;
 // Shown until the business saves their own list from Settings.
@@ -203,6 +205,41 @@ export class SettingsService {
       metadata: { before: before.tcsPercent, after: tcsPercent },
     });
     return { tcsPercent };
+  }
+
+  /* ── Default dispatch bag threshold (global fallback) ─────────────────────
+   * Used when a party has no bag threshold of its own set in Special Rates.
+   * Enforced against non-admins (no dispatch:override) in DispatchService. */
+
+  async getDispatchBagThreshold(): Promise<DispatchBagThresholdDto> {
+    const row = await this.prisma.appConfig.findUnique({ where: { key: DISPATCH_BAG_THRESHOLD } });
+    const parsed = row?.value != null ? Number(row.value) : NaN;
+    return { maxBagsPerDispatch: Number.isFinite(parsed) ? parsed : null };
+  }
+
+  async updateDispatchBagThreshold(dto: UpdateDispatchBagThresholdDto, actor?: AuthenticatedUser): Promise<DispatchBagThresholdDto> {
+    const before = await this.getDispatchBagThreshold();
+    const maxBagsPerDispatch = dto.maxBagsPerDispatch;
+    if (maxBagsPerDispatch == null) {
+      await this.prisma.appConfig.deleteMany({ where: { key: DISPATCH_BAG_THRESHOLD } });
+    } else {
+      await this.prisma.appConfig.upsert({
+        where: { key: DISPATCH_BAG_THRESHOLD },
+        update: { value: String(maxBagsPerDispatch) },
+        create: { key: DISPATCH_BAG_THRESHOLD, value: String(maxBagsPerDispatch) },
+      });
+    }
+    void this.audit.record({
+      userId: actor?.id ?? null,
+      userEmail: actor?.email ?? null,
+      action: ACTIONS.UPDATE,
+      resource: RESOURCES.SETTING,
+      resourceId: DISPATCH_BAG_THRESHOLD,
+      description: `Changed default dispatch bag threshold from ${before.maxBagsPerDispatch ?? 'none'} to ${maxBagsPerDispatch ?? 'none'}`,
+      statusCode: 200,
+      metadata: { before: before.maxBagsPerDispatch, after: maxBagsPerDispatch },
+    });
+    return { maxBagsPerDispatch };
   }
 
   /* ── Order quantity-field layout (per-category Bags/Pcs/Kgs/Box order) ────── */

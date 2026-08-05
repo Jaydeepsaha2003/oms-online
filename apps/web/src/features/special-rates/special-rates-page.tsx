@@ -703,17 +703,24 @@ function BagWeightPanel({
 
   const [category, setCategory] = useState('');
   const [kgsPerBag, setKgsPerBag] = useState('');
+  const [maxBags, setMaxBags] = useState('');
   const categories = lookups?.categories ?? [];
 
   const submit = () => {
     if (!category) return toast.error('Select a category');
     const kg = Number(kgsPerBag);
     if (kgsPerBag.trim() === '' || Number.isNaN(kg) || kg <= 0) return toast.error('Enter the kgs one bag weighs (a positive number)');
-    const common = { category, kgsPerBag: kg };
+    let maxBagsPerDispatch: number | null = null;
+    if (maxBags.trim() !== '') {
+      maxBagsPerDispatch = Number(maxBags);
+      if (Number.isNaN(maxBagsPerDispatch) || maxBagsPerDispatch <= 0) return toast.error('Max bags per dispatch must be a positive number');
+    }
+    const common = { category, kgsPerBag: kg, maxBagsPerDispatch };
     const onSuccess = (msg: string) => {
       toast.success(msg);
       setCategory('');
       setKgsPerBag('');
+      setMaxBags('');
     };
     const onError = (e: unknown) => toast.error(getApiErrorMessage(e, 'Save failed'));
     if (bulk) {
@@ -728,7 +735,7 @@ function BagWeightPanel({
   const onDelete = async (r: CustomerBagWeightDto) => {
     const ok = await confirm({
       title: 'Remove bag weight?',
-      description: `${r.category}: 1 bag = ${r.kgsPerBag} kg will be removed — Kgs will no longer auto-fill from Bags for this category.`,
+      description: `${r.category}: 1 bag = ${r.kgsPerBag} kg will be removed — Kgs will no longer auto-fill from Bags for this category${r.maxBagsPerDispatch ? ', and its dispatch bag threshold will also be cleared' : ''}.`,
       confirmText: 'Remove',
       destructive: true,
     });
@@ -744,6 +751,17 @@ function BagWeightPanel({
       align: 'right',
       cell: (r) => <span className="font-semibold tabular-nums text-amber-700">{r.kgsPerBag.toLocaleString('en-IN')} kg</span>,
     },
+    {
+      id: 'threshold',
+      label: 'Max bags/dispatch',
+      align: 'right',
+      cell: (r) =>
+        r.maxBagsPerDispatch ? (
+          <span className="font-semibold tabular-nums text-rose-700">{r.maxBagsPerDispatch.toLocaleString('en-IN')}</span>
+        ) : (
+          <span className="text-muted-foreground">Default</span>
+        ),
+    },
   ];
 
   return (
@@ -751,13 +769,13 @@ function BagWeightPanel({
       title="Bag weight (Kgs per bag)"
       icon={<Weight className="size-4" />}
       accent={accent}
-      info="For this customer, how many kgs one bag weighs in a category. On the New Order form, typing Bags then auto-fills Kgs = Bags × this weight (the user can still overtype it)."
+      info="For this customer, how many kgs one bag weighs in a category. On the New Order form, typing Bags then auto-fills Kgs = Bags × this weight (the user can still overtype it). You can also cap how many bags a non-admin may dispatch at once for this category — leave it blank to fall back to the default set in Settings."
       badge={bulk ? `${targetCount(target)} customers` : `${bagWeights.length} set`}
       className={className}
     >
       {canCreate && (
         <div className="space-y-3 rounded-lg border bg-slate-50/70 p-3">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
             <div className="space-y-1">
               <Label className="text-xs">Category</Label>
               <NativeSelect value={category} onChange={setCategory} options={categories} placeholder="Category…" />
@@ -765,6 +783,10 @@ function BagWeightPanel({
             <div className="space-y-1">
               <Label className="text-xs">Kgs per 1 bag</Label>
               <Input type="number" step="any" min="0" className="text-right tabular-nums" placeholder="e.g. 70" value={kgsPerBag} onChange={(e) => setKgsPerBag(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Max bags per dispatch</Label>
+              <Input type="number" step="any" min="0" className="text-right tabular-nums" placeholder="Default" value={maxBags} onChange={(e) => setMaxBags(e.target.value)} title="Leave blank to use the default threshold set in Settings" />
             </div>
             <div className="flex items-end">
               <AddButton

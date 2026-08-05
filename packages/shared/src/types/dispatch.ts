@@ -141,6 +141,9 @@ export type DispatchQuery = PaginationQuery & {
   product?: string;
   design?: string;
   agent?: string;
+  /** Dispatch-date range (inclusive), 'YYYY-MM-DD'. */
+  dateFrom?: string;
+  dateTo?: string;
 };
 /** Distinct values present in dispatch records, for the Modify Dispatch filters.
  *  `subCategories` is only populated for the pending pool (Dispatch Order page). */
