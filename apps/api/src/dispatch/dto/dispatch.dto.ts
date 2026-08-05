@@ -39,4 +39,6 @@ export class PendingQueryDto extends PaginationDto {
   @IsOptional() @IsString() subCategory?: string;
   /** "ALL" toggle → product matched as a base name (all design variants). */
   @IsOptional() @Transform(({ value }) => value === true || value === 'true' || value === '1') @IsBoolean() all?: boolean;
+  /** Excel export only: comma-separated column ids (see DISPATCH_EXPORT_COLUMNS). */
+  @IsOptional() @IsString() columns?: string;
 }

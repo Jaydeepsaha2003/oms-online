@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Camera, CalendarClock, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Filter, Flame, Hourglass, Loader2, Package, PackageCheck, RotateCcw, TriangleAlert, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { qtyOrderForCategory, type DispatchStatus, type PendingLineDto, type QtyField } from '@oms/shared';
+import { DISPATCH_EXPORT_COLUMNS, qtyOrderForCategory, type DispatchStatus, type PendingLineDto, type QtyField } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn, shortOrderCode } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
@@ -13,7 +13,7 @@ import { LiveLinePhotos } from '../orders/line-photos';
 import { useOrderItemPhotos } from '../orders/use-orders';
 import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
-import { ExportButton } from '@/components/common/excel-actions';
+import { ExportButton, ExportColumnsDialog } from '@/components/common/excel-actions';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
@@ -25,6 +25,8 @@ import { exportPendingDispatch, useCreateDispatch, usePendingFilterOptions, useP
 import { useDispatchDate } from './use-dispatch-date';
 
 const PAGE_SIZE = 50;
+/** {@link DISPATCH_EXPORT_COLUMNS} reshaped for the export dialog's `{id, label}` prop. */
+const EXPORT_COLUMN_OPTIONS = DISPATCH_EXPORT_COLUMNS.map((c) => ({ id: c.id, label: c.header }));
 const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? 0 : Number(s));
 const qty = (v: number | null) => (v ? v.toLocaleString('en-IN') : '—');
 
@@ -310,18 +312,24 @@ export function DispatchOrderPage() {
   const cols = useColumnOrder('dispatch-pending', columns);
   // Export the pending list under the CURRENTLY applied filters (the server
   // re-runs the same query without paging, so you get every matching line).
-  const onExport = async () => {
+  // The button opens a "which columns?" dialog first; this actually downloads
+  // once the user confirms a column set.
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const onExport = async (columns: string[]) => {
     setExporting(true);
     try {
-      await exportPendingDispatch({
-        dueType: dueType || undefined,
-        customer: customer || undefined,
-        agent: agent || undefined,
-        product: product || undefined,
-        design: design || undefined,
-        subCategory: subCategory || undefined,
-        all: all || undefined,
-      });
+      await exportPendingDispatch(
+        {
+          dueType: dueType || undefined,
+          customer: customer || undefined,
+          agent: agent || undefined,
+          product: product || undefined,
+          design: design || undefined,
+          subCategory: subCategory || undefined,
+          all: all || undefined,
+        },
+        columns,
+      );
     } catch (e) {
       toast.error(getApiErrorMessage(e, 'Excel export failed'));
     } finally {
@@ -416,7 +424,7 @@ export function DispatchOrderPage() {
                 </Button>
               )}
               <div className="min-w-0 flex-1" />
-              {can('dispatch:export') && <ExportButton onClick={onExport} disabled={exporting} label="Export to Excel" />}
+              {can('dispatch:export') && <ExportButton onClick={() => setExportDialogOpen(true)} disabled={exporting} label="Export to Excel" />}
             </div>
           </div>
 
@@ -458,7 +466,7 @@ export function DispatchOrderPage() {
               </Button>
             )}
             <div className="ml-auto flex shrink-0 items-center gap-2">
-              {can('dispatch:export') && <ExportButton onClick={onExport} disabled={exporting} label="Export pending list to Excel" />}
+              {can('dispatch:export') && <ExportButton onClick={() => setExportDialogOpen(true)} disabled={exporting} label="Export pending list to Excel" />}
               <ColumnSettings
                 columns={cols.orderedReorderable}
                 hidden={cols.hidden}
@@ -611,6 +619,17 @@ export function DispatchOrderPage() {
       </Sheet>
 
       {shipped !== null && <DispatchTruckAnimation code={shipped} onDone={() => setShipped(null)} />}
+
+      <ExportColumnsDialog
+        open={exportDialogOpen}
+        onOpenChange={setExportDialogOpen}
+        columns={EXPORT_COLUMN_OPTIONS}
+        storageKey="oms:dispatch-pending-export-columns:v1"
+        onExport={onExport}
+        exporting={exporting}
+        title="Choose columns to export"
+        description="Pick which columns go into the pending-dispatch Excel file."
+      />
     </div>
   );
 }
