@@ -906,17 +906,33 @@ export class DispatchService implements OnModuleInit {
   async update(id: number, dto: UpdateDispatchDto, actor?: Actor): Promise<DispatchDto> {
     const cur = await this.prisma.dispatch.findUnique({ where: { id } });
     if (!cur) throw new NotFoundException('Dispatch not found.');
-    await this.assertNotBilled(id);
+
+    // A billed dispatch may still have its status corrected (Partial ↔ Full) and
+    // its photos managed — those two operations don't change any invoiced quantity.
+    // Everything else (qty, date, remarks) is still guarded by assertNotBilled so the
+    // challan and the dispatch always agree on what was shipped.
+    const wantsQtyOrDateOrComment =
+      dto.bags !== undefined ||
+      dto.pcs !== undefined ||
+      dto.gram !== undefined ||
+      dto.box !== undefined ||
+      dto.comment !== undefined ||
+      dto.dispatchDate !== undefined;
+    if (wantsQtyOrDateOrComment) await this.assertNotBilled(id);
+
+    // For a billed dispatch that sent only a status change, keep all other fields
+    // locked to their current values so we never accidentally touch the billed qty.
+    const isBilled = await this.isBilledDispatch(id);
     const it = await this.prisma.orderItem.findUnique({ where: { id: cur.orderItemId }, include: { dispatches: true } });
     if (!it) throw new NotFoundException('Order line not found.');
 
     // Remaining excludes the dispatch being edited (so its own qty can be changed).
     const others = it.dispatches.filter((d) => d.id !== id);
     const rem = this.remaining(it, others);
-    const bags = dto.bags !== undefined ? toNum(dto.bags) ?? 0 : cur.bags ?? 0;
-    const pcs = dto.pcs !== undefined ? toNum(dto.pcs) ?? 0 : cur.pcs ?? 0;
-    const gram = dto.gram !== undefined ? toNum(dto.gram) ?? 0 : cur.gram ?? 0;
-    const box = dto.box !== undefined ? toNum(dto.box) ?? 0 : cur.box ?? 0;
+    const bags = !isBilled && dto.bags !== undefined ? toNum(dto.bags) ?? 0 : cur.bags ?? 0;
+    const pcs = !isBilled && dto.pcs !== undefined ? toNum(dto.pcs) ?? 0 : cur.pcs ?? 0;
+    const gram = !isBilled && dto.gram !== undefined ? toNum(dto.gram) ?? 0 : cur.gram ?? 0;
+    const box = !isBilled && dto.box !== undefined ? toNum(dto.box) ?? 0 : cur.box ?? 0;
     const status = (dto.dispatchStatus ?? cur.dispatchStatus) as DispatchStatus;
     this.validateQty({ bags, pcs, gram, box }, rem, status, it.calField);
 
@@ -928,9 +944,9 @@ export class DispatchService implements OnModuleInit {
         gram,
         box,
         dispatchStatus: status,
-        ...(dto.comment !== undefined ? { comment: toStr(dto.comment) } : {}),
-        ...(dto.supItem !== undefined ? { supItem: toStr(dto.supItem) } : {}),
-        ...(dto.dispatchDate ? { dispatchDate: new Date(dto.dispatchDate) } : {}),
+        ...(!isBilled && dto.comment !== undefined ? { comment: toStr(dto.comment) } : {}),
+        ...(!isBilled && dto.supItem !== undefined ? { supItem: toStr(dto.supItem) } : {}),
+        ...(!isBilled && dto.dispatchDate ? { dispatchDate: new Date(dto.dispatchDate) } : {}),
       },
     });
 
@@ -967,6 +983,15 @@ export class DispatchService implements OnModuleInit {
     }
     this.invalidatePendingCache(); // edited quantities change remaining-to-dispatch
     return this.toDto(row);
+  }
+
+  /** Returns true when this dispatch is billed on a non-cancelled challan. */
+  private async isBilledDispatch(id: number): Promise<boolean> {
+    const billed = await this.prisma.challanItem.findFirst({
+      where: { dispatchId: id, challan: { challanStatus: { not: 'CANCELLED' } } },
+      select: { id: true },
+    });
+    return !!billed;
   }
 
   async remove(id: number): Promise<void> {

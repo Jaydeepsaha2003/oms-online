@@ -269,8 +269,15 @@ function GroupedLineRow({
       {showRates && <span className="font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(amount)}</span>}
       <div className="ml-auto flex items-center gap-1">
         {canEdit && (
-          <Button variant="ghost" size="icon" className="size-6" onClick={onEdit} disabled={locked} aria-label="Edit" title={locked ? `Billed on ${d.challanCode} — no longer editable` : 'Edit'}>
-            <Pencil className="size-3.5" />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-6"
+            onClick={onEdit}
+            aria-label={locked ? 'Edit status & photos' : 'Edit'}
+            title={locked ? `Billed on ${d.challanCode} — status & photos only` : 'Edit'}
+          >
+            {locked ? <Camera className="size-3.5" /> : <Pencil className="size-3.5" />}
           </Button>
         )}
         {canDelete && (
@@ -468,7 +475,7 @@ function ModifyDispatchCard({
 }) {
   const qtys = ([['Bags', d.bags], ['Pcs', d.pcs], ['Kgs', d.gram], ['Box', d.box]] as const).filter(([, v]) => v && v > 0);
   const amount = d.rate != null ? Math.round(d.rate * ((d.calField ?? '').toUpperCase() === 'PCS' ? (d.pcs ?? 0) : (d.gram ?? 0))) : null;
-  // Billed lines are read-only — see the note on assertNotBilled in dispatch.service.ts.
+  // Billed lines: qty/date/remarks are locked but status & photos can still be changed.
   const locked = !!d.challanCode;
   return (
     <div className="mdisp-card-in bg-card relative overflow-hidden rounded-2xl border shadow-sm" style={{ animationDelay: `${Math.min(index, 10) * 40}ms` }}>
@@ -518,35 +525,33 @@ function ModifyDispatchCard({
         {d.comment && <p className="text-muted-foreground text-[12.5px] leading-snug">{d.comment}</p>}
       </div>
 
-      {locked ? (
-        (canEdit || canDelete) && (
-          <div className="text-muted-foreground flex items-center justify-center gap-1.5 border-t py-2.5 text-[12.5px] font-semibold">
-            <Lock className="size-3.5" /> Billed on {d.challanCode} — read-only
-          </div>
-        )
-      ) : (
-        (canEdit || canDelete) && (
-          <div className="flex border-t text-[13px] font-semibold">
-            {canEdit && (
-              <button type="button" onClick={onEdit} className="text-primary active:bg-primary/5 flex flex-1 items-center justify-center gap-1.5 py-2.5 transition-colors">
-                <Pencil className="size-4" /> Edit
-              </button>
-            )}
-            {canEdit && canDelete && <div className="bg-border w-px" />}
-            {canDelete && (
-              <button type="button" onClick={onDelete} className="text-destructive active:bg-destructive/5 flex flex-1 items-center justify-center gap-1.5 py-2.5 transition-colors">
-                <Trash2 className="size-4" /> Delete
-              </button>
-            )}
-          </div>
-        )
+      {(canEdit || canDelete) && (
+        <div className="flex border-t text-[13px] font-semibold">
+          {canEdit && (
+            <button
+              type="button"
+              onClick={onEdit}
+              className="text-primary active:bg-primary/5 flex flex-1 items-center justify-center gap-1.5 py-2.5 transition-colors"
+              title={locked ? `Billed on ${d.challanCode} — status & photos only` : 'Edit dispatch'}
+            >
+              {locked ? <Camera className="size-4" /> : <Pencil className="size-4" />}
+              {locked ? 'Status & Photos' : 'Edit'}
+            </button>
+          )}
+          {canEdit && canDelete && !locked && <div className="bg-border w-px" />}
+          {canDelete && !locked && (
+            <button type="button" onClick={onDelete} className="text-destructive active:bg-destructive/5 flex flex-1 items-center justify-center gap-1.5 py-2.5 transition-colors">
+              <Trash2 className="size-4" /> Delete
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
 }
 
 export function ModifyDispatchPage() {
-  const { can } = usePermissions();
+  const { can, permissions } = usePermissions();
   const confirm = useConfirm();
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
@@ -1011,6 +1016,7 @@ export function ModifyDispatchPage() {
             ].join(' ')}
             actions={(d) => (
               <div className="flex justify-end gap-1">
+                <DispatchPhotosButton orderItemId={d.orderItemId} isSuperAdmin={permissions.includes(ALL_PERMISSIONS)} />
                 <RecordHistory
                   resource={RESOURCES.DISPATCH}
                   resourceId={d.id}
@@ -1034,11 +1040,10 @@ export function ModifyDispatchPage() {
                     size="icon"
                     className="size-7"
                     onClick={() => setEditing(d)}
-                    disabled={!!d.challanCode}
-                    aria-label="Edit"
-                    title={d.challanCode ? `Billed on ${d.challanCode} — no longer editable` : 'Edit'}
+                    aria-label={d.challanCode ? 'Edit status & photos' : 'Edit'}
+                    title={d.challanCode ? `Billed on ${d.challanCode} — status & photos only` : 'Edit'}
                   >
-                    <Pencil className="size-4" />
+                    {d.challanCode ? <Camera className="size-4" /> : <Pencil className="size-4" />}
                   </Button>
                 )}
                 {can('dispatch:delete') && (
@@ -1150,6 +1155,46 @@ const toDateInput = (iso: string) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
+/** Standalone camera-icon button that opens a read-only photo viewer dialog
+ *  for the given order-item — usable from both the flat table's action column
+ *  and the grouped desktop view's line rows. */
+function DispatchPhotosButton({ orderItemId, isSuperAdmin }: { orderItemId: number; isSuperAdmin: boolean }) {
+  const [open, setOpen] = useState(false);
+  const { data: photos } = useOrderItemPhotos(orderItemId);
+  const count = photos?.length ?? 0;
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="relative size-7"
+        onClick={(e) => { e.stopPropagation(); setOpen(true); }}
+        aria-label="View photos"
+        title={count > 0 ? `View ${count} photo${count === 1 ? '' : 's'}` : 'No photos'}
+      >
+        <Camera className="size-4" />
+        {count > 0 && (
+          <span className="absolute -top-1 -right-1 flex size-3.5 items-center justify-center rounded-full bg-indigo-600 text-[8px] font-bold tabular-nums text-white">
+            {count > 9 ? '9+' : count}
+          </span>
+        )}
+      </Button>
+      {open && (
+        <Dialog open onOpenChange={(o) => !o && setOpen(false)}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Camera className="size-4" /> Line photos
+              </DialogTitle>
+            </DialogHeader>
+            <LiveLinePhotos orderItemId={orderItemId} canEdit={false} canDelete={isSuperAdmin} hideHeader />
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
+  );
+}
+
 function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onClose: () => void }) {
   const { can, permissions } = usePermissions();
   const canApprove = can('dispatch:approve');
@@ -1157,6 +1202,9 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
   // super admin (the '*' wildcard grant, not just dispatch:manage) may delete
   // one — these are proof-of-dispatch, so cleanup is deliberately narrow.
   const isSuperAdmin = permissions.includes(ALL_PERMISSIONS);
+  // Billed dispatches: qty/date/remarks are frozen on the challan — only
+  // dispatchStatus and photos are editable from this dialog.
+  const locked = !!dispatch.challanCode;
   const [photosOpen, setPhotosOpen] = useState(false);
   const { data: photos } = useOrderItemPhotos(dispatch.orderItemId);
   const update = useUpdateDispatch(dispatch.id);
@@ -1186,6 +1234,18 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
 
   const submit = () => {
     if (update.isPending) return; // guard a double-fire (fast Ctrl+S + click)
+    // Billed dispatch: only the status is changeable — skip qty validation and
+    // send only the status so we don't accidentally trigger the backend's billed guard.
+    if (locked) {
+      update.mutate(
+        { dispatchStatus: form.dispatchStatus },
+        {
+          onSuccess: () => { toast.success('Dispatch status updated'); onClose(); },
+          onError: (e) => toast.error(getApiErrorMessage(e, 'Update failed')),
+        },
+      );
+      return;
+    }
     const cf = (dispatch.calField ?? '').toUpperCase();
     if (cf === 'PCS' && num(form.pcs) <= 0) return toast.error('Pcs is required — this item is priced by PCS.');
     if (cf === 'KGS' && num(form.gram) <= 0) return toast.error('Kgs is required to dispatch this item.');
@@ -1258,27 +1318,41 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
             </div>
           </div>
 
-          {/* Dispatch date — editable. Moving it off today needs `dispatch:approve`;
-              without it, everything else in this edit still saves immediately and
-              only the date move itself waits on a sign-off (the dispatch keeps its
-              current date until then). */}
+          {/* Billed-dispatch notice — qty/date/remarks are locked; only status & photos allowed. */}
+          {locked && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-[12.5px] font-medium text-amber-800 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-300">
+              <Lock className="mt-0.5 size-3.5 shrink-0" />
+              <span>
+                Billed on challan <span className="font-bold">{dispatch.challanCode}</span> — quantities, date and remarks are locked.
+                You can still change the <span className="font-bold">dispatch status</span> and <span className="font-bold">manage photos</span>.
+              </span>
+            </div>
+          )}
+
+          {/* Dispatch date — editable (unlocked only). */}
           <div className="space-y-1.5">
             <Label className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">Dispatch date</Label>
-            <Input type="date" value={form.dispatchDate} onChange={(e) => set({ dispatchDate: e.target.value })} className="h-10 text-base tabular-nums" />
-            {dateChanged && !canApprove && (
+            <Input
+              type="date"
+              value={form.dispatchDate}
+              onChange={(e) => set({ dispatchDate: e.target.value })}
+              className="h-10 text-base tabular-nums"
+              disabled={locked}
+            />
+            {dateChanged && !canApprove && !locked && (
               <p className="flex items-center gap-1 text-[11.5px] font-medium text-amber-700 dark:text-amber-400">
                 <TriangleAlert className="size-3.5 shrink-0" /> This move needs admin approval — everything else you change here still saves right away.
               </p>
             )}
           </div>
 
-          {/* Quantities */}
+          {/* Quantities — disabled when billed. */}
           <div className="space-y-1.5">
-            <Label className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">Quantities</Label>
+            <Label className={cn('text-[11px] font-semibold tracking-wide uppercase', locked ? 'text-muted-foreground/50' : 'text-muted-foreground')}>Quantities</Label>
             <div className="grid grid-cols-4 gap-2.5">
               {qtyFields.map(({ key: k, label }) => (
                 <div key={k} className="space-y-1">
-                  <Label className="text-[11px] font-medium">{label}</Label>
+                  <Label className={cn('text-[11px] font-medium', locked && 'text-muted-foreground/50')}>{label}</Label>
                   <Input
                     type="number"
                     step="any"
@@ -1286,13 +1360,14 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
                     className="h-10 text-right text-base tabular-nums"
                     value={form[k]}
                     onChange={(e) => set({ [k]: e.target.value } as Partial<typeof form>)}
+                    disabled={locked}
                   />
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Status — segmented toggle (more tactile than a dropdown). */}
+          {/* Status — always editable, even for billed dispatches. */}
           <div className="space-y-1.5">
             <Label className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">Dispatch status</Label>
             <div className="bg-muted grid grid-cols-2 gap-1 rounded-lg p-1">
@@ -1314,28 +1389,29 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
             </div>
           </div>
 
-          {/* Remarks */}
+          {/* Remarks — disabled when billed. */}
           <div className="space-y-1.5">
-            <Label className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">Remarks</Label>
-            <Input value={form.comment} onChange={(e) => set({ comment: e.target.value })} placeholder="Dispatch remark…" />
+            <Label className={cn('text-[11px] font-semibold tracking-wide uppercase', locked ? 'text-muted-foreground/50' : 'text-muted-foreground')}>Remarks</Label>
+            <Input value={form.comment} onChange={(e) => set({ comment: e.target.value })} placeholder="Dispatch remark…" disabled={locked} />
           </div>
 
-          {/* Line photos — anyone who can open this dialog can view them; only a
-              super admin sees the delete option (see isSuperAdmin above). No
-              adding from here — that stays the Dispatch form's job. */}
-          <div className="rounded-lg border border-slate-200 bg-slate-50/70">
+          {/* Line photos — always accessible. Adding/rearranging allowed for all;
+              deleting only for super admins (proof-of-dispatch cleanup is narrow). */}
+          <div className="rounded-lg border border-slate-200 bg-slate-50/70 dark:border-slate-700 dark:bg-slate-800/30">
             <button type="button" onClick={() => setPhotosOpen((o) => !o)} className="flex w-full items-center justify-between gap-2 px-3 py-2.5">
-              <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
+              <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300">
                 <Camera className="size-3.5" /> Line photos
                 {!!photos?.length && (
-                  <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-indigo-700">{photos.length}</span>
+                  <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300">{photos.length}</span>
                 )}
               </span>
               <ChevronDown className={cn('text-muted-foreground size-4 shrink-0 transition-transform', photosOpen && 'rotate-180')} />
             </button>
             {photosOpen && (
               <div className="px-3 pb-3">
-                <LiveLinePhotos orderItemId={dispatch.orderItemId} canEdit={false} canDelete={isSuperAdmin} hideHeader />
+                {/* canEdit=true so photos can be added/viewed even after billing;
+                    canDelete is restricted to super admins as before. */}
+                <LiveLinePhotos orderItemId={dispatch.orderItemId} canEdit={true} canDelete={isSuperAdmin} hideHeader />
               </div>
             )}
           </div>
