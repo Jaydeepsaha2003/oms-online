@@ -648,14 +648,33 @@ model OrderItem {
   legacyItemId Int?
   createdAt    DateTime @default(now())
 
-  order      Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  dispatches Dispatch[]
-  photos     OrderItemPhoto[]
+  order       Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  dispatches  Dispatch[]
+  photos      OrderItemPhoto[]
+  designTrack DesignTrackEntry?
 
   @@index([orderId])
   @@index([bookingId])
   @@index([legacyItemId])
   @@map("order_items")
+}
+
+/// Design Track's hand-entered processed ("Kalwat") quantity for one order line.
+/// One row per line, created on first entry — lines never touched simply have no
+/// row, which is what distinguishes "nothing processed yet" from "0 processed".
+/// The Remaining figure is NOT stored: it is always bags - kalwat, derived on
+/// read so it cannot fall out of step with an edited order.
+model DesignTrackEntry {
+  orderItemId Int      @id
+  kalwat      Float?
+  /// Who last typed a value, for the audit trail on a manual figure.
+  updatedBy   String?
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  @@map("design_track_entries")
 }
 
 /// A photo attached to an order line (reference image, artwork, packing shot…).

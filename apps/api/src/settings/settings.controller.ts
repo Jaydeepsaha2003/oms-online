@@ -15,6 +15,7 @@ import { UpdateChallanTermsDto } from './dto/challan-terms.dto';
 import { UpdateOrderQtyLayoutDto } from './dto/order-qty-layout.dto';
 import { UpdateTcsSettingDto } from './dto/tcs-setting.dto';
 import { UpdateDispatchBagThresholdDto } from './dto/dispatch-bag-threshold.dto';
+import { UpdateDesignTrackTypesDto } from './dto/design-track-types.dto';
 
 const R = RESOURCES.SETTING;
 
@@ -115,6 +116,20 @@ export class SettingsController {
   @SkipAudit()
   updateDispatchBagThreshold(@Body() dto: UpdateDispatchBagThresholdDto, @CurrentUser() user: AuthenticatedUser) {
     return this.settings.updateDispatchBagThreshold(dto, user);
+  }
+
+  // Design Track's tracked design types — readable by any authenticated user
+  // (the grid needs them), editable only with setting:update.
+  @Get('design-track-types')
+  getDesignTrackTypes() {
+    return this.settings.getDesignTrackTypes();
+  }
+
+  @Put('design-track-types')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Updated the tracked design types for Design Track' })
+  updateDesignTrackTypes(@Body() dto: UpdateDesignTrackTypesDto) {
+    return this.settings.updateDesignTrackTypes(dto);
   }
 
   // Order quantity-field layout — read by the New Order form (any authenticated

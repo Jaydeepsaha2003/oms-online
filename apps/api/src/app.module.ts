@@ -33,6 +33,7 @@ import { OrdersModule } from './orders/orders.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { QuotationsModule } from './quotations/quotations.module';
 import { DispatchModule } from './dispatch/dispatch.module';
+import { DesignTrackModule } from './design-track/design-track.module';
 import { ChallansModule } from './challans/challans.module';
 import { SpecialRatesModule } from './special-rates/special-rates.module';
 import { CrmModule } from './crm/crm.module';
@@ -91,6 +92,7 @@ import { ApprovalsModule } from './approvals/approvals.module';
     BookingsModule,
     QuotationsModule,
     DispatchModule,
+    DesignTrackModule,
     ChallansModule,
     SpecialRatesModule,
     CrmModule,

@@ -258,7 +258,13 @@ export const MENU: MenuNode[] = [
     id: 'dispatch-group',
     label: 'Dispatch',
     icon: 'Truck',
-    anyPermission: [perm(RESOURCES.DISPATCH, ACTIONS.VIEW), perm(RESOURCES.DISPATCH, ACTIONS.CREATE)],
+    anyPermission: [
+      perm(RESOURCES.DISPATCH, ACTIONS.VIEW),
+      perm(RESOURCES.DISPATCH, ACTIONS.CREATE),
+      // Otherwise a role granted only Design Track would see no Dispatch group
+      // at all, and so no way to reach the page it can actually open.
+      perm(RESOURCES.DESIGN_TRACK, ACTIONS.VIEW),
+    ],
     children: [
       {
         id: 'dispatch-order',
@@ -274,6 +280,13 @@ export const MENU: MenuNode[] = [
         to: '/dispatch',
         icon: 'PackageCheck',
         permission: perm(RESOURCES.DISPATCH, ACTIONS.VIEW),
+      },
+      {
+        id: 'design-track',
+        label: 'Design Track',
+        to: '/dispatch/design-track',
+        icon: 'Sparkles',
+        permission: perm(RESOURCES.DESIGN_TRACK, ACTIONS.VIEW),
       },
     ],
   },

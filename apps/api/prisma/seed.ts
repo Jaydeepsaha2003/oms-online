@@ -57,6 +57,7 @@ async function seedRoles() {
   const idByKey = new Map(allPerms.map((p) => [p.key, p.id]));
 
   let created = 0;
+  let toppedUp = 0;
   for (const role of SYSTEM_ROLES) {
     const existing = await prisma.role.findUnique({ where: { name: role.name } });
     const record = await prisma.role.upsert({
@@ -72,20 +73,40 @@ async function seedRoles() {
       },
     });
 
-    if (existing) continue; // Permissions already exist — an admin may have customized them since; leave them alone.
-    created++;
-
     const keys = role.permissions === ALL_PERMISSIONS ? ALL_PERMISSION_KEYS : role.permissions;
-    const permissionIds = keys
-      .map((k) => idByKey.get(k))
-      .filter((id): id is string => Boolean(id));
-    if (permissionIds.length) {
-      await prisma.rolePermission.createMany({
-        data: permissionIds.map((permissionId) => ({ roleId: record.id, permissionId })),
-      });
+    const permissionIds = keys.map((k) => idByKey.get(k)).filter((id): id is string => Boolean(id));
+
+    if (!existing) {
+      created++;
+      if (permissionIds.length) {
+        await prisma.rolePermission.createMany({
+          data: permissionIds.map((permissionId) => ({ roleId: record.id, permissionId })),
+        });
+      }
+      continue;
+    }
+
+    // The role already exists, so its grants are whatever an admin has settled
+    // on — do NOT replace them. The one exception is super admin, whose whole
+    // definition is "everything": it holds the expanded key list rather than a
+    // wildcard, so a permission added by a later release would never reach it
+    // and its own new screens would be invisible to it. Top up the missing keys
+    // (additive only — nothing is ever revoked here). The API separately refuses
+    // to narrow this role, so there is no customization to preserve.
+    if (role.permissions !== ALL_PERMISSIONS) continue;
+    const held = new Set(
+      (await prisma.rolePermission.findMany({ where: { roleId: record.id }, select: { permissionId: true } })).map((r) => r.permissionId),
+    );
+    const missing = permissionIds.filter((id) => !held.has(id));
+    if (missing.length) {
+      await prisma.rolePermission.createMany({ data: missing.map((permissionId) => ({ roleId: record.id, permissionId })) });
+      toppedUp += missing.length;
     }
   }
-  console.log(`✓ Roles: ${created} created with default permissions, ${SYSTEM_ROLES.length - created} already existed (left as-is)`);
+  console.log(
+    `✓ Roles: ${created} created with default permissions, ${SYSTEM_ROLES.length - created} already existed (grants left as-is)` +
+      (toppedUp ? `; super admin topped up with ${toppedUp} new permission(s)` : ''),
+  );
 }
 
 async function seedAdmin() {

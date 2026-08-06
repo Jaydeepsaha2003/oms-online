@@ -48,6 +48,9 @@ export const RESOURCES = {
   DISPATCH: 'dispatch',
   /** Challan / tax invoice (legacy PendChallan + Form14). */
   CHALLAN: 'challan',
+  /** Dispatch → Design Track: pending order lines for the design types the
+   *  business is tracking, with a manually-entered processed ("Kalwat") qty. */
+  DESIGN_TRACK: 'designtrack',
   PRODUCT: 'product',
   DESIGN: 'design',
   DESIGN_NAME: 'designname',
@@ -160,6 +163,13 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
     label: 'Challan / Invoices',
     group: 'Sales',
     actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.PRINT, ACTIONS.MANAGE],
+  },
+  {
+    resource: RESOURCES.DESIGN_TRACK,
+    label: 'Design Track',
+    group: 'Sales',
+    // `update` is what lets someone type a Kalwat qty; view is read-only.
+    actions: [ACTIONS.VIEW, ACTIONS.UPDATE, ACTIONS.EXPORT],
   },
   { resource: RESOURCES.CUSTOMER, label: 'Customers', group: 'Sales', actions: STANDARD },
   { resource: RESOURCES.AGENT, label: 'Agents', group: 'Sales', actions: STANDARD },

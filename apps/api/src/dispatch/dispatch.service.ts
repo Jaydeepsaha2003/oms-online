@@ -245,6 +245,17 @@ export class DispatchService implements OnModuleInit {
   /** The full pool of order lines still awaiting dispatch (ordered − dispatched > 0),
    *  before any dropdown/search filtering. Shared by the list and its filter options.
    *  Cached for {@link PENDING_CACHE_TTL_MS} (see note above). */
+  /**
+   * The pending-line pool, for other modules that must work from exactly the
+   * same lines this screen shows — currently Design Track. Deliberately a thin
+   * wrapper rather than making the computation public: callers share the same
+   * short-lived cache and cannot bypass it with their own query, so the two
+   * screens can never disagree about what "pending" means.
+   */
+  async pendingPool(): Promise<PendingLineDto[]> {
+    return this.computePendingLines();
+  }
+
   private async computePendingLines(): Promise<PendingLineDto[]> {
     if (this.pendingCache && Date.now() - this.pendingCache.at < PENDING_CACHE_TTL_MS) {
       return this.pendingCache.lines;

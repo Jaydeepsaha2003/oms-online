@@ -36,6 +36,7 @@ const PriceHistoryPage = lazy(() => import('@/features/bookings/price-history-pa
 const QuotationsPage = lazy(() => import('@/features/quotations/quotations-page').then((m) => ({ default: m.QuotationsPage })));
 const DispatchOrderPage = lazy(() => import('@/features/dispatch/dispatch-order-page').then((m) => ({ default: m.DispatchOrderPage })));
 const ModifyDispatchPage = lazy(() => import('@/features/dispatch/modify-dispatch-page').then((m) => ({ default: m.ModifyDispatchPage })));
+const DesignTrackPage = lazy(() => import('@/features/design-track/design-track-page').then((m) => ({ default: m.DesignTrackPage })));
 const SpecialRatesPage = lazy(() => import('@/features/special-rates/special-rates-page').then((m) => ({ default: m.SpecialRatesPage })));
 const PendingChallanPage = lazy(() => import('@/features/challans/pending-challan-page').then((m) => ({ default: m.PendingChallanPage })));
 const ChallanFormPage = lazy(() => import('@/features/challans/challan-form-page').then((m) => ({ default: m.ChallanFormPage })));
@@ -330,6 +331,14 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.DISPATCH, ACTIONS.VIEW)}>
                 <ModifyDispatchPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/dispatch/design-track"
+            element={
+              <RequirePermission permission={perm(RESOURCES.DESIGN_TRACK, ACTIONS.VIEW)}>
+                <DesignTrackPage />
               </RequirePermission>
             }
           />

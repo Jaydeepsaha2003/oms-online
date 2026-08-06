@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { ACTIONS, DEFAULT_ORDER_QTY_LAYOUT, normalizeQtyOrder, RESOURCES, type ChallanTermsDto, type CompanyProfileDto, type DispatchBagThresholdDto, type OrderFooterDto, type OrderOptionDto, type OrderQtyLayout, type OrderTermsDto, type TcsSettingDto } from '@oms/shared';
+import { ACTIONS, DEFAULT_ORDER_QTY_LAYOUT, normalizeQtyOrder, RESOURCES, resolveLineDesign, type ChallanTermsDto, type CompanyProfileDto, type DesignTrackTypesDto, type DispatchBagThresholdDto, type OrderFooterDto, type OrderOptionDto, type OrderQtyLayout, type OrderTermsDto, type TcsSettingDto } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { uc } from '../common/coerce';
 import { AuditService } from '../audit/audit.service';
@@ -12,6 +12,7 @@ import { UpdateOrderFooterDto } from './dto/order-footer.dto';
 import { UpdateChallanTermsDto } from './dto/challan-terms.dto';
 import { UpdateTcsSettingDto } from './dto/tcs-setting.dto';
 import { UpdateDispatchBagThresholdDto } from './dto/dispatch-bag-threshold.dto';
+import { UpdateDesignTrackTypesDto } from './dto/design-track-types.dto';
 
 type Row = Prisma.OrderOptionGetPayload<object>;
 
@@ -22,6 +23,7 @@ const ORDER_FOOTER = 'ORDER_FOOTER';
 const CHALLAN_TERMS = 'CHALLAN_TERMS';
 const ORDER_QTY_LAYOUT = 'ORDER_QTY_LAYOUT';
 const TCS_PERCENT = 'TCS_PERCENT';
+const DESIGN_TRACK_TYPES = 'DESIGN_TRACK_TYPES';
 const DISPATCH_BAG_THRESHOLD = 'DISPATCH_BAG_THRESHOLD';
 // Matches the legacy Form14 rate, kept until the business saves its own %.
 const DEFAULT_TCS_PERCENT = 1;
@@ -240,6 +242,47 @@ export class SettingsService {
       metadata: { before: before.maxBagsPerDispatch, after: maxBagsPerDispatch },
     });
     return { maxBagsPerDispatch };
+  }
+
+  /* ── Design Track: which design types the grid may show ───────────────────
+   * `available` is every DISTINCT design type currently sitting on an order line
+   * — deduplicated, so a design used by 200 lines is offered once. Combination
+   * names ("WL+LOGO") are real design types in this data and are listed as they
+   * are; the "NA"-family placeholders are not designs and are excluded. */
+
+  async getDesignTrackTypes(): Promise<DesignTrackTypesDto> {
+    const [row, lines] = await Promise.all([
+      this.prisma.appConfig.findUnique({ where: { key: DESIGN_TRACK_TYPES } }),
+      this.prisma.orderItem.findMany({ select: { design: true, designType: true } }),
+    ]);
+
+    const available = [...new Set(lines.map(resolveLineDesign).filter((d): d is string => !!d))].sort((a, b) =>
+      a.localeCompare(b),
+    );
+
+    let selected: string[] = [];
+    if (row?.value) {
+      try {
+        const parsed = JSON.parse(row.value);
+        if (Array.isArray(parsed)) selected = parsed.map((t) => String(t));
+      } catch {
+        /* fall through to nothing selected */
+      }
+    }
+    return { selected, available };
+  }
+
+  async updateDesignTrackTypes(dto: UpdateDesignTrackTypesDto): Promise<DesignTrackTypesDto> {
+    // Store upper-cased and deduplicated — the grid matches case-insensitively,
+    // so keeping two casings of one design would be a silent no-op difference.
+    const selected = [...new Set(dto.selected.map((t) => t.trim().toUpperCase()).filter(Boolean))].sort();
+    const value = JSON.stringify(selected);
+    await this.prisma.appConfig.upsert({
+      where: { key: DESIGN_TRACK_TYPES },
+      update: { value },
+      create: { key: DESIGN_TRACK_TYPES, value },
+    });
+    return this.getDesignTrackTypes();
   }
 
   /* ── Order quantity-field layout (per-category Bags/Pcs/Kgs/Box order) ────── */
