@@ -206,6 +206,10 @@ export interface DraftChallanInput {
 
 export interface ChallanDraftItem {
   dispatchId: number | null;
+  /** The source dispatch's order line — lets Modify Challan show that line's
+   *  reference photos (see the Dispatch photo-documentation feature). Null for
+   *  a manual/SCRAP line with no dispatch behind it. */
+  orderItemId: number | null;
   orderId: number | null;
   orderCode: string | null;
   productName: string | null;

@@ -9,10 +9,11 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useColumnOrder } from '@/hooks/use-column-order';
 import { usePageSize } from '@/hooks/use-page-size';
-import { useOrderQtyLayout } from '@/features/settings/use-settings';
+import { settingValues, useOrderQtyLayout, useSettings } from '@/features/settings/use-settings';
 import { LiveLinePhotos } from '../orders/line-photos';
 import { useOrderItemPhotos } from '../orders/use-orders';
 import { useConfirm } from '@/components/common/confirm';
+import { CancelReasonFields } from '@/components/common/cancel-reason';
 import { ColumnSettings } from '@/components/common/column-settings';
 import { PageSizeSelect } from '@/components/common/page-size-select';
 import { ExportButton, ExportColumnsDialog } from '@/components/common/excel-actions';
@@ -22,8 +23,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
-import { exportPendingDispatch, useCreateDispatch, useDispatchPhotoCheck, usePendingFilterOptions, usePendingOrders } from './use-dispatch';
+import { exportPendingDispatch, useCreateDispatch, useDispatchPhotoCheck, useLineLock, usePendingFilterOptions, usePendingOrders } from './use-dispatch';
 import { useDispatchDate } from './use-dispatch-date';
 
 /** {@link DISPATCH_EXPORT_COLUMNS} reshaped for the export dialog's `{id, label}` prop. */
@@ -259,7 +261,11 @@ export function DispatchOrderPage() {
   // Default → short base-name list (one pick = all its designs). ALL on → the full
   // list with every design variant, so a pick targets that specific item.
   const productOptions = all ? (options?.products ?? []) : (options?.productBases ?? []);
-  const { data, isLoading } = usePendingOrders(query);
+  // Live refresh every 2s so the shop floor always sees the current pending
+  // pool — but never while someone has a line open to dispatch (the sheet
+  // below): a background refetch mid-entry would be jarring, and a successful
+  // dispatch already forces its own immediate refresh via useCreateDispatch.
+  const { data, isLoading } = usePendingOrders(query, { autoRefresh: !active });
   const hasFilters = !!dueType || !!customer || !!agent || !!product || !!design || !!subCategory || all;
   const resetFilters = () => {
     setDueType('');
@@ -750,22 +756,34 @@ function DispatchSheet({
 }) {
   const create = useCreateDispatch();
   const confirm = useConfirm();
+  // Editing lock: someone else with this same line open elsewhere (here or in
+  // Modify Dispatch) blocks this sheet outright — closed immediately with who
+  // has it, rather than letting two people type quantities into the same line.
+  const lockDenied = useLineLock(line.orderItemId);
+  useEffect(() => {
+    if (!lockDenied) return;
+    toast.error(lockDenied);
+    onClose();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lockDenied]);
   const { can } = usePermissions();
   const isMobile = useIsMobile();
   const { data: existingPhotos } = useOrderItemPhotos(line.orderItemId);
-  // Has this party + item + design ever been documented with a photo? Combined
-  // with `existingPhotos` (not just the check's own snapshot) so Save unlocks
-  // the instant a photo finishes uploading, without waiting on this query to
-  // refetch — see the note on useDispatchPhotoCheck.
+  // Plain items (no design) never need a reference photo — only design items do.
+  const hasDesign = !!line.designType && line.designType.trim().toUpperCase() !== 'NA';
+  // Has this party + item (product + size) + design ever been documented with a
+  // photo? Combined with `existingPhotos` (not just the check's own snapshot) so
+  // Save unlocks the instant a photo finishes uploading, without waiting on this
+  // query to refetch — see the note on useDispatchPhotoCheck.
   const photoCheck = useDispatchPhotoCheck(line.orderItemId);
   const hasPhotoOnFile = !!photoCheck.data?.hasPhoto || (existingPhotos?.length ?? 0) > 0;
   const photoCheckReady = !photoCheck.isLoading;
   // Photos default collapsed on phones — packing staff mainly need qty entry,
   // and the sheet should fit with minimal scrolling. Desktop keeps it open.
-  // Forced open once we know there's nothing on file yet, on either platform,
-  // so the requirement is impossible to miss.
+  // Forced open once we know there's nothing on file yet (design items only), on
+  // either platform, so the requirement is impossible to miss.
   const [photosOpenManual, setPhotosOpenManual] = useState<boolean | null>(null);
-  const photosOpen = photosOpenManual ?? (!photoCheckReady ? !isMobile : !hasPhotoOnFile || !isMobile);
+  const photosOpen = photosOpenManual ?? (!hasDesign ? !isMobile : !photoCheckReady ? !isMobile : !hasPhotoOnFile || !isMobile);
   const setPhotosOpen = (v: boolean) => setPhotosOpenManual(v);
   // Bags/Pcs/Kgs/Box entry order follows this line's product category, per
   // Settings → Order quantity fields — same layout as the New Order form.
@@ -789,6 +807,40 @@ function DispatchSheet({
       box: String(line.remBox || ''),
       dispatchStatus: 'FULLY DISPATCH',
     });
+
+  // Over-dispatch reason: quantity typed exceeds what's left on the line. Never
+  // silent — a reason (managed in Settings → Dispatch Overage Reasons) is
+  // required before it can save. Pending qty/over-list sits here while the
+  // dialog is open; doCreate() below is the single path that actually saves.
+  const [overageOpen, setOverageOpen] = useState(false);
+  const [overagePending, setOveragePending] = useState<{
+    bags: number; pcs: number; gram: number; box: number;
+    over: readonly (readonly [string, number, number | null])[];
+  } | null>(null);
+  const { data: settings } = useSettings();
+  const overageReasons = useMemo(() => settingValues(settings, 'DISPATCH_OVERAGE_REASON'), [settings]);
+
+  const doCreate = (bags: number, pcs: number, gram: number, box: number, status: DispatchStatus, extraComment?: string) => {
+    const comment = [form.comment.trim(), extraComment].filter(Boolean).join(' | ') || null;
+    create.mutate(
+      { orderItemId: line.orderItemId, bags, pcs, gram, box, dispatchStatus: status, comment, dispatchDate },
+      {
+        onSuccess: (res) => {
+          if (res.status === 'CREATED') {
+            onDispatched(res.dispatch.code ?? '');
+          } else {
+            // Back-dated, and this user can't approve it themselves — nothing was
+            // created; it's now waiting in Approvals.
+            toast.info(`Sent for approval — ${res.approvalCode}`, {
+              description: 'This dispatch needs an admin sign-off before it takes effect.',
+            });
+            onClose();
+          }
+        },
+        onError: (e) => toast.error(getApiErrorMessage(e, 'Dispatch failed')),
+      },
+    );
+  };
 
   const submit = async () => {
     // Guard against a double-fire (fast double-tap, or the Ctrl+S shortcut pressed
@@ -821,26 +873,11 @@ function DispatchSheet({
 
     let status = form.dispatchStatus;
     if (over.length) {
-      const ok = await confirm({
-        title: 'Dispatch more than what remains?',
-        description: (
-          <>
-            This goes past what's left on this order line:
-            <ul className="mt-1.5 list-disc space-y-0.5 pl-4">
-              {over.map(([label, v, rem]) => (
-                <li key={label}>
-                  <span className="font-semibold">{label}</span>: dispatching {n(v)}, only {n(rem ?? 0)} remaining.
-                </li>
-              ))}
-            </ul>
-            <p className="mt-2">The line will be marked Fully Dispatched. Continue anyway?</p>
-          </>
-        ),
-        confirmText: 'Dispatch anyway',
-        destructive: true,
-      });
-      if (!ok) return;
-      status = 'FULLY DISPATCH'; // nothing is left pending once you go over
+      // A reason is required (no silent/blind confirm) — opens the dialog below
+      // and stops here; doCreate() picks up once a reason is chosen.
+      setOveragePending({ bags, pcs, gram, box, over });
+      setOverageOpen(true);
+      return;
     } else {
       // Exact-remaining Kgs is suspicious: real dispatched weight is almost always
       // a little more or less than the ordered amount. Nudge the user to re-check
@@ -864,24 +901,23 @@ function DispatchSheet({
         if (!ok) return;
       }
     }
-    create.mutate(
-      { orderItemId: line.orderItemId, bags, pcs, gram, box, dispatchStatus: status, comment: form.comment.trim() || null, dispatchDate },
-      {
-        onSuccess: (res) => {
-          if (res.status === 'CREATED') {
-            onDispatched(res.dispatch.code ?? '');
-          } else {
-            // Back-dated, and this user can't approve it themselves — nothing was
-            // created; it's now waiting in Approvals.
-            toast.info(`Sent for approval — ${res.approvalCode}`, {
-              description: 'This dispatch needs an admin sign-off before it takes effect.',
-            });
-            onClose();
-          }
-        },
-        onError: (e) => toast.error(getApiErrorMessage(e, 'Dispatch failed')),
-      },
-    );
+    doCreate(bags, pcs, gram, box, status);
+  };
+
+  // Confirms the overage dialog: a reason is mandatory, then it always saves
+  // Fully Dispatched (nothing is left pending once you go over).
+  const [overageReason, setOverageReason] = useState('');
+  const [overageNote, setOverageNote] = useState('');
+  const confirmOverage = () => {
+    if (!overagePending) return;
+    if (!overageReason.trim()) return toast.error('Please choose a reason.');
+    const { bags, pcs, gram, box } = overagePending;
+    const tag = `Overage — ${overageReason.trim()}${overageNote.trim() ? `: ${overageNote.trim()}` : ''}`;
+    doCreate(bags, pcs, gram, box, 'FULLY DISPATCH', tag);
+    setOverageOpen(false);
+    setOverageReason('');
+    setOverageNote('');
+    setOveragePending(null);
   };
 
   // Ctrl/Cmd+S saves the dispatch (bound once; always calls the latest submit).
@@ -999,8 +1035,9 @@ function DispatchSheet({
         {/* Reference-photo requirement: this party + item + design must have a
             photo on file (from history, or attached right here) before Save
             unlocks — see useDispatchPhotoCheck. No override; the backend
-            enforces the same rule if this is somehow bypassed client-side. */}
-        {photoCheckReady && (
+            enforces the same rule if this is somehow bypassed client-side.
+            Plain items (no design) never need one, so nothing shows here. */}
+        {hasDesign && photoCheckReady && (
           <div
             className={cn(
               'flex items-start gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold',
@@ -1041,7 +1078,10 @@ function DispatchSheet({
           </button>
           {photosOpen && (
             <div className="px-3 pb-3">
-              <LiveLinePhotos orderItemId={line.orderItemId} canEdit={can('order:update')} hideHeader />
+              {/* Photos captured here are permanent proof-of-dispatch — once
+                  attached, nobody can remove one from this screen (see the
+                  admin-only delete in Modify Dispatch instead). */}
+              <LiveLinePhotos orderItemId={line.orderItemId} canEdit={can('order:update')} canDelete={false} hideHeader />
             </div>
           )}
         </div>
@@ -1065,6 +1105,34 @@ function DispatchSheet({
           </Button>
         </div>
       </SheetFooter>
+
+      <Dialog open={overageOpen} onOpenChange={(o) => { if (!o) { setOverageOpen(false); setOveragePending(null); } }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Dispatch more than what remains?</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4">
+            <div className="text-muted-foreground text-sm">
+              This goes past what's left on this order line:
+              <ul className="mt-1.5 list-disc space-y-0.5 pl-4">
+                {overagePending?.over.map(([label, v, rem]) => (
+                  <li key={label}>
+                    <span className="text-foreground font-semibold">{label}</span>: dispatching {v.toLocaleString('en-IN')}, only {(rem ?? 0).toLocaleString('en-IN')} remaining.
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2">The line will be marked Fully Dispatched.</p>
+            </div>
+            <CancelReasonFields reasons={overageReasons} reason={overageReason} note={overageNote} onReason={setOverageReason} onNote={setOverageNote} />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => { setOverageOpen(false); setOveragePending(null); }}>Cancel</Button>
+            <Button type="button" variant="destructive" onClick={confirmOverage} disabled={create.isPending}>
+              {create.isPending ? <Loader2 className="animate-spin" /> : <Truck />} Dispatch anyway
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </SheetContent>
   );
 }

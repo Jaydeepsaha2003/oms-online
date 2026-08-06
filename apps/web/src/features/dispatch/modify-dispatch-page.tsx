@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarRange, ChevronDown, ChevronLeft, ChevronRight, Layers, Loader2, Lock, Pencil, Search, Trash2, TriangleAlert, Users } from 'lucide-react';
+import { Camera, CalendarRange, ChevronDown, ChevronLeft, ChevronRight, Layers, Loader2, Lock, Pencil, Search, Trash2, TriangleAlert, Users } from 'lucide-react';
 import { toast } from 'sonner';
-import { DISPATCH_STATUSES, MAX_PAGE_SIZE, RESOURCES, qtyOrderForCategory, type DispatchDto, type QtyField } from '@oms/shared';
+import { ALL_PERMISSIONS, DISPATCH_STATUSES, MAX_PAGE_SIZE, RESOURCES, qtyOrderForCategory, type DispatchDto, type QtyField } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn, shortDispatchCode, shortOrderCode } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
@@ -23,7 +23,9 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { DateRangeCalendar } from '@/components/common/date-range-calendar';
 import { PRESETS, presetRange } from '@/features/challans/date-presets';
-import { useDeleteDispatch, useDispatches, useDispatchFilterOptions, useUpdateDispatch } from './use-dispatch';
+import { useDeleteDispatch, useDispatches, useDispatchFilterOptions, useLineLock, useUpdateDispatch } from './use-dispatch';
+import { LiveLinePhotos } from '../orders/line-photos';
+import { useOrderItemPhotos } from '../orders/use-orders';
 
 const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? 0 : Number(s));
 const qty = (v: number | null) => (v ? v.toLocaleString('en-IN') : '—');
@@ -606,7 +608,9 @@ export function ModifyDispatchPage() {
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
   };
-  const { data, isLoading } = useDispatches(query);
+  // Live refresh every 2s — paused while the edit dialog is open, so a
+  // background refetch can never reset a quantity someone is mid-editing.
+  const { data, isLoading } = useDispatches(query, { autoRefresh: !editing });
   const del = useDeleteDispatch();
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
@@ -989,9 +993,24 @@ const toDateInput = (iso: string) => {
 };
 
 function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onClose: () => void }) {
-  const { can } = usePermissions();
+  const { can, permissions } = usePermissions();
   const canApprove = can('dispatch:approve');
+  // Everyone who can open this dialog can VIEW the line's photos; only a true
+  // super admin (the '*' wildcard grant, not just dispatch:manage) may delete
+  // one — these are proof-of-dispatch, so cleanup is deliberately narrow.
+  const isSuperAdmin = permissions.includes(ALL_PERMISSIONS);
+  const [photosOpen, setPhotosOpen] = useState(false);
+  const { data: photos } = useOrderItemPhotos(dispatch.orderItemId);
   const update = useUpdateDispatch(dispatch.id);
+  // Editing lock: blocks this dialog outright if someone else already has this
+  // same order line open — here or in the Dispatch form on the same item.
+  const lockDenied = useLineLock(dispatch.orderItemId);
+  useEffect(() => {
+    if (!lockDenied) return;
+    toast.error(lockDenied);
+    onClose();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lockDenied]);
   const { data: qtyLayout } = useOrderQtyLayout();
   const qtyFields = useMemo(() => orderedQtyFields(qtyLayout, dispatch.pCategory), [qtyLayout, dispatch.pCategory]);
   const s = (v: number | null) => (v == null ? '' : String(v));
@@ -1141,6 +1160,26 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
           <div className="space-y-1.5">
             <Label className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">Remarks</Label>
             <Input value={form.comment} onChange={(e) => set({ comment: e.target.value })} placeholder="Dispatch remark…" />
+          </div>
+
+          {/* Line photos — anyone who can open this dialog can view them; only a
+              super admin sees the delete option (see isSuperAdmin above). No
+              adding from here — that stays the Dispatch form's job. */}
+          <div className="rounded-lg border border-slate-200 bg-slate-50/70">
+            <button type="button" onClick={() => setPhotosOpen((o) => !o)} className="flex w-full items-center justify-between gap-2 px-3 py-2.5">
+              <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
+                <Camera className="size-3.5" /> Line photos
+                {!!photos?.length && (
+                  <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-indigo-700">{photos.length}</span>
+                )}
+              </span>
+              <ChevronDown className={cn('text-muted-foreground size-4 shrink-0 transition-transform', photosOpen && 'rotate-180')} />
+            </button>
+            {photosOpen && (
+              <div className="px-3 pb-3">
+                <LiveLinePhotos orderItemId={dispatch.orderItemId} canEdit={false} canDelete={isSuperAdmin} hideHeader />
+              </div>
+            )}
           </div>
         </div>
 

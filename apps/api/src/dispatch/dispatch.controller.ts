@@ -93,6 +93,27 @@ export class DispatchController {
     return this.dispatch.photoCheck(orderItemId);
   }
 
+  /** Claim the editing lock on an order line — called when the Dispatch sheet
+   *  or Modify Dispatch's edit dialog opens, and renewed while it stays open.
+   *  409s (with who's holding it) if someone else already has it. Gated on
+   *  `view` (not create/update) since both a new-dispatch and an edit flow
+   *  share this one lock space, and view is the one thing both require. */
+  @Post('lock/:orderItemId')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  @SkipAudit()
+  lock(@Param('orderItemId', ParseIntPipe) orderItemId: number, @CurrentUser() user: AuthenticatedUser) {
+    return this.dispatch.acquireLock(orderItemId, { id: user.id, name: user.name });
+  }
+
+  /** Release the editing lock — called when the sheet/dialog closes. */
+  @Delete('lock/:orderItemId')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  @SkipAudit()
+  unlock(@Param('orderItemId', ParseIntPipe) orderItemId: number, @CurrentUser() user: AuthenticatedUser) {
+    this.dispatch.releaseLock(orderItemId, { id: user.id });
+    return { ok: true };
+  }
+
   @Get()
   @Permissions(perm(R, ACTIONS.VIEW))
   async list(@Query() query: DispatchQueryDto, @CurrentUser() user: AuthenticatedUser) {

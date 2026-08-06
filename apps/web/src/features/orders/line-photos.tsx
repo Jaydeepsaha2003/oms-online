@@ -71,6 +71,7 @@ const LIGHTBOX_CSS = `
 function PhotoManager({
   photos,
   canEdit = true,
+  canDelete,
   busy = false,
   onAddFiles,
   onRemove,
@@ -79,7 +80,13 @@ function PhotoManager({
   hideHeader = false,
 }: {
   photos: LinePhoto[];
+  /** Governs adding new photos (drag/drop + the Add tile). */
   canEdit?: boolean;
+  /** Governs the per-photo delete button — defaults to `canEdit` so existing
+   *  callers keep their current behaviour. Pass separately wherever adding and
+   *  deleting need different rules (e.g. Modify Dispatch: view for everyone,
+   *  delete for super admins only; Dispatch Order: add allowed, delete never). */
+  canDelete?: boolean;
   busy?: boolean;
   onAddFiles: (files: File[]) => void;
   onRemove: (photo: LinePhoto) => void;
@@ -89,6 +96,7 @@ function PhotoManager({
    *  themselves (e.g. a collapsible section header). */
   hideHeader?: boolean;
 }) {
+  const allowDelete = canDelete ?? canEdit;
   const [viewer, setViewer] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -161,7 +169,7 @@ function PhotoManager({
                 <ZoomIn className="size-3" /> View
               </span>
             </button>
-            {canEdit && (
+            {allowDelete && (
               <button
                 type="button"
                 onClick={() => onRemove(p)}
@@ -414,11 +422,14 @@ export function DraftLinePhotos({
 export function LiveLinePhotos({
   orderItemId,
   canEdit = true,
+  canDelete,
   title = 'Line photos',
   hideHeader = false,
 }: {
   orderItemId: number;
   canEdit?: boolean;
+  /** See the note on PhotoManager — defaults to `canEdit` when omitted. */
+  canDelete?: boolean;
   title?: string;
   hideHeader?: boolean;
 }) {
@@ -467,6 +478,7 @@ export function LiveLinePhotos({
     <PhotoManager
       photos={photos}
       canEdit={canEdit}
+      canDelete={canDelete}
       busy={busy}
       onAddFiles={addFiles}
       onRemove={remove}

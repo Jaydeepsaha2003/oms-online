@@ -221,6 +221,7 @@ export class ChallansService {
       const qty = unit === 'KGS' || unit === 'KG' || unit === 'KGS.' ? n(d.gram) : n(d.pcs);
       return {
         dispatchId: d.id,
+        orderItemId: d.orderItemId,
         orderId: d.orderId,
         orderCode: d.orderCode,
         productName: d.productName,
@@ -586,13 +587,17 @@ export class ChallansService {
     const { gstFor, rateFor } = await this.rateMaps(challan.customerName, customer?.transportName ?? null);
 
     const dispIds = challan.items.map((i) => i.dispatchId).filter((x): x is number => x != null);
-    const disp = dispIds.length ? await this.prisma.dispatch.findMany({ where: { id: { in: dispIds } }, select: { id: true, pCategory: true } }) : [];
+    const disp = dispIds.length ? await this.prisma.dispatch.findMany({ where: { id: { in: dispIds } }, select: { id: true, pCategory: true, orderItemId: true } }) : [];
     const catById = new Map(disp.map((d) => [d.id, d.pCategory ?? '']));
+    // For the item-photos viewer on Modify Challan — a challan line only stores
+    // its source dispatchId, so its order line is resolved via that dispatch.
+    const orderItemIdById = new Map(disp.map((d) => [d.id, d.orderItemId]));
 
     const rows: ChallanDraftItem[] = challan.items.map((it) => {
       const cat = (it.pCategory || (it.dispatchId != null ? catById.get(it.dispatchId) : '') || '').toUpperCase();
       return {
         dispatchId: it.dispatchId,
+        orderItemId: it.dispatchId != null ? (orderItemIdById.get(it.dispatchId) ?? null) : null,
         orderId: null,
         orderCode: null,
         productName: it.productName,

@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowLeftRight,
+  Camera,
   CalendarCheck2,
   CalendarDays,
   Check,
@@ -48,8 +49,11 @@ import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useOrderQtyLayout } from '@/features/settings/use-settings';
+import { LiveLinePhotos } from '../orders/line-photos';
+import { useOrderItemPhotos } from '../orders/use-orders';
 import {
   useAllChallanCustomers,
   useChallanDraft,
@@ -122,6 +126,40 @@ const warnMissingRates = (items: ChallanDraftItem[]) => {
     duration: 9000,
   });
 };
+
+/** Read-only viewer for a challan line's reference photos — the same photos
+ *  attached back on the order line (Order Modify / Dispatch), surfaced here so
+ *  anyone building or reviewing the challan can see what was actually shipped.
+ *  Shows nothing for a manual/SCRAP line (no order line to attach photos to). */
+function ItemPhotosButton({ orderItemId }: { orderItemId: number }) {
+  const [open, setOpen] = useState(false);
+  const { data: photos } = useOrderItemPhotos(orderItemId);
+  const count = photos?.length ?? 0;
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className={cn(
+          'inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-bold transition-colors',
+          count ? 'text-indigo-700 hover:bg-indigo-50 dark:text-indigo-300 dark:hover:bg-indigo-400/10' : 'text-muted-foreground/50 hover:text-muted-foreground',
+        )}
+        title={count ? `View ${count} photo${count === 1 ? '' : 's'}` : 'No photos on this line'}
+      >
+        <Camera className="size-3" />
+        {count > 0 && <span className="tabular-nums">{count}</span>}
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Line photos</DialogTitle>
+          </DialogHeader>
+          <LiveLinePhotos orderItemId={orderItemId} canEdit={false} hideHeader />
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
 
 export function ChallanFormPage() {
   const navigate = useNavigate();
@@ -430,6 +468,7 @@ export function ChallanFormPage() {
     const row: Row = {
       key: `man-${rows.length}-${performance.now() | 0}`,
       dispatchId: null,
+      orderItemId: null,
       orderId: null,
       orderCode: null,
       productName: m.product.trim(),
@@ -1134,6 +1173,7 @@ export function ChallanFormPage() {
                         {r.productName || '—'}
                         {r.dispatchId == null && <span className="bg-muted text-muted-foreground ml-1 rounded px-1 text-[10px]">manual</span>}
                         <MissingRateBadge missing={unpricedByKey.get(r.key) ?? []} pCategory={r.pCategory} className="ml-1.5" />
+                        {r.orderItemId != null && <ItemPhotosButton orderItemId={r.orderItemId} />}
                       </td>
                       <td className="w-24 font-medium text-slate-600 dark:text-slate-300">{r.design || '—'}</td>
                       {qtyOrder.map((f) => (
@@ -1207,6 +1247,7 @@ export function ChallanFormPage() {
                               <span className="text-slate-400 mr-1 tabular-nums">{idx + 1}.</span>
                               {r.productName || '—'}
                               {r.dispatchId == null && <span className="bg-muted text-muted-foreground ml-1.5 rounded px-1 text-[10px]">manual</span>}
+                              {r.orderItemId != null && <ItemPhotosButton orderItemId={r.orderItemId} />}
                             </p>
                             <p className="text-muted-foreground truncate text-[11px] font-medium">
                               {r.design || '—'} · {r.unit || '—'} · ₹{(r.price ?? 0).toLocaleString('en-IN')}

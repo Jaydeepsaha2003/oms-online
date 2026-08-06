@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException, type OnModuleInit } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, type OnModuleInit } from '@nestjs/common';
 import { Dispatch, Prisma } from '@prisma/client';
 import {
   type DispatchBackdatePayload,
@@ -93,6 +93,39 @@ export class DispatchService implements OnModuleInit {
     private readonly approvals: ApprovalsService,
     private readonly audit: AuditService,
   ) {}
+
+  /* ── Editing locks: "someone else has this line open" ──────────────────────
+   * A soft, in-memory lock keyed by orderItemId — the entity both the Dispatch
+   * form (new dispatch on a pending line) and Modify Dispatch's edit dialog
+   * (an existing dispatch, which also carries orderItemId) revolve around, so
+   * one lock space covers a collision between either screen on the same line.
+   * TTL-based rather than release-guaranteed: a crashed tab/lost connection
+   * can't leave a line permanently stuck, it just expires. Single-process,
+   * in-memory by design — this app runs as one Windows service against one
+   * SQLite file, so there's no second instance to coordinate with. */
+  private readonly lineLocks = new Map<number, { userId: string | null; userName: string; acquiredAt: number }>();
+  private static readonly LOCK_TTL_MS = 90_000;
+
+  /** Claim (or renew) the lock on an order line. Fails only when someone ELSE
+   *  holds a still-live lock — the same user calling again (a heartbeat while
+   *  their sheet stays open) always succeeds and just refreshes the timer. */
+  acquireLock(orderItemId: number, user: { id?: string | null; name?: string | null }): { ok: true } {
+    const now = Date.now();
+    const existing = this.lineLocks.get(orderItemId);
+    const mine = (existing?.userId ?? null) === (user.id ?? null);
+    if (existing && !mine && now - existing.acquiredAt < DispatchService.LOCK_TTL_MS) {
+      throw new ConflictException(`${existing.userName} is currently working on this item — try again in a moment.`);
+    }
+    this.lineLocks.set(orderItemId, { userId: user.id ?? null, userName: user.name ?? 'Another user', acquiredAt: now });
+    return { ok: true };
+  }
+
+  /** Release the lock — a no-op if it's already gone or held by someone else
+   *  (so a stale/duplicate release call can never steal another user's lock). */
+  releaseLock(orderItemId: number, user: { id?: string | null }): void {
+    const existing = this.lineLocks.get(orderItemId);
+    if (existing && (existing.userId ?? null) === (user.id ?? null)) this.lineLocks.delete(orderItemId);
+  }
 
   /**
    * Record one entry against a specific dispatch, so it shows up in that
@@ -495,10 +528,15 @@ export class DispatchService implements OnModuleInit {
   }
 
   /**
-   * Has this party + item + design ever been documented with a photo? Checked
-   * before the Dispatch form allows Save. "Documented" means either this exact
-   * line already has a photo attached, or an earlier line for the SAME customer
-   * + product + design that has actually been dispatched does.
+   * Has this party + item (product + SIZE) + design ever been documented with a
+   * photo? Checked before the Dispatch form allows Save. Two rules:
+   *  - No design at all (blank/"NA") → nothing to document; always passes. Only
+   *    items that actually carry a design need a reference photo.
+   *  - Otherwise, "documented" means either this exact line already has a photo
+   *    attached, or an earlier line for the SAME customer + product + psize +
+   *    design that has actually been dispatched does. `psize` matters because
+   *    "7 RDX" and "7.5 RDX" are the same product but different items — e.g. a
+   *    photo of one says nothing about the other.
    */
   async photoCheck(orderItemId: number): Promise<DispatchPhotoCheckDto> {
     const it = await this.prisma.orderItem.findUnique({
@@ -506,12 +544,16 @@ export class DispatchService implements OnModuleInit {
       select: {
         product: true,
         designType: true,
+        psize: true,
         order: { select: { customerId: true } },
         photos: { select: { url: true }, take: 1, orderBy: { createdAt: 'desc' } },
       },
     });
     if (!it) throw new NotFoundException('Order line not found.');
 
+    if (!it.designType || it.designType.trim().toUpperCase() === 'NA') {
+      return { hasPhoto: true, fromHistory: false, sampleUrl: null };
+    }
     if (it.photos.length) {
       return { hasPhoto: true, fromHistory: false, sampleUrl: it.photos[0].url };
     }
@@ -523,6 +565,7 @@ export class DispatchService implements OnModuleInit {
           id: { not: orderItemId },
           product: it.product,
           designType: it.designType,
+          psize: it.psize,
           order: { customerId: it.order.customerId },
           dispatches: { some: {} },
         },

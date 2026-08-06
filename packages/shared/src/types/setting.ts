@@ -1,6 +1,6 @@
 /** User-editable option lists surfaced on the Settings page and used by forms. */
 
-export const SETTING_GROUPS = ['COMPLETION_DAYS', 'ORDER_TYPE', 'QUOTATION_CANCEL_REASON'] as const;
+export const SETTING_GROUPS = ['COMPLETION_DAYS', 'ORDER_TYPE', 'QUOTATION_CANCEL_REASON', 'DISPATCH_OVERAGE_REASON'] as const;
 export type SettingGroup = (typeof SETTING_GROUPS)[number];
 
 export interface OrderOptionDto {
@@ -145,5 +145,12 @@ export const SETTING_GROUP_META: SettingGroupMeta[] = [
     description: 'Reasons selectable when cancelling a quotation or an order — used for analysis. Add "Others" to allow a free-typed reason.',
     numeric: false,
     placeholder: 'e.g. PRICE TOO HIGH',
+  },
+  {
+    group: 'DISPATCH_OVERAGE_REASON',
+    label: 'Dispatch Overage Reasons',
+    description: 'Reasons selectable when a dispatch quantity goes past what a line has left pending — required before it can be saved. Add "Others" to allow a free-typed reason.',
+    numeric: false,
+    placeholder: 'e.g. PACKING ROUND-UP',
   },
 ];
