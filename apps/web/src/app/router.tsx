@@ -59,6 +59,7 @@ const SettingsPage = lazy(() => import('@/features/settings/settings-page').then
 const UsersPage = lazy(() => import('@/features/admin/users-page').then((m) => ({ default: m.UsersPage })));
 const UserFormPage = lazy(() => import('@/features/admin/user-form-page').then((m) => ({ default: m.UserFormPage })));
 const RolesPage = lazy(() => import('@/features/admin/roles-page').then((m) => ({ default: m.RolesPage })));
+const RoleFormPage = lazy(() => import('@/features/admin/role-form-page').then((m) => ({ default: m.RoleFormPage })));
 const AuditLogPage = lazy(() => import('@/features/audit-log/audit-log-page').then((m) => ({ default: m.AuditLogPage })));
 const ApprovalsPage = lazy(() => import('@/features/approvals/approvals-page').then((m) => ({ default: m.ApprovalsPage })));
 const BusinessOverviewPage = lazy(() => import('@/features/reports/business-overview-page').then((m) => ({ default: m.BusinessOverviewPage })));
@@ -521,6 +522,22 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.ROLE, ACTIONS.VIEW)}>
                 <RolesPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/admin/roles/new"
+            element={
+              <RequirePermission permission={perm(RESOURCES.ROLE, ACTIONS.CREATE)}>
+                <RoleFormPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/admin/roles/:id/edit"
+            element={
+              <RequirePermission permission={perm(RESOURCES.ROLE, ACTIONS.UPDATE)}>
+                <RoleFormPage />
               </RequirePermission>
             }
           />

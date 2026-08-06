@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException, type OnModuleInit } from '@nestjs/common';
 import { Dispatch, Prisma } from '@prisma/client';
 import {
+  resolveLineDesign,
   type DispatchBackdatePayload,
   type DispatchDateChangePayload,
   type DispatchDto,
@@ -530,19 +531,25 @@ export class DispatchService implements OnModuleInit {
   /**
    * Has this party + item (product + SIZE) + design ever been documented with a
    * photo? Checked before the Dispatch form allows Save. Two rules:
-   *  - No design at all (blank/"NA") → nothing to document; always passes. Only
-   *    items that actually carry a design need a reference photo.
+   *  - No design at all → nothing to document; always passes. Only items that
+   *    actually carry a design need a reference photo.
    *  - Otherwise, "documented" means either this exact line already has a photo
    *    attached, or an earlier line for the SAME customer + product + psize +
    *    design that has actually been dispatched does. `psize` matters because
    *    "7 RDX" and "7.5 RDX" are the same product but different items — e.g. a
    *    photo of one says nothing about the other.
+   *
+   * "Has a design" goes through {@link resolveLineDesign}, NOT the raw
+   * `designType` column. Reading that column alone silently exempted every
+   * imported line, which stores its design in `design` and leaves `designType`
+   * as "NA" — so e.g. "5 RAMPATRA DL+LOGO" dispatched with no photo at all.
    */
   async photoCheck(orderItemId: number): Promise<DispatchPhotoCheckDto> {
     const it = await this.prisma.orderItem.findUnique({
       where: { id: orderItemId },
       select: {
         product: true,
+        design: true,
         designType: true,
         psize: true,
         order: { select: { customerId: true } },
@@ -551,36 +558,44 @@ export class DispatchService implements OnModuleInit {
     });
     if (!it) throw new NotFoundException('Order line not found.');
 
-    if (!it.designType || it.designType.trim().toUpperCase() === 'NA') {
-      return { hasPhoto: true, fromHistory: false, sampleUrl: null };
+    const design = resolveLineDesign(it);
+    if (!design) {
+      return { hasPhoto: true, fromHistory: false, sampleUrl: null, needsPhoto: false };
     }
     if (it.photos.length) {
-      return { hasPhoto: true, fromHistory: false, sampleUrl: it.photos[0].url };
+      return { hasPhoto: true, fromHistory: false, sampleUrl: it.photos[0].url, needsPhoto: true };
     }
-    if (!it.order.customerId) return { hasPhoto: false, fromHistory: false, sampleUrl: null };
+    if (!it.order.customerId) return { hasPhoto: false, fromHistory: false, sampleUrl: null, needsPhoto: true };
 
-    const historic = await this.prisma.orderItemPhoto.findFirst({
+    // Candidates share the customer + product + size; the design is matched in
+    // JS afterwards because it can live in either column. Filtering on the raw
+    // `designType` here instead would match every imported line against every
+    // other (they all read "NA"), and a DL+LOGO photo would wrongly satisfy a
+    // CARVING line on the same product.
+    const candidates = await this.prisma.orderItemPhoto.findMany({
       where: {
         orderItem: {
           id: { not: orderItemId },
           product: it.product,
-          designType: it.designType,
           psize: it.psize,
           order: { customerId: it.order.customerId },
           dispatches: { some: {} },
         },
       },
       orderBy: { createdAt: 'desc' },
-      select: { url: true },
+      select: { url: true, orderItem: { select: { design: true, designType: true } } },
     });
-    return historic ? { hasPhoto: true, fromHistory: true, sampleUrl: historic.url } : { hasPhoto: false, fromHistory: false, sampleUrl: null };
+    const historic = candidates.find((p) => resolveLineDesign(p.orderItem) === design);
+    return historic
+      ? { hasPhoto: true, fromHistory: true, sampleUrl: historic.url, needsPhoto: true }
+      : { hasPhoto: false, fromHistory: false, sampleUrl: null, needsPhoto: true };
   }
 
   /** Server-side twin of {@link photoCheck} — a hard, unconditional block (no
    *  override permission) so the rule holds even against a direct API call,
-   *  not just the Dispatch form's own gating. Scoped to the per-line dispatch
-   *  entry point only; the "dispatch entire order" bulk shortcut has no photo
-   *  UI at all, so it deliberately isn't run through this check. */
+   *  not just the Dispatch form's own gating. The "dispatch entire order"
+   *  shortcut enforces the same rule inline (see {@link dispatchOrderFully}),
+   *  batching its checks so it can name every undocumented item at once. */
   private async assertPhotoDocumented(orderItemId: number): Promise<void> {
     const status = await this.photoCheck(orderItemId);
     if (!status.hasPhoto) {
@@ -785,6 +800,12 @@ export class DispatchService implements OnModuleInit {
    * brand-new order) quantity. Cancelled/draft orders are rejected; cancelled lines,
    * already fully-dispatched lines, and zero-quantity lines are skipped. Runs in one
    * transaction so it's all-or-nothing.
+   *
+   * The reference-photo rule applies here too. This shortcut used to bypass it
+   * entirely, which meant an order full of design items could be shipped with no
+   * documentation at all — the very thing the rule exists to prevent. Every line
+   * about to be dispatched is checked up front so the error can name what's
+   * missing, rather than failing halfway through.
    */
   async dispatchOrderFully(orderId: number, userName?: string): Promise<{ dispatched: number; skipped: number }> {
     const order = await this.prisma.order.findUnique({
@@ -794,6 +815,25 @@ export class DispatchService implements OnModuleInit {
     if (!order) throw new NotFoundException('Order not found.');
     if (order.status === 'CANCELLED' || order.status === 'DRAFT') {
       throw new BadRequestException('This order is not available for dispatch.');
+    }
+
+    /** Lines this run would actually create a dispatch for. */
+    const eligible = order.items.filter((it) => {
+      if (it.status === 'CANCELLED' || it.dispatches.some((d) => d.dispatchStatus === 'FULLY DISPATCH')) return false;
+      const rem = this.remaining(it, it.dispatches);
+      return rem.bags > EPS || rem.pcs > EPS || rem.gram > EPS || rem.box > EPS;
+    });
+
+    const undocumented: string[] = [];
+    for (const it of eligible) {
+      if (!resolveLineDesign(it)) continue; // no design → nothing to document
+      const status = await this.photoCheck(it.id);
+      if (!status.hasPhoto) undocumented.push(it.productName || it.product || `line #${it.id}`);
+    }
+    if (undocumented.length) {
+      throw new BadRequestException(
+        `These design items have no reference photo on file for this party — attach one before dispatching: ${undocumented.join(', ')}.`,
+      );
     }
 
     const result = await this.prisma.$transaction(async (tx) => {

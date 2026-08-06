@@ -21,17 +21,46 @@ export class NotificationsGateway implements OnGatewayConnection {
   /** Rejects the connection unless it carries a currently-valid access token. */
   async handleConnection(client: Socket): Promise<void> {
     const token = client.handshake.auth?.token as string | undefined;
-    const userId = token ? await this.verifyToken(token) : null;
-    if (!userId) {
+    const verified = token ? await this.verifyToken(token) : null;
+    if (!verified) {
       client.disconnect(true);
       return;
     }
+    const { userId, sid } = verified;
     // The connection already proves who this is; keep it so a notification can
     // be addressed to particular people instead of everyone. One room per user
     // (rather than per permission) means a role change takes effect on the next
     // send, with no need to re-shuffle live sockets.
     client.data.userId = userId;
+    // Kept so a forced sign-out can target the exact devices being kicked and
+    // leave the one that just signed in alone (see forceSignOut).
+    client.data.sid = sid ?? null;
     await client.join(NotificationsGateway.userRoom(userId));
+  }
+
+  /**
+   * Tell the given sessions they've been signed out, and drop their sockets.
+   *
+   * Used when a fresh login displaces a user's other devices. The `sid` check in
+   * JwtStrategy already blocks their next HTTP request, but an idle tab makes no
+   * requests — it would sit on a stale screen until something happened to poke
+   * it. Pushing here is what makes the logout immediate rather than eventual.
+   */
+  forceSignOut(userId: string, sids: string[]): number {
+    if (!sids.length) return 0;
+    const targets = new Set(sids);
+    let kicked = 0;
+    for (const socket of this.server.sockets.sockets.values()) {
+      if (socket.data.userId !== userId) continue;
+      const sid = socket.data.sid as string | null | undefined;
+      // No sid on the socket (an older token) can't be told apart from the new
+      // session, so leave it — its next request gets rejected anyway.
+      if (!sid || !targets.has(sid)) continue;
+      socket.emit('auth:signed-out', { reason: 'SIGNED_IN_ELSEWHERE' });
+      socket.disconnect(true);
+      kicked += 1;
+    }
+    return kicked;
   }
 
   /** Socket.IO room carrying every live connection belonging to one user. */
@@ -40,7 +69,7 @@ export class NotificationsGateway implements OnGatewayConnection {
   }
 
   /** Same checks as JwtStrategy.validate: active user, current token version, session not revoked. */
-  private async verifyToken(token: string): Promise<string | null> {
+  private async verifyToken(token: string): Promise<{ userId: string; sid?: string } | null> {
     try {
       const { jwt: jwtCfg } = configuration();
       const payload = await this.jwt.verifyAsync<JwtPayload>(token, { secret: jwtCfg.accessSecret });
@@ -59,7 +88,7 @@ export class NotificationsGateway implements OnGatewayConnection {
         if (!session || session.revokedAt) return null;
       }
 
-      return payload.sub;
+      return { userId: payload.sub, sid: payload.sid };
     } catch {
       return null;
     }

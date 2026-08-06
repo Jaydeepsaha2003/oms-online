@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Camera, CalendarRange, ChevronDown, ChevronLeft, ChevronRight, Filter, Layers, Loader2, Lock, Pencil, Search, Trash2, TriangleAlert, Users, X } from 'lucide-react';
+import { Camera, CalendarRange, ChevronDown, ChevronLeft, ChevronRight, Eye, Filter, Layers, Loader2, Lock, Pencil, Search, Trash2, TriangleAlert, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ALL_PERMISSIONS, DISPATCH_STATUSES, MAX_PAGE_SIZE, RESOURCES, qtyOrderForCategory, type DispatchDto, type QtyField } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -239,6 +239,8 @@ function GroupedLineRow({
   canEdit,
   canDelete,
   showRates,
+  isSuperAdmin,
+  onView,
   onEdit,
   onDelete,
 }: {
@@ -246,6 +248,8 @@ function GroupedLineRow({
   canEdit: boolean;
   canDelete: boolean;
   showRates: boolean;
+  isSuperAdmin: boolean;
+  onView: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -268,6 +272,10 @@ function GroupedLineRow({
       <ChallanBadge d={d} />
       {showRates && <span className="font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(amount)}</span>}
       <div className="ml-auto flex items-center gap-1">
+        <Button variant="ghost" size="icon" className="size-6" onClick={onView} aria-label="View" title="View details">
+          <Eye className="size-3.5" />
+        </Button>
+        <DispatchPhotosButton orderItemId={d.orderItemId} isSuperAdmin={isSuperAdmin} compact />
         {canEdit && (
           <Button
             variant="ghost"
@@ -277,7 +285,7 @@ function GroupedLineRow({
             aria-label={locked ? 'Edit status & photos' : 'Edit'}
             title={locked ? `Billed on ${d.challanCode} — status & photos only` : 'Edit'}
           >
-            {locked ? <Camera className="size-3.5" /> : <Pencil className="size-3.5" />}
+            <Pencil className="size-3.5" />
           </Button>
         )}
         {canDelete && (
@@ -299,6 +307,8 @@ function GroupedDesktopView({
   canEdit,
   canDelete,
   showRates,
+  isSuperAdmin,
+  onView,
   onEdit,
   onDelete,
 }: {
@@ -308,6 +318,8 @@ function GroupedDesktopView({
   canEdit: boolean;
   canDelete: boolean;
   showRates: boolean;
+  isSuperAdmin: boolean;
+  onView: (d: DispatchDto) => void;
   onEdit: (d: DispatchDto) => void;
   onDelete: (d: DispatchDto) => void;
 }) {
@@ -360,7 +372,7 @@ function GroupedDesktopView({
                   {open && (
                     <div className="space-y-1.5 border-t bg-slate-50/60 px-3.5 py-2 dark:bg-white/[0.02]">
                       {p.lines.map((d) => (
-                        <GroupedLineRow key={d.id} d={d} canEdit={canEdit} canDelete={canDelete} showRates={showRates} onEdit={() => onEdit(d)} onDelete={() => onDelete(d)} />
+                        <GroupedLineRow key={d.id} d={d} canEdit={canEdit} canDelete={canDelete} showRates={showRates} isSuperAdmin={isSuperAdmin} onView={() => onView(d)} onEdit={() => onEdit(d)} onDelete={() => onDelete(d)} />
                       ))}
                     </div>
                   )}
@@ -384,6 +396,8 @@ function GroupedMobileView({
   canEdit,
   canDelete,
   showRates,
+  isSuperAdmin,
+  onView,
   onEdit,
   onDelete,
 }: {
@@ -393,6 +407,8 @@ function GroupedMobileView({
   canEdit: boolean;
   canDelete: boolean;
   showRates: boolean;
+  isSuperAdmin: boolean;
+  onView: (d: DispatchDto) => void;
   onEdit: (d: DispatchDto) => void;
   onDelete: (d: DispatchDto) => void;
 }) {
@@ -440,7 +456,7 @@ function GroupedMobileView({
                   {open && (
                     <div className="space-y-2 border-t bg-slate-50/60 p-3 dark:bg-white/[0.02]">
                       {p.lines.map((d, i) => (
-                        <ModifyDispatchCard key={d.id} d={d} index={i} canEdit={canEdit} canDelete={canDelete} showRates={showRates} onEdit={() => onEdit(d)} onDelete={() => onDelete(d)} />
+                        <ModifyDispatchCard key={d.id} d={d} index={i} canEdit={canEdit} canDelete={canDelete} showRates={showRates} isSuperAdmin={isSuperAdmin} onView={() => onView(d)} onEdit={() => onEdit(d)} onDelete={() => onDelete(d)} />
                       ))}
                     </div>
                   )}
@@ -462,6 +478,8 @@ function ModifyDispatchCard({
   canEdit,
   canDelete,
   showRates,
+  isSuperAdmin,
+  onView,
   onEdit,
   onDelete,
 }: {
@@ -470,6 +488,8 @@ function ModifyDispatchCard({
   canEdit: boolean;
   canDelete: boolean;
   showRates: boolean;
+  isSuperAdmin: boolean;
+  onView: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -525,27 +545,43 @@ function ModifyDispatchCard({
         {d.comment && <p className="text-muted-foreground text-[12.5px] leading-snug">{d.comment}</p>}
       </div>
 
-      {(canEdit || canDelete) && (
-        <div className="flex border-t text-[13px] font-semibold">
-          {canEdit && (
+      {/* Actions mirror the desktop row's set — view, photos, edit, delete —
+          so the same four are reachable on either platform. */}
+      <div className="flex border-t text-[12.5px] font-semibold">
+        <button
+          type="button"
+          onClick={onView}
+          className="text-foreground/80 active:bg-muted flex flex-1 items-center justify-center gap-1.5 py-2.5 transition-colors"
+          title="View details"
+        >
+          <Eye className="size-4" /> View
+        </button>
+        <div className="bg-border w-px" />
+        <div className="flex flex-1 items-center justify-center py-1">
+          <DispatchPhotosButton orderItemId={d.orderItemId} isSuperAdmin={isSuperAdmin} />
+        </div>
+        {canEdit && (
+          <>
+            <div className="bg-border w-px" />
             <button
               type="button"
               onClick={onEdit}
               className="text-primary active:bg-primary/5 flex flex-1 items-center justify-center gap-1.5 py-2.5 transition-colors"
               title={locked ? `Billed on ${d.challanCode} — status & photos only` : 'Edit dispatch'}
             >
-              {locked ? <Camera className="size-4" /> : <Pencil className="size-4" />}
-              {locked ? 'Status & Photos' : 'Edit'}
+              <Pencil className="size-4" /> Edit
             </button>
-          )}
-          {canEdit && canDelete && !locked && <div className="bg-border w-px" />}
-          {canDelete && !locked && (
+          </>
+        )}
+        {canDelete && !locked && (
+          <>
+            <div className="bg-border w-px" />
             <button type="button" onClick={onDelete} className="text-destructive active:bg-destructive/5 flex flex-1 items-center justify-center gap-1.5 py-2.5 transition-colors">
               <Trash2 className="size-4" /> Delete
             </button>
-          )}
-        </div>
-      )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -586,6 +622,7 @@ export function ModifyDispatchPage() {
     });
   const { page, setPage, pageSize, setPageSize } = usePageSize('dispatch-modify');
   const [editing, setEditing] = useState<DispatchDto | null>(null);
+  const [viewing, setViewing] = useState<DispatchDto | null>(null);
   const canViewRates = can('dispatch:viewrates');
   const columns = useMemo(() => (canViewRates ? withRates(COLUMNS) : COLUMNS), [canViewRates]);
   const cols = useColumnOrder('dispatch-modify', columns);
@@ -978,6 +1015,8 @@ export function ModifyDispatchPage() {
                 canEdit={can('dispatch:update')}
                 canDelete={can('dispatch:delete')}
                 showRates={canViewRates}
+                isSuperAdmin={permissions.includes(ALL_PERMISSIONS)}
+                onView={(d) => setViewing(d)}
                 onEdit={(d) => setEditing(d)}
                 onDelete={(d) => handleDelete(d)}
               />
@@ -1016,6 +1055,9 @@ export function ModifyDispatchPage() {
             ].join(' ')}
             actions={(d) => (
               <div className="flex justify-end gap-1">
+                <Button variant="ghost" size="icon" className="size-7" onClick={() => setViewing(d)} aria-label="View" title="View details">
+                  <Eye className="size-4" />
+                </Button>
                 <DispatchPhotosButton orderItemId={d.orderItemId} isSuperAdmin={permissions.includes(ALL_PERMISSIONS)} />
                 <RecordHistory
                   resource={RESOURCES.DISPATCH}
@@ -1043,7 +1085,7 @@ export function ModifyDispatchPage() {
                     aria-label={d.challanCode ? 'Edit status & photos' : 'Edit'}
                     title={d.challanCode ? `Billed on ${d.challanCode} — status & photos only` : 'Edit'}
                   >
-                    {d.challanCode ? <Camera className="size-4" /> : <Pencil className="size-4" />}
+                    <Pencil className="size-4" />
                   </Button>
                 )}
                 {can('dispatch:delete') && (
@@ -1080,6 +1122,8 @@ export function ModifyDispatchPage() {
               canEdit={can('dispatch:update')}
               canDelete={can('dispatch:delete')}
               showRates={canViewRates}
+              isSuperAdmin={permissions.includes(ALL_PERMISSIONS)}
+              onView={(d) => setViewing(d)}
               onEdit={(d) => setEditing(d)}
               onDelete={(d) => handleDelete(d)}
             />
@@ -1094,6 +1138,8 @@ export function ModifyDispatchPage() {
                 canEdit={can('dispatch:update')}
                 canDelete={can('dispatch:delete')}
                 showRates={canViewRates}
+                isSuperAdmin={permissions.includes(ALL_PERMISSIONS)}
+                onView={() => setViewing(d)}
                 onEdit={() => setEditing(d)}
                 onDelete={() => handleDelete(d)}
               />
@@ -1130,6 +1176,7 @@ export function ModifyDispatchPage() {
         </div>
       </div>
 
+      {viewing && <ViewDispatchDialog dispatch={viewing} onClose={() => setViewing(null)} />}
       {editing && <EditDispatchDialog dispatch={editing} onClose={() => setEditing(null)} />}
     </div>
   );
@@ -1158,7 +1205,7 @@ const toDateInput = (iso: string) => {
 /** Standalone camera-icon button that opens a read-only photo viewer dialog
  *  for the given order-item — usable from both the flat table's action column
  *  and the grouped desktop view's line rows. */
-function DispatchPhotosButton({ orderItemId, isSuperAdmin }: { orderItemId: number; isSuperAdmin: boolean }) {
+function DispatchPhotosButton({ orderItemId, isSuperAdmin, compact = false }: { orderItemId: number; isSuperAdmin: boolean; compact?: boolean }) {
   const [open, setOpen] = useState(false);
   const { data: photos } = useOrderItemPhotos(orderItemId);
   const count = photos?.length ?? 0;
@@ -1167,12 +1214,12 @@ function DispatchPhotosButton({ orderItemId, isSuperAdmin }: { orderItemId: numb
       <Button
         variant="ghost"
         size="icon"
-        className="relative size-7"
+        className={cn('relative', compact ? 'size-6' : 'size-7')}
         onClick={(e) => { e.stopPropagation(); setOpen(true); }}
         aria-label="View photos"
         title={count > 0 ? `View ${count} photo${count === 1 ? '' : 's'}` : 'No photos'}
       >
-        <Camera className="size-4" />
+        <Camera className={compact ? 'size-3.5' : 'size-4'} />
         {count > 0 && (
           <span className="absolute -top-1 -right-1 flex size-3.5 items-center justify-center rounded-full bg-indigo-600 text-[8px] font-bold tabular-nums text-white">
             {count > 9 ? '9+' : count}
@@ -1192,6 +1239,72 @@ function DispatchPhotosButton({ orderItemId, isSuperAdmin }: { orderItemId: numb
         </Dialog>
       )}
     </>
+  );
+}
+
+/**
+ * Read-only detail view of one dispatch. The edit dialog can't serve this role:
+ * it takes the line lock (blocking other users) and it's unavailable entirely
+ * for billed lines — which are exactly the ones you most often just want to
+ * look at. So "view" is its own, always-available action.
+ */
+function ViewDispatchDialog({ dispatch: d, onClose }: { dispatch: DispatchDto; onClose: () => void }) {
+  const { formatDate: fmtDate } = useDateFormat();
+  const fmt = (iso: string | null) => (iso ? fmtDate(iso) : '—');
+  const { can } = usePermissions();
+  const showRates = can('dispatch:viewrates');
+  const amount =
+    d.rate != null ? Math.round(d.rate * ((d.calField ?? '').toUpperCase() === 'PCS' ? (d.pcs ?? 0) : (d.gram ?? 0))) : null;
+
+  const Row = ({ label, children }: { label: string; children: React.ReactNode }) => (
+    <div className="flex items-baseline justify-between gap-3 border-b border-dashed py-1.5 last:border-0">
+      <span className="text-muted-foreground shrink-0 text-[11px] font-semibold tracking-wide uppercase">{label}</span>
+      <span className="min-w-0 text-right text-[13px] font-medium break-words">{children}</span>
+    </div>
+  );
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="flex max-h-[90vh] w-[calc(100vw-2rem)] flex-col sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex flex-wrap items-center gap-2">
+            <Eye className="size-4" />
+            <span className="font-mono">{shortDispatchCode(d.code, d.id)}</span>
+            <StatusBadge s={d.dispatchStatus} />
+            <ChallanBadge d={d} />
+          </DialogTitle>
+        </DialogHeader>
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+          <Row label="Item">{d.productName || d.product || '—'}</Row>
+          <Row label="Design">{d.designType && d.designType.toUpperCase() !== 'NA' ? d.designType : '—'}</Row>
+          <Row label="Party">{d.customerName}</Row>
+          {d.agentName && <Row label="Agent">{d.agentName}</Row>}
+          <Row label="Order">{shortOrderCode(d.orderCode, d.orderId)}</Row>
+          <Row label="Dispatch date">{fmt(d.dispatchDate)}</Row>
+          <Row label="Bags">{qty(d.bags)}</Row>
+          <Row label="Pcs">{qty(d.pcs)}</Row>
+          <Row label="Kgs">{qty(d.gram)}</Row>
+          <Row label="Box">{qty(d.box)}</Row>
+          {showRates && (
+            <>
+              <Row label="Rate">{d.rate != null ? money(d.rate) : '—'}</Row>
+              <Row label="Amount">{money(amount)}</Row>
+            </>
+          )}
+          <Row label="Billed on">
+            {d.challanCode ? `${d.challanCode}${d.challanStatus ? ` · ${d.challanStatus}` : ''}` : 'Not billed yet'}
+          </Row>
+          {d.comment && <Row label="Remarks">{d.comment}</Row>}
+          <Row label="Entered by">{d.userName || '—'}</Row>
+          <Row label="Created">{fmt(d.createdAt)}</Row>
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

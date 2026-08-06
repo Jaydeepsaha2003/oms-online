@@ -65,10 +65,12 @@ export class OrdersController {
     return this.orders.lookups();
   }
 
+  // The current filters come in so each dropdown can offer only values that
+  // would actually return rows alongside the others (cascading).
   @Get('filter-options')
   @Permissions(perm(R, ACTIONS.VIEW))
-  filterOptions() {
-    return this.orders.filterOptions();
+  filterOptions(@Query() query: OrderQueryDto) {
+    return this.orders.filterOptions(query);
   }
 
   // ── Order-line photos (shared by Order Modify & Dispatch) ──────────────────

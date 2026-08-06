@@ -76,4 +76,35 @@ export class SessionsService {
     }
     return { count: res.count };
   }
+
+  /**
+   * Displace every other device for this user, keeping only `keepSid` — the
+   * session that just signed in. Backs the one-device-at-a-time rule.
+   *
+   * Sets `expiresAt` alongside `revokedAt`, which matters: AuthService.refresh
+   * deliberately honours a token revoked in the last 60s so that two tabs racing
+   * to rotate don't log each other out. A device kicked by this would sit inside
+   * that window and quietly mint itself a brand-new session — undoing the
+   * eviction. Expiring the row instead trips refresh's earlier, absolute
+   * expiry check, which has no grace period.
+   *
+   * `tokenVersion` is deliberately NOT bumped: the per-session `sid` check in
+   * JwtStrategy already kills the evicted access tokens instantly, whereas a
+   * bump would also invalidate the token just issued to the new device.
+   *
+   * Returns the evicted session ids so the caller can push them a live logout.
+   */
+  async keepOnly(userId: string, keepSid: string): Promise<string[]> {
+    const doomed = await this.prisma.refreshToken.findMany({
+      where: { userId, revokedAt: null, id: { not: keepSid } },
+      select: { id: true },
+    });
+    if (!doomed.length) return [];
+    const now = new Date();
+    await this.prisma.refreshToken.updateMany({
+      where: { id: { in: doomed.map((d) => d.id) } },
+      data: { revokedAt: now, expiresAt: now },
+    });
+    return doomed.map((d) => d.id);
+  }
 }

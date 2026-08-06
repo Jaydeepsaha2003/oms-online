@@ -167,16 +167,20 @@ export function OrderModifyPage() {
   const [orderId, setOrderId] = useState('');
   const { page, setPage, pageSize, setPageSize } = usePageSize('order-modify');
 
-  const { data, isLoading } = useOrders({
-    page,
-    pageSize,
+  // Priority goes to the server too, so it prunes lines exactly like the other
+  // line-level filters instead of being trimmed off after paging.
+  const filters = {
     customer: customer || undefined,
     agent: agent || undefined,
     product: product || undefined,
     design: design || undefined,
+    priority: priority || undefined,
     orderId: orderId ? Number(orderId) : undefined,
-  });
-  const { data: filterOptions } = useOrderFilterOptions();
+  };
+  const { data, isLoading } = useOrders({ page, pageSize, ...filters });
+  // Same filters drive the dropdowns, so each one only offers values that would
+  // actually return rows next to the others.
+  const { data: filterOptions } = useOrderFilterOptions(filters);
   const save = useSaveOrder();
   const { data: settings } = useSettings();
   const orderTypeOptions = useMemo(() => settingValues(settings, 'ORDER_TYPE'), [settings]);
@@ -196,17 +200,7 @@ export function OrderModifyPage() {
   const onExport = async (columns: string[]) => {
     setExporting(true);
     try {
-      await exportOrderLines(
-        {
-          customer: customer || undefined,
-          agent: agent || undefined,
-          product: product || undefined,
-          design: design || undefined,
-          orderId: orderId ? Number(orderId) : undefined,
-          priority: priority || undefined,
-        },
-        columns,
-      );
+      await exportOrderLines(filters, columns);
     } catch (e) {
       toast.error(getApiErrorMessage(e, 'Excel export failed'));
     } finally {
@@ -229,12 +223,14 @@ export function OrderModifyPage() {
   const totalPages = data?.totalPages ?? 1;
 
   // Flatten every order's lines into a single list (order info repeats per line).
-  // Priority has no server-side filter (a tiny fixed NORMAL/URGENT enum), so it's
-  // applied here, after flattening — product/design are already narrowed server-side.
-  const rows = useMemo<Row[]>(() => {
-    const flat = orders.flatMap((order) => order.items.map((line) => ({ order, line })));
-    return priority ? flat.filter((r) => r.line.priority === priority) : flat;
-  }, [orders, priority]);
+  // The API now prunes each order's lines to the ones matching the line-level
+  // filters, so everything here is already a row the user asked for — no
+  // post-flatten filtering. (It used to only narrow the parent ORDER, which is
+  // why filtering by one product still listed that order's other products.)
+  const rows = useMemo<Row[]>(
+    () => orders.flatMap((order) => order.items.map((line) => ({ order, line }))),
+    [orders],
+  );
 
   // Phones: group lines by their parent order — one card per order, its lines
   // nested underneath, instead of repeating the order/customer on every line.

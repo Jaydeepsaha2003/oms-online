@@ -83,6 +83,14 @@ export interface DispatchPhotoCheckDto {
   fromHistory: boolean;
   /** A representative photo URL to show as proof, when one exists. */
   sampleUrl: string | null;
+  /**
+   * Does this line carry a design, and therefore fall under the reference-photo
+   * rule at all? Resolved server-side (see `resolveLineDesign`) because the
+   * design can live in either of two columns depending on whether the line was
+   * entered here or imported — the client used to guess from one of them and got
+   * it wrong for every imported line.
+   */
+  needsPhoto: boolean;
 }
 
 export interface DispatchDto {

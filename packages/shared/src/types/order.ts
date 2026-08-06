@@ -342,3 +342,42 @@ export interface OrderTimeline {
   status: string;
   lines: OrderTimelineLine[];
 }
+
+/* ── "Does this line carry a real design?" ────────────────────────────────────
+ * Every screen used to inline `x && x.toUpperCase() !== 'NA'`, which missed two
+ * things and caused the reference-photo rule to silently skip design items:
+ *
+ *  1. The blank marker is not always exactly "NA". Legacy Access data also uses
+ *     "N/A", "NONE", "NIL", "-" and friends for "no design".
+ *  2. There are TWO data shapes for where the design lives. Native rows put the
+ *     chosen design in `design` and its code in `designType`. Imported rows put
+ *     the code in `design` (mirroring the productName suffix) and leave
+ *     `designType` as "NA". Reading only `designType` therefore reports "no
+ *     design" for ~40% of lines that genuinely have one — e.g.
+ *     "5 RAMPATRA DL+LOGO" came back as undesigned and skipped its photo.
+ *
+ * Resolve through both fields, treating the full placeholder set as blank.
+ */
+const DESIGN_PLACEHOLDERS = new Set(['', 'NA', 'N/A', 'N.A.', 'N.A', 'NONE', 'NIL', '-', '--']);
+
+/** True when a design field holds an actual design rather than a "none" marker. */
+export function isRealDesign(value: string | null | undefined): boolean {
+  return !DESIGN_PLACEHOLDERS.has((value ?? '').trim().toUpperCase());
+}
+
+/**
+ * The line's actual design, or null when it genuinely has none. Prefers
+ * `designType` (the code) and falls back to `design`, so both the native and the
+ * imported shape resolve correctly.
+ */
+export function resolveLineDesign(line: { design?: string | null; designType?: string | null }): string | null {
+  const type = (line.designType ?? '').trim();
+  if (isRealDesign(type)) return type.toUpperCase();
+  const name = (line.design ?? '').trim();
+  if (isRealDesign(name)) return name.toUpperCase();
+  return null;
+}
+
+/** True when the line carries a design, and so needs a reference photo. */
+export const lineHasDesign = (line: { design?: string | null; designType?: string | null }): boolean =>
+  resolveLineDesign(line) !== null;

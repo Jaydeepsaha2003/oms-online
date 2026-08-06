@@ -161,10 +161,42 @@ export function Combobox({
   const matches = React.useMemo(() => {
     if (!dirty || ql === '') return opts;
     const terms = ql.split(WORD_SEP).filter(Boolean);
-    return opts.filter((o) => {
+
+    /**
+     * How well an option matches, left to right — lower is better. Matching
+     * alone isn't enough to be useful: typing "10 royal special" matches both
+     * "10 ROYAL SPECIAL" and "10 ROYAL DELUX SPECIAL", and the one you actually
+     * typed has to come first rather than being buried under its longer
+     * variants. So order the survivors by how literally they read left to right.
+     */
+    const rank = (label: string): number => {
+      const l = label.toLowerCase();
+      if (l.startsWith(ql)) return 0; // reads exactly as typed, from the start
+      const words = l.split(WORD_SEP).filter(Boolean);
+      // Every term prefix-matches the word in the same position — same order,
+      // no words skipped ("roy spe" → "ROYAL SPECIAL").
+      if (terms.every((t, i) => words[i]?.startsWith(t))) return 1;
+      // Same order, but with other words in between ("10 royal special" →
+      // "10 ROYAL DELUX SPECIAL").
+      let w = 0;
+      for (const t of terms) {
+        while (w < words.length && !words[w].startsWith(t)) w++;
+        if (w === words.length) return 3; // ran out — terms are out of order
+        w++;
+      }
+      return 2;
+    };
+
+    const scored: { row: Row; score: number }[] = [];
+    for (const o of opts) {
       const words = `${o.label} ${o.value} ${o.keywords ?? ''}`.toLowerCase().split(WORD_SEP).filter(Boolean);
-      return terms.every((t) => words.some((w) => w.startsWith(t)));
-    });
+      if (!terms.every((t) => words.some((w) => w.startsWith(t)))) continue;
+      scored.push({ row: o, score: rank(o.label ?? o.value) });
+    }
+    // Array.prototype.sort is stable, so equally-ranked options keep the
+    // caller's original ordering (usually already meaningful, e.g. A→Z).
+    scored.sort((a, b) => a.score - b.score);
+    return scored.map((s) => s.row);
   }, [opts, dirty, ql]);
   const visible = matches.slice(0, RENDER_LIMIT);
   const hiddenCount = matches.length - visible.length;

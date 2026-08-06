@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Eye, EyeOff, KeyRound, Loader2, Lock, Mail } from 'lucide-react';
+import { KeyRound, Loader2, Lock, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 import { getApiErrorMessage } from '@/lib/api';
 import { isInstalledApp } from '@/lib/app-session';
@@ -40,7 +40,6 @@ export function LoginPage() {
   const [email, setEmail] = useState(() => localStorage.getItem(LAST_EMAIL_KEY) ?? '');
   const [password, setPassword] = useState('');
   const [pin, setPin] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   // Desktop only. On a phone the login screen is now reached on every launch of
   // the app, and a 2.3 MB video in front of it each time is a toll on the one
   // path the user cannot avoid — worse over the VPN, where it is also the part
@@ -194,22 +193,14 @@ export function LoginPage() {
                     <Lock className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                     <Input
                       id="password"
-                      type={showPassword ? 'text' : 'password'}
+                      type="password"
                       autoComplete="current-password"
                       placeholder="••••••••"
-                      className="px-9"
+                      className="pl-9"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && submitPassword()}
                     />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword((v) => !v)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground hover:text-foreground"
-                      aria-label={showPassword ? 'Hide password' : 'Show password'}
-                    >
-                      {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                    </button>
                   </div>
                 </div>
                 <Button className="w-full" onClick={submitPassword} disabled={pending}>
@@ -257,11 +248,6 @@ export function LoginPage() {
             )}
           </div>
         </div>
-
-        <p className="mt-4 text-center text-xs text-muted-foreground">
-          Dev login: <span className="font-medium">admin@oms.local</span> · password{' '}
-          <span className="font-medium">Admin@12345</span> · PIN <span className="font-medium">246813</span>
-        </p>
       </div>
     </div>
   );

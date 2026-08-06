@@ -44,12 +44,20 @@ export function useOrder(id?: number) {
   });
 }
 
-/** Distinct product/design values on order lines, for the Orders page filters. */
-export function useOrderFilterOptions() {
+/**
+ * Values for the Order Modify filter dropdowns, cascaded off whatever is already
+ * selected — so picking a customer narrows the product list to that customer's
+ * products. Paging is stripped so the query key doesn't churn when the user
+ * simply turns a page.
+ */
+export function useOrderFilterOptions(query: Partial<OrderQuery> = {}) {
+  const { page: _page, pageSize: _pageSize, ...filters } = query;
+  const params = Object.fromEntries(Object.entries(filters).filter(([, v]) => v != null && v !== ''));
   return useQuery({
-    queryKey: [...KEY, 'filter-options'],
-    queryFn: () => http.get<OrderFilterOptions>('/orders/filter-options'),
+    queryKey: [...KEY, 'filter-options', params],
+    queryFn: () => http.get<OrderFilterOptions>('/orders/filter-options', { params }),
     staleTime: 60_000,
+    placeholderData: (prev) => prev,
   });
 }
 

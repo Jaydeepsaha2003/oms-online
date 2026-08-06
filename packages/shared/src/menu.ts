@@ -484,6 +484,66 @@ export const MENU: MenuNode[] = [
   },
 ];
 
+/* ── Menu-shaped view of the permission catalog (Roles & Permissions editor) ──
+ *
+ * The role editor used to list RESOURCES — one "Dispatch" row covering both
+ * Dispatch Order and Modify Dispatch. Admins don't think in resources; they think
+ * "who can open Modify Dispatch?". These rows re-key the same permissions by the
+ * screen they unlock, so the matrix reads like the sidebar.
+ *
+ * Nothing about the permission model changes — `openPermission` is the exact key
+ * the sidebar already filters on. Which means two screens gated by the SAME key
+ * (e.g. Pending Challan and Create Challan are both `challan:create`) cannot be
+ * granted apart, and say so via `sharedWith` rather than pretending otherwise.
+ */
+export interface MenuPermissionRow {
+  /** Menu group heading, e.g. 'Dispatch'. Top-level leaves use their own label. */
+  group: string;
+  /** The screen, e.g. 'Modify Dispatch'. */
+  label: string;
+  /** Menu node id — stable key for the UI. */
+  id: string;
+  /** Resource behind the screen, e.g. 'dispatch'. */
+  resource: string;
+  /** The permission that opens this screen (its sidebar/route gate). */
+  openPermission: string;
+  /** Other screens gated by the exact same permission — they move together. */
+  sharedWith: string[];
+}
+
+/**
+ * Every menu and sub-menu as a permission row, in sidebar order.
+ *
+ * A group node contributes only through its children (its own `anyPermission` is
+ * derived from them, so granting it separately would mean nothing). Nodes with no
+ * permission at all are skipped — there is nothing to grant.
+ */
+export function menuPermissionRows(menu: MenuNode[] = MENU): MenuPermissionRow[] {
+  const rows: Omit<MenuPermissionRow, 'sharedWith'>[] = [];
+
+  const walk = (nodes: MenuNode[], group: string | null) => {
+    for (const node of nodes) {
+      if (node.children?.length) {
+        walk(node.children, node.label);
+        continue;
+      }
+      // Leaves gate on a single `permission`; `anyPermission` is a group idiom.
+      if (!node.permission) continue;
+      const [resource] = node.permission.split(':');
+      rows.push({ group: group ?? node.label, label: node.label, id: node.id, resource, openPermission: node.permission });
+    }
+  };
+  walk(menu, null);
+
+  const byPermission = new Map<string, string[]>();
+  for (const r of rows) byPermission.set(r.openPermission, [...(byPermission.get(r.openPermission) ?? []), r.label]);
+
+  return rows.map((r) => ({
+    ...r,
+    sharedWith: (byPermission.get(r.openPermission) ?? []).filter((l) => l !== r.label),
+  }));
+}
+
 /** Returns the permission(s) a node requires, as an array (possibly empty). */
 function requiredPermissions(node: MenuNode): string[] {
   if (node.anyPermission && node.anyPermission.length) return node.anyPermission;

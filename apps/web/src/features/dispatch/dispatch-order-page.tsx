@@ -769,8 +769,6 @@ function DispatchSheet({
   const { can } = usePermissions();
   const isMobile = useIsMobile();
   const { data: existingPhotos } = useOrderItemPhotos(line.orderItemId);
-  // Plain items (no design) never need a reference photo — only design items do.
-  const hasDesign = !!line.designType && line.designType.trim().toUpperCase() !== 'NA';
   // Has this party + item (product + size) + design ever been documented with a
   // photo? Combined with `existingPhotos` (not just the check's own snapshot) so
   // Save unlocks the instant a photo finishes uploading, without waiting on this
@@ -778,6 +776,11 @@ function DispatchSheet({
   const photoCheck = useDispatchPhotoCheck(line.orderItemId);
   const hasPhotoOnFile = !!photoCheck.data?.hasPhoto || (existingPhotos?.length ?? 0) > 0;
   const photoCheckReady = !photoCheck.isLoading;
+  // Plain items (no design) never need a reference photo — only design items do.
+  // Taken from the server, which resolves the design across both of the columns
+  // it can live in; deciding this here from `line.designType` alone silently
+  // exempted every imported line (e.g. "5 RAMPATRA DL+LOGO").
+  const hasDesign = !!photoCheck.data?.needsPhoto;
   // Photos default collapsed on phones — packing staff mainly need qty entry,
   // and the sheet should fit with minimal scrolling. Desktop keeps it open.
   // Forced open once we know there's nothing on file yet (design items only), on

@@ -44,20 +44,42 @@ export class OrdersService {
     private readonly bookings: BookingsService,
   ) {}
 
+  /**
+   * The filters that describe a LINE rather than an order.
+   *
+   * Order Modify is a line grid, so these have to be applied to the lines
+   * themselves. Constraining only the parent order (`items: { some: … }`) keeps
+   * the right orders but then hands back ALL of their lines — which is why
+   * filtering to product "10 ROYAL SPECIAL" also returned "5 RAMPATRA": a
+   * different line of the same order. Used twice: to pick the orders worth
+   * fetching, and again to prune each one's lines to the matching ones.
+   *
+   * Note this is a single `some` over the whole conjunction, not a `some` per
+   * filter. Product X AND design Y now means "one line has both", where before
+   * an order with X on one line and Y on another would qualify with neither
+   * line actually matching.
+   */
+  private lineWhere(query: OrderQueryDto): Prisma.OrderItemWhereInput | undefined {
+    const and: Prisma.OrderItemWhereInput[] = [];
+    if (query.product) and.push({ OR: [{ productName: query.product }, { product: query.product }] });
+    if (query.design) and.push({ designType: query.design });
+    if (query.priority) and.push({ priority: query.priority });
+    return and.length ? { AND: and } : undefined;
+  }
+
   /** Shared where-builder for the order list and the Order Modify export —
    *  every exact-match / search filter both screens offer. */
   private buildWhere(query: OrderQueryDto): Prisma.OrderWhereInput {
     const search = query.search?.trim();
-    // Product / design filters keep an order when ANY of its lines matches.
-    const lineFilters: Prisma.OrderWhereInput[] = [];
-    if (query.product) lineFilters.push({ items: { some: { OR: [{ productName: query.product }, { product: query.product }] } } });
-    if (query.design) lineFilters.push({ items: { some: { designType: query.design } } });
+    const lineWhere = this.lineWhere(query);
     return {
       ...(query.status ? { status: uc(query.status)! } : {}),
       ...(query.customer ? { customerName: query.customer } : {}),
       ...(query.agent ? { agentName: query.agent } : {}),
       ...(query.orderId ? { id: query.orderId } : {}),
-      ...(lineFilters.length ? { AND: lineFilters } : {}),
+      // Skip orders with no matching line at all, so a filtered page isn't
+      // padded out with orders that contribute zero rows once pruned.
+      ...(lineWhere ? { items: { some: lineWhere } } : {}),
       ...(search
         ? {
             OR: [
@@ -70,12 +92,18 @@ export class OrdersService {
     };
   }
 
+  /** {@link INCLUDE}, with each order's lines pruned to those matching the
+   *  line-level filters — so the caller only ever sees rows it asked for. */
+  private includeFor(query: OrderQueryDto) {
+    return { items: { where: this.lineWhere(query), include: INCLUDE.items.include } };
+  }
+
   async findMany(query: OrderQueryDto): Promise<Paginated<OrderDto>> {
     const where = this.buildWhere(query);
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.order.findMany({
         where,
-        include: INCLUDE,
+        include: this.includeFor(query),
         // Newest order first, by Order # (id) rather than order date.
         orderBy: [{ id: 'desc' }],
         skip: query.skip,
@@ -119,16 +147,15 @@ export class OrdersService {
   /**
    * Every order LINE matching Order Modify's current filters, flattened —
    * mirrors exactly what that screen shows (drafts excluded, same as its own
-   * client-side filter) plus the priority filter, which only this export
-   * endpoint applies server-side.
+   * client-side filter). Line-level filters are pruned by `includeFor`, the same
+   * way the list does it, so the sheet and the screen can't disagree.
    */
   async exportLines(query: OrderQueryDto): Promise<OrderLineExportRow[]> {
     const where: Prisma.OrderWhereInput = { ...this.buildWhere(query), status: { not: 'DRAFT' } };
-    const rows = await this.prisma.order.findMany({ where, include: INCLUDE, orderBy: [{ id: 'desc' }] });
+    const rows = await this.prisma.order.findMany({ where, include: this.includeFor(query), orderBy: [{ id: 'desc' }] });
     const out: OrderLineExportRow[] = [];
     for (const o of rows) {
       for (const it of o.items) {
-        if (query.priority && (it.priority ?? '') !== query.priority) continue;
         out.push({
           orderId: o.id,
           orderCode: o.code,
@@ -408,31 +435,67 @@ export class OrdersService {
     };
   }
 
-  /** Distinct product / design values present on order lines, for the Orders
-   *  page filter dropdowns (only values that can actually match something). */
-  async filterOptions(): Promise<OrderFilterOptions> {
-    const [rows, orderRows, customerRows, idRows] = await Promise.all([
-      this.prisma.orderItem.findMany({ select: { productName: true, product: true, designType: true } }),
-      this.prisma.order.findMany({ select: { agentName: true }, distinct: ['agentName'], orderBy: { agentName: 'asc' } }),
-      // Names actually present on orders — not the full customer master, so the
-      // dropdown can't offer a party that would return an empty list.
-      this.prisma.order.findMany({ select: { customerName: true }, distinct: ['customerName'], orderBy: { customerName: 'asc' } }),
-      // Drafts never show on Order Modify (see the client's own filter), so the
-      // Order ID picker excludes them too — picking one would otherwise land on
-      // an id the visible list can never match.
-      this.prisma.order.findMany({ where: { status: { not: 'DRAFT' } }, select: { id: true, code: true }, orderBy: { id: 'desc' } }),
-    ]);
-    const products = new Set<string>();
-    const designs = new Set<string>();
-    for (const r of rows) {
-      const p = r.productName || r.product;
-      if (p) products.add(p);
-      if (r.designType && r.designType.toUpperCase() !== 'NA') designs.add(r.designType);
-    }
-    const sorted = (s: Set<string>) => [...s].sort((a, b) => a.localeCompare(b));
-    const agents = orderRows.map((o) => o.agentName).filter((a): a is string => !!a).sort((a, b) => a.localeCompare(b));
-    const customers = customerRows.map((o) => o.customerName).filter((c): c is string => !!c).sort((a, b) => a.localeCompare(b));
-    return { customers, agents, products: sorted(products), designs: sorted(designs), orders: idRows };
+  /**
+   * Values for the Order Modify filter dropdowns.
+   *
+   * Cascading, the same way Modify Dispatch does it: each dropdown's options are
+   * computed against the OTHER active filters but not its own, so picking a
+   * customer narrows the product list to that customer's products while leaving
+   * the customer list itself intact (otherwise selecting one would collapse its
+   * own dropdown to a single entry and you could never switch). One flat scan of
+   * order lines backs all of them — the filters are simple equality, so doing
+   * the narrowing in memory beats five more round trips.
+   */
+  async filterOptions(query: OrderQueryDto = {} as OrderQueryDto): Promise<OrderFilterOptions> {
+    const lines = await this.prisma.orderItem.findMany({
+      select: {
+        productName: true,
+        product: true,
+        designType: true,
+        priority: true,
+        order: { select: { id: true, code: true, status: true, customerName: true, agentName: true } },
+      },
+    });
+    type Line = (typeof lines)[number];
+    const productOf = (l: Line) => l.productName || l.product;
+    const designOf = (l: Line) => (l.designType && l.designType.toUpperCase() !== 'NA' ? l.designType : null);
+
+    const apply = (list: Line[], q: OrderQueryDto) => {
+      let out = list;
+      if (q.customer) out = out.filter((l) => l.order.customerName === q.customer);
+      if (q.agent) out = out.filter((l) => l.order.agentName === q.agent);
+      if (q.product) out = out.filter((l) => productOf(l) === q.product);
+      if (q.design) out = out.filter((l) => designOf(l) === q.design);
+      if (q.priority) out = out.filter((l) => (l.priority ?? '') === q.priority);
+      if (q.orderId) out = out.filter((l) => l.order.id === q.orderId);
+      return out;
+    };
+    /** The pool a given dropdown should offer: every other filter applied, its own ignored. */
+    const poolFor = (exclude: keyof OrderQueryDto) => apply(lines, { ...query, [exclude]: undefined } as OrderQueryDto);
+
+    const distinct = (list: Line[], pick: (l: Line) => string | null | undefined) => {
+      const s = new Set<string>();
+      for (const l of list) {
+        const v = pick(l);
+        if (v) s.add(v);
+      }
+      return [...s].sort((a, b) => a.localeCompare(b));
+    };
+
+    // Drafts never show on Order Modify (see the client's own filter), so the
+    // Order ID picker excludes them too — picking one would otherwise land on
+    // an id the visible list can never match.
+    const orderPool = poolFor('orderId').filter((l) => l.order.status !== 'DRAFT');
+    const byId = new Map<number, { id: number; code: string | null }>();
+    for (const l of orderPool) if (!byId.has(l.order.id)) byId.set(l.order.id, { id: l.order.id, code: l.order.code });
+
+    return {
+      customers: distinct(poolFor('customer'), (l) => l.order.customerName),
+      agents: distinct(poolFor('agent'), (l) => l.order.agentName),
+      products: distinct(poolFor('product'), productOf),
+      designs: distinct(poolFor('design'), designOf),
+      orders: [...byId.values()].sort((a, b) => b.id - a.id),
+    };
   }
 
   async lookups(): Promise<OrderLookupsWire> {

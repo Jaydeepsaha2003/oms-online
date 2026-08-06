@@ -4,6 +4,7 @@ import axios from 'axios';
 import type { AuthResult, AuthUser, LoginDto, PinLoginDto } from '@oms/shared';
 import { http, refreshAccessToken } from '@/lib/api';
 import { appWasKilled, markAppRunning } from '@/lib/app-session';
+import { disconnectNotificationsSocket } from '@/lib/notifications-socket';
 import { useAuthStore } from '@/stores/auth-store';
 
 /** Log in with email + password; stores the session on success. */
@@ -29,7 +30,14 @@ export function useLogout() {
   const clear = useAuthStore((s) => s.clear);
   return useMutation({
     mutationFn: () => http.post('/auth/logout'),
-    onSettled: () => clear(),
+    onSettled: () => {
+      // Drop the live socket too — it's authenticated with the token being
+      // revoked. Left open, the next sign-in would reuse this dead connection
+      // (connectNotificationsSocket is a no-op while one exists) and the new
+      // session would never receive server pushes.
+      disconnectNotificationsSocket();
+      clear();
+    },
   });
 }
 
