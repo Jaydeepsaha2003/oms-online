@@ -1,5 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, ImageIcon, Loader2, Plus, Settings as SettingsIcon, Trash2, Upload } from 'lucide-react';
+import {
+  ArrowLeft,
+  ArrowRight,
+  BellRing,
+  Building2,
+  ClipboardList,
+  HardDrive,
+  ImageIcon,
+  Loader2,
+  Plus,
+  Receipt,
+  Settings as SettingsIcon,
+  Trash2,
+  Truck,
+  Upload,
+  type LucideIcon,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { DEFAULT_ORDER_QTY_LAYOUT, normalizeQtyOrder, QTY_FIELD_LABEL, SETTING_GROUP_META, type OrderOptionDto, type OrderQtyLayout, type QtyField, type SettingGroupMeta } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -39,11 +55,23 @@ import {
   useUpdateTcsPercent,
 } from './use-settings';
 
+type TabKey = 'general' | 'orders' | 'challan' | 'dispatch' | 'crm' | 'backup';
+
 export function SettingsPage() {
   const { data: all, isLoading } = useSettings();
   const { can } = usePermissions();
   const canEdit = can('setting:update');
   const canBackup = can('backup:export');
+  const [tab, setTab] = useState<TabKey>('general');
+
+  const tabs: { id: TabKey; label: string; icon: LucideIcon }[] = [
+    { id: 'general', label: 'General', icon: Building2 },
+    { id: 'orders', label: 'Orders', icon: ClipboardList },
+    { id: 'challan', label: 'Challan & Tax', icon: Receipt },
+    { id: 'dispatch', label: 'Dispatch', icon: Truck },
+    { id: 'crm', label: 'CRM', icon: BellRing },
+    ...(canBackup ? ([{ id: 'backup', label: 'Backup', icon: HardDrive }] as const) : []),
+  ];
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">
@@ -57,40 +85,76 @@ export function SettingsPage() {
         </div>
       </div>
 
-      <MyDevicesCard />
+      {/* Tab bar — same pill-segmented style used on the customer form's tabs. */}
+      <div className="flex flex-wrap items-center gap-1 overflow-x-auto rounded-[4px] border border-amber-300 bg-amber-50/40 p-0.5 dark:border-amber-400/40">
+        {tabs.map(({ id, label, icon: Icon }) => {
+          const on = tab === id;
+          return (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setTab(id)}
+              className={cn(
+                'flex items-center gap-1.5 rounded-[3px] px-3 py-1.5 text-[12.5px] font-semibold whitespace-nowrap transition-colors',
+                on ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              <Icon className="size-3.5" /> {label}
+            </button>
+          );
+        })}
+      </div>
 
-      <TestNotificationCard />
-
-      <CompanyCard canEdit={canEdit} />
-
-      <OrderTermsCard canEdit={canEdit} />
-
-      <OrderFooterCard canEdit={canEdit} />
-
-      <ChallanTermsCard canEdit={canEdit} />
-
-      <TcsPercentCard canEdit={canEdit} />
-
-      <DispatchBagThresholdCard canEdit={canEdit} />
-
-      <PreferencesCard />
-
-      <OrderQtyLayoutCard canEdit={canEdit} />
-
-      <ChallanPrefixCard canEdit={canEdit} />
-
-      <CrmReminderCard />
-
-      {canBackup && <DatabaseBackupCard />}
-
-      {isLoading ? (
-        <div className="flex h-40 items-center justify-center text-muted-foreground">
-          <Loader2 className="size-6 animate-spin" />
+      {tab === 'general' && (
+        <div className="space-y-4">
+          <CompanyCard canEdit={canEdit} />
+          <PreferencesCard />
+          <MyDevicesCard />
+          <TestNotificationCard />
         </div>
-      ) : (
-        SETTING_GROUP_META.map((meta) => (
-          <GroupCard key={meta.group} meta={meta} options={all ?? []} canEdit={canEdit} />
-        ))
+      )}
+
+      {tab === 'orders' && (
+        <div className="space-y-4">
+          <OrderTermsCard canEdit={canEdit} />
+          <OrderFooterCard canEdit={canEdit} />
+          <OrderQtyLayoutCard canEdit={canEdit} />
+          {isLoading ? (
+            <div className="flex h-40 items-center justify-center text-muted-foreground">
+              <Loader2 className="size-6 animate-spin" />
+            </div>
+          ) : (
+            SETTING_GROUP_META.map((meta) => (
+              <GroupCard key={meta.group} meta={meta} options={all ?? []} canEdit={canEdit} />
+            ))
+          )}
+        </div>
+      )}
+
+      {tab === 'challan' && (
+        <div className="space-y-4">
+          <ChallanTermsCard canEdit={canEdit} />
+          <ChallanPrefixCard canEdit={canEdit} />
+          <TcsPercentCard canEdit={canEdit} />
+        </div>
+      )}
+
+      {tab === 'dispatch' && (
+        <div className="space-y-4">
+          <DispatchBagThresholdCard canEdit={canEdit} />
+        </div>
+      )}
+
+      {tab === 'crm' && (
+        <div className="space-y-4">
+          <CrmReminderCard />
+        </div>
+      )}
+
+      {tab === 'backup' && canBackup && (
+        <div className="space-y-4">
+          <DatabaseBackupCard />
+        </div>
       )}
     </div>
   );

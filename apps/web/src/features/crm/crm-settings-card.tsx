@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { BellRing, Loader2 } from 'lucide-react';
+import { BellRing, Clock, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getApiErrorMessage } from '@/lib/api';
+import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,6 +11,45 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useCrmSettings, useSaveCrmSettings } from './use-crm';
+
+/** Whole-hour clock picker (native time-of-day widget, minutes locked to :00) —
+ *  the reminder loop only clamps to the hour, so offering minutes would be a
+ *  false precision the backend can't actually honour. A native time input tops
+ *  out at 23:00, so the "until" field's end-of-day edge case (hour 24) is
+ *  offered as a separate checkbox instead of trying to feed it into the widget. */
+function HourTimePicker({ hour, onChange, disabled, allowEndOfDay = false }: { hour: number; onChange: (h: number) => void; disabled?: boolean; allowEndOfDay?: boolean }) {
+  const isEndOfDay = allowEndOfDay && hour === 24;
+  return (
+    <div className="space-y-1.5">
+      <div className="relative">
+        <Clock className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
+        <Input
+          type="time"
+          step={3600}
+          disabled={disabled || isEndOfDay}
+          value={isEndOfDay ? '' : `${String(Math.min(23, Math.max(0, hour))).padStart(2, '0')}:00`}
+          onChange={(e) => {
+            const n = Number(e.target.value.split(':')[0]);
+            if (Number.isFinite(n)) onChange(Math.min(23, Math.max(0, n)));
+          }}
+          className="pl-8"
+        />
+      </div>
+      {allowEndOfDay && (
+        <label className="flex items-center gap-1.5 text-xs">
+          <input
+            type="checkbox"
+            className={cn('accent-indigo-600 size-3.5', !disabled && 'cursor-pointer')}
+            checked={isEndOfDay}
+            disabled={disabled}
+            onChange={(e) => onChange(e.target.checked ? 24 : 23)}
+          />
+          Until end of day (24:00)
+        </label>
+      )}
+    </div>
+  );
+}
 
 /** Global defaults for the CRM "anti-forget" reminder loop. Per follow-up can override the interval + daily cap. */
 export function CrmReminderCard() {
@@ -58,8 +98,8 @@ export function CrmReminderCard() {
           <Field label="Remind every (mins)"><Input type="number" min="1" disabled={!canEdit} value={String(form.intervalMins ?? '')} onChange={(e) => set('intervalMins', e.target.value)} /></Field>
           <Field label="Max reminders / day"><Input type="number" min="0" disabled={!canEdit} value={String(form.maxRemindersPerDay ?? '')} onChange={(e) => set('maxRemindersPerDay', e.target.value)} /><span className="text-muted-foreground text-[11px]">0 = unlimited</span></Field>
           <Field label="Flag this many days early"><Input type="number" min="0" disabled={!canEdit} value={String(form.leadDays ?? '')} onChange={(e) => set('leadDays', e.target.value)} /></Field>
-          <Field label="Quiet hours — from"><Input type="number" min="0" max="23" disabled={!canEdit} value={String(form.workStartHour ?? '')} onChange={(e) => set('workStartHour', e.target.value)} /></Field>
-          <Field label="…until (24h)"><Input type="number" min="1" max="24" disabled={!canEdit} value={String(form.workEndHour ?? '')} onChange={(e) => set('workEndHour', e.target.value)} /></Field>
+          <Field label="Working hours — from"><HourTimePicker hour={num('workStartHour')} disabled={!canEdit} onChange={(h) => set('workStartHour', String(h))} /></Field>
+          <Field label="…until"><HourTimePicker hour={num('workEndHour')} disabled={!canEdit} allowEndOfDay onChange={(h) => set('workEndHour', String(h))} /></Field>
         </div>
         <div className="flex flex-wrap gap-6">
           <label className="flex items-center gap-2 text-sm"><Switch checked={!!form.sound} disabled={!canEdit} onCheckedChange={(v) => set('sound', v)} /> Play a chime</label>

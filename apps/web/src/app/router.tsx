@@ -57,6 +57,7 @@ const DaybookPage = lazy(() => import('@/features/account/daybook-page').then((m
 const TallyReconPage = lazy(() => import('@/features/account/tally-recon-page').then((m) => ({ default: m.TallyReconPage })));
 const SettingsPage = lazy(() => import('@/features/settings/settings-page').then((m) => ({ default: m.SettingsPage })));
 const UsersPage = lazy(() => import('@/features/admin/users-page').then((m) => ({ default: m.UsersPage })));
+const UserFormPage = lazy(() => import('@/features/admin/user-form-page').then((m) => ({ default: m.UserFormPage })));
 const RolesPage = lazy(() => import('@/features/admin/roles-page').then((m) => ({ default: m.RolesPage })));
 const AuditLogPage = lazy(() => import('@/features/audit-log/audit-log-page').then((m) => ({ default: m.AuditLogPage })));
 const ApprovalsPage = lazy(() => import('@/features/approvals/approvals-page').then((m) => ({ default: m.ApprovalsPage })));
@@ -496,6 +497,22 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.USER, ACTIONS.VIEW)}>
                 <UsersPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/admin/users/new"
+            element={
+              <RequirePermission permission={perm(RESOURCES.USER, ACTIONS.CREATE)}>
+                <UserFormPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/admin/users/:id/edit"
+            element={
+              <RequirePermission permission={perm(RESOURCES.USER, ACTIONS.UPDATE)}>
+                <UserFormPage />
               </RequirePermission>
             }
           />

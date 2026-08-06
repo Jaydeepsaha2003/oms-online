@@ -27,6 +27,16 @@ async function main() {
     });
   }
   console.log(`✓ ${PERMISSION_CATALOG.length} permissions in catalog — ${added} newly added.`);
+
+  // Also drop permissions for resources/actions no longer in the catalog (a
+  // pulled feature) — cascades to RolePermission, harmless to roles' own grants.
+  const catalogKeys = new Set(PERMISSION_CATALOG.map((p) => p.key));
+  const all = await prisma.permission.findMany({ select: { id: true, key: true } });
+  const stale = all.filter((p) => !catalogKeys.has(p.key));
+  if (stale.length) {
+    await prisma.permission.deleteMany({ where: { id: { in: stale.map((p) => p.id) } } });
+    console.log(`✓ Pruned ${stale.length} permission(s) no longer in the catalog: ${stale.map((p) => p.key).join(', ')}`);
+  }
 }
 
 main()

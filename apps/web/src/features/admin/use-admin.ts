@@ -26,6 +26,16 @@ export function useUsers(query: UserQuery) {
   });
 }
 
+/** A single user, for the full-page edit form (route param → direct fetch,
+ *  independent of whatever page of the list happens to be loaded). */
+export function useUser(id: string | undefined) {
+  return useQuery({
+    queryKey: [...USERS, id],
+    queryFn: () => http.get<UserDto>(`/users/${id}`),
+    enabled: !!id,
+  });
+}
+
 export function useCreateUser() {
   const qc = useQueryClient();
   return useMutation({

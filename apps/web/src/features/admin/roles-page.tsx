@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
-import { Loader2, Lock, Plus, Shield, Trash2 } from 'lucide-react';
+import { Fragment, useMemo, useState } from 'react';
+import { Loader2, Lock, Pencil, Plus, Shield, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { ACTIONS, perm, RESOURCE_DEFINITIONS, type ResourceDef, type RoleDto } from '@oms/shared';
+import { ACTIONS, perm, RESOURCE_DEFINITIONS, type Action, type ResourceDef, type RoleDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -16,6 +16,12 @@ import { useCreateRole, useDeleteRole, useRoles, useUpdateRole } from './use-adm
 
 // All concrete permission keys (used by "Select all").
 const ALL_KEYS = RESOURCE_DEFINITIONS.flatMap((d) => d.actions.map((a) => perm(d.resource, a)));
+// Every action, as a fixed column order for the permission matrix — a resource
+// that doesn't use a given action just shows a blank cell in that column, so
+// every row lines up under the same headings.
+const ALL_ACTIONS: Action[] = Object.values(ACTIONS);
+const ACTION_LABEL: Record<string, string> = { [ACTIONS.MANAGE]: 'manage (full)', [ACTIONS.VIEWRATES]: 'view rates' };
+const actionLabel = (a: Action) => ACTION_LABEL[a] ?? a;
 // Resource definitions grouped by their heading, in declared order.
 const GROUPS: [string, ResourceDef[]][] = (() => {
   const m = new Map<string, ResourceDef[]>();
@@ -74,20 +80,36 @@ export function RolesPage() {
           </p>
           <p className="text-muted-foreground truncate font-mono text-xs">{r.name}</p>
         </div>
-        {can('role:delete') && !r.isSystem && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8 shrink-0 text-destructive hover:text-destructive"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleDelete(r);
-            }}
-            aria-label="Delete"
-          >
-            <Trash2 className="size-4" />
-          </Button>
-        )}
+        <div className="flex shrink-0 gap-1">
+          {can('role:update') && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8"
+              onClick={(e) => {
+                e.stopPropagation();
+                setEditing(r);
+              }}
+              aria-label="Edit"
+            >
+              <Pencil className="size-4" />
+            </Button>
+          )}
+          {can('role:delete') && !r.isSystem && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 text-destructive hover:text-destructive"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDelete(r);
+              }}
+              aria-label="Delete"
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          )}
+        </div>
       </div>
       {r.description && <p className="text-muted-foreground truncate text-xs">{r.description}</p>}
       <div className="flex items-center gap-3 text-xs">
@@ -139,8 +161,13 @@ export function RolesPage() {
         mobileCard={roleMobileCard}
         actions={(r) => (
           <div className="flex justify-end gap-1">
+            {can('role:update') && (
+              <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(r)} aria-label="Edit" title="Edit">
+                <Pencil className="size-4" />
+              </Button>
+            )}
             {can('role:delete') && !r.isSystem && (
-              <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => handleDelete(r)} aria-label="Delete">
+              <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => handleDelete(r)} aria-label="Delete" title="Delete">
                 <Trash2 className="size-4" />
               </Button>
             )}
@@ -184,6 +211,26 @@ function RoleDialog({ role, onClose }: { role: RoleDto | null; onClose: () => vo
   };
   const selectedCount = isWildcard ? ALL_KEYS.length : perms.size;
 
+  // Resources that actually use a given action — a column with nothing to
+  // toggle (no resource in the whole catalog uses that action) is skipped.
+  const rowsForAction = (a: Action) => RESOURCE_DEFINITIONS.filter((d) => d.actions.includes(a));
+  const columnAllOn = (a: Action) => rowsForAction(a).every((d) => has(perm(d.resource, a)));
+  const columnAnyOn = (a: Action) => rowsForAction(a).some((d) => has(perm(d.resource, a)));
+  const toggleColumn = (a: Action) => {
+    if (isWildcard) return;
+    const rows = rowsForAction(a);
+    const turnOn = !rows.every((d) => has(perm(d.resource, a)));
+    setPerms((prev) => {
+      const next = new Set(prev);
+      rows.forEach((d) => {
+        const key = perm(d.resource, a);
+        if (turnOn) next.add(key);
+        else next.delete(key);
+      });
+      return next;
+    });
+  };
+
   const submit = () => {
     if (!label.trim()) return toast.error('Label is required');
     const opts = {
@@ -206,7 +253,7 @@ function RoleDialog({ role, onClose }: { role: RoleDto | null; onClose: () => vo
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="flex max-h-[90vh] w-[calc(100vw-2rem)] flex-col sm:max-w-3xl">
+      <DialogContent className="flex max-h-[90vh] w-[calc(100vw-2rem)] flex-col sm:max-w-5xl">
         <DialogHeader>
           <DialogTitle>{isEdit ? `Edit role — ${role!.label}` : 'New role'}</DialogTitle>
         </DialogHeader>
@@ -257,36 +304,73 @@ function RoleDialog({ role, onClose }: { role: RoleDto | null; onClose: () => vo
               </p>
             )}
 
-            <div className={cn('space-y-3 rounded-lg border p-3 sm:space-y-4', isWildcard && 'opacity-60')}>
-              {GROUPS.map(([group, defs]) => (
-                <div key={group} className="space-y-1.5">
-                  <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">{group}</p>
-                  <div className="space-y-1">
-                    {defs.map((d) => (
-                      <div key={d.resource} className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b py-1.5 last:border-0">
-                        <span className="w-full text-sm font-medium sm:w-44 sm:shrink-0">{d.label}</span>
-                        <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-                          {d.actions.map((a) => {
+            <div className={cn('overflow-x-auto rounded-lg border', isWildcard && 'opacity-60')}>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-muted/50 border-b">
+                    <th className="sticky left-0 z-10 bg-muted/50 px-3 py-2 text-left text-xs font-semibold whitespace-nowrap">Form</th>
+                    {ALL_ACTIONS.map((a) => {
+                      const rows = rowsForAction(a);
+                      if (!rows.length) return null;
+                      const allOn = columnAllOn(a);
+                      const anyOn = columnAnyOn(a);
+                      return (
+                        <th key={a} className="px-2 py-2 text-center text-xs font-semibold whitespace-nowrap">
+                          <button
+                            type="button"
+                            disabled={isWildcard}
+                            onClick={() => toggleColumn(a)}
+                            className={cn('flex w-full flex-col items-center gap-1', !isWildcard && 'cursor-pointer')}
+                            title={allOn ? `Unselect all "${actionLabel(a)}"` : `Select all "${actionLabel(a)}"`}
+                          >
+                            <input
+                              type="checkbox"
+                              className="accent-indigo-600 size-3.5"
+                              checked={allOn}
+                              readOnly
+                              ref={(el) => { if (el) el.indeterminate = !allOn && anyOn; }}
+                              disabled={isWildcard}
+                            />
+                            <span className="font-normal capitalize">{actionLabel(a)}</span>
+                          </button>
+                        </th>
+                      );
+                    })}
+                  </tr>
+                </thead>
+                <tbody>
+                  {GROUPS.map(([group, defs]) => (
+                    <Fragment key={group}>
+                      <tr className="bg-muted/20">
+                        <td colSpan={ALL_ACTIONS.length + 1} className="text-muted-foreground sticky left-0 px-3 py-1 text-[11px] font-semibold tracking-wide uppercase">
+                          {group}
+                        </td>
+                      </tr>
+                      {defs.map((d) => (
+                        <tr key={d.resource} className="border-b last:border-0 hover:bg-muted/20">
+                          <td className="sticky left-0 z-10 bg-card px-3 py-1.5 text-sm font-medium whitespace-nowrap">{d.label}</td>
+                          {ALL_ACTIONS.map((a) => {
+                            if (!d.actions.includes(a)) return <td key={a} className="text-muted-foreground/40 px-2 py-1.5 text-center">—</td>;
                             const key = perm(d.resource, a);
                             return (
-                              <label key={key} className={cn('flex items-center gap-1.5 py-0.5 text-sm', !isWildcard && 'cursor-pointer')}>
+                              <td key={a} className="px-2 py-1.5 text-center">
                                 <input
                                   type="checkbox"
-                                  className="accent-indigo-600 size-3.5"
+                                  className={cn('accent-indigo-600 size-3.5', !isWildcard && 'cursor-pointer')}
                                   checked={has(key)}
                                   disabled={isWildcard}
                                   onChange={() => toggle(key)}
+                                  aria-label={`${d.label}: ${actionLabel(a)}`}
                                 />
-                                {a === ACTIONS.MANAGE ? <span className="font-medium">manage (full)</span> : a === ACTIONS.VIEWRATES ? 'view rates' : a}
-                              </label>
+                              </td>
                             );
                           })}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
+                        </tr>
+                      ))}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>

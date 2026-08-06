@@ -82,13 +82,6 @@ export const RESOURCES = {
   DAYBOOK: 'daybook',
   /** Accounts → Reconciliation with Tally: upload a register, compare, fix gaps. */
   TALLY_RECON: 'tallyrecon',
-  SUPPLIER: 'supplier',
-  INVENTORY: 'inventory',
-  PRODUCTION: 'production',
-  BOM: 'bom',
-  PURCHASE: 'purchase',
-  INVOICE: 'invoice',
-  SHIPMENT: 'shipment',
   REPORT: 'report',
   USER: 'user',
   ROLE: 'role',
@@ -185,8 +178,6 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
     group: 'Sales',
     actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.MANAGE],
   },
-  { resource: RESOURCES.INVOICE, label: 'Invoices', group: 'Sales', actions: STANDARD_PRINTABLE },
-
   {
     resource: RESOURCES.CHEQUE,
     label: 'Manage Cheques',
@@ -241,35 +232,11 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
     group: 'Accounts',
     actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.DELETE, ACTIONS.EXPORT],
   },
-  {
-    resource: RESOURCES.SHIPMENT,
-    label: 'Shipments',
-    group: 'Sales',
-    actions: [...STANDARD, ACTIONS.PRINT],
-  },
 
   { resource: RESOURCES.PRODUCT, label: 'Products', group: 'Catalog', actions: STANDARD },
   { resource: RESOURCES.DESIGN, label: 'Designs', group: 'Catalog', actions: STANDARD },
   { resource: RESOURCES.DESIGN_NAME, label: 'Design Names', group: 'Catalog', actions: STANDARD },
   { resource: RESOURCES.COMBINATION, label: 'Combinations', group: 'Catalog', actions: STANDARD },
-  { resource: RESOURCES.BOM, label: 'Bill of Materials', group: 'Catalog', actions: STANDARD },
-
-  {
-    resource: RESOURCES.PRODUCTION,
-    label: 'Production / Work Orders',
-    group: 'Production',
-    actions: STANDARD_PRINTABLE,
-  },
-
-  {
-    resource: RESOURCES.PURCHASE,
-    label: 'Purchase Orders',
-    group: 'Procurement',
-    actions: STANDARD_PRINTABLE,
-  },
-  { resource: RESOURCES.SUPPLIER, label: 'Suppliers', group: 'Procurement', actions: STANDARD },
-
-  { resource: RESOURCES.INVENTORY, label: 'Inventory / Stock', group: 'Inventory', actions: STANDARD },
 
   { resource: RESOURCES.REPORT, label: 'Reports', group: 'Reports', actions: READONLY },
 

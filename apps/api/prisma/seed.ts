@@ -1,9 +1,16 @@
 /**
  * Database seed.
- * Run with `npm run db:seed`. Idempotent — safe to run repeatedly.
+ * Run with `npm run db:seed`. Idempotent — safe to run repeatedly, including on
+ * every production restart (start.bat / restart.bat run this whenever their
+ * DB-sync stamp is stale).
  *
  *   1. Upserts every permission in the shared catalog.
- *   2. Creates/updates the built-in system roles and their permission grants.
+ *   2. Creates the built-in system roles on first run only, with their default
+ *      permission grants. Once a system role already exists, its permissions
+ *      are NOT touched again here — they belong to whoever edits that role from
+ *      the Roles & Permissions screen from then on. Re-wiping them on every
+ *      restart would silently discard an admin's in-app customization, which is
+ *      not acceptable in production.
  *   3. Creates the bootstrap admin (super_admin) from SEED_ADMIN_* env vars.
  */
 import { PrismaClient } from '@prisma/client';
@@ -29,14 +36,33 @@ async function seedPermissions() {
   console.log(`✓ Permissions seeded (${PERMISSION_CATALOG.length})`);
 }
 
+/**
+ * Remove Permission rows for resources/actions no longer in the shared catalog
+ * (e.g. a feature that got pulled). This is NOT the same as resetting a role's
+ * customized grants — it only deletes permissions that no longer correspond to
+ * anything in the app at all. Cascades to RolePermission automatically.
+ */
+async function pruneRemovedPermissions() {
+  const catalogKeys = new Set(PERMISSION_CATALOG.map((p) => p.key));
+  const all = await prisma.permission.findMany({ select: { id: true, key: true } });
+  const stale = all.filter((p) => !catalogKeys.has(p.key));
+  if (!stale.length) return;
+  await prisma.permission.deleteMany({ where: { id: { in: stale.map((p) => p.id) } } });
+  console.log(`✓ Pruned ${stale.length} permission(s) no longer in the catalog: ${stale.map((p) => p.key).join(', ')}`);
+}
+
 async function seedRoles() {
   // Map permission key -> id for fast lookup.
   const allPerms = await prisma.permission.findMany({ select: { id: true, key: true } });
   const idByKey = new Map(allPerms.map((p) => [p.key, p.id]));
 
+  let created = 0;
   for (const role of SYSTEM_ROLES) {
+    const existing = await prisma.role.findUnique({ where: { name: role.name } });
     const record = await prisma.role.upsert({
       where: { name: role.name },
+      // Label/description/isSystem stay in sync with the definition even after
+      // creation — only the permission GRANTS are first-run-only (see below).
       update: { label: role.label, description: role.description, isSystem: role.isSystem },
       create: {
         name: role.name,
@@ -46,20 +72,20 @@ async function seedRoles() {
       },
     });
 
+    if (existing) continue; // Permissions already exist — an admin may have customized them since; leave them alone.
+    created++;
+
     const keys = role.permissions === ALL_PERMISSIONS ? ALL_PERMISSION_KEYS : role.permissions;
     const permissionIds = keys
       .map((k) => idByKey.get(k))
       .filter((id): id is string => Boolean(id));
-
-    // Replace the role's permission set so it always reflects the definition.
-    await prisma.rolePermission.deleteMany({ where: { roleId: record.id } });
     if (permissionIds.length) {
       await prisma.rolePermission.createMany({
         data: permissionIds.map((permissionId) => ({ roleId: record.id, permissionId })),
       });
     }
   }
-  console.log(`✓ Roles seeded (${SYSTEM_ROLES.length})`);
+  console.log(`✓ Roles: ${created} created with default permissions, ${SYSTEM_ROLES.length - created} already existed (left as-is)`);
 }
 
 async function seedAdmin() {
@@ -94,6 +120,7 @@ async function seedAdmin() {
 async function main() {
   console.log('Seeding OMS database…');
   await seedPermissions();
+  await pruneRemovedPermissions();
   await seedRoles();
   await seedAdmin();
   console.log('Done.');

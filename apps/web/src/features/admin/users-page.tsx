@@ -1,21 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check, ChevronLeft, ChevronRight, KeyRound, Loader2, Mail, MonitorSmartphone, Pencil, Plus, Search, ShieldCheck, Trash2, UserPlus, Users } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { ChevronLeft, ChevronRight, Loader2, MonitorSmartphone, Pencil, Search, Trash2, UserPlus, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import type { UserDto, UserStatus } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn, formatDateShort, formatDateTime } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
-import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useConfirm } from '@/components/common/confirm';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { PageSizeSelect } from '@/components/common/page-size-select';
 import { usePageSize } from '@/hooks/use-page-size';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { NativeSelect } from '@/components/common/combo';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { useCreateUser, useDeleteUser, useRoles, useUpdateUser, useUsers } from './use-admin';
+import { useDeleteUser, useUsers } from './use-admin';
 import { UserSessionsDialog } from './user-sessions-dialog';
 
 const STATUSES: UserStatus[] = ['active', 'disabled', 'invited'];
@@ -64,14 +62,13 @@ function StatCard({ label, value, tone }: { label: string; value: number; tone: 
 }
 
 export function UsersPage() {
+  const navigate = useNavigate();
   const { can } = usePermissions();
   const confirm = useConfirm();
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const { page, setPage, pageSize, setPageSize } = usePageSize('users');
-  const [editing, setEditing] = useState<UserDto | null>(null);
-  const [creating, setCreating] = useState(false);
   const [sessionsUser, setSessionsUser] = useState<UserDto | null>(null);
 
   useEffect(() => {
@@ -167,7 +164,7 @@ export function UsersPage() {
           </Button>
         )}
         {can('user:update') && (
-          <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(u)} aria-label="Edit">
+          <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(`/admin/users/${u.id}/edit`)} aria-label="Edit">
             <Pencil className="size-4" />
           </Button>
         )}
@@ -208,7 +205,7 @@ export function UsersPage() {
           </div>
         </div>
         {can('user:create') && (
-          <Button onClick={() => setCreating(true)}>
+          <Button onClick={() => navigate('/admin/users/new')}>
             <UserPlus /> New user
           </Button>
         )}
@@ -237,7 +234,7 @@ export function UsersPage() {
         rowKey={(u) => u.id}
         isLoading={isLoading}
         emptyText="No users match your filters."
-        onRowClick={(u) => can('user:update') && setEditing(u)}
+        onRowClick={(u) => can('user:update') && navigate(`/admin/users/${u.id}/edit`)}
         mobileCard={userMobileCard}
         actions={(u) => (
           <div className="flex justify-end gap-1">
@@ -247,7 +244,7 @@ export function UsersPage() {
               </Button>
             )}
             {can('user:update') && (
-              <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(u)} aria-label="Edit">
+              <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(`/admin/users/${u.id}/edit`)} aria-label="Edit">
                 <Pencil className="size-4" />
               </Button>
             )}
@@ -277,209 +274,8 @@ export function UsersPage() {
         </div>
       </div>
 
-      {(creating || editing) && (
-        <UserDialog
-          user={editing}
-          onClose={() => {
-            setCreating(false);
-            setEditing(null);
-          }}
-        />
-      )}
       {sessionsUser && <UserSessionsDialog user={sessionsUser} onClose={() => setSessionsUser(null)} />}
     </div>
-  );
-}
-
-/** Status choices as a tactile segmented control, colour-coded like the table's badges. */
-const STATUS_SEGMENT_TONE: Record<UserStatus, string> = {
-  active: 'data-[on=true]:bg-emerald-50 data-[on=true]:text-emerald-700 data-[on=true]:ring-emerald-200 dark:data-[on=true]:bg-emerald-500/15 dark:data-[on=true]:text-emerald-300',
-  disabled: 'data-[on=true]:bg-rose-50 data-[on=true]:text-rose-700 data-[on=true]:ring-rose-200 dark:data-[on=true]:bg-rose-500/15 dark:data-[on=true]:text-rose-300',
-  invited: 'data-[on=true]:bg-amber-50 data-[on=true]:text-amber-700 data-[on=true]:ring-amber-200 dark:data-[on=true]:bg-amber-500/15 dark:data-[on=true]:text-amber-300',
-};
-
-function UserDialog({ user, onClose }: { user: UserDto | null; onClose: () => void }) {
-  const isEdit = !!user;
-  const create = useCreateUser();
-  const update = useUpdateUser(user?.id ?? '');
-  const saving = create.isPending || update.isPending;
-  const { data: roles } = useRoles();
-  const [roleSearch, setRoleSearch] = useState('');
-
-  const [email, setEmail] = useState(user?.email ?? '');
-  const [name, setName] = useState(user?.name ?? '');
-  const [password, setPassword] = useState('');
-  const [status, setStatus] = useState<UserStatus>(user?.status ?? 'active');
-  const [roleIds, setRoleIds] = useState<Set<string>>(new Set(user?.roles.map((r) => r.id) ?? []));
-
-  const toggleRole = (id: string) =>
-    setRoleIds((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-
-  const visibleRoles = useMemo(() => {
-    const q = roleSearch.trim().toLowerCase();
-    const all = roles ?? [];
-    return q ? all.filter((r) => r.label.toLowerCase().includes(q) || (r.description ?? '').toLowerCase().includes(q)) : all;
-  }, [roles, roleSearch]);
-  const allVisibleSelected = visibleRoles.length > 0 && visibleRoles.every((r) => roleIds.has(r.id));
-  const toggleAllVisible = () =>
-    setRoleIds((prev) => {
-      const next = new Set(prev);
-      if (allVisibleSelected) visibleRoles.forEach((r) => next.delete(r.id));
-      else visibleRoles.forEach((r) => next.add(r.id));
-      return next;
-    });
-
-  const submit = () => {
-    if (!name.trim()) return toast.error('Name is required');
-    if (roleIds.size === 0) return toast.error('Assign at least one role');
-    const opts = {
-      onSuccess: () => {
-        toast.success(isEdit ? 'User updated' : 'User created');
-        onClose();
-      },
-      onError: (e: unknown) => toast.error(getApiErrorMessage(e, 'Save failed')),
-    };
-    if (isEdit) {
-      update.mutate({ name: name.trim(), status, roleIds: [...roleIds] }, opts);
-    } else {
-      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) return toast.error('Enter a valid email');
-      if (password.length < 8) return toast.error('Password must be at least 8 characters');
-      create.mutate({ email: email.trim(), name: name.trim(), password, status, roleIds: [...roleIds] }, opts);
-    }
-  };
-
-  useSaveShortcut(submit);
-
-  const previewId = user?.id ?? (name || email || 'new');
-
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="flex max-h-[calc(100vh-3rem)] w-[calc(100vw-2rem)] flex-col overflow-hidden sm:max-w-2xl">
-        <DialogHeader>
-          <div className="flex items-center gap-3">
-            <span className={cn('bg-gradient-to-br flex size-11 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white shadow-sm', toneFor(previewId))}>
-              {initials(name || 'New User')}
-            </span>
-            <div className="min-w-0">
-              <DialogTitle className="truncate">{isEdit ? user!.name : 'New user'}</DialogTitle>
-              <DialogDescription>{isEdit ? 'Update account access — email is permanent once created.' : 'Create an account and grant it access.'}</DialogDescription>
-            </div>
-          </div>
-        </DialogHeader>
-        <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto pr-1">
-          {/* ── Account: identity fields, minimal on purpose ─────────────────── */}
-          <div className="grid grid-cols-1 gap-3 rounded-lg border bg-slate-50/60 p-3 sm:grid-cols-2 dark:bg-white/[0.02]">
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label className="text-muted-foreground flex items-center gap-1.5 text-[11px] font-semibold tracking-wide uppercase">
-                <Mail className="size-3.5" /> Email {!isEdit && '*'}
-              </Label>
-              <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={isEdit} placeholder="name@company.com" title={isEdit ? 'Email is permanent once the account is created' : undefined} />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">Name *</Label>
-              <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus placeholder="Full name" />
-            </div>
-            {!isEdit && (
-              <div className="space-y-1.5">
-                <Label className="text-muted-foreground flex items-center gap-1.5 text-[11px] font-semibold tracking-wide uppercase">
-                  <KeyRound className="size-3.5" /> Password *
-                </Label>
-                <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Min 8 characters" />
-              </div>
-            )}
-          </div>
-
-          {/* ── Access: everything that decides what this account can do ────── */}
-          <div className="space-y-3 rounded-lg border border-primary/15 bg-primary/[0.03] p-3">
-            <div className="flex items-center gap-1.5 text-sm font-semibold text-primary">
-              <ShieldCheck className="size-4" /> Access
-            </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">Account status</Label>
-              <div className="bg-muted grid grid-cols-3 gap-1 rounded-lg p-1">
-                {STATUSES.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    data-on={status === s}
-                    onClick={() => setStatus(s)}
-                    className={cn(
-                      'ring-1 ring-inset ring-transparent rounded-md py-1.5 text-xs font-bold capitalize transition-all active:scale-[0.98]',
-                      status === s ? cn('bg-card shadow-sm', STATUS_SEGMENT_TONE[s]) : 'text-muted-foreground',
-                    )}
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <Label className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">
-                  Roles * <span className="text-primary/70 normal-case">({roleIds.size} assigned)</span>
-                </Label>
-                {(roles?.length ?? 0) > 5 && (
-                  <button type="button" onClick={toggleAllVisible} className="text-primary text-[11px] font-semibold hover:underline">
-                    {allVisibleSelected ? 'Clear' : 'Select all'}
-                  </button>
-                )}
-              </div>
-              {(roles?.length ?? 0) > 5 && (
-                <div className="relative">
-                  <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
-                  <Input value={roleSearch} onChange={(e) => setRoleSearch(e.target.value)} placeholder="Search roles…" className="h-8 pl-8 text-sm" />
-                </div>
-              )}
-              <div className="max-h-52 space-y-1 overflow-y-auto rounded-md border bg-card p-1.5">
-                {visibleRoles.map((r) => {
-                  const on = roleIds.has(r.id);
-                  return (
-                    <button
-                      type="button"
-                      key={r.id}
-                      onClick={() => toggleRole(r.id)}
-                      className={cn(
-                        'flex w-full cursor-pointer items-start gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors',
-                        on ? 'bg-primary/[0.06] ring-1 ring-primary/20' : 'hover:bg-muted/60',
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-[4px] border-[1.5px] transition-colors',
-                          on ? 'border-primary bg-primary text-primary-foreground' : 'border-slate-400',
-                        )}
-                      >
-                        {on && <Check className="size-3" strokeWidth={3} />}
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block text-sm font-medium">{r.label}</span>
-                        {r.description && <span className="text-muted-foreground block text-xs">{r.description}</span>}
-                      </span>
-                    </button>
-                  );
-                })}
-                {!visibleRoles.length && <p className="text-muted-foreground p-2 text-sm">{roleSearch ? 'No roles match your search.' : 'No roles defined yet.'}</p>}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button onClick={submit} disabled={saving}>
-            {saving ? <Loader2 className="animate-spin" /> : <Plus />} {isEdit ? 'Save' : 'Create'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 
