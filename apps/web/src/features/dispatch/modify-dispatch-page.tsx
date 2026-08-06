@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Camera, CalendarRange, ChevronDown, ChevronLeft, ChevronRight, Layers, Loader2, Lock, Pencil, Search, Trash2, TriangleAlert, Users } from 'lucide-react';
+import { Camera, CalendarRange, ChevronDown, ChevronLeft, ChevronRight, Filter, Layers, Loader2, Lock, Pencil, Search, Trash2, TriangleAlert, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ALL_PERMISSIONS, DISPATCH_STATUSES, MAX_PAGE_SIZE, RESOURCES, qtyOrderForCategory, type DispatchDto, type QtyField } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -20,6 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { DateRangeCalendar } from '@/components/common/date-range-calendar';
 import { PRESETS, presetRange } from '@/features/challans/date-presets';
@@ -558,6 +559,15 @@ export function ModifyDispatchPage() {
   const [dateTo, setDateTo] = useState('');
   const [datePreset, setDatePreset] = useState('');
   const [dateOpen, setDateOpen] = useState(false);
+  // Phones: only Search + Customer + Item show up top; Agent/Design/Status live
+  // behind this Filter icon (same pattern as Dispatch Order) — Date range and
+  // Group already have their own compact, self-contained mobile controls
+  // (Popover with its own Done button; a plain toggle), so they stay visible
+  // rather than adding a second "apply" step inside the sheet.
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [draftAgent, setDraftAgent] = useState('');
+  const [draftDesign, setDraftDesign] = useState('');
+  const [draftStatus, setDraftStatus] = useState('');
   // Subtotal view: groups the current filtered set by Date then Party. Off by
   // default (keeps today's flat-table behaviour); switching it on pulls a much
   // larger page so a subtotal is never short by a page boundary (see `query`).
@@ -641,6 +651,101 @@ export function ModifyDispatchPage() {
     setPage(1);
   };
   const dateLabel = datePreset || (dateFrom || dateTo ? `${dateFrom ? formatDate(dateFrom) : '…'} → ${dateTo ? formatDate(dateTo) : '…'}` : 'Any date');
+  // Shared body of the Date popover — same control on mobile and desktop.
+  const datePanel = (
+    <div className="w-[15.5rem] space-y-2">
+      <div className="flex flex-wrap items-center gap-1">
+        {PRESETS.map((p) => (
+          <button
+            key={p}
+            type="button"
+            onClick={() => applyDatePreset(p)}
+            aria-pressed={datePreset === p}
+            className={cn(
+              'cursor-pointer rounded-[4px] border px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap transition-colors duration-150',
+              datePreset === p
+                ? 'border-primary bg-primary text-primary-foreground shadow-sm'
+                : 'border-border bg-muted/40 text-slate-600 hover:border-primary/40 hover:bg-accent hover:text-accent-foreground',
+            )}
+          >
+            {p}
+          </button>
+        ))}
+      </div>
+      <div className="border-t pt-2">
+        <DateRangeCalendar
+          from={dateFrom}
+          to={dateTo}
+          onChange={(f, t) => {
+            setDateFrom(f);
+            setDateTo(t);
+            setDatePreset('');
+            setPage(1);
+          }}
+        />
+      </div>
+      <div className="flex items-center justify-between gap-2 border-t pt-2">
+        <span className="min-w-0 truncate text-[11.5px] font-semibold">
+          {dateActive ? (
+            <>
+              {dateFrom ? formatDate(dateFrom) : '…'} <span className="text-muted-foreground">→</span> {dateTo ? formatDate(dateTo) : '…'}
+            </>
+          ) : (
+            <span className="text-muted-foreground font-medium">All dates</span>
+          )}
+        </span>
+        <div className="flex shrink-0 gap-1.5">
+          {dateActive && (
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-[12px] font-semibold" onClick={clearDates}>
+              Clear
+            </Button>
+          )}
+          <Button size="sm" className="h-7 shrink-0 px-3 text-[12px] font-semibold" onClick={() => setDateOpen(false)}>
+            Done
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const hasFilters = !!(statusFilter || customerFilter || agentFilter || productFilter || designFilter || dateActive);
+  const resetFilters = () => {
+    setStatusFilter('');
+    setCustomerFilter('');
+    setAgentFilter('');
+    setProductFilter('');
+    setDesignFilter('');
+    clearDates();
+    setPage(1);
+  };
+  // The behind-the-icon count on mobile — just the three fields the sheet holds.
+  const sheetFilterCount = (agentFilter ? 1 : 0) + (designFilter ? 1 : 0) + (statusFilter ? 1 : 0);
+  const draftDirty = !!(draftAgent || draftDesign || draftStatus || agentFilter || designFilter || statusFilter);
+  // Open the mobile sheet with its drafts seeded from what's currently applied.
+  const openMobileFilters = () => {
+    setDraftAgent(agentFilter);
+    setDraftDesign(designFilter);
+    setDraftStatus(statusFilter);
+    setMobileFiltersOpen(true);
+  };
+  // "Show results": commit the drafts to the real filter state, then close.
+  const applyDraftFilters = () => {
+    setAgentFilter(draftAgent);
+    setDesignFilter(draftDesign);
+    setStatusFilter(draftStatus);
+    setPage(1);
+    setMobileFiltersOpen(false);
+  };
+  // Sheet "Reset": clear only what lives behind the Filter icon, applied right away.
+  const resetSheetFilters = () => {
+    setDraftAgent('');
+    setDraftDesign('');
+    setDraftStatus('');
+    setAgentFilter('');
+    setDesignFilter('');
+    setStatusFilter('');
+    setPage(1);
+  };
 
   const handleDelete = async (d: DispatchDto) => {
     if (d.challanCode) return toast.error(`Billed on ${d.challanCode} — cannot be deleted.`);
@@ -664,8 +769,8 @@ export function ModifyDispatchPage() {
     <div className="flex h-full min-h-0 flex-col gap-2 p-2.5 font-sans sm:gap-2.5 sm:p-3">
       {/* ── Toolbar: search + filters, then column settings — one card. */}
       <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
-        <div className="grid grid-cols-2 gap-2 p-2.5 sm:flex sm:flex-wrap sm:items-center sm:gap-2.5 sm:p-3">
-          <div className="relative col-span-2 sm:w-56">
+        <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
+          <div className="relative w-full sm:w-56">
             <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
             <Input
               placeholder="Search #, customer, item, design name or remark…"
@@ -674,119 +779,172 @@ export function ModifyDispatchPage() {
               onChange={(e) => setSearchInput(e.target.value)}
             />
           </div>
-          {/* Filter order follows the house pattern: Customer, Item Name, Agent,
-              Category, Sub Category, Design Name (skipping whichever of those this
-              page doesn't have — there's no Category/Sub Category filter here). */}
-          <div className="sm:w-40">
-            <NativeSelect value={customerFilter} onChange={(v) => { setCustomerFilter(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="All customers" className={cn(CONTROL, 'font-medium', customerFilter && CONTROL_ON)} />
-          </div>
-          <div className="sm:w-40">
-            {/* Digits-first keyboard: item names begin with a size number. */}
-            <NativeSelect value={productFilter} onChange={(v) => { setProductFilter(v); setPage(1); }} options={['', ...(options?.products ?? [])]} placeholder="All items" className={cn(CONTROL, 'font-medium', productFilter && CONTROL_ON)} digitsFirst />
-          </div>
-          <div className="sm:w-36">
-            <NativeSelect value={agentFilter} onChange={(v) => { setAgentFilter(v); setPage(1); }} options={['', ...(options?.agents ?? [])]} placeholder="All agents" className={cn(CONTROL, 'font-medium', agentFilter && CONTROL_ON)} />
-          </div>
-          <div className="sm:w-44">
-            <NativeSelect value={designFilter} onChange={(v) => { setDesignFilter(v); setPage(1); }} options={['', ...(options?.designs ?? [])]} placeholder="All design names" className={cn(CONTROL, 'font-medium', designFilter && CONTROL_ON)} />
-          </div>
-          <div className="sm:w-36">
-            <NativeSelect value={statusFilter} onChange={(v) => { setStatusFilter(v); setPage(1); }} options={['', ...DISPATCH_STATUSES]} placeholder="All statuses" className={cn(CONTROL, 'font-medium', statusFilter && CONTROL_ON)} />
-          </div>
 
-          {/* Dispatch-date range — scopes the Group by Date & Party view (and the
-              flat table too, when set). */}
-          <Popover open={dateOpen} onOpenChange={setDateOpen}>
-            <PopoverTrigger asChild>
-              <Button variant="outline" className={cn(CONTROL, 'max-w-52 font-medium', dateActive && CONTROL_ON)} title="Filter by dispatch date">
-                <CalendarRange className="size-3.5 shrink-0" />
-                <span className="truncate">{dateLabel}</span>
-                <ChevronDown className="size-3 shrink-0 opacity-60" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="start" className="font-poppins w-auto max-w-[calc(100vw-1.5rem)] p-2.5">
-              <div className="w-[15.5rem] space-y-2">
-                <div className="flex flex-wrap items-center gap-1">
-                  {PRESETS.map((p) => (
-                    <button
-                      key={p}
-                      type="button"
-                      onClick={() => applyDatePreset(p)}
-                      aria-pressed={datePreset === p}
-                      className={cn(
-                        'cursor-pointer rounded-[4px] border px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap transition-colors duration-150',
-                        datePreset === p
-                          ? 'border-primary bg-primary text-primary-foreground shadow-sm'
-                          : 'border-border bg-muted/40 text-slate-600 hover:border-primary/40 hover:bg-accent hover:text-accent-foreground',
-                      )}
-                    >
-                      {p}
-                    </button>
-                  ))}
-                </div>
-                <div className="border-t pt-2">
-                  <DateRangeCalendar
-                    from={dateFrom}
-                    to={dateTo}
-                    onChange={(f, t) => {
-                      setDateFrom(f);
-                      setDateTo(t);
-                      setDatePreset('');
-                      setPage(1);
-                    }}
-                  />
-                </div>
-                <div className="flex items-center justify-between gap-2 border-t pt-2">
-                  <span className="min-w-0 truncate text-[11.5px] font-semibold">
-                    {dateActive ? (
-                      <>
-                        {dateFrom ? formatDate(dateFrom) : '…'} <span className="text-muted-foreground">→</span> {dateTo ? formatDate(dateTo) : '…'}
-                      </>
-                    ) : (
-                      <span className="text-muted-foreground font-medium">All dates</span>
-                    )}
+          {/* Phones: just the two filters people actually reach for first —
+              Customer and Item — each on their own full-width line. Everything
+              else (Agent / Design / Status) lives behind the Filter icon; Date
+              range and Group already have their own compact, self-contained
+              controls, so they stay visible in the row below rather than
+              needing a second "apply" step inside the sheet. */}
+          <div className="flex w-full flex-col gap-2 sm:hidden">
+            <NativeSelect value={customerFilter} onChange={(v) => { setCustomerFilter(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="Customer" className={cn(CONTROL, 'font-medium', customerFilter && CONTROL_ON)} />
+            <NativeSelect value={productFilter} onChange={(v) => { setProductFilter(v); setPage(1); }} options={['', ...(options?.products ?? [])]} placeholder="Item" className={cn(CONTROL, 'font-medium', productFilter && CONTROL_ON)} digitsFirst />
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="icon" className={cn('relative size-9 shrink-0 rounded-[4px] border-amber-300', sheetFilterCount > 0 && CONTROL_ON)} onClick={openMobileFilters} aria-label="More filters">
+                <Filter className="size-4" />
+                {sheetFilterCount > 0 && (
+                  <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-bold tabular-nums">
+                    {sheetFilterCount}
                   </span>
-                  <div className="flex shrink-0 gap-1.5">
-                    {dateActive && (
-                      <Button variant="ghost" size="sm" className="h-7 px-2 text-[12px] font-semibold" onClick={clearDates}>
-                        Clear
-                      </Button>
-                    )}
-                    <Button size="sm" className="h-7 shrink-0 px-3 text-[12px] font-semibold" onClick={() => setDateOpen(false)}>
-                      Done
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </PopoverContent>
-          </Popover>
+                )}
+              </Button>
+              {hasFilters && (
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="size-9 shrink-0 rounded-[4px] border-amber-300 text-amber-700 hover:bg-amber-50 hover:text-amber-900 dark:text-amber-300 dark:hover:bg-amber-400/10"
+                  onClick={resetFilters}
+                  aria-label="Reset all filters"
+                  title="Reset all filters"
+                >
+                  <X className="size-4" />
+                </Button>
+              )}
+              <Popover open={dateOpen} onOpenChange={setDateOpen}>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className={cn(CONTROL, 'min-w-0 flex-1 font-medium', dateActive && CONTROL_ON)} title="Filter by dispatch date">
+                    <CalendarRange className="size-3.5 shrink-0" />
+                    <span className="truncate">{dateLabel}</span>
+                    <ChevronDown className="size-3 shrink-0 opacity-60" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="font-poppins w-auto max-w-[calc(100vw-1.5rem)] p-2.5">
+                  {datePanel}
+                </PopoverContent>
+              </Popover>
+            </div>
+            <label
+              className={cn(
+                'flex cursor-pointer items-center justify-between gap-2 rounded-[4px] border px-2.5 py-2 text-[12.5px] font-semibold select-none',
+                grouped ? 'border-primary/40 bg-primary/5 text-primary' : 'border-amber-300 text-slate-600 dark:border-amber-400/40',
+              )}
+            >
+              <span className="flex items-center gap-1.5">
+                <Layers className="size-3.5" /> Group by Date &amp; Party
+              </span>
+              <Switch checked={grouped} onCheckedChange={setGrouped} />
+            </label>
+          </div>
 
-          {/* The subtotal view — see GroupedDesktopView / GroupedMobileView below. */}
-          <label
-            className={cn(
-              'flex h-9 shrink-0 cursor-pointer items-center gap-2 rounded-[4px] border px-2.5 text-[12.5px] font-semibold whitespace-nowrap select-none',
-              grouped ? 'border-primary/40 bg-primary/5 text-primary' : 'border-amber-300 text-slate-600 dark:border-amber-400/40',
+          {/* Desktop: filters inline. */}
+          <div className="hidden flex-wrap items-center gap-2 sm:flex">
+            {/* Filter order follows the house pattern: Customer, Item Name, Agent,
+                Category, Sub Category, Design Name (skipping whichever of those this
+                page doesn't have — there's no Category/Sub Category filter here). */}
+            <div className="sm:w-40">
+              <NativeSelect value={customerFilter} onChange={(v) => { setCustomerFilter(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="All customers" className={cn(CONTROL, 'font-medium', customerFilter && CONTROL_ON)} />
+            </div>
+            <div className="sm:w-40">
+              {/* Digits-first keyboard: item names begin with a size number. */}
+              <NativeSelect value={productFilter} onChange={(v) => { setProductFilter(v); setPage(1); }} options={['', ...(options?.products ?? [])]} placeholder="All items" className={cn(CONTROL, 'font-medium', productFilter && CONTROL_ON)} digitsFirst />
+            </div>
+            <div className="sm:w-36">
+              <NativeSelect value={agentFilter} onChange={(v) => { setAgentFilter(v); setPage(1); }} options={['', ...(options?.agents ?? [])]} placeholder="All agents" className={cn(CONTROL, 'font-medium', agentFilter && CONTROL_ON)} />
+            </div>
+            <div className="sm:w-44">
+              <NativeSelect value={designFilter} onChange={(v) => { setDesignFilter(v); setPage(1); }} options={['', ...(options?.designs ?? [])]} placeholder="All design names" className={cn(CONTROL, 'font-medium', designFilter && CONTROL_ON)} />
+            </div>
+            <div className="sm:w-36">
+              <NativeSelect value={statusFilter} onChange={(v) => { setStatusFilter(v); setPage(1); }} options={['', ...DISPATCH_STATUSES]} placeholder="All statuses" className={cn(CONTROL, 'font-medium', statusFilter && CONTROL_ON)} />
+            </div>
+
+            {/* Dispatch-date range — scopes the Group by Date & Party view (and the
+                flat table too, when set). */}
+            <Popover open={dateOpen} onOpenChange={setDateOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className={cn(CONTROL, 'max-w-52 font-medium', dateActive && CONTROL_ON)} title="Filter by dispatch date">
+                  <CalendarRange className="size-3.5 shrink-0" />
+                  <span className="truncate">{dateLabel}</span>
+                  <ChevronDown className="size-3 shrink-0 opacity-60" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="font-poppins w-auto max-w-[calc(100vw-1.5rem)] p-2.5">
+                {datePanel}
+              </PopoverContent>
+            </Popover>
+
+            {/* The subtotal view — see GroupedDesktopView / GroupedMobileView below. */}
+            <label
+              className={cn(
+                'flex h-9 shrink-0 cursor-pointer items-center gap-2 rounded-[4px] border px-2.5 text-[12.5px] font-semibold whitespace-nowrap select-none',
+                grouped ? 'border-primary/40 bg-primary/5 text-primary' : 'border-amber-300 text-slate-600 dark:border-amber-400/40',
+              )}
+              title="Group the current list by Date, then Party — with a running subtotal of Bags/Pcs/Kgs/Box for each"
+            >
+              <Layers className="size-3.5" />
+              <Switch checked={grouped} onCheckedChange={setGrouped} />
+              Group by Date &amp; Party
+            </label>
+
+            {hasFilters && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9 rounded-[4px] text-[12.5px] font-semibold text-amber-700 hover:bg-amber-50 hover:text-amber-900 dark:text-amber-300 dark:hover:bg-amber-400/10"
+                onClick={resetFilters}
+                title="Clear all filters"
+              >
+                <X className="size-3.5" /> Reset
+              </Button>
             )}
-            title="Group the current list by Date, then Party — with a running subtotal of Bags/Pcs/Kgs/Box for each"
-          >
-            <Layers className="size-3.5" />
-            <Switch checked={grouped} onCheckedChange={setGrouped} />
-            Group by Date &amp; Party
-          </label>
 
-          <div className="col-span-2 ml-auto sm:col-span-1">
-            <ColumnSettings
-              columns={cols.orderedReorderable}
-              hidden={cols.hidden}
-              onReorder={cols.moveBefore}
-              onMove={cols.move}
-              onToggle={cols.toggle}
-              onReset={cols.reset}
-              dateFormat={{ value: format, options: DATE_FORMATS, onChange: setFormat }}
-            />
+            <div className="ml-auto shrink-0">
+              <ColumnSettings
+                columns={cols.orderedReorderable}
+                hidden={cols.hidden}
+                onReorder={cols.moveBefore}
+                onMove={cols.move}
+                onToggle={cols.toggle}
+                onReset={cols.reset}
+                dateFormat={{ value: format, options: DATE_FORMATS, onChange: setFormat }}
+              />
+            </div>
           </div>
         </div>
       </div>
+
+      {/* Phones only: Agent / Design / Status live behind the Filter icon above. */}
+      <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
+        <SheetContent side="bottom" className="sm:hidden">
+          <SheetHeader>
+            <div className="flex items-center justify-between">
+              <SheetTitle>Filters</SheetTitle>
+              <Button variant="ghost" size="sm" className="-mr-2 gap-1.5 font-bold text-rose-600 hover:bg-rose-50 hover:text-rose-700 disabled:text-rose-600/40" onClick={resetSheetFilters} disabled={!draftDirty}>
+                <X className="size-3.5" /> Reset
+              </Button>
+            </div>
+          </SheetHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Agent</Label>
+              <NativeSelect value={draftAgent} onChange={setDraftAgent} options={['', ...(options?.agents ?? [])]} placeholder="All agents" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Design</Label>
+              <NativeSelect value={draftDesign} onChange={setDraftDesign} options={['', ...(options?.designs ?? [])]} placeholder="All design names" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs font-medium uppercase">Status</Label>
+              <NativeSelect value={draftStatus} onChange={setDraftStatus} options={['', ...DISPATCH_STATUSES]} placeholder="All statuses" />
+            </div>
+          </div>
+          <SheetFooter>
+            <Button className="h-11 w-full text-base font-semibold" onClick={applyDraftFilters}>
+              Show results
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
 
       {/* The table/card list takes the leftover height and scrolls WITHIN itself
           (both directions on desktop), so the horizontal scrollbar sits right
