@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { Agent } from 'node:http';
-import { homedir, networkInterfaces } from 'node:os';
+import { homedir, hostname, networkInterfaces } from 'node:os';
 import path from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
@@ -22,6 +22,14 @@ function getAllLocalIPs(): string[] {
     'localhost',
     '127.0.0.1',
     '192.168.0.236',
+    // This PC's own name (e.g. GURUDEV1121), resolved on the LAN by NetBIOS/mDNS.
+    // Every Wi-Fi reconnect can hand out a DIFFERENT DHCP address, which silently
+    // breaks the https://<ip>:6173 URL saved on people's phones - the server is
+    // still running, but the address they bookmarked no longer points at it, which
+    // is exactly what "the server goes down when the Wi-Fi drops" looks like from
+    // the outside. A hostname URL survives that, so pin it into the cert too.
+    hostname(),
+    `${hostname()}.local`,
     // iPhone Personal Hotspot client pool — pre-pinned so a cert generated at
     // home is already valid when the PC hops onto the hotspot (no restart needed).
     ...Array.from({ length: 13 }, (_, i) => `172.20.10.${i + 2}`),

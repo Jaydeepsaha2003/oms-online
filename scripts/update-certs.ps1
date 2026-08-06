@@ -30,7 +30,11 @@ $reservedLanIps = @("192.168.0.236")
 # (run phone-url.bat to see the current address). Keep this list in sync with
 # getAllLocalIPs() in apps/web/vite.config.ts.
 $reservedLanIps += 2..14 | ForEach-Object { "172.20.10.$_" }
-$activeIps = @("localhost", "127.0.0.1", "::1") + $reservedLanIps
+# This PC's own name (e.g. GURUDEV1121), resolved on the LAN by NetBIOS/mDNS. Every
+# Wi-Fi reconnect can hand out a DIFFERENT DHCP address, which silently breaks the
+# https://<ip>:6173 URL saved on people's phones - the server is still running, but
+# the bookmarked address no longer points at it. A hostname URL survives that.
+$activeIps = @("localhost", "127.0.0.1", "::1", $env:COMPUTERNAME, "$env:COMPUTERNAME.local") + $reservedLanIps
 $adapters = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -ne "127.0.0.1" -and $_.IPAddress -notlike "169.254.*" }
 foreach ($a in $adapters) {
     if ($a.IPAddress) {

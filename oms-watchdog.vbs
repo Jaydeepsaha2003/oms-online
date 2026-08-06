@@ -72,6 +72,33 @@ Function RestartInFlight()
   On Error Goto 0
 End Function
 
+' Windows' own boot time, read locale-independently from WMI (the CIM string is
+' yyyymmddHHMMSS...).
+Function BootTime()
+  Dim o, s
+  For Each o In wmi.ExecQuery("SELECT LastBootUpTime FROM Win32_OperatingSystem")
+    s = o.LastBootUpTime
+    BootTime = DateSerial(CInt(Mid(s, 1, 4)), CInt(Mid(s, 5, 2)), CInt(Mid(s, 7, 2))) + _
+               TimeSerial(CInt(Mid(s, 9, 2)), CInt(Mid(s, 11, 2)), CInt(Mid(s, 13, 2)))
+    Exit For
+  Next
+End Function
+
+' A stop is only meant to last for the session it was made in. "Run stop.bat,
+' then switch the PC off" used to leave the machine permanently dead: the marker
+' outlived the reboot, so this watchdog sat idle at the next logon and the
+' servers never came back until somebody ran start.bat by hand. Clear a marker
+' that predates this boot - once, here, not inside the loop, so a stop.bat run
+' LATER in this session is still honoured for as long as the session lasts.
+' Mirrors the same guard in autostart-oms.vbs (which covers the pre-login path).
+If fso.FileExists(dir & "\.oms-stopped") Then
+  If fso.GetFile(dir & "\.oms-stopped").DateLastModified < BootTime() Then
+    On Error Resume Next
+    fso.DeleteFile dir & "\.oms-stopped", True
+    On Error Goto 0
+  End If
+End If
+
 Do While True
   If (Not fso.FileExists(dir & "\.oms-stopped")) And (Not RestartInFlight()) Then
     webUp = PortUp(6173)
