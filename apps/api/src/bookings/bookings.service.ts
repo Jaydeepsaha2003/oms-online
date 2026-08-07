@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import {
   type BookingConversionDto,
   type BookingDto,
@@ -17,6 +18,7 @@ import {
   resolveSpecialRates,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { PdfService } from '../pdf/pdf.service';
 import { toNum, toStr, uc } from '../common/coerce';
 import {
   BookingQueryDto,
@@ -42,7 +44,10 @@ interface RateSnapshot {
 
 @Injectable()
 export class BookingsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly pdf: PdfService,
+  ) {}
 
   /* ── List / read ─────────────────────────────────────────────────────────── */
 
@@ -173,6 +178,76 @@ export class BookingsService {
       throw new BadRequestException('This booking already has conversions — it cannot be deleted.');
     }
     await this.prisma.booking.delete({ where: { id } });
+  }
+
+  /* ── PDF (order-wise sales detail for one booking) ───────────────────────── */
+
+  /**
+   * A Tally-style black & white statement for one bag booking: the booking's
+   * own booked/converted/remaining figures, then every real order line drawn
+   * from it, grouped by the Order it actually landed on. A booking can span
+   * more than one Order (see {@link linkItems}), so this reads straight off
+   * `OrderItem.bookingId` rather than the single `booking.orderId` pointer.
+   */
+  async generateBookingPdf(id: number): Promise<{ buffer: Buffer; filename: string }> {
+    const booking = await this.prisma.booking.findUnique({ where: { id } });
+    if (!booking) throw new NotFoundException('Booking not found.');
+
+    const orderItems = await this.prisma.orderItem.findMany({
+      where: { bookingId: id },
+      include: { order: { select: { id: true, code: true, orderDate: true, status: true } } },
+      orderBy: [{ orderId: 'asc' }, { id: 'asc' }],
+    });
+
+    const groups = new Map<number, BookingPdfOrderGroup>();
+    for (const it of orderItems) {
+      let group = groups.get(it.order.id);
+      if (!group) {
+        group = {
+          orderCode: it.order.code ?? `ORD-${String(it.order.id).padStart(5, '0')}`,
+          orderDate: it.order.orderDate,
+          orderStatus: it.order.status,
+          lines: [],
+        };
+        groups.set(it.order.id, group);
+      }
+      const qty = it.calField === 'PCS' ? (it.pcs ?? 0) : (it.gram ?? 0);
+      group.lines.push({
+        productName: it.productName,
+        designType: it.designType && it.designType.toUpperCase() !== 'NA' ? it.designType : null,
+        bags: it.bags,
+        kgs: it.gram,
+        pcs: it.pcs,
+        rate: it.rate,
+        amount: round2((it.rate ?? 0) * qty),
+        status: it.status,
+      });
+    }
+
+    const buffer = await this.pdf.render(
+      buildBookingPdfDoc({
+        code: booking.code ?? this.codeFor(booking.id),
+        customerName: booking.customerName,
+        agentName: booking.agentName,
+        category: booking.category,
+        bookingDate: booking.bookingDate,
+        bags: booking.bags,
+        kgs: booking.kgs,
+        convertedBags: booking.convertedBags,
+        convertedKgs: booking.convertedKgs,
+        remainingBags: Math.max(0, round2(booking.bags - booking.convertedBags - (booking.precloseBags ?? 0))),
+        remainingKgs: Math.max(0, round2(booking.kgs - booking.convertedKgs - (booking.precloseKgs ?? 0))),
+        status: booking.status as BookingStatus,
+        comment: booking.comment,
+        precloseBags: booking.precloseBags,
+        precloseKgs: booking.precloseKgs,
+        precloseComment: booking.precloseComment,
+        precloseByName: booking.precloseByName,
+        precloseAt: booking.precloseAt,
+        groups: [...groups.values()],
+      }),
+    );
+    return { buffer, filename: `${booking.code ?? this.codeFor(booking.id)}.pdf` };
   }
 
   /**
@@ -813,4 +888,252 @@ export class BookingsService {
 
 function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+/* ── Booking PDF document (Tally-style black & white) ────────────────────── */
+
+interface BookingPdfLine {
+  productName: string | null;
+  designType: string | null;
+  bags: number | null;
+  kgs: number | null;
+  pcs: number | null;
+  rate: number | null;
+  amount: number;
+  status: string;
+}
+
+interface BookingPdfOrderGroup {
+  orderCode: string;
+  orderDate: Date;
+  orderStatus: string;
+  lines: BookingPdfLine[];
+}
+
+interface BookingPdfData {
+  code: string;
+  customerName: string;
+  agentName: string | null;
+  category: string | null;
+  bookingDate: Date;
+  bags: number;
+  kgs: number;
+  convertedBags: number;
+  convertedKgs: number;
+  remainingBags: number;
+  remainingKgs: number;
+  status: string;
+  comment: string | null;
+  precloseBags: number | null;
+  precloseKgs: number | null;
+  precloseComment: string | null;
+  precloseByName: string | null;
+  precloseAt: Date | null;
+  groups: BookingPdfOrderGroup[];
+}
+
+const PDF_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
+/** Compact d-MMM-yy date, matching the Party Ledger PDF's convention. */
+const pdfDate = (value: Date | string | null): string => {
+  if (!value) return '';
+  const date = typeof value === 'string' ? new Date(value) : value;
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.getDate()}-${PDF_MONTHS[date.getMonth()]}-${String(date.getFullYear()).slice(-2)}`;
+};
+/** Tally convention: two decimals, zero cell left blank. */
+const amt2 = (v: number | null | undefined) => (v ? v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '');
+/** Same, but zero prints as 0.00 (used in the summary strip, never blank). */
+const amt2z = (v: number | null | undefined) => (v || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const BOOKING_STATUS_LABEL: Record<string, string> = {
+  OPEN: 'Open',
+  PARTIALLY_CONVERTED: 'Partially Converted',
+  CONVERTED: 'Fully Converted',
+  CANCELLED: 'Cancelled',
+  PRECLOSED: 'Preclosed',
+};
+
+/**
+ * A Tally "statement" for one bag booking: plain black on white with no fills
+ * or accent colour, a centred masthead, and every order-item this booking ever
+ * drew down grouped under the Order it landed on — mirroring the Party Ledger
+ * PDF's grammar (see `party-ledger.service.ts`'s `buildLedgerDoc`) so every
+ * printed document in the app reads as one consistent house style.
+ */
+function buildBookingPdfDoc(b: BookingPdfData): TDocumentDefinitions {
+  const BLACK = '#000000';
+  const pageWidth = 595 - 36;
+  const BODY = 9;
+  type Cell = Record<string, unknown>;
+  const txt = (text: string, extra: Cell = {}): Cell => ({ text, fontSize: BODY, lineHeight: 1.12, color: BLACK, ...extra });
+  const num = (text: string, extra: Cell = {}): Cell => ({ text, fontSize: BODY, alignment: 'right', noWrap: true, color: BLACK, ...extra });
+  const head = (text: string, extra: Cell = {}): Cell => ({ text, fontSize: BODY + 0.5, bold: true, characterSpacing: 0.3, color: BLACK, ...extra });
+
+  const COLS = 7; // Product, Design, Bags, Kgs, Pcs, Rate, Amount
+  const colRow: Cell[] = [
+    head('Product'),
+    head('Design'),
+    head('Bags', { alignment: 'right' }),
+    head('Kgs', { alignment: 'right' }),
+    head('Pcs', { alignment: 'right' }),
+    head('Rate', { alignment: 'right' }),
+    head('Amount', { alignment: 'right' }),
+  ];
+  const spanRow = (cell: Cell): Cell[] => [{ ...cell, colSpan: COLS }, ...Array.from({ length: COLS - 1 }, () => ({ text: '' }))];
+
+  const lineRow = (l: BookingPdfLine): Cell[] => {
+    const cancelled = l.status === 'CANCELLED';
+    const style = cancelled ? { italics: true } : {};
+    return [
+      txt(`${l.productName ?? '—'}${cancelled ? '  (Cancelled)' : ''}`, style),
+      txt(l.designType ?? '—', style),
+      num(amt2(l.bags), style),
+      num(amt2(l.kgs), style),
+      num(amt2(l.pcs), style),
+      num(amt2(l.rate), style),
+      num(amt2(l.amount), style),
+    ];
+  };
+
+  const subtotalRow = (g: BookingPdfOrderGroup): Cell[] => {
+    const active = g.lines.filter((l) => l.status !== 'CANCELLED');
+    const bags = round2(active.reduce((s, l) => s + (l.bags ?? 0), 0));
+    const kgs = round2(active.reduce((s, l) => s + (l.kgs ?? 0), 0));
+    const amount = round2(active.reduce((s, l) => s + l.amount, 0));
+    return [
+      txt(''),
+      txt('Order Total', { bold: true, fontSize: BODY - 0.5 }),
+      num(amt2z(bags), { bold: true }),
+      num(amt2z(kgs), { bold: true }),
+      txt(''),
+      txt(''),
+      num(amt2z(amount), { bold: true }),
+    ];
+  };
+
+  // Build the body while recording which row boundaries get a rule, mirroring
+  // the ledger PDF's "column rules run full-height, horizontal rules only
+  // frame the headings, groups and totals" skeleton.
+  const body: Cell[][] = [colRow];
+  const hLine = new Map<number, number>([
+    [0, 1],
+    [1, 1],
+  ]);
+  for (const g of b.groups) {
+    hLine.set(body.length, 0.6);
+    body.push(spanRow(head(`Order ${g.orderCode}   ·   ${pdfDate(g.orderDate)}   ·   ${g.orderStatus}`)));
+    for (const l of g.lines) body.push(lineRow(l));
+    hLine.set(body.length, 0.6);
+    body.push(subtotalRow(g));
+  }
+  if (!b.groups.length) {
+    body.push(spanRow(txt('Nothing converted from this booking yet.', { italics: true, alignment: 'center', margin: [0, 4, 0, 4] })));
+  }
+  const active = b.groups.flatMap((g) => g.lines.filter((l) => l.status !== 'CANCELLED'));
+  hLine.set(body.length, 1.5);
+  body.push([
+    txt(''),
+    txt('Grand Total', { bold: true, fontSize: BODY + 0.5 }),
+    num(amt2z(round2(active.reduce((s, l) => s + (l.bags ?? 0), 0))), { bold: true, fontSize: BODY + 0.5 }),
+    num(amt2z(round2(active.reduce((s, l) => s + (l.kgs ?? 0), 0))), { bold: true, fontSize: BODY + 0.5 }),
+    txt(''),
+    txt(''),
+    num(amt2z(round2(active.reduce((s, l) => s + l.amount, 0))), { bold: true, fontSize: BODY + 0.5 }),
+  ]);
+  hLine.set(body.length, 1.5);
+
+  const summaryCell = (label: string, bags: number, kgs: number): Cell => ({
+    stack: [
+      { text: label, fontSize: 9, bold: true, characterSpacing: 0.4 },
+      { text: `${amt2z(bags)} bags`, fontSize: 12, bold: true, margin: [0, 2, 0, 0] },
+      { text: `${amt2z(kgs)} kgs`, fontSize: 9.5, margin: [0, 1, 0, 0] },
+    ],
+    margin: [8, 5, 8, 5],
+  });
+  const preclosed = b.status === 'PRECLOSED';
+  const summaryCells: Cell[] = [
+    summaryCell('BOOKED', b.bags, b.kgs),
+    summaryCell('CONVERTED', b.convertedBags, b.convertedKgs),
+    summaryCell(preclosed ? 'STILL PENDING' : 'REMAINING', b.remainingBags, b.remainingKgs),
+    ...(preclosed ? [summaryCell('WRITTEN OFF', b.precloseBags ?? 0, b.precloseKgs ?? 0)] : []),
+  ];
+
+  return {
+    pageSize: 'A4',
+    pageOrientation: 'portrait',
+    pageMargins: [18, 22, 18, 32],
+    defaultStyle: { font: 'Calibri', fontSize: BODY, color: BLACK },
+    content: [
+      {
+        stack: [
+          { text: b.customerName.toUpperCase(), bold: true, fontSize: 15, alignment: 'center' },
+          { text: 'Bag Booking Statement', fontSize: 11.5, alignment: 'center', margin: [0, 1, 0, 0] },
+          {
+            text: `Booking ${b.code}${b.agentName ? `   ·   Agent: ${b.agentName}` : ''}   ·   ${b.category ?? 'SALES'}`,
+            fontSize: 10,
+            alignment: 'center',
+            margin: [0, 3, 0, 0],
+          },
+          { text: `Booking date: ${pdfDate(b.bookingDate)}`, fontSize: 10.5, bold: true, alignment: 'center', margin: [0, 6, 0, 0] },
+          {
+            text: `Status: ${BOOKING_STATUS_LABEL[b.status] ?? b.status}   ·   Amounts in INR`,
+            fontSize: 9,
+            alignment: 'center',
+            margin: [0, 2, 0, 0],
+          },
+        ],
+        margin: [0, 0, 0, 5],
+      },
+      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: pageWidth, y2: 0, lineWidth: 1, lineColor: BLACK }], margin: [0, 0, 0, 6] },
+
+      {
+        unbreakable: true,
+        table: { widths: summaryCells.map(() => '*'), body: [summaryCells] },
+        layout: {
+          hLineWidth: () => 0.5,
+          vLineWidth: () => 0.5,
+          hLineColor: () => BLACK,
+          vLineColor: () => BLACK,
+          paddingLeft: () => 0,
+          paddingRight: () => 0,
+          paddingTop: () => 0,
+          paddingBottom: () => 0,
+        },
+        margin: [0, 0, 0, preclosed ? 4 : 10],
+      },
+      ...(preclosed
+        ? [
+            {
+              text: `Preclosed ${pdfDate(b.precloseAt)}${b.precloseByName ? ` by ${b.precloseByName}` : ''}${b.precloseComment ? ` — ${b.precloseComment}` : ''}`,
+              fontSize: 8.5,
+              italics: true,
+              margin: [0, 0, 0, 10],
+            },
+          ]
+        : []),
+
+      {
+        table: { headerRows: 1, dontBreakRows: true, widths: ['*', 70, 42, 42, 36, 50, 62], body },
+        layout: {
+          hLineWidth: (i: number) => hLine.get(i) ?? 0,
+          vLineWidth: () => 0.5,
+          hLineColor: () => BLACK,
+          vLineColor: () => BLACK,
+          paddingLeft: () => 3,
+          paddingRight: () => 3,
+          paddingTop: () => 4,
+          paddingBottom: () => 4,
+        },
+      },
+
+      ...(b.comment ? [{ text: `Comment: ${b.comment}`, fontSize: 9, italics: true, margin: [0, 10, 0, 0] }] : []),
+    ],
+    footer: (currentPage: number, pageCount: number) => ({
+      columns: [
+        { text: `Generated ${new Date().toLocaleString('en-GB')}`, fontSize: 8, color: BLACK, margin: [24, 0, 0, 0] },
+        { text: `Page ${currentPage} of ${pageCount}`, fontSize: 8, bold: true, color: BLACK, alignment: 'right', margin: [0, 0, 24, 0] },
+      ],
+      margin: [0, 6, 0, 0],
+    }),
+  } as unknown as TDocumentDefinitions;
 }

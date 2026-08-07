@@ -125,18 +125,23 @@ export interface CombinationInput {
   designIds: number[];
 }
 
-/** Existing distinct values to populate the product form's category dropdowns. */
+/** Existing distinct values to populate the product form's category dropdowns.
+ *  `subCategories` is every distinct (category, sub-category) PAIR that actually
+ *  exists, not a flat list — so a sub-category dropdown can be filtered down to
+ *  just the ones under the currently-selected category. */
 export interface ProductLookups {
   categories: string[];
-  subCategories: string[];
+  subCategories: { category: string; subCategory: string }[];
   /** Per-category price calculation field (KGS / PCS). */
   categoryFields: CategoryFieldDto[];
 }
 
-/** Existing distinct values to populate the design form's category dropdowns. */
+/** Existing distinct values to populate the design form's category dropdowns.
+ *  `subCategories` is every distinct (category, sub-category) pair — see
+ *  {@link ProductLookups} for why this isn't a flat list. */
 export interface DesignLookups {
   categories: string[];
-  subCategories: string[];
+  subCategories: { category: string; subCategory: string }[];
 }
 
 export type ProductQuery = PaginationQuery & {

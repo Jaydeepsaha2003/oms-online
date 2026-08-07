@@ -15,6 +15,8 @@ import type {
   DiscountHistoryList,
   DiscountInvoiceList,
   DiscountInvoiceQuery,
+  EditPaymentInput,
+  EditPaymentResult,
   LedgerList,
   OpeningBalanceDto,
   OpeningBalanceInput,
@@ -245,6 +247,15 @@ export function useSavePayment() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: SavePaymentInput) => http.post<SavePaymentResult>('/payments', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PAYMENT_KEY }),
+  });
+}
+
+/** Correct an already-saved receipt's amount/date/mode/remarks. */
+export function useEditPayment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...input }: { id: number } & EditPaymentInput) => http.patch<EditPaymentResult>(`/payments/${id}`, input),
     onSuccess: () => qc.invalidateQueries({ queryKey: PAYMENT_KEY }),
   });
 }

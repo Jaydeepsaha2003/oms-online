@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
@@ -41,6 +42,15 @@ export class BookingsController {
   @Permissions(perm(R, ACTIONS.VIEW))
   get(@Param('id', ParseIntPipe) id: number) {
     return this.bookings.findOne(id);
+  }
+
+  /** Order-wise sales detail for this booking, as a Tally-style B&W PDF. */
+  @Get(':id/pdf')
+  @Permissions(perm(R, ACTIONS.PRINT))
+  async pdf(@Param('id', ParseIntPipe) id: number, @Res() res: Response) {
+    const { buffer, filename } = await this.bookings.generateBookingPdf(id);
+    res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${filename}"` });
+    res.send(buffer);
   }
 
   @Post()

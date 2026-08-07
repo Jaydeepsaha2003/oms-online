@@ -52,9 +52,11 @@ export class ProductsService {
     return this.toDto(row);
   }
 
-  /** Distinct existing categories & sub-categories for the form's dropdowns. */
+  /** Distinct existing categories & (category, sub-category) pairs for the
+   *  form's cascading dropdowns — pairs so a chosen category can filter which
+   *  sub-categories are offered, instead of showing every sub-category ever seen. */
   async lookups(): Promise<ProductLookups> {
-    const [cats, subs, categoryFields] = await Promise.all([
+    const [cats, pairs, categoryFields] = await Promise.all([
       this.prisma.product.findMany({
         where: { category: { not: '' } },
         select: { category: true },
@@ -62,16 +64,16 @@ export class ProductsService {
         orderBy: { category: 'asc' },
       }),
       this.prisma.product.findMany({
-        where: { subCategory: { not: '' } },
-        select: { subCategory: true },
-        distinct: ['subCategory'],
-        orderBy: { subCategory: 'asc' },
+        where: { category: { not: '' }, subCategory: { not: '' } },
+        select: { category: true, subCategory: true },
+        distinct: ['category', 'subCategory'],
+        orderBy: [{ category: 'asc' }, { subCategory: 'asc' }],
       }),
       readCategoryFields(this.prisma),
     ]);
     return {
       categories: cats.map((c) => c.category).filter(Boolean),
-      subCategories: subs.map((s) => s.subCategory).filter(Boolean),
+      subCategories: pairs.map((p) => ({ category: p.category, subCategory: p.subCategory })),
       categoryFields,
     };
   }

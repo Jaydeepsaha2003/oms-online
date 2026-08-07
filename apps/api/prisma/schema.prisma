@@ -1284,6 +1284,23 @@ model AcctLedger {
   cashCredit   Float    @default(0)
   transRemarks String?
   userName     String?
+  // The full original save() input (RECEIPT vouchers only) — captured so this
+  // voucher, and anything saved after it, can be reversed and replayed if its
+  // amount/date/mode needs correcting. Null on vouchers saved before edit
+  // support existed; those can't be edited (see PaymentsService.editReceipt).
+  adjMode           String?
+  selectedInvNos    String? // JSON array — AGST REF mode only
+  takeAccOn         String? // PARTY | AGENT
+  bankName          String?
+  chequeNo          String?
+  cashTransLocation String?
+  cashRecBy         String?
+  // This voucher's own generated REC-.../ADV-... ids (if any were created) —
+  // reused verbatim on replay so later vouchers that reference them still resolve.
+  receiptRefId String?
+  advanceRefId String?
+  editedAt     DateTime?
+  editedByName String?
   createdAt    DateTime @default(now())
 
   @@index([custId])
@@ -1313,12 +1330,17 @@ model AcctPaymentReceipt {
   modeOfAdj         String?
   // Voucher no (fresh receipt) OR advance REF ID (advance-funded allocation).
   refRecId          String?
+  // The voucher whose save() call created this row — independent of refRecId
+  // (which records who FUNDED it). The reliable key for "everything voucher X
+  // touched," used to reverse/replay a voucher when its amount is edited.
+  sourceVoucherNo   String?
   createdAt         DateTime @default(now())
 
   @@index([custId])
   @@index([invNo])
   @@index([refRecId])
   @@index([recDate])
+  @@index([sourceVoucherNo])
   @@map("acct_payment_receipt")
 }
 
@@ -1342,11 +1364,14 @@ model AcctPartyAdvance {
   // Originating voucher no.
   refRecId          String?
   takeAccOn         String? // PARTY | AGENT
+  // The voucher whose save() call created this row — see AcctPaymentReceipt.sourceVoucherNo.
+  sourceVoucherNo   String?
   createdAt         DateTime @default(now())
 
   @@index([custId])
   @@index([refId])
   @@index([recDate])
+  @@index([sourceVoucherNo])
   @@map("acct_party_advance")
 }
 
@@ -1365,6 +1390,8 @@ model AcctOpeningTrans {
   drCr         String? // DEBIT | CREDIT (OPENING rows only)
   // Voucher no that cleared this opening (CLEARANCE rows only).
   refRecId     String?
+  // The voucher whose save() call created this row — see AcctPaymentReceipt.sourceVoucherNo.
+  sourceVoucherNo String?
   remarks      String?
   userName     String?
   createdAt    DateTime @default(now())
@@ -1372,6 +1399,7 @@ model AcctOpeningTrans {
   @@index([custId])
   @@index([kind])
   @@index([transDate])
+  @@index([sourceVoucherNo])
   @@map("acct_opening_trans")
 }
 

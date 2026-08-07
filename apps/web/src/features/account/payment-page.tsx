@@ -7,12 +7,13 @@ import {
   ChevronRight,
   Download,
   Loader2,
+  Pencil,
   RotateCcw,
   Save,
   ScrollText,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { PendingInvoiceRow, SavePaymentResult } from '@oms/shared';
+import type { LedgerEntryDto, PendingInvoiceRow, SavePaymentResult } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { getApiErrorMessage } from '@/lib/api';
@@ -23,10 +24,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { NativeSelect } from '@/components/common/combo';
 import { useCustomers } from '@/features/customers/use-customers';
 import { useAgents } from '@/features/agents/use-agents';
-import { useActiveBankAccounts, useChequeOptions, usePaymentContext, usePaymentLedger, useSavePayment } from './use-account';
+import { useActiveBankAccounts, useChequeOptions, useEditPayment, usePaymentContext, usePaymentLedger, useSavePayment } from './use-account';
 import { exportPendingInvoices } from './payment-pending-export';
 
 const inr = (v: number | null | undefined) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
@@ -933,14 +935,163 @@ function DueCard({
   );
 }
 
+/**
+ * Correct an already-saved receipt's amount/date/mode/remarks. WHO it was
+ * taken from and HOW it was adjusted (adjMode, ticked invoices) stay fixed —
+ * only the figures a typo could get wrong are editable here. Saving reverses
+ * this voucher and every later one for the same party/agent, then replays
+ * them — see PaymentsService.editReceipt.
+ */
+function EditPaymentDialog({ entry, onClose }: { entry: LedgerEntryDto; onClose: () => void }) {
+  const edit = useEditPayment();
+  const { data: banks } = useActiveBankAccounts();
+  const bankOptions = useMemo(() => (banks ?? []).map((b) => b.display), [banks]);
+
+  const [payMode, setPayMode] = useState(entry.transMode);
+  const [bankName, setBankName] = useState(entry.bankName ?? '');
+  const [chequeNo, setChequeNo] = useState(entry.chequeNo ?? '');
+  const [cashLoc, setCashLoc] = useState(entry.cashTransLocation ?? '');
+  const [cashBy, setCashBy] = useState(entry.cashRecBy ?? '');
+  const [receiptStr, setReceiptStr] = useState(String(entry.bankCredit || entry.cashCredit || ''));
+  const [recDate, setRecDate] = useState(entry.transDate.slice(0, 10));
+  const [remarks, setRemarks] = useState(entry.transRemarks ?? '');
+
+  const receipt = Number(receiptStr) || 0;
+  const needsBank = payMode === 'BANK' || payMode === 'CHEQUE';
+
+  const submit = () => {
+    if (!payMode) return toast.error('Please select Payment Mode (BANK / CHEQUE / CASH).');
+    if (!(receipt > 0)) return toast.error('Receipt Amount must be greater than 0.');
+    if (needsBank && !bankName.trim()) return toast.error('Please select a Bank Name.');
+    if (payMode === 'CHEQUE' && !chequeNo.trim()) return toast.error('Please select / enter Cheque No.');
+    if (payMode === 'CASH' && !cashLoc.trim()) return toast.error('Please enter Cash Transfer Location.');
+    if (payMode === 'CASH' && !cashBy.trim()) return toast.error('Please enter Cash Received By.');
+
+    edit.mutate(
+      {
+        id: entry.id,
+        payMode,
+        bankName: bankName || null,
+        chequeNo: chequeNo || null,
+        cashTransLocation: cashLoc || null,
+        cashRecBy: cashBy || null,
+        receiptAmt: receipt,
+        recDate,
+        remarks: remarks || null,
+      },
+      {
+        onSuccess: (res) => {
+          toast.success(res.replayedCount > 0 ? `${entry.voucherNo} updated — ${res.replayedCount} later receipt(s) recomputed` : `${entry.voucherNo} updated`);
+          onClose();
+        },
+        onError: (e) => toast.error(getApiErrorMessage(e, 'Edit failed')),
+      },
+    );
+  };
+
+  useSaveShortcut(submit);
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Pencil className="text-primary size-4" /> Edit {entry.voucherNo}
+          </DialogTitle>
+          <DialogDescription>
+            {entry.customerName} — correcting the amount replays this voucher and any later receipt for the same party/agent, so their numbers stay consistent.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-2.5">
+          <div className="grid grid-cols-2 gap-2.5">
+            <div className="space-y-1">
+              <Label htmlFor="edit-date" className={FIELD_LABEL}>Receipt Date *</Label>
+              <DatePicker id="edit-date" value={recDate} onChange={(v) => v && setRecDate(v)} clearable={false} className={cn(CONTROL, 'w-full')} />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="edit-amt" className={FIELD_LABEL}>Receipt Amount *</Label>
+              <Input id="edit-amt" type="number" inputMode="decimal" className={CONTROL} value={receiptStr} onChange={(e) => setReceiptStr(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <span className={FIELD_LABEL}>Payment Mode *</span>
+            <div role="group" aria-label="Payment mode" className="grid grid-cols-3 gap-0.5 rounded-[4px] border border-amber-400 bg-amber-50/40 p-0.5 dark:border-amber-400/60 dark:bg-transparent">
+              {(['BANK', 'CHEQUE', 'CASH'] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  aria-pressed={payMode === m}
+                  onClick={() => setPayMode(m)}
+                  className={cn(
+                    'min-h-9 cursor-pointer rounded-[3px] py-1.5 text-[11.5px] font-bold tracking-wide uppercase transition-colors duration-150',
+                    payMode === m ? 'bg-primary text-primary-foreground shadow-sm' : 'text-amber-900/70 hover:bg-amber-100 hover:text-amber-900 dark:text-amber-200/70 dark:hover:bg-amber-400/10',
+                  )}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {needsBank && (
+            <div className="space-y-1">
+              <Label htmlFor="edit-bank" className={FIELD_LABEL}>Bank Name *</Label>
+              <NativeSelect id="edit-bank" value={bankName} onChange={setBankName} options={bankOptions} placeholder="Our receiving account…" className={cn(CONTROL, 'font-medium')} />
+            </div>
+          )}
+          {payMode === 'CHEQUE' && (
+            <div className="space-y-1">
+              <Label htmlFor="edit-cheque" className={FIELD_LABEL}>Cheque No *</Label>
+              <Input id="edit-cheque" className={CONTROL} value={chequeNo} onChange={(e) => setChequeNo(e.target.value)} />
+            </div>
+          )}
+          {payMode === 'CASH' && (
+            <div className="grid grid-cols-2 gap-2.5">
+              <div className="space-y-1">
+                <Label htmlFor="edit-cashloc" className={FIELD_LABEL}>Cash Location *</Label>
+                <Input id="edit-cashloc" className={CONTROL} value={cashLoc} onChange={(e) => setCashLoc(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="edit-cashby" className={FIELD_LABEL}>Received By *</Label>
+                <Input id="edit-cashby" className={CONTROL} value={cashBy} onChange={(e) => setCashBy(e.target.value)} />
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-1">
+            <Label htmlFor="edit-remarks" className={FIELD_LABEL}>Remarks</Label>
+            <Input id="edit-remarks" className={CONTROL} value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={edit.isPending}>
+            {edit.isPending ? <Loader2 className="animate-spin" /> : <Save />} Save changes
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /* ── Receipt Ledger browser (legacy Button1 / Ctrl+E) ───────────────────────── */
 
 function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { ownerKind: string; owner: string; customerId?: number; agentName?: string; onClose: () => void }) {
+  const { can } = usePermissions();
+  const canEdit = can('payment:update');
   const [page, setPage] = useState(1);
+  const [editing, setEditing] = useState<LedgerEntryDto | null>(null);
   const { data, isLoading } = usePaymentLedger({ customerId, agentName, dateFrom: fyStart(), dateTo: TODAY(), page, pageSize: 25 });
   const rows = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
+  const cols = canEdit ? 9 : 8;
   return (
+    <>
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[90dvh] w-[min(900px,96vw)] max-w-[96vw] overflow-y-auto sm:!max-w-[900px]">
         <DialogHeader>
@@ -960,14 +1111,15 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
                 <th scope="col" className={cn(TH, TH_LINE)}>Particulars</th>
                 <th scope="col" className={cn(TH, TH_LINE, 'text-right')}>Bank Cr</th>
                 <th scope="col" className={cn(TH, TH_LINE, 'text-right')}>Cash Cr</th>
-                <th scope="col" className={cn(TH)}>Remarks</th>
+                <th scope="col" className={cn(TH, canEdit && TH_LINE)}>Remarks</th>
+                {canEdit && <th scope="col" className={cn(TH, 'w-9')} />}
               </tr>
             </thead>
             <tbody className="select-none">
               {isLoading ? (
-                <tr><td colSpan={8} className="h-20 text-center"><Loader2 className="text-muted-foreground mx-auto size-5 animate-spin" /></td></tr>
+                <tr><td colSpan={cols} className="h-20 text-center"><Loader2 className="text-muted-foreground mx-auto size-5 animate-spin" /></td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={8} className="text-muted-foreground h-20 text-center text-[13px] font-medium">No receipts recorded this financial year.</td></tr>
+                <tr><td colSpan={cols} className="text-muted-foreground h-20 text-center text-[13px] font-medium">No receipts recorded this financial year.</td></tr>
               ) : (
                 rows.map((r) => (
                   <tr key={r.id} className="border-b border-amber-200/70 even:bg-amber-50/70 hover:bg-amber-200/70 dark:border-amber-400/10 dark:even:bg-amber-400/[0.05] dark:hover:bg-amber-400/20">
@@ -978,7 +1130,31 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
                     <td className={cn(TD, 'max-w-56 truncate')} title={r.particulars ?? ''}>{r.particulars ?? '—'}</td>
                     <td className={cn(TD, NUM, 'font-bold')}>{r.bankCredit ? inr(r.bankCredit) : '-'}</td>
                     <td className={cn(TD, NUM, 'font-bold')}>{r.cashCredit ? inr(r.cashCredit) : '-'}</td>
-                    <td className={cn(TD, 'text-muted-foreground max-w-40 truncate')} title={r.transRemarks ?? ''}>{r.transRemarks ?? '—'}</td>
+                    <td className={cn(TD, 'text-muted-foreground max-w-40 truncate', canEdit && '')} title={r.transRemarks ?? ''}>{r.transRemarks ?? '—'}</td>
+                    {canEdit && (
+                      <td className="px-1 py-[3px] text-center">
+                        {r.voucherType === 'RECEIPT' && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="inline-flex">
+                                <button
+                                  type="button"
+                                  disabled={!r.editable}
+                                  onClick={() => setEditing(r)}
+                                  className="text-muted-foreground hover:bg-amber-200/70 hover:text-amber-900 disabled:pointer-events-none disabled:opacity-30 inline-flex size-6 items-center justify-center rounded-[4px] dark:hover:bg-amber-400/20 dark:hover:text-amber-200"
+                                  aria-label={`Edit ${r.voucherNo}`}
+                                >
+                                  <Pencil className="size-3.5" />
+                                </button>
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="left" className="max-w-56">
+                              {r.editable ? 'Edit received amount / date / mode' : "Can't edit — predates edit support, or a later receipt for this party/agent does"}
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))
               )}
@@ -997,6 +1173,8 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    {editing && <EditPaymentDialog entry={editing} onClose={() => setEditing(null)} />}
+    </>
   );
 }
 

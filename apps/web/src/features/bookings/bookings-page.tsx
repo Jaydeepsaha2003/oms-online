@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Ban, ChevronLeft, ChevronRight, EllipsisVertical, Filter, Link2, PackageOpen, Plus, RotateCcw, Search, Split, TriangleAlert, Trash2 } from 'lucide-react';
+import { Ban, ChevronLeft, ChevronRight, EllipsisVertical, Filter, Link2, PackageOpen, Plus, Printer, RotateCcw, Search, Split, TriangleAlert, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { BookingDto, BookingStatus } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
+import { downloadPdf } from '@/lib/pdf';
 import { cn, shortOrderCode } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -133,6 +134,10 @@ export function BookingsPage() {
     });
   };
 
+  const handlePrint = (b: BookingDto) => {
+    void downloadPdf(`/bookings/${b.id}/pdf`, `${b.code}.pdf`).catch((e) => toast.error(getApiErrorMessage(e, 'PDF failed')));
+  };
+
   const handleDelete = async (b: BookingDto) => {
     const ok = await confirm({
       title: 'Delete this booking?',
@@ -162,6 +167,14 @@ export function BookingsPage() {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-60 font-sans">
+          {can('booking:print') && (
+            <>
+              <DropdownMenuItem onSelect={() => handlePrint(b)}>
+                <Printer /> Print PDF
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          )}
           {can('booking:cancel') && (
             <DropdownMenuItem
               variant="destructive"

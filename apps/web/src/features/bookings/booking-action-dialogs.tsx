@@ -108,6 +108,16 @@ export function AssignOldOrderDialog({ booking, onClose }: { booking: BookingDto
       return next;
     });
 
+  const allVisibleSelected = candidates.length > 0 && candidates.every((c) => selected.has(c.orderItemId));
+  const someVisibleSelected = candidates.some((c) => selected.has(c.orderItemId));
+  const toggleAllVisible = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) candidates.forEach((c) => next.delete(c.orderItemId));
+      else candidates.forEach((c) => next.add(c.orderItemId));
+      return next;
+    });
+
   const totals = useMemo(() => {
     const picked = candidates.filter((c) => selected.has(c.orderItemId));
     return {
@@ -164,7 +174,19 @@ export function AssignOldOrderDialog({ booking, onClose }: { booking: BookingDto
             <table className="w-full text-[12.5px]">
               <thead className="bg-muted/50 sticky top-0">
                 <tr className="text-muted-foreground text-left text-[11px] font-semibold tracking-wide uppercase">
-                  <th className="w-8 px-2 py-1.5" />
+                  <th className="w-8 px-2 py-1.5">
+                    <button
+                      type="button"
+                      onClick={toggleAllVisible}
+                      title={allVisibleSelected ? 'Deselect all' : 'Select all'}
+                      className={cn(
+                        'flex size-4 items-center justify-center rounded-[4px] border-[1.5px]',
+                        allVisibleSelected ? 'border-primary bg-primary text-primary-foreground' : someVisibleSelected ? 'border-primary bg-primary/20' : 'border-slate-400',
+                      )}
+                    >
+                      {allVisibleSelected && <Check className="size-3" strokeWidth={3} />}
+                    </button>
+                  </th>
                   <th className="px-2 py-1.5">Order</th>
                   <th className="px-2 py-1.5">Product</th>
                   <th className="px-2 py-1.5">Design</th>

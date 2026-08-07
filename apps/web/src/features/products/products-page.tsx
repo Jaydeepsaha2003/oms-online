@@ -151,6 +151,13 @@ export function ProductsPage() {
 
   // Dropdown filter options (distinct categories / sub-categories from the master).
   const { data: lookups } = useProductLookups();
+  // Narrowed to the currently-selected category, so picking one doesn't still
+  // offer every sub-category ever seen (most of which return zero rows once
+  // combined with that category).
+  const subCategoryOptions = useMemo(
+    () => [...new Set((lookups?.subCategories ?? []).filter((sc) => !category || sc.category === category).map((sc) => sc.subCategory))],
+    [lookups, category],
+  );
 
   const query = {
     page,
@@ -409,7 +416,7 @@ export function ProductsPage() {
                 setSubCategory(v);
                 setPage(1);
               }}
-              options={['', ...(lookups?.subCategories ?? [])]}
+              options={['', ...subCategoryOptions]}
               placeholder="All sub categories"
               className={cn(CONTROL, 'font-medium', subCategory && CONTROL_ON)}
             />
@@ -530,7 +537,7 @@ export function ProductsPage() {
                   setSubCategory(v);
                   setPage(1);
                 }}
-                options={['', ...(lookups?.subCategories ?? [])]}
+                options={['', ...subCategoryOptions]}
                 placeholder="All sub categories"
               />
             </div>
@@ -741,6 +748,10 @@ function ProductDialog({ product, onClose }: { product: ProductDto | null; onClo
   });
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const numOrNull = (v: string) => (v.trim() === '' || Number.isNaN(Number(v)) ? null : Number(v));
+  const subCategoryOptions = useMemo(
+    () => [...new Set((lookups?.subCategories ?? []).filter((sc) => !form.category || sc.category === form.category).map((sc) => sc.subCategory))],
+    [lookups, form.category],
+  );
 
   const submit = () => {
     if (!form.category.trim() || !form.subCategory.trim() || !form.product.trim()) {
@@ -788,7 +799,7 @@ function ProductDialog({ product, onClose }: { product: ProductDto | null; onClo
               <Label>Category *</Label>
               <Combo
                 value={form.category}
-                onChange={(v) => set('category', v)}
+                onChange={(v) => { set('category', v); set('subCategory', ''); }}
                 options={lookups?.categories ?? []}
                 placeholder="Select or type a new one…"
               />
@@ -798,7 +809,7 @@ function ProductDialog({ product, onClose }: { product: ProductDto | null; onClo
               <Combo
                 value={form.subCategory}
                 onChange={(v) => set('subCategory', v)}
-                options={lookups?.subCategories ?? []}
+                options={subCategoryOptions}
                 placeholder="Select or type a new one…"
               />
             </div>

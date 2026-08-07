@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import {
   type ChequeOptionRow,
   type DueType,
+  type EditPaymentResult,
   type LedgerEntryDto,
   type Paginated,
   type PartyAdvanceSummary,
@@ -14,7 +15,7 @@ import {
   type SavePaymentResult,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
-import { LedgerQueryDto, PaymentContextQueryDto, SavePaymentDto } from './dto/payment.dto';
+import { EditPaymentDto, LedgerQueryDto, PaymentContextQueryDto, SavePaymentDto } from './dto/payment.dto';
 
 const r2 = (x: number) => Math.round(x * 100) / 100;
 const EPS = 0.005;
@@ -44,6 +45,35 @@ function dueTypeOf(invDate: Date, dueDate: Date | null, today: Date): { dueType:
 
 /** The prisma delegate set usable both from the service root and inside $transaction. */
 type Db = Prisma.TransactionClient;
+
+/** Everything {@link PaymentsService.runWaterfall} needs to create one voucher.
+ *  `receiptRefId`/`advanceRefId` are REUSED when non-null (an edit's replay),
+ *  else generated on first actual need (a fresh save). `createdAt` is likewise
+ *  only set on a replay, to preserve the voucher's original entry time. */
+interface WaterfallParams {
+  voucherNo: string;
+  receiptRefId: string | null;
+  advanceRefId: string | null;
+  recDate: Date;
+  customers: { id: number; name: string; payBy: string | null }[];
+  isAgent: boolean;
+  agentName: string | null;
+  headName: string;
+  headId: number;
+  payMode: string;
+  bankName: string | null;
+  chequeNo: string | null;
+  cashLoc: string | null;
+  cashBy: string | null;
+  remarks: string | null;
+  adjMode: string;
+  selectedInvNos: string[] | undefined;
+  receiptAmt: number;
+  userName?: string | null;
+  editedAt: Date | null;
+  editedByName: string | null;
+  createdAt: Date | null;
+}
 
 @Injectable()
 export class PaymentsService {
@@ -153,6 +183,39 @@ export class PaymentsService {
       .filter((c) => c.balance > EPS);
   }
 
+  /**
+   * Whether each of these RECEIPT rows can be edited — false once any LATER
+   * voucher for the same party/agent group predates edit support (adjMode
+   * null), since that later voucher can't be safely replayed. Grouped so one
+   * "how far back does this party's edit-support boundary go" query covers
+   * every row in the page for that party, rather than one query per row.
+   */
+  private async editabilityFor(
+    rows: { id: number; voucherType: string; custId: number; agentName: string | null; adjMode: string | null }[],
+  ): Promise<Map<number, boolean>> {
+    const receiptRows = rows.filter((r) => r.voucherType === 'RECEIPT');
+    if (!receiptRows.length) return new Map();
+    const groupKey = (r: { custId: number; agentName: string | null }) => (r.custId !== 0 ? `c:${r.custId}` : `a:${r.agentName}`);
+    const groups = new Map<string, { custId: number; agentName: string | null }>();
+    for (const r of receiptRows) groups.set(groupKey(r), { custId: r.custId, agentName: r.agentName });
+
+    const cutoffs = new Map<string, number>(); // group key -> highest id with adjMode null (0 = none)
+    await Promise.all(
+      [...groups.entries()].map(async ([key, g]) => {
+        const blocker = await this.prisma.acctLedger.findFirst({
+          where: { voucherType: 'RECEIPT', adjMode: null, custId: g.custId, ...(g.custId === 0 ? { agentName: g.agentName } : {}) },
+          orderBy: { id: 'desc' },
+          select: { id: true },
+        });
+        cutoffs.set(key, blocker?.id ?? 0);
+      }),
+    );
+
+    const out = new Map<number, boolean>();
+    for (const r of receiptRows) out.set(r.id, r.adjMode != null && r.id > (cutoffs.get(groupKey(r)) ?? 0));
+    return out;
+  }
+
   /** Voucher history for the Receipt Ledger browser (party or agent). */
   async ledger(q: LedgerQueryDto): Promise<Paginated<LedgerEntryDto>> {
     const and: Prisma.AcctLedgerWhereInput[] = [];
@@ -171,6 +234,7 @@ export class PaymentsService {
       this.prisma.acctLedger.findMany({ where, orderBy: [{ transDate: 'desc' }, { id: 'desc' }], skip: q.skip, take: q.pageSize }),
       this.prisma.acctLedger.count({ where }),
     ]);
+    const editability = await this.editabilityFor(rows);
     return {
       items: rows.map((r) => ({
         id: r.id,
@@ -187,6 +251,13 @@ export class PaymentsService {
         transRemarks: r.transRemarks,
         userName: r.userName,
         createdAt: r.createdAt.toISOString(),
+        bankName: r.bankName,
+        chequeNo: r.chequeNo,
+        cashTransLocation: r.cashTransLocation,
+        cashRecBy: r.cashRecBy,
+        editable: editability.get(r.id) ?? false,
+        editedAt: r.editedAt ? r.editedAt.toISOString() : null,
+        editedByName: r.editedByName,
       })),
       total,
       page: q.page,
@@ -197,28 +268,41 @@ export class PaymentsService {
 
   /* ── Save (the legacy BtnSave waterfall, in one transaction) ──────────────── */
 
+  /** Shared field validation for both a fresh save and an edit's new figures —
+   *  mirrors the legacy ValidateBeforeSave messages, in order. */
+  private validateFigures(input: {
+    payMode: string;
+    receiptAmt: number;
+    bankName?: string | null;
+    chequeNo?: string | null;
+    cashTransLocation?: string | null;
+    cashRecBy?: string | null;
+    recDate: string;
+  }): { receiptAmt: number; recDate: Date } {
+    if (!['BANK', 'CHEQUE', 'CASH'].includes(input.payMode)) throw new BadRequestException('Please select Payment Mode (BANK / CHEQUE / CASH).');
+    const receiptAmt = r2(input.receiptAmt);
+    if (!Number.isFinite(receiptAmt) || receiptAmt <= 0) throw new BadRequestException('Receipt Amount must be greater than 0.');
+    if (isBankMode(input.payMode) && !input.bankName?.trim()) throw new BadRequestException('Please select a Bank Name.');
+    if (input.payMode === 'CHEQUE' && !input.chequeNo?.trim()) throw new BadRequestException('Please select / enter Cheque No.');
+    if (input.payMode === 'CASH' && !input.cashTransLocation?.trim()) throw new BadRequestException('Please enter Cash Transfer Location.');
+    if (input.payMode === 'CASH' && !input.cashRecBy?.trim()) throw new BadRequestException('Please enter Cash Received By.');
+    const recDate = parseDay(input.recDate, 'Receipt date');
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+    if (recDate.getTime() > today.getTime()) throw new BadRequestException('Receipt date cannot be in the future.');
+    return { receiptAmt, recDate };
+  }
+
   async save(dto: SavePaymentDto, userName?: string | null): Promise<SavePaymentResult> {
-    // Validation — mirrors the legacy ValidateBeforeSave messages, in order.
     const isAgent = dto.takeAccOn === 'AGENT';
     if (isAgent ? !dto.agentName?.trim() : dto.customerId == null) {
       throw new BadRequestException('Please select either Customer / Party Name or Agent Name.');
     }
-    if (!['BANK', 'CHEQUE', 'CASH'].includes(dto.payMode)) throw new BadRequestException('Please select Payment Mode (BANK / CHEQUE / CASH).');
-    const receiptAmt = r2(dto.receiptAmt);
-    if (!Number.isFinite(receiptAmt) || receiptAmt <= 0) throw new BadRequestException('Receipt Amount must be greater than 0.');
-    if (isBankMode(dto.payMode) && !dto.bankName?.trim()) throw new BadRequestException('Please select a Bank Name.');
-    if (dto.payMode === 'CHEQUE' && !dto.chequeNo?.trim()) throw new BadRequestException('Please select / enter Cheque No.');
-    if (dto.payMode === 'CASH' && !dto.cashTransLocation?.trim()) throw new BadRequestException('Please enter Cash Transfer Location.');
-    if (dto.payMode === 'CASH' && !dto.cashRecBy?.trim()) throw new BadRequestException('Please enter Cash Received By.');
     if (dto.adjMode === 'AGST REF' && !(dto.selectedInvNos?.length ?? 0)) {
       throw new BadRequestException('AGST REF mode requires selecting at least one invoice.');
     }
-    const recDate = parseDay(dto.recDate, 'Receipt date');
-    const today = new Date();
-    today.setHours(23, 59, 59, 999);
-    if (recDate.getTime() > today.getTime()) throw new BadRequestException('Receipt date cannot be in the future.');
+    const { receiptAmt, recDate } = this.validateFigures(dto);
 
-    const bankish = isBankMode(dto.payMode);
     const bankName = dto.bankName?.trim().toUpperCase() || null;
     const chequeNo = dto.payMode === 'CHEQUE' ? dto.chequeNo?.trim().toUpperCase() || null : null;
     const cashLoc = dto.payMode === 'CASH' ? dto.cashTransLocation?.trim().toUpperCase() || null : null;
@@ -230,183 +314,345 @@ export class PaymentsService {
       const agentName = isAgent ? dto.agentName!.trim() : null;
       const headName = isAgent ? agentName! : customers[0].name;
       const headId = isAgent ? 0 : customers[0].id;
-
-      // 1) Ledger voucher (RN/<n>) — money in = CREDIT on the mode's bucket.
       const voucherNo = await this.nextVoucherNo(tx);
-      const particulars =
-        dto.payMode === 'BANK' ? (bankName ?? '') : dto.payMode === 'CHEQUE' ? `${bankName} ON CHEQUE: ${chequeNo}` : `CASH RECEIPT BY ${cashBy} / ${cashLoc}`;
-      await tx.acctLedger.create({
-        data: {
-          voucherNo,
-          transDate: recDate,
-          customerName: headName,
-          custId: headId,
-          agentName,
-          particulars,
+
+      return this.runWaterfall(tx, {
+        voucherNo,
+        receiptRefId: null,
+        advanceRefId: null,
+        recDate,
+        customers,
+        isAgent,
+        agentName,
+        headName,
+        headId,
+        payMode: dto.payMode,
+        bankName,
+        chequeNo,
+        cashLoc,
+        cashBy,
+        remarks,
+        adjMode: dto.adjMode,
+        selectedInvNos: dto.selectedInvNos,
+        receiptAmt,
+        userName: userName ?? null,
+        editedAt: null,
+        editedByName: null,
+        createdAt: null,
+      });
+    });
+  }
+
+  /**
+   * Correct an already-saved receipt's amount/date/mode/remarks. WHO it was
+   * taken from and HOW it was adjusted (adjMode, ticked invoices) are kept
+   * exactly as originally recorded — only the figures change.
+   *
+   * A receipt's amount doesn't live in one place: it can fund old-advance
+   * clearances, invoice allocations and a new advance spill, and every LATER
+   * receipt for the same party/agent computed its own allocation off the
+   * balances this one left behind. So editing this voucher means reversing it
+   * AND every later voucher for the same party/agent (the only ones whose
+   * numbers could actually depend on it), then replaying them in original
+   * order — the target with the corrected figures, everything after it exactly
+   * as it was. Voucher numbers and REC-/ADV- ref ids are always reused, never
+   * regenerated, so nothing referencing them elsewhere goes stale.
+   *
+   * Only possible when this voucher — and everything in its replay chain — was
+   * itself saved with enough captured detail to reconstruct (adjMode non-null;
+   * see the AcctLedger columns added for this). Receipts saved before edit
+   * support existed can't be edited.
+   *
+   * Known scope limit: the replay chain is matched by custId (PARTY) or
+   * agentName (AGENT) on the ledger row, which only follows a customer through
+   * receipts taken the SAME way. A customer who normally pays directly but was
+   * later swept into an AGENT-mode receipt for their agent — after the voucher
+   * being edited — won't have that agent voucher caught by this chain.
+   */
+  async editReceipt(id: number, dto: EditPaymentDto, userName?: string | null): Promise<EditPaymentResult> {
+    const target = await this.prisma.acctLedger.findUnique({ where: { id } });
+    if (!target) throw new NotFoundException('Receipt not found.');
+    if (target.voucherType !== 'RECEIPT') throw new BadRequestException('Only a receipt voucher can be edited here.');
+    if (target.adjMode == null) throw new BadRequestException('This receipt predates edit support and cannot be edited.');
+
+    const { receiptAmt, recDate } = this.validateFigures(dto);
+    const bankName = dto.bankName?.trim().toUpperCase() || null;
+    const chequeNo = dto.payMode === 'CHEQUE' ? dto.chequeNo?.trim().toUpperCase() || null : null;
+    const cashLoc = dto.payMode === 'CASH' ? dto.cashTransLocation?.trim().toUpperCase() || null : null;
+    const cashBy = dto.payMode === 'CASH' ? dto.cashRecBy?.trim().toUpperCase() || null : null;
+    const remarks = dto.remarks?.trim().toUpperCase() || null;
+
+    return this.prisma.$transaction(async (tx) => {
+      // The replay chain: this voucher plus every later RECEIPT voucher for the
+      // same party (custId) or agent group (agentName) — see the scope-limit note above.
+      const chain = await tx.acctLedger.findMany({
+        where: {
+          id: { gte: target.id },
           voucherType: 'RECEIPT',
-          transMode: dto.payMode,
-          bankCredit: bankish ? receiptAmt : 0,
-          cashCredit: bankish ? 0 : receiptAmt,
-          transRemarks: remarks,
-          userName: userName ?? null,
+          ...(target.custId !== 0 ? { custId: target.custId } : { agentName: target.agentName }),
+        },
+        orderBy: { id: 'asc' },
+      });
+      const blocker = chain.find((row) => row.adjMode == null);
+      if (blocker) {
+        throw new BadRequestException(
+          blocker.id === target.id
+            ? 'This receipt predates edit support and cannot be edited.'
+            : `Receipt ${blocker.voucherNo} (saved after this one, for the same party/agent) predates edit support — this receipt can't be safely edited until then.`,
+        );
+      }
+
+      // Reverse every voucher in the chain, most-recent first.
+      for (const row of [...chain].reverse()) {
+        await tx.acctPaymentReceipt.deleteMany({ where: { sourceVoucherNo: row.voucherNo } });
+        await tx.acctPartyAdvance.deleteMany({ where: { sourceVoucherNo: row.voucherNo } });
+        await tx.acctOpeningTrans.deleteMany({ where: { sourceVoucherNo: row.voucherNo } });
+        await tx.acctLedger.delete({ where: { id: row.id } });
+      }
+
+      // Replay each voucher in original order — the target with the corrected
+      // figures, everything after it exactly as it was originally recorded.
+      for (const row of chain) {
+        const isTarget = row.id === target.id;
+        const isAgent = row.custId === 0;
+        const customers = await this.resolveCustomers(tx, isAgent ? null : row.custId, isAgent ? row.agentName : null);
+        const rowPayMode = isTarget ? dto.payMode : row.transMode;
+
+        await this.runWaterfall(tx, {
+          voucherNo: row.voucherNo,
+          receiptRefId: row.receiptRefId,
+          advanceRefId: row.advanceRefId,
+          recDate: isTarget ? recDate : row.transDate,
+          customers,
+          isAgent,
+          agentName: isAgent ? row.agentName : null,
+          headName: isAgent ? row.agentName! : customers[0].name,
+          headId: isAgent ? 0 : customers[0].id,
+          payMode: rowPayMode,
+          bankName: isTarget ? bankName : row.bankName,
+          chequeNo: isTarget ? chequeNo : row.chequeNo,
+          cashLoc: isTarget ? cashLoc : row.cashTransLocation,
+          cashBy: isTarget ? cashBy : row.cashRecBy,
+          remarks: isTarget ? remarks : row.transRemarks,
+          adjMode: row.adjMode!,
+          selectedInvNos: row.selectedInvNos ? (JSON.parse(row.selectedInvNos) as string[]) : undefined,
+          receiptAmt: isTarget ? receiptAmt : row.bankCredit || row.cashCredit,
+          userName: row.userName,
+          editedAt: isTarget ? new Date() : row.editedAt,
+          editedByName: isTarget ? (userName ?? null) : row.editedByName,
+          createdAt: row.createdAt,
+        });
+      }
+
+      return { voucherNo: target.voucherNo, replayedCount: chain.length - 1 };
+    });
+  }
+
+  /**
+   * The legacy BtnSave waterfall — creates one ledger voucher plus whatever
+   * opening-clearance / invoice-allocation / advance-spill rows its amount
+   * covers. Shared by `save()` (fresh voucher, fresh ids) and `editReceipt()`
+   * (reused voucher number + ref ids, so a correction never breaks anything
+   * that already refers to them).
+   */
+  private async runWaterfall(tx: Db, p: WaterfallParams): Promise<SavePaymentResult> {
+    const bankish = isBankMode(p.payMode);
+    const particulars =
+      p.payMode === 'BANK' ? (p.bankName ?? '') : p.payMode === 'CHEQUE' ? `${p.bankName} ON CHEQUE: ${p.chequeNo}` : `CASH RECEIPT BY ${p.cashBy} / ${p.cashLoc}`;
+
+    // 1) Ledger voucher — money in = CREDIT on the mode's bucket. receiptRefId/
+    //    advanceRefId are filled in at the end, once known.
+    const ledger = await tx.acctLedger.create({
+      data: {
+        voucherNo: p.voucherNo,
+        transDate: p.recDate,
+        customerName: p.headName,
+        custId: p.headId,
+        agentName: p.agentName,
+        particulars,
+        voucherType: 'RECEIPT',
+        transMode: p.payMode,
+        bankCredit: bankish ? p.receiptAmt : 0,
+        cashCredit: bankish ? 0 : p.receiptAmt,
+        transRemarks: p.remarks,
+        userName: p.userName ?? null,
+        adjMode: p.adjMode,
+        selectedInvNos: p.selectedInvNos?.length ? JSON.stringify(p.selectedInvNos) : null,
+        takeAccOn: p.isAgent ? 'AGENT' : 'PARTY',
+        bankName: p.bankName,
+        chequeNo: p.chequeNo,
+        cashTransLocation: p.cashLoc,
+        cashRecBy: p.cashBy,
+        editedAt: p.editedAt,
+        editedByName: p.editedByName,
+        ...(p.createdAt ? { createdAt: p.createdAt } : {}),
+      },
+    });
+
+    const allocations: PaymentAllocation[] = [];
+    let remaining = p.receiptAmt;
+    let openingCleared = 0;
+
+    // 2) Clear opening balances first (mode bucket). Agent mode: per customer.
+    const openings = await this.openingPending(tx, p.customers);
+    for (const o of openings) {
+      if (remaining <= EPS) break;
+      const pend = bankish ? o.pendingBank : o.pendingCash;
+      if (pend <= EPS) continue;
+      const clear = r2(Math.min(pend, remaining));
+      await tx.acctOpeningTrans.create({
+        data: {
+          kind: 'CLEARANCE',
+          customerName: o.customerName,
+          custId: o.customerId,
+          transDate: p.recDate,
+          bankAmt: bankish ? clear : 0,
+          cashAmt: bankish ? 0 : clear,
+          refRecId: p.voucherNo,
+          sourceVoucherNo: p.voucherNo,
+          userName: p.userName ?? null,
         },
       });
+      allocations.push({ kind: 'OPENING', customerName: o.customerName, fundedBy: p.voucherNo, modeOfAdj: p.adjMode, amount: clear });
+      openingCleared = r2(openingCleared + clear);
+      remaining = r2(remaining - clear);
+    }
 
-      const allocations: PaymentAllocation[] = [];
-      let remaining = receiptAmt;
-      let openingCleared = 0;
-
-      // 2) Clear opening balances first (mode bucket). Agent mode: per customer.
-      const openings = await this.openingPending(tx, customers);
-      for (const o of openings) {
-        if (remaining <= EPS) break;
-        const pend = bankish ? o.pendingBank : o.pendingCash;
-        if (pend <= EPS) continue;
-        const clear = r2(Math.min(pend, remaining));
-        await tx.acctOpeningTrans.create({
-          data: {
-            kind: 'CLEARANCE',
-            customerName: o.customerName,
-            custId: o.customerId,
-            transDate: recDate,
-            bankAmt: bankish ? clear : 0,
-            cashAmt: bankish ? 0 : clear,
-            refRecId: voucherNo,
-            userName: userName ?? null,
-          },
-        });
-        allocations.push({ kind: 'OPENING', customerName: o.customerName, fundedBy: voucherNo, modeOfAdj: dto.adjMode, amount: clear });
-        openingCleared = r2(openingCleared + clear);
-        remaining = r2(remaining - clear);
+    // 3) Invoice allocation (skipped entirely in ADVANCE mode).
+    let invoicesCleared = 0;
+    let receiptRefId: string | null = p.receiptRefId;
+    if (p.adjMode !== 'ADVANCE' && remaining > EPS) {
+      let rows = (await this.invoicePending(tx, p.customers, p.recDate)).filter((r) => (bankish ? r.bankBal : r.cashBal) > EPS);
+      if (p.adjMode === 'AGST REF') {
+        // Only the ticked invoices, in the user's tick order.
+        const order = new Map((p.selectedInvNos ?? []).map((n, i) => [n, i]));
+        rows = rows.filter((r) => order.has(r.invNo)).sort((a, b) => order.get(a.invNo)! - order.get(b.invNo)!);
+        if (!rows.length) throw new BadRequestException('AGST REF mode requires selecting at least one invoice.');
       }
 
-      // 3) Invoice allocation (skipped entirely in ADVANCE mode).
-      let invoicesCleared = 0;
-      let receiptRefId: string | null = null;
-      if (dto.adjMode !== 'ADVANCE' && remaining > EPS) {
-        let rows = (await this.invoicePending(tx, customers, recDate)).filter((r) => (bankish ? r.bankBal : r.cashBal) > EPS);
-        if (dto.adjMode === 'AGST REF') {
-          // Only the ticked invoices, in the user's tick order.
-          const order = new Map(dto.selectedInvNos!.map((n, i) => [n, i]));
-          rows = rows.filter((r) => order.has(r.invNo)).sort((a, b) => order.get(a.invNo)! - order.get(b.invNo)!);
-          if (!rows.length) throw new BadRequestException('AGST REF mode requires selecting at least one invoice.');
+      // Party mode: fund each allocation from OLD advances FIFO first, then from
+      // today's receipt (the legacy two-step). Agent mode uses only the receipt.
+      const advRows = !p.isAgent
+        ? (await this.advancePending(tx, p.customers)).filter((a) => (bankish ? a.bankBal : a.cashBal) > EPS)
+        : [];
+      let advIdx = 0;
+      let advLeft = advRows.length ? (bankish ? advRows[0].bankBal : advRows[0].cashBal) : 0;
+
+      // Legacy two-tracker behavior: allocations are SIZED by today's receipt
+      // (`sizeLeft`), but only the receipt-funded portions consume the actual
+      // cash (`remaining`) — receipt money freed by old-advance funding parks
+      // as a NEW advance at the end, exactly like PaymentForm.vb.
+      let sizeLeft = remaining;
+      for (const inv of rows) {
+        if (sizeLeft <= EPS) break;
+        const pend = bankish ? inv.bankBal : inv.cashBal;
+        let need = r2(Math.min(pend, sizeLeft));
+        if (need <= EPS) continue;
+        sizeLeft = r2(sizeLeft - need);
+        invoicesCleared = r2(invoicesCleared + need);
+
+        // Step 1: old advances FIFO.
+        while (need > EPS && advIdx < advRows.length) {
+          if (advLeft <= EPS) {
+            advIdx += 1;
+            advLeft = advIdx < advRows.length ? (bankish ? advRows[advIdx].bankBal : advRows[advIdx].cashBal) : 0;
+            continue;
+          }
+          const use = r2(Math.min(need, advLeft));
+          receiptRefId ??= await this.nextRefId(tx, 'REC', p.recDate);
+          await tx.acctPaymentReceipt.create({
+            data: {
+              refId: receiptRefId,
+              recDate: p.recDate,
+              invNo: inv.invNo,
+              customerName: inv.customerName,
+              custId: inv.customerId,
+              recType: 'RECEIPT',
+              recAmt: use,
+              payMode: p.payMode,
+              bankName: p.bankName,
+              chequeNo: p.chequeNo,
+              cashTransLocation: p.cashLoc,
+              cashRecBy: p.cashBy,
+              modeOfAdj: 'ADVANCE',
+              refRecId: advRows[advIdx].refId,
+              sourceVoucherNo: p.voucherNo,
+            },
+          });
+          allocations.push({ kind: 'INVOICE', customerName: inv.customerName, invNo: inv.invNo, fundedBy: advRows[advIdx].refId, modeOfAdj: 'ADVANCE', amount: use });
+          need = r2(need - use);
+          advLeft = r2(advLeft - use);
         }
-
-        // Party mode: fund each allocation from OLD advances FIFO first, then from
-        // today's receipt (the legacy two-step). Agent mode uses only the receipt.
-        const advRows = !isAgent
-          ? (await this.advancePending(tx, customers)).filter((a) => (bankish ? a.bankBal : a.cashBal) > EPS)
-          : [];
-        let advIdx = 0;
-        let advLeft = advRows.length ? (bankish ? advRows[0].bankBal : advRows[0].cashBal) : 0;
-
-        // Legacy two-tracker behavior: allocations are SIZED by today's receipt
-        // (`sizeLeft`), but only the receipt-funded portions consume the actual
-        // cash (`remaining`) — receipt money freed by old-advance funding parks
-        // as a NEW advance at the end, exactly like PaymentForm.vb.
-        let sizeLeft = remaining;
-        for (const inv of rows) {
-          if (sizeLeft <= EPS) break;
-          const pend = bankish ? inv.bankBal : inv.cashBal;
-          let need = r2(Math.min(pend, sizeLeft));
-          if (need <= EPS) continue;
-          sizeLeft = r2(sizeLeft - need);
-          invoicesCleared = r2(invoicesCleared + need);
-
-          // Step 1: old advances FIFO.
-          while (need > EPS && advIdx < advRows.length) {
-            if (advLeft <= EPS) {
-              advIdx += 1;
-              advLeft = advIdx < advRows.length ? (bankish ? advRows[advIdx].bankBal : advRows[advIdx].cashBal) : 0;
-              continue;
-            }
-            const use = r2(Math.min(need, advLeft));
-            receiptRefId ??= await this.nextRefId(tx, 'REC', recDate);
-            await tx.acctPaymentReceipt.create({
-              data: {
-                refId: receiptRefId,
-                recDate,
-                invNo: inv.invNo,
-                customerName: inv.customerName,
-                custId: inv.customerId,
-                recType: 'RECEIPT',
-                recAmt: use,
-                payMode: dto.payMode,
-                bankName,
-                chequeNo,
-                cashTransLocation: cashLoc,
-                cashRecBy: cashBy,
-                modeOfAdj: 'ADVANCE',
-                refRecId: advRows[advIdx].refId,
-              },
-            });
-            allocations.push({ kind: 'INVOICE', customerName: inv.customerName, invNo: inv.invNo, fundedBy: advRows[advIdx].refId, modeOfAdj: 'ADVANCE', amount: use });
-            need = r2(need - use);
-            advLeft = r2(advLeft - use);
-          }
-          // Step 2: today's receipt (this is the part that consumes actual cash).
-          if (need > EPS) {
-            receiptRefId ??= await this.nextRefId(tx, 'REC', recDate);
-            await tx.acctPaymentReceipt.create({
-              data: {
-                refId: receiptRefId,
-                recDate,
-                invNo: inv.invNo,
-                customerName: inv.customerName,
-                custId: inv.customerId,
-                recType: 'RECEIPT',
-                recAmt: need,
-                payMode: dto.payMode,
-                bankName,
-                chequeNo,
-                cashTransLocation: cashLoc,
-                cashRecBy: cashBy,
-                modeOfAdj: dto.adjMode,
-                refRecId: voucherNo,
-              },
-            });
-            allocations.push({ kind: 'INVOICE', customerName: inv.customerName, invNo: inv.invNo, fundedBy: voucherNo, modeOfAdj: dto.adjMode, amount: need });
-            remaining = r2(remaining - need);
-          }
+        // Step 2: today's receipt (this is the part that consumes actual cash).
+        if (need > EPS) {
+          receiptRefId ??= await this.nextRefId(tx, 'REC', p.recDate);
+          await tx.acctPaymentReceipt.create({
+            data: {
+              refId: receiptRefId,
+              recDate: p.recDate,
+              invNo: inv.invNo,
+              customerName: inv.customerName,
+              custId: inv.customerId,
+              recType: 'RECEIPT',
+              recAmt: need,
+              payMode: p.payMode,
+              bankName: p.bankName,
+              chequeNo: p.chequeNo,
+              cashTransLocation: p.cashLoc,
+              cashRecBy: p.cashBy,
+              modeOfAdj: p.adjMode,
+              refRecId: p.voucherNo,
+              sourceVoucherNo: p.voucherNo,
+            },
+          });
+          allocations.push({ kind: 'INVOICE', customerName: inv.customerName, invNo: inv.invNo, fundedBy: p.voucherNo, modeOfAdj: p.adjMode, amount: need });
+          remaining = r2(remaining - need);
         }
       }
+    }
 
-      // 4) Whatever's left parks on account (ACCT PARTY ADVANCE).
-      let advanceRefId: string | null = null;
-      if (remaining > EPS) {
-        advanceRefId = await this.nextRefId(tx, 'ADV', recDate);
-        await tx.acctPartyAdvance.create({
-          data: {
-            refId: advanceRefId,
-            recDate,
-            custId: headId,
-            customerName: headName,
-            agentName,
-            bankAmt: bankish ? remaining : 0,
-            cashAmt: bankish ? 0 : remaining,
-            payMode: dto.payMode,
-            bankName,
-            chequeNo,
-            cashTransLocation: cashLoc,
-            cashRecBy: cashBy,
-            recType: 'RECEIPT',
-            refRecId: voucherNo,
-            takeAccOn: isAgent ? 'AGENT' : 'PARTY',
-          },
-        });
-        allocations.push({ kind: 'ADVANCE_SPILL', customerName: headName, fundedBy: voucherNo, modeOfAdj: dto.adjMode, amount: remaining });
-      }
+    // 4) Whatever's left parks on account (ACCT PARTY ADVANCE).
+    let advanceRefId: string | null = p.advanceRefId;
+    if (remaining > EPS) {
+      advanceRefId ??= await this.nextRefId(tx, 'ADV', p.recDate);
+      await tx.acctPartyAdvance.create({
+        data: {
+          refId: advanceRefId,
+          recDate: p.recDate,
+          custId: p.headId,
+          customerName: p.headName,
+          agentName: p.agentName,
+          bankAmt: bankish ? remaining : 0,
+          cashAmt: bankish ? 0 : remaining,
+          payMode: p.payMode,
+          bankName: p.bankName,
+          chequeNo: p.chequeNo,
+          cashTransLocation: p.cashLoc,
+          cashRecBy: p.cashBy,
+          recType: 'RECEIPT',
+          refRecId: p.voucherNo,
+          takeAccOn: p.isAgent ? 'AGENT' : 'PARTY',
+          sourceVoucherNo: p.voucherNo,
+        },
+      });
+      allocations.push({ kind: 'ADVANCE_SPILL', customerName: p.headName, fundedBy: p.voucherNo, modeOfAdj: p.adjMode, amount: remaining });
+    }
 
-      return {
-        voucherNo,
-        receiptRefId: receiptRefId ?? '',
-        advanceRefId,
-        allocations,
-        openingCleared,
-        invoicesCleared,
-        advanceParked: remaining > EPS ? remaining : 0,
-      };
-    });
+    // Persist whichever ref ids actually got used, so a future edit can reuse
+    // them too. Always writes (even when unchanged from what was passed in) —
+    // the initial create() above never sets these, so on a fresh save() they'd
+    // otherwise be left null forever.
+    await tx.acctLedger.update({ where: { id: ledger.id }, data: { receiptRefId, advanceRefId } });
+
+    return {
+      voucherNo: p.voucherNo,
+      receiptRefId: receiptRefId ?? '',
+      advanceRefId,
+      allocations,
+      openingCleared,
+      invoicesCleared,
+      advanceParked: remaining > EPS ? remaining : 0,
+    };
   }
 
   /* ── Derivations (the legacy Access "…Summary" views) ─────────────────────── */

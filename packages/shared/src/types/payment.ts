@@ -157,6 +157,36 @@ export interface SavePaymentResult {
   advanceParked: number;
 }
 
+/* ── Edit (reverse + replay) ──────────────────────────────────────────────── */
+
+/**
+ * Correct an already-saved receipt's amount/date/mode/remarks. WHO it was taken
+ * from and HOW it was adjusted (adjMode, ticked invoices) stay fixed — those
+ * shape which invoices/advances got touched, and re-deciding them from scratch
+ * on an edit would be a different, riskier feature than fixing a typo'd figure.
+ *
+ * Only possible when this voucher (and everything saved after it) was itself
+ * saved with edit-support live — see {@link LedgerEntryDto.editable}. Editing
+ * replays every later voucher too, since each one's allocation depended on the
+ * balances left behind by the ones before it.
+ */
+export interface EditPaymentInput {
+  payMode: string;
+  bankName?: string | null;
+  chequeNo?: string | null;
+  cashTransLocation?: string | null;
+  cashRecBy?: string | null;
+  receiptAmt: number;
+  recDate: string;
+  remarks?: string | null;
+}
+
+export interface EditPaymentResult {
+  voucherNo: string;
+  /** How many later vouchers were reversed and replayed as a consequence. */
+  replayedCount: number;
+}
+
 /* ── Ledger listing (voucher history) ─────────────────────────────────────── */
 
 export interface LedgerEntryDto {
@@ -174,6 +204,20 @@ export interface LedgerEntryDto {
   transRemarks: string | null;
   userName: string | null;
   createdAt: string;
+  /** Mode-specific detail, for pre-filling an edit — null on receipts saved
+   *  before edit support existed (and on non-RECEIPT vouchers). */
+  bankName: string | null;
+  chequeNo: string | null;
+  cashTransLocation: string | null;
+  cashRecBy: string | null;
+  /** True once this row (and every later voucher for the same party/agent —
+   *  the only ones whose allocations could actually depend on this one)
+   *  carries enough captured detail to be safely reversed and replayed. False
+   *  for receipts saved before edit support existed, or with anything
+   *  un-editable saved after them. */
+  editable: boolean;
+  editedAt: string | null;
+  editedByName: string | null;
 }
 
 export type LedgerQuery = PaginationQuery & {

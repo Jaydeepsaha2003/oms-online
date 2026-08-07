@@ -1208,6 +1208,37 @@ export function OrderFormPage() {
   // Offer "Save as Draft" on a new order, or when editing one that's still a draft.
   const showSaveDraft = docKind === 'order' && (!isEdit || orderIsDraft);
 
+  // ── Leave-without-saving guard (new order/quotation only) ────────────────
+  // Editing an existing document already has a customer + items the moment it
+  // loads, so this can't reuse that same "has content" check without prompting
+  // on every single edit visit — it's scoped to brand-new documents, where any
+  // content at all is genuinely unsaved work.
+  const [exitPrompt, setExitPrompt] = useState<string | null>(null);
+  const hasUnsavedNewContent = !isEdit && (customer.trim() !== '' || items.length > 0);
+
+  /** Every in-page "leave" affordance funnels through here so a half-built new
+   *  order/quotation isn't silently discarded — offers to save it first. */
+  const confirmExit = (dest: string) => {
+    if (!hasUnsavedNewContent) {
+      navigate(dest);
+      return;
+    }
+    setExitPrompt(dest);
+  };
+
+  // Tab close / hard reload — the in-app dialog above can't catch this, so warn
+  // via the browser's own native prompt instead (same pattern as the Tally
+  // Reconciliation page's upload guard).
+  useEffect(() => {
+    if (!hasUnsavedNewContent) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      return '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [hasUnsavedNewContent]);
+
   // Keep the latest action handlers in a ref so the global shortcut listener
   // (bound once) always calls the current closures.
   const actionsRef = useRef<{ add: () => void; save: () => void; quote: () => void; dispatch: () => void; cancel: () => void; focusItem: () => void } | null>(null);
@@ -1219,7 +1250,7 @@ export function OrderFormPage() {
       if (!isEdit && docKind === 'order') persist('quotation');
     },
     dispatch: createAndDispatch,
-    cancel: () => navigate(listPath),
+    cancel: () => confirmExit(listPath),
     focusItem: () => formRef.current?.querySelector<HTMLElement>('[data-tabfield="itemName"] input')?.focus(),
   };
   useEffect(() => {
@@ -1300,10 +1331,51 @@ export function OrderFormPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Leaving a new, unsaved order/quotation — offer to save it as a draft
+          instead of silently discarding whatever was typed/added so far. */}
+      <Dialog open={!!exitPrompt} onOpenChange={(o) => !o && setExitPrompt(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Leave without saving?</DialogTitle>
+            <DialogDescription>
+              {items.length} item{items.length === 1 ? '' : 's'}
+              {customer.trim() ? ` for ${customer.trim()}` : ''} {items.length === 1 ? "hasn't" : "haven't"} been saved yet.
+              {docKind === 'order' ? ' You can save it as a draft and pick it up later.' : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:justify-end">
+            <Button variant="outline" onClick={() => setExitPrompt(null)}>
+              Keep editing
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                const dest = exitPrompt!;
+                clearOrderDraft();
+                setExitPrompt(null);
+                navigate(dest);
+              }}
+            >
+              Discard &amp; leave
+            </Button>
+            <Button
+              onClick={() => {
+                setExitPrompt(null);
+                if (docKind === 'quotation') void persist('quotation');
+                else void saveOrder('DRAFT', false);
+              }}
+              disabled={saving}
+            >
+              <FilePen /> Save as draft
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Slim toolbar — the page title already shows in the top bar, so the big
           in-page heading is dropped to avoid a duplicate title and free up space. */}
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate(listPath)} aria-label="Back" title="Back">
+        <Button variant="ghost" size="icon" onClick={() => confirmExit(listPath)} aria-label="Back" title="Back">
           <ArrowLeft />
         </Button>
         <div className="ml-auto flex items-center gap-2">
@@ -1793,7 +1865,7 @@ export function OrderFormPage() {
           <span className="text-lg font-bold tabular-nums text-emerald-600">₹{total.toLocaleString('en-IN')}</span>
         </p>
         <div className="grid grid-cols-2 gap-2 sm:ml-auto sm:flex sm:flex-wrap sm:justify-end">
-          <Button type="button" variant="destructive" onClick={() => navigate(listPath)} title="Cancel (Esc)">
+          <Button type="button" variant="destructive" onClick={() => confirmExit(listPath)} title="Cancel (Esc)">
             Cancel
           </Button>
           <Button type="button" variant="outline" onClick={resetForm} title={isEdit ? 'Revert unsaved changes' : 'Clear the form'}>

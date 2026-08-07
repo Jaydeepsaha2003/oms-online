@@ -32,3 +32,16 @@ export class SavePaymentDto {
   @IsString() recDate!: string;
   @IsOptional() @IsString() remarks?: string | null;
 }
+
+/** Correct an already-saved receipt's amount/date/mode/remarks. WHO it was
+ *  taken from and HOW it was adjusted stay fixed — see PaymentsService.editReceipt. */
+export class EditPaymentDto {
+  @IsIn(PAY_MODES as unknown as string[]) payMode!: string;
+  @IsOptional() @IsString() bankName?: string | null;
+  @IsOptional() @IsString() chequeNo?: string | null;
+  @IsOptional() @IsString() cashTransLocation?: string | null;
+  @IsOptional() @IsString() cashRecBy?: string | null;
+  @Type(() => Number) @IsNumber() receiptAmt!: number;
+  @IsString() recDate!: string;
+  @IsOptional() @IsString() remarks?: string | null;
+}

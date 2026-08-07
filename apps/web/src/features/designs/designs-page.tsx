@@ -194,6 +194,18 @@ export function DesignsPage() {
     category: comboCategory || undefined,
     subCategory: comboSubCategory || undefined,
   };
+  // Sub-category options narrowed to the currently-selected category, for both
+  // filter bars — otherwise picking a category still offered every sub-category
+  // ever seen, most of which return zero rows once combined with that category.
+  const subCategoryOptions = useMemo(
+    () => [...new Set((lookups?.subCategories ?? []).filter((sc) => !category || sc.category === category).map((sc) => sc.subCategory))],
+    [lookups, category],
+  );
+  const comboSubCategoryOptions = useMemo(
+    () => [...new Set((lookups?.subCategories ?? []).filter((sc) => !comboCategory || sc.category === comboCategory).map((sc) => sc.subCategory))],
+    [lookups, comboCategory],
+  );
+
   const { data: comboData, isLoading: combosLoading } = useCombinations(comboQuery);
   const delCombo = useDeleteCombination();
   const importComboMut = useImportCombinations();
@@ -483,7 +495,7 @@ export function DesignsPage() {
                   setSubCategory(v);
                   setPage(1);
                 }}
-                options={['', ...(lookups?.subCategories ?? [])]}
+                options={['', ...subCategoryOptions]}
                 placeholder="All sub categories"
                 className={cn(CONTROL, 'font-medium', subCategory && CONTROL_ON)}
               />
@@ -570,7 +582,7 @@ export function DesignsPage() {
                     setSubCategory(v);
                     setPage(1);
                   }}
-                  options={['', ...(lookups?.subCategories ?? [])]}
+                  options={['', ...subCategoryOptions]}
                   placeholder="All sub categories"
                 />
               </div>
@@ -725,7 +737,7 @@ export function DesignsPage() {
                   setComboSubCategory(v);
                   setComboPage(1);
                 }}
-                options={['', ...(lookups?.subCategories ?? [])]}
+                options={['', ...comboSubCategoryOptions]}
                 placeholder="All sub categories"
                 className={cn(CONTROL, 'font-medium', comboSubCategory && CONTROL_ON)}
               />
@@ -789,7 +801,7 @@ export function DesignsPage() {
                     setComboSubCategory(v);
                     setComboPage(1);
                   }}
-                  options={['', ...(lookups?.subCategories ?? [])]}
+                  options={['', ...comboSubCategoryOptions]}
                   placeholder="All sub categories"
                 />
               </div>
@@ -960,6 +972,10 @@ function DesignDialog({ design, onClose, onCreated }: { design: DesignDto | null
   });
   const set = (k: 'category' | 'subCategory' | 'designType' | 'cost' | 'rate', v: string) => setForm((f) => ({ ...f, [k]: v }));
   const numOrNull = (v: string) => (v.trim() === '' || Number.isNaN(Number(v)) ? null : Number(v));
+  const subCategoryOptions = useMemo(
+    () => [...new Set((lookups?.subCategories ?? []).filter((sc) => !form.category || sc.category === form.category).map((sc) => sc.subCategory))],
+    [lookups, form.category],
+  );
 
   // Live margin readout — only meaningful once both cost and rate are entered.
   const costN = numOrNull(form.cost);
@@ -1038,7 +1054,7 @@ function DesignDialog({ design, onClose, onCreated }: { design: DesignDto | null
             <Field label="Category" required>
               <Combo
                 value={form.category}
-                onChange={(v) => set('category', v)}
+                onChange={(v) => { set('category', v); set('subCategory', ''); }}
                 options={lookups?.categories ?? []}
                 placeholder="Select or add…"
               />
@@ -1047,7 +1063,7 @@ function DesignDialog({ design, onClose, onCreated }: { design: DesignDto | null
               <Combo
                 value={form.subCategory}
                 onChange={(v) => set('subCategory', v)}
-                options={lookups?.subCategories ?? []}
+                options={subCategoryOptions}
                 placeholder="Select or add…"
               />
             </Field>

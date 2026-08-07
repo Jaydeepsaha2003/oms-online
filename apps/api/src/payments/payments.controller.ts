@@ -1,11 +1,11 @@
-import { Body, Controller, Get, ParseIntPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { PaymentsService } from './payments.service';
-import { LedgerQueryDto, PaymentContextQueryDto, SavePaymentDto } from './dto/payment.dto';
+import { EditPaymentDto, LedgerQueryDto, PaymentContextQueryDto, SavePaymentDto } from './dto/payment.dto';
 
 const R = RESOURCES.PAYMENT;
 
@@ -49,5 +49,14 @@ export class PaymentsController {
   @Audit({ action: ACTIONS.CREATE, resource: R, description: 'Saved a payment receipt' })
   save(@Body() dto: SavePaymentDto, @CurrentUser('name') userName?: string) {
     return this.payments.save(dto, userName);
+  }
+
+  /** Correct an already-saved receipt's amount/date/mode/remarks — reverses and
+   *  replays this voucher and everything saved after it for the same party/agent. */
+  @Patch(':id')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Edited a payment receipt' })
+  edit(@Param('id', ParseIntPipe) id: number, @Body() dto: EditPaymentDto, @CurrentUser('name') userName?: string) {
+    return this.payments.editReceipt(id, dto, userName);
   }
 }
