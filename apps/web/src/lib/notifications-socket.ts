@@ -1,6 +1,6 @@
 import { io, type Socket } from 'socket.io-client';
 import { toast } from 'sonner';
-import type { TestNotificationPayload } from '@oms/shared';
+import type { AppNotification, TestNotificationPayload } from '@oms/shared';
 import { useAuthStore } from '@/stores/auth-store';
 import { queryClient } from './query';
 import { playTestChime } from './chime';
@@ -48,6 +48,22 @@ export function connectNotificationsSocket(): void {
   // once. Silent by design — no toast/sound.
   socket.on('challans:pending-changed', () => {
     void queryClient.invalidateQueries({ queryKey: ['challans', 'pending'] });
+  });
+
+  // A notification addressed to this user specifically — currently dispatch
+  // alerts. The gateway has ALWAYS emitted this event (notifyUsers), but nothing
+  // listened for it here, so every targeted in-app notification was silently
+  // dropped. Web Push covers the closed-app case separately.
+  socket.on('notification', (n: AppNotification) => {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+      try {
+        new Notification(n.title, { body: n.body, icon: '/icons/icon-192.png' });
+      } catch {
+        /* ignore — some platforms restrict constructing Notification directly */
+      }
+    }
+    playTestChime();
+    toast.info(n.title, { description: n.body });
   });
 
   // This account signed in somewhere else, and OMS allows one device at a time.

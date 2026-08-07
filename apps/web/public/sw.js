@@ -4,7 +4,7 @@
 // Bumping this name is what evicts a poisoned cache: `activate` deletes every
 // cache whose key isn't the current one. Bump it whenever the caching rules
 // below change, or to force stranded clients onto a fresh copy.
-const CACHE = 'oms-v11';
+const CACHE = 'oms-v12';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -133,9 +133,13 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const d = event.notification.data ?? {};
+  // followupId is checked first: CRM reminders also carry a `kind`, but theirs is
+  // 'PAYMENT' / 'DELIVERY', never 'dispatch'.
   const url = d.followupId
     ? `/${d.kind === 'PAYMENT' ? 'crm/payments' : 'crm'}?followup=${d.followupId}`
-    : '/';
+    : d.kind === 'dispatch'
+      ? '/dispatch'
+      : '/';
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
       for (const client of clients) {
