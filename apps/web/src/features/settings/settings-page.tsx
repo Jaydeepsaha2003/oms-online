@@ -36,6 +36,7 @@ import { MyDevicesCard } from './my-devices-card';
 import { TestNotificationCard } from './test-notification-card';
 import { DatabaseBackupCard } from './database-backup-card';
 import { DesignTrackCard } from './design-track-card';
+import { DispatchAlertsCard } from './dispatch-alerts-card';
 import {
   useChallanTerms,
   useCompany,
@@ -143,6 +144,7 @@ export function SettingsPage() {
       {tab === 'dispatch' && (
         <div className="space-y-4">
           <DispatchBagThresholdCard canEdit={canEdit} />
+          <DispatchAlertsCard canEdit={canEdit} />
           <DesignTrackCard canEdit={canEdit} />
         </div>
       )}

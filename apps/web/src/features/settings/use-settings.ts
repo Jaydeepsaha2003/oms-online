@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ChallanTermsDto, ChallanTermsInput, CompanyProfileDto, CompanyProfileInput, DispatchBagThresholdDto, DispatchBagThresholdInput, OrderFooterDto, OrderFooterInput, OrderOptionDto, OrderOptionInput, OrderQtyLayout, OrderTermsDto, OrderTermsInput, TcsSettingDto, TcsSettingInput } from '@oms/shared';
+import type { ChallanTermsDto, ChallanTermsInput, CompanyProfileDto, CompanyProfileInput, DispatchAlertSettingsDto, DispatchAlertSettingsInput, DispatchBagThresholdDto, DispatchBagThresholdInput, OrderFooterDto, OrderFooterInput, OrderOptionDto, OrderOptionInput, OrderQtyLayout, OrderTermsDto, OrderTermsInput, TcsSettingDto, TcsSettingInput } from '@oms/shared';
 import { http } from '@/lib/api';
 
 const KEY = ['settings'] as const;
@@ -10,6 +10,7 @@ const CHALLAN_TERMS_KEY = ['challan-terms'] as const;
 const ORDER_QTY_LAYOUT_KEY = ['order-qty-layout'] as const;
 const TCS_PERCENT_KEY = ['tcs-percent'] as const;
 const DISPATCH_BAG_THRESHOLD_KEY = ['dispatch-bag-threshold'] as const;
+const DISPATCH_ALERTS_KEY = ['dispatch-alerts'] as const;
 
 export function useCompany() {
   return useQuery({
@@ -126,6 +127,24 @@ export function useUpdateDispatchBagThreshold() {
   return useMutation({
     mutationFn: (input: DispatchBagThresholdInput) => http.put<DispatchBagThresholdDto>('/settings/dispatch-bag-threshold', input),
     onSuccess: () => qc.invalidateQueries({ queryKey: DISPATCH_BAG_THRESHOLD_KEY }),
+  });
+}
+
+/** Which dispatch events alert the people holding `dispatchalert:notify`. */
+export function useDispatchAlerts() {
+  return useQuery({
+    queryKey: DISPATCH_ALERTS_KEY,
+    queryFn: () => http.get<DispatchAlertSettingsDto>('/settings/dispatch-alerts'),
+    staleTime: 60_000,
+  });
+}
+
+export function useUpdateDispatchAlerts() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: DispatchAlertSettingsInput) =>
+      http.put<DispatchAlertSettingsDto>('/settings/dispatch-alerts', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: DISPATCH_ALERTS_KEY }),
   });
 }
 
