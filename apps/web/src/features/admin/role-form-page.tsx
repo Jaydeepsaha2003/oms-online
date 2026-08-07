@@ -30,12 +30,34 @@ const COLUMNS: Action[] = Object.values(ACTIONS).filter((a) =>
   SCREENS.some((s) => ACTIONS_BY_RESOURCE.get(s.resource)?.includes(a)),
 );
 
-const ACTION_LABEL: Record<string, string> = { [ACTIONS.MANAGE]: 'Manage (full)', [ACTIONS.VIEWRATES]: 'View rates' };
+const ACTION_LABEL: Record<string, string> = {
+  [ACTIONS.MANAGE]: 'Manage (full)',
+  [ACTIONS.VIEWRATES]: 'View rates',
+  [ACTIONS.NOTIFY]: 'Receive alerts',
+};
 const label = (a: Action) => ACTION_LABEL[a] ?? a.charAt(0).toUpperCase() + a.slice(1);
 
-/** Every concrete permission the matrix can grant (backs "Select all"). */
+/**
+ * Permissions that belong to no sidebar screen.
+ *
+ * The matrix above has one row per MENU leaf, so a permission that grants an
+ * ability rather than access to a page (receiving dispatch alerts, downloading
+ * a backup) produces no row and no column — it would sit in the catalog and in
+ * the database while being impossible to tick. These get their own section.
+ */
+const CAPABILITIES = RESOURCE_DEFINITIONS.filter((d) => !SCREENS.some((s) => s.resource === d.resource)).map((d) => ({
+  resource: d.resource as string,
+  label: d.label,
+  group: d.group,
+  items: d.actions.map((a) => ({ key: perm(d.resource, a), action: a })),
+}));
+
+/** Every concrete permission this page can grant (backs "Select all"). */
 const ALL_KEYS = [
-  ...new Set(SCREENS.flatMap((s) => (ACTIONS_BY_RESOURCE.get(s.resource) ?? []).map((a) => perm(s.resource, a)))),
+  ...new Set([
+    ...SCREENS.flatMap((s) => (ACTIONS_BY_RESOURCE.get(s.resource) ?? []).map((a) => perm(s.resource, a))),
+    ...CAPABILITIES.flatMap((c) => c.items.map((i) => i.key)),
+  ]),
 ];
 
 export function RoleFormPage() {
@@ -80,6 +102,12 @@ export function RoleFormPage() {
     const q = search.trim().toLowerCase();
     if (!q) return SCREENS;
     return SCREENS.filter((s) => `${s.group} ${s.label}`.toLowerCase().includes(q));
+  }, [search]);
+
+  const visibleCapabilities = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return CAPABILITIES;
+    return CAPABILITIES.filter((c) => `${c.group} ${c.label}`.toLowerCase().includes(q));
   }, [search]);
 
   /** Cells a column can actually toggle, across the rows currently on screen. */
@@ -220,7 +248,7 @@ export function RoleFormPage() {
           </Label>
           <div className="relative w-56">
             <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Find a screen…" className="h-8 pl-8 text-sm" />
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Find a screen or capability…" className="h-8 pl-8 text-sm" />
           </div>
         </div>
         {!isWildcard && (
@@ -363,6 +391,42 @@ export function RoleFormPage() {
         The tinted cell in each row is the permission that opens that screen. Rows marked <span className="font-semibold">linked</span> are
         gated by the same permission as another screen, so they can only be granted together.
       </p>
+
+      {/* Abilities that aren't a screen, so the grid above can't express them. */}
+      {visibleCapabilities.length > 0 && (
+        <div className={cn('bg-card rounded-lg border p-3', isWildcard && 'opacity-60')}>
+          <Label className="text-sm">Capabilities</Label>
+          <p className="text-muted-foreground mt-0.5 mb-3 text-[11.5px]">
+            These grant an ability rather than access to a page, so they have no row in the grid above.
+          </p>
+          <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+            {visibleCapabilities.map((c) => (
+              <div key={c.resource} className="rounded-md border p-2.5">
+                <div className="text-[13px] font-medium">{c.label}</div>
+                <div className="text-muted-foreground mb-1.5 text-[10.5px] tracking-wide uppercase">{c.group}</div>
+                <div className="flex flex-wrap gap-x-3 gap-y-1.5">
+                  {c.items.map((i) => (
+                    <label
+                      key={i.key}
+                      className={cn('flex items-center gap-1.5 text-[12.5px]', !isWildcard && 'cursor-pointer')}
+                    >
+                      <input
+                        type="checkbox"
+                        className={cn('accent-indigo-600 size-3.5', !isWildcard && 'cursor-pointer')}
+                        checked={has(i.key)}
+                        disabled={isWildcard}
+                        onChange={() => toggle(i.key)}
+                        aria-label={`${c.label}: ${label(i.action)}`}
+                      />
+                      {label(i.action)}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
