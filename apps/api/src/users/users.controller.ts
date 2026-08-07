@@ -21,6 +21,7 @@ import { SessionsService } from '../auth/sessions.service';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { ExcelService } from '../excel/excel.service';
 import { CreateUserDto } from './dto/create-user.dto';
+import { SetUserPasswordDto } from './dto/set-password.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UserQueryDto } from './dto/user-query.dto';
 import { UsersService } from './users.service';
@@ -68,6 +69,25 @@ export class UsersController {
   @Audit({ action: ACTIONS.UPDATE, resource: RESOURCES.USER })
   update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
     return this.users.update(id, dto);
+  }
+
+  /**
+   * Set a user's password (forgotten-password reset).
+   *
+   * Separate from PATCH :id so it is an explicit, audited act rather than
+   * something that rides along with a name or role edit. The existing password
+   * is never required — it cannot be known, only replaced.
+   */
+  @Patch(':id/password')
+  @Permissions(perm(RESOURCES.USER, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: RESOURCES.USER, description: "Set a user's password (admin reset)" })
+  async setPassword(
+    @Param('id') id: string,
+    @Body() dto: SetUserPasswordDto,
+    @CurrentUser() me: AuthenticatedUser,
+  ) {
+    await this.users.setPassword(id, dto.password, me);
+    return { ok: true };
   }
 
   @Delete(':id')

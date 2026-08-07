@@ -52,6 +52,14 @@ export function useUpdateUser(id: string) {
   });
 }
 
+/** Admin sets another user's password (forgotten-password reset). Signs that
+ *  user out of every device, so nothing keeps working on the old password. */
+export function useSetUserPassword(id: string) {
+  return useMutation({
+    mutationFn: (password: string) => http.patch<{ ok: true }>(`/users/${id}/password`, { password }),
+  });
+}
+
 export function useDeleteUser() {
   const qc = useQueryClient();
   return useMutation({

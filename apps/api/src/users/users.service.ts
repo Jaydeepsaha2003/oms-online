@@ -1,7 +1,9 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
-import { type Paginated, type UserDto, type UserStatus } from '@oms/shared';
+import { ALL_PERMISSIONS, type Paginated, type UserDto, type UserStatus } from '@oms/shared';
+import { SessionsService } from '../auth/sessions.service';
+import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -12,7 +14,12 @@ type UserRow = Prisma.UserGetPayload<{ include: typeof USER_INCLUDE }>;
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // Reused so an admin-set password kills sessions exactly the way
+    // "sign out everywhere" already does — one implementation, not two.
+    private readonly sessions: SessionsService,
+  ) {}
 
   async findMany(query: UserQueryDto): Promise<Paginated<UserDto>> {
     const where: Prisma.UserWhereInput = {
@@ -98,6 +105,46 @@ export class UsersService {
   async remove(id: string): Promise<void> {
     await this.ensureExists(id);
     await this.prisma.user.delete({ where: { id } });
+  }
+
+  /**
+   * Set another user's password — the forgotten-password path.
+   *
+   * An existing password can never be read back (bcrypt is one-way), so recovery
+   * can only mean replacing it. Every session is then killed: `tokenVersion` is
+   * bumped, which invalidates outstanding access tokens, and the refresh tokens
+   * are revoked. Otherwise a device already signed in would keep working with
+   * the password its owner no longer knows.
+   *
+   * Guarded against privilege escalation — see {@link assertMayManage}.
+   */
+  async setPassword(id: string, password: string, actor: AuthenticatedUser): Promise<void> {
+    const target = await this.prisma.user.findUnique({ where: { id }, include: USER_INCLUDE });
+    if (!target) throw new NotFoundException('User not found.');
+    this.assertMayManage(target, actor);
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    await this.prisma.user.update({ where: { id }, data: { passwordHash } });
+    // Bump tokenVersion + revoke refresh tokens (same effect as "sign out everywhere").
+    await this.sessions.revokeAll(id);
+  }
+
+  /**
+   * Refuse to touch an account that holds a role the actor does not.
+   *
+   * Without this, `user:manage` would be a hand-over of the whole system: an
+   * Administrator could set the Super Administrator's password and sign in as
+   * them. A super admin carries the `*` wildcard and so passes for everyone.
+   */
+  private assertMayManage(target: UserRow, actor: AuthenticatedUser): void {
+    if (actor.permissions.includes(ALL_PERMISSIONS)) return;
+    const mine = new Set(actor.roles);
+    const beyond = target.roles.map((ur) => ur.role).filter((r) => !mine.has(r.name));
+    if (beyond.length) {
+      throw new ForbiddenException(
+        `You cannot set the password of a user holding ${beyond.map((r) => r.label).join(', ')} — that role outranks yours.`,
+      );
+    }
   }
 
   /** Flattened rows for Excel export. */

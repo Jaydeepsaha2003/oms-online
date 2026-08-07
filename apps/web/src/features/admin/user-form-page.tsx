@@ -9,7 +9,7 @@ import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useCreateUser, useRoles, useUpdateUser, useUser } from './use-admin';
+import { useCreateUser, useRoles, useSetUserPassword, useUpdateUser, useUser } from './use-admin';
 
 const STATUSES: UserStatus[] = ['active', 'disabled', 'invited'];
 const STATUS_SEGMENT_TONE: Record<UserStatus, string> = {
@@ -46,6 +46,10 @@ export function UserFormPage() {
   const [password, setPassword] = useState('');
   const [status, setStatus] = useState<UserStatus>('active');
   const [roleIds, setRoleIds] = useState<Set<string>>(new Set());
+  // Kept apart from `password` (which only creates): resetting is its own
+  // deliberate action with its own button, not something a name edit carries.
+  const [newPassword, setNewPassword] = useState('');
+  const setPasswordMutation = useSetUserPassword(id ?? '');
 
   useEffect(() => {
     if (!user) return;
@@ -155,6 +159,46 @@ export function UserFormPage() {
           </div>
         )}
       </div>
+
+      {/* Reset, not reveal: the existing password is stored only as a one-way
+          hash, so it cannot be shown to anyone — it can only be replaced. */}
+      {isEdit && (
+        <div className="space-y-1.5 rounded-lg border p-3">
+          <Label className="text-muted-foreground flex items-center gap-1.5 text-[11px] font-semibold tracking-wide uppercase">
+            <KeyRound className="size-3.5" /> Set a new password
+          </Label>
+          <p className="text-muted-foreground text-[11.5px]">
+            The current password can't be displayed — it's stored as a one-way hash, so nobody can read it. Use this when
+            someone has forgotten theirs. Saving signs them out of every device.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Input
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              placeholder="Min 8 characters"
+              className="max-w-xs"
+              autoComplete="new-password"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              disabled={newPassword.length < 8 || setPasswordMutation.isPending}
+              onClick={() =>
+                setPasswordMutation.mutate(newPassword, {
+                  onSuccess: () => {
+                    setNewPassword('');
+                    toast.success(`Password updated — ${name || 'this user'} has been signed out everywhere.`);
+                  },
+                  onError: (e) => toast.error(getApiErrorMessage(e, 'Could not set the password')),
+                })
+              }
+            >
+              {setPasswordMutation.isPending ? <Loader2 className="animate-spin" /> : <KeyRound />} Set password
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* ── Access: everything that decides what this account can do ────── */}
       <div className="space-y-3 rounded-lg border border-primary/15 bg-primary/[0.03] p-3">
