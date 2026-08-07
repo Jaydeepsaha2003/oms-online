@@ -155,7 +155,16 @@ export function UserFormPage() {
             <Label className="text-muted-foreground flex items-center gap-1.5 text-[11px] font-semibold tracking-wide uppercase">
               <KeyRound className="size-3.5" /> Password *
             </Label>
-            <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Min 8 characters" />
+            {/* new-password, not current-password: this creates an account, so a
+                manager should offer to generate/save rather than fill the admin's
+                own credentials into it. */}
+            <Input
+              type="password"
+              autoComplete="new-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Min 8 characters"
+            />
           </div>
         )}
       </div>
