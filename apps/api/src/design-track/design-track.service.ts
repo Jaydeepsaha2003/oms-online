@@ -1,10 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import type {
-  DesignTrackFilterOptions,
-  DesignTrackList,
-  DesignTrackRow,
-  DesignTrackTypesDto,
-  PendingLineDto,
+import {
+  resolveLineDesignType,
+  type DesignTrackFilterOptions,
+  type DesignTrackList,
+  type DesignTrackRow,
+  type DesignTrackTypesDto,
+  type PendingLineDto,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { DispatchService } from '../dispatch/dispatch.service';
@@ -33,13 +34,17 @@ export class DesignTrackService {
    * bury the handful of designs actually being worked in ~850 rows.
    */
   private async pool(): Promise<Tracked[]> {
-    const { selected } = await this.settings.getDesignTrackTypes();
+    const { selected, available } = await this.settings.getDesignTrackTypes();
     if (!selected.length) return [];
-    const tracked = new Set(selected.map((d) => d.toUpperCase()));
+    const tracked = new Set(selected.map((d) => d.trim().toUpperCase()));
+    // The master's own type set, so a line's `design` column is only read as a
+    // type when it really is one — see resolveLineDesignType.
+    const knownTypes = new Set(available);
 
-    const lines = (await this.dispatch.pendingPool()).filter((l) =>
-      tracked.has((l.designType ?? '').trim().toUpperCase()),
-    );
+    const lines = (await this.dispatch.pendingPool()).filter((l) => {
+      const type = resolveLineDesignType(l, knownTypes);
+      return type != null && tracked.has(type);
+    });
     if (!lines.length) return [];
 
     const entries: { orderItemId: number; kalwat: number | null }[] = await this.prisma.designTrackEntry.findMany({

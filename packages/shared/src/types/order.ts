@@ -381,3 +381,29 @@ export function resolveLineDesign(line: { design?: string | null; designType?: s
 /** True when the line carries a design, and so needs a reference photo. */
 export const lineHasDesign = (line: { design?: string | null; designType?: string | null }): boolean =>
   resolveLineDesign(line) !== null;
+
+/**
+ * The line's design TYPE specifically — the priced thing in the Design master
+ * (e.g. "WL+LOGO"), never a decorative design NAME ("ZEBRA", "GUCCI") and never
+ * a combination.
+ *
+ * This is narrower than {@link resolveLineDesign} on purpose. That one answers
+ * "does this line have any design at all?", so falling back to `design` is right
+ * there — for the photo rule a name is as good as a type. But `design` holds a
+ * TYPE only on imported rows; on rows entered here it holds the NAME. Reading it
+ * blindly is what put 25 design names into Design Track's picker.
+ *
+ * `knownTypes` is the Design master's own set of types (upper-cased), which is
+ * what makes the two shapes separable: a `design` value is only accepted as a
+ * type when the master actually knows it as one.
+ */
+export function resolveLineDesignType(
+  line: { design?: string | null; designType?: string | null },
+  knownTypes: ReadonlySet<string>,
+): string | null {
+  const type = (line.designType ?? '').trim().toUpperCase();
+  if (isRealDesign(type)) return type;
+  const fallback = (line.design ?? '').trim().toUpperCase();
+  if (isRealDesign(fallback) && knownTypes.has(fallback)) return fallback;
+  return null;
+}

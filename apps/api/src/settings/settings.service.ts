@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { ACTIONS, DEFAULT_ORDER_QTY_LAYOUT, normalizeQtyOrder, RESOURCES, resolveLineDesign, type ChallanTermsDto, type CompanyProfileDto, type DesignTrackTypesDto, type DispatchBagThresholdDto, type OrderFooterDto, type OrderOptionDto, type OrderQtyLayout, type OrderTermsDto, type TcsSettingDto } from '@oms/shared';
+import { ACTIONS, DEFAULT_ORDER_QTY_LAYOUT, isRealDesign, normalizeQtyOrder, RESOURCES, type ChallanTermsDto, type CompanyProfileDto, type DesignTrackTypesDto, type DispatchBagThresholdDto, type OrderFooterDto, type OrderOptionDto, type OrderQtyLayout, type OrderTermsDto, type TcsSettingDto } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { uc } from '../common/coerce';
 import { AuditService } from '../audit/audit.service';
@@ -245,20 +245,24 @@ export class SettingsService {
   }
 
   /* ── Design Track: which design types the grid may show ───────────────────
-   * `available` is every DISTINCT design type currently sitting on an order line
-   * — deduplicated, so a design used by 200 lines is offered once. Combination
-   * names ("WL+LOGO") are real design types in this data and are listed as they
-   * are; the "NA"-family placeholders are not designs and are excluded. */
+   * `available` comes from the DESIGN MASTER's distinct `designType` — the
+   * priced things, e.g. "WL+LOGO". Deriving it from order lines instead pulled
+   * in decorative design NAMES ("ZEBRA", "GUCCI", "AK RING"), because a line's
+   * `design` column holds a name on rows entered here and only holds a type on
+   * imported ones. Reading the master excludes names and combinations by
+   * construction: those live in their own tables (DesignName / Combination).
+   * Multi-part types like "CARVING+LOGO" ARE real master types, not
+   * combinations, so they stay. */
 
   async getDesignTrackTypes(): Promise<DesignTrackTypesDto> {
-    const [row, lines] = await Promise.all([
+    const [row, designs] = await Promise.all([
       this.prisma.appConfig.findUnique({ where: { key: DESIGN_TRACK_TYPES } }),
-      this.prisma.orderItem.findMany({ select: { design: true, designType: true } }),
+      this.prisma.design.findMany({ select: { designType: true }, distinct: ['designType'] }),
     ]);
 
-    const available = [...new Set(lines.map(resolveLineDesign).filter((d): d is string => !!d))].sort((a, b) =>
-      a.localeCompare(b),
-    );
+    const available = [
+      ...new Set(designs.map((d) => d.designType.trim().toUpperCase()).filter((d) => isRealDesign(d))),
+    ].sort((a, b) => a.localeCompare(b));
 
     let selected: string[] = [];
     if (row?.value) {
