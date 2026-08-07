@@ -22,7 +22,13 @@ type Row = Prisma.ApprovalRequestGetPayload<object>;
  * Returns the id of whatever it created (stored as `resultId` for traceability),
  * or null when the action produces nothing addressable.
  */
-export type ApprovalHandler = (payload: Record<string, unknown>, approverName: string) => Promise<number | null>;
+/** Applies an approved request. `approver` is optional so handlers that don't
+ *  care about who signed off keep compiling unchanged. */
+export type ApprovalHandler = (
+  payload: Record<string, unknown>,
+  approverName: string,
+  approver?: { id?: string | null; name: string },
+) => Promise<number | null>;
 
 /**
  * Where an approval's decision should ALSO be logged, beyond the generic
@@ -179,7 +185,7 @@ export class ApprovalsService {
       throw new BadRequestException('This request’s saved details are unreadable, so it cannot be applied.');
     }
 
-    const resultId = await handler(payload, approver.name);
+    const resultId = await handler(payload, approver.name, approver);
 
     const saved = await this.prisma.approvalRequest.update({
       where: { id },

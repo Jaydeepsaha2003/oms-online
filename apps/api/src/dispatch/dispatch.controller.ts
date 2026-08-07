@@ -151,8 +151,8 @@ export class DispatchController {
   @Post('fulfill-order/:orderId')
   @Permissions(perm(R, ACTIONS.CREATE))
   @Audit({ action: ACTIONS.CREATE, resource: R, description: 'Fully dispatched an order (Create & Dispatch)' })
-  fulfillOrder(@Param('orderId', ParseIntPipe) orderId: number, @CurrentUser('name') userName: string) {
-    return this.dispatch.dispatchOrderFully(orderId, userName);
+  fulfillOrder(@Param('orderId', ParseIntPipe) orderId: number, @CurrentUser() user: AuthenticatedUser) {
+    return this.dispatch.dispatchOrderFully(orderId, { id: user.id ?? null, name: user.name });
   }
 
   @Patch(':id')
@@ -170,8 +170,8 @@ export class DispatchController {
   @Delete(':id')
   @Permissions(perm(R, ACTIONS.DELETE))
   @Audit({ action: ACTIONS.DELETE, resource: R, description: 'Deleted a dispatch' })
-  async remove(@Param('id', ParseIntPipe) id: number) {
-    await this.dispatch.remove(id);
+  async remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthenticatedUser) {
+    await this.dispatch.remove(id, { id: user.id ?? null, name: user.name });
     return { ok: true };
   }
 }

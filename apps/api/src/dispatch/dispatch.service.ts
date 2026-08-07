@@ -84,6 +84,7 @@ export class DispatchService implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly approvals: ApprovalsService,
     private readonly audit: AuditService,
+    private readonly notifier: DispatchNotifier,
   ) {}
 
   /* ── Editing locks: "someone else has this line open" ──────────────────────
@@ -149,7 +150,7 @@ export class DispatchService implements OnModuleInit {
    * requester had held `dispatch:approve` all along.
    */
   onModuleInit(): void {
-    this.approvals.registerHandler('DISPATCH_BACKDATE', async (payload, approverName) => {
+    this.approvals.registerHandler('DISPATCH_BACKDATE', async (payload, approverName, approver) => {
       const p = payload as unknown as DispatchBackdatePayload;
       const row = await this.create(
         {
@@ -167,8 +168,30 @@ export class DispatchService implements OnModuleInit {
         // on the approval row, not on the dispatch they merely signed off.
         p.requestedByName ?? approverName,
         undefined,
-        { skipAudit: true }, // ApprovalsService.approve() writes the combined entry
+        // ApprovalsService.approve() writes the combined audit entry, and the
+        // alert below says "approved" rather than the plain "dispatched" one
+        // create() would have raised.
+        { skipAudit: true, skipNotify: true },
       );
+      this.notifier.backdateApproved({
+        // The approver is excluded — they just decided this and know about it.
+        actorId: approver?.id ?? null,
+        dispatchId: row.id,
+        dispatchCode: row.code ?? this.codeFor(row.id),
+        // The payload's snapshot fields are optional on the type. submit() always
+        // fills customerName in, but an older parked request predating that could
+        // not, and an approval can sit in the inbox indefinitely.
+        customerName: p.customerName ?? 'Unknown party',
+        productName: p.productName,
+        orderCode: p.orderCode,
+        dispatchDate: p.dispatchDate,
+        requestedByName: p.requestedByName ?? null,
+        approverName,
+        bags: p.bags,
+        pcs: p.pcs,
+        gram: p.gram,
+        box: p.box,
+      });
       return row.id;
     });
 
@@ -698,7 +721,12 @@ export class DispatchService implements OnModuleInit {
    * plain "created" entry here would just be a confusing duplicate sitting next
    * to it in the dispatch's history.
    */
-  async create(dto: CreateDispatchDto, userName?: string, actor?: Actor, opts?: { skipAudit?: boolean }): Promise<DispatchDto> {
+  async create(
+    dto: CreateDispatchDto,
+    userName?: string,
+    actor?: Actor,
+    opts?: { skipAudit?: boolean; skipNotify?: boolean },
+  ): Promise<DispatchDto> {
     const bags = toNum(dto.bags) ?? 0;
     const pcs = toNum(dto.pcs) ?? 0;
     const gram = toNum(dto.gram) ?? 0;
@@ -791,6 +819,28 @@ export class DispatchService implements OnModuleInit {
         metadata: { bags, pcs, gram, box, dispatchStatus: dto.dispatchStatus, dispatchDate: dispatch.dispatchDate.toISOString() },
       });
     }
+    // Alert AFTER the transaction has committed, and only for a real insert.
+    // A deduped double-tap returns the pre-existing row (see
+    // DISPATCH_DEDUPE_WINDOW_MS) — alerting there would fire a second time for a
+    // shipment that only ever happened once. `skipNotify` is the approval replay,
+    // which raises its own, differently-worded alert instead.
+    if (!row.deduped && !opts?.skipNotify) {
+      this.notifier.dispatchCreated({
+        actorId: actor?.id ?? null,
+        userName: userName ?? actor?.name ?? null,
+        dispatchId: dispatch.id,
+        dispatchCode: dispatch.code ?? this.codeFor(dispatch.id),
+        customerName: dispatch.customerName,
+        productName: dispatch.productName,
+        designType: dispatch.designType,
+        orderCode: dispatch.orderCode,
+        dispatchStatus: dto.dispatchStatus,
+        bags,
+        pcs,
+        gram,
+        box,
+      });
+    }
     this.invalidatePendingCache(); // a new dispatch changes what's still pending
     return this.toDto(dispatch);
   }
@@ -809,7 +859,7 @@ export class DispatchService implements OnModuleInit {
    * about to be dispatched is checked up front so the error can name what's
    * missing, rather than failing halfway through.
    */
-  async dispatchOrderFully(orderId: number, userName?: string): Promise<{ dispatched: number; skipped: number }> {
+  async dispatchOrderFully(orderId: number, actor?: Actor): Promise<{ dispatched: number; skipped: number }> {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: { items: { include: { dispatches: true } } },
@@ -878,7 +928,7 @@ export class DispatchService implements OnModuleInit {
             box: rem.box,
             dispatchStatus: 'FULLY DISPATCH',
             dispatchDate: new Date(),
-            userName: userName ?? null,
+            userName: actor?.name ?? null,
           },
         });
         await tx.dispatch.update({ where: { id: row.id }, data: { code: this.codeFor(row.id) } });
@@ -887,7 +937,20 @@ export class DispatchService implements OnModuleInit {
       return { dispatched, skipped };
     });
 
-    if (result.dispatched > 0) this.invalidatePendingCache();
+    if (result.dispatched > 0) {
+      this.invalidatePendingCache();
+      // ONE alert for the whole order. This shortcut has no approval gate of any
+      // kind (see the controller — it needs only dispatch:create), so it is the
+      // path where an alert matters most.
+      this.notifier.orderFullyDispatched({
+        actorId: actor?.id ?? null,
+        userName: actor?.name ?? null,
+        orderId: order.id,
+        orderCode: order.code ?? this.orderCodeFor(order.id),
+        customerName: order.customerName,
+        itemCount: result.dispatched,
+      });
+    }
     return result;
   }
 
@@ -1022,6 +1085,15 @@ export class DispatchService implements OnModuleInit {
         actor,
         metadata: { before: { ...qtyBefore, dispatchStatus: cur.dispatchStatus, dispatchDate: cur.dispatchDate.toISOString() }, after: { ...qtyAfter, dispatchStatus: status, dispatchDate: row.dispatchDate.toISOString() } },
       });
+      this.notifier.dispatchUpdated({
+        actorId: actor?.id ?? null,
+        userName: actor?.name ?? null,
+        dispatchId: id,
+        dispatchCode: cur.code ?? this.codeFor(id),
+        customerName: cur.customerName,
+        // The very same text the dispatch's Activity History shows.
+        changes: changes.join('; '),
+      });
     }
     this.invalidatePendingCache(); // edited quantities change remaining-to-dispatch
     return this.toDto(row);
@@ -1036,12 +1108,25 @@ export class DispatchService implements OnModuleInit {
     return !!billed;
   }
 
-  async remove(id: number): Promise<void> {
-    const c = await this.prisma.dispatch.count({ where: { id } });
-    if (!c) throw new NotFoundException('Dispatch not found.');
+  async remove(id: number, actor?: Actor): Promise<void> {
+    // Read the row before deleting it: the alert has to name the party, item and
+    // quantities that are about to stop existing.
+    const row = await this.prisma.dispatch.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException('Dispatch not found.');
     await this.assertNotBilled(id);
     await this.prisma.dispatch.delete({ where: { id } });
     this.invalidatePendingCache(); // a deleted dispatch puts its qty back in the pool
+    this.notifier.dispatchDeleted({
+      actorId: actor?.id ?? null,
+      userName: actor?.name ?? null,
+      dispatchCode: row.code ?? this.codeFor(id),
+      customerName: row.customerName,
+      productName: row.productName,
+      bags: row.bags,
+      pcs: row.pcs,
+      gram: row.gram,
+      box: row.box,
+    });
   }
 
   /** Blocks edit/delete once a dispatch has been billed onto a live challan — the
