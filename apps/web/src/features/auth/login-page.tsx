@@ -169,13 +169,26 @@ export function LoginPage() {
           {/* Panels */}
           <div key={mode} className="mt-6 duration-300 animate-in fade-in-0">
             {mode === 'password' ? (
-              <div className="space-y-4">
+              /* A REAL form with a real submit button, on purpose. Browser
+                 password managers offer to save a login when they observe a form
+                 submission — with the fields loose in <div>s and sign-in wired to
+                 a click handler, Chrome and iOS have nothing to observe and the
+                 "save password?" prompt never appears. `name` attributes and the
+                 autocomplete tokens below are the other half of that detection. */
+              <form
+                className="space-y-4"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  submitPassword();
+                }}
+              >
                 <div className="space-y-2">
                   <Label htmlFor="email">Email</Label>
                   <div className="relative">
                     <Mail className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                     <Input
                       id="email"
+                      name="email"
                       type="email"
                       inputMode="email"
                       autoComplete="username"
@@ -183,7 +196,6 @@ export function LoginPage() {
                       className="pl-9"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && submitPassword()}
                     />
                   </div>
                 </div>
@@ -193,21 +205,21 @@ export function LoginPage() {
                     <Lock className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                     <Input
                       id="password"
+                      name="password"
                       type="password"
                       autoComplete="current-password"
                       placeholder="••••••••"
                       className="pl-9"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && submitPassword()}
                     />
                   </div>
                 </div>
-                <Button className="w-full" onClick={submitPassword} disabled={pending}>
+                <Button type="submit" className="w-full" disabled={pending}>
                   {pending ? <Loader2 className="size-4 animate-spin" /> : null}
                   {pending ? 'Signing in…' : 'Sign in'}
                 </Button>
-              </div>
+              </form>
             ) : rememberedEmail ? (
               <div className="space-y-5">
                 {/* Account identity (read-only) — no email field in PIN mode */}
