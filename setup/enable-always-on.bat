@@ -15,7 +15,7 @@ REM  Wi-Fi drops (verified in the logs and the Windows event log). What
 REM  died was the 192.168.0.236 ADDRESS, not the server.
 REM
 REM  Requires administrator rights (one-time). To undo, see the notes
-REM  printed at the end and disable-autostart.bat.
+REM  printed at the end and disable-autostart.bat (same folder).
 REM ============================================================
 
 REM Self-elevate to Administrator if we are not already.
@@ -26,7 +26,8 @@ if not "%errorlevel%"=="0" (
     exit /b
 )
 
-cd /d "%~dp0"
+REM This script lives in setup\ - work from the project root above it.
+cd /d "%~dp0.."
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0enable-always-on.ps1"
 if errorlevel 1 (
     echo.

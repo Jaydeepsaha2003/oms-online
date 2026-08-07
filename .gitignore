@@ -50,7 +50,7 @@ coverage/
 Thumbs.db
 *.swp
 
-# Local DB backups (START-OMS / scripts/backup-db)
+# Local DB backups (scripts/backup-db.cmd, scripts/register-daily-backup.cmd)
 backups/
 
 # Local HTTPS certs copied from ~/.vite-plugin-mkcert (private key - never commit)

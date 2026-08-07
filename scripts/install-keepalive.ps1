@@ -13,13 +13,14 @@
 #  double-clicked start.bat again.
 #
 #  This is deliberately the no-admin mechanism (fires at logon). For coverage
-#  BEFORE anyone logs in, run enable-autostart.bat once as administrator - that
-#  registers a SYSTEM scheduled task. The two are safe together: the watchdog has
-#  a duplicate-instance guard and both respect the .oms-stopped marker, so an
+#  BEFORE anyone logs in, run setup\enable-autostart.bat once as administrator -
+#  that registers a SYSTEM scheduled task. The two are safe together: the watchdog
+#  has a duplicate-instance guard and both respect the .oms-stopped marker, so an
 #  intentional stop.bat stays stopped.
 #
 #  Idempotent: re-running only rewrites the shortcut if it's missing or stale.
-#  Removed by disable-keepalive.bat.
+#  Removed by setup\disable-autostart.bat - though start.bat re-installs it on
+#  every launch, so to keep OMS down on purpose use stop.bat instead.
 # ============================================================
 $ErrorActionPreference = 'Stop'
 

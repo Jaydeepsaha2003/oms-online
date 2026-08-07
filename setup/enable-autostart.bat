@@ -18,7 +18,8 @@ if not "%errorlevel%"=="0" (
     exit /b
 )
 
-cd /d "%~dp0"
+REM This script lives in setup\ - work from the project root above it.
+cd /d "%~dp0.."
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0enable-autostart.ps1"
 if errorlevel 1 (
     echo.

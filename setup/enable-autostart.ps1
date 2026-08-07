@@ -2,7 +2,9 @@
 # (before any login), as SYSTEM, silently launching autostart-oms.vbs.
 # Also removes the older Startup-folder shortcut (login-only) if present,
 # since this task supersedes it.
-$ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+# This script lives in setup\, one level below the project root - and the task
+# has to launch the project's autostart-oms.vbs, which sits at the root.
+$ProjectDir = Split-Path -Parent $PSScriptRoot
 $TaskName = 'OMS Auto Start'
 
 $Startup = [Environment]::GetFolderPath('Startup')

@@ -132,7 +132,7 @@ Write-Host '  Reach the app on a URL that survives a Wi-Fi reconnect:'
 Write-Host "     On this PC   :  https://localhost:6173"
 Write-Host "     On a phone   :  https://$($env:COMPUTERNAME):6173   (name, not IP)"
 Write-Host ''
-Write-Host '  UNDO: disable-autostart.bat removes the boot task; set'
+Write-Host '  UNDO: setup\disable-autostart.bat removes the boot task; set'
 Write-Host '        HiberbootEnabled back to 1 to restore Fast Startup.'
 Write-Host '========================================================'
 Write-Host ''

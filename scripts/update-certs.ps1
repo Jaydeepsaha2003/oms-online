@@ -27,7 +27,7 @@ $reservedLanIps = @("192.168.0.236")
 # iOS always assigns from this fixed pool). With these baked into the cert, the
 # ALREADY-RUNNING server stays TLS-valid the moment the PC hops onto the hotspot:
 # no cert regen, no restart - just open https://<hotspot-ip>:6173 on the phone
-# (run phone-url.bat to see the current address). Keep this list in sync with
+# (run setup\phone-url.bat to see the current address). Keep this list in sync with
 # getAllLocalIPs() in apps/web/vite.config.ts.
 $reservedLanIps += 2..14 | ForEach-Object { "172.20.10.$_" }
 # This PC's own name (e.g. GURUDEV1121), resolved on the LAN by NetBIOS/mDNS. Every

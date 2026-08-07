@@ -6,7 +6,7 @@ REM  cert is pre-pinned for 192.168.0.236 and 172.20.10.2-14
 REM  (see scripts\update-certs.ps1), so whichever network the PC
 REM  is on, just open the printed https URL on the phone.
 REM ============================================================
-cd /d "%~dp0"
+cd /d "%~dp0.."
 echo.
 echo   Open ONE of these on your phone (same network as this PC):
 echo.
