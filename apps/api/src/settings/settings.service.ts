@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { ACTIONS, DEFAULT_ORDER_QTY_LAYOUT, isRealDesign, normalizeQtyOrder, RESOURCES, type ChallanTermsDto, type CompanyProfileDto, type DesignTrackTypesDto, type DispatchBagThresholdDto, type OrderFooterDto, type OrderOptionDto, type OrderQtyLayout, type OrderTermsDto, type TcsSettingDto } from '@oms/shared';
+import { ACTIONS, DEFAULT_ORDER_QTY_LAYOUT, isRealDesign, normalizeQtyOrder, RESOURCES, type ChallanTermsDto, type CompanyProfileDto, type DesignTrackTypesDto, type DispatchAlertSettingsDto, type DispatchBagThresholdDto, type OrderFooterDto, type OrderOptionDto, type OrderQtyLayout, type OrderTermsDto, type TcsSettingDto } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { uc } from '../common/coerce';
 import { AuditService } from '../audit/audit.service';
@@ -13,6 +13,7 @@ import { UpdateChallanTermsDto } from './dto/challan-terms.dto';
 import { UpdateTcsSettingDto } from './dto/tcs-setting.dto';
 import { UpdateDispatchBagThresholdDto } from './dto/dispatch-bag-threshold.dto';
 import { UpdateDesignTrackTypesDto } from './dto/design-track-types.dto';
+import { UpdateDispatchAlertsDto } from './dto/dispatch-alerts.dto';
 
 type Row = Prisma.OrderOptionGetPayload<object>;
 
@@ -25,6 +26,7 @@ const ORDER_QTY_LAYOUT = 'ORDER_QTY_LAYOUT';
 const TCS_PERCENT = 'TCS_PERCENT';
 const DESIGN_TRACK_TYPES = 'DESIGN_TRACK_TYPES';
 const DISPATCH_BAG_THRESHOLD = 'DISPATCH_BAG_THRESHOLD';
+const DISPATCH_ALERTS = 'DISPATCH_ALERTS';
 // Matches the legacy Form14 rate, kept until the business saves its own %.
 const DEFAULT_TCS_PERCENT = 1;
 // Shown until the business saves their own list from Settings.
@@ -39,6 +41,17 @@ const DEFAULT_ORDER_FOOTER = ['***THIS IS COMPUTER GENRATED {DOC_TYPE}***'];
 // Unlike Order Terms, the Challan bill prints no Terms & Conditions until the
 // business explicitly adds some from Settings.
 const DEFAULT_CHALLAN_TERMS: string[] = [];
+// Ships entirely off: the business turns on exactly the events it wants. Also the
+// resolved value for a missing or malformed config row — alerting fails silent,
+// never loud, and must never start firing because a row could not be parsed.
+const DISPATCH_ALERTS_OFF: DispatchAlertSettingsDto = {
+  enabled: false,
+  onCreate: false,
+  onBulk: false,
+  onBackdateApproved: false,
+  onEdit: false,
+  onDelete: false,
+};
 
 @Injectable()
 export class SettingsService {
@@ -242,6 +255,72 @@ export class SettingsService {
       metadata: { before: before.maxBagsPerDispatch, after: maxBagsPerDispatch },
     });
     return { maxBagsPerDispatch };
+  }
+
+  /* ── Dispatch alerts (who gets told when party items are dispatched) ───────
+   * One JSON row in AppConfig, so there is no schema to migrate. Reads coerce
+   * every flag with `=== true`: a partial, mistyped or hand-edited row resolves
+   * to off rather than to an accidental broadcast. */
+
+  async getDispatchAlerts(): Promise<DispatchAlertSettingsDto> {
+    const row = await this.prisma.appConfig.findUnique({ where: { key: DISPATCH_ALERTS } });
+    if (!row?.value) return { ...DISPATCH_ALERTS_OFF };
+    try {
+      const parsed = JSON.parse(row.value) as Partial<DispatchAlertSettingsDto>;
+      const on = (k: keyof DispatchAlertSettingsDto) => parsed[k] === true;
+      return {
+        enabled: on('enabled'),
+        onCreate: on('onCreate'),
+        onBulk: on('onBulk'),
+        onBackdateApproved: on('onBackdateApproved'),
+        onEdit: on('onEdit'),
+        onDelete: on('onDelete'),
+      };
+    } catch {
+      return { ...DISPATCH_ALERTS_OFF };
+    }
+  }
+
+  async updateDispatchAlerts(
+    dto: UpdateDispatchAlertsDto,
+    actor?: AuthenticatedUser,
+  ): Promise<DispatchAlertSettingsDto> {
+    const before = await this.getDispatchAlerts();
+    const after: DispatchAlertSettingsDto = {
+      enabled: dto.enabled,
+      onCreate: dto.onCreate,
+      onBulk: dto.onBulk,
+      onBackdateApproved: dto.onBackdateApproved,
+      onEdit: dto.onEdit,
+      onDelete: dto.onDelete,
+    };
+    const value = JSON.stringify(after);
+    await this.prisma.appConfig.upsert({
+      where: { key: DISPATCH_ALERTS },
+      update: { value },
+      create: { key: DISPATCH_ALERTS, value },
+    });
+
+    // Name each flag that actually moved — "Updated settings" would not answer
+    // "who turned dispatch alerts off, and when", which is the whole point of
+    // auditing a switch like this.
+    const keys = Object.keys(after) as (keyof DispatchAlertSettingsDto)[];
+    const changed = keys
+      .filter((k) => before[k] !== after[k])
+      .map((k) => `${k} ${before[k] ? 'on' : 'off'} → ${after[k] ? 'on' : 'off'}`);
+    void this.audit.record({
+      userId: actor?.id ?? null,
+      userEmail: actor?.email ?? null,
+      action: ACTIONS.UPDATE,
+      resource: RESOURCES.SETTING,
+      resourceId: DISPATCH_ALERTS,
+      description: changed.length
+        ? `Changed dispatch alerts: ${changed.join('; ')}`
+        : 'Saved dispatch alerts (no change)',
+      statusCode: 200,
+      metadata: { before, after },
+    });
+    return after;
   }
 
   /* ── Design Track: which design types the grid may show ───────────────────

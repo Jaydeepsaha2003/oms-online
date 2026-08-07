@@ -16,6 +16,7 @@ import { UpdateOrderQtyLayoutDto } from './dto/order-qty-layout.dto';
 import { UpdateTcsSettingDto } from './dto/tcs-setting.dto';
 import { UpdateDispatchBagThresholdDto } from './dto/dispatch-bag-threshold.dto';
 import { UpdateDesignTrackTypesDto } from './dto/design-track-types.dto';
+import { UpdateDispatchAlertsDto } from './dto/dispatch-alerts.dto';
 
 const R = RESOURCES.SETTING;
 
@@ -116,6 +117,21 @@ export class SettingsController {
   @SkipAudit()
   updateDispatchBagThreshold(@Body() dto: UpdateDispatchBagThresholdDto, @CurrentUser() user: AuthenticatedUser) {
     return this.settings.updateDispatchBagThreshold(dto, user);
+  }
+
+  // Dispatch alerts — readable by any authenticated user (the card renders for
+  // anyone who can open Settings), editable only with setting:update. The service
+  // writes its own audit entry naming each flag that moved.
+  @Get('dispatch-alerts')
+  getDispatchAlerts() {
+    return this.settings.getDispatchAlerts();
+  }
+
+  @Put('dispatch-alerts')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @SkipAudit()
+  updateDispatchAlerts(@Body() dto: UpdateDispatchAlertsDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.settings.updateDispatchAlerts(dto, user);
   }
 
   // Design Track's tracked design types — readable by any authenticated user
