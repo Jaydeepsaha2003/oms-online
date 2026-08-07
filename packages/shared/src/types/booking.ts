@@ -11,8 +11,13 @@
 
 import type { Paginated, PaginationQuery } from './common';
 
-/** Lifecycle of a booking as it is drawn down by conversions. */
-export const BOOKING_STATUSES = ['OPEN', 'PARTIALLY_CONVERTED', 'CONVERTED', 'CANCELLED'] as const;
+/**
+ * Lifecycle of a booking as it is drawn down by conversions.
+ * PRECLOSED is a distinct terminal state from CONVERTED: it means SOME qty was
+ * converted but the rest was deliberately written off and the booking closed,
+ * rather than every booked bag/kg actually being fulfilled.
+ */
+export const BOOKING_STATUSES = ['OPEN', 'PARTIALLY_CONVERTED', 'CONVERTED', 'CANCELLED', 'PRECLOSED'] as const;
 export type BookingStatus = (typeof BOOKING_STATUSES)[number];
 
 export interface BookingDto {
@@ -40,6 +45,12 @@ export interface BookingDto {
   /** Code of the order holding the converted lines, once one exists. */
   orderCode: string | null;
   userName: string | null;
+  /** Set only once PRECLOSED — the bags/kgs written off, by whom, when, and why. */
+  precloseBags: number | null;
+  precloseKgs: number | null;
+  precloseComment: string | null;
+  precloseByName: string | null;
+  precloseAt: string | null;
   /** The product-category lines reserved on this booking (e.g. 1 bag GLASS, 1 bag CUP). */
   items: BookingItemDto[];
   conversions: BookingConversionDto[];
@@ -128,6 +139,41 @@ export interface ConvertBookingLineInput {
 
 export interface ConvertBookingInput {
   lines: ConvertBookingLineInput[];
+}
+
+/**
+ * Preclose a PARTIALLY_CONVERTED booking: write off whatever bags/kgs are still
+ * pending (the exact amount is computed server-side from the booking's own
+ * remaining figure, not typed by the caller — see PrecloseBookingResult) and
+ * close it for good. `comment` records why, for the audit trail.
+ */
+export interface PrecloseBookingInput {
+  comment?: string | null;
+}
+
+/**
+ * One existing OrderItem not currently linked to any booking — a candidate for
+ * "Assign old order" (retroactively attaching a pre-existing order line to this
+ * booking so its converted qty reflects reality).
+ */
+export interface LinkableOrderItemDto {
+  orderItemId: number;
+  orderId: number;
+  orderCode: string | null;
+  orderDate: string;
+  pCategory: string | null;
+  productName: string | null;
+  designType: string | null;
+  bags: number | null;
+  pcs: number | null;
+  gram: number | null;
+  box: number | null;
+  rate: number | null;
+  priority: string | null;
+}
+
+export interface LinkBookingItemsInput {
+  orderItemIds: number[];
 }
 
 /** A priced preview of one convertible line, using booking-date rates. */

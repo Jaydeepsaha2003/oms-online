@@ -41,6 +41,14 @@ import { useActiveCustomerBookings } from '@/features/bookings/use-bookings';
 import { BookingDrawSheet, type DrawnBookingLine } from './booking-draw-sheet';
 import { DesignNamePicker, resolveDesignNameChoices } from './design-name-picker';
 
+/**
+ * State a caller can navigate in with to pre-fill the form — mirrors the same
+ * pattern challan-form-page.tsx uses. Today the only source is Bag Bookings'
+ * "Convert" action: land on New Order with the customer already picked and the
+ * booking-draw sheet ready to open, instead of the older standalone convert page.
+ */
+type NavState = { customerName?: string; openBookingDraw?: boolean };
+
 /** A line item once added to the order. */
 interface Item {
   key: string;
@@ -222,6 +230,7 @@ export function OrderFormPage() {
   const docKind: 'order' | 'quotation' = location.pathname.startsWith('/quotations') ? 'quotation' : 'order';
   const listPath = docKind === 'quotation' ? '/quotations' : '/orders';
   const docLabel = docKind === 'quotation' ? 'quotation' : 'order';
+  const navState = (location.state ?? null) as NavState | null;
   const [saved, setSaved] = useState(false); // shows the success-tick overlay
   const [savePrompt, setSavePrompt] = useState(false); // new-order "Save & PDF / Save only" choice
 
@@ -362,6 +371,18 @@ export function OrderFormPage() {
   // button only shows when the customer actually has a drawable booking.
   const [bookingSheetOpen, setBookingSheetOpen] = useState(false);
   const { data: activeBookings = [] } = useActiveCustomerBookings(docKind === 'order' ? customer.trim() : '');
+  // Arriving from Bag Bookings' "Convert" action: once the pre-filled customer's
+  // bookings have actually loaded, open the sheet automatically instead of making
+  // the user click "Draw from Bag Booking" themselves. Fires at most once — after
+  // that the sheet is the user's own to open/close, e.g. via the button below.
+  const autoOpenedBookingSheet = useRef(false);
+  useEffect(() => {
+    if (autoOpenedBookingSheet.current || !navState?.openBookingDraw) return;
+    if (customer.trim() !== (navState.customerName ?? '').trim()) return; // wait for the pre-fill to land
+    if (activeBookings.length === 0) return; // nothing to draw — leave it closed, no dead-end popup
+    autoOpenedBookingSheet.current = true;
+    setBookingSheetOpen(true);
+  }, [navState?.openBookingDraw, navState?.customerName, customer, activeBookings.length]);
   // Bags/kgs already queued in THIS order for a given booking (so the sheet can
   // show the true remaining before the order is even saved).
   const alreadyQueuedForBooking = (bookingId: number) =>
@@ -493,7 +514,10 @@ export function OrderFormPage() {
 
   // ── Work-in-progress local draft (auto-save / restore) ───────────────────
   // Only for a brand-new order — restores a half-filled order from last time.
-  const draftEnabled = !isEdit && docKind === 'order';
+  // Skipped when a customer arrived via nav state (Bag Bookings' Convert): that's
+  // a deliberate, specific navigation, and silently restoring an unrelated old
+  // draft on top of the customer we just set would stomp it back out.
+  const draftEnabled = !isEdit && docKind === 'order' && !navState?.customerName;
   const draftReady = useRef(false);
   const [restoredDraft, setRestoredDraft] = useState(false);
 
@@ -591,6 +615,16 @@ export function OrderFormPage() {
       if (c.category) setCategory(c.category);
     }
   };
+
+  // Arriving from Bag Bookings' "Convert" action with a customer already chosen —
+  // apply it the same way picking it from the dropdown would (agent/category
+  // fill in too). Waits on `lookups` so that lookup actually succeeds; re-running
+  // once it resolves is harmless since setting the same name again is a no-op.
+  useEffect(() => {
+    if (isEdit || docKind !== 'order' || !navState?.customerName || !lookups) return;
+    onCustomer(navState.customerName);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEdit, docKind, navState?.customerName, lookups]);
 
   const setEntryField = (patch: Partial<Item>) => setEntry((e) => ({ ...e, ...patch }));
 

@@ -29,6 +29,8 @@ export const ACTIONS = {
   CONVERT: 'convert',
   /** Cancel a quotation (with a tracked reason). */
   CANCEL: 'cancel',
+  /** Write off a bag booking's still-pending qty and close it for good. */
+  PRECLOSE: 'preclose',
   /** Exceed a configured guardrail that would otherwise block the action outright
    *  (first use: a per-party/default dispatch bag threshold). */
   OVERRIDE: 'override',
@@ -149,7 +151,7 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
     resource: RESOURCES.BOOKING,
     label: 'Bag Bookings',
     group: 'Sales',
-    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.CONVERT, ACTIONS.CANCEL, ACTIONS.MANAGE],
+    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.CONVERT, ACTIONS.CANCEL, ACTIONS.PRECLOSE, ACTIONS.MANAGE],
   },
   {
     resource: RESOURCES.QUOTATION,

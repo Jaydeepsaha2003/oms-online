@@ -1,6 +1,6 @@
 import { PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsNumber, IsOptional, IsString, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, ArrayNotEmpty, IsArray, IsIn, IsInt, IsNumber, IsOptional, IsString, MaxLength, Min, ValidateNested } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 export class CreateBookingItemDto {
@@ -50,4 +50,17 @@ export class BookingQueryDto extends PaginationDto {
 
 export class PriceHistoryQueryDto extends PaginationDto {
   @IsOptional() @IsIn(['PRODUCT', 'DESIGN', 'CUSTOMER']) kind?: 'PRODUCT' | 'DESIGN' | 'CUSTOMER';
+}
+
+export class PrecloseBookingDto {
+  @IsOptional() @IsString() @MaxLength(1000) comment?: string | null;
+}
+
+export class LinkableItemsQueryDto {
+  @IsOptional() @IsString() search?: string;
+}
+
+export class LinkBookingItemsDto {
+  @IsArray() @ArrayNotEmpty() @ArrayMaxSize(200) @Type(() => Number) @IsInt({ each: true })
+  orderItemIds!: number[];
 }

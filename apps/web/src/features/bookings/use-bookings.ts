@@ -7,6 +7,9 @@ import type {
   BookingQuoteResult,
   ConvertBookingInput,
   CreateBookingInput,
+  LinkableOrderItemDto,
+  LinkBookingItemsInput,
+  PrecloseBookingInput,
   PriceHistoryList,
   PriceHistoryQuery,
   UpdateBookingInput,
@@ -99,6 +102,40 @@ export function useDeleteBooking() {
   return useMutation({
     mutationFn: (id: number) => http.delete<{ ok: true }>(`/bookings/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+/** Write off a partially-converted booking's remaining qty and close it. */
+export function usePrecloseBooking() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...input }: { id: number } & PrecloseBookingInput) =>
+      http.post<BookingDto>(`/bookings/${id}/preclose`, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+/** Existing, not-yet-linked order lines for this booking's customer — the
+ *  candidate pool for "Assign old order(s)". */
+export function useLinkableBookingItems(bookingId: number | undefined, search: string) {
+  return useQuery({
+    queryKey: [...KEY, bookingId, 'linkable-items', search],
+    queryFn: () => http.get<LinkableOrderItemDto[]>(`/bookings/${bookingId}/linkable-items`, { params: { search: search || undefined } }),
+    enabled: bookingId != null,
+    placeholderData: (prev) => prev,
+  });
+}
+
+/** Retroactively attach existing order line(s) to a booking. */
+export function useLinkBookingItems() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...input }: { id: number } & LinkBookingItemsInput) =>
+      http.post<BookingDto>(`/bookings/${id}/link-items`, input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEY });
+      qc.invalidateQueries({ queryKey: ['orders'] });
+    },
   });
 }
 

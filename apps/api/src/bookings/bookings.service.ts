@@ -9,6 +9,7 @@ import {
   type BookingStatus,
   type CustomerLogoDto,
   type CustomerRateDto,
+  type LinkableOrderItemDto,
   type Paginated,
   type PriceHistoryList,
   type RateChangeEntry,
@@ -23,6 +24,9 @@ import {
   ConvertBookingLineDto,
   CreateBookingDto,
   CreateBookingItemDto,
+  LinkableItemsQueryDto,
+  LinkBookingItemsDto,
+  PrecloseBookingDto,
   PriceHistoryQueryDto,
   UpdateBookingDto,
 } from './dto/booking.dto';
@@ -171,6 +175,125 @@ export class BookingsService {
     await this.prisma.booking.delete({ where: { id } });
   }
 
+  /**
+   * Preclose a PARTIALLY_CONVERTED booking: write off exactly what's still
+   * pending right now and close it for good, so a booking that will never be
+   * fully drawn doesn't sit "partial" forever.
+   *
+   * Only valid from PARTIALLY_CONVERTED — OPEN has nothing converted yet (that's
+   * what Cancel is for) and CONVERTED/CANCELLED/PRECLOSED already have nothing
+   * left to write off. The written-off amount is always the CURRENT remaining
+   * figure, not a caller-supplied one — letting the caller type an arbitrary
+   * number would leave the booking in an ambiguous state (still partly open?
+   * closed anyway?) which defeats the point of a terminal status.
+   */
+  async preclose(id: number, dto: PrecloseBookingDto, userName?: string | null): Promise<BookingDto> {
+    const booking = await this.prisma.booking.findUnique({ where: { id } });
+    if (!booking) throw new NotFoundException('Booking not found.');
+    if (booking.status !== 'PARTIALLY_CONVERTED') {
+      throw new BadRequestException('Only a partially converted booking (something converted, something still pending) can be preclosed.');
+    }
+    const remBags = round2(Math.max(0, booking.bags - booking.convertedBags));
+    const remKgs = round2(Math.max(0, booking.kgs - booking.convertedKgs));
+    await this.prisma.booking.update({
+      where: { id },
+      data: {
+        status: 'PRECLOSED',
+        precloseBags: remBags,
+        precloseKgs: remKgs,
+        precloseComment: toStr(dto.comment),
+        precloseByName: userName ?? null,
+        precloseAt: new Date(),
+      },
+    });
+    return this.findOne(id);
+  }
+
+  /**
+   * Existing OrderItems not currently linked to ANY booking, for this booking's
+   * customer — candidates for "Assign old order(s)": retroactively attaching a
+   * pre-existing order line to this booking so its converted qty reflects an
+   * order that was created without going through the normal draw-down flow.
+   */
+  async linkableItems(id: number, query: LinkableItemsQueryDto): Promise<LinkableOrderItemDto[]> {
+    const booking = await this.prisma.booking.findUnique({ where: { id }, select: { customerName: true } });
+    if (!booking) throw new NotFoundException('Booking not found.');
+    const search = query.search?.trim();
+    const rows = await this.prisma.orderItem.findMany({
+      where: {
+        bookingId: null,
+        status: { not: 'CANCELLED' },
+        order: { customerName: booking.customerName, status: { notIn: ['CANCELLED', 'DRAFT'] } },
+        ...(search ? { OR: [{ productName: { contains: search } }, { order: { code: { contains: search } } }] } : {}),
+      },
+      include: { order: { select: { id: true, code: true, orderDate: true } } },
+      orderBy: { order: { orderDate: 'desc' } },
+      take: 200,
+    });
+    return rows.map((it) => ({
+      orderItemId: it.id,
+      orderId: it.order.id,
+      orderCode: it.order.code ?? `ORD-${String(it.order.id).padStart(5, '0')}`,
+      orderDate: it.order.orderDate.toISOString(),
+      pCategory: it.pCategory,
+      productName: it.productName,
+      designType: it.designType && it.designType.toUpperCase() !== 'NA' ? it.designType : null,
+      bags: it.bags,
+      pcs: it.pcs,
+      gram: it.gram,
+      box: it.box,
+      rate: it.rate,
+      priority: it.priority,
+    }));
+  }
+
+  /**
+   * Attach existing, currently-unlinked OrderItems to this booking — the
+   * "Assign old order(s)" correction tool. Reuses `recompute()` afterwards so
+   * the linked lines are picked up exactly like a normal conversion: they
+   * appear in `convertedBags/Kgs`, per-category draw-down, and rebuild the
+   * `BookingConversion` audit rows (tracked there via `convertedByName`, which
+   * is the order's own creator; WHO did the linking is recorded separately by
+   * the controller's audit-log entry on this route).
+   */
+  async linkItems(id: number, dto: LinkBookingItemsDto): Promise<BookingDto> {
+    const booking = await this.prisma.booking.findUnique({ where: { id }, include: { items: true } });
+    if (!booking) throw new NotFoundException('Booking not found.');
+    if (booking.status === 'CANCELLED' || booking.status === 'PRECLOSED') {
+      throw new BadRequestException(`A ${booking.status.toLowerCase()} booking can't have items assigned to it.`);
+    }
+
+    const items = await this.prisma.orderItem.findMany({
+      where: { id: { in: dto.orderItemIds } },
+      include: { order: { select: { customerName: true, status: true, code: true } } },
+    });
+    if (items.length !== dto.orderItemIds.length) throw new BadRequestException('One or more selected order lines no longer exist.');
+    for (const it of items) {
+      if (it.bookingId != null) throw new BadRequestException(`${it.productName ?? `line #${it.id}`} is already linked to a booking.`);
+      if (it.status === 'CANCELLED') throw new BadRequestException(`${it.productName ?? `line #${it.id}`} is a cancelled line.`);
+      if (it.order.status === 'CANCELLED') throw new BadRequestException(`Order ${it.order.code ?? ''} is cancelled.`);
+      if (uc(it.order.customerName) !== uc(booking.customerName)) {
+        throw new BadRequestException(`${it.productName ?? `line #${it.id}`} belongs to a different customer than this booking.`);
+      }
+    }
+
+    // Same overall-capacity guard as convert() — this is a manual correction, but
+    // the booking's totals still have to stay honest. Per-category enforcement is
+    // intentionally skipped here (unlike convert()): an old order predates the
+    // booking's category split and forcing it to match would just block valid
+    // corrections on a technicality.
+    const addBags = round2(items.reduce((s, it) => s + (it.bags ?? 0), 0));
+    const addKgs = round2(items.reduce((s, it) => s + (it.gram ?? 0), 0));
+    const remBags = round2(booking.bags - booking.convertedBags);
+    const remKgs = round2(booking.kgs - booking.convertedKgs);
+    if (addBags - remBags > 0.001) throw new BadRequestException(`Assigning ${addBags} bags exceeds the ${remBags} remaining on this booking.`);
+    if (addKgs - remKgs > 0.001) throw new BadRequestException(`Assigning ${addKgs} kgs exceeds the ${remKgs} remaining on this booking.`);
+
+    await this.prisma.orderItem.updateMany({ where: { id: { in: dto.orderItemIds } }, data: { bookingId: booking.id } });
+    await this.recompute(booking.id);
+    return this.findOne(id);
+  }
+
   /* ── Quote (price convertible lines as of the booking date) ──────────────── */
 
   async quote(id: number, dto: ConvertBookingDto): Promise<BookingQuoteResult> {
@@ -286,7 +409,15 @@ export class BookingsService {
     const orderId = items[0]?.orderId ?? null;
     const convertedBags = round2(items.reduce((s, it) => s + (it.bags ?? 0), 0));
     const convertedKgs = round2(items.reduce((s, it) => s + (it.gram ?? 0), 0));
-    const status = booking.status === 'CANCELLED' ? 'CANCELLED' : this.statusFor(booking.bags, booking.kgs, convertedBags, convertedKgs);
+    // CANCELLED and PRECLOSED are manual, terminal calls — a booking's own qty
+    // math must never silently promote it back to OPEN/PARTIAL/CONVERTED just
+    // because an order tied to it changed. (Linking an item to a PRECLOSED
+    // booking is refused up front in linkItems(), so this really only matters
+    // for e.g. an order-item edit/delete triggering a routine recompute.)
+    const status =
+      booking.status === 'CANCELLED' || booking.status === 'PRECLOSED'
+        ? booking.status
+        : this.statusFor(booking.bags, booking.kgs, convertedBags, convertedKgs);
 
     // Per-category draw-down — matched by pCategory against the real order lines
     // that reference this booking, so each booked line's own remaining tracks
@@ -340,10 +471,13 @@ export class BookingsService {
     });
     const drawnBags = round2(items.reduce((s, it) => s + (it.bags ?? 0), 0));
     const drawnKgs = round2(items.reduce((s, it) => s + (it.gram ?? 0), 0));
+    // Written-off qty (if preclosed) counts against remaining too — belt-and-
+    // braces alongside assertBookingCapacity's own PRECLOSED check, since this is
+    // also called for the on-screen remainingBags/Kgs display.
     return {
       booking,
-      remBags: round2(booking.bags - drawnBags),
-      remKgs: round2(booking.kgs - drawnKgs),
+      remBags: round2(booking.bags - drawnBags - (booking.precloseBags ?? 0)),
+      remKgs: round2(booking.kgs - drawnKgs - (booking.precloseKgs ?? 0)),
     };
   }
 
@@ -594,8 +728,8 @@ export class BookingsService {
   }
 
   private toDto(r: Row, orderCodes: Map<number, string>): BookingDto {
-    const remainingBags = Math.max(0, round2(r.bags - r.convertedBags));
-    const remainingKgs = Math.max(0, round2(r.kgs - r.convertedKgs));
+    const remainingBags = Math.max(0, round2(r.bags - r.convertedBags - (r.precloseBags ?? 0)));
+    const remainingKgs = Math.max(0, round2(r.kgs - r.convertedKgs - (r.precloseKgs ?? 0)));
     return {
       id: r.id,
       code: r.code ?? this.codeFor(r.id),
@@ -615,6 +749,11 @@ export class BookingsService {
       orderId: r.orderId,
       orderCode: r.orderId ? orderCodes.get(r.orderId) ?? null : null,
       userName: r.userName,
+      precloseBags: r.precloseBags,
+      precloseKgs: r.precloseKgs,
+      precloseComment: r.precloseComment,
+      precloseByName: r.precloseByName,
+      precloseAt: r.precloseAt ? r.precloseAt.toISOString() : null,
       items: r.items.map((it) => this.toItemDto(it)),
       conversions: r.conversions.map((c) => this.toConversionDto(c)),
       createdAt: r.createdAt.toISOString(),
