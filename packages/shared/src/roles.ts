@@ -54,6 +54,9 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
       // Signs off whatever lands in the Approvals inbox. `dispatch:manage` above
       // already implies dispatch:approve, so an admin back-dates directly.
       perm(RESOURCES.APPROVAL, ACTIONS.MANAGE),
+      // Told whenever anyone dispatches party items. Its own resource, so it can
+      // be revoked from this role without touching dispatch management.
+      perm(RESOURCES.DISPATCH_ALERT, ACTIONS.NOTIFY),
     ],
     isSystem: true,
   },

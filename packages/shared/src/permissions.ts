@@ -32,6 +32,9 @@ export const ACTIONS = {
   /** Exceed a configured guardrail that would otherwise block the action outright
    *  (first use: a per-party/default dispatch bag threshold). */
   OVERRIDE: 'override',
+  /** Receives alerts for a feature area. Delivery only — grants no access to any
+   *  screen or data, so it can be given to (and taken from) a role on its own. */
+  NOTIFY: 'notify',
   /** Full control of a resource — implies every other action on it. */
   MANAGE: 'manage',
 } as const;
@@ -46,6 +49,12 @@ export const RESOURCES = {
   BOOKING: 'booking',
   QUOTATION: 'quotation',
   DISPATCH: 'dispatch',
+  /** Dispatch alerts: who is told when a user dispatches party items. Deliberately
+   *  its OWN resource rather than a `dispatch:notify` action — `hasPermission`
+   *  treats `<resource>:manage` as granting every action on that resource, so
+   *  under `dispatch` everyone holding `dispatch:manage` would receive alerts
+   *  implicitly and could never be excluded. */
+  DISPATCH_ALERT: 'dispatchalert',
   /** Challan / tax invoice (legacy PendChallan + Form14). */
   CHALLAN: 'challan',
   /** Dispatch → Design Track: pending order lines for the design types the
@@ -163,6 +172,14 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
     label: 'Challan / Invoices',
     group: 'Sales',
     actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.PRINT, ACTIONS.MANAGE],
+  },
+  {
+    resource: RESOURCES.DISPATCH_ALERT,
+    label: 'Dispatch Alerts',
+    group: 'Sales',
+    // NOTE: `manage` is deliberately absent. Adding it would let the
+    // `<resource>:manage` fallback in hasPermission() grant alerts implicitly.
+    actions: [ACTIONS.NOTIFY],
   },
   {
     resource: RESOURCES.DESIGN_TRACK,

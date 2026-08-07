@@ -30,3 +30,11 @@ export interface PushSubscriptionRequest {
 export interface VapidPublicKeyResult {
   publicKey: string;
 }
+
+/** A notification addressed to specific users: the body of the Socket.IO
+ *  `notification` event and of the Web Push message. */
+export interface AppNotification {
+  title: string;
+  body: string;
+  data?: Record<string, unknown>;
+}

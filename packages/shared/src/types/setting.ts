@@ -154,3 +154,26 @@ export const SETTING_GROUP_META: SettingGroupMeta[] = [
     placeholder: 'e.g. PACKING ROUND-UP',
   },
 ];
+
+/** Which dispatch events raise an alert to users holding `dispatchalert:notify`.
+ *  Every flag ships false — the feature does nothing until switched on. */
+export interface DispatchAlertSettingsDto {
+  /** Master switch. When false nothing fires, whatever the individual flags say. */
+  enabled: boolean;
+  /** A dispatch recorded from the Dispatch form. */
+  onCreate: boolean;
+  /** "Create & Dispatch" shipped a whole order — one grouped alert, not one per line. */
+  onBulk: boolean;
+  /** A back-dated dispatch became real because an approver signed it off. */
+  onBackdateApproved: boolean;
+  /** An existing dispatch's qty / status / date / remark changed. */
+  onEdit: boolean;
+  /** A dispatch was deleted. */
+  onDelete: boolean;
+}
+
+export type DispatchAlertSettingsInput = DispatchAlertSettingsDto;
+
+/** The per-event keys of {@link DispatchAlertSettingsDto} — everything except the
+ *  master switch. Used to index the flags when deciding whether to send. */
+export type DispatchAlertEvent = 'onCreate' | 'onBulk' | 'onBackdateApproved' | 'onEdit' | 'onDelete';
