@@ -19,6 +19,8 @@ import { AuditService } from '../audit/audit.service';
 import { formatDate } from '../common/date.util';
 import { toNum, toStr, uc } from '../common/coerce';
 import { CreateDispatchDto, DispatchQueryDto, PendingQueryDto, UpdateDispatchDto } from './dto/dispatch.dto';
+import { DispatchNotifier } from './dispatch-notifier.service';
+import { qtyText } from './qty-text.util';
 
 const EPS = 1e-6;
 
@@ -26,17 +28,6 @@ const EPS = 1e-6;
 interface Actor {
   id?: string | null;
   name?: string | null;
-}
-
-/** "3 bags · 160 kgs" — only the units that carry a value, so the trail stays readable. */
-function qtyText(q: { bags?: number | null; pcs?: number | null; gram?: number | null; box?: number | null }): string {
-  const parts = [
-    q.bags ? `${q.bags} bags` : null,
-    q.pcs ? `${q.pcs} pcs` : null,
-    q.gram ? `${q.gram} kgs` : null,
-    q.box ? `${q.box} box` : null,
-  ].filter(Boolean);
-  return parts.length ? parts.join(' · ') : 'no quantities';
 }
 
 // Cap quantities at 3 decimals. Subtracting/summing floats (e.g. ordered − dispatched)
