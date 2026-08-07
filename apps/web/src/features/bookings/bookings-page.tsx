@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Ban, ChevronLeft, ChevronRight, Filter, PackageOpen, Plus, RotateCcw, Search, Split, Trash2 } from 'lucide-react';
+import { Ban, ChevronLeft, ChevronRight, EllipsisVertical, Filter, Link2, PackageOpen, Plus, RotateCcw, Search, Split, TriangleAlert, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { BookingDto, BookingStatus } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -15,8 +15,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { NativeSelect } from '@/components/common/combo';
 import { PageSizeSelect } from '@/components/common/page-size-select';
+import { PrecloseBookingDialog, AssignOldOrderDialog } from './booking-action-dialogs';
 import { useBookings, useCancelBooking, useDeleteBooking } from './use-bookings';
 
 const STATUS_STYLE: Record<BookingStatus, string> = {
@@ -24,12 +26,14 @@ const STATUS_STYLE: Record<BookingStatus, string> = {
   PARTIALLY_CONVERTED: 'bg-sky-50 text-sky-700 ring-sky-200',
   CONVERTED: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
   CANCELLED: 'bg-rose-50 text-rose-700 ring-rose-200',
+  PRECLOSED: 'bg-slate-100 text-slate-700 ring-slate-200',
 };
 const STATUS_LABEL: Record<BookingStatus, string> = {
   OPEN: 'Open',
   PARTIALLY_CONVERTED: 'Partial',
   CONVERTED: 'Converted',
   CANCELLED: 'Cancelled',
+  PRECLOSED: 'Preclosed',
 };
 
 const num = (v: number) => v.toLocaleString('en-IN');
@@ -104,9 +108,16 @@ export function BookingsPage() {
   });
   const cancel = useCancelBooking();
   const remove = useDeleteBooking();
+  const [precloseFor, setPrecloseFor] = useState<BookingDto | null>(null);
+  const [assignFor, setAssignFor] = useState<BookingDto | null>(null);
 
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
+
+  /** Draw down remaining bags/kgs by way of the New Order form's "Draw from Bag
+   *  Booking" sheet, instead of the older standalone Convert page — one place to
+   *  build a real order out of a booking, with the item picker already there. */
+  const goToDrawSheet = (b: BookingDto) => navigate('/orders/new', { state: { customerName: b.customerName, openBookingDraw: true } });
 
   const handleCancel = async (b: BookingDto) => {
     const ok = await confirm({
@@ -136,10 +147,56 @@ export function BookingsPage() {
     });
   };
 
+  /** Cancel / Preclose / Assign old order(s) / Delete — grouped behind one
+   *  kebab menu since Convert is the one action common enough to earn its own
+   *  icon, and the rest are occasional corrections. */
+  const bookingActionsMenu = (b: BookingDto) => {
+    const untouched = b.convertedBags === 0 && b.convertedKgs === 0;
+    const canPreclose = b.status === 'PARTIALLY_CONVERTED';
+    const canAssign = b.status === 'OPEN' || b.status === 'PARTIALLY_CONVERTED';
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" className="size-8" aria-label={`Actions for booking ${b.code}`} title="Booking actions">
+            <EllipsisVertical className="size-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-60 font-sans">
+          {can('booking:cancel') && (
+            <DropdownMenuItem
+              variant="destructive"
+              disabled={!untouched || b.status === 'CANCELLED'}
+              onSelect={() => handleCancel(b)}
+            >
+              <Ban /> Cancel booking
+            </DropdownMenuItem>
+          )}
+          {can('booking:preclose') && (
+            <DropdownMenuItem disabled={!canPreclose} onSelect={() => setPrecloseFor(b)}>
+              <TriangleAlert /> Preclose (write off remaining)
+            </DropdownMenuItem>
+          )}
+          {can('booking:update') && (
+            <DropdownMenuItem disabled={!canAssign} onSelect={() => setAssignFor(b)}>
+              <Link2 /> Assign old order(s)
+            </DropdownMenuItem>
+          )}
+          {can('booking:delete') && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" disabled={!untouched} onSelect={() => handleDelete(b)}>
+                <Trash2 /> Delete permanently
+              </DropdownMenuItem>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  };
+
   // Phones: one stacked card per booking instead of a horizontally-scrolling table.
   const bookingMobileCard = (b: BookingDto) => {
     const convertible = b.status === 'OPEN' || b.status === 'PARTIALLY_CONVERTED';
-    const untouched = b.convertedBags === 0 && b.convertedKgs === 0;
     return (
       <div className="space-y-2.5">
         <div className="flex items-start justify-between gap-2">
@@ -180,36 +237,13 @@ export function BookingsPage() {
               size="icon"
               className="size-8 text-sky-600 hover:bg-sky-50 hover:text-sky-700 disabled:text-slate-300"
               disabled={!convertible}
-              onClick={() => navigate(`/bookings/${b.id}/convert`)}
-              aria-label="Convert to items"
+              onClick={() => goToDrawSheet(b)}
+              aria-label="Draw into a new order"
             >
               <Split className="size-4" />
             </Button>
           )}
-          {can('booking:cancel') && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-8 text-amber-600 hover:bg-amber-50 hover:text-amber-700 disabled:text-slate-300"
-              disabled={!untouched || b.status === 'CANCELLED'}
-              onClick={() => handleCancel(b)}
-              aria-label="Cancel booking"
-            >
-              <Ban className="size-4" />
-            </Button>
-          )}
-          {can('booking:delete') && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-8 text-destructive hover:text-destructive disabled:text-slate-300"
-              disabled={!untouched}
-              onClick={() => handleDelete(b)}
-              aria-label="Delete booking"
-            >
-              <Trash2 className="size-4" />
-            </Button>
-          )}
+          {bookingActionsMenu(b)}
         </div>
       </div>
     );
@@ -267,7 +301,7 @@ export function BookingsPage() {
           <NativeSelect
             value={status}
             onChange={(v) => { setStatus(v); setPage(1); }}
-            options={['', 'OPEN', 'PARTIALLY_CONVERTED', 'CONVERTED', 'CANCELLED']}
+            options={['', 'OPEN', 'PARTIALLY_CONVERTED', 'CONVERTED', 'PRECLOSED', 'CANCELLED']}
             placeholder="All statuses"
             renderOption={(v) => (v ? STATUS_LABEL[v as BookingStatus] : 'All statuses')}
           />
@@ -297,7 +331,7 @@ export function BookingsPage() {
               <NativeSelect
                 value={status}
                 onChange={(v) => { setStatus(v); setPage(1); }}
-                options={['', 'OPEN', 'PARTIALLY_CONVERTED', 'CONVERTED', 'CANCELLED']}
+                options={['', 'OPEN', 'PARTIALLY_CONVERTED', 'CONVERTED', 'PRECLOSED', 'CANCELLED']}
                 placeholder="All statuses"
                 renderOption={(v) => (v ? STATUS_LABEL[v as BookingStatus] : 'All statuses')}
               />
@@ -317,11 +351,10 @@ export function BookingsPage() {
         rowKey={(b) => b.id}
         isLoading={isLoading}
         emptyText="No bookings yet — create one."
-        onRowClick={can('booking:convert') ? (b) => navigate(`/bookings/${b.id}/convert`) : undefined}
+        onRowClick={can('booking:convert') ? (b) => goToDrawSheet(b) : undefined}
         mobileCard={bookingMobileCard}
         actions={(b) => {
           const convertible = b.status === 'OPEN' || b.status === 'PARTIALLY_CONVERTED';
-          const untouched = b.convertedBags === 0 && b.convertedKgs === 0;
           return (
             <div className="flex justify-end gap-1">
               {can('booking:convert') && (
@@ -333,63 +366,20 @@ export function BookingsPage() {
                         size="icon"
                         className="size-8 text-sky-600 hover:bg-sky-50 hover:text-sky-700 disabled:text-slate-300"
                         disabled={!convertible}
-                        onClick={() => navigate(`/bookings/${b.id}/convert`)}
-                        aria-label="Convert to items"
+                        onClick={() => goToDrawSheet(b)}
+                        aria-label="Draw into a new order"
                       >
                         <Split className="size-4" />
                       </Button>
                     </span>
                   </TooltipTrigger>
                   <TooltipContent side="top" className="max-w-56">
-                    <p className="font-semibold">Convert to items</p>
-                    <p className="opacity-80">Draw down remaining bags/kgs into real order lines at the frozen booking-date rates.</p>
+                    <p className="font-semibold">Draw into a new order</p>
+                    <p className="opacity-80">Opens New Order for {b.customerName} with "Draw from Bag Booking" ready to go.</p>
                   </TooltipContent>
                 </Tooltip>
               )}
-              {can('booking:cancel') && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="inline-flex">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-8 text-amber-600 hover:bg-amber-50 hover:text-amber-700 disabled:text-slate-300"
-                        disabled={!untouched || b.status === 'CANCELLED'}
-                        onClick={() => handleCancel(b)}
-                        aria-label="Cancel booking"
-                      >
-                        <Ban className="size-4" />
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="max-w-56">
-                    <p className="font-semibold">Cancel booking</p>
-                    <p className="opacity-80">Only bookings with nothing converted yet can be cancelled.</p>
-                  </TooltipContent>
-                </Tooltip>
-              )}
-              {can('booking:delete') && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="inline-flex">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-8 text-destructive hover:text-destructive disabled:text-slate-300"
-                        disabled={!untouched}
-                        onClick={() => handleDelete(b)}
-                        aria-label="Delete booking"
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="max-w-56">
-                    <p className="font-semibold">Delete booking</p>
-                    <p className="opacity-80">Permanently remove — only while nothing has been converted.</p>
-                  </TooltipContent>
-                </Tooltip>
-              )}
+              {bookingActionsMenu(b)}
             </div>
           );
         }}
@@ -411,6 +401,9 @@ export function BookingsPage() {
           </div>
         </div>
       </div>
+
+      {precloseFor && <PrecloseBookingDialog booking={precloseFor} onClose={() => setPrecloseFor(null)} />}
+      {assignFor && <AssignOldOrderDialog booking={assignFor} onClose={() => setAssignFor(null)} />}
     </div>
   );
 }

@@ -1074,12 +1074,20 @@ model Booking {
   kgs           Float    @default(0) // total booked (weight)
   convertedBags Float    @default(0) // drawn down by conversions
   convertedKgs  Float    @default(0)
-  status        String   @default("OPEN") // OPEN | PARTIALLY_CONVERTED | CONVERTED | CANCELLED
+  status        String   @default("OPEN") // OPEN | PARTIALLY_CONVERTED | CONVERTED | CANCELLED | PRECLOSED
   comment       String?
   orderId       Int? // the Order holding converted lines (created lazily)
   // JSON of the customer's { rates, logos } special-rate rows captured at booking.
   rateSnapshot  String?
   userName      String?
+  // Preclose: writes off whatever was still pending on a PARTIALLY_CONVERTED
+  // booking and closes it for good — the qty written off (as of that moment) is
+  // captured here so it isn't just silently dropped. Null until preclosed.
+  precloseBags    Float?
+  precloseKgs     Float?
+  precloseComment String?
+  precloseByName  String?
+  precloseAt      DateTime?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

@@ -9,6 +9,9 @@ import {
   BookingQueryDto,
   ConvertBookingDto,
   CreateBookingDto,
+  LinkableItemsQueryDto,
+  LinkBookingItemsDto,
+  PrecloseBookingDto,
   PriceHistoryQueryDto,
   UpdateBookingDto,
 } from './dto/booking.dto';
@@ -74,6 +77,30 @@ export class BookingsController {
   @Audit({ action: ACTIONS.CANCEL, resource: R })
   cancel(@Param('id', ParseIntPipe) id: number) {
     return this.bookings.cancel(id);
+  }
+
+  /** Write off a partially-converted booking's remaining qty and close it. */
+  @Post(':id/preclose')
+  @Permissions(perm(R, ACTIONS.PRECLOSE))
+  @Audit({ action: ACTIONS.PRECLOSE, resource: R, description: 'Preclosed a bag booking (wrote off remaining qty)' })
+  preclose(@Param('id', ParseIntPipe) id: number, @Body() dto: PrecloseBookingDto, @CurrentUser('name') userName: string) {
+    return this.bookings.preclose(id, dto, userName);
+  }
+
+  /** Existing, not-yet-linked order lines for this booking's customer — the
+   *  candidate pool for "Assign old order(s)". */
+  @Get(':id/linkable-items')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  linkableItems(@Param('id', ParseIntPipe) id: number, @Query() query: LinkableItemsQueryDto) {
+    return this.bookings.linkableItems(id, query);
+  }
+
+  /** Retroactively attach existing order line(s) to this booking. */
+  @Post(':id/link-items')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Assigned existing order line(s) to a bag booking' })
+  linkItems(@Param('id', ParseIntPipe) id: number, @Body() dto: LinkBookingItemsDto) {
+    return this.bookings.linkItems(id, dto);
   }
 
   @Delete(':id')

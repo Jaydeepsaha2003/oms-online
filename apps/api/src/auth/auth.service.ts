@@ -12,9 +12,7 @@ import {
 } from '@oms/shared';
 import type { JwtConfig } from '../config/configuration';
 import { AuditService } from '../audit/audit.service';
-import { NotificationsGateway } from '../notifications/notifications.gateway';
 import { PrismaService } from '../prisma/prisma.service';
-import { SessionsService } from './sessions.service';
 import { flattenAccess, USER_ACCESS_INCLUDE, type UserWithAccess } from './user-access.util';
 
 export interface RequestMeta {
@@ -27,9 +25,6 @@ export interface IssuedSession {
   /** Raw refresh token — the controller stores it in an httpOnly cookie. */
   refreshToken: string;
   refreshExpiresAt: Date;
-  /** The new session's id (the access token's `sid`) — lets a caller displace
-   *  every OTHER session for this user without touching the one it just made. */
-  sessionId: string;
 }
 
 @Injectable()
@@ -40,8 +35,6 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly audit: AuditService,
-    private readonly sessions: SessionsService,
-    private readonly notifications: NotificationsGateway,
     config: ConfigService,
   ) {
     this.jwtCfg = config.get<JwtConfig>('jwt')!;
@@ -200,25 +193,6 @@ export class AuthService {
     await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
     const session = await this.issueSession(user, meta);
 
-    // One device at a time: signing in here displaces every other session on
-    // this account. Done after the new session exists so it can be spared.
-    const evicted = await this.sessions.keepOnly(user.id, session.sessionId);
-    if (evicted.length) {
-      // Their next request would be rejected anyway (the guard checks `sid`),
-      // but an idle tab makes no requests — push so they drop out now.
-      this.notifications.forceSignOut(user.id, evicted);
-      await this.audit.record({
-        userId: user.id,
-        userEmail: user.email,
-        action: AUDIT_ACTIONS.LOGOUT,
-        resource: RESOURCES.USER,
-        description: `Signed out of ${evicted.length} other device${evicted.length === 1 ? '' : 's'} — signed in elsewhere`,
-        ip: meta.ip ?? null,
-        userAgent: meta.userAgent ?? null,
-        statusCode: 200,
-      });
-    }
-
     await this.audit.record({
       userId: user.id,
       userEmail: user.email,
@@ -280,7 +254,7 @@ export class AuthService {
       tokenType: 'Bearer',
       user: this.buildAuthUser(user),
     };
-    return { auth, refreshToken, refreshExpiresAt, sessionId: session.id };
+    return { auth, refreshToken, refreshExpiresAt };
   }
 
   private buildAuthUser(user: UserWithAccess): AuthUser {

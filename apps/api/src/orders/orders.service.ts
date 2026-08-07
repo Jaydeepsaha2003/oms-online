@@ -1142,7 +1142,9 @@ export class OrdersService {
     for (const [bookingId, sum] of byBooking) {
       const info = await this.bookings.remainingFor(bookingId, excludeOrderId);
       if (!info) throw new BadRequestException('A drawn booking no longer exists.');
-      if (info.booking.status === 'CANCELLED') throw new BadRequestException(`Booking ${info.booking.code ?? bookingId} is cancelled and can't be drawn.`);
+      if (info.booking.status === 'CANCELLED' || info.booking.status === 'PRECLOSED') {
+        throw new BadRequestException(`Booking ${info.booking.code ?? bookingId} is ${info.booking.status.toLowerCase()} and can't be drawn.`);
+      }
       if (sum.bags - info.remBags > 0.001) throw new BadRequestException(`Drawing ${sum.bags} bags exceeds the ${info.remBags} left on booking ${info.booking.code ?? bookingId}.`);
       if (sum.kgs - info.remKgs > 0.001) throw new BadRequestException(`Drawing ${sum.kgs} kgs exceeds the ${info.remKgs} left on booking ${info.booking.code ?? bookingId}.`);
     }

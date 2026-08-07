@@ -65,21 +65,11 @@ export function connectNotificationsSocket(): void {
     playTestChime();
     toast.info(n.title, { description: n.body });
   });
-
-  // This account signed in somewhere else, and OMS allows one device at a time.
-  // The server has already killed this session, so every request from here would
-  // 401 — but an idle tab makes no requests, and would otherwise sit on a stale
-  // screen looking usable. Clear now: `clear()` drops the token, which makes
-  // ProtectedRoute redirect to /login.
-  socket.on('auth:signed-out', () => {
-    disconnectNotificationsSocket();
-    useAuthStore.getState().clear();
-    toast.error('You were signed out because this account signed in on another device.');
-  });
 }
 
-/** Closes this tab's socket (used on logout / forced sign-out) so the next login
- *  opens a fresh one carrying the new token. */
+/** Closes this tab's socket (used on logout) so a subsequent login opens a
+ *  fresh one carrying the new token, rather than reusing one authenticated
+ *  with the now-revoked token. */
 export function disconnectNotificationsSocket(): void {
   socket?.disconnect();
   socket = null;
