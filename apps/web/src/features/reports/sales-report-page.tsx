@@ -46,8 +46,10 @@ export function SalesReportPage() {
                 <YAxis tick={{ fontSize: 12, fill: '#64748b' }} tickLine={false} axisLine={false} width={52} tickFormatter={(v: number) => inrCompact(v)} />
                 <Tooltip formatter={(v: number) => inrFull(v)} cursor={{ fill: 'rgba(148,163,184,0.12)' }} />
                 <Legend wrapperStyle={{ fontSize: 12 }} iconType="circle" />
-                <Bar name="Last FY" dataKey="lastYear" fill="#cbd5e1" radius={[4, 4, 0, 0]} maxBarSize={22} />
-                <Bar name="This FY" dataKey="thisYear" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={22} />
+                <Bar name="Last FY (Bank)" dataKey="lastYearBank" stackId="last" fill="#94a3b8" maxBarSize={22} />
+                <Bar name="Last FY (Cash)" dataKey="lastYearCash" stackId="last" fill="#e2e8f0" radius={[4, 4, 0, 0]} maxBarSize={22} />
+                <Bar name="This FY (Bank)" dataKey="thisYearBank" stackId="this" fill="#3b82f6" maxBarSize={22} />
+                <Bar name="This FY (Cash)" dataKey="thisYearCash" stackId="this" fill="#93c5fd" radius={[4, 4, 0, 0]} maxBarSize={22} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -63,7 +65,9 @@ export function SalesReportPage() {
                 <XAxis dataKey="label" tick={{ fontSize: 12, fill: '#64748b' }} tickLine={false} axisLine={{ stroke: '#e2e8f0' }} />
                 <YAxis tick={{ fontSize: 12, fill: '#64748b' }} tickLine={false} axisLine={false} width={52} tickFormatter={(v: number) => inrCompact(v)} />
                 <Tooltip formatter={(v: number) => inrFull(v)} cursor={{ fill: 'rgba(148,163,184,0.12)' }} />
-                <Bar dataKey="billed" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                <Legend wrapperStyle={{ fontSize: 12 }} iconType="circle" />
+                <Bar name="Bank" dataKey="billedBank" stackId="billed" fill="#3b82f6" maxBarSize={40} />
+                <Bar name="Cash" dataKey="billedCash" stackId="billed" fill="#93c5fd" radius={[4, 4, 0, 0]} maxBarSize={40} />
               </BarChart>
             </ResponsiveContainer>
           </div>

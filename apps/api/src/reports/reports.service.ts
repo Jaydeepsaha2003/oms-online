@@ -38,6 +38,9 @@ const payModeOf = (m: string | null | undefined): 'Bank' | 'Cash' | 'Cheque' => 
   if (u === 'CHEQUE' || u === 'CHQ') return 'Cheque';
   return 'Bank';
 };
+/** Two-way split for chart series: Bank absorbs Cheque, same convention
+ *  Payments/Party Ledger already use for bankBal vs cashBal. */
+const isBankMode = (m: string | null | undefined) => payModeOf(m) !== 'Cash';
 
 @Injectable()
 export class ReportsService {
@@ -150,9 +153,18 @@ export class ReportsService {
   }
 
   /** Roll a list of slices to the top `cap`, others folded into the tail total is dropped. */
-  private topSlices(map: Map<string, { value: number; count: number }>, cap: number): ReportSlice[] {
+  /** `cash` is derived as `value − bank`, not summed independently — a handful
+   *  of invoices have `b + c` below `total` (a debit note reduced them without
+   *  touching `total`), and deriving keeps a stacked Bank/Cash bar always
+   *  summing exactly to the headline figure instead of falling slightly short. */
+  private topSlices(map: Map<string, { value: number; count: number; bank?: number }>, cap: number): ReportSlice[] {
     return [...map.entries()]
-      .map(([name, v]) => ({ name, value: r0(v.value), count: v.count }))
+      .map(([name, v]) => ({
+        name,
+        value: r0(v.value),
+        count: v.count,
+        ...(v.bank !== undefined ? { bank: r0(v.bank), cash: r0(v.value - v.bank) } : {}),
+      }))
       .sort((a, b) => b.value - a.value)
       .slice(0, cap);
   }
@@ -187,37 +199,62 @@ export class ReportsService {
     const ordersMetric = this.windowMetric(ords.map((o) => ({ date: o.orderDate, amount: 1 })), win);
     const challansMetric = this.windowMetric(sales.map((c) => ({ date: c.invDate, amount: 1 })), win);
 
-    // 12-month billed vs collected trend (party-scoped).
+    // 12-month billed vs collected trend (party-scoped), each split by mode —
+    // billed via Challan.b (bank)/.c (cash), collected via receipt payMode.
     const buckets = new Map<string, ReportMonthPoint>();
     for (let i = 0; i < 12; i++) {
       const d = new Date(trendStart.getFullYear(), trendStart.getMonth() + i, 1);
-      buckets.set(this.monthKey(d), { month: this.monthKey(d), label: this.monthLabel(d), billed: 0, collected: 0 });
+      buckets.set(this.monthKey(d), { month: this.monthKey(d), label: this.monthLabel(d), billed: 0, billedBank: 0, billedCash: 0, collected: 0, collectedBank: 0, collectedCash: 0 });
     }
-    for (const c of sales) { const b = buckets.get(this.monthKey(c.invDate)); if (b) b.billed += n(c.total); }
-    for (const rc of recs) { const b = buckets.get(this.monthKey(rc.recDate)); if (b) b.collected += n(rc.recAmt); }
-    const trend = [...buckets.values()].map((p) => ({ ...p, billed: r0(p.billed), collected: r0(p.collected) }));
+    for (const c of sales) {
+      const b = buckets.get(this.monthKey(c.invDate));
+      if (!b) continue;
+      b.billed += n(c.total);
+      b.billedBank += n(c.b);
+    }
+    for (const rc of recs) {
+      const b = buckets.get(this.monthKey(rc.recDate));
+      if (!b) continue;
+      b.collected += n(rc.recAmt);
+      if (isBankMode(rc.payMode)) b.collectedBank += n(rc.recAmt);
+      else b.collectedCash += n(rc.recAmt);
+    }
+    // billedCash derives from billed − billedBank (not summed independently) —
+    // see topSlices()'s comment for why.
+    const trend = [...buckets.values()].map((p) => ({
+      ...p,
+      billed: r0(p.billed), billedBank: r0(p.billedBank), billedCash: r0(p.billed - p.billedBank),
+      collected: r0(p.collected), collectedBank: r0(p.collectedBank), collectedCash: r0(p.collectedCash),
+    }));
 
-    // In-window slices (category / party / region / agent) + collection modes.
+    // In-window slices (category / party / region / agent) + collection modes,
+    // each carrying its own bank split (billed via Challan.b) — cash derives
+    // from value − bank via topSlices().
     const inWin = (d: Date) => d >= win.curStart && d <= win.curEnd;
-    const cat = new Map<string, { value: number; count: number }>();
-    const party = new Map<string, { value: number; count: number }>();
-    const region = new Map<string, { value: number; count: number }>();
-    const agent = new Map<string, { value: number; count: number }>();
+    const cat = new Map<string, { value: number; count: number; bank: number }>();
+    const party = new Map<string, { value: number; count: number; bank: number }>();
+    const region = new Map<string, { value: number; count: number; bank: number }>();
+    const agent = new Map<string, { value: number; count: number; bank: number }>();
     const modeMap = new Map<string, { value: number; count: number }>();
-    const add = (m: Map<string, { value: number; count: number }>, key: string, v: number) => {
+    const add = (m: Map<string, { value: number; count: number; bank: number }>, key: string, v: number, bank: number) => {
+      const cur = m.get(key);
+      if (cur) { cur.value += v; cur.count += 1; cur.bank += bank; } else m.set(key, { value: v, count: 1, bank });
+    };
+    const addMode = (m: Map<string, { value: number; count: number }>, key: string, v: number) => {
       const cur = m.get(key);
       if (cur) { cur.value += v; cur.count += 1; } else m.set(key, { value: v, count: 1 });
     };
     for (const c of sales) {
       if (!inWin(c.invDate)) continue;
       const v = n(c.total);
-      add(cat, (c.category ?? '').trim() || 'Uncategorised', v);
-      add(party, c.customerName || '—', v);
+      const bank = n(c.b);
+      add(cat, (c.category ?? '').trim() || 'Uncategorised', v, bank);
+      add(party, c.customerName || '—', v, bank);
       const cust = c.customerId != null ? custMap.get(c.customerId) : undefined;
-      add(region, ((cust?.region ?? '').trim().toUpperCase()) || 'UNKNOWN', v);
-      add(agent, ((cust?.agentName ?? '').trim()) || 'SELF', v);
+      add(region, ((cust?.region ?? '').trim().toUpperCase()) || 'UNKNOWN', v, bank);
+      add(agent, ((cust?.agentName ?? '').trim()) || 'SELF', v, bank);
     }
-    for (const rc of recs) { if (inWin(rc.recDate)) add(modeMap, payModeOf(rc.payMode), n(rc.recAmt)); }
+    for (const rc of recs) { if (inWin(rc.recDate)) addMode(modeMap, payModeOf(rc.payMode), n(rc.recAmt)); }
     const collectionModes = ['Bank', 'Cash', 'Cheque'].map((name) => ({ name, value: r0(modeMap.get(name)?.value ?? 0) })).filter((s) => s.value > 0);
 
     // Outstanding is a balance view: party-scoped, all-time (never date-scoped).
@@ -280,6 +317,25 @@ export class ReportsService {
     return m;
   }
 
+  /** Same as {@link receivedByInvoice}, split by mode (Bank absorbs Cheque) —
+   *  for charts that need a bank/cash breakdown of outstanding money. */
+  private async receivedByInvoiceSplit(): Promise<Map<string, { bank: number; cash: number }>> {
+    const [receipts, discounts] = await Promise.all([
+      this.prisma.acctPaymentReceipt.findMany({ select: { invNo: true, recAmt: true, payMode: true } }),
+      this.prisma.acctPartyDiscount.findMany({ select: { invNo: true, disAmt: true, billType: true } }),
+    ]);
+    const m = new Map<string, { bank: number; cash: number }>();
+    const bump = (invNo: string, bank: number, cash: number) => {
+      const cur = m.get(invNo) ?? { bank: 0, cash: 0 };
+      cur.bank += bank;
+      cur.cash += cash;
+      m.set(invNo, cur);
+    };
+    for (const r of receipts) bump(r.invNo, isBankMode(r.payMode) ? n(r.recAmt) : 0, isBankMode(r.payMode) ? 0 : n(r.recAmt));
+    for (const d of discounts) bump(d.invNo, d.billType === 'BANK' ? n(d.disAmt) : 0, d.billType === 'BANK' ? 0 : n(d.disAmt));
+    return m;
+  }
+
   // ── §8.6 Sales & Revenue ────────────────────────────────────────────────────
   async salesReport(months = 12, f: ReportFilters = {}): Promise<SalesReport> {
     const now = new Date();
@@ -287,7 +343,7 @@ export class ReportsService {
     const first = new Date(now.getFullYear(), now.getMonth() - (span - 1), 1);
     const fx = await this.resolveFilter(f);
     const [challans, custRows] = await Promise.all([
-      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { invDate: true, total: true, category: true, customerName: true, customerId: true, transaction: true } }),
+      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { invDate: true, total: true, b: true, c: true, category: true, customerName: true, customerId: true, transaction: true } }),
       this.prisma.customer.findMany({ select: { id: true, region: true, agentName: true, state: true } }),
     ]);
     const custMap = new Map(custRows.map((c) => [c.id, c]));
@@ -297,27 +353,28 @@ export class ReportsService {
     const buckets = new Map<string, ReportMonthPoint>();
     for (let i = 0; i < span; i++) {
       const d = new Date(first.getFullYear(), first.getMonth() + i, 1);
-      buckets.set(this.monthKey(d), { month: this.monthKey(d), label: this.monthLabel(d), billed: 0, collected: 0 });
+      buckets.set(this.monthKey(d), { month: this.monthKey(d), label: this.monthLabel(d), billed: 0, billedBank: 0, billedCash: 0, collected: 0, collectedBank: 0, collectedCash: 0 });
     }
-    const agent = new Map<string, { value: number; count: number }>();
-    const region = new Map<string, { value: number; count: number }>();
-    const state = new Map<string, { value: number; count: number }>();
-    const party = new Map<string, { value: number; count: number }>();
-    const cat = new Map<string, { value: number; count: number }>();
-    const add = (m: Map<string, { value: number; count: number }>, k: string, v: number) => {
+    const agent = new Map<string, { value: number; count: number; bank: number }>();
+    const region = new Map<string, { value: number; count: number; bank: number }>();
+    const state = new Map<string, { value: number; count: number; bank: number }>();
+    const party = new Map<string, { value: number; count: number; bank: number }>();
+    const cat = new Map<string, { value: number; count: number; bank: number }>();
+    const add = (m: Map<string, { value: number; count: number; bank: number }>, k: string, v: number, bank: number) => {
       const cur = m.get(k);
-      if (cur) { cur.value += v; cur.count += 1; } else m.set(k, { value: v, count: 1 });
+      if (cur) { cur.value += v; cur.count += 1; cur.bank += bank; } else m.set(k, { value: v, count: 1, bank });
     };
     for (const c of sales) {
       const v = n(c.total);
+      const bank = n(c.b);
       const b = buckets.get(this.monthKey(c.invDate));
-      if (b) b.billed += v;
+      if (b) { b.billed += v; b.billedBank += bank; }
       const cu = c.customerId != null ? custMap.get(c.customerId) : undefined;
-      add(agent, (cu?.agentName ?? '').trim() || 'SELF', v);
-      add(region, (cu?.region ?? '').trim().toUpperCase() || 'UNKNOWN', v);
-      add(state, (cu?.state ?? '').trim().toUpperCase() || 'UNKNOWN', v);
-      add(party, c.customerName || '—', v);
-      add(cat, (c.category ?? '').trim() || 'Uncategorised', v);
+      add(agent, (cu?.agentName ?? '').trim() || 'SELF', v, bank);
+      add(region, (cu?.region ?? '').trim().toUpperCase() || 'UNKNOWN', v, bank);
+      add(state, (cu?.state ?? '').trim().toUpperCase() || 'UNKNOWN', v, bank);
+      add(party, c.customerName || '—', v, bank);
+      add(cat, (c.category ?? '').trim() || 'Uncategorised', v, bank);
     }
     const historyByMonth = new Array(12).fill(0);
     const historyPeriods = new Array(12).fill(0).map(() => new Set<string>());
@@ -330,20 +387,27 @@ export class ReportsService {
     const meanMonth = monthAverages.reduce((s, v) => s + v, 0) / 12 || 1;
     const seasonality = monthAverages.map((v, i) => ({ month: String(i + 1).padStart(2, '0'), label: MON[i], index: Math.round((v / meanMonth) * 100) / 100 }));
 
-    // Year-over-year, aligned to the Indian FY (Apr→Mar).
+    // Year-over-year, aligned to the Indian FY (Apr→Mar), each split by mode.
     const fyStart = this.startOfFinYear(now);
     const lastFyStart = new Date(fyStart.getFullYear() - 1, 3, 1);
     const fyEnd = new Date(fyStart.getFullYear() + 1, 3, 1);
     const yoyThis = new Array(12).fill(0);
+    const yoyThisBank = new Array(12).fill(0);
     const yoyLast = new Array(12).fill(0);
+    const yoyLastBank = new Array(12).fill(0);
     for (const c of partySales) {
       const t = c.invDate;
       const idx = (t.getMonth() - 3 + 12) % 12; // Apr=0 … Mar=11
-      if (t >= fyStart && t < fyEnd && t <= now) yoyThis[idx] += n(c.total);
-      else if (t >= lastFyStart && t < fyStart) yoyLast[idx] += n(c.total);
+      if (t >= fyStart && t < fyEnd && t <= now) { yoyThis[idx] += n(c.total); yoyThisBank[idx] += n(c.b); }
+      else if (t >= lastFyStart && t < fyStart) { yoyLast[idx] += n(c.total); yoyLastBank[idx] += n(c.b); }
     }
     const FYMON = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'];
-    const yoy = FYMON.map((label, i) => ({ label, thisYear: r0(yoyThis[i]), lastYear: r0(yoyLast[i]) }));
+    // Cash derives from the year total minus bank — see topSlices()'s comment.
+    const yoy = FYMON.map((label, i) => ({
+      label,
+      thisYear: r0(yoyThis[i]), thisYearBank: r0(yoyThisBank[i]), thisYearCash: r0(yoyThis[i] - yoyThisBank[i]),
+      lastYear: r0(yoyLast[i]), lastYearBank: r0(yoyLastBank[i]), lastYearCash: r0(yoyLast[i] - yoyLastBank[i]),
+    }));
     // Like-for-like growth: this FY-to-date vs last FY over the SAME elapsed months
     // (comparing 4 months against a full 12 would be misleading).
     const tThis = yoyThis.reduce((s, v) => s + v, 0);
@@ -351,7 +415,7 @@ export class ReportsService {
     const tLast = partySales.filter((c) => c.invDate >= lastFyStart && c.invDate <= lastCutoff).reduce((s, c) => s + n(c.total), 0);
 
     return {
-      monthly: [...buckets.values()].map((p) => ({ ...p, billed: r0(p.billed) })),
+      monthly: [...buckets.values()].map((p) => ({ ...p, billed: r0(p.billed), billedBank: r0(p.billedBank), billedCash: r0(p.billed - p.billedBank) })),
       yoy,
       yoyTotals: { thisYear: r0(tThis), lastYear: r0(tLast), growthPct: tLast > 0 ? ((tThis - tLast) / tLast) * 100 : null },
       seasonality,
@@ -374,7 +438,7 @@ export class ReportsService {
       this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { code: true, total: true, b: true, c: true, invDate: true, dueDate: true, customerId: true, customerName: true, transaction: true } }),
       this.prisma.customer.findMany({ select: { id: true, partyName: true, agentName: true } }),
       this.prisma.acctPartyAdvance.findMany({ select: { custId: true, bankAmt: true, cashAmt: true } }),
-      this.receivedByInvoice(),
+      this.receivedByInvoiceSplit(),
       this.prisma.acctPaymentReceipt.findMany({ select: { custId: true, recDate: true, recAmt: true, payMode: true } }),
       // The live recovery CRM: payment follow-ups drive the contact/promise signals.
       this.prisma.followup.findMany({ where: { kind: 'PAYMENT' }, select: { customerId: true, partyName: true, status: true, promisedAt: true, promisedAmount: true, updatedAt: true, resolvedAt: true } }),
@@ -403,37 +467,41 @@ export class ReportsService {
       { key: '61-90', label: '61–90 days', lo: 61, hi: 90 },
       { key: '90+', label: '90+ days', lo: 91, hi: Infinity },
     ];
-    const aging = AGING.map((a) => ({ key: a.key, label: a.label, value: 0, parties: 0 }));
+    const aging = AGING.map((a) => ({ key: a.key, label: a.label, value: 0, bank: 0, cash: 0, parties: 0 }));
     const agingParties: Set<string>[] = AGING.map(() => new Set());
 
-    interface P { custId: number | null; party: string; agent: string | null; outstanding: number; overdue: number; oldestDays: number }
+    interface P { custId: number | null; party: string; agent: string | null; outstanding: number; overdue: number; overdueBank: number; overdueCash: number; oldestDays: number }
     const parties = new Map<string, P>();
     let totalOutstanding = 0;
     let overdue = 0;
     let dueSoon = 0;
     for (const c of sales) {
-      // b + c (not the gross total) — see receivedByInvoice()'s comment.
-      const bal = Math.max(0, n(c.b) + n(c.c) - (recvByInv.get(c.code) ?? 0));
+      const split = recvByInv.get(c.code) ?? { bank: 0, cash: 0 };
+      const bankBal = Math.max(0, n(c.b) - split.bank);
+      const cashBal = Math.max(0, n(c.c) - split.cash);
+      const bal = bankBal + cashBal;
       if (bal <= 0) continue;
       totalOutstanding += bal;
       const key = c.customerName || '—';
       let p = parties.get(key);
-      if (!p) { p = { custId: c.customerId ?? null, party: key, agent: (c.customerId != null ? custMap.get(c.customerId)?.agentName : null) ?? null, outstanding: 0, overdue: 0, oldestDays: 0 }; parties.set(key, p); }
+      if (!p) { p = { custId: c.customerId ?? null, party: key, agent: (c.customerId != null ? custMap.get(c.customerId)?.agentName : null) ?? null, outstanding: 0, overdue: 0, overdueBank: 0, overdueCash: 0, oldestDays: 0 }; parties.set(key, p); }
       p.outstanding += bal;
       if (c.dueDate) {
         const days = Math.floor((today.getTime() - this.startOfDay(c.dueDate).getTime()) / DAY);
         if (days > 0) {
           overdue += bal;
           p.overdue += bal;
+          p.overdueBank += bankBal;
+          p.overdueCash += cashBal;
           p.oldestDays = Math.max(p.oldestDays, days);
           const bi = AGING.findIndex((a) => days >= a.lo && days <= a.hi);
-          if (bi >= 0) { aging[bi].value += bal; agingParties[bi].add(key); }
+          if (bi >= 0) { aging[bi].value += bal; aging[bi].bank += bankBal; aging[bi].cash += cashBal; agingParties[bi].add(key); }
         } else if (days >= -15) {
           dueSoon += bal;
         }
       }
     }
-    aging.forEach((a, i) => { a.value = r0(a.value); a.parties = agingParties[i].size; });
+    aging.forEach((a, i) => { a.value = r0(a.value); a.bank = r0(a.bank); a.cash = r0(a.cash); a.parties = agingParties[i].size; });
     const advanceHeld = r0(advances.filter((a) => fx.custOk(a.custId)).reduce((s, a) => s + n(a.bankAmt) + n(a.cashAmt), 0));
 
     // ── CRM recovery signals (from PAYMENT follow-ups) ──
@@ -501,7 +569,7 @@ export class ReportsService {
 
     const topOverdueParties = [...parties.values()]
       .filter((p) => p.overdue > 0)
-      .map((p) => ({ name: p.party, value: r0(p.overdue) }))
+      .map((p) => ({ name: p.party, value: r0(p.overdue), bank: r0(p.overdueBank), cash: r0(p.overdueCash) }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 12);
 
@@ -534,10 +602,17 @@ export class ReportsService {
 
     // Collection trend (last 12 months collected) + efficiency.
     const trendStart = new Date(now.getFullYear(), now.getMonth() - 11, 1);
-    const tb = new Map<string, { month: string; label: string; collected: number }>();
-    for (let i = 0; i < 12; i++) { const d = new Date(trendStart.getFullYear(), trendStart.getMonth() + i, 1); tb.set(this.monthKey(d), { month: this.monthKey(d), label: this.monthLabel(d), collected: 0 }); }
-    for (const r of lastRec) { if (!fx.custOk(r.custId)) continue; const b = tb.get(this.monthKey(r.recDate)); if (b) b.collected += n(r.recAmt); }
-    const collectionTrend = [...tb.values()].map((p) => ({ ...p, collected: r0(p.collected) }));
+    const tb = new Map<string, { month: string; label: string; collected: number; collectedBank: number; collectedCash: number }>();
+    for (let i = 0; i < 12; i++) { const d = new Date(trendStart.getFullYear(), trendStart.getMonth() + i, 1); tb.set(this.monthKey(d), { month: this.monthKey(d), label: this.monthLabel(d), collected: 0, collectedBank: 0, collectedCash: 0 }); }
+    for (const r of lastRec) {
+      if (!fx.custOk(r.custId)) continue;
+      const b = tb.get(this.monthKey(r.recDate));
+      if (!b) continue;
+      b.collected += n(r.recAmt);
+      if (isBankMode(r.payMode)) b.collectedBank += n(r.recAmt);
+      else b.collectedCash += n(r.recAmt);
+    }
+    const collectionTrend = [...tb.values()].map((p) => ({ ...p, collected: r0(p.collected), collectedBank: r0(p.collectedBank), collectedCash: r0(p.collectedCash) }));
 
     const periodStart = fx.from ?? this.startOfFinYear(now);
     const periodEnd = fx.to ?? now;
@@ -579,20 +654,21 @@ export class ReportsService {
     const sales = allSales.filter((c) => fx.dateOk(c.invDate));
 
     const asOfDate = fx.to ?? now;
-    interface Agg { custId: number | null; party: string; agent: string | null; revenue: number; invoices: number; lifeRevenue: number; lifeInvoices: number; lastOrder: Date | null; outstanding: number }
+    interface Agg { custId: number | null; party: string; agent: string | null; revenue: number; revenueBank: number; invoices: number; lifeRevenue: number; lifeInvoices: number; lastOrder: Date | null; outstanding: number }
     const map = new Map<string, Agg>();
     const keyOf = (name: string) => name.trim().toUpperCase();
     const custByName = new Map(custs.map((c) => [keyOf(c.partyName ?? ''), c]));
     const get = (name: string, custId: number | null): Agg => {
       const k = keyOf(name);
       let a = map.get(k);
-      if (!a) { const cu = custByName.get(k); a = { custId: custId ?? cu?.id ?? null, party: name, agent: cu?.agentName ?? null, revenue: 0, invoices: 0, lifeRevenue: 0, lifeInvoices: 0, lastOrder: null, outstanding: 0 }; map.set(k, a); }
+      if (!a) { const cu = custByName.get(k); a = { custId: custId ?? cu?.id ?? null, party: name, agent: cu?.agentName ?? null, revenue: 0, revenueBank: 0, invoices: 0, lifeRevenue: 0, lifeInvoices: 0, lastOrder: null, outstanding: 0 }; map.set(k, a); }
       return a;
     };
     for (const c of custs) if (fx.custOk(c.id) && c.partyName?.trim()) get(c.partyName, c.id);
     for (const c of sales) {
       const a = get(c.customerName, c.customerId ?? null);
       a.revenue += n(c.total);
+      a.revenueBank += n(c.b);
       a.invoices += 1;
     }
     for (const c of allSales) {
@@ -624,11 +700,13 @@ export class ReportsService {
     };
 
     const segCount = new Map<string, number>();
-    const segRev = new Map<string, number>();
+    const segRev = new Map<string, { value: number; bank: number }>();
     const parties = [...map.values()].map((a) => {
       const seg = segmentOf(a);
       segCount.set(seg, (segCount.get(seg) ?? 0) + 1);
-      segRev.set(seg, (segRev.get(seg) ?? 0) + a.revenue);
+      const sr = segRev.get(seg) ?? { value: 0, bank: 0 };
+      sr.value += a.revenue; sr.bank += a.revenueBank;
+      segRev.set(seg, sr);
       const days = a.lastOrder ? Math.floor((asOfDate.getTime() - a.lastOrder.getTime()) / DAY) : null;
       return { customerId: a.custId, party: a.party, agent: a.agent, revenue: r0(a.revenue), invoices: a.invoices, lastOrder: a.lastOrder ? a.lastOrder.toISOString() : null, daysSince: days, segment: seg, outstanding: r0(a.outstanding) };
     }).sort((x, y) => y.revenue - x.revenue).slice(0, 300);
@@ -637,8 +715,9 @@ export class ReportsService {
     const segments = [...segCount.entries()]
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => SEG_ORDER.indexOf(a.name) - SEG_ORDER.indexOf(b.name));
+    // Cash derives from value − bank — see topSlices()'s comment.
     const segmentRevenue = [...segRev.entries()]
-      .map(([name, value]) => ({ name, value: r0(value) }))
+      .map(([name, v]) => ({ name, value: r0(v.value), bank: r0(v.bank), cash: r0(v.value - v.bank) }))
       .filter((s) => s.value > 0)
       .sort((a, b) => b.value - a.value);
 
@@ -657,7 +736,7 @@ export class ReportsService {
     const now = new Date();
     const fx = await this.resolveFilter(f);
     const [rawItems, designs] = await Promise.all([
-      this.prisma.challanItem.findMany({ select: { productName: true, amount: true, bags: true, pcs: true, kgs: true, box: true, pCategory: true, design: true, challan: { select: { invDate: true, customerId: true, challanStatus: true, transaction: true } } } }),
+      this.prisma.challanItem.findMany({ select: { productName: true, amount: true, bags: true, pcs: true, kgs: true, box: true, pCategory: true, design: true, challan: { select: { invDate: true, customerId: true, challanStatus: true, transaction: true, total: true, b: true, c: true } } } }),
       this.prisma.design.findMany({ where: { active: true }, select: { designType: true, category: true, cost: true, rate: true } }),
     ]);
     // Only lines from live challans, party + date scoped.
@@ -665,18 +744,39 @@ export class ReportsService {
     // Slice by the chosen measure: money (amount) or a physical unit.
     const measureOf = (it: (typeof items)[number]): number =>
       measure === 'bags' ? n(it.bags) : measure === 'pcs' ? n(it.pcs) : measure === 'kgs' ? n(it.kgs) : measure === 'box' ? n(it.box) : n(it.amount);
-    const prod = new Map<string, { value: number; count: number }>();
-    const cat = new Map<string, { value: number; count: number }>();
-    const dsg = new Map<string, { value: number; count: number }>();
+    // A line has no bank/cash of its own — only its parent invoice does. For the
+    // money measure, attribute each line's bank share pro-rata to the invoice's
+    // own b ÷ total ratio (cash then derives as value − bank via topSlices()); a
+    // physical quantity (bags/pcs/kgs/box) has no payment mode at all, so it
+    // isn't split — bank/cash simply aren't set on those slices.
+    const bankShareOf = (it: (typeof items)[number]): number | null => {
+      if (measure !== 'amount' || !it.challan) return null;
+      const total = n(it.challan.total);
+      if (total <= 0) return 0;
+      return n(it.challan.b) * (n(it.amount) / total);
+    };
+    const prod = new Map<string, { value: number; count: number; bank?: number }>();
+    const cat = new Map<string, { value: number; count: number; bank?: number }>();
+    const dsg = new Map<string, { value: number; count: number; bank?: number }>();
+    const bump = (m: Map<string, { value: number; count: number; bank?: number }>, key: string, v: number, bank: number | null) => {
+      const cur = m.get(key);
+      if (cur) {
+        cur.value += v; cur.count += 1;
+        if (bank != null) cur.bank = (cur.bank ?? 0) + bank;
+      } else {
+        m.set(key, { value: v, count: 1, ...(bank != null ? { bank } : {}) });
+      }
+    };
     for (const it of items) {
       const v = measureOf(it);
       if (v <= 0) continue;
+      const bank = bankShareOf(it);
       const name = (it.productName ?? '').trim() || '—';
-      const p = prod.get(name); if (p) { p.value += v; p.count += 1; } else prod.set(name, { value: v, count: 1 });
+      bump(prod, name, v, bank);
       const c = (it.pCategory ?? '').trim() || 'Uncategorised';
-      const cc = cat.get(c); if (cc) { cc.value += v; cc.count += 1; } else cat.set(c, { value: v, count: 1 });
+      bump(cat, c, v, bank);
       const d = (it.design ?? '').trim();
-      if (d && !['NA', 'N/A', 'NONE', '-', 'NIL'].includes(d.toUpperCase())) { const dd = dsg.get(d); if (dd) { dd.value += v; dd.count += 1; } else dsg.set(d, { value: v, count: 1 }); }
+      if (d && !['NA', 'N/A', 'NONE', '-', 'NIL'].includes(d.toUpperCase())) bump(dsg, d, v, bank);
     }
 
     const catMargin = new Map<string, { sum: number; count: number }>();

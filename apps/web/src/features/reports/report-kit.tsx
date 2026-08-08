@@ -87,27 +87,55 @@ export function Kpi({ label, value, hint, icon: Icon, tone = 'blue', metric, loa
 }
 
 const BAR_COLORS = ['#3b82f6', '#8b5cf6', '#f59e0b', '#10b981', '#ef4444', '#06b6d4', '#ec4899', '#84cc16'];
+/** Bank/Cash split colors, used consistently across every report chart. */
+export const BANK_COLOR = '#3b82f6';
+export const CASH_COLOR = '#10b981';
 
-/** A ranked horizontal-bar list (no chart lib) — great for top parties / regions / agents. */
+/** A ranked horizontal-bar list (no chart lib) — great for top parties / regions / agents.
+ *  When a slice carries `bank`/`cash` (real money with a payment mode — billed via
+ *  Challan.b/.c, or collected via receipt mode), its bar renders as a Bank+Cash
+ *  stacked split instead of one solid colour, with a small legend up top. Slices
+ *  without a mode (counts, ratios, physical quantities) keep the plain single-colour bar. */
 export function RankedBars({ data, money = true, emptyText = 'No data.' }: { data: ReportSlice[]; money?: boolean; emptyText?: string }) {
   if (!data.length) return <div className="text-muted-foreground py-8 text-center text-sm">{emptyText}</div>;
   const max = Math.max(...data.map((d) => d.value), 1);
   const fmt = (v: number) => (money ? inrCompact(v) : Math.round(v).toLocaleString('en-IN'));
+  const split = money && data.some((d) => d.bank != null && d.cash != null);
   return (
     <div className="space-y-2.5">
-      {data.map((d, i) => (
-        <div key={d.name} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
-          <div className="min-w-0">
-            <div className="mb-1 flex items-center justify-between gap-2">
-              <span className="truncate text-sm font-medium" title={d.name}>{d.name}</span>
-              <span className="shrink-0 text-sm font-semibold tabular-nums" title={money ? inrFull(d.value) : undefined}>{fmt(d.value)}</span>
-            </div>
-            <div className="bg-muted h-2 overflow-hidden rounded-full">
-              <div className="h-full rounded-full" style={{ width: `${(d.value / max) * 100}%`, background: BAR_COLORS[i % BAR_COLORS.length] }} />
+      {split && (
+        <div className="text-muted-foreground -mt-0.5 mb-1 flex items-center gap-3 text-[11px]">
+          <span className="inline-flex items-center gap-1"><span className="size-2 rounded-full" style={{ background: BANK_COLOR }} /> Bank</span>
+          <span className="inline-flex items-center gap-1"><span className="size-2 rounded-full" style={{ background: CASH_COLOR }} /> Cash</span>
+        </div>
+      )}
+      {data.map((d, i) => {
+        const bank = d.bank ?? 0;
+        const cash = d.cash ?? 0;
+        return (
+          <div key={d.name} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
+            <div className="min-w-0">
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <span className="truncate text-sm font-medium" title={d.name}>{d.name}</span>
+                <span className="shrink-0 text-sm font-semibold tabular-nums" title={money ? inrFull(d.value) : undefined}>
+                  {fmt(d.value)}
+                  {split && <span className="text-muted-foreground ml-1 font-normal">({fmt(bank)} bank / {fmt(cash)} cash)</span>}
+                </span>
+              </div>
+              <div className="bg-muted flex h-2 overflow-hidden rounded-full">
+                {split ? (
+                  <>
+                    <div className="h-full" style={{ width: `${(bank / max) * 100}%`, background: BANK_COLOR }} />
+                    <div className="h-full" style={{ width: `${(cash / max) * 100}%`, background: CASH_COLOR }} />
+                  </>
+                ) : (
+                  <div className="h-full rounded-full" style={{ width: `${(d.value / max) * 100}%`, background: BAR_COLORS[i % BAR_COLORS.length] }} />
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

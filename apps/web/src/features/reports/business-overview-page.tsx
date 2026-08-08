@@ -14,8 +14,12 @@ function TrendTooltip({ active, payload, label }: { active?: boolean; payload?: 
   return (
     <div className="rounded-lg border bg-white/95 px-3 py-2 text-xs shadow-md backdrop-blur">
       <div className="mb-1 font-semibold text-slate-700">{label}</div>
-      <div className="flex items-center gap-1.5"><span className="inline-block size-2.5 rounded-sm bg-blue-500" />Billed: <span className="font-semibold tabular-nums">{inrFull(p.billed)}</span></div>
-      <div className="flex items-center gap-1.5"><span className="inline-block size-2.5 rounded-sm bg-emerald-500" />Collected: <span className="font-semibold tabular-nums">{inrFull(p.collected)}</span></div>
+      <div className="font-semibold text-slate-600">Billed: {inrFull(p.billed)}</div>
+      <div className="flex items-center gap-1.5 pl-1"><span className="inline-block size-2.5 rounded-sm bg-blue-500" />Bank: <span className="font-semibold tabular-nums">{inrFull(p.billedBank)}</span></div>
+      <div className="flex items-center gap-1.5 pl-1"><span className="inline-block size-2.5 rounded-sm bg-blue-200" />Cash: <span className="font-semibold tabular-nums">{inrFull(p.billedCash)}</span></div>
+      <div className="mt-1.5 font-semibold text-slate-600">Collected: {inrFull(p.collected)}</div>
+      <div className="flex items-center gap-1.5 pl-1"><span className="inline-block size-2.5 rounded-full bg-emerald-500" />Bank: <span className="font-semibold tabular-nums">{inrFull(p.collectedBank)}</span></div>
+      <div className="flex items-center gap-1.5 pl-1"><span className="inline-block size-2.5 rounded-full bg-emerald-200" />Cash: <span className="font-semibold tabular-nums">{inrFull(p.collectedCash)}</span></div>
       {rate != null && <div className="mt-1 text-slate-500">Collected {rate.toFixed(0)}% of billed</div>}
     </div>
   );
@@ -92,8 +96,10 @@ export function BusinessOverviewPage() {
                 <YAxis tick={{ fontSize: 12, fill: '#64748b' }} tickLine={false} axisLine={false} width={52} tickFormatter={(v: number) => inrCompact(v)} />
                 <Tooltip content={<TrendTooltip />} cursor={{ fill: 'rgba(148,163,184,0.12)' }} />
                 <Legend wrapperStyle={{ fontSize: 12 }} iconType="circle" />
-                <Bar name="Billed" dataKey="billed" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={34} />
-                <Line name="Collected" type="monotone" dataKey="collected" stroke="#10b981" strokeWidth={2.5} dot={{ r: 3, fill: '#10b981' }} activeDot={{ r: 5 }} />
+                <Bar name="Billed (Bank)" dataKey="billedBank" stackId="billed" fill="#3b82f6" maxBarSize={34} />
+                <Bar name="Billed (Cash)" dataKey="billedCash" stackId="billed" fill="#93c5fd" radius={[4, 4, 0, 0]} maxBarSize={34} />
+                <Line name="Collected (Bank)" type="monotone" dataKey="collectedBank" stroke="#10b981" strokeWidth={2.5} dot={{ r: 3, fill: '#10b981' }} activeDot={{ r: 5 }} />
+                <Line name="Collected (Cash)" type="monotone" dataKey="collectedCash" stroke="#6ee7b7" strokeWidth={2.5} dot={{ r: 3, fill: '#6ee7b7' }} activeDot={{ r: 5 }} />
               </ComposedChart>
             </ResponsiveContainer>
           </div>

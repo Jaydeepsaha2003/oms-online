@@ -1,4 +1,4 @@
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, HandCoins, PhoneCall } from 'lucide-react';
 import type { PromiseState, RecoveryStage } from '@oms/shared';
@@ -97,8 +97,10 @@ export function CollectionsReportPage() {
                 <CartesianGrid vertical={false} stroke="#e2e8f0" strokeDasharray="3 3" />
                 <XAxis dataKey="label" tick={{ fontSize: 12, fill: '#64748b' }} tickLine={false} axisLine={{ stroke: '#e2e8f0' }} />
                 <YAxis tick={{ fontSize: 12, fill: '#64748b' }} tickLine={false} axisLine={false} width={52} tickFormatter={(v: number) => inrCompact(v)} />
-                <Tooltip formatter={(v: number, _n, p) => [inrFull(v), `${p.payload.parties} parties`]} cursor={{ fill: 'rgba(148,163,184,0.12)' }} />
-                <Bar dataKey="value" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={64} />
+                <Tooltip formatter={(v: number, dataKey) => [inrFull(v), dataKey === 'bank' ? 'Bank' : 'Cash']} labelFormatter={(label, p) => `${label} · ${p?.[0]?.payload?.parties ?? 0} parties`} cursor={{ fill: 'rgba(148,163,184,0.12)' }} />
+                <Legend wrapperStyle={{ fontSize: 12 }} iconType="circle" />
+                <Bar name="Bank" dataKey="bank" stackId="age" fill="#ef4444" maxBarSize={64} />
+                <Bar name="Cash" dataKey="cash" stackId="age" fill="#fca5a5" radius={[4, 4, 0, 0]} maxBarSize={64} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -116,16 +118,22 @@ export function CollectionsReportPage() {
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={data?.collectionTrend ?? []} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
                 <defs>
-                  <linearGradient id="collGrad" x1="0" y1="0" x2="0" y2="1">
+                  <linearGradient id="collGradBank" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="#10b981" stopOpacity={0.35} />
                     <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="collGradCash" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#6ee7b7" stopOpacity={0.35} />
+                    <stop offset="100%" stopColor="#6ee7b7" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid vertical={false} stroke="#e2e8f0" strokeDasharray="3 3" />
                 <XAxis dataKey="label" tick={{ fontSize: 12, fill: '#64748b' }} tickLine={false} axisLine={{ stroke: '#e2e8f0' }} />
                 <YAxis tick={{ fontSize: 12, fill: '#64748b' }} tickLine={false} axisLine={false} width={52} tickFormatter={(v: number) => inrCompact(v)} />
-                <Tooltip formatter={(v: number) => [inrFull(v), 'Collected']} cursor={{ stroke: '#94a3b8' }} />
-                <Area type="monotone" dataKey="collected" stroke="#10b981" strokeWidth={2.5} fill="url(#collGrad)" />
+                <Tooltip formatter={(v: number, name) => [inrFull(v), name]} cursor={{ stroke: '#94a3b8' }} />
+                <Legend wrapperStyle={{ fontSize: 12 }} iconType="circle" />
+                <Area name="Bank" type="monotone" dataKey="collectedBank" stackId="collected" stroke="#10b981" strokeWidth={2.5} fill="url(#collGradBank)" />
+                <Area name="Cash" type="monotone" dataKey="collectedCash" stackId="collected" stroke="#6ee7b7" strokeWidth={2.5} fill="url(#collGradCash)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>

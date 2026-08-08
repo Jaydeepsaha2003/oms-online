@@ -30,20 +30,32 @@ export interface ReportFilterOptions {
   customers: { id: number; name: string }[];
 }
 
-/** A labelled money/quantity slice — the row shape for every ranked list & pie. */
+/** A labelled money/quantity slice — the row shape for every ranked list & pie.
+ *  `bank`/`cash` are the same figure split by mode (Bank absorbs Cheque, matching
+ *  the rest of the app's own `isBankMode` convention) — present whenever the
+ *  underlying figure is real money with a mode (billed via `Challan.b`/`c`, or
+ *  collected via `AcctPaymentReceipt.payMode`). Absent for non-money slices
+ *  (party/order counts, physical quantities, ratios) where a split has no
+ *  meaning; `value` stays the one number to read in that case. */
 export interface ReportSlice {
   name: string;
   value: number;
+  bank?: number;
+  cash?: number;
   /** Optional secondary value (e.g. count behind the money), when useful. */
   count?: number;
 }
 
-/** One month bucket of billed vs collected money. */
+/** One month bucket of billed vs collected money, each split by mode. */
 export interface ReportMonthPoint {
   month: string; // yyyy-mm
   label: string; // "Jul 25"
   billed: number;
+  billedBank: number;
+  billedCash: number;
   collected: number;
+  collectedBank: number;
+  collectedCash: number;
 }
 
 /** §8.5 — the business in one screen. */
@@ -91,8 +103,8 @@ export interface BusinessOverview {
 export interface SalesReport {
   /** Monthly billed revenue for the last `months` months. */
   monthly: ReportMonthPoint[];
-  /** This financial year vs last, aligned by calendar month (Apr→Mar). */
-  yoy: { label: string; thisYear: number; lastYear: number }[];
+  /** This financial year vs last, aligned by calendar month (Apr→Mar), each split by mode. */
+  yoy: { label: string; thisYear: number; thisYearBank: number; thisYearCash: number; lastYear: number; lastYearBank: number; lastYearCash: number }[];
   /** This-FY total vs last-FY total, and growth %. */
   yoyTotals: { thisYear: number; lastYear: number; growthPct: number | null };
   /** Seasonality index per calendar month (month avg ÷ overall month avg; 1 = average). */
@@ -155,10 +167,10 @@ export interface CollectionsReport {
   collectedModes: ReportSlice[];
   /** Parties with the most overdue exposure (capped). */
   topOverdueParties: ReportSlice[];
-  /** Overdue value by ageing bucket. */
-  aging: { key: string; label: string; value: number; parties: number }[];
-  /** Monthly collected trend (last 12 months). */
-  collectionTrend: { month: string; label: string; collected: number }[];
+  /** Overdue value by ageing bucket, split by mode. */
+  aging: { key: string; label: string; value: number; bank: number; cash: number; parties: number }[];
+  /** Monthly collected trend (last 12 months), split by mode. */
+  collectionTrend: { month: string; label: string; collected: number; collectedBank: number; collectedCash: number }[];
   /** Recovery KPIs from the CRM follow-up layer. */
   recoveryKpis: {
     promisesDueToday: number;
