@@ -403,6 +403,7 @@ export class DispatchService implements OnModuleInit {
       products: distinct(productPool, (l) => l.productName || l.product),
       productBases: distinct(productPool, (l) => DispatchService.baseProductName(l.productName || l.product, l.product)),
       designs: distinct(poolFor('design'), (l) => (l.designType && l.designType.toUpperCase() !== 'NA' ? l.designType : null)),
+      categories: distinct(poolFor('category'), (l) => l.pCategory),
       subCategories: distinct(poolFor('subCategory'), (l) => l.subCategory),
     };
   }
@@ -435,6 +436,9 @@ export class DispatchService implements OnModuleInit {
       }
     }
     if (query.design) lines = lines.filter((l) => l.designType === query.design);
+    // Product category, not the order-level `category` — the Dispatch Order page
+    // filters the product pool (GLASS / CUP / LOTI / …), which is `pCategory`.
+    if (query.category) lines = lines.filter((l) => l.pCategory === query.category);
     if (query.subCategory) lines = lines.filter((l) => l.subCategory === query.subCategory);
     if (query.unit) {
       const u = query.unit.toUpperCase();

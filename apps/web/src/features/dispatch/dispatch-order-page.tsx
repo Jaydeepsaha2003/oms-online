@@ -238,6 +238,9 @@ export function DispatchOrderPage() {
   const [agent, setAgent] = useState('');
   const [product, setProduct] = useState('');
   const [design, setDesign] = useState('');
+  // Product category (GLASS / CUP / LOTI / …). Its own on-screen select on
+  // phones, above Product — see the render below for why.
+  const [category, setCategory] = useState('');
   const [subCategory, setSubCategory] = useState('');
   const { page, setPage, pageSize, setPageSize } = usePageSize('dispatch-pending');
   const [active, setActive] = useState<PendingLineDto | null>(null);
@@ -265,6 +268,7 @@ export function DispatchOrderPage() {
     agent: agent || undefined,
     product: product || undefined,
     design: design || undefined,
+    category: category || undefined,
     subCategory: subCategory || undefined,
     all: all || undefined,
   };
@@ -279,13 +283,14 @@ export function DispatchOrderPage() {
   // below): a background refetch mid-entry would be jarring, and a successful
   // dispatch already forces its own immediate refresh via useCreateDispatch.
   const { data, isLoading } = usePendingOrders(query, { autoRefresh: !active });
-  const hasFilters = !!dueType || !!customer || !!agent || !!product || !!design || !!subCategory || all;
+  const hasFilters = !!dueType || !!customer || !!agent || !!product || !!design || !!category || !!subCategory || all;
   const resetFilters = () => {
     setDueType('');
     setCustomer('');
     setAgent('');
     setProduct('');
     setDesign('');
+    setCategory('');
     setSubCategory('');
     setAll(false);
     setPage(1);
@@ -318,8 +323,8 @@ export function DispatchOrderPage() {
   };
   // Sheet "Reset": clear every filter that lives behind the Filter icon
   // (Agent/Due/Design/Sub category/ALL) — both the drafts and what's applied —
-  // immediately. Customer and Product keep their own on-screen selects, so a
-  // phone still has a one-tap way to clear just those.
+  // immediately. Customer, Category and Product keep their own on-screen selects,
+  // so a phone still has a one-tap way to clear just those.
   // `all` counts here: the ALL switch is rendered inside this sheet, so leaving it
   // out left Reset DISABLED whenever ALL was the only active filter — making it
   // impossible to turn off from a phone.
@@ -344,9 +349,9 @@ export function DispatchOrderPage() {
   };
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
-  // Customer + Product are their own on-screen selects on mobile, so the
-  // filter-icon badge counts only what lives behind it (Agent/Due/Design/Sub
-  // category/ALL).
+  // Customer + Category + Product are their own on-screen selects on mobile, so
+  // the filter-icon badge counts only what lives behind it
+  // (Agent/Due/Design/Sub category/ALL).
   const sheetFilterCount = (agent ? 1 : 0) + (dueType ? 1 : 0) + (design ? 1 : 0) + (subCategory ? 1 : 0) + (all ? 1 : 0);
   const { can } = usePermissions();
   const canViewRates = can('dispatch:viewrates');
@@ -438,12 +443,23 @@ export function DispatchOrderPage() {
 
       <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
         <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
-          {/* Phones: just the two filters people actually reach for first —
-              Customer and Product — each on their own full-width line. Everything
-              else (Agent / Due / Design / Sub category / ALL) lives behind the
-              Filter icon, which sits with Export and a one-tap Reset-all. */}
+          {/* Phones: the filters people actually reach for first — Customer, Sub
+              category and Product — each on their own full-width line. Everything
+              else (Agent / Due / Design / ALL) lives behind the Filter icon, which
+              sits with Export and a one-tap Reset-all. */}
           <div className="flex w-full flex-col gap-2 sm:hidden">
             <NativeSelect value={customer} onChange={(v) => { setCustomer(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="Customer" className={cn(CONTROL, 'font-medium', customer && CONTROL_ON)} />
+            {/* Category sits ABOVE Product on purpose: the option lists cascade
+                (see `usePendingFilterOptions`), so picking it first narrows the
+                product dropdown to that category's items — 856 names down to 47
+                for CUP, 2 for LOTI. (Not a win for GLASS, which is 804 of the
+                856; it's the non-glass work this rescues.)
+                Category (GLASS / CUP / LOTI / …) rather than Sub category: five
+                readable values, where sub category is 40 build codes like
+                "10-PCS-FG-22G" that nobody picks a product by — that one stays
+                behind the Filter icon. Applies straight away, same as Customer
+                and Product (no draft/"Show" step). */}
+            <NativeSelect value={category} onChange={(v) => { setCategory(v); setPage(1); }} options={['', ...(options?.categories ?? [])]} placeholder="Category" className={cn(CONTROL, 'font-medium', category && CONTROL_ON)} />
             {/* Item names start with a size then words ("15 MIRROR (26 G)
                 LASER"), so the keyboard opens on digits and hands over to
                 letters exactly when no item continues the typed number — see
@@ -481,10 +497,15 @@ export function DispatchOrderPage() {
               <NativeSelect value={dueType} onChange={(v) => { setDueType(v); setPage(1); }} options={['', 'Due', 'Past Due', 'Over Due']} placeholder="All due" className={cn(CONTROL, 'font-medium', dueType && CONTROL_ON)} />
             </div>
             {/* Filter order follows the house pattern: Customer, Item Name, Agent,
-                Category, Sub Category, Design (no separate top-level Category
-                dropdown on this page — only Sub Category — so that's skipped). */}
+                Category, Sub Category, Design. Category is placed before Item
+                Name here (not at its house position) for the same reason as on
+                phones: the lists cascade, so picking it first is what shrinks the
+                product dropdown. */}
             <div className="w-56">
               <NativeSelect value={customer} onChange={(v) => { setCustomer(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="All customers" className={cn(CONTROL, 'font-medium', customer && CONTROL_ON)} />
+            </div>
+            <div className="w-36">
+              <NativeSelect value={category} onChange={(v) => { setCategory(v); setPage(1); }} options={['', ...(options?.categories ?? [])]} placeholder="All categories" className={cn(CONTROL, 'font-medium', category && CONTROL_ON)} />
             </div>
             <div className="w-56">
               <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...productOptions]} placeholder={all ? 'All (any design)' : 'All products'} className={cn(CONTROL, 'font-medium', product && CONTROL_ON)} digitsFirst />

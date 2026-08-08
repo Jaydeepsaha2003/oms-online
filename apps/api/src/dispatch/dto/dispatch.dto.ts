@@ -40,6 +40,8 @@ export class PendingQueryDto extends PaginationDto {
   @IsOptional() @IsString() agent?: string;
   @IsOptional() @IsString() product?: string;
   @IsOptional() @IsString() design?: string;
+  /** Product category — matched against the line's `pCategory`. */
+  @IsOptional() @IsString() category?: string;
   @IsOptional() @IsString() subCategory?: string;
   /** "ALL" toggle → product matched as a base name (all design variants). */
   @IsOptional() @Transform(({ value }) => value === true || value === 'true' || value === '1') @IsBoolean() all?: boolean;
