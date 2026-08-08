@@ -199,6 +199,38 @@ export class BookingsService {
       orderBy: [{ orderId: 'asc' }, { id: 'asc' }],
     });
 
+    // Dispatch + Challan, per line — a two-hop lookup since ChallanItem only
+    // carries dispatchId, not orderItemId (mirrors OrdersService.timeline()).
+    const orderItemIds = orderItems.map((it) => it.id);
+    const dispatches = orderItemIds.length
+      ? await this.prisma.dispatch.findMany({
+          where: { orderItemId: { in: orderItemIds } },
+          select: { id: true, orderItemId: true, bags: true, pcs: true, gram: true, dispatchStatus: true },
+          orderBy: [{ orderItemId: 'asc' }, { id: 'asc' }],
+        })
+      : [];
+    const dispatchIds = dispatches.map((d) => d.id);
+    const challanItems = dispatchIds.length
+      ? await this.prisma.challanItem.findMany({
+          where: { dispatchId: { in: dispatchIds } },
+          include: { challan: { select: { code: true, challanStatus: true } } },
+        })
+      : [];
+    // Dispatch -> its challan (prefer a non-cancelled one when re-challaned).
+    const challanByDispatch = new Map<number, { code: string; challanStatus: string }>();
+    for (const ci of challanItems) {
+      if (ci.dispatchId == null || !ci.challan) continue;
+      const cur = challanByDispatch.get(ci.dispatchId);
+      if (cur && cur.challanStatus !== 'CANCELLED') continue;
+      challanByDispatch.set(ci.dispatchId, ci.challan);
+    }
+    const dispatchesByItem = new Map<number, typeof dispatches>();
+    for (const d of dispatches) {
+      const list = dispatchesByItem.get(d.orderItemId) ?? [];
+      list.push(d);
+      dispatchesByItem.set(d.orderItemId, list);
+    }
+
     const groups = new Map<number, BookingPdfOrderGroup>();
     for (const it of orderItems) {
       let group = groups.get(it.order.id);
@@ -212,6 +244,9 @@ export class BookingsService {
         groups.set(it.order.id, group);
       }
       const qty = it.calField === 'PCS' ? (it.pcs ?? 0) : (it.gram ?? 0);
+      const itemDispatches = dispatchesByItem.get(it.id) ?? [];
+      const fullyDispatched = itemDispatches.some((d) => d.dispatchStatus === 'FULLY DISPATCH');
+      const challanCodes = [...new Set(itemDispatches.map((d) => challanByDispatch.get(d.id)?.code).filter((c): c is string => !!c))];
       group.lines.push({
         productName: it.productName,
         designType: it.designType && it.designType.toUpperCase() !== 'NA' ? it.designType : null,
@@ -221,6 +256,11 @@ export class BookingsService {
         rate: it.rate,
         amount: round2((it.rate ?? 0) * qty),
         status: it.status,
+        dispatchStatus: fullyDispatched ? 'FULL' : itemDispatches.length ? 'PARTIAL' : 'PENDING',
+        dispatchedBags: round2(itemDispatches.reduce((s, d) => s + (d.bags ?? 0), 0)),
+        dispatchedKgs: round2(itemDispatches.reduce((s, d) => s + (d.gram ?? 0), 0)),
+        dispatchedPcs: round2(itemDispatches.reduce((s, d) => s + (d.pcs ?? 0), 0)),
+        challanCodes,
       });
     }
 
@@ -247,7 +287,9 @@ export class BookingsService {
         groups: [...groups.values()],
       }),
     );
-    return { buffer, filename: `${booking.code ?? this.codeFor(booking.id)}.pdf` };
+    const stamp = booking.code ?? this.codeFor(booking.id);
+    const safeCustomer = booking.customerName.replace(/[\\/:*?"<>|]/g, '-').trim();
+    return { buffer, filename: `${safeCustomer}_${stamp}.pdf` };
   }
 
   /**
@@ -901,6 +943,14 @@ interface BookingPdfLine {
   rate: number | null;
   amount: number;
   status: string;
+  /** PENDING = nothing shipped yet, PARTIAL = some shipped, FULL = a "FULLY
+   *  DISPATCH" record exists — mirrors the same status Dispatch Order uses. */
+  dispatchStatus: 'PENDING' | 'PARTIAL' | 'FULL';
+  dispatchedBags: number;
+  dispatchedKgs: number;
+  dispatchedPcs: number;
+  /** Invoice(s) this line's dispatch(es) were billed on, if any. */
+  challanCodes: string[];
 }
 
 interface BookingPdfOrderGroup {
@@ -969,7 +1019,8 @@ function buildBookingPdfDoc(b: BookingPdfData): TDocumentDefinitions {
   const num = (text: string, extra: Cell = {}): Cell => ({ text, fontSize: BODY, alignment: 'right', noWrap: true, color: BLACK, ...extra });
   const head = (text: string, extra: Cell = {}): Cell => ({ text, fontSize: BODY + 0.5, bold: true, characterSpacing: 0.3, color: BLACK, ...extra });
 
-  const COLS = 7; // Product, Design, Bags, Kgs, Pcs, Rate, Amount
+  const COLS = 8; // Product, Design, Bags, Kgs, Pcs, Rate, Amount, Dispatch
+  const COL_WIDTHS = ['*', 52, 32, 32, 26, 40, 52, 88];
   const colRow: Cell[] = [
     head('Product'),
     head('Design'),
@@ -978,8 +1029,21 @@ function buildBookingPdfDoc(b: BookingPdfData): TDocumentDefinitions {
     head('Pcs', { alignment: 'right' }),
     head('Rate', { alignment: 'right' }),
     head('Amount', { alignment: 'right' }),
+    head('Dispatch / Challan'),
   ];
   const spanRow = (cell: Cell): Cell[] => [{ ...cell, colSpan: COLS }, ...Array.from({ length: COLS - 1 }, () => ({ text: '' }))];
+
+  const DISPATCH_LABEL: Record<BookingPdfLine['dispatchStatus'], string> = { PENDING: 'Pending', PARTIAL: 'Partial', FULL: 'Full' };
+  const dispatchCell = (l: BookingPdfLine, style: Cell): Cell => {
+    const qtyBits = [l.dispatchedBags ? `${amt2(l.dispatchedBags)}b` : null, l.dispatchedKgs ? `${amt2(l.dispatchedKgs)}k` : null, l.dispatchedPcs ? `${amt2(l.dispatchedPcs)}p` : null].filter(Boolean);
+    return {
+      stack: [
+        { text: DISPATCH_LABEL[l.dispatchStatus], fontSize: BODY - 0.5, bold: l.dispatchStatus === 'FULL', ...style },
+        ...(qtyBits.length ? [{ text: qtyBits.join(' '), fontSize: BODY - 2, ...style }] : []),
+        ...(l.challanCodes.length ? [{ text: l.challanCodes.join(', '), fontSize: BODY - 2, ...style }] : []),
+      ],
+    };
+  };
 
   const lineRow = (l: BookingPdfLine): Cell[] => {
     const cancelled = l.status === 'CANCELLED';
@@ -992,6 +1056,7 @@ function buildBookingPdfDoc(b: BookingPdfData): TDocumentDefinitions {
       num(amt2(l.pcs), style),
       num(amt2(l.rate), style),
       num(amt2(l.amount), style),
+      dispatchCell(l, style),
     ];
   };
 
@@ -1008,30 +1073,40 @@ function buildBookingPdfDoc(b: BookingPdfData): TDocumentDefinitions {
       txt(''),
       txt(''),
       num(amt2z(amount), { bold: true }),
+      txt(''),
     ];
   };
 
-  // Build the body while recording which row boundaries get a rule, mirroring
-  // the ledger PDF's "column rules run full-height, horizontal rules only
-  // frame the headings, groups and totals" skeleton.
-  const body: Cell[][] = [colRow];
-  const hLine = new Map<number, number>([
-    [0, 1],
-    [1, 1],
-  ]);
-  for (const g of b.groups) {
-    hLine.set(body.length, 0.6);
-    body.push(spanRow(head(`Order ${g.orderCode}   ·   ${pdfDate(g.orderDate)}   ·   ${g.orderStatus}`)));
-    for (const l of g.lines) body.push(lineRow(l));
-    hLine.set(body.length, 0.6);
-    body.push(subtotalRow(g));
-  }
-  if (!b.groups.length) {
-    body.push(spanRow(txt('Nothing converted from this booking yet.', { italics: true, alignment: 'center', margin: [0, 4, 0, 4] })));
-  }
+  // Each order is its own boxed, unbreakable block — never split across a page
+  // and never runs into the next order's rows — rather than one continuous
+  // table for the whole booking.
+  const orderBlocks = b.groups.map((g) => {
+    const rows: Cell[][] = [colRow, ...g.lines.map(lineRow), subtotalRow(g)];
+    const totalsAt = rows.length - 1;
+    return {
+      unbreakable: true,
+      stack: [
+        { text: `Order ${g.orderCode}   ·   ${pdfDate(g.orderDate)}   ·   ${g.orderStatus}`, bold: true, fontSize: BODY + 0.5, margin: [1, 0, 0, 3] },
+        {
+          table: { headerRows: 1, dontBreakRows: true, widths: COL_WIDTHS, body: rows },
+          layout: {
+            hLineWidth: (i: number) => (i === 0 || i === 1 || i === totalsAt || i === rows.length ? 1 : 0.4),
+            vLineWidth: () => 0.8,
+            hLineColor: () => BLACK,
+            vLineColor: () => BLACK,
+            paddingLeft: () => 3,
+            paddingRight: () => 3,
+            paddingTop: () => 4,
+            paddingBottom: () => 4,
+          },
+        },
+      ],
+      margin: [0, 0, 0, 12],
+    };
+  });
+
   const active = b.groups.flatMap((g) => g.lines.filter((l) => l.status !== 'CANCELLED'));
-  hLine.set(body.length, 1.5);
-  body.push([
+  const grandTotalRow: Cell[] = [
     txt(''),
     txt('Grand Total', { bold: true, fontSize: BODY + 0.5 }),
     num(amt2z(round2(active.reduce((s, l) => s + (l.bags ?? 0), 0))), { bold: true, fontSize: BODY + 0.5 }),
@@ -1039,8 +1114,22 @@ function buildBookingPdfDoc(b: BookingPdfData): TDocumentDefinitions {
     txt(''),
     txt(''),
     num(amt2z(round2(active.reduce((s, l) => s + l.amount, 0))), { bold: true, fontSize: BODY + 0.5 }),
-  ]);
-  hLine.set(body.length, 1.5);
+    txt(''),
+  ];
+  const grandTotalBlock = {
+    unbreakable: true,
+    table: { widths: COL_WIDTHS, body: [grandTotalRow] },
+    layout: {
+      hLineWidth: () => 1.5,
+      vLineWidth: () => 0.8,
+      hLineColor: () => BLACK,
+      vLineColor: () => BLACK,
+      paddingLeft: () => 3,
+      paddingRight: () => 3,
+      paddingTop: () => 4,
+      paddingBottom: () => 4,
+    },
+  };
 
   const summaryCell = (label: string, bags: number, kgs: number): Cell => ({
     stack: [
@@ -1112,19 +1201,9 @@ function buildBookingPdfDoc(b: BookingPdfData): TDocumentDefinitions {
           ]
         : []),
 
-      {
-        table: { headerRows: 1, dontBreakRows: true, widths: ['*', 70, 42, 42, 36, 50, 62], body },
-        layout: {
-          hLineWidth: (i: number) => hLine.get(i) ?? 0,
-          vLineWidth: () => 0.5,
-          hLineColor: () => BLACK,
-          vLineColor: () => BLACK,
-          paddingLeft: () => 3,
-          paddingRight: () => 3,
-          paddingTop: () => 4,
-          paddingBottom: () => 4,
-        },
-      },
+      ...(orderBlocks.length
+        ? [...orderBlocks, grandTotalBlock]
+        : [{ text: 'Nothing converted from this booking yet.', italics: true, alignment: 'center', margin: [0, 8, 0, 8] }]),
 
       ...(b.comment ? [{ text: `Comment: ${b.comment}`, fontSize: 9, italics: true, margin: [0, 10, 0, 0] }] : []),
     ],
