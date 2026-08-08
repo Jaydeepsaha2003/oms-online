@@ -68,6 +68,10 @@ export interface PendingLineDto {
   /** True when this line already has an open back-date approval request — lets
    *  the pending list show "Pending approval" instead of looking untouched. */
   hasPendingApproval?: boolean;
+  /** Name of whoever currently has this line's dispatch dialog open (see
+   *  DispatchService's in-memory line lock), so other users see it's taken
+   *  before they even try to open it. Null/absent = free to open. */
+  lockedByName?: string | null;
 }
 
 /**

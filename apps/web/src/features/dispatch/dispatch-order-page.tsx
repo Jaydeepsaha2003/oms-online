@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Camera, CalendarClock, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Filter, Flame, Hourglass, Loader2, Package, PackageCheck, RotateCcw, TriangleAlert, Truck, X } from 'lucide-react';
+import { Camera, CalendarClock, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Filter, Flame, Hourglass, Loader2, Lock, Package, PackageCheck, RotateCcw, TriangleAlert, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { DISPATCH_EXPORT_COLUMNS, qtyOrderForCategory, type DispatchStatus, type PendingLineDto, type QtyField } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -58,6 +58,16 @@ const PendingApprovalBadge = () => (
   </span>
 );
 
+/** Shown when another user currently has this line's dispatch dialog open (see
+ *  useLineLock) — lets people see a line is taken before they even try to open
+ *  it, instead of only finding out from the "try again in a moment" toast. */
+const LockedBadge = ({ name }: { name: string }) => (
+  <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-600 ring-1 ring-inset ring-slate-200 dark:bg-slate-500/15 dark:text-slate-300 dark:ring-slate-400/25">
+    <Lock className="size-3" />
+    {name}
+  </span>
+);
+
 /** Priority is always shown — URGENT stands out in rose, NORMAL as a quiet slate chip. */
 const PriorityBadge = ({ p }: { p: string | null }) =>
   p === 'URGENT' ? (
@@ -83,17 +93,19 @@ const RAIL_TONE: Record<string, string> = { Due: 'bg-emerald-500', 'Past Due': '
 /** A tactile, native-feeling pending-line card for phones. Tap anywhere to dispatch. */
 function DispatchCard({ line, index, showRates, onClick }: { line: PendingLineDto; index: number; showRates: boolean; onClick: () => void }) {
   const urgent = line.priority === 'URGENT';
+  const locked = !!line.lockedByName;
   const qtys = ([['Bags', line.remBags], ['Pcs', line.remPcs], ['Kgs', line.remKgs], ['Box', line.remBox]] as const).filter(([, v]) => v > 0);
   const pendingAmt = line.rate != null ? Math.round(line.rate * ((line.calField ?? '').toUpperCase() === 'PCS' ? line.remPcs : line.remKgs)) : null;
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={() => (locked ? toast.error(`${line.lockedByName} is currently dispatching this line — try again in a moment.`) : onClick())}
       className={cn(
         'group bg-card relative block w-full overflow-hidden rounded-2xl border text-left shadow-sm transition-transform duration-150 ease-out active:scale-[0.98] [touch-action:manipulation]',
         // URGENT also gets a faint red wash + ring across the whole card, not just
         // the rail — "deep red" should be impossible to miss while scanning.
         urgent && 'border-rose-300 bg-rose-50/60 ring-1 ring-rose-200 dark:border-rose-400/30 dark:bg-rose-500/[0.06] dark:ring-rose-400/20',
+        locked && 'opacity-60',
       )}
     >
       <span className={cn('absolute inset-y-0 left-0 w-1.5', urgent ? 'bg-rose-800' : (RAIL_TONE[line.dueType] ?? 'bg-blue-900'))} aria-hidden />
@@ -106,9 +118,10 @@ function DispatchCard({ line, index, showRates, onClick }: { line: PendingLineDt
           <DueBadge t={line.dueType} />
         </div>
 
-        {line.hasPendingApproval && (
-          <div>
-            <PendingApprovalBadge />
+        {(line.hasPendingApproval || locked) && (
+          <div className="flex flex-wrap gap-1.5">
+            {line.hasPendingApproval && <PendingApprovalBadge />}
+            {locked && <LockedBadge name={line.lockedByName!} />}
           </div>
         )}
 
@@ -169,7 +182,7 @@ const CONTROL_ON = 'border-amber-500 bg-amber-50 text-amber-900 font-semibold da
 const COLUMNS: DataColumn<PendingLineDto>[] = [
   { id: 'order', label: 'ORD#', pin: 'left0', pinWidthClass: 'sm:w-16 sm:min-w-16', fixed: true, cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{shortOrderCode(r.orderCode, r.orderId)}</span> },
   { id: 'orderDate', label: 'Order date', cell: (r) => <span className={cn(TEXT_CELL, 'whitespace-nowrap tabular-nums')}>{formatDate(r.orderDate)}</span> },
-  { id: 'due', label: 'Due', cell: (r) => <span className={cn(TEXT_CELL, 'flex items-center gap-1.5 whitespace-nowrap tabular-nums')}>{formatDate(r.dueDate)} <DueBadge t={r.dueType} /> {r.hasPendingApproval && <PendingApprovalBadge />}</span> },
+  { id: 'due', label: 'Due', cell: (r) => <span className={cn(TEXT_CELL, 'flex items-center gap-1.5 whitespace-nowrap tabular-nums')}>{formatDate(r.dueDate)} <DueBadge t={r.dueType} /> {r.hasPendingApproval && <PendingApprovalBadge />} {r.lockedByName && <LockedBadge name={r.lockedByName} />}</span> },
   {
     id: 'customer',
     label: 'Customer',
@@ -584,7 +597,7 @@ export function DispatchOrderPage() {
             // paint, no scrolling the whole page down to reach it.
             fill
             emptyText="No pending order lines — everything is dispatched."
-            onRowClick={(r) => setActive(r)}
+            onRowClick={(r) => (r.lockedByName ? toast.error(`${r.lockedByName} is currently dispatching this line — try again in a moment.`) : setActive(r))}
             className={[
               'font-sans text-[13px]',
               // Rows are click-to-dispatch, so block accidental text selection (a
@@ -1083,8 +1096,13 @@ function DispatchSheet({
             <div className="px-3 pb-3">
               {/* Photos captured here are permanent proof-of-dispatch — once
                   attached, nobody can remove one from this screen (see the
-                  admin-only delete in Modify Dispatch instead). */}
-              <LiveLinePhotos orderItemId={line.orderItemId} canEdit={can('order:update')} canDelete={false} hideHeader />
+                  admin-only delete in Modify Dispatch instead). Gated on
+                  dispatch:create (the permission that actually lets someone
+                  save a dispatch, and reach this dialog at all) rather than
+                  order:update — a shop-floor dispatch role otherwise gets
+                  blocked by the mandatory-photo rule above with no way to
+                  satisfy it, since it usually doesn't hold order:update. */}
+              <LiveLinePhotos orderItemId={line.orderItemId} canEdit={can('dispatch:create')} canDelete={false} hideHeader />
             </div>
           )}
         </div>

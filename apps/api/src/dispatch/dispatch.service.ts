@@ -16,6 +16,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { ApprovalsService } from '../approvals/approvals.service';
 import { AuditService } from '../audit/audit.service';
+import { NotificationsGateway } from '../notifications/notifications.gateway';
 import { formatDate } from '../common/date.util';
 import { toNum, toStr, uc } from '../common/coerce';
 import { CreateDispatchDto, DispatchQueryDto, PendingQueryDto, UpdateDispatchDto } from './dto/dispatch.dto';
@@ -85,6 +86,7 @@ export class DispatchService implements OnModuleInit {
     private readonly approvals: ApprovalsService,
     private readonly audit: AuditService,
     private readonly notifier: DispatchNotifier,
+    private readonly gateway: NotificationsGateway,
   ) {}
 
   /* ── Editing locks: "someone else has this line open" ──────────────────────
@@ -106,10 +108,15 @@ export class DispatchService implements OnModuleInit {
     const now = Date.now();
     const existing = this.lineLocks.get(orderItemId);
     const mine = (existing?.userId ?? null) === (user.id ?? null);
-    if (existing && !mine && now - existing.acquiredAt < DispatchService.LOCK_TTL_MS) {
+    const wasLive = !!existing && now - existing.acquiredAt < DispatchService.LOCK_TTL_MS;
+    if (existing && !mine && wasLive) {
       throw new ConflictException(`${existing.userName} is currently working on this item — try again in a moment.`);
     }
     this.lineLocks.set(orderItemId, { userId: user.id ?? null, userName: user.name ?? 'Another user', acquiredAt: now });
+    // Only a genuinely new/newly-live lock changes what other users' pending
+    // lists should show — a heartbeat renewal (same user, still live) doesn't,
+    // so it skips the broadcast rather than pinging every open tab every 30s.
+    if (!(mine && wasLive)) this.gateway.emitDispatchLockChanged();
     return { ok: true };
   }
 
@@ -117,7 +124,21 @@ export class DispatchService implements OnModuleInit {
    *  (so a stale/duplicate release call can never steal another user's lock). */
   releaseLock(orderItemId: number, user: { id?: string | null }): void {
     const existing = this.lineLocks.get(orderItemId);
-    if (existing && (existing.userId ?? null) === (user.id ?? null)) this.lineLocks.delete(orderItemId);
+    if (existing && (existing.userId ?? null) === (user.id ?? null)) {
+      this.lineLocks.delete(orderItemId);
+      this.gateway.emitDispatchLockChanged();
+    }
+  }
+
+  /** Live (non-expired) locks right now, keyed by orderItemId — folded into the
+   *  pending pool so other users see a line is taken before they try to open it. */
+  private activeLockNames(): Map<number, string> {
+    const now = Date.now();
+    const out = new Map<number, string>();
+    for (const [orderItemId, lock] of this.lineLocks) {
+      if (now - lock.acquiredAt < DispatchService.LOCK_TTL_MS) out.set(orderItemId, lock.userName);
+    }
+    return out;
   }
 
   /**
@@ -429,7 +450,15 @@ export class DispatchService implements OnModuleInit {
     const total = lines.length;
     const page = lines.slice(query.skip, query.skip + query.pageSize);
     const pendingIds = await this.pendingApprovalOrderItemIds();
-    const items = pendingIds.size ? page.map((l) => (pendingIds.has(l.orderItemId) ? { ...l, hasPendingApproval: true } : l)) : page;
+    const locks = this.activeLockNames();
+    const items =
+      pendingIds.size || locks.size
+        ? page.map((l) => ({
+            ...l,
+            ...(pendingIds.has(l.orderItemId) ? { hasPendingApproval: true } : {}),
+            lockedByName: locks.get(l.orderItemId) ?? null,
+          }))
+        : page;
     return { items, total, page: query.page, pageSize: query.pageSize, totalPages: Math.max(1, Math.ceil(total / query.pageSize)) };
   }
 

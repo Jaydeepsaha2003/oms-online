@@ -96,4 +96,13 @@ export class NotificationsGateway implements OnGatewayConnection {
     this.server.emit('challans:pending-changed');
     return this.server.sockets.sockets.size;
   }
+
+  /** Silent data-changed ping: a Dispatch Order line's soft edit-lock was
+   *  acquired or released, so every open Pending Dispatch view re-fetches and
+   *  shows/clears that line's "being dispatched by X" state live, instead of
+   *  only finding out when someone else tries to open it themselves. */
+  emitDispatchLockChanged(): number {
+    this.server.emit('dispatch:lock-changed');
+    return this.server.sockets.sockets.size;
+  }
 }
