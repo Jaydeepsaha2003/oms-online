@@ -1077,14 +1077,17 @@ function buildBookingPdfDoc(b: BookingPdfData): TDocumentDefinitions {
     ];
   };
 
-  // Each order is its own boxed, unbreakable block — never split across a page
-  // and never runs into the next order's rows — rather than one continuous
-  // table for the whole booking.
+  // Each order is its own boxed block — a bordered table of its own, under its
+  // own bold "Order …" label — rather than one continuous table for the whole
+  // booking. Deliberately NOT `unbreakable`: pdfmake silently drops an
+  // unbreakable block entirely once it's taller than one page (confirmed on a
+  // booking with 40+ lines under one order — the whole table vanished), so a
+  // large order is instead left free to paginate normally, repeating its own
+  // header row (`headerRows: 1`) on the next page like any other long table.
   const orderBlocks = b.groups.map((g) => {
     const rows: Cell[][] = [colRow, ...g.lines.map(lineRow), subtotalRow(g)];
     const totalsAt = rows.length - 1;
     return {
-      unbreakable: true,
       stack: [
         { text: `Order ${g.orderCode}   ·   ${pdfDate(g.orderDate)}   ·   ${g.orderStatus}`, bold: true, fontSize: BODY + 0.5, margin: [1, 0, 0, 3] },
         {

@@ -164,7 +164,7 @@ export class ReportsService {
     const fx = await this.resolveFilter(f);
 
     const [challans, receipts, orders, custRows, backlog, recvByInv] = await Promise.all([
-      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { code: true, invDate: true, total: true, category: true, customerName: true, customerId: true, transaction: true } }),
+      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { code: true, invDate: true, total: true, b: true, c: true, category: true, customerName: true, customerId: true, transaction: true } }),
       this.prisma.acctPaymentReceipt.findMany({ select: { recDate: true, recAmt: true, payMode: true, custId: true } }),
       this.prisma.order.findMany({ where: { status: { not: 'CANCELLED' } }, select: { orderDate: true, customerId: true } }),
       this.prisma.customer.findMany({ select: { id: true, region: true, agentName: true } }),
@@ -225,7 +225,10 @@ export class ReportsService {
     const owing = new Set<string>();
     const activeIds = new Set(sales.filter((c) => inWin(c.invDate)).map((c) => c.customerId != null ? `c:${c.customerId}` : `n:${c.customerName.trim().toUpperCase()}`));
     for (const c of sales) {
-      const balance = Math.max(0, n(c.total) - (recvByInv.get(c.code) ?? 0));
+      // b + c (not the gross total) — a handful of invoices have b/c reduced
+      // below the gross total to reflect a debit note issued against them,
+      // and total − receipts alone would still show those as fully owed.
+      const balance = Math.max(0, n(c.b) + n(c.c) - (recvByInv.get(c.code) ?? 0));
       if (balance <= 0) continue;
       outstanding += balance;
       owing.add(c.customerId != null ? `c:${c.customerId}` : `n:${c.customerName.trim().toUpperCase()}`);
@@ -262,11 +265,18 @@ export class ReportsService {
     return new Date(d.getFullYear(), d.getMonth(), d.getDate());
   }
 
-  /** Received amount per invoice number (challan code) — the collections join key. */
+  /** Received + written-off amount per invoice number (challan code) — the
+   *  collections join key. Discounts count as settled money same as a receipt
+   *  (Party Ledger and Payments both already treat them that way); without
+   *  this, a discount-cleared invoice reads as still fully owed here. */
   private async receivedByInvoice(): Promise<Map<string, number>> {
-    const receipts = await this.prisma.acctPaymentReceipt.findMany({ select: { invNo: true, recAmt: true } });
+    const [receipts, discounts] = await Promise.all([
+      this.prisma.acctPaymentReceipt.findMany({ select: { invNo: true, recAmt: true } }),
+      this.prisma.acctPartyDiscount.findMany({ select: { invNo: true, disAmt: true } }),
+    ]);
     const m = new Map<string, number>();
     for (const r of receipts) m.set(r.invNo, (m.get(r.invNo) ?? 0) + n(r.recAmt));
+    for (const d of discounts) m.set(d.invNo, (m.get(d.invNo) ?? 0) + n(d.disAmt));
     return m;
   }
 
@@ -361,7 +371,7 @@ export class ReportsService {
     const DAY = 86_400_000;
     const fx = await this.resolveFilter(f);
     const [challans, custRows, advances, recvByInv, lastRec, payFollowups] = await Promise.all([
-      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { code: true, total: true, invDate: true, dueDate: true, customerId: true, customerName: true, transaction: true } }),
+      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { code: true, total: true, b: true, c: true, invDate: true, dueDate: true, customerId: true, customerName: true, transaction: true } }),
       this.prisma.customer.findMany({ select: { id: true, partyName: true, agentName: true } }),
       this.prisma.acctPartyAdvance.findMany({ select: { custId: true, bankAmt: true, cashAmt: true } }),
       this.receivedByInvoice(),
@@ -402,7 +412,8 @@ export class ReportsService {
     let overdue = 0;
     let dueSoon = 0;
     for (const c of sales) {
-      const bal = Math.max(0, n(c.total) - (recvByInv.get(c.code) ?? 0));
+      // b + c (not the gross total) — see receivedByInvoice()'s comment.
+      const bal = Math.max(0, n(c.b) + n(c.c) - (recvByInv.get(c.code) ?? 0));
       if (bal <= 0) continue;
       totalOutstanding += bal;
       const key = c.customerName || '—';
@@ -560,7 +571,7 @@ export class ReportsService {
     const fx = await this.resolveFilter(f);
     const [custs, challans, orders, recvByInv] = await Promise.all([
       this.prisma.customer.findMany({ where: { active: true }, select: { id: true, partyName: true, agentName: true } }),
-      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { customerId: true, customerName: true, total: true, code: true, invDate: true, transaction: true } }),
+      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { customerId: true, customerName: true, total: true, b: true, c: true, code: true, invDate: true, transaction: true } }),
       this.prisma.order.findMany({ where: { status: { not: 'CANCELLED' } }, select: { customerId: true, customerName: true, orderDate: true } }),
       this.receivedByInvoice(),
     ]);
@@ -587,7 +598,8 @@ export class ReportsService {
     for (const c of allSales) {
       const a = get(c.customerName, c.customerId ?? null);
       if (c.invDate <= asOfDate) { a.lifeRevenue += n(c.total); a.lifeInvoices += 1; }
-      a.outstanding += Math.max(0, n(c.total) - (recvByInv.get(c.code) ?? 0));
+      // b + c (not the gross total) — see receivedByInvoice()'s comment.
+      a.outstanding += Math.max(0, n(c.b) + n(c.c) - (recvByInv.get(c.code) ?? 0));
     }
     for (const o of orders) {
       if (!fx.custOk(o.customerId) || o.orderDate > asOfDate) continue;
