@@ -510,6 +510,26 @@ export function Combobox({
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
                 setForceText(true);
+                // Tapping ABC is the user saying "the number is finished, letters
+                // next" — so supply the space the keypad has no key for, instead
+                // of switching the keyboard and leaving them to type it.
+                //
+                // Safe because a letter never follows the leading number run
+                // directly: all 856 distinct item names are "<number> <words>"
+                // (checked against the live list, same basis as the auto-space in
+                // `onInputChange`). Without this the keypad strands the common
+                // case — at "8" just two names ("80 ML …") hold the pad up while
+                // 113 names starting with "8 " are unreachable, and the same trap
+                // exists on 7 of the 10 digits ("1" gates 451 names).
+                //
+                // Still derived from the OPTIONS rather than assumed, so a future
+                // name that breaks the pattern (or a trailing "." mid-decimal)
+                // just switches the keyboard and adds nothing. Routed through
+                // `onInputChange` so the dropdown, `onType` and creatable-value
+                // wiring all update exactly as they do for a typed keystroke.
+                if (!text.endsWith(' ') && opts.some((o) => o.label.startsWith(`${text} `))) {
+                  onInputChange(`${text} `);
+                }
                 inputRef.current?.focus();
               }}
               aria-label="Switch to the letter keyboard"

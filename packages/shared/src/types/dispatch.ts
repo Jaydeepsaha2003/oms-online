@@ -175,11 +175,17 @@ export type DispatchQuery = PaginationQuery & {
   dateTo?: string;
 };
 /** Distinct values present in dispatch records, for the Modify Dispatch filters.
- *  `subCategories` is only populated for the pending pool (Dispatch Order page). */
+ *  `categories` / `subCategories` are only populated for the pending pool
+ *  (Dispatch Order page). */
 export interface DispatchFilterOptions {
   customers: string[];
   /** Distinct sales agents present in dispatch records (Modify Dispatch filter). */
   agents?: string[];
+  /** Distinct PRODUCT categories (GLASS / CUP / LOTI / …) — the line's `pCategory`,
+   *  not the order-level `category`. A short list (single digits in practice),
+   *  which is what makes it usable as a top-level filter above the product picker:
+   *  choosing one cuts the product options down to that category's items. */
+  categories?: string[];
   products: string[];
   /** Base product names (design suffix stripped, e.g. "15 Rajwadi") — the option
    *  set the Dispatch Order product picker shows when its "ALL" toggle is on, so a
@@ -216,6 +222,8 @@ export type PendingQuery = PaginationQuery & {
   agent?: string;
   product?: string;
   design?: string;
+  /** Product category (matched against the line's `pCategory`). */
+  category?: string;
   subCategory?: string;
   /** "ALL" toggle (mirrors the legacy Form13 checkbox linked to SelectProduct):
    *  when true the `product` value is matched as a base-name prefix so every design
