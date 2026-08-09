@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Ban, ChevronLeft, ChevronRight, ExternalLink, Loader2, RotateCcw, Save, Trash2, Undo2 } from 'lucide-react';
+import { Ban, ChevronLeft, ChevronRight, ExternalLink, Filter, Loader2, RotateCcw, Save, Trash2, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { OrderDto, OrderInput, OrderItemDto, QtyField } from '@oms/shared';
 import { ORDER_LINE_EXPORT_COLUMNS, ORDER_PRIORITIES, qtyOrderForCategory, resolveSpecialRates } from '@oms/shared';
@@ -165,6 +165,7 @@ export function OrderModifyPage() {
   const [design, setDesign] = useState('');
   const [priority, setPriority] = useState('');
   const [orderId, setOrderId] = useState('');
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const { page, setPage, pageSize, setPageSize } = usePageSize('order-modify');
 
   // Priority goes to the server too, so it prunes lines exactly like the other
@@ -208,6 +209,9 @@ export function OrderModifyPage() {
     }
   };
   const hasFilters = !!customer || !!agent || !!product || !!design || !!priority || !!orderId;
+  // Product/Agent/Design/Priority move behind the Filter icon on phones — this
+  // count feeds its badge and drives the mobile sheet's own Reset button.
+  const activeFilterCount = (product ? 1 : 0) + (agent ? 1 : 0) + (design ? 1 : 0) + (priority ? 1 : 0);
   const resetFilters = () => {
     setCustomer('');
     setAgent('');
@@ -332,7 +336,23 @@ export function OrderModifyPage() {
               className={cn(CONTROL, 'font-medium', customer && CONTROL_ON)}
             />
           </div>
-          <div className="w-40">
+          {/* Phones: Product / Agent / Design / Priority move behind this icon
+              (see the sheet below) — they don't fit the toolbar at phone widths. */}
+          <Button
+            variant="outline"
+            size="icon"
+            className={cn('relative size-9 shrink-0 rounded-[4px] border-amber-300 lg:hidden', activeFilterCount > 0 && CONTROL_ON)}
+            onClick={() => setMobileFiltersOpen(true)}
+            aria-label="Filters"
+          >
+            <Filter className="size-4" />
+            {activeFilterCount > 0 && (
+              <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-bold tabular-nums">
+                {activeFilterCount}
+              </span>
+            )}
+          </Button>
+          <div className="hidden w-40 lg:block">
             <NativeSelect
               value={product}
               onChange={(v) => { setProduct(v); setPage(1); }}
@@ -341,7 +361,7 @@ export function OrderModifyPage() {
               className={cn(CONTROL, 'font-medium', product && CONTROL_ON)}
             />
           </div>
-          <div className="w-36">
+          <div className="hidden w-36 lg:block">
             <NativeSelect
               value={agent}
               onChange={(v) => { setAgent(v); setPage(1); }}
@@ -350,7 +370,7 @@ export function OrderModifyPage() {
               className={cn(CONTROL, 'font-medium', agent && CONTROL_ON)}
             />
           </div>
-          <div className="w-36">
+          <div className="hidden w-36 lg:block">
             <NativeSelect
               value={design}
               onChange={(v) => { setDesign(v); setPage(1); }}
@@ -359,7 +379,7 @@ export function OrderModifyPage() {
               className={cn(CONTROL, 'font-medium', design && CONTROL_ON)}
             />
           </div>
-          <div className="w-32">
+          <div className="hidden w-32 lg:block">
             <NativeSelect
               value={priority}
               onChange={(v) => { setPriority(v); setPage(1); }}
@@ -372,7 +392,7 @@ export function OrderModifyPage() {
             <Button
               variant="ghost"
               size="sm"
-              className="h-9 shrink-0 rounded-[4px] text-[12.5px] font-semibold text-amber-700 hover:bg-amber-50 hover:text-amber-900 dark:text-amber-300 dark:hover:bg-amber-400/10"
+              className="hidden h-9 shrink-0 rounded-[4px] text-[12.5px] font-semibold text-amber-700 hover:bg-amber-50 hover:text-amber-900 lg:inline-flex dark:text-amber-300 dark:hover:bg-amber-400/10"
               onClick={resetFilters}
               title="Clear all filters"
             >
@@ -393,6 +413,69 @@ export function OrderModifyPage() {
           </div>
         </div>
       </div>
+
+      {/* Phones only: Product / Agent / Design / Priority live behind the Filter icon above. */}
+      <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
+        <SheetContent side="bottom" className="font-poppins lg:hidden">
+          <SheetHeader>
+            <div className="flex items-center justify-between">
+              <SheetTitle>Filters</SheetTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground -mr-2 gap-1.5 font-semibold"
+                onClick={resetFilters}
+                disabled={activeFilterCount === 0}
+              >
+                <RotateCcw className="size-3.5" /> Reset
+              </Button>
+            </div>
+          </SheetHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Product</Label>
+              <NativeSelect
+                value={product}
+                onChange={(v) => { setProduct(v); setPage(1); }}
+                options={['', ...(filterOptions?.products ?? [])]}
+                placeholder="All products"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Agent</Label>
+              <NativeSelect
+                value={agent}
+                onChange={(v) => { setAgent(v); setPage(1); }}
+                options={['', ...(filterOptions?.agents ?? [])]}
+                placeholder="All agents"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Design</Label>
+              <NativeSelect
+                value={design}
+                onChange={(v) => { setDesign(v); setPage(1); }}
+                options={['', ...(filterOptions?.designs ?? [])]}
+                placeholder="All designs"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Priority</Label>
+              <NativeSelect
+                value={priority}
+                onChange={(v) => { setPriority(v); setPage(1); }}
+                options={['', ...ORDER_PRIORITIES]}
+                placeholder="All priorities"
+              />
+            </div>
+          </div>
+          <SheetFooter>
+            <Button className="w-full font-bold" onClick={() => setMobileFiltersOpen(false)}>
+              Show {(data?.total ?? 0).toLocaleString('en-IN')} lines
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
 
       {/* The table/card list takes the leftover height and scrolls WITHIN itself
           (both directions on desktop), so the horizontal scrollbar sits right

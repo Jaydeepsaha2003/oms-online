@@ -150,6 +150,14 @@ const apiProxy = {
     target: 'http://127.0.0.1:4000',
     changeOrigin: true,
     agent: apiAgent,
+    // Pass the real client on as X-Forwarded-For. Without it every request
+    // reaches Nest from 127.0.0.1 (this proxy), which had two consequences the
+    // whole LAN shared: the rate limiter counted ALL users against ONE 300/min
+    // bucket per route — so the more people worked at once, the sooner everyone
+    // got 429s that the UI reported as "the server may be stopped" — and the
+    // audit trail recorded 127.0.0.1 as the actor's IP for every entry.
+    // `trust proxy` is already enabled on the Nest side to read this.
+    xfwd: true,
     configure: (proxy: any) => {
       proxy.on('error', (err: any) => {
         console.warn('[vite proxy error /api]:', err.message);
@@ -170,6 +178,8 @@ const apiProxy = {
     target: 'http://127.0.0.1:4000',
     changeOrigin: true,
     ws: true,
+    xfwd: true, // same reasoning as /api above
+
     configure: (proxy: any) => {
       proxy.on('error', (err: any) => {
         console.warn('[vite proxy error /socket.io]:', err.message);

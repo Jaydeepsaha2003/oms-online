@@ -16,11 +16,22 @@ import { useEffect, useRef, useState } from 'react';
  */
 const HEALTH_URL = `${import.meta.env.VITE_API_URL || '/api'}/health`;
 const POLL_MS = 10_000;
-const TIMEOUT_MS = 5_000;
+const TIMEOUT_MS = 8_000;
+/**
+ * How many checks in a row must fail before the user is told the server is
+ * down. One dropped or slow probe — a Wi-Fi hiccup, a moment of load — is not
+ * an outage, and reporting it as one made a perfectly healthy server look like
+ * it kept "switching off", especially with several people working at once.
+ */
+const FAILURES_BEFORE_OFFLINE = 2;
 
 const REASON_DEVICE = 'This device has no internet or Wi-Fi connection.';
 const REASON_SERVER =
   'Can’t reach the OMS server — the server app may be stopped, or the host PC may be switched off.';
+/** The server ANSWERED, just not with a success. It is definitively running,
+ *  so saying "it may be switched off" would be plainly wrong. */
+const reasonHttp = (code: number) =>
+  `The OMS server is running and reachable, but answered with an error (HTTP ${code}). It should recover on its own; if this keeps up, check the server log.`;
 
 export type ServerStatus = 'connected' | 'offline';
 
@@ -36,6 +47,7 @@ export function useServerStatus(): ServerStatusState {
   const [state, setState] = useState<ServerStatusState>({ status: 'connected', reason: null, checking: true });
   const timer = useRef<ReturnType<typeof setTimeout>>();
   const alive = useRef(true);
+  const failures = useRef(0);
 
   useEffect(() => {
     alive.current = true;
@@ -51,27 +63,38 @@ export function useServerStatus(): ServerStatusState {
       if (typeof document !== 'undefined' && document.hidden) return schedule();
       // Device-level offline is instantly knowable; no request needed.
       if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        failures.current = FAILURES_BEFORE_OFFLINE; // this one is certain, don't wait it out
         setState({ status: 'offline', reason: REASON_DEVICE, checking: false });
         return schedule();
       }
       setState((s) => ({ ...s, checking: true }));
       const ctrl = new AbortController();
       const to = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+
+      /** Only report an outage once it has been confirmed by a repeat check. */
+      const fail = (reason: string) => {
+        failures.current += 1;
+        if (failures.current >= FAILURES_BEFORE_OFFLINE) setState({ status: 'offline', reason, checking: false });
+        else setState((s) => ({ ...s, checking: false }));
+      };
+      const ok = () => {
+        failures.current = 0;
+        setState({ status: 'connected', reason: null, checking: false });
+      };
+
       try {
         const res = await fetch(HEALTH_URL, { signal: ctrl.signal, cache: 'no-store' });
         if (!alive.current) return;
-        setState(
-          res.ok
-            ? { status: 'connected', reason: null, checking: false }
-            : { status: 'offline', reason: REASON_SERVER, checking: false },
-        );
+        // Any answer at all — including 429/5xx — proves the server is up and
+        // listening. Only a total lack of response can mean it's stopped.
+        // 429 in particular is a healthy server deliberately shedding load, and
+        // reporting that as "switched off" is what made busy periods look like
+        // the server kept dying.
+        if (res.ok || res.status === 429) ok();
+        else fail(reasonHttp(res.status));
       } catch {
         if (!alive.current) return;
-        setState({
-          status: 'offline',
-          reason: navigator.onLine === false ? REASON_DEVICE : REASON_SERVER,
-          checking: false,
-        });
+        fail(navigator.onLine === false ? REASON_DEVICE : REASON_SERVER);
       } finally {
         clearTimeout(to);
         schedule();
