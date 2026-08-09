@@ -1,6 +1,6 @@
 import { PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsArray, IsBoolean, IsNumber, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsNumber, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 export class CreateDesignDto {
@@ -44,6 +44,8 @@ export class SetDesignFlagsDto {
 export class DesignQueryDto extends PaginationDto {
   @IsOptional() @IsString() category?: string;
   @IsOptional() @IsString() subCategory?: string;
+  /** standalone = used in no combination; combined = used in at least one. */
+  @IsOptional() @IsIn(['standalone', 'combined']) combinationStatus?: 'standalone' | 'combined';
 }
 
 export class ImportDesignsDto {

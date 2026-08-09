@@ -40,10 +40,16 @@ export class DesignTrackService {
     // The master's own type set, so a line's `design` column is only read as a
     // type when it really is one — see resolveLineDesignType.
     const knownTypes = new Set(available);
+    // A combination type ("DL+WL") tracks automatically once any of its
+    // component designs is picked — the Settings picker only ever offers plain
+    // designs (see settings.service.ts), so this is the only place combinations
+    // get matched at all.
+    const matchesTracked = (type: string) =>
+      tracked.has(type) || (type.includes('+') && type.split('+').some((part) => tracked.has(part.trim())));
 
     const lines = (await this.dispatch.pendingPool()).filter((l) => {
       const type = resolveLineDesignType(l, knownTypes);
-      return type != null && tracked.has(type);
+      return type != null && matchesTracked(type);
     });
     if (!lines.length) return [];
 

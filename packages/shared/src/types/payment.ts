@@ -187,6 +187,19 @@ export interface EditPaymentResult {
   replayedCount: number;
 }
 
+/**
+ * Removing a receipt entirely. Same reverse-and-replay as an edit — the deleted
+ * voucher is simply the one not replayed — so every invoice it had paid goes
+ * back to pending and every LATER receipt for the party re-allocates onto the
+ * invoices it should have paid. Subject to the same {@link LedgerEntryDto.editable}
+ * requirement as an edit.
+ */
+export interface DeletePaymentResult {
+  voucherNo: string;
+  /** How many later vouchers were reversed and replayed as a consequence. */
+  replayedCount: number;
+}
+
 /* ── Ledger listing (voucher history) ─────────────────────────────────────── */
 
 export interface LedgerEntryDto {

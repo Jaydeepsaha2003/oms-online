@@ -15,6 +15,7 @@ import type {
   DiscountHistoryList,
   DiscountInvoiceList,
   DiscountInvoiceQuery,
+  DeletePaymentResult,
   EditPaymentInput,
   EditPaymentResult,
   LedgerList,
@@ -256,6 +257,15 @@ export function useEditPayment() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...input }: { id: number } & EditPaymentInput) => http.patch<EditPaymentResult>(`/payments/${id}`, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PAYMENT_KEY }),
+  });
+}
+
+/** Remove a receipt — the server puts back every invoice/advance it had settled. */
+export function useDeletePayment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => http.delete<DeletePaymentResult>(`/payments/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: PAYMENT_KEY }),
   });
 }

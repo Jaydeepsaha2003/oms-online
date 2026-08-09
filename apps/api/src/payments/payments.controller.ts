@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
@@ -58,5 +58,14 @@ export class PaymentsController {
   @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Edited a payment receipt' })
   edit(@Param('id', ParseIntPipe) id: number, @Body() dto: EditPaymentDto, @CurrentUser('name') userName?: string) {
     return this.payments.editReceipt(id, dto, userName);
+  }
+
+  /** Remove a receipt — reverses this voucher and everything saved after it for
+   *  the same party/agent, then replays them all except this one. */
+  @Delete(':id')
+  @Permissions(perm(R, ACTIONS.DELETE))
+  @Audit({ action: ACTIONS.DELETE, resource: R, description: 'Deleted a payment receipt' })
+  remove(@Param('id', ParseIntPipe) id: number) {
+    return this.payments.deleteReceipt(id);
   }
 }

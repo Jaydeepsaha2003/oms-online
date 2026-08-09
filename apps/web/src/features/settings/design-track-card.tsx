@@ -26,7 +26,11 @@ export function DesignTrackCard({ canEdit }: { canEdit: boolean }) {
     if (data) setSelected(new Set(data.selected));
   }, [data]);
 
-  const available = data?.available ?? [];
+  // Combination types ("DL+WL") are excluded here on purpose — picking a plain
+  // design (e.g. "DL") auto-tracks every combination built from it too, so
+  // listing combinations alongside plain designs would only double the list
+  // without adding a choice the user actually needs to make.
+  const available = useMemo(() => (data?.available ?? []).filter((d) => !d.includes('+')), [data]);
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return q ? available.filter((d) => d.toLowerCase().includes(q)) : available;
@@ -63,8 +67,9 @@ export function DesignTrackCard({ canEdit }: { canEdit: boolean }) {
           <Sparkles className="size-4 text-indigo-600" /> Design Track
         </CardTitle>
         <p className="text-muted-foreground text-xs">
-          Pick the design types Dispatch → Design Track should list. Only distinct designs are offered, and only these
-          appear on that screen — nothing selected means the grid stays empty.
+          Pick the design types Dispatch → Design Track should list. Only plain designs are offered here — pick "DL"
+          and lines using any combination built from it (e.g. "DL+WL") are tracked automatically. Nothing selected
+          means the grid stays empty.
         </p>
       </CardHeader>
       <CardContent className="space-y-3">

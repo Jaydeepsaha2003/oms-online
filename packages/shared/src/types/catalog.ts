@@ -60,6 +60,9 @@ export interface DesignDto {
   active: boolean;
   /** Whether this design is shown on the customer Rate List. */
   showOnRateList: boolean;
+  /** Names of every Combination this design is a component of — empty means
+   *  it's used standalone, never combined with another design. */
+  combinationNames: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -153,6 +156,8 @@ export type DesignQuery = PaginationQuery & {
   /** Exact-match list filters (Designs page dropdowns). */
   category?: string;
   subCategory?: string;
+  /** standalone = used in no combination; combined = used in at least one. */
+  combinationStatus?: 'standalone' | 'combined';
 };
 export type DesignNameQuery = PaginationQuery;
 export type CombinationQuery = PaginationQuery & {

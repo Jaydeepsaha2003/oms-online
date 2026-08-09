@@ -70,6 +70,12 @@ const CONTROL =
   'h-9 rounded-[4px] border-amber-300 dark:border-amber-400/40 text-[12.5px] focus-visible:border-amber-500 focus-visible:ring-amber-400/30';
 const CONTROL_ON = 'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
 
+const COMBINATION_STATUS_OPTIONS = [
+  { value: '', label: 'All designs' },
+  { value: 'standalone', label: 'Standalone only' },
+  { value: 'combined', label: 'Combined only' },
+];
+
 /** Margin = rate − cost; up/green for profit, down/red for loss, dash when unknown. */
 const marginCell = (cost: number | null, rate: number | null) => {
   if (cost == null || rate == null) return <span className="text-muted-foreground text-[13px]">—</span>;
@@ -107,6 +113,30 @@ function DesignActiveToggle({ design }: { design: DesignDto }) {
   );
 }
 
+/** Standalone vs. combined indicator for a design row — chips list the
+ *  combination(s) it's a component of, or a plain "Standalone" pill. */
+function CombinationBadge({ names }: { names: string[] }) {
+  if (names.length === 0) {
+    return (
+      <span className="text-muted-foreground inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold ring-1 ring-slate-200 ring-inset dark:bg-white/5 dark:ring-white/10">
+        Standalone
+      </span>
+    );
+  }
+  return (
+    <div className="flex max-w-xs flex-wrap gap-1">
+      {names.map((n) => (
+        <span
+          key={n}
+          className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700 ring-1 ring-indigo-200 ring-inset dark:bg-indigo-400/10 dark:text-indigo-300 dark:ring-indigo-400/25"
+        >
+          {n}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 /** Inline "show on rate list" checkbox for a design row. */
 function DesignRateListCheckbox({ design }: { design: DesignDto }) {
   const setFlags = useSetDesignFlags();
@@ -137,6 +167,7 @@ export function DesignsPage() {
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
   const [subCategory, setSubCategory] = useState('');
+  const [combinationStatus, setCombinationStatus] = useState<'' | 'standalone' | 'combined'>('');
   const { page, setPage, pageSize, setPageSize } = usePageSize('designs-merged');
   const [editing, setEditing] = useState<DesignDto | null>(null);
   const [creating, setCreating] = useState(false);
@@ -145,10 +176,11 @@ export function DesignsPage() {
   // After a new design is created, offer to combine it with same-category designs.
   const [combineWith, setCombineWith] = useState<DesignDto | null>(null);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
-  const activeFilterCount = (category ? 1 : 0) + (subCategory ? 1 : 0);
+  const activeFilterCount = (category ? 1 : 0) + (subCategory ? 1 : 0) + (combinationStatus ? 1 : 0);
   const resetFilters = () => {
     setCategory('');
     setSubCategory('');
+    setCombinationStatus('');
     setPage(1);
   };
 
@@ -158,6 +190,7 @@ export function DesignsPage() {
     search: search || undefined,
     category: category || undefined,
     subCategory: subCategory || undefined,
+    combinationStatus: combinationStatus || undefined,
   };
   const { data, isLoading } = useDesigns(query);
   const del = useDeleteDesign();
@@ -295,6 +328,12 @@ export function DesignsPage() {
       { id: 'cost', label: 'Cost', align: 'right', sortValue: (d) => d.cost, cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(d.cost)}</span> },
       { id: 'rate', label: 'Rate', align: 'right', sortValue: (d) => d.rate, cell: (d) => <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(d.rate)}</span> },
       { id: 'margin', label: 'Margin', align: 'right', sortValue: (d) => (d.cost != null && d.rate != null ? d.rate - d.cost : null), cell: (d) => marginCell(d.cost, d.rate) },
+      {
+        id: 'combinations',
+        label: 'Combinations',
+        noSort: true,
+        cell: (d) => <CombinationBadge names={d.combinationNames} />,
+      },
       { id: 'active', label: 'Active', sortValue: (d) => (d.active ? 1 : 0), cell: (d) => <div className="flex justify-center"><DesignActiveToggle design={d} /></div> },
     ],
     [selected],
@@ -305,6 +344,24 @@ export function DesignsPage() {
     { id: 'category', label: 'Category', sortValue: (c) => c.category, cell: (c) => <span className={TEXT_CELL}>{c.category || '—'}</span> },
     { id: 'subCategory', label: 'Sub category', sortValue: (c) => c.subCategory, cell: (c) => <span className={TEXT_CELL}>{c.subCategory || '—'}</span> },
     { id: 'name', label: 'Design type', sortValue: (c) => c.name, cell: (c) => <span className={cn(TEXT_CELL, 'text-indigo-700 dark:text-indigo-300')}>{c.name}</span> },
+    {
+      id: 'designs',
+      label: 'Designs',
+      noSort: true,
+      cell: (c) => (
+        <div className="flex max-w-xs flex-wrap gap-1">
+          {c.designs.map((d) => (
+            <span
+              key={d.id}
+              className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700 ring-1 ring-indigo-200 ring-inset dark:bg-indigo-400/10 dark:text-indigo-300 dark:ring-indigo-400/25"
+              title={`${d.category} / ${d.subCategory}`}
+            >
+              {d.designType}
+            </span>
+          ))}
+        </div>
+      ),
+    },
     { id: 'cost', label: 'Cost', align: 'right', sortValue: (c) => c.cost, cell: (c) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(c.cost)}</span> },
     { id: 'rate', label: 'Rate', align: 'right', sortValue: (c) => c.rate, cell: (c) => <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(c.rate)}</span> },
     { id: 'margin', label: 'Margin', align: 'right', sortValue: (c) => (c.cost != null && c.rate != null ? c.rate - c.cost : null), cell: (c) => marginCell(c.cost, c.rate) },
@@ -351,6 +408,7 @@ export function DesignsPage() {
             <p className="text-muted-foreground truncate text-[11.5px] font-medium">
               {d.category} · {d.subCategory}
             </p>
+            <div className="mt-1"><CombinationBadge names={d.combinationNames} /></div>
           </div>
         </div>
         <DesignActiveToggle design={d} />
@@ -500,6 +558,18 @@ export function DesignsPage() {
                 className={cn(CONTROL, 'font-medium', subCategory && CONTROL_ON)}
               />
             </div>
+            <div className="hidden w-44 lg:block">
+              <NativeSelect
+                value={combinationStatus}
+                onChange={(v) => {
+                  setCombinationStatus(v as '' | 'standalone' | 'combined');
+                  setPage(1);
+                }}
+                options={COMBINATION_STATUS_OPTIONS}
+                placeholder="All designs"
+                className={cn(CONTROL, 'font-medium', combinationStatus && CONTROL_ON)}
+              />
+            </div>
             <p className="text-muted-foreground shrink-0 text-[12px] font-medium tabular-nums">
               <span className="font-bold text-foreground">{(data?.total ?? 0).toLocaleString('en-IN')}</span> designs
             </p>
@@ -584,6 +654,18 @@ export function DesignsPage() {
                   }}
                   options={['', ...subCategoryOptions]}
                   placeholder="All sub categories"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Combinations</Label>
+                <NativeSelect
+                  value={combinationStatus}
+                  onChange={(v) => {
+                    setCombinationStatus(v as '' | 'standalone' | 'combined');
+                    setPage(1);
+                  }}
+                  options={COMBINATION_STATUS_OPTIONS}
+                  placeholder="All designs"
                 />
               </div>
             </div>

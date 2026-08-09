@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import {
   type ChequeOptionRow,
+  type DeletePaymentResult,
   type DueType,
   type EditPaymentResult,
   type LedgerEntryDto,
@@ -45,6 +46,25 @@ function dueTypeOf(invDate: Date, dueDate: Date | null, today: Date): { dueType:
 
 /** The prisma delegate set usable both from the service root and inside $transaction. */
 type Db = Prisma.TransactionClient;
+
+/** One saved voucher, as stored — the unit an edit/delete reverses and replays. */
+type LedgerRow = Prisma.AcctLedgerGetPayload<object>;
+
+/** The corrected figures an edit applies to its own target voucher. Every other
+ *  voucher in the replay chain (and every voucher during a delete) replays with
+ *  no override, i.e. exactly as it was originally recorded. */
+interface ReplayOverride {
+  recDate: Date;
+  payMode: string;
+  bankName: string | null;
+  chequeNo: string | null;
+  cashLoc: string | null;
+  cashBy: string | null;
+  remarks: string | null;
+  receiptAmt: number;
+  editedAt: Date;
+  editedByName: string | null;
+}
 
 /** Everything {@link PaymentsService.runWaterfall} needs to create one voucher.
  *  `receiptRefId`/`advanceRefId` are REUSED when non-null (an edit's replay),
@@ -383,68 +403,143 @@ export class PaymentsService {
     const remarks = dto.remarks?.trim().toUpperCase() || null;
 
     return this.prisma.$transaction(async (tx) => {
-      // The replay chain: this voucher plus every later RECEIPT voucher for the
-      // same party (custId) or agent group (agentName) — see the scope-limit note above.
-      const chain = await tx.acctLedger.findMany({
-        where: {
-          id: { gte: target.id },
-          voucherType: 'RECEIPT',
-          ...(target.custId !== 0 ? { custId: target.custId } : { agentName: target.agentName }),
-        },
-        orderBy: { id: 'asc' },
-      });
-      const blocker = chain.find((row) => row.adjMode == null);
-      if (blocker) {
-        throw new BadRequestException(
-          blocker.id === target.id
-            ? 'This receipt predates edit support and cannot be edited.'
-            : `Receipt ${blocker.voucherNo} (saved after this one, for the same party/agent) predates edit support — this receipt can't be safely edited until then.`,
-        );
-      }
-
-      // Reverse every voucher in the chain, most-recent first.
-      for (const row of [...chain].reverse()) {
-        await tx.acctPaymentReceipt.deleteMany({ where: { sourceVoucherNo: row.voucherNo } });
-        await tx.acctPartyAdvance.deleteMany({ where: { sourceVoucherNo: row.voucherNo } });
-        await tx.acctOpeningTrans.deleteMany({ where: { sourceVoucherNo: row.voucherNo } });
-        await tx.acctLedger.delete({ where: { id: row.id } });
-      }
+      const chain = await this.loadReplayChain(tx, target, 'edited');
+      await this.reverseChain(tx, chain);
 
       // Replay each voucher in original order — the target with the corrected
       // figures, everything after it exactly as it was originally recorded.
+      const corrected: ReplayOverride = {
+        recDate,
+        payMode: dto.payMode,
+        bankName,
+        chequeNo,
+        cashLoc,
+        cashBy,
+        remarks,
+        receiptAmt,
+        editedAt: new Date(),
+        editedByName: userName ?? null,
+      };
       for (const row of chain) {
-        const isTarget = row.id === target.id;
-        const isAgent = row.custId === 0;
-        const customers = await this.resolveCustomers(tx, isAgent ? null : row.custId, isAgent ? row.agentName : null);
-        const rowPayMode = isTarget ? dto.payMode : row.transMode;
-
-        await this.runWaterfall(tx, {
-          voucherNo: row.voucherNo,
-          receiptRefId: row.receiptRefId,
-          advanceRefId: row.advanceRefId,
-          recDate: isTarget ? recDate : row.transDate,
-          customers,
-          isAgent,
-          agentName: isAgent ? row.agentName : null,
-          headName: isAgent ? row.agentName! : customers[0].name,
-          headId: isAgent ? 0 : customers[0].id,
-          payMode: rowPayMode,
-          bankName: isTarget ? bankName : row.bankName,
-          chequeNo: isTarget ? chequeNo : row.chequeNo,
-          cashLoc: isTarget ? cashLoc : row.cashTransLocation,
-          cashBy: isTarget ? cashBy : row.cashRecBy,
-          remarks: isTarget ? remarks : row.transRemarks,
-          adjMode: row.adjMode!,
-          selectedInvNos: row.selectedInvNos ? (JSON.parse(row.selectedInvNos) as string[]) : undefined,
-          receiptAmt: isTarget ? receiptAmt : row.bankCredit || row.cashCredit,
-          userName: row.userName,
-          editedAt: isTarget ? new Date() : row.editedAt,
-          editedByName: isTarget ? (userName ?? null) : row.editedByName,
-          createdAt: row.createdAt,
-        });
+        await this.replayRow(tx, row, row.id === target.id ? corrected : undefined);
       }
 
       return { voucherNo: target.voucherNo, replayedCount: chain.length - 1 };
+    });
+  }
+
+  /**
+   * Remove an already-saved receipt, putting every balance back exactly where it
+   * would have been had the receipt never been entered.
+   *
+   * Deleting is the same problem as editing (see {@link editReceipt}): the money
+   * is spread across opening clearances, invoice allocations and an advance
+   * spill, and every LATER receipt for the same party/agent allocated itself
+   * against the balances this one left behind. So it reuses the same machinery —
+   * reverse this voucher and every later one, then replay them all EXCEPT this
+   * one. Not replaying it is what makes it a delete, and replaying the rest is
+   * what re-points them at the invoices they should have paid all along.
+   *
+   * The same scope limit and edit-support requirement as `editReceipt` apply.
+   */
+  async deleteReceipt(id: number): Promise<DeletePaymentResult> {
+    const target = await this.prisma.acctLedger.findUnique({ where: { id } });
+    if (!target) throw new NotFoundException('Receipt not found.');
+    if (target.voucherType !== 'RECEIPT') throw new BadRequestException('Only a receipt voucher can be deleted here.');
+    if (target.adjMode == null) throw new BadRequestException('This receipt predates edit support and cannot be deleted.');
+
+    // Tally Reconciliation stamps the voucher it created onto the report row and
+    // then refuses to enter that row again. Deleting the voucher out from under
+    // that stamp would strand the row as "already entered as RN/x" against a
+    // receipt that no longer exists — and since voucher numbers are max+1 over
+    // live rows, the number could later be handed to an unrelated receipt.
+    const reconciled = await this.prisma.tallyReconRow.findFirst({
+      where: { resolvedRef: target.voucherNo },
+      select: { id: true },
+    });
+    if (reconciled) {
+      throw new BadRequestException(
+        `${target.voucherNo} was entered from Tally Reconciliation. Reset that row in the reconciliation report first, then delete this receipt.`,
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const chain = await this.loadReplayChain(tx, target, 'deleted');
+      await this.reverseChain(tx, chain);
+      for (const row of chain) {
+        if (row.id === target.id) continue; // not replaying it IS the delete
+        await this.replayRow(tx, row);
+      }
+      return { voucherNo: target.voucherNo, replayedCount: chain.length - 1 };
+    });
+  }
+
+  /**
+   * This voucher plus every later RECEIPT voucher for the same party (custId) or
+   * agent group (agentName) — the set whose allocations could depend on it, and
+   * so the set that has to be reversed and replayed together. Throws when any
+   * member predates edit support, since it could not be faithfully replayed.
+   */
+  private async loadReplayChain(tx: Db, target: LedgerRow, verb: 'edited' | 'deleted'): Promise<LedgerRow[]> {
+    const chain = await tx.acctLedger.findMany({
+      where: {
+        id: { gte: target.id },
+        voucherType: 'RECEIPT',
+        ...(target.custId !== 0 ? { custId: target.custId } : { agentName: target.agentName }),
+      },
+      orderBy: { id: 'asc' },
+    });
+    const blocker = chain.find((row) => row.adjMode == null);
+    if (blocker) {
+      throw new BadRequestException(
+        blocker.id === target.id
+          ? `This receipt predates edit support and cannot be ${verb}.`
+          : `Receipt ${blocker.voucherNo} (saved after this one, for the same party/agent) predates edit support — this receipt can't be safely ${verb} until then.`,
+      );
+    }
+    return chain;
+  }
+
+  /** Undo every row the chain's vouchers wrote, most-recent first. `sourceVoucherNo`
+   *  is stamped on all three child tables precisely so this is exact. */
+  private async reverseChain(tx: Db, chain: LedgerRow[]): Promise<void> {
+    for (const row of [...chain].reverse()) {
+      await tx.acctPaymentReceipt.deleteMany({ where: { sourceVoucherNo: row.voucherNo } });
+      await tx.acctPartyAdvance.deleteMany({ where: { sourceVoucherNo: row.voucherNo } });
+      await tx.acctOpeningTrans.deleteMany({ where: { sourceVoucherNo: row.voucherNo } });
+      await tx.acctLedger.delete({ where: { id: row.id } });
+    }
+  }
+
+  /** Re-run one reversed voucher through the waterfall. Without `override` it is
+   *  replayed exactly as originally recorded; with one, the target's figures are
+   *  corrected. Voucher number and REC-/ADV- ref ids are always reused. */
+  private async replayRow(tx: Db, row: LedgerRow, override?: ReplayOverride): Promise<void> {
+    const isAgent = row.custId === 0;
+    const customers = await this.resolveCustomers(tx, isAgent ? null : row.custId, isAgent ? row.agentName : null);
+    await this.runWaterfall(tx, {
+      voucherNo: row.voucherNo,
+      receiptRefId: row.receiptRefId,
+      advanceRefId: row.advanceRefId,
+      recDate: override?.recDate ?? row.transDate,
+      customers,
+      isAgent,
+      agentName: isAgent ? row.agentName : null,
+      headName: isAgent ? row.agentName! : customers[0].name,
+      headId: isAgent ? 0 : customers[0].id,
+      payMode: override?.payMode ?? row.transMode,
+      bankName: override ? override.bankName : row.bankName,
+      chequeNo: override ? override.chequeNo : row.chequeNo,
+      cashLoc: override ? override.cashLoc : row.cashTransLocation,
+      cashBy: override ? override.cashBy : row.cashRecBy,
+      remarks: override ? override.remarks : row.transRemarks,
+      adjMode: row.adjMode!,
+      selectedInvNos: row.selectedInvNos ? (JSON.parse(row.selectedInvNos) as string[]) : undefined,
+      receiptAmt: override?.receiptAmt ?? (row.bankCredit || row.cashCredit),
+      userName: row.userName,
+      editedAt: override?.editedAt ?? row.editedAt,
+      editedByName: override ? override.editedByName : row.editedByName,
+      createdAt: row.createdAt,
     });
   }
 

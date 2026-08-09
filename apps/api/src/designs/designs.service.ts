@@ -5,7 +5,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { toNum, uc } from '../common/coerce';
 import { CreateDesignDto, DesignQueryDto, ImportDesignsDto, SetDesignFlagsDto, UpdateDesignDto } from './dto/design.dto';
 
-type Row = Prisma.DesignGetPayload<object>;
+const INCLUDE = { combinationLinks: { include: { combination: { select: { name: true } } } } } as const;
+type Row = Prisma.DesignGetPayload<{ include: typeof INCLUDE }>;
+/** Plain design columns, no combination-links include — what most internal
+ *  helpers (rate-history logging, import matching) actually need. */
+type BareRow = Prisma.DesignGetPayload<object>;
 
 @Injectable()
 export class DesignsService {
@@ -26,10 +30,14 @@ export class DesignsService {
     // Exact-match dropdown filters (Designs page).
     if (query.category?.trim()) and.push({ category: query.category.trim() });
     if (query.subCategory?.trim()) and.push({ subCategory: query.subCategory.trim() });
+    // standalone = never a component of a Combination; combined = a component of at least one.
+    if (query.combinationStatus === 'standalone') and.push({ combinationLinks: { none: {} } });
+    else if (query.combinationStatus === 'combined') and.push({ combinationLinks: { some: {} } });
     const where: Prisma.DesignWhereInput = and.length ? { AND: and } : {};
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.design.findMany({
         where,
+        include: INCLUDE,
         orderBy: [{ category: 'asc' }, { designType: 'asc' }],
         skip: query.skip,
         take: query.pageSize,
@@ -46,7 +54,7 @@ export class DesignsService {
   }
 
   async findOne(id: number): Promise<DesignDto> {
-    const row = await this.prisma.design.findUnique({ where: { id } });
+    const row = await this.prisma.design.findUnique({ where: { id }, include: INCLUDE });
     if (!row) throw new NotFoundException('Design not found.');
     return this.toDto(row);
   }
@@ -77,7 +85,7 @@ export class DesignsService {
 
   async create(dto: CreateDesignDto): Promise<DesignDto> {
     try {
-      const row = await this.prisma.design.create({ data: this.toData(dto) });
+      const row = await this.prisma.design.create({ data: this.toData(dto), include: INCLUDE });
       return this.toDto(await this.ensureCode(row));
     } catch (err) {
       throw this.conflictOr(err);
@@ -88,7 +96,7 @@ export class DesignsService {
     const before = await this.prisma.design.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('Design not found.');
     try {
-      const row = await this.prisma.design.update({ where: { id }, data: this.toData(dto) });
+      const row = await this.prisma.design.update({ where: { id }, data: this.toData(dto), include: INCLUDE });
       await this.logRateChange(before, row, changedByName);
       return this.toDto(await this.ensureCode(row));
     } catch (err) {
@@ -97,7 +105,7 @@ export class DesignsService {
   }
 
   /** Record an old→new design-rate change (for booking-date repricing + audit). */
-  private async logRateChange(before: Row, after: Row, changedByName?: string | null): Promise<void> {
+  private async logRateChange(before: BareRow, after: BareRow, changedByName?: string | null): Promise<void> {
     if ((before.rate ?? null) === (after.rate ?? null)) return;
     await this.prisma.designRateHistory.create({
       data: {
@@ -121,6 +129,7 @@ export class DesignsService {
         ...(dto.active !== undefined ? { active: dto.active } : {}),
         ...(dto.showOnRateList !== undefined ? { showOnRateList: dto.showOnRateList } : {}),
       },
+      include: INCLUDE,
     });
     return this.toDto(row);
   }
@@ -132,7 +141,7 @@ export class DesignsService {
 
   /** Stable export/import column order — also used as the empty-export template. */
   exportHeaders(): string[] {
-    return ['ID', 'CODE', 'CATEGORY', 'SUB CATEGORY', 'DESIGN TYPE', 'COST', 'RATE'];
+    return ['ID', 'CODE', 'CATEGORY', 'SUB CATEGORY', 'DESIGN TYPE', 'COST', 'RATE', 'COMBINATIONS'];
   }
 
   async exportRows(query: DesignQueryDto): Promise<Record<string, unknown>[]> {
@@ -145,6 +154,7 @@ export class DesignsService {
       'DESIGN TYPE': r.designType,
       COST: r.cost ?? '',
       RATE: r.rate ?? '',
+      COMBINATIONS: r.combinationNames.join(', '),
     }));
   }
 
@@ -178,7 +188,7 @@ export class DesignsService {
           await this.logRateChange(existing, updated, 'Import');
           result.updated++;
         } else {
-          const created = await this.prisma.design.create({ data });
+          const created = await this.prisma.design.create({ data, include: INCLUDE });
           await this.ensureCode(created);
           result.created++;
         }
@@ -209,7 +219,7 @@ export class DesignsService {
 
   private async ensureCode(row: Row): Promise<Row> {
     if (row.code) return row;
-    return this.prisma.design.update({ where: { id: row.id }, data: { code: this.codeFor(row.id) } });
+    return this.prisma.design.update({ where: { id: row.id }, data: { code: this.codeFor(row.id) }, include: INCLUDE });
   }
 
   private async ensureExists(id: number): Promise<void> {
@@ -235,6 +245,7 @@ export class DesignsService {
       rate: r.rate,
       active: r.active,
       showOnRateList: r.showOnRateList,
+      combinationNames: r.combinationLinks.map((l) => l.combination.name),
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     };

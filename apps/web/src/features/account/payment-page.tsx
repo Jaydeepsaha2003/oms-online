@@ -11,6 +11,7 @@ import {
   RotateCcw,
   Save,
   ScrollText,
+  Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { LedgerEntryDto, PendingInvoiceRow, SavePaymentResult } from '@oms/shared';
@@ -26,9 +27,10 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { NativeSelect } from '@/components/common/combo';
+import { useConfirm } from '@/components/common/confirm';
 import { useCustomers } from '@/features/customers/use-customers';
 import { useAgents } from '@/features/agents/use-agents';
-import { useActiveBankAccounts, useChequeOptions, useEditPayment, usePaymentContext, usePaymentLedger, useSavePayment } from './use-account';
+import { useActiveBankAccounts, useChequeOptions, useDeletePayment, useEditPayment, usePaymentContext, usePaymentLedger, useSavePayment } from './use-account';
 import { exportPendingInvoices } from './payment-pending-export';
 
 const inr = (v: number | null | undefined) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
@@ -1083,13 +1085,39 @@ function EditPaymentDialog({ entry, onClose }: { entry: LedgerEntryDto; onClose:
 
 function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { ownerKind: string; owner: string; customerId?: number; agentName?: string; onClose: () => void }) {
   const { can } = usePermissions();
+  const confirm = useConfirm();
   const canEdit = can('payment:update');
+  const canDelete = can('payment:delete');
+  const showActions = canEdit || canDelete;
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<LedgerEntryDto | null>(null);
+  const del = useDeletePayment();
   const { data, isLoading } = usePaymentLedger({ customerId, agentName, dateFrom: fyStart(), dateTo: TODAY(), page, pageSize: 25 });
   const rows = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
-  const cols = canEdit ? 9 : 8;
+  const cols = showActions ? 9 : 8;
+
+  const handleDelete = async (r: LedgerEntryDto) => {
+    const amount = inr(r.bankCredit || r.cashCredit);
+    const ok = await confirm({
+      title: `Delete ${r.voucherNo}?`,
+      description:
+        `${r.customerName} — ${amount} received on ${prettyDate(r.transDate)} will be removed. ` +
+        'Every invoice and advance it settled goes back to pending, and any later receipt for this party is re-applied automatically. This cannot be undone.',
+      confirmText: 'Delete receipt',
+      destructive: true,
+    });
+    if (!ok) return;
+    del.mutate(r.id, {
+      onSuccess: (res) =>
+        toast.success(
+          res.replayedCount > 0
+            ? `${r.voucherNo} deleted — ${res.replayedCount} later receipt(s) recomputed`
+            : `${r.voucherNo} deleted`,
+        ),
+      onError: (e) => toast.error(getApiErrorMessage(e, 'Delete failed')),
+    });
+  };
   return (
     <>
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -1111,8 +1139,8 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
                 <th scope="col" className={cn(TH, TH_LINE)}>Particulars</th>
                 <th scope="col" className={cn(TH, TH_LINE, 'text-right')}>Bank Cr</th>
                 <th scope="col" className={cn(TH, TH_LINE, 'text-right')}>Cash Cr</th>
-                <th scope="col" className={cn(TH, canEdit && TH_LINE)}>Remarks</th>
-                {canEdit && <th scope="col" className={cn(TH, 'w-9')} />}
+                <th scope="col" className={cn(TH, showActions && TH_LINE)}>Remarks</th>
+                {showActions && <th scope="col" className={cn(TH, 'w-16')} />}
               </tr>
             </thead>
             <tbody className="select-none">
@@ -1130,28 +1158,54 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
                     <td className={cn(TD, 'max-w-56 truncate')} title={r.particulars ?? ''}>{r.particulars ?? '—'}</td>
                     <td className={cn(TD, NUM, 'font-bold')}>{r.bankCredit ? inr(r.bankCredit) : '-'}</td>
                     <td className={cn(TD, NUM, 'font-bold')}>{r.cashCredit ? inr(r.cashCredit) : '-'}</td>
-                    <td className={cn(TD, 'text-muted-foreground max-w-40 truncate', canEdit && '')} title={r.transRemarks ?? ''}>{r.transRemarks ?? '—'}</td>
-                    {canEdit && (
-                      <td className="px-1 py-[3px] text-center">
+                    <td className={cn(TD, 'text-muted-foreground max-w-40 truncate')} title={r.transRemarks ?? ''}>{r.transRemarks ?? '—'}</td>
+                    {showActions && (
+                      <td className="px-1 py-[3px]">
                         {r.voucherType === 'RECEIPT' && (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="inline-flex">
-                                <button
-                                  type="button"
-                                  disabled={!r.editable}
-                                  onClick={() => setEditing(r)}
-                                  className="text-muted-foreground hover:bg-amber-200/70 hover:text-amber-900 disabled:pointer-events-none disabled:opacity-30 inline-flex size-6 items-center justify-center rounded-[4px] dark:hover:bg-amber-400/20 dark:hover:text-amber-200"
-                                  aria-label={`Edit ${r.voucherNo}`}
-                                >
-                                  <Pencil className="size-3.5" />
-                                </button>
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent side="left" className="max-w-56">
-                              {r.editable ? 'Edit received amount / date / mode' : "Can't edit — predates edit support, or a later receipt for this party/agent does"}
-                            </TooltipContent>
-                          </Tooltip>
+                          <div className="flex items-center justify-center gap-0.5">
+                            {canEdit && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="inline-flex">
+                                    <button
+                                      type="button"
+                                      disabled={!r.editable}
+                                      onClick={() => setEditing(r)}
+                                      className="text-muted-foreground hover:bg-amber-200/70 hover:text-amber-900 disabled:pointer-events-none disabled:opacity-30 inline-flex size-6 items-center justify-center rounded-[4px] dark:hover:bg-amber-400/20 dark:hover:text-amber-200"
+                                      aria-label={`Edit ${r.voucherNo}`}
+                                    >
+                                      <Pencil className="size-3.5" />
+                                    </button>
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="left" className="max-w-56">
+                                  {r.editable ? 'Edit received amount / date / mode' : "Can't edit — predates edit support, or a later receipt for this party/agent does"}
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
+                            {canDelete && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="inline-flex">
+                                    <button
+                                      type="button"
+                                      disabled={!r.editable || del.isPending}
+                                      onClick={() => handleDelete(r)}
+                                      className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-30 inline-flex size-6 items-center justify-center rounded-[4px]"
+                                      aria-label={`Delete ${r.voucherNo}`}
+                                    >
+                                      <Trash2 className="size-3.5" />
+                                    </button>
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="left" className="max-w-56">
+                                  {r.editable
+                                    ? 'Delete this receipt — invoices it paid go back to pending'
+                                    : "Can't delete — predates edit support, or a later receipt for this party/agent does"}
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
+                          </div>
                         )}
                       </td>
                     )}
