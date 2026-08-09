@@ -1076,10 +1076,31 @@ export class OrdersService {
     return this.toPhotoDto(row);
   }
 
-  /** Detach a photo and best-effort delete its file from /uploads. */
+  /** Detach a photo and best-effort delete its file from /uploads. Once a
+   *  challan has been raised against this line's dispatch, its photos are
+   *  evidence of what actually shipped and can no longer be removed — mirrors
+   *  {@link DispatchService.assertNotBilled}, checked here too since a photo
+   *  can be deleted straight from Order Modify, not only from Modify Dispatch. */
   async deletePhoto(photoId: number): Promise<void> {
     const row = await this.prisma.orderItemPhoto.findUnique({ where: { id: photoId } });
     if (!row) throw new NotFoundException('Photo not found.');
+
+    const dispatches = await this.prisma.dispatch.findMany({
+      where: { orderItemId: row.orderItemId },
+      select: { id: true },
+    });
+    if (dispatches.length) {
+      const billed = await this.prisma.challanItem.findFirst({
+        where: { dispatchId: { in: dispatches.map((d) => d.id) }, challan: { challanStatus: { not: 'CANCELLED' } } },
+        select: { challan: { select: { code: true } } },
+      });
+      if (billed) {
+        throw new BadRequestException(
+          `This line is billed on challan ${billed.challan?.code ?? ''} — its photos can no longer be deleted.`,
+        );
+      }
+    }
+
     await this.prisma.orderItemPhoto.delete({ where: { id: photoId } });
     try {
       await unlink(join(UPLOADS_DIR, row.path));

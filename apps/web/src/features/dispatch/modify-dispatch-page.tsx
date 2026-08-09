@@ -275,7 +275,7 @@ function GroupedLineRow({
         <Button variant="ghost" size="icon" className="size-6" onClick={onView} aria-label="View" title="View details">
           <Eye className="size-3.5" />
         </Button>
-        <DispatchPhotosButton orderItemId={d.orderItemId} isSuperAdmin={isSuperAdmin} compact />
+        <DispatchPhotosButton orderItemId={d.orderItemId} isSuperAdmin={isSuperAdmin} challanCode={d.challanCode} compact />
         {canEdit && (
           <Button
             variant="ghost"
@@ -558,7 +558,7 @@ function ModifyDispatchCard({
         </button>
         <div className="bg-border w-px" />
         <div className="flex flex-1 items-center justify-center py-1">
-          <DispatchPhotosButton orderItemId={d.orderItemId} isSuperAdmin={isSuperAdmin} />
+          <DispatchPhotosButton orderItemId={d.orderItemId} isSuperAdmin={isSuperAdmin} challanCode={d.challanCode} />
         </div>
         {canEdit && (
           <>
@@ -1058,7 +1058,7 @@ export function ModifyDispatchPage() {
                 <Button variant="ghost" size="icon" className="size-7" onClick={() => setViewing(d)} aria-label="View" title="View details">
                   <Eye className="size-4" />
                 </Button>
-                <DispatchPhotosButton orderItemId={d.orderItemId} isSuperAdmin={permissions.includes(ALL_PERMISSIONS)} />
+                <DispatchPhotosButton orderItemId={d.orderItemId} isSuperAdmin={permissions.includes(ALL_PERMISSIONS)} challanCode={d.challanCode} />
                 <RecordHistory
                   resource={RESOURCES.DISPATCH}
                   resourceId={d.id}
@@ -1205,10 +1205,23 @@ const toDateInput = (iso: string) => {
 /** Standalone camera-icon button that opens a read-only photo viewer dialog
  *  for the given order-item — usable from both the flat table's action column
  *  and the grouped desktop view's line rows. */
-function DispatchPhotosButton({ orderItemId, isSuperAdmin, compact = false }: { orderItemId: number; isSuperAdmin: boolean; compact?: boolean }) {
+function DispatchPhotosButton({
+  orderItemId,
+  isSuperAdmin,
+  challanCode,
+  compact = false,
+}: {
+  orderItemId: number;
+  isSuperAdmin: boolean;
+  /** Once this dispatch is billed, its photos are evidence of what actually
+   *  shipped — even a super admin can no longer delete them here. */
+  challanCode?: string | null;
+  compact?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const { data: photos } = useOrderItemPhotos(orderItemId);
   const count = photos?.length ?? 0;
+  const locked = !!challanCode;
   return (
     <>
       <Button
@@ -1233,8 +1246,13 @@ function DispatchPhotosButton({ orderItemId, isSuperAdmin, compact = false }: { 
               <DialogTitle className="flex items-center gap-2">
                 <Camera className="size-4" /> Line photos
               </DialogTitle>
+              {locked && (
+                <p className="text-muted-foreground text-xs">
+                  Billed on {challanCode} — photos can no longer be deleted.
+                </p>
+              )}
             </DialogHeader>
-            <LiveLinePhotos orderItemId={orderItemId} canEdit={false} canDelete={isSuperAdmin} hideHeader />
+            <LiveLinePhotos orderItemId={orderItemId} canEdit={false} canDelete={isSuperAdmin && !locked} hideHeader />
           </DialogContent>
         </Dialog>
       )}
@@ -1509,7 +1527,9 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
           </div>
 
           {/* Line photos — always accessible. Adding/rearranging allowed for all;
-              deleting only for super admins (proof-of-dispatch cleanup is narrow). */}
+              deleting only for super admins, and only BEFORE a challan exists —
+              once billed, the photos are proof of what actually shipped and
+              can no longer be removed by anyone. */}
           <div className="rounded-lg border border-slate-200 bg-slate-50/70 dark:border-slate-700 dark:bg-slate-800/30">
             <button type="button" onClick={() => setPhotosOpen((o) => !o)} className="flex w-full items-center justify-between gap-2 px-3 py-2.5">
               <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300">
@@ -1522,9 +1542,12 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
             </button>
             {photosOpen && (
               <div className="px-3 pb-3">
-                {/* canEdit=true so photos can be added/viewed even after billing;
-                    canDelete is restricted to super admins as before. */}
-                <LiveLinePhotos orderItemId={dispatch.orderItemId} canEdit={true} canDelete={isSuperAdmin} hideHeader />
+                {locked && (
+                  <p className="text-muted-foreground mb-2 text-[11px]">
+                    Billed on {dispatch.challanCode} — photos can no longer be deleted.
+                  </p>
+                )}
+                <LiveLinePhotos orderItemId={dispatch.orderItemId} canEdit={true} canDelete={isSuperAdmin && !locked} hideHeader />
               </div>
             )}
           </div>
