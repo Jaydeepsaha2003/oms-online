@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Ban, ChevronLeft, ChevronRight, EllipsisVertical, Filter, Link2, PackageOpen, Plus, Printer, RotateCcw, Search, Split, TriangleAlert, Trash2 } from 'lucide-react';
+import { Ban, ChevronLeft, ChevronRight, EllipsisVertical, FileSearch, Filter, Link2, PackageOpen, Plus, Printer, RotateCcw, Search, Split, TriangleAlert, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { BookingDto, BookingStatus } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
-import { downloadPdf } from '@/lib/pdf';
+import { downloadPdf, openPdf } from '@/lib/pdf';
 import { cn, shortOrderCode } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -138,6 +138,13 @@ export function BookingsPage() {
     void downloadPdf(`/bookings/${b.id}/pdf`, `${b.code}.pdf`).catch((e) => toast.error(getApiErrorMessage(e, 'PDF failed')));
   };
 
+  /** Same statement as Print PDF, opened in a new tab instead of saved as a
+   *  file — for a quick look at the bags' journey (booked → converted →
+   *  dispatched → billed) without a download hitting the user's device. */
+  const handlePreview = (b: BookingDto) => {
+    void openPdf(`/bookings/${b.id}/pdf`, `${b.code}.pdf`).catch((e) => toast.error(getApiErrorMessage(e, 'Preview failed')));
+  };
+
   const handleDelete = async (b: BookingDto) => {
     const ok = await confirm({
       title: 'Delete this booking?',
@@ -177,6 +184,9 @@ export function BookingsPage() {
         <DropdownMenuContent align="end" className="w-60 font-sans">
           {can('booking:print') && (
             <>
+              <DropdownMenuItem onSelect={() => handlePreview(b)}>
+                <FileSearch className="text-violet-600" /> Preview PDF
+              </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => handlePrint(b)}>
                 <Printer /> Print PDF
               </DropdownMenuItem>

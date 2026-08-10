@@ -1126,7 +1126,11 @@ model BookingItem {
 model BookingConversion {
   id              Int      @id @default(autoincrement())
   bookingId       Int
-  orderItemId     Int?
+  // Unique (not just indexed): an OrderItem is drawn from at most one booking
+  // ever, so this is a stable 1:1 handle recompute() upserts against instead of
+  // deleting/recreating the row — which is what lets `removedAt` below survive
+  // across repeated recomputes instead of being wiped every time.
+  orderItemId     Int?     @unique
   productName     String?
   designType      String?
   bags            Float?
@@ -1137,6 +1141,21 @@ model BookingConversion {
   amount          Float?
   convertedByName String?
   convertedAt     DateTime @default(now())
+  // Snapshot of the order the line landed on, captured at every recompute —
+  // survives even if the Order (or just this line) is later hard-deleted, which
+  // is the only case `orderItemId`'s own join can no longer resolve.
+  orderId         Int?
+  orderCode       String?
+  orderDate       DateTime?
+  // Set once this line stops counting toward Booking.convertedBags/Kgs — i.e. it
+  // (or its whole order) was cancelled, or the OrderItem row itself was deleted
+  // outright. Frozen at the moment it happens (recompute() never pushes it
+  // forward on a later, unrelated call) so the PDF can show exactly how this
+  // qty was used before it stopped counting.
+  removedAt       DateTime?
+  // LINE_CANCELLED | ORDER_CANCELLED | LINE_DELETED
+  removedReason   String?
+  removedByName   String?
 
   booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 

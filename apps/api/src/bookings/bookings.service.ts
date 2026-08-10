@@ -211,6 +211,17 @@ export class BookingsService {
       orderBy: [{ orderId: 'asc' }, { id: 'asc' }],
     });
 
+    // The durable audit trail (see recompute()) — gives every non-live line
+    // (cancelled OR hard-deleted) its "removed" attribution, and is the ONLY
+    // remaining trace of a line whose OrderItem row no longer exists at all.
+    const conversions = await this.prisma.bookingConversion.findMany({ where: { bookingId: id } });
+    const conversionByItemId = new Map(conversions.map((c) => [c.orderItemId, c]));
+    const liveItemIds = new Set(orderItems.map((it) => it.id));
+    // A line can only be hard-deleted while it has never been dispatched (see
+    // OrdersService.update()'s "Mark it Cancelled instead" guard), so a ghost
+    // line never needs a dispatch/challan lookup — it simply never had one.
+    const ghostConversions = conversions.filter((c) => c.orderItemId != null && !liveItemIds.has(c.orderItemId) && c.removedReason === 'LINE_DELETED');
+
     // Dispatch + Challan, per line — a two-hop lookup since ChallanItem only
     // carries dispatchId, not orderItemId (mirrors OrdersService.timeline()).
     const orderItemIds = orderItems.map((it) => it.id);
@@ -259,6 +270,7 @@ export class BookingsService {
       const itemDispatches = dispatchesByItem.get(it.id) ?? [];
       const fullyDispatched = itemDispatches.some((d) => d.dispatchStatus === 'FULLY DISPATCH');
       const challanCodes = [...new Set(itemDispatches.map((d) => challanByDispatch.get(d.id)?.code).filter((c): c is string => !!c))];
+      const removal = conversionByItemId.get(it.id);
       group.lines.push({
         productName: it.productName,
         designType: it.designType && it.designType.toUpperCase() !== 'NA' ? it.designType : null,
@@ -273,9 +285,49 @@ export class BookingsService {
         dispatchedKgs: round2(itemDispatches.reduce((s, d) => s + (d.gram ?? 0), 0)),
         dispatchedPcs: round2(itemDispatches.reduce((s, d) => s + (d.pcs ?? 0), 0)),
         challanCodes,
+        removedAt: removal?.removedAt ?? null,
+        removedReason: removal?.removedReason ?? null,
+        removedByName: removal?.removedByName ?? null,
       });
     }
 
+    // Ghost lines: the OrderItem row is gone entirely, so this snapshot from
+    // recompute() is the only surviving trace of it. Grouped under its
+    // snapshotted order — the SAME order group as any of that order's still-
+    // existing lines, if there are any, so a partially-deleted order doesn't
+    // print as two separate blocks.
+    for (const c of ghostConversions) {
+      const orderKey = c.orderId ?? -c.id; // never collides with a real order id
+      let group = groups.get(orderKey);
+      if (!group) {
+        group = {
+          orderCode: c.orderCode ?? (c.orderId ? `ORD-${String(c.orderId).padStart(5, '0')}` : 'Deleted order'),
+          orderDate: c.orderDate ?? c.convertedAt,
+          orderStatus: 'DELETED',
+          lines: [],
+        };
+        groups.set(orderKey, group);
+      }
+      const qty = c.pcs && !c.kgs ? c.pcs : (c.kgs ?? 0);
+      group.lines.push({
+        productName: c.productName,
+        designType: c.designType && c.designType.toUpperCase() !== 'NA' ? c.designType : null,
+        bags: c.bags,
+        kgs: c.kgs,
+        pcs: c.pcs,
+        rate: c.frozenRate,
+        amount: round2(c.amount ?? (c.frozenRate ?? 0) * qty),
+        status: 'CANCELLED', // reuses the existing italic "line no longer active" styling
+        dispatchStatus: 'PENDING',
+        dispatchedBags: 0,
+        dispatchedKgs: 0,
+        dispatchedPcs: 0,
+        challanCodes: [],
+        removedAt: c.removedAt,
+        removedReason: c.removedReason,
+        removedByName: c.removedByName,
+      });
+    }
     const buffer = await this.pdf.render(
       buildBookingPdfDoc({
         code: booking.code ?? this.codeFor(booking.id),
@@ -520,24 +572,43 @@ export class BookingsService {
 
   /**
    * Recompute a booking's draw-down from the real OrderItems that reference it.
-   * `convertedBags/Kgs` + `status` are the sum over every non-cancelled line (on a
-   * non-cancelled order) with this bookingId, and the `BookingConversion` audit
-   * rows are rebuilt to mirror them. Idempotent — safe to call after any change.
+   * `convertedBags/Kgs` + `status` are the sum over every LIVE line (not
+   * cancelled, on a not-cancelled order) with this bookingId.
+   *
+   * `BookingConversion` is upserted (by `orderItemId`, not deleted/recreated) so
+   * it can double as a durable audit trail: once a line stops being live —
+   * cancelled, its order cancelled, or the OrderItem row hard-deleted outright —
+   * its row is marked `removedAt`/`removedReason`/`removedByName` instead of
+   * disappearing, freezing exactly how that qty was used right before it
+   * stopped counting. `generateBookingPdf` reads this to show that history,
+   * including for a line so thoroughly deleted that OrderItem no longer has a
+   * row for it at all — the `orderId`/`orderCode`/`orderDate` snapshot is what
+   * lets THAT case still render as part of the right order group.
+   *
+   * `actorName` attributes a removal that happens as a side effect of THIS
+   * call (e.g. the order edit that just cancelled/deleted the line) — omit it
+   * for recomputes that only add/adjust lines (convert, linkItems), where
+   * nothing is being removed. Idempotent — safe to call after any change.
    */
-  async recompute(bookingId: number): Promise<void> {
+  async recompute(bookingId: number, actorName?: string | null): Promise<void> {
     const booking = await this.prisma.booking.findUnique({ where: { id: bookingId }, include: { items: true } });
     if (!booking) return;
-    const items = await this.prisma.orderItem.findMany({
-      where: { bookingId, status: { not: 'CANCELLED' }, order: { status: { not: 'CANCELLED' } } },
-      include: { order: { select: { userName: true } } },
+    // Every OrderItem still linked to this booking, LIVE OR NOT — a cancelled
+    // line's snapshot must still be captured, only a genuinely deleted row is
+    // absent here (see the sweep below for that case).
+    const linked = await this.prisma.orderItem.findMany({
+      where: { bookingId },
+      include: { order: { select: { id: true, code: true, orderDate: true, status: true, userName: true } } },
       orderBy: { id: 'asc' },
     });
-    // Link the booking to the (first) order its lines live on — this is the order
-    // the standalone-convert path created, or the order it was drawn into via the
-    // order form. Falls back to null once every drawn line is gone.
-    const orderId = items[0]?.orderId ?? null;
-    const convertedBags = round2(items.reduce((s, it) => s + (it.bags ?? 0), 0));
-    const convertedKgs = round2(items.reduce((s, it) => s + (it.gram ?? 0), 0));
+    const live = linked.filter((it) => it.status !== 'CANCELLED' && it.order.status !== 'CANCELLED');
+
+    // Link the booking to the (first) order its live lines live on — this is the
+    // order the standalone-convert path created, or the order it was drawn into
+    // via the order form. Falls back to null once every drawn line is gone.
+    const orderId = live[0]?.orderId ?? null;
+    const convertedBags = round2(live.reduce((s, it) => s + (it.bags ?? 0), 0));
+    const convertedKgs = round2(live.reduce((s, it) => s + (it.gram ?? 0), 0));
     // CANCELLED and PRECLOSED are manual, terminal calls — a booking's own qty
     // math must never silently promote it back to OPEN/PARTIAL/CONVERTED just
     // because an order tied to it changed. (Linking an item to a PRECLOSED
@@ -552,7 +623,7 @@ export class BookingsService {
     // that reference this booking, so each booked line's own remaining tracks
     // independently of the others (e.g. GLASS's 1 bag vs CUP's 1 bag).
     for (const bookingItem of booking.items) {
-      const matching = items.filter((it) => (uc(it.pCategory) ?? '') === bookingItem.pCategory);
+      const matching = live.filter((it) => (uc(it.pCategory) ?? '') === bookingItem.pCategory);
       const itemConvertedBags = round2(matching.reduce((s, it) => s + (it.bags ?? 0), 0));
       const itemConvertedKgs = round2(matching.reduce((s, it) => s + (it.gram ?? 0), 0));
       if (itemConvertedBags !== bookingItem.convertedBags || itemConvertedKgs !== bookingItem.convertedKgs) {
@@ -560,28 +631,49 @@ export class BookingsService {
       }
     }
 
-    await this.prisma.bookingConversion.deleteMany({ where: { bookingId } });
-    if (items.length) {
-      await this.prisma.bookingConversion.createMany({
-        data: items.map((it) => {
-          const qty = it.calField === 'PCS' ? it.pcs ?? 0 : it.gram ?? 0;
-          return {
-            bookingId,
-            orderItemId: it.id,
-            productName: it.productName,
-            designType: it.designType,
-            bags: it.bags,
-            kgs: it.gram,
-            pcs: it.pcs,
-            box: it.box,
-            frozenRate: it.rate,
-            amount: (it.rate ?? 0) * qty,
-            convertedByName: it.order?.userName ?? null,
-            convertedAt: it.createdAt,
-          };
-        }),
+    // Fetch existing rows first so a removal already frozen at some earlier
+    // moment is never pushed forward by this (possibly unrelated) recompute.
+    const existingByItemId = new Map(
+      (await this.prisma.bookingConversion.findMany({ where: { bookingId } })).map((c) => [c.orderItemId, c]),
+    );
+    for (const it of linked) {
+      const isLive = it.status !== 'CANCELLED' && it.order.status !== 'CANCELLED';
+      const existing = existingByItemId.get(it.id);
+      const qty = it.calField === 'PCS' ? it.pcs ?? 0 : it.gram ?? 0;
+      const removedReason: string | null = isLive ? null : it.status === 'CANCELLED' ? 'LINE_CANCELLED' : 'ORDER_CANCELLED';
+      const data = {
+        productName: it.productName,
+        designType: it.designType,
+        bags: it.bags,
+        kgs: it.gram,
+        pcs: it.pcs,
+        box: it.box,
+        frozenRate: it.rate,
+        amount: (it.rate ?? 0) * qty,
+        convertedByName: it.order.userName ?? null,
+        orderId: it.order.id,
+        orderCode: it.order.code,
+        orderDate: it.order.orderDate,
+        removedAt: isLive ? null : (existing?.removedAt ?? new Date()),
+        removedReason: isLive ? null : removedReason,
+        removedByName: isLive ? null : (existing?.removedByName ?? actorName ?? null),
+      };
+      await this.prisma.bookingConversion.upsert({
+        where: { orderItemId: it.id },
+        create: { bookingId, orderItemId: it.id, convertedAt: it.createdAt, ...data },
+        update: data,
       });
     }
+    // Lines that have vanished entirely since the last recompute (the OrderItem
+    // row itself was hard-deleted) keep their previously-captured snapshot —
+    // this sweep is what flips them to removed, since the loop above can only
+    // see rows that still exist.
+    const linkedIds = linked.map((it) => it.id);
+    await this.prisma.bookingConversion.updateMany({
+      where: { bookingId, removedAt: null, ...(linkedIds.length ? { orderItemId: { notIn: linkedIds } } : {}) },
+      data: { removedAt: new Date(), removedReason: 'LINE_DELETED', removedByName: actorName ?? null },
+    });
+
     await this.prisma.booking.update({ where: { id: bookingId }, data: { convertedBags, convertedKgs, status, orderId } });
   }
 
@@ -936,6 +1028,12 @@ export class BookingsService {
       amount: c.amount,
       convertedByName: c.convertedByName,
       convertedAt: c.convertedAt.toISOString(),
+      orderId: c.orderId,
+      orderCode: c.orderCode,
+      orderDate: c.orderDate ? c.orderDate.toISOString() : null,
+      removedAt: c.removedAt ? c.removedAt.toISOString() : null,
+      removedReason: c.removedReason as BookingConversionDto['removedReason'],
+      removedByName: c.removedByName,
     };
   }
 }
@@ -963,11 +1061,19 @@ interface BookingPdfLine {
   dispatchedPcs: number;
   /** Invoice(s) this line's dispatch(es) were billed on, if any. */
   challanCodes: string[];
+  /** Set once this line stopped counting toward the booking's converted qty —
+   *  cancelled, its order cancelled, or (for a ghost line) hard-deleted
+   *  outright. Null for a still-live line. */
+  removedAt: Date | null;
+  removedReason: string | null;
+  removedByName: string | null;
 }
 
 interface BookingPdfOrderGroup {
   orderCode: string;
   orderDate: Date;
+  /** 'DELETED' for a ghost group whose order no longer exists at all — not a
+   *  real Order.status value. */
   orderStatus: string;
   lines: BookingPdfLine[];
 }
@@ -1057,11 +1163,31 @@ function buildBookingPdfDoc(b: BookingPdfData): TDocumentDefinitions {
     };
   };
 
+  const REMOVED_LABEL: Record<string, string> = {
+    LINE_CANCELLED: 'Cancelled',
+    ORDER_CANCELLED: 'Order cancelled',
+    LINE_DELETED: 'Deleted',
+  };
+
   const lineRow = (l: BookingPdfLine): Cell[] => {
-    const cancelled = l.status === 'CANCELLED';
-    const style = cancelled ? { italics: true } : {};
+    // Ground truth is `removedAt`, not `status` — a line whose own status is
+    // still CONFIRMED but whose PARENT ORDER was cancelled no longer counts
+    // either, and this is the only check that catches that case too.
+    const removed = !!l.removedAt;
+    const style = removed ? { italics: true } : {};
+    const label = l.removedReason ? (REMOVED_LABEL[l.removedReason] ?? 'Removed') : null;
+    const suffix = label ? `  (${label})` : '';
+    // The whole point of this feature: exactly how this qty was used, and
+    // when/by whom it stopped counting — printed right under the line so
+    // there's no need to cross-reference anything else to see it.
+    const caption = removed
+      ? [label, l.removedByName ? `by ${l.removedByName}` : null, l.removedAt ? pdfDate(l.removedAt) : null].filter(Boolean).join(' · ')
+      : null;
+    const productCell: Cell = caption
+      ? { stack: [{ text: `${l.productName ?? '—'}${suffix}`, fontSize: BODY, lineHeight: 1.12, color: BLACK, ...style }, { text: caption, fontSize: BODY - 2.5, italics: true, color: '#555555' }] }
+      : txt(`${l.productName ?? '—'}${suffix}`, style);
     return [
-      txt(`${l.productName ?? '—'}${cancelled ? '  (Cancelled)' : ''}`, style),
+      productCell,
       txt(l.designType ?? '—', style),
       num(amt2(l.bags), style),
       num(amt2(l.kgs), style),
@@ -1073,7 +1199,7 @@ function buildBookingPdfDoc(b: BookingPdfData): TDocumentDefinitions {
   };
 
   const subtotalRow = (g: BookingPdfOrderGroup): Cell[] => {
-    const active = g.lines.filter((l) => l.status !== 'CANCELLED');
+    const active = g.lines.filter((l) => !l.removedAt);
     const bags = round2(active.reduce((s, l) => s + (l.bags ?? 0), 0));
     const kgs = round2(active.reduce((s, l) => s + (l.kgs ?? 0), 0));
     const amount = round2(active.reduce((s, l) => s + l.amount, 0));
@@ -1120,7 +1246,7 @@ function buildBookingPdfDoc(b: BookingPdfData): TDocumentDefinitions {
     };
   });
 
-  const active = b.groups.flatMap((g) => g.lines.filter((l) => l.status !== 'CANCELLED'));
+  const active = b.groups.flatMap((g) => g.lines.filter((l) => !l.removedAt));
   const grandTotalRow: Cell[] = [
     txt(''),
     txt('Grand Total', { bold: true, fontSize: BODY + 0.5 }),

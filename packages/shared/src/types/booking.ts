@@ -75,6 +75,9 @@ export interface BookingItemDto {
   updatedAt: string;
 }
 
+/** Why a conversion stopped counting toward Booking.convertedBags/Kgs. */
+export type BookingConversionRemovedReason = 'LINE_CANCELLED' | 'ORDER_CANCELLED' | 'LINE_DELETED';
+
 export interface BookingConversionDto {
   id: number;
   bookingId: number;
@@ -89,6 +92,16 @@ export interface BookingConversionDto {
   amount: number | null;
   convertedByName: string | null;
   convertedAt: string;
+  /** Snapshot of the order this line landed on, captured every recompute — the
+   *  only trace left once the line (or its whole order) is hard-deleted. */
+  orderId: number | null;
+  orderCode: string | null;
+  orderDate: string | null;
+  /** Set once this line stopped counting — cancelled, its order cancelled, or
+   *  the OrderItem row itself deleted outright. Null while still live. */
+  removedAt: string | null;
+  removedReason: BookingConversionRemovedReason | null;
+  removedByName: string | null;
 }
 
 /** One product-category line to reserve, e.g. { pCategory: 'GLASS', bags: 1 }. */

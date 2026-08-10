@@ -214,7 +214,7 @@ export class OrdersService {
     return this.toDto(await this.ensureCode(row));
   }
 
-  async update(id: number, dto: UpdateOrderDto): Promise<OrderDto> {
+  async update(id: number, dto: UpdateOrderDto, actorName?: string | null): Promise<OrderDto> {
     await this.ensureExists(id);
     const data = await this.toHeaderData(dto as CreateOrderDto);
     // Bookings that were already drawn into this order — they may lose lines (which
@@ -318,14 +318,14 @@ export class OrdersService {
 
     const row = await this.prisma.order.findUnique({ where: { id }, include: INCLUDE });
     // Recompute every booking this order touched — before and after the change.
-    await this.recomputeBookings([
-      ...this.bookingIdsOf(row!.items),
-      ...bookingsBefore.map((b) => b.bookingId!),
-    ]);
+    await this.recomputeBookings(
+      [...this.bookingIdsOf(row!.items), ...bookingsBefore.map((b) => b.bookingId!)],
+      actorName,
+    );
     return this.toDto(await this.ensureCode(row!));
   }
 
-  async remove(id: number): Promise<void> {
+  async remove(id: number, actorName?: string | null): Promise<void> {
     await this.ensureExists(id);
     const bookingLines = await this.prisma.orderItem.findMany({
       where: { orderId: id, bookingId: { not: null } },
@@ -333,13 +333,19 @@ export class OrdersService {
     });
     await this.prisma.order.delete({ where: { id } });
     // Deleting the order frees any booking quantity its lines had drawn.
-    await this.recomputeBookings(bookingLines.map((b) => b.bookingId!));
+    await this.recomputeBookings(bookingLines.map((b) => b.bookingId!), actorName);
   }
 
   /** Cancel / restore an order. Cancelling is only allowed while the order is
    *  untouched — once any line has a dispatch, the order can no longer be
    *  cancelled (the record must stay consistent with the dispatch history). */
-  async updateStatus(id: number, status: 'CONFIRMED' | 'CANCELLED', reason?: string, note?: string): Promise<OrderDto> {
+  async updateStatus(
+    id: number,
+    status: 'CONFIRMED' | 'CANCELLED',
+    reason?: string,
+    note?: string,
+    actorName?: string | null,
+  ): Promise<OrderDto> {
     const order = await this.prisma.order.findUnique({ where: { id }, select: { id: true, items: { select: { id: true } } } });
     if (!order) throw new NotFoundException('Order not found.');
     if (status === 'CANCELLED' && order.items.length) {
@@ -356,7 +362,7 @@ export class OrdersService {
     const row = await this.prisma.order.update({ where: { id }, data: { status, ...cancelData }, include: INCLUDE });
     // Cancelling/restoring the order changes whether its booking lines count as
     // drawn — recompute any booking it references.
-    await this.recomputeBookings(this.bookingIdsOf(row.items));
+    await this.recomputeBookings(this.bookingIdsOf(row.items), actorName);
     return this.toDto(row, status === 'CANCELLED' ? 'NONE' : null);
   }
 
@@ -1121,8 +1127,11 @@ export class OrdersService {
     return [...new Set(items.map((it) => it.bookingId).filter((v): v is number => v != null))];
   }
 
-  private async recomputeBookings(ids: number[]): Promise<void> {
-    for (const bid of new Set(ids)) await this.bookings.recompute(bid);
+  /** `actorName` attributes a removal to whoever's edit/delete/cancel caused it
+   *  — pass it only from a call that might actually remove a line (update,
+   *  remove, updateStatus); omit it from create/convert/link, which only add. */
+  private async recomputeBookings(ids: number[], actorName?: string | null): Promise<void> {
+    for (const bid of new Set(ids)) await this.bookings.recompute(bid, actorName);
   }
 
   /** Re-price every booking-sourced line at its booking's frozen date rates so the

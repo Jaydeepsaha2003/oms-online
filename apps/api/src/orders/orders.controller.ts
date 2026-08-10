@@ -134,22 +134,26 @@ export class OrdersController {
   @Patch(':id/status')
   @Permissions(perm(R, ACTIONS.UPDATE))
   @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Changed a sales order status' })
-  updateStatus(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateOrderStatusDto) {
-    return this.orders.updateStatus(id, dto.status, dto.reason, dto.note);
+  updateStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateOrderStatusDto,
+    @CurrentUser() user: AuthenticatedUser | undefined,
+  ) {
+    return this.orders.updateStatus(id, dto.status, dto.reason, dto.note, user?.name ?? null);
   }
 
   @Patch(':id')
   @Permissions(perm(R, ACTIONS.UPDATE))
   @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Edited a sales order' })
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateOrderDto) {
-    return this.orders.update(id, dto);
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateOrderDto, @CurrentUser() user: AuthenticatedUser | undefined) {
+    return this.orders.update(id, dto, user?.name ?? null);
   }
 
   @Delete(':id')
   @Permissions(perm(R, ACTIONS.DELETE))
   @Audit({ action: ACTIONS.DELETE, resource: R, description: 'Deleted a sales order' })
-  async remove(@Param('id', ParseIntPipe) id: number) {
-    await this.orders.remove(id);
+  async remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthenticatedUser | undefined) {
+    await this.orders.remove(id, user?.name ?? null);
     return { ok: true };
   }
 }
