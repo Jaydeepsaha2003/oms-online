@@ -123,7 +123,7 @@ export function BookingsPage() {
   const handleCancel = async (b: BookingDto) => {
     const ok = await confirm({
       title: 'Cancel this booking?',
-      description: `Booking ${b.code} for "${b.customerName}" will be marked CANCELLED. Only bookings with nothing converted yet can be cancelled.`,
+      description: `Booking ${b.code} for "${b.customerName}" will be marked CANCELLED. Its already-converted bags/kgs and the orders they became are untouched — this only stops any further draw-down.`,
       confirmText: 'Cancel booking',
       destructive: true,
     });
@@ -141,7 +141,7 @@ export function BookingsPage() {
   const handleDelete = async (b: BookingDto) => {
     const ok = await confirm({
       title: 'Delete this booking?',
-      description: `Booking ${b.code} will be permanently removed. This is only possible while nothing has been converted.`,
+      description: `Booking ${b.code} will be permanently removed. This is only possible while nothing has been converted — once it has, use Cancel instead.`,
       confirmText: 'Delete',
       destructive: true,
     });
@@ -154,9 +154,17 @@ export function BookingsPage() {
 
   /** Cancel / Preclose / Assign old order(s) / Delete — grouped behind one
    *  kebab menu since Convert is the one action common enough to earn its own
-   *  icon, and the rest are occasional corrections. */
+   *  icon, and the rest are occasional corrections.
+   *
+   *  Delete and Cancel are deliberately mutually exclusive, never both enabled
+   *  at once: an untouched booking (nothing converted) has nothing worth
+   *  preserving, so it's simply deleted; the moment any bag/kg is converted,
+   *  real OrderItems exist against it, so hard-deleting the booking would leave
+   *  them pointing at nothing — Cancel (a soft status flip) is the only safe
+   *  way to stop it from then on. */
   const bookingActionsMenu = (b: BookingDto) => {
     const untouched = b.convertedBags === 0 && b.convertedKgs === 0;
+    const canCancel = !untouched && b.status !== 'CANCELLED' && b.status !== 'PRECLOSED';
     const canPreclose = b.status === 'PARTIALLY_CONVERTED';
     const canAssign = b.status === 'OPEN' || b.status === 'PARTIALLY_CONVERTED';
     return (
@@ -178,8 +186,9 @@ export function BookingsPage() {
           {can('booking:cancel') && (
             <DropdownMenuItem
               variant="destructive"
-              disabled={!untouched || b.status === 'CANCELLED'}
+              disabled={!canCancel}
               onSelect={() => handleCancel(b)}
+              title={untouched ? 'Nothing converted yet — delete it instead' : undefined}
             >
               <Ban /> Cancel booking
             </DropdownMenuItem>
@@ -197,7 +206,12 @@ export function BookingsPage() {
           {can('booking:delete') && (
             <>
               <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" disabled={!untouched} onSelect={() => handleDelete(b)}>
+              <DropdownMenuItem
+                variant="destructive"
+                disabled={!untouched}
+                onSelect={() => handleDelete(b)}
+                title={!untouched ? 'Already converted — cancel it instead' : undefined}
+              >
                 <Trash2 /> Delete permanently
               </DropdownMenuItem>
             </>

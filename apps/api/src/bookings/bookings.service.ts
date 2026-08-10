@@ -160,22 +160,34 @@ export class BookingsService {
     return this.findOne(id);
   }
 
-  /** Cancel a booking. Only allowed while nothing has been converted yet. */
+  /**
+   * Cancel a booking that has at least one bag/kg already converted — the
+   * counterpart to {@link remove}, which handles the opposite case. Once real
+   * OrderItems exist against a booking, hard-deleting its header would leave
+   * them pointing at nothing, so the only way to stop it is a soft, reversible
+   * status flip instead. An untouched booking has nothing to preserve, so it's
+   * routed to Delete instead — hence the two actions never overlap: exactly one
+   * is ever valid for a given booking.
+   */
   async cancel(id: number): Promise<BookingDto> {
-    const booking = await this.prisma.booking.findUnique({ where: { id }, select: { id: true, convertedBags: true, convertedKgs: true } });
+    const booking = await this.prisma.booking.findUnique({ where: { id }, select: { id: true, status: true, convertedBags: true, convertedKgs: true } });
     if (!booking) throw new NotFoundException('Booking not found.');
-    if (booking.convertedBags > 0 || booking.convertedKgs > 0) {
-      throw new BadRequestException('This booking already has conversions — it can no longer be cancelled.');
+    if (booking.status === 'CANCELLED') throw new BadRequestException('This booking is already cancelled.');
+    if (booking.status === 'PRECLOSED') throw new BadRequestException('This booking is preclosed — there is nothing left to cancel.');
+    if (booking.convertedBags <= 0 && booking.convertedKgs <= 0) {
+      throw new BadRequestException('Nothing has been converted from this booking yet — delete it instead.');
     }
     await this.prisma.booking.update({ where: { id }, data: { status: 'CANCELLED' } });
     return this.findOne(id);
   }
 
+  /** Delete a booking outright. Only allowed while nothing has been converted
+   *  yet — see {@link cancel} for the case once bags/kgs have been drawn. */
   async remove(id: number): Promise<void> {
     const booking = await this.prisma.booking.findUnique({ where: { id }, select: { convertedBags: true, convertedKgs: true } });
     if (!booking) throw new NotFoundException('Booking not found.');
     if (booking.convertedBags > 0 || booking.convertedKgs > 0) {
-      throw new BadRequestException('This booking already has conversions — it cannot be deleted.');
+      throw new BadRequestException('This booking already has conversions — it cannot be deleted. Cancel it instead.');
     }
     await this.prisma.booking.delete({ where: { id } });
   }
