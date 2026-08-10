@@ -4,7 +4,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ACTIONS, ORDER_LINE_EXPORT_COLUMNS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { Permissions } from '../common/decorators/permissions.decorator';
+import { AnyPermission, Permissions } from '../common/decorators/permissions.decorator';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { ExcelService } from '../excel/excel.service';
 import { formatDate } from '../common/date.util';
@@ -82,14 +82,20 @@ export class OrdersController {
   }
 
   // ── Order-line photos (shared by Order Modify & Dispatch) ──────────────────
+  //
+  // These three are reachable from BOTH screens, so they accept an order editor
+  // OR a dispatcher. Requiring `order:update` alone meant packing staff — who
+  // hold dispatch permissions and no order-editing rights — hit "Missing
+  // required permission(s): order:update" when adding the very reference photo
+  // the dispatch refuses to save without.
   @Get('items/:itemId/photos')
-  @Permissions(perm(R, ACTIONS.VIEW))
+  @AnyPermission(perm(R, ACTIONS.VIEW), perm(RESOURCES.DISPATCH, ACTIONS.VIEW))
   listPhotos(@Param('itemId', ParseIntPipe) itemId: number) {
     return this.orders.listPhotos(itemId);
   }
 
   @Post('items/:itemId/photos')
-  @Permissions(perm(R, ACTIONS.UPDATE))
+  @AnyPermission(perm(R, ACTIONS.UPDATE), perm(RESOURCES.DISPATCH, ACTIONS.CREATE))
   @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Added an order line photo' })
   addPhoto(
     @Param('itemId', ParseIntPipe) itemId: number,
@@ -100,7 +106,7 @@ export class OrdersController {
   }
 
   @Delete('photos/:photoId')
-  @Permissions(perm(R, ACTIONS.UPDATE))
+  @AnyPermission(perm(R, ACTIONS.UPDATE), perm(RESOURCES.DISPATCH, ACTIONS.CREATE))
   @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Removed an order line photo' })
   async deletePhoto(@Param('photoId', ParseIntPipe) photoId: number) {
     await this.orders.deletePhoto(photoId);
