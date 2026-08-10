@@ -9,7 +9,7 @@ import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { ExcelService } from '../excel/excel.service';
 import { formatDate } from '../common/date.util';
 import { OrdersService } from './orders.service';
-import { AddOrderItemPhotoDto, CreateOrderDto, OrderQueryDto, UpdateOrderDto, UpdateOrderStatusDto } from './dto/order.dto';
+import { AddOrderItemPhotoDto, CreateOrderDto, OrderQueryDto, PriceAsOfDto, UpdateOrderDto, UpdateOrderStatusDto } from './dto/order.dto';
 
 const R = RESOURCES.ORDER;
 const fmtDate = (d?: Date | null): string => formatDate(d, '');
@@ -63,6 +63,14 @@ export class OrdersController {
   @Permissions(perm(R, ACTIONS.VIEW))
   lookups() {
     return this.orders.lookups();
+  }
+
+  /** Order Modify's item-change rate check: would the newly-picked item have
+   *  priced differently as of this order's own date? */
+  @Post('price-as-of')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  priceAsOf(@Body() dto: PriceAsOfDto) {
+    return this.orders.priceAsOf(dto);
   }
 
   // The current filters come in so each dropdown can offer only values that

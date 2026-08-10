@@ -11,7 +11,7 @@ import { BookingsService } from '../bookings/bookings.service';
 import { toNum, toStr, uc } from '../common/coerce';
 import { readCategoryFields } from '../common/category-fields';
 import { UPLOADS_DIR } from '../uploads/uploads.constants';
-import { AddOrderItemPhotoDto, CreateOrderDto, OrderQueryDto, UpdateOrderDto } from './dto/order.dto';
+import { AddOrderItemPhotoDto, CreateOrderDto, OrderQueryDto, PriceAsOfDto, UpdateOrderDto } from './dto/order.dto';
 
 const INCLUDE = { items: { include: { photos: { orderBy: { id: 'asc' } } } } } as const;
 type Row = Prisma.OrderGetPayload<{ include: typeof INCLUDE }>;
@@ -195,6 +195,21 @@ export class OrdersService {
       .filter(Boolean)
       .join(', ');
     return dto;
+  }
+
+  /** Order Modify's item-change rate check — delegates to the same as-of-date
+   *  pricing Bag Bookings already uses, anchored on this order's own date
+   *  instead of a booking date. See {@link BookingsService.priceAsOf}. */
+  async priceAsOf(dto: PriceAsOfDto) {
+    const asOfDate = new Date(dto.asOfDate);
+    if (Number.isNaN(asOfDate.getTime())) throw new BadRequestException('Invalid date.');
+    return this.bookings.priceAsOf(dto.customerId ?? null, asOfDate, {
+      pCategory: dto.pCategory ?? null,
+      subCategory: dto.subCategory ?? null,
+      product: dto.product ?? null,
+      designType: dto.designType ?? null,
+      psize: dto.psize ?? null,
+    });
   }
 
   async create(dto: CreateOrderDto): Promise<OrderDto> {

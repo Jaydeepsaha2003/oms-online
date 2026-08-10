@@ -58,6 +58,15 @@ export class QuotationsController {
     return this.quotations.create(dto);
   }
 
+  /** "Save as Quotation" from View Orders — copies a DRAFT order into a new
+   *  quotation, leaving the draft itself untouched. */
+  @Post('from-order/:orderId')
+  @Permissions(perm(R, ACTIONS.CREATE))
+  @Audit({ action: ACTIONS.CREATE, resource: R, description: 'Saved a draft order as a quotation' })
+  createFromOrder(@Param('orderId', ParseIntPipe) orderId: number, @CurrentUser('name') userName?: string) {
+    return this.quotations.createFromOrder(orderId, userName);
+  }
+
   @Patch(':id')
   @Permissions(perm(R, ACTIONS.UPDATE))
   @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Edited a quotation' })

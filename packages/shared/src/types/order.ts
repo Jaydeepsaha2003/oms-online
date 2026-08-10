@@ -343,6 +343,23 @@ export interface OrderTimeline {
   lines: OrderTimelineLine[];
 }
 
+/**
+ * Order Modify's item-change rate check: "would the newly-picked item have
+ * priced differently as of this order's own date?" — reuses Bag Bookings'
+ * as-of-date pricing (see {@link BookingQuoteLine}), anchored on `asOfDate`
+ * instead of a booking date, with no frozen special-rate snapshot to draw on
+ * (a plain order never has one — both sides use the customer's CURRENT rates).
+ */
+export interface PriceAsOfInput {
+  customerId?: number | null;
+  asOfDate: string;
+  pCategory?: string | null;
+  subCategory?: string | null;
+  product?: string | null;
+  designType?: string | null;
+  psize?: number | null;
+}
+
 /* ── "Does this line carry a real design?" ────────────────────────────────────
  * Every screen used to inline `x && x.toUpperCase() !== 'NA'`, which missed two
  * things and caused the reference-photo rule to silently skip design items:

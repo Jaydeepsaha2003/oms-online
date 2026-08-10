@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Ban, ChevronLeft, ChevronRight, EllipsisVertical, Eye, Filter, Loader2, Plus, Printer, RotateCcw, Search, Trash2, Truck } from 'lucide-react';
+import { Ban, ChevronLeft, ChevronRight, EllipsisVertical, Eye, FileText, Filter, Loader2, Plus, Printer, RotateCcw, Search, Trash2, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 import type { OrderDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -18,10 +18,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { NativeSelect } from '@/components/common/combo';
 import { CancelReasonFields } from '@/components/common/cancel-reason';
 import { settingValues, useSettings } from '@/features/settings/use-settings';
+import { useCreateQuotationFromOrder } from '@/features/quotations/use-quotations';
 import { useCancelOrder, useDeleteOrder, useOrderFilterOptions, useOrders } from './use-orders';
 import { OrderTimelineModal } from './order-timeline-modal';
 
@@ -132,7 +133,9 @@ export function OrdersPage() {
   const [timelineFor, setTimelineFor] = useState<OrderDto | null>(null);
   const [cancelling, setCancelling] = useState<OrderDto | null>(null);
   const [deleting, setDeleting] = useState<OrderDto | null>(null);
+  const [quotingDraft, setQuotingDraft] = useState<OrderDto | null>(null);
   const canDelete = can('order:delete');
+  const saveAsQuotation = useCreateQuotationFromOrder();
 
   const items = data?.items ?? [];
   const totalRows = data?.total ?? 0;
@@ -148,6 +151,9 @@ export function OrdersPage() {
     const hasDispatches = (o.dispatchState ?? 'NONE') !== 'NONE';
     const canCancel = !alreadyCancelled && !hasDispatches;
     const cancelLabel = alreadyCancelled ? 'Already cancelled' : hasDispatches ? 'Cannot cancel - items dispatched' : 'Cancel order';
+    // Only a DRAFT is quotable — a confirmed order is a real commitment (and may
+    // already have dispatches behind it), so quoting it after the fact is backwards.
+    const isDraft = o.status === 'DRAFT';
 
     return (
       <DropdownMenu>
@@ -171,6 +177,14 @@ export function OrdersPage() {
             <DropdownMenuItem onSelect={() => navigate(`/orders/${o.id}/bill`)}>
               <Printer /> Bill / Invoice
             </DropdownMenuItem>
+          )}
+          {isDraft && can('quotation:create') && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => setQuotingDraft(o)}>
+                <FileText className="text-violet-600" /> Save as Quotation
+              </DropdownMenuItem>
+            </>
           )}
           {can('order:update') && (
             <>
@@ -485,6 +499,42 @@ export function OrdersPage() {
       {timelineFor && <OrderTimelineModal order={timelineFor} onClose={() => setTimelineFor(null)} />}
       {cancelling && <CancelOrderDialog order={cancelling} onClose={() => setCancelling(null)} />}
       {deleting && <DeleteOrderDialog order={deleting} onClose={() => setDeleting(null)} />}
+
+      {quotingDraft && (
+        <Dialog open onOpenChange={(o) => !o && setQuotingDraft(null)}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <FileText className="text-violet-600 size-5" /> Save as Quotation
+              </DialogTitle>
+              <DialogDescription>
+                A new quotation will be created for <span className="text-foreground font-semibold">{quotingDraft.customerName}</span> with
+                this draft&apos;s items and rates. The draft order stays where it is — delete it separately if you no longer need it.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setQuotingDraft(null)} disabled={saveAsQuotation.isPending}>
+                Cancel
+              </Button>
+              <Button
+                disabled={saveAsQuotation.isPending}
+                onClick={() =>
+                  saveAsQuotation.mutate(quotingDraft.id, {
+                    onSuccess: (q) => {
+                      setQuotingDraft(null);
+                      toast.success(`Saved as quotation ${q.code}`);
+                      navigate('/quotations');
+                    },
+                    onError: (e) => toast.error(getApiErrorMessage(e, 'Could not save as quotation')),
+                  })
+                }
+              >
+                {saveAsQuotation.isPending ? <Loader2 className="animate-spin" /> : <FileText />} Create quotation
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

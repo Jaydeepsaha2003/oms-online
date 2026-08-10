@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { OrderDto, OrderFilterOptions, OrderInput, OrderItemOption, OrderItemPhotoDto, OrderList, OrderLookups, OrderLookupsWire, OrderQuery, OrderTimeline, UploadedFileDto } from '@oms/shared';
+import type { BookingQuoteLine, OrderDto, OrderFilterOptions, OrderInput, OrderItemOption, OrderItemPhotoDto, OrderList, OrderLookups, OrderLookupsWire, OrderQuery, OrderTimeline, PriceAsOfInput, UploadedFileDto } from '@oms/shared';
 import { downloadFile, http } from '@/lib/api';
 
 const KEY = ['orders'] as const;
@@ -127,6 +127,14 @@ export function useSaveOrder() {
   return useMutation({
     mutationFn: ({ id, input }: { id: number; input: OrderInput }) => http.patch<OrderDto>(`/orders/${id}`, input),
     onSuccess: () => invalidateOrderAvailability(qc),
+  });
+}
+
+/** Order Modify's item-change rate check — no query-key/caching concerns (a
+ *  one-off lookup fired from `onItemPick`), so a plain mutation is simplest. */
+export function usePriceAsOf() {
+  return useMutation({
+    mutationFn: (input: PriceAsOfInput) => http.post<BookingQuoteLine>('/orders/price-as-of', input),
   });
 }
 

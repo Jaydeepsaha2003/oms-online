@@ -819,9 +819,24 @@ function DispatchSheet({
   // and the sheet should fit with minimal scrolling. Desktop keeps it open.
   // Forced open once we know there's nothing on file yet (design items only), on
   // either platform, so the requirement is impossible to miss.
+  //
+  // LATCHED ONCE, deliberately, rather than derived live off `hasPhotoOnFile`.
+  // As a live expression this collapsed the section the instant an upload
+  // finished on a phone: `hasPhotoOnFile` flipped true, so `!hasPhotoOnFile ||
+  // !isMobile` went false and the panel slammed shut, taking the thumbnail the
+  // user had just added with it — indistinguishable from the upload failing.
+  // It only ever reproduced under 640px (`isMobile`); anywhere wider `!isMobile`
+  // keeps the expression true, which is why it looked like one person's phone.
   const [photosOpenManual, setPhotosOpenManual] = useState<boolean | null>(null);
-  const photosOpen = photosOpenManual ?? (!hasDesign ? !isMobile : !photoCheckReady ? !isMobile : !hasPhotoOnFile || !isMobile);
+  const photosOpen = photosOpenManual ?? !isMobile;
   const setPhotosOpen = (v: boolean) => setPhotosOpenManual(v);
+  useEffect(() => {
+    // Decide the automatic default exactly once, as soon as the photo check
+    // resolves — from then on only the user's own toggle moves it.
+    if (photosOpenManual !== null || !photoCheckReady) return;
+    setPhotosOpenManual(!hasDesign ? !isMobile : !hasPhotoOnFile || !isMobile);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [photoCheckReady]);
   // Bags/Pcs/Kgs/Box entry order follows this line's product category, per
   // Settings → Order quantity fields — same layout as the New Order form.
   const { data: qtyLayout } = useOrderQtyLayout();

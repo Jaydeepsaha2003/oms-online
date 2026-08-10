@@ -73,6 +73,64 @@ export class QuotationsService {
     return this.toDto(await this.ensureCode(row));
   }
 
+  /**
+   * Build a quotation out of an existing DRAFT order — the reverse of
+   * {@link convert}, for "Save as Quotation" in View Orders. Only a DRAFT is
+   * eligible: a confirmed order is a real commitment (and may already have
+   * dispatches/challans behind it), so quoting it after the fact would be
+   * backwards.
+   *
+   * The draft order is deliberately LEFT IN PLACE rather than deleted —
+   * this is one click in a row menu, and silently destroying the order it was
+   * fired from would be unrecoverable if it was a mis-tap. Deleting the leftover
+   * draft afterwards is the user's call.
+   */
+  async createFromOrder(orderId: number, userName?: string | null): Promise<QuotationDto> {
+    const order = await this.prisma.order.findUnique({ where: { id: orderId }, include: { items: true } });
+    if (!order) throw new NotFoundException('Order not found.');
+    if (order.status !== 'DRAFT') {
+      throw new BadRequestException('Only a draft order can be saved as a quotation.');
+    }
+    if (!order.items.length) throw new BadRequestException('This draft has no items to quote.');
+
+    const dto: CreateQuotationDto = {
+      customerName: order.customerName,
+      poNumber: order.poNumber ?? undefined,
+      agentName: order.agentName ?? undefined,
+      category: order.category ?? undefined,
+      orderDate: order.orderDate.toISOString(),
+      completionDate: order.completionDate ? order.completionDate.toISOString() : undefined,
+      priority: order.priority ?? undefined,
+      // A brand-new quotation always starts as a draft of its own — it hasn't
+      // been sent to the customer just because the order it came from existed.
+      status: 'DRAFT',
+      comment: order.comment ?? undefined,
+      items: order.items.map((it) => ({
+        pCategory: it.pCategory,
+        subCategory: it.subCategory,
+        product: it.product,
+        design: it.design,
+        productName: it.productName,
+        designType: it.designType,
+        psize: it.psize,
+        bags: it.bags,
+        pcs: it.pcs,
+        gram: it.gram,
+        box: it.box,
+        productRate: it.productRate,
+        designRate: it.designRate,
+        rate: it.rate,
+        calField: it.calField,
+        priority: it.priority,
+        ordType: it.ordType,
+        comment: it.comment,
+      })),
+    };
+    const created = await this.create(dto);
+    if (userName) await this.prisma.quotation.update({ where: { id: created.id }, data: { userName } });
+    return this.findOne(created.id);
+  }
+
   async update(id: number, dto: UpdateQuotationDto): Promise<QuotationDto> {
     const current = await this.prisma.quotation.findUnique({ where: { id } });
     if (!current) throw new NotFoundException('Quotation not found.');

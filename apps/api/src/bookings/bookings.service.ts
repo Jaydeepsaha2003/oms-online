@@ -710,6 +710,20 @@ export class BookingsService {
     return this.priceLine(line, booking.bookingDate, this.parseSnapshot(booking.rateSnapshot));
   }
 
+  /**
+   * Price one line's chart rate AS OF an arbitrary date — for Order Modify's
+   * "the item was changed to something with a different rate" check, which has
+   * no booking (and therefore no frozen rate snapshot) to lean on. Both the
+   * as-of and current sides resolve the customer's CURRENT special rates (a
+   * plain order never snapshots them the way a booking does), so `priceChanged`
+   * here reports purely a BASE chart-rate change since `asOfDate` — exactly the
+   * signal "would this line have priced differently back then" needs.
+   */
+  async priceAsOf(customerId: number | null, asOfDate: Date, line: ConvertBookingLineDto): Promise<BookingQuoteLine> {
+    const snapshot = customerId ? await this.snapshotSpecialRates(customerId) : { rates: [], logos: [] };
+    return this.priceLine(line, asOfDate, snapshot);
+  }
+
   /* ── Price-change history (unified products / designs / special rates) ───── */
 
   async priceHistory(query: PriceHistoryQueryDto): Promise<PriceHistoryList> {

@@ -26,7 +26,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { settingValues, useOrderQtyLayout, useSettings } from '@/features/settings/use-settings';
 import { useCustomerSpecialRates } from '@/features/special-rates/use-special-rates';
 import { usePermissions } from '@/hooks/use-permissions';
-import { exportOrderLines, useOrderFilterOptions, useOrderLookups, useOrders, useSaveOrder } from './use-orders';
+import { exportOrderLines, useOrderFilterOptions, useOrderLookups, useOrders, usePriceAsOf, useSaveOrder } from './use-orders';
 import { LiveLinePhotos } from './line-photos';
 import { DesignNamePicker, resolveDesignNameChoices } from './design-name-picker';
 
@@ -62,6 +62,7 @@ function StatusPill({ status }: { status: string }) {
 }
 
 const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? null : Number(s));
+const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 const fmtNum = (v: number | null) => (v == null ? '' : String(v));
 const dash = (v: number | null) => (v == null || v === 0 ? '—' : v.toLocaleString('en-IN'));
 
@@ -672,6 +673,10 @@ function LineEditor({
   const { order, line } = row;
   const { can } = usePermissions();
   const confirm = useConfirm();
+  const priceAsOf = usePriceAsOf();
+  // Blocks Save while onItemPick's rate check is in flight, so a fast
+  // double-click can't submit before the confirm dialog even has a chance to appear.
+  const [checkingRate, setCheckingRate] = useState(false);
   const { data: lookups } = useOrderLookups();
   const { data: special } = useCustomerSpecialRates(order.customerId ?? undefined);
   const { data: qtyLayout } = useOrderQtyLayout();
@@ -815,7 +820,15 @@ function LineEditor({
   }, [lookups]);
 
   // Picking an item fills product, design type, design name and both rates.
-  const onItemPick = (label: string) => {
+  //
+  // When the pick is a genuinely different item/design from what was
+  // originally on this line (not just re-picking the same one, or a pure
+  // qty/rate tweak), the CURRENT catalogue rate this would silently apply may
+  // not be what the rate was back when the order was actually placed — which
+  // is exactly the "changes the rate with no warning" complaint this guards
+  // against. So it checks the item's rate AS OF THE ORDER'S DATE first: if
+  // that differs from today's rate, it asks before applying either one.
+  const onItemPick = async (label: string) => {
     const it = itemOptions.map.get(label);
     if (!it) {
       set({ itemName: label, product: label });
@@ -830,10 +843,49 @@ function LineEditor({
           designType: it.designType ?? null,
         })
       : null;
-    const productRate = (it.productRate ?? 0) + (resolved?.productDelta ?? 0);
-    const designRate = (it.designRate ?? 0) + (resolved?.designDelta ?? 0);
+    const currentProductRate = (it.productRate ?? 0) + (resolved?.productDelta ?? 0);
+    const currentDesignRate = (it.designRate ?? 0) + (resolved?.designDelta ?? 0);
     const hasProductRate = it.productRate != null || (resolved?.productDelta ?? 0) !== 0;
     const hasDesignRate = !!it.designType && (it.designRate != null || (resolved?.designDelta ?? 0) !== 0);
+
+    let finalProductRate: number | null = hasProductRate ? currentProductRate : null;
+    let finalDesignRate: number | null = hasDesignRate ? currentDesignRate : null;
+
+    const norm = (v: string | null | undefined) => (v ?? '').trim().toUpperCase();
+    const itemFullyChanged = norm(it.product) !== norm(baseline.current.product) || norm(it.designType) !== norm(baseline.current.designType);
+
+    if (itemFullyChanged && order.orderDate) {
+      setCheckingRate(true);
+      try {
+        const asOf = await priceAsOf.mutateAsync({
+          customerId: order.customerId ?? undefined,
+          asOfDate: order.orderDate,
+          pCategory: it.category,
+          subCategory: it.subCategory,
+          product: it.product,
+          designType: it.designType ?? undefined,
+          psize: it.size ?? undefined,
+        });
+        if (asOf.priceChanged) {
+          const useCurrent = await confirm({
+            title: 'Rate changed since this order was placed',
+            description: `As of ${formatDate(order.orderDate)}, this item priced at ₹${asOf.rate.toLocaleString('en-IN')}. The current rate is ₹${asOf.currentRate.toLocaleString('en-IN')}. Apply the current rate to this line?`,
+            confirmText: 'Yes, use current rate',
+            cancelText: 'No, keep the order-date rate',
+          });
+          if (!useCurrent) {
+            finalProductRate = hasProductRate ? round2(asOf.productRate + asOf.productDelta) : null;
+            finalDesignRate = hasDesignRate ? round2(asOf.designRate + asOf.designDelta) : null;
+          }
+        }
+      } catch {
+        // A failed rate check shouldn't block picking the item — fall back to
+        // silently applying the current rate, same as before this feature existed.
+      } finally {
+        setCheckingRate(false);
+      }
+    }
+
     set({
       itemName: label,
       pCategory: it.category,
@@ -842,8 +894,8 @@ function LineEditor({
       designType: it.designType ?? '',
       designName: realName,
       psize: it.size != null ? String(it.size) : '',
-      productRate: hasProductRate ? String(productRate) : '',
-      designRate: hasDesignRate ? String(designRate) : '',
+      productRate: finalProductRate != null ? String(finalProductRate) : '',
+      designRate: finalDesignRate != null ? String(finalDesignRate) : '',
     });
   };
 
@@ -1026,8 +1078,8 @@ function LineEditor({
           <Button variant="outline" onClick={addNewMode ? () => setAddNewMode(false) : onClose} disabled={saving}>
             {addNewMode ? 'Back to editing' : 'Close'}
           </Button>
-          <Button onClick={submit} disabled={saving || (!addNewMode && !dirty)}>
-            {saving ? <Loader2 className="animate-spin" /> : <Save />} {addNewMode ? 'Add as New Item' : 'Save'}
+          <Button onClick={submit} disabled={saving || checkingRate || (!addNewMode && !dirty)}>
+            {saving || checkingRate ? <Loader2 className="animate-spin" /> : <Save />} {checkingRate ? 'Checking rate…' : addNewMode ? 'Add as New Item' : 'Save'}
           </Button>
         </div>
       </SheetFooter>

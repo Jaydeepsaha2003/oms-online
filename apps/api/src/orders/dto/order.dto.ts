@@ -1,6 +1,6 @@
 import { PartialType } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsArray, IsIn, IsInt, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsArray, IsIn, IsInt, IsNumber, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 export class CreateOrderDto {
@@ -40,6 +40,22 @@ export class AddOrderItemPhotoDto {
   @IsOptional() @IsString() filename?: string;
   @IsOptional() @IsString() mimeType?: string;
   @IsOptional() @IsInt() size?: number;
+}
+
+/**
+ * "Would this item have priced differently as of the order's own date?" —
+ * Order Modify's item-change rate check. Reuses the exact same base
+ * chart-rate history reconstruction as Bag Bookings' as-of-date pricing, just
+ * without a frozen special-rate snapshot (a plain order never has one).
+ */
+export class PriceAsOfDto {
+  @IsOptional() @IsInt() customerId?: number;
+  @IsString() asOfDate!: string;
+  @IsOptional() @IsString() @MaxLength(64) pCategory?: string;
+  @IsOptional() @IsString() @MaxLength(64) subCategory?: string;
+  @IsOptional() @IsString() @MaxLength(128) product?: string;
+  @IsOptional() @IsString() @MaxLength(128) designType?: string;
+  @IsOptional() @IsNumber() psize?: number;
 }
 
 export class OrderQueryDto extends PaginationDto {

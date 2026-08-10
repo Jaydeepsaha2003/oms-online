@@ -35,6 +35,20 @@ export function useCreateQuotation() {
   });
 }
 
+/** "Save as Quotation" from View Orders — copies a DRAFT order into a new
+ *  quotation (the draft itself is left alone). Invalidates orders too, since
+ *  the source row's menu state depends on the order list. */
+export function useCreateQuotationFromOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (orderId: number) => http.post<QuotationDto>(`/quotations/from-order/${orderId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEY });
+      qc.invalidateQueries({ queryKey: ['orders'] });
+    },
+  });
+}
+
 export function useUpdateQuotation(id: number) {
   const qc = useQueryClient();
   return useMutation({
