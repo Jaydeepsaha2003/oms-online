@@ -370,7 +370,7 @@ REM covers the current Windows session, so before this a restart left the
 REM machine with no watchdog and no servers until someone ran start.bat by hand.
 REM This drops a shortcut in the Startup folder (no admin rights needed) and is
 REM a no-op once installed. For coverage before anyone even logs in, run
-REM setup\enable-autostart.bat once as administrator.
+REM enable-autostart.bat once as administrator.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\install-keepalive.ps1" >nul 2>&1
 
 REM Wait until both ports are listening so we can confirm a real startup.
@@ -394,7 +394,7 @@ if defined READY (
 )
 echo.
 echo   Phone and PC must be on the SAME Wi-Fi. First time only, run
-echo   setup\enable-lan-access.bat as administrator to open the firewall.
+echo   enable-lan-access.bat as administrator to open the firewall.
 echo.
 echo   Coding and want fast edit+refresh instead? Use dev.bat.
 echo.

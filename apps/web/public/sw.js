@@ -4,7 +4,12 @@
 // Bumping this name is what evicts a poisoned cache: `activate` deletes every
 // cache whose key isn't the current one. Bump it whenever the caching rules
 // below change, or to force stranded clients onto a fresh copy.
-const CACHE = 'oms-v12';
+// v13: a rebuild replaced every content-hashed chunk, so any client still
+// holding the v12 shell was pointing at chunk names that no longer exist
+// ("Importing a module script failed"). Bumping evicts that shell on activate,
+// so the next navigation is fetched fresh instead of being served the poisoned
+// snapshot from cache.
+const CACHE = 'oms-v13';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();

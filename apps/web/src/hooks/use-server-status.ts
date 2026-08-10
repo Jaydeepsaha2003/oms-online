@@ -16,12 +16,21 @@ import { useEffect, useRef, useState } from 'react';
  */
 const HEALTH_URL = `${import.meta.env.VITE_API_URL || '/api'}/health`;
 const POLL_MS = 10_000;
+// 8s, not 5s. Phones reach this server through the router's OpenVPN, where a
+// cell handoff (5G↔LTE, or moving between towers) re-establishes the tunnel and
+// one round trip can easily outlast 5 seconds without anything being wrong.
 const TIMEOUT_MS = 8_000;
+// A failed check is retried sooner than the normal cadence, so a blip is
+// confirmed or cleared quickly instead of leaving the UI stale for 10s.
+const RETRY_MS = 3_000;
 /**
- * How many checks in a row must fail before the user is told the server is
- * down. One dropped or slow probe — a Wi-Fi hiccup, a moment of load — is not
- * an outage, and reporting it as one made a perfectly healthy server look like
- * it kept "switching off", especially with several people working at once.
+ * Report "offline" only after this many CONSECUTIVE failures. One dropped or
+ * slow probe — a Wi-Fi hiccup, a cell handoff, a moment of load with several
+ * people working at once — is not an outage, and reporting it as one made a
+ * perfectly healthy server look like it kept "switching off": the dot flickered
+ * red/green on every handoff. Recovery stays instant (one success clears it);
+ * only the bad news waits for a second opinion. Worst case a real outage now
+ * shows after ~2 checks instead of 1, which is still seconds.
  */
 const FAILURES_BEFORE_OFFLINE = 2;
 
@@ -47,57 +56,86 @@ export function useServerStatus(): ServerStatusState {
   const [state, setState] = useState<ServerStatusState>({ status: 'connected', reason: null, checking: true });
   const timer = useRef<ReturnType<typeof setTimeout>>();
   const alive = useRef(true);
-  const failures = useRef(0);
+  // Consecutive failed checks; reset by any success. See FAILURES_BEFORE_OFFLINE.
+  const fails = useRef(0);
+  // True while a health request is in flight. check() runs from five places —
+  // mount, the scheduled poll, `focus`, `online` and `visibilitychange` — and a
+  // phone fires focus AND visibilitychange together every time the app is opened
+  // or resumed, usually with a poll already due. Without this guard those all run
+  // as separate checks, and ONE dropped moment on the link failed each of them
+  // independently: fails jumped 0→2 (or 3) in a single tick, crossed
+  // FAILURES_BEFORE_OFFLINE and showed "Offline" instantly — the exact flapping
+  // the counter was added to prevent. Collapsing them to one in-flight check
+  // makes a blip count once, which is what "consecutive failures" has to mean.
+  const inFlight = useRef(false);
 
   useEffect(() => {
     alive.current = true;
 
-    function schedule() {
+    function schedule(delay: number = POLL_MS) {
       if (timer.current) clearTimeout(timer.current);
-      timer.current = setTimeout(check, POLL_MS);
+      timer.current = setTimeout(check, delay);
+    }
+
+    /** A check failed. Hold the current status until enough failures pile up. */
+    function onCheckFailed(reason: string) {
+      fails.current += 1;
+      if (fails.current >= FAILURES_BEFORE_OFFLINE) {
+        setState({ status: 'offline', reason, checking: false });
+      } else {
+        // Not confident yet — leave the indicator as it was rather than
+        // flashing red, and come back sooner than the normal cadence.
+        setState((s) => ({ ...s, checking: false }));
+      }
+      schedule(fails.current >= FAILURES_BEFORE_OFFLINE ? POLL_MS : RETRY_MS);
     }
 
     async function check() {
       if (!alive.current) return;
+      // A check is already running — let it be the one that reports. Returning
+      // without rescheduling is deliberate: the in-flight check schedules the
+      // next poll itself on every one of its exit paths.
+      if (inFlight.current) return;
       // Don't spend requests while the tab is hidden — reschedule and wait.
       if (typeof document !== 'undefined' && document.hidden) return schedule();
-      // Device-level offline is instantly knowable; no request needed.
+      // Device-level offline is instantly knowable and unambiguous (the OS says
+      // there's no network at all), so it skips the tolerance above and reports
+      // immediately — there is nothing transient to wait out.
       if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-        failures.current = FAILURES_BEFORE_OFFLINE; // this one is certain, don't wait it out
+        fails.current = FAILURES_BEFORE_OFFLINE; // this one is certain, don't wait it out
         setState({ status: 'offline', reason: REASON_DEVICE, checking: false });
         return schedule();
       }
       setState((s) => ({ ...s, checking: true }));
       const ctrl = new AbortController();
       const to = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
-
-      /** Only report an outage once it has been confirmed by a repeat check. */
-      const fail = (reason: string) => {
-        failures.current += 1;
-        if (failures.current >= FAILURES_BEFORE_OFFLINE) setState({ status: 'offline', reason, checking: false });
-        else setState((s) => ({ ...s, checking: false }));
-      };
-      const ok = () => {
-        failures.current = 0;
-        setState({ status: 'connected', reason: null, checking: false });
-      };
-
+      inFlight.current = true;
       try {
         const res = await fetch(HEALTH_URL, { signal: ctrl.signal, cache: 'no-store' });
         if (!alive.current) return;
-        // Any answer at all — including 429/5xx — proves the server is up and
+        // Any answer at all — including 429 — proves the server is up and
         // listening. Only a total lack of response can mean it's stopped.
         // 429 in particular is a healthy server deliberately shedding load, and
         // reporting that as "switched off" is what made busy periods look like
         // the server kept dying.
-        if (res.ok || res.status === 429) ok();
-        else fail(reasonHttp(res.status));
+        if (res.ok || res.status === 429) {
+          fails.current = 0;
+          setState({ status: 'connected', reason: null, checking: false });
+          schedule();
+        } else {
+          // It answered, just not with a success — so the reason says "running
+          // but erroring", never "may be switched off".
+          onCheckFailed(reasonHttp(res.status));
+        }
       } catch {
         if (!alive.current) return;
-        fail(navigator.onLine === false ? REASON_DEVICE : REASON_SERVER);
+        onCheckFailed(navigator.onLine === false ? REASON_DEVICE : REASON_SERVER);
       } finally {
         clearTimeout(to);
-        schedule();
+        // In `finally`, never in a branch: if this ever failed to reset, every
+        // future check would return at the guard above and the indicator would
+        // freeze on whatever it last showed, with no polling at all.
+        inFlight.current = false;
       }
     }
 
