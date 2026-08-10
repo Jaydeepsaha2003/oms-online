@@ -821,13 +821,17 @@ function LineEditor({
 
   // Picking an item fills product, design type, design name and both rates.
   //
-  // When the pick is a genuinely different item/design from what was
-  // originally on this line (not just re-picking the same one, or a pure
-  // qty/rate tweak), the CURRENT catalogue rate this would silently apply may
-  // not be what the rate was back when the order was actually placed — which
-  // is exactly the "changes the rate with no warning" complaint this guards
-  // against. So it checks the item's rate AS OF THE ORDER'S DATE first: if
-  // that differs from today's rate, it asks before applying either one.
+  // Swapping the item to a genuinely different one (e.g. "5 RAMPATRA
+  // HANDLE+LASER+LOGO" → "5 RAMPATRA LASER+LOGO" — same product, fewer design
+  // parts) normally re-prices the line on the spot. That is the whole
+  // "it changed my rate without telling me" complaint, so whenever the rate
+  // that WOULD be applied differs from the rate already on the line, it asks
+  // first and lets the user keep the existing one.
+  //
+  // The rate offered is the new item's price AS OF THE ORDER'S DATE, not
+  // today's — this order was placed on that date, so that's its correct basis.
+  // (Today's chart rate is only used as a fallback when the order-date rate
+  // can't be resolved.)
   const onItemPick = async (label: string) => {
     const it = itemOptions.map.get(label);
     if (!it) {
@@ -848,34 +852,52 @@ function LineEditor({
     const hasProductRate = it.productRate != null || (resolved?.productDelta ?? 0) !== 0;
     const hasDesignRate = !!it.designType && (it.designRate != null || (resolved?.designDelta ?? 0) !== 0);
 
+    // Default: today's catalogue rate, exactly as before.
     let finalProductRate: number | null = hasProductRate ? currentProductRate : null;
     let finalDesignRate: number | null = hasDesignRate ? currentDesignRate : null;
 
     const norm = (v: string | null | undefined) => (v ?? '').trim().toUpperCase();
-    const itemFullyChanged = norm(it.product) !== norm(baseline.current.product) || norm(it.designType) !== norm(baseline.current.designType);
+    // Compared against the CURRENT form values, not the original line: picking
+    // A → B → C should ask on each real change, not just when it differs from A.
+    const itemChanged = norm(it.product) !== norm(form.product) || norm(it.designType) !== norm(form.designType);
+    // The rate already sitting on this line — what "keep the old rate" means.
+    const existingRate = (num(form.productRate) ?? 0) + (num(form.designRate) ?? 0);
 
-    if (itemFullyChanged && order.orderDate) {
+    // Nothing to protect if the line had no rate yet — just fill it in.
+    if (itemChanged && existingRate > 0) {
       setCheckingRate(true);
       try {
-        const asOf = await priceAsOf.mutateAsync({
-          customerId: order.customerId ?? undefined,
-          asOfDate: order.orderDate,
-          pCategory: it.category,
-          subCategory: it.subCategory,
-          product: it.product,
-          designType: it.designType ?? undefined,
-          psize: it.size ?? undefined,
-        });
-        if (asOf.priceChanged) {
-          const useCurrent = await confirm({
-            title: 'Rate changed since this order was placed',
-            description: `As of ${formatDate(order.orderDate)}, this item priced at ₹${asOf.rate.toLocaleString('en-IN')}. The current rate is ₹${asOf.currentRate.toLocaleString('en-IN')}. Apply the current rate to this line?`,
-            confirmText: 'Yes, use current rate',
-            cancelText: 'No, keep the order-date rate',
+        if (order.orderDate) {
+          const asOf = await priceAsOf.mutateAsync({
+            customerId: order.customerId ?? undefined,
+            asOfDate: order.orderDate,
+            pCategory: it.category,
+            subCategory: it.subCategory,
+            product: it.product,
+            designType: it.designType ?? undefined,
+            psize: it.size ?? undefined,
           });
-          if (!useCurrent) {
+          // Only trust the historical lookup when it actually resolved the item
+          // (it returns zeros for anything it can't match) — otherwise today's
+          // catalogue rate above stays the offer.
+          if (asOf.rate > 0) {
             finalProductRate = hasProductRate ? round2(asOf.productRate + asOf.productDelta) : null;
             finalDesignRate = hasDesignRate ? round2(asOf.designRate + asOf.designDelta) : null;
+          }
+        }
+        const newRate = (finalProductRate ?? 0) + (finalDesignRate ?? 0);
+        if (Math.abs(newRate - existingRate) > 0.001) {
+          const inr = (v: number) => `₹${v.toLocaleString('en-IN')}`;
+          const useNew = await confirm({
+            title: 'This changes the line’s rate',
+            description: `"${label}" prices at ${inr(newRate)}${order.orderDate ? ` as of ${formatDate(order.orderDate)}` : ''}, but this line is currently ${inr(existingRate)}. Apply the new rate, or keep the existing one?`,
+            confirmText: `Yes, use ${inr(newRate)}`,
+            cancelText: `No, keep ${inr(existingRate)}`,
+          });
+          if (!useNew) {
+            // Keep exactly what was on the line — the item identity still changes.
+            finalProductRate = num(form.productRate);
+            finalDesignRate = num(form.designRate);
           }
         }
       } catch {

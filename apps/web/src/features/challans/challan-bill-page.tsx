@@ -558,8 +558,11 @@ export function ChallanBillPage() {
             )}
             {challan.remarks && (
               <>
-                <div style={{ color: ORANGE, fontWeight: 700, fontSize: 16, marginTop: 6 }}>Remarks</div>
-                <div style={{ marginTop: 3, color: '#555555', fontSize: 16 }}>{challan.remarks}</div>
+                {/* `fontFamily: FONT` on both, like the Transporter line above:
+                    without it these two fell back to the default face and the
+                    remarks visibly didn't match the rest of the bill. */}
+                <div style={{ fontFamily: FONT, color: ORANGE, fontWeight: 700, fontSize: 16, marginTop: 6 }}>Remarks</div>
+                <div style={{ fontFamily: FONT, marginTop: 3, color: '#555555', fontSize: 16 }}>{challan.remarks}</div>
               </>
             )}
           </div>

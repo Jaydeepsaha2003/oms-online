@@ -72,6 +72,10 @@ export interface PendingLineDto {
    *  DispatchService's in-memory line lock), so other users see it's taken
    *  before they even try to open it. Null/absent = free to open. */
   lockedByName?: string | null;
+  /** How many reference photos this line already has. Counted server-side per
+   *  page so a mobile card can offer "view photos" without each card firing its
+   *  own request. 0 = nothing attached yet. */
+  photoCount?: number;
 }
 
 /**

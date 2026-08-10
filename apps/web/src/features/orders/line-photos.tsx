@@ -25,6 +25,7 @@ import type { OrderItemPhotoInput } from '@oms/shared';
 import { getApiErrorMessage, uploadFile } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useConfirm } from '@/components/common/confirm';
+import { looksLikeImage, prepareImageForUpload } from '@/lib/image-prep';
 import { Button } from '@/components/ui/button';
 import { useAddOrderItemPhoto, useDeleteOrderItemPhoto, useOrderItemPhotos } from './use-orders';
 
@@ -51,7 +52,11 @@ export function toPhotoInput(photos: LinePhoto[]): OrderItemPhotoInput[] {
 }
 
 const photoKeyOf = (p: LinePhoto) => (p.id != null ? `id:${p.id}` : `url:${p.url}`);
-const IMAGE_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp,image/bmp,image/heic,image/heif';
+/** `image/*` leads deliberately: Android Chrome greys out gallery providers that
+ *  don't declare one of the explicit MIME types, so an explicit-only list made
+ *  most gallery apps unusable. The specific types stay for desktop pickers,
+ *  which show friendlier filtering when they're named. */
+const IMAGE_ACCEPT = 'image/*,image/png,image/jpeg,image/gif,image/webp,image/bmp,image/heic,image/heif';
 const MAX_BYTES = 8 * 1024 * 1024;
 
 // One-off keyframes for the lightbox — richer than the tailwind-animate presets.
@@ -78,6 +83,7 @@ function PhotoManager({
   title = 'Photos',
   emptyHint = 'No photos yet.',
   hideHeader = false,
+  gridClassName = 'grid-cols-4 gap-2 sm:grid-cols-5',
 }: {
   photos: LinePhoto[];
   /** Governs adding new photos (drag/drop + the Add tile). */
@@ -95,25 +101,39 @@ function PhotoManager({
   /** Skip the built-in title/count row — for callers that already show it
    *  themselves (e.g. a collapsible section header). */
   hideHeader?: boolean;
+  /** Column/gap classes for the thumbnail grid. Fewer columns = bigger tiles;
+   *  the default suits the wide in-page/dialog views, while a narrow popover
+   *  wants fewer, larger tiles so a reference photo is actually readable. */
+  gridClassName?: string;
 }) {
   const allowDelete = canDelete ?? canEdit;
   const [viewer, setViewer] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const pickFiles = (list: FileList | null) => {
-    if (!list || list.length === 0) return;
+  // Takes a real File[] rather than a live FileList: resetting the input's
+  // `value` (needed so re-picking the same photo fires onChange again) empties
+  // the FileList object itself, which would leave this async function reading
+  // zero files. Callers snapshot before clearing.
+  const pickFiles = async (list: File[]) => {
+    if (list.length === 0) return;
     const files: File[] = [];
-    for (const f of Array.from(list)) {
-      if (!f.type.startsWith('image/')) {
-        toast.error(`${f.name}: only image files can be added.`);
+    for (const f of list) {
+      // `looksLikeImage`, not `type.startsWith('image/')`: Android's own pickers
+      // commonly return an empty `type`, which the old check rejected outright —
+      // so picking a gallery photo on Android silently did nothing.
+      if (!looksLikeImage(f)) {
+        toast.error(`${f.name || 'That file'}: only image files can be added.`);
         continue;
       }
-      if (f.size > MAX_BYTES) {
-        toast.error(`${f.name}: image is larger than 8 MB.`);
+      // Shrink big camera photos rather than refusing them — a phone JPEG is
+      // routinely over the 8 MB cap that used to reject it outright.
+      const prepared = await prepareImageForUpload(f);
+      if (prepared.size > MAX_BYTES) {
+        toast.error(`${f.name}: still larger than 8 MB after resizing — please pick a smaller image.`);
         continue;
       }
-      files.push(f);
+      files.push(prepared);
     }
     if (files.length) onAddFiles(files);
   };
@@ -135,7 +155,8 @@ function PhotoManager({
 
       <div
         className={cn(
-          'grid grid-cols-4 gap-2 sm:grid-cols-5',
+          'grid',
+          gridClassName,
           dragOver && 'rounded-lg outline-2 outline-dashed outline-indigo-400',
         )}
         onDragOver={(e) => {
@@ -148,7 +169,7 @@ function PhotoManager({
           if (!canEdit) return;
           e.preventDefault();
           setDragOver(false);
-          pickFiles(e.dataTransfer.files);
+          void pickFiles(e.dataTransfer.files ? Array.from(e.dataTransfer.files) : []);
         }}
       >
         {photos.map((p, i) => (
@@ -218,8 +239,10 @@ function PhotoManager({
         multiple
         className="hidden"
         onChange={(e) => {
-          pickFiles(e.target.files);
+          // Snapshot BEFORE clearing — see the note on pickFiles.
+          const picked = e.target.files ? Array.from(e.target.files) : [];
           e.target.value = '';
+          void pickFiles(picked);
         }}
       />
 
@@ -376,10 +399,14 @@ export function DraftLinePhotos({
   value,
   onChange,
   canEdit = true,
+  gridClassName,
 }: {
   value: LinePhoto[];
   onChange: (photos: LinePhoto[]) => void;
   canEdit?: boolean;
+  /** See {@link PhotoManager} — lets the order form's narrow popover show
+   *  fewer, larger tiles than the default in-page grid. */
+  gridClassName?: string;
 }) {
   const [busy, setBusy] = useState(false);
   const valueRef = useRef(value);
@@ -413,6 +440,7 @@ export function DraftLinePhotos({
       onRemove={remove}
       title="Line photos"
       emptyHint="No photos on this line."
+      gridClassName={gridClassName}
     />
   );
 }
@@ -425,6 +453,7 @@ export function LiveLinePhotos({
   canDelete,
   title = 'Line photos',
   hideHeader = false,
+  gridClassName,
 }: {
   orderItemId: number;
   canEdit?: boolean;
@@ -432,6 +461,8 @@ export function LiveLinePhotos({
   canDelete?: boolean;
   title?: string;
   hideHeader?: boolean;
+  /** See {@link PhotoManager} — fewer, larger tiles for narrow phone viewers. */
+  gridClassName?: string;
 }) {
   const confirm = useConfirm();
   const { data: photos = [], isLoading } = useOrderItemPhotos(orderItemId);
@@ -485,6 +516,7 @@ export function LiveLinePhotos({
       title={title}
       emptyHint="No photos on this line."
       hideHeader={hideHeader}
+      gridClassName={gridClassName}
     />
   );
 }

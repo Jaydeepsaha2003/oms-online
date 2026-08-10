@@ -1977,8 +1977,14 @@ function LinePhotoButton({ photos, onChange }: { photos: LinePhoto[]; onChange: 
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-80">
-        <DraftLinePhotos value={photos} onChange={onChange} />
+      {/* Wider than the usual popover, with 3 columns instead of 4/5: these are
+          REFERENCE photos — the point is to recognise the design at a glance,
+          which a ~50px tile in a 320px popover didn't allow. Capped to the
+          viewport so it still fits a phone, and scrolled rather than grown
+          past the screen — tiles this size stack up fast on a line with many
+          photos, where the old small ones stayed comfortably short. */}
+      <PopoverContent align="end" className="max-h-[70vh] w-[min(34rem,calc(100vw-2rem))] overflow-y-auto">
+        <DraftLinePhotos value={photos} onChange={onChange} gridClassName="grid-cols-2 gap-3" />
       </PopoverContent>
     </Popover>
   );

@@ -1,7 +1,7 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
-import { ALL_PERMISSIONS, type Paginated, type UserDto, type UserStatus } from '@oms/shared';
+import { ALL_PERMISSIONS, hasPermission, type Paginated, type UserDto, type UserStatus } from '@oms/shared';
 import { SessionsService } from '../auth/sessions.service';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { PrismaService } from '../prisma/prisma.service';
@@ -60,7 +60,8 @@ export class UsersService {
     return this.toDto(user);
   }
 
-  async create(dto: CreateUserDto): Promise<UserDto> {
+  async create(dto: CreateUserDto, actor: AuthenticatedUser): Promise<UserDto> {
+    await this.assertMayGrant(dto.roleIds, actor);
     const passwordHash = await bcrypt.hash(dto.password, 12);
     try {
       const user = await this.prisma.user.create({
@@ -79,8 +80,13 @@ export class UsersService {
     }
   }
 
-  async update(id: string, dto: UpdateUserDto): Promise<UserDto> {
-    await this.ensureExists(id);
+  async update(id: string, dto: UpdateUserDto, actor: AuthenticatedUser): Promise<UserDto> {
+    const target = await this.prisma.user.findUnique({ where: { id }, include: USER_INCLUDE });
+    if (!target) throw new NotFoundException('User not found.');
+    // Both halves are needed: you may not edit someone who outranks you, and you
+    // may not hand out a role you don't hold (including to yourself).
+    await this.assertMayManage(target, actor);
+    if (dto.roleIds) await this.assertMayGrant(dto.roleIds, actor);
     const ops: Prisma.PrismaPromise<unknown>[] = [
       this.prisma.user.update({
         where: { id },
@@ -102,8 +108,12 @@ export class UsersService {
     return this.findOne(id);
   }
 
-  async remove(id: string): Promise<void> {
-    await this.ensureExists(id);
+  async remove(id: string, actor: AuthenticatedUser): Promise<void> {
+    const target = await this.prisma.user.findUnique({ where: { id }, include: USER_INCLUDE });
+    if (!target) throw new NotFoundException('User not found.');
+    // Deleting an account that outranks you is escalation by another route:
+    // remove the Super Administrator, then re-create one you control.
+    await this.assertMayManage(target, actor, 'delete');
     await this.prisma.user.delete({ where: { id } });
   }
 
@@ -121,7 +131,7 @@ export class UsersService {
   async setPassword(id: string, password: string, actor: AuthenticatedUser): Promise<void> {
     const target = await this.prisma.user.findUnique({ where: { id }, include: USER_INCLUDE });
     if (!target) throw new NotFoundException('User not found.');
-    this.assertMayManage(target, actor);
+    await this.assertMayManage(target, actor);
 
     const passwordHash = await bcrypt.hash(password, 12);
     await this.prisma.user.update({ where: { id }, data: { passwordHash } });
@@ -136,13 +146,65 @@ export class UsersService {
    * Administrator could set the Super Administrator's password and sign in as
    * them. A super admin carries the `*` wildcard and so passes for everyone.
    */
-  private assertMayManage(target: UserRow, actor: AuthenticatedUser): void {
+  private async assertMayManage(target: UserRow, actor: AuthenticatedUser, verb = 'modify'): Promise<void> {
     if (actor.permissions.includes(ALL_PERMISSIONS)) return;
-    const mine = new Set(actor.roles);
-    const beyond = target.roles.map((ur) => ur.role).filter((r) => !mine.has(r.name));
+    const beyond = await this.rolesBeyond(
+      target.roles.map((ur) => ur.role.id),
+      actor,
+    );
     if (beyond.length) {
       throw new ForbiddenException(
-        `You cannot set the password of a user holding ${beyond.map((r) => r.label).join(', ')} — that role outranks yours.`,
+        `You cannot ${verb} a user holding ${beyond.map((r) => r.label).join(', ')} — that role outranks yours.`,
+      );
+    }
+  }
+
+  /**
+   * Which of these roles outrank the actor — judged ONLY on the permissions that
+   * could actually hand someone more power than they started with.
+   *
+   * Two models were tried and both were wrong for this app:
+   *
+   *  - by role NAME (`target.roles ⊄ actor.roles`): treats every *different*
+   *    role as superior, so an Administrator was refused on an Operator.
+   *  - by full permission superset: the roles here are job functions, not nested
+   *    tiers. Operator holds dispatch permissions an Administrator doesn't, so
+   *    Operator "outranked" Administrator and admins still couldn't manage staff
+   *    or reset their passwords — the bug this was meant to fix.
+   *
+   * What actually matters is narrow: `*`, and the user/role administration
+   * permissions. Those are the ones that let you mint a stronger account or
+   * rewrite a role definition. Ordinary operational permissions (dispatch,
+   * orders, challans) can't escalate anything, so holding them must not make an
+   * account untouchable by the person whose job is managing accounts.
+   */
+  private async rolesBeyond(roleIds: string[], actor: AuthenticatedUser): Promise<{ label: string }[]> {
+    if (!roleIds.length) return [];
+    const escalating = (key: string) => key === ALL_PERMISSIONS || key.startsWith('user:') || key.startsWith('role:');
+    const roles = await this.prisma.role.findMany({
+      where: { id: { in: [...new Set(roleIds)] } },
+      include: { permissions: { include: { permission: true } } },
+    });
+    return roles.filter((r) =>
+      r.permissions.some((rp) => escalating(rp.permission.key) && !hasPermission(actor.permissions, rp.permission.key)),
+    );
+  }
+
+  /**
+   * Refuse to GRANT a role the actor does not hold themselves.
+   *
+   * This is the other half of {@link assertMayManage}, and the bigger hole of
+   * the two: guarding only the password path still let an Administrator hand
+   * themselves (or anyone else) the Super Administrator role outright and pick
+   * up all 234 permissions — no password reset needed. `user:manage` is meant to
+   * be "run the user list", not "promote yourself past your own ceiling".
+   */
+  private async assertMayGrant(roleIds: string[], actor: AuthenticatedUser): Promise<void> {
+    if (actor.permissions.includes(ALL_PERMISSIONS)) return;
+    const beyond = await this.rolesBeyond(roleIds, actor);
+    if (beyond.length) {
+      throw new ForbiddenException(
+        `You cannot assign ${beyond.map((r) => r.label).join(', ')} — it grants permissions you don't have yourself.`,
       );
     }
   }

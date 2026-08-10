@@ -92,12 +92,23 @@ export interface OpeningPendingRow {
 }
 
 /** Everything the Payment form needs for one party (or one agent's customers). */
+/** A receipt already booked for this party/agent on the same date — used to warn
+ *  about an accidental duplicate before a new one is saved. */
+export interface SameDayReceiptDto {
+  voucherNo: string;
+  amount: number;
+  payMode: string;
+  remarks: string | null;
+}
+
 export interface PaymentContext {
   /** PARTY: exactly one entry. AGENT: one per customer of the agent. */
   customers: { customerId: number; customerName: string }[];
   invoices: PendingInvoiceRow[];
   advances: PendingAdvanceRow[];
   openings: OpeningPendingRow[];
+  /** Receipts already entered for this party on the chosen receipt date. */
+  sameDayReceipts: SameDayReceiptDto[];
   totals: {
     invoiceBank: number;
     invoiceCash: number;

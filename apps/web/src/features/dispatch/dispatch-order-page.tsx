@@ -23,7 +23,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { exportPendingDispatch, useCreateDispatch, useDispatchPhotoCheck, useLineLock, usePendingFilterOptions, usePendingOrders } from './use-dispatch';
 import { useDispatchDate } from './use-dispatch-date';
@@ -96,12 +96,25 @@ function DispatchCard({ line, index, showRates, onClick }: { line: PendingLineDt
   const locked = !!line.lockedByName;
   const qtys = ([['Bags', line.remBags], ['Pcs', line.remPcs], ['Kgs', line.remKgs], ['Box', line.remBox]] as const).filter(([, v]) => v > 0);
   const pendingAmt = line.rate != null ? Math.round(line.rate * ((line.calField ?? '').toUpperCase() === 'PCS' ? line.remPcs : line.remKgs)) : null;
+  const photoCount = line.photoCount ?? 0;
+  const [photosOpen, setPhotosOpen] = useState(false);
+  const open = () => (locked ? toast.error(`${line.lockedByName} is currently dispatching this line — try again in a moment.`) : onClick());
   return (
-    <button
-      type="button"
-      onClick={() => (locked ? toast.error(`${line.lockedByName} is currently dispatching this line — try again in a moment.`) : onClick())}
+    // A div[role=button], not a <button>: the photo viewer below is a real button
+    // and nesting one button inside another is invalid HTML — on phones it makes
+    // the inner tap unreliable, sometimes opening the dispatch sheet instead.
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={open}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          open();
+        }
+      }}
       className={cn(
-        'group bg-card relative block w-full overflow-hidden rounded-2xl border text-left shadow-sm transition-transform duration-150 ease-out active:scale-[0.98] [touch-action:manipulation]',
+        'group bg-card relative block w-full cursor-pointer overflow-hidden rounded-2xl border text-left shadow-sm transition-transform duration-150 ease-out active:scale-[0.98] [touch-action:manipulation]',
         // URGENT also gets a faint red wash + ring across the whole card, not just
         // the rail — "deep red" should be impossible to miss while scanning.
         urgent && 'border-rose-300 bg-rose-50/60 ring-1 ring-rose-200 dark:border-rose-400/30 dark:bg-rose-500/[0.06] dark:ring-rose-400/20',
@@ -149,9 +162,31 @@ function DispatchCard({ line, index, showRates, onClick }: { line: PendingLineDt
               <span className="text-muted-foreground text-[13px]">Nothing pending</span>
             )}
           </div>
-          <span className="bg-primary/10 text-primary flex size-9 shrink-0 items-center justify-center rounded-full transition-transform group-active:translate-x-0.5" aria-hidden>
-            <Truck className="size-4.5" />
-          </span>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {/* Reference photos, viewable WITHOUT opening the dispatch sheet —
+                that sheet takes the line lock, so peeking at a photo used to
+                block everyone else from the line. Only shown when there's
+                something to see. */}
+            {photoCount > 0 && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setPhotosOpen(true);
+                }}
+                className="relative flex size-9 items-center justify-center rounded-full bg-indigo-50 text-indigo-600 ring-1 ring-indigo-200 active:scale-95 dark:bg-indigo-400/10 dark:text-indigo-300 dark:ring-indigo-400/25"
+                aria-label={`View ${photoCount} photo${photoCount === 1 ? '' : 's'}`}
+              >
+                <Camera className="size-4.5" />
+                <span className="absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-indigo-600 text-[9px] font-bold tabular-nums text-white">
+                  {photoCount > 9 ? '9+' : photoCount}
+                </span>
+              </button>
+            )}
+            <span className="bg-primary/10 text-primary flex size-9 items-center justify-center rounded-full transition-transform group-active:translate-x-0.5" aria-hidden>
+              <Truck className="size-4.5" />
+            </span>
+          </div>
         </div>
 
         {showRates && (
@@ -168,7 +203,26 @@ function DispatchCard({ line, index, showRates, onClick }: { line: PendingLineDt
           </div>
         )}
       </div>
-    </button>
+
+      {photosOpen && (
+        <Dialog open onOpenChange={(o) => !o && setPhotosOpen(false)}>
+          {/* Radix portals this to <body>, so it isn't nested inside the card —
+              but stop the click anyway so dismissing it can't fall through and
+              open the dispatch sheet underneath. */}
+          <DialogContent className="max-h-[85dvh] w-[min(30rem,96vw)] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Camera className="size-4" /> Line photos
+              </DialogTitle>
+              <DialogDescription className="truncate">
+                {line.productName || line.product || '—'} · {line.customerName}
+              </DialogDescription>
+            </DialogHeader>
+            <LiveLinePhotos orderItemId={line.orderItemId} canEdit={false} canDelete={false} hideHeader gridClassName="grid-cols-2 gap-3" />
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
   );
 }
 

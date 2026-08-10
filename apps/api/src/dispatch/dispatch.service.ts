@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException, type OnModuleInit } from '@nestjs/common';
 import { Dispatch, Prisma } from '@prisma/client';
 import {
+  isRealDesign,
   resolveLineDesign,
   type DispatchBackdatePayload,
   type DispatchDateChangePayload,
@@ -111,6 +112,16 @@ export class DispatchService implements OnModuleInit {
     const wasLive = !!existing && now - existing.acquiredAt < DispatchService.LOCK_TTL_MS;
     if (existing && !mine && wasLive) {
       throw new ConflictException(`${existing.userName} is currently working on this item — try again in a moment.`);
+    }
+    // One line at a time per person. A user can only have one sheet open, so any
+    // OTHER line still showing their name is a leftover: the release never fired
+    // because the tab was closed, the phone slept, or the signal dropped, and it
+    // would otherwise sit there looking like they're on two lines at once until
+    // the 90s TTL expired. Claiming a new line is proof they've left the old one.
+    if (user.id != null) {
+      for (const [otherId, lock] of this.lineLocks) {
+        if (otherId !== orderItemId && lock.userId === user.id) this.lineLocks.delete(otherId);
+      }
     }
     this.lineLocks.set(orderItemId, { userId: user.id ?? null, userName: user.name ?? 'Another user', acquiredAt: now });
     // Only a genuinely new/newly-live lock changes what other users' pending
@@ -455,14 +466,25 @@ export class DispatchService implements OnModuleInit {
     const page = lines.slice(query.skip, query.skip + query.pageSize);
     const pendingIds = await this.pendingApprovalOrderItemIds();
     const locks = this.activeLockNames();
-    const items =
-      pendingIds.size || locks.size
-        ? page.map((l) => ({
-            ...l,
-            ...(pendingIds.has(l.orderItemId) ? { hasPendingApproval: true } : {}),
-            lockedByName: locks.get(l.orderItemId) ?? null,
-          }))
-        : page;
+    // One grouped count for the whole PAGE, not a query per row: the mobile
+    // cards each want to show "this line has N photos" and fetching that per
+    // card meant 25+ parallel requests on every scroll.
+    const photoCounts = new Map<number, number>();
+    const pageItemIds = page.map((l) => l.orderItemId);
+    if (pageItemIds.length) {
+      const grouped = await this.prisma.orderItemPhoto.groupBy({
+        by: ['orderItemId'],
+        where: { orderItemId: { in: pageItemIds } },
+        _count: { id: true },
+      });
+      for (const g of grouped) photoCounts.set(g.orderItemId, g._count.id);
+    }
+    const items = page.map((l) => ({
+      ...l,
+      ...(pendingIds.has(l.orderItemId) ? { hasPendingApproval: true } : {}),
+      lockedByName: locks.get(l.orderItemId) ?? null,
+      photoCount: photoCounts.get(l.orderItemId) ?? 0,
+    }));
     return { items, total, page: query.page, pageSize: query.pageSize, totalPages: Math.max(1, Math.ceil(total / query.pageSize)) };
   }
 
@@ -587,17 +609,24 @@ export class DispatchService implements OnModuleInit {
   }
 
   /**
-   * Has this party + item (product + SIZE) + design ever been documented with a
-   * photo? Checked before the Dispatch form allows Save. Two rules:
+   * Has this party + item (product + SIZE) + design TYPE + design NAME ever been
+   * documented with a photo? Checked before the Dispatch form allows Save. Two rules:
    *  - No design at all → nothing to document; always passes. Only items that
    *    actually carry a design need a reference photo.
    *  - Otherwise, "documented" means either this exact line already has a photo
    *    attached, or an earlier line for the SAME customer + product + psize +
-   *    design that has actually been dispatched does. `psize` matters because
-   *    "7 RDX" and "7.5 RDX" are the same product but different items — e.g. a
-   *    photo of one says nothing about the other.
+   *    design type + design name that has actually been dispatched does. `psize`
+   *    matters because "7 RDX" and "7.5 RDX" are the same product but different
+   *    items — e.g. a photo of one says nothing about the other.
    *
-   * "Has a design" goes through {@link resolveLineDesign}, NOT the raw
+   * The design half is matched on BOTH columns together (see {@link designKeyOf}),
+   * not on {@link resolveLineDesign}'s single collapsed value. That helper returns
+   * the type OR the name, whichever is present, so two lines sharing the type
+   * "DL+LOGO" but carrying different design NAMES — "ZEBRA" vs "GUCCI" — resolved
+   * identically, and a photo of the zebra one silently satisfied the gucci one.
+   * They are visibly different designs, so each needs its own reference photo.
+   *
+   * "Has a design" still goes through {@link resolveLineDesign}, NOT the raw
    * `designType` column. Reading that column alone silently exempted every
    * imported line, which stores its design in `design` and leaves `designType`
    * as "NA" — so e.g. "5 RAMPATRA DL+LOGO" dispatched with no photo at all.
@@ -643,10 +672,28 @@ export class DispatchService implements OnModuleInit {
       orderBy: { createdAt: 'desc' },
       select: { url: true, orderItem: { select: { design: true, designType: true } } },
     });
-    const historic = candidates.find((p) => resolveLineDesign(p.orderItem) === design);
+    const wanted = this.designKeyOf(it);
+    const historic = candidates.find((p) => this.designKeyOf(p.orderItem) === wanted);
     return historic
       ? { hasPhoto: true, fromHistory: true, sampleUrl: historic.url, needsPhoto: true }
       : { hasPhoto: false, fromHistory: false, sampleUrl: null, needsPhoto: true };
+  }
+
+  /**
+   * A line's design identity for photo-matching: design TYPE and design NAME
+   * together, so a photo only counts for a line carrying the same both.
+   *
+   * Each half is normalised independently and a placeholder ("NA", "N/A",
+   * "NONE", "-", …) collapses to empty, so a row that genuinely has no name only
+   * ever matches another row that equally has none — rather than matching
+   * everything, which is what folding the two columns into one value did.
+   */
+  private designKeyOf(row: { design?: string | null; designType?: string | null }): string {
+    const part = (v: string | null | undefined) => {
+      const t = (v ?? '').trim().toUpperCase();
+      return isRealDesign(t) ? t : '';
+    };
+    return `${part(row.designType)}|${part(row.design)}`;
   }
 
   /** Server-side twin of {@link photoCheck} — a hard, unconditional block (no

@@ -12,6 +12,7 @@ import {
   type PaymentContext,
   type PendingAdvanceRow,
   type PendingInvoiceRow,
+  type SameDayReceiptDto,
   type OpeningPendingRow,
   type SavePaymentResult,
 } from '@oms/shared';
@@ -104,16 +105,18 @@ export class PaymentsService {
   async context(q: PaymentContextQueryDto): Promise<PaymentContext> {
     const recDate = parseDay(q.recDate, 'Receipt date');
     const customers = await this.resolveCustomers(this.prisma, q.customerId ?? null, q.agentName ?? null);
-    const [invoices, advances, openings] = await Promise.all([
+    const [invoices, advances, openings, sameDayReceipts] = await Promise.all([
       this.invoicePending(this.prisma, customers, recDate),
       this.advancePending(this.prisma, customers),
       this.openingPending(this.prisma, customers),
+      this.receiptsOn(recDate, q.customerId ?? null, q.agentName ?? null),
     ]);
     return {
       customers: customers.map((c) => ({ customerId: c.id, customerName: c.name })),
       invoices,
       advances,
       openings,
+      sameDayReceipts,
       totals: {
         invoiceBank: r2(invoices.reduce((a, i) => a + i.bankBal, 0)),
         invoiceCash: r2(invoices.reduce((a, i) => a + i.cashBal, 0)),
@@ -863,6 +866,37 @@ export class PaymentsService {
         takeAccOn: a.takeAccOn,
       }))
       .filter((a) => a.bankBal > EPS || a.cashBal > EPS);
+  }
+
+  /**
+   * Receipts already entered for this party/agent on the SAME date — so the
+   * form can warn before saving what looks like an accidental second entry of
+   * the same amount (a double tap on Save, or two people entering the same
+   * cheque). Returned with the context rather than as its own endpoint: the
+   * context is already refetched whenever the party or date changes, which is
+   * exactly when this answer changes too.
+   */
+  private async receiptsOn(recDate: Date, customerId: number | null, agentName: string | null): Promise<SameDayReceiptDto[]> {
+    if (customerId == null && !agentName?.trim()) return [];
+    const from = new Date(recDate);
+    from.setHours(0, 0, 0, 0);
+    const to = new Date(recDate);
+    to.setHours(23, 59, 59, 999);
+    const rows = await this.prisma.acctLedger.findMany({
+      where: {
+        voucherType: 'RECEIPT',
+        transDate: { gte: from, lte: to },
+        ...(customerId != null ? { custId: customerId } : { agentName: agentName!.trim() }),
+      },
+      orderBy: { id: 'desc' },
+      select: { voucherNo: true, bankCredit: true, cashCredit: true, transMode: true, transRemarks: true },
+    });
+    return rows.map((r) => ({
+      voucherNo: r.voucherNo,
+      amount: r2(r.bankCredit || r.cashCredit),
+      payMode: r.transMode,
+      remarks: r.transRemarks,
+    }));
   }
 
   /** OpeningBalSummary: Σ OPENING DEBIT − Σ CLEARANCE per customer (CREDITs excluded). */

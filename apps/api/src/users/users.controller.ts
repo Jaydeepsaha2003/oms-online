@@ -60,15 +60,15 @@ export class UsersController {
   @Post()
   @Permissions(perm(RESOURCES.USER, ACTIONS.CREATE))
   @Audit({ action: ACTIONS.CREATE, resource: RESOURCES.USER })
-  create(@Body() dto: CreateUserDto) {
-    return this.users.create(dto);
+  create(@Body() dto: CreateUserDto, @CurrentUser() me: AuthenticatedUser) {
+    return this.users.create(dto, me);
   }
 
   @Patch(':id')
   @Permissions(perm(RESOURCES.USER, ACTIONS.UPDATE))
   @Audit({ action: ACTIONS.UPDATE, resource: RESOURCES.USER })
-  update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
-    return this.users.update(id, dto);
+  update(@Param('id') id: string, @Body() dto: UpdateUserDto, @CurrentUser() me: AuthenticatedUser) {
+    return this.users.update(id, dto, me);
   }
 
   /**
@@ -93,11 +93,11 @@ export class UsersController {
   @Delete(':id')
   @Permissions(perm(RESOURCES.USER, ACTIONS.DELETE))
   @Audit({ action: ACTIONS.DELETE, resource: RESOURCES.USER })
-  async remove(@Param('id') id: string, @CurrentUser('id') currentUserId: string) {
-    if (id === currentUserId) {
+  async remove(@Param('id') id: string, @CurrentUser() me: AuthenticatedUser) {
+    if (id === me.id) {
       throw new BadRequestException('You cannot delete your own account.');
     }
-    await this.users.remove(id);
+    await this.users.remove(id, me);
     return { ok: true };
   }
 

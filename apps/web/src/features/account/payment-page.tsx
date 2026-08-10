@@ -104,6 +104,7 @@ export function PaymentPage() {
   // Arriving from Party Advances (or anywhere else) can hand over a party or
   // agent name to preselect, so the user lands straight on that pending context.
   const { state } = useLocation() as { state?: { party?: string; agent?: string } | null };
+  const confirm = useConfirm();
 
   /* ── form state ─────────────────────────────────────────────────────────── */
   const [recDate, setRecDate] = useState(TODAY);
@@ -306,7 +307,14 @@ export function PaymentPage() {
     setRecDate(TODAY());
   };
 
-  const submit = () => {
+  // True while submit() is waiting on a confirmation dialog. Without it the
+  // SUBMIT button stays live during those awaits (`save.isPending` is still
+  // false), so a double tap could open two dialogs and book the receipt twice —
+  // the very duplicate the first check below exists to prevent.
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async () => {
+    if (submitting || save.isPending) return;
     // Legacy ValidateBeforeSave, same messages in the same order.
     if (!ownerChosen) return toast.error('Please select either Customer / Party Name or Agent Name.');
     if (!payMode) return toast.error('Please select Payment Mode (BANK / CHEQUE / CASH).');
@@ -317,30 +325,78 @@ export function PaymentPage() {
     if (payMode === 'CASH' && !cashBy.trim()) return toast.error('Please enter Cash Received By.');
     if (adjMode === 'AGST REF' && selected.length === 0) return toast.error('AGST REF mode requires selecting at least one invoice.');
 
-    save.mutate(
-      {
-        takeAccOn: isAgent ? 'AGENT' : 'PARTY',
-        customerId: isAgent ? null : customerId,
-        agentName: isAgent ? agent : null,
-        payMode,
-        bankName: bankName || null,
-        chequeNo: chequeNo || null,
-        cashTransLocation: cashLoc || null,
-        cashRecBy: cashBy || null,
-        adjMode,
-        selectedInvNos: adjMode === 'AGST REF' ? selected : undefined,
-        receiptAmt: receipt,
-        recDate,
-        remarks: remarks || null,
-      },
-      {
-        onSuccess: (res) => {
-          setResult(res);
-          clearAll();
+    setSubmitting(true);
+    try {
+      // ── 1. Same amount, same party, same day → probably a double entry ─────
+      // Caught before saving because a duplicate receipt is genuinely painful to
+      // unwind: it over-settles invoices and the surplus becomes a silent advance.
+      const dup = (ctx?.sameDayReceipts ?? []).filter((r) => Math.abs(r.amount - receipt) < 0.01);
+      if (dup.length) {
+        const ok = await confirm({
+          title: 'Possibly already received',
+          description: `${inr(receipt)} was already received from ${ownerLabel} on ${formatDate(recDate)} — ${dup.map((d) => d.voucherNo).join(', ')}. Save this as a SECOND receipt for the same amount?`,
+          confirmText: 'Yes, this is a separate payment',
+          cancelText: 'No, let me check',
+          destructive: true,
+        });
+        if (!ok) return;
+      }
+
+      // ── 2. Amount exactly matches one pending invoice → offer AGST REF ─────
+      // AUTOMATIC would spread it oldest-first and could leave that invoice
+      // open, which is almost never what paying an exact invoice amount meant.
+      let adjModeToSave = adjMode;
+      let selectedToSave = adjMode === 'AGST REF' ? selected : undefined;
+      if (adjMode === 'AUTOMATIC') {
+        const exact = invoices.filter((i) => Math.abs(bucketAmt(i) - receipt) < 0.01);
+        if (exact.length === 1) {
+          const inv = exact[0];
+          const useAgst = await confirm({
+            title: 'Matches one invoice exactly',
+            description: `${inr(receipt)} is exactly the pending amount on ${inv.invNo}. Settle that invoice directly (AGST REF), or carry on adjusting oldest-first (AUTOMATIC)?`,
+            confirmText: `Yes, use AGST REF for ${inv.invNo}`,
+            cancelText: 'No, keep AUTOMATIC',
+          });
+          if (useAgst) {
+            // Passed straight into the payload — setState wouldn't have applied
+            // by the time mutate() reads it.
+            adjModeToSave = 'AGST REF';
+            selectedToSave = [inv.invNo];
+            setAdjMode('AGST REF');
+            setSelected([inv.invNo]);
+          }
+        }
+      }
+
+      save.mutate(
+        {
+          takeAccOn: isAgent ? 'AGENT' : 'PARTY',
+          customerId: isAgent ? null : customerId,
+          agentName: isAgent ? agent : null,
+          payMode,
+          bankName: bankName || null,
+          chequeNo: chequeNo || null,
+          cashTransLocation: cashLoc || null,
+          cashRecBy: cashBy || null,
+          adjMode: adjModeToSave,
+          selectedInvNos: selectedToSave,
+          receiptAmt: receipt,
+          recDate,
+          remarks: remarks || null,
         },
-        onError: (e) => toast.error(getApiErrorMessage(e, 'Save failed')),
-      },
-    );
+        {
+          onSuccess: (res) => {
+            setResult(res);
+            clearAll();
+          },
+          onError: (e) => toast.error(getApiErrorMessage(e, 'Save failed')),
+        },
+      );
+    } finally {
+      // mutate() is callback-based, so this runs as soon as it's been fired —
+      // from here on `save.isPending` is what keeps the button disabled.
+      setSubmitting(false);
+    }
   };
 
   useSaveShortcut(submit);
@@ -563,7 +619,7 @@ export function PaymentPage() {
               {canCreate && (
                 <Button
                   onClick={submit}
-                  disabled={save.isPending}
+                  disabled={save.isPending || submitting}
                   title="Save receipt (Ctrl+S)"
                   className="h-11 flex-[2] bg-emerald-600 font-bold text-white hover:bg-emerald-700 lg:h-10"
                 >
