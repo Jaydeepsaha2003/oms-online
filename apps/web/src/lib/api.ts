@@ -200,6 +200,18 @@ export function getDuplicateMatch(error: unknown): DuplicateMatch | null {
 /** Extract a human-readable message from an API error. */
 export function getApiErrorMessage(error: unknown, fallback = 'Something went wrong'): string {
   if (axios.isAxiosError(error)) {
+    // No response at all = the request never completed a round trip: the tunnel
+    // is down, the VPN isn't carrying traffic, or the host is unreachable. Axios
+    // only offers its own wording here ("timeout of 20000ms exceeded",
+    // "Network Error"), which tells a shop user nothing about what to do. Say
+    // what actually went wrong and what to check — this is the message people
+    // see when sign-in fails away from the shop, so it has to be actionable.
+    if (!error.response && error.code !== 'ERR_CANCELED') {
+      const timedOut = error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT';
+      return timedOut
+        ? 'The server did not respond. Check that your VPN is connected, then try again.'
+        : 'Can’t reach the OMS server. Check your Wi-Fi or VPN connection, then try again.';
+    }
     const data = error.response?.data as { message?: string; details?: Record<string, string[]> } | undefined;
     // A validation failure puts the useful part in `details` — its top-level
     // message is only ever "Validation failed", which tells the user nothing

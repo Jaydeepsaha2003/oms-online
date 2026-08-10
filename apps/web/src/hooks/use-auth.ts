@@ -7,11 +7,21 @@ import { appWasKilled, markAppRunning } from '@/lib/app-session';
 import { disconnectNotificationsSocket } from '@/lib/notifications-socket';
 import { useAuthStore } from '@/stores/auth-store';
 
+// Sign-in must fail LOUDLY rather than hang. The shared axios instance sets no
+// `timeout`, and axios defaults to 0 = wait forever — so with no route to the
+// server (phone on the VPN with the tunnel not carrying traffic, or pointed at a
+// hostname that doesn't resolve off-LAN) the button sat on "Signing in…"
+// indefinitely with nothing to tell the user what was wrong. 20s is well past a
+// slow-but-working login over the router's OpenVPN, and short enough that a dead
+// path surfaces as a real error the user can act on. `/auth/me` and
+// `/auth/refresh` below already do this; login was the one that was missed.
+const LOGIN_TIMEOUT_MS = 20_000;
+
 /** Log in with email + password; stores the session on success. */
 export function useLogin() {
   const setSession = useAuthStore((s) => s.setSession);
   return useMutation({
-    mutationFn: (dto: LoginDto) => http.post<AuthResult>('/auth/login', dto),
+    mutationFn: (dto: LoginDto) => http.post<AuthResult>('/auth/login', dto, { timeout: LOGIN_TIMEOUT_MS }),
     onSuccess: (auth) => setSession(auth),
   });
 }
@@ -20,7 +30,7 @@ export function useLogin() {
 export function usePinLogin() {
   const setSession = useAuthStore((s) => s.setSession);
   return useMutation({
-    mutationFn: (dto: PinLoginDto) => http.post<AuthResult>('/auth/pin-login', dto),
+    mutationFn: (dto: PinLoginDto) => http.post<AuthResult>('/auth/pin-login', dto, { timeout: LOGIN_TIMEOUT_MS }),
     onSuccess: (auth) => setSession(auth),
   });
 }

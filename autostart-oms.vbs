@@ -1,7 +1,7 @@
 ' ============================================================
 '  OMS - Auto-start / self-healing watchdog.
-'  The "OMS Auto Start" scheduled task (installed by setup\enable-autostart.bat /
-'  removed by setup\disable-autostart.bat) runs this silently at Windows boot AND
+'  The "OMS Auto Start" scheduled task (installed by enable-autostart.bat /
+'  removed by disable-autostart.bat) runs this silently at Windows boot AND
 '  every few minutes after that:
 '    - If stop.bat was used (marker file .oms-stopped exists), it does
 '      nothing - an intentional stop stays stopped until start.bat runs.

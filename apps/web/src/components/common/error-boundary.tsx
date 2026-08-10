@@ -16,6 +16,31 @@ interface State {
 
 const CHUNK_RELOAD_KEY = 'oms:chunk-reloaded';
 
+/**
+ * Drop the service worker and every cache it holds, then reload.
+ *
+ * A plain reload is not enough to recover a stale chunk. sw.js answers
+ * navigations network-first but gives up after 2.5s and serves the cached
+ * shell — so on a slow or blipping link (a phone on the router's OpenVPN) the
+ * reload is answered with the SAME poisoned shell, pointing at chunk names the
+ * last build deleted. It fails identically, the one-shot guard is now spent,
+ * and the user is parked on the error screen with no way back but a manual tap.
+ *
+ * Purging is safe HERE specifically because the caller has a confirmed stale
+ * chunk error in hand — unlike index.html's blank-screen timer, which fires on
+ * a guess and must not wipe a healthy client's prefetched assets over a merely
+ * slow load.
+ */
+function purgeAndReload(): void {
+  const done = () => window.location.reload();
+  if (!('serviceWorker' in navigator)) return done();
+  navigator.serviceWorker
+    .getRegistrations()
+    .then((regs) => Promise.all(regs.map((r) => r.unregister())))
+    .then(() => ('caches' in window ? caches.keys().then((n) => Promise.all(n.map((k) => caches.delete(k)))) : undefined))
+    .finally(done);
+}
+
 /** A lazy route whose chunk no longer exists — i.e. a build shipped under us.
  *  Browsers word this differently, so match on the shapes they all use. */
 function isStaleChunkError(error: Error): boolean {
@@ -47,22 +72,11 @@ export class ErrorBoundary extends Component<Props, State> {
     // flag so a genuine, reproducible crash can't reload in a loop.
     if (isStaleChunkError(error) && !sessionStorage.getItem(CHUNK_RELOAD_KEY)) {
       sessionStorage.setItem(CHUNK_RELOAD_KEY, '1');
-      window.location.reload();
+      purgeAndReload();
     }
   }
 
-  private handleReload = () => {
-    const done = () => window.location.reload();
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker
-        .getRegistrations()
-        .then((regs) => Promise.all(regs.map((r) => r.unregister())))
-        .then(() => ('caches' in window ? caches.keys().then((n) => Promise.all(n.map((k) => caches.delete(k)))) : undefined))
-        .finally(done);
-    } else {
-      done();
-    }
-  };
+  private handleReload = purgeAndReload;
 
   render() {
     if (!this.state.error) return this.props.children;

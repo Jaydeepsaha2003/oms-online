@@ -1082,9 +1082,11 @@ export function OrderFormPage() {
       if (docKind === 'quotation') updateQuotation.mutate(input, opts);
       else update.mutate(input, opts);
     } else if (target === 'quotation') {
+      // Saving the *order* form as a quotation: `input.status` is an ORDER status
+      // ("CONFIRMED"), which the quotation API rejects. A new quotation starts as DRAFT.
       // After creating, jump to the printable page so it can be downloaded right
       // away. Back from there returns to this New Order form (browser history).
-      createQuotation.mutate(input, {
+      createQuotation.mutate({ ...input, status: 'DRAFT' }, {
         onSuccess: (q) => finishTo(can('quotation:view') ? `/quotations/${q.id}/bill` : listDest),
         onError,
       });
