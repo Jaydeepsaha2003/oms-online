@@ -9,7 +9,20 @@
 // ("Importing a module script failed"). Bumping evicts that shell on activate,
 // so the next navigation is fetched fresh instead of being served the poisoned
 // snapshot from cache.
-const CACHE = 'oms-v13';
+// v14: the shell fetch used to be ABORTED after 2.5s, which on a phone over the
+// router's VPN meant it usually lost the race — and because an aborted fetch
+// never reaches `cache.put`, the stored shell was never refreshed either. The
+// app then booted the old bundle forever, on every reload, with no way out
+// short of clearing site data. It now answers from cache when the network is
+// slow but lets that fetch finish in the background, so the next open is
+// current. See the navigation handler below.
+const CACHE = 'oms-v14';
+
+/** How long a navigation waits for the live shell before falling back to cache.
+ *  Generous compared with the old 2.5s: a phone resuming on cellular or the
+ *  router's OpenVPN routinely needs more than that, and losing this race used to
+ *  be permanent. The fallback still keeps a cold open instant. */
+const SHELL_TIMEOUT_MS = 6000;
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -51,28 +64,39 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       (async () => {
         const cache = await caches.open(CACHE);
-        try {
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 2500);
-          // `no-store` matters: without it this revalidation can be answered
-          // from the HTTP cache, so the shell we store — and then serve to
-          // every future load — can be older than what the server has. Paired
-          // with the cache-first rule for /assets/ below, one stale snapshot
-          // pins the app to a build whose chunks the next deploy deletes, and
-          // the app stops booting entirely.
-          const res = await fetch('/', { signal: controller.signal, cache: 'no-store' });
-          clearTimeout(timer);
-          if (res && res.ok) {
-            cache.put('/', res.clone()).catch(() => {});
-            return res;
+        // Start the real fetch and — crucially — never abort it. The old code
+        // cancelled this after 2.5s, and a cancelled fetch never reaches
+        // `cache.put`, so a phone that lost the race every time kept the same
+        // stale shell for good. Letting it run means even a slow link refreshes
+        // the shell, so the NEXT open boots the new build.
+        //
+        // `no-store` matters: without it this revalidation can be answered from
+        // the HTTP cache, so the shell we store — and then serve to every future
+        // load — can be older than what the server has. Paired with the
+        // cache-first rule for /assets/ below, one stale snapshot pins the app to
+        // a build whose chunks the next deploy deletes, and it stops booting.
+        const network = fetch('/', { cache: 'no-store' }).then((res) => {
+          if (res && res.ok) cache.put('/', res.clone()).catch(() => {});
+          return res;
+        });
+        // Keeps this worker alive until the fetch lands, even though the
+        // response below may already have been served from cache.
+        event.waitUntil(network.catch(() => {}));
+
+        const cached = await cache.match('/');
+        // First-ever open (nothing cached): we have to wait for the network.
+        if (!cached) {
+          try {
+            return await network;
+          } catch {
+            return fetch('/');
           }
-          throw new Error('shell fetch not ok');
-        } catch {
-          // Slow / offline / aborted → serve the last cached shell; if there is
-          // none yet (first-ever open), fall back to a plain network fetch.
-          const hit = await cache.match('/');
-          return hit || fetch('/');
         }
+        // Otherwise prefer the live shell, but don't hang on it — a slow link
+        // gets the cached one now and the fresh one on the next open.
+        const timeout = new Promise((resolve) => setTimeout(() => resolve(null), SHELL_TIMEOUT_MS));
+        const winner = await Promise.race([network.catch(() => null), timeout]);
+        return winner && winner.ok ? winner : cached;
       })(),
     );
     return;
@@ -114,6 +138,26 @@ self.addEventListener('fetch', (event) => {
         return Response.error();
       }),
   );
+});
+
+/**
+ * Escape hatch for a client that reloaded but still booted the old bundle —
+ * see `hardRefresh()` in lib/pwa-update.ts. Without this the only cure was
+ * clearing site data by hand, which is not something to ask of packing staff on
+ * a phone.
+ *   CLEAR_SHELL — drop the cached index.html so the next navigation must fetch it
+ *   CLEAR_ALL   — drop every cache (shell + hashed assets)
+ * Both reply on the supplied port so the page can wait before reloading.
+ */
+self.addEventListener('message', (event) => {
+  const type = event.data && event.data.type;
+  if (type !== 'CLEAR_SHELL' && type !== 'CLEAR_ALL') return;
+  const reply = () => event.ports && event.ports[0] && event.ports[0].postMessage({ ok: true });
+  const work =
+    type === 'CLEAR_ALL'
+      ? caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
+      : caches.open(CACHE).then((c) => c.delete('/'));
+  event.waitUntil(work.then(reply).catch(reply));
 });
 
 // Web Push — fires even when the app is fully closed; the browser wakes this

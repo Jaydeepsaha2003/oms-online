@@ -69,6 +69,9 @@ async function reloadIfNewBuildDeployed(): Promise<void> {
     // Compare just the filenames so a differing origin/base can't cause a loop.
     const name = (p: string) => p.split('/').pop();
     if (name(latest) !== name(current)) announceUpdate();
+    // Running the newest bundle — forget any earlier failed reload attempts so a
+    // future update starts from a clean count rather than jumping to the purge.
+    else clearReloadGuard();
   } catch {
     /* offline / server down — keep running the current build */
   }
@@ -95,7 +98,63 @@ function safeToReloadNow(): boolean {
   return !typing && !isEditable && !dialogOpen;
 }
 
+/**
+ * How many plain reloads to try before assuming a reload alone can't land the
+ * new build. Counted per tab/session, so a normal update (one reload) never
+ * escalates, but a client stuck on a stale shell stops looping and gets purged.
+ */
+const RELOAD_GUARD_KEY = 'oms:update-reload-attempts';
+const MAX_PLAIN_RELOADS = 2;
+
+const attempts = (): number => Number(sessionStorage.getItem(RELOAD_GUARD_KEY) ?? '0');
+/** Called once we're confirmed to be running the newest bundle. */
+function clearReloadGuard(): void {
+  try {
+    sessionStorage.removeItem(RELOAD_GUARD_KEY);
+  } catch {
+    /* private mode / storage disabled — the guard just doesn't persist */
+  }
+}
+
+/** Ask the service worker to bin its caches, then reload. Last resort for a
+ *  client whose reloads keep being answered from a stale shell. */
+async function hardRefresh(): Promise<void> {
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    const sw = reg?.active;
+    if (sw) {
+      await new Promise<void>((resolve) => {
+        const ch = new MessageChannel();
+        // Don't wait forever if the worker never answers.
+        const t = setTimeout(resolve, 3000);
+        ch.port1.onmessage = () => {
+          clearTimeout(t);
+          resolve();
+        };
+        sw.postMessage({ type: 'CLEAR_ALL' }, [ch.port2]);
+      });
+    }
+  } catch {
+    /* fall through — reloading is still worth a try */
+  }
+  clearReloadGuard();
+  window.location.reload();
+}
+
 export function applyUpdateNow(): void {
+  let n = MAX_PLAIN_RELOADS; // assume the worst if sessionStorage is unavailable
+  try {
+    n = attempts() + 1;
+    sessionStorage.setItem(RELOAD_GUARD_KEY, String(n));
+  } catch {
+    /* storage disabled — go straight to the purge path below */
+  }
+  // Reloading twice without the bundle changing means something is answering
+  // the navigation from cache. Purge and reload instead of looping.
+  if (n > MAX_PLAIN_RELOADS) {
+    void hardRefresh();
+    return;
+  }
   window.location.reload();
 }
 
