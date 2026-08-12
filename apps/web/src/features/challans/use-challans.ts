@@ -59,6 +59,12 @@ export function usePendingChallans(query: PendingChallanQuery, opts?: { enabled?
     enabled: opts?.enabled ?? true,
     staleTime: 0,
     refetchOnMount: 'always',
+    // Belt and braces behind the live `challans:pending-changed` socket ping: a
+    // phone that was asleep, or a PC whose socket dropped, misses the broadcast
+    // entirely and would otherwise sit on a list that no longer exists. Coming
+    // back to the tab or regaining the network re-fetches on its own.
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
 }
 

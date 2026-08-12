@@ -286,8 +286,21 @@ export class DispatchService implements OnModuleInit {
   }
 
   private pendingCache: { at: number; lines: PendingLineDto[] } | null = null;
+  /**
+   * Every dispatch write funnels through here, so this is also where the rest of
+   * the building gets told.
+   *
+   * A dispatch moves TWO pools: what is still awaiting dispatch, and what is
+   * awaiting a challan. The challan side was only ever broadcast by
+   * ChallansService, so creating or editing a dispatch changed the un-challaned
+   * pool silently — an open Pending Challan view on another device (the office PC
+   * while someone dispatches from a phone) kept showing the old list until it was
+   * reloaded by hand. Since this is already the one place every write passes, the
+   * ping belongs here rather than repeated across submit/update/remove.
+   */
   private invalidatePendingCache(): void {
     this.pendingCache = null;
+    this.gateway.emitPendingChallansChanged();
   }
 
   /* ── Pending order lines (ordered − dispatched) ─────────────────────────── */
