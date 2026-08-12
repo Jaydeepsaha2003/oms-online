@@ -812,14 +812,14 @@ export class PaymentsService {
       const m = d.billType === 'BANK' ? bankDisc : cashDisc;
       m.set(d.invNo, r2((m.get(d.invNo) ?? 0) + (d._sum.disAmt ?? 0)));
     }
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
     const rows: PendingInvoiceRow[] = [];
     for (const c of challans) {
       const bankBal = r2((c.b ?? 0) - (bankRec.get(c.code) ?? 0) - (bankDisc.get(c.code) ?? 0));
       const cashBal = r2((c.c ?? 0) - (cashRec.get(c.code) ?? 0) - (cashDisc.get(c.code) ?? 0));
       if (bankBal <= EPS && cashBal <= EPS) continue;
-      const dd = dueTypeOf(c.invDate, c.dueDate, today);
+      // Ageing is measured from the RECEIPT date, not from "now" — back-dating
+      // a receipt must show the due days as they stood on that day.
+      const dd = dueTypeOf(c.invDate, c.dueDate, recDate);
       rows.push({
         invNo: c.code,
         invDate: c.invDate.toISOString(),
