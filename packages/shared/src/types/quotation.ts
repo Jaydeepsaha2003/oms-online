@@ -40,6 +40,12 @@ export interface QuotationDto {
   convertedAt: string | null;
   /** How it was converted: 'DIRECT' or 'EDITED'. */
   convertMode: string | null;
+  /** Set when this quotation came from a draft order via "Save as Quotation".
+   *  That order is parked (status QUOTED) — hidden from View Orders — and
+   *  converting this quotation revives it under the SAME Order #, rather than
+   *  minting a second one. Null for a quotation typed from scratch. */
+  sourceOrderId: number | null;
+  sourceOrderCode: string | null;
   /** Cancellation tracking (for analysis). */
   cancelReason: string | null;
   cancelNote: string | null;

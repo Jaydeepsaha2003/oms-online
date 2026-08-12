@@ -11,6 +11,7 @@ import {
   type CustomerLogoDto,
   type CustomerRateDto,
   type LinkableOrderItemDto,
+  ORDER_UNCOMMITTED_STATUSES,
   type Paginated,
   type PriceHistoryList,
   type RateChangeEntry,
@@ -404,7 +405,7 @@ export class BookingsService {
       where: {
         bookingId: null,
         status: { not: 'CANCELLED' },
-        order: { customerName: booking.customerName, status: { notIn: ['CANCELLED', 'DRAFT'] } },
+        order: { customerName: booking.customerName, status: { notIn: ['CANCELLED', ...ORDER_UNCOMMITTED_STATUSES] } },
         ...(search ? { OR: [{ productName: { contains: search } }, { order: { code: { contains: search } } }] } : {}),
       },
       include: { order: { select: { id: true, code: true, orderDate: true } } },

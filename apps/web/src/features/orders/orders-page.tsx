@@ -507,9 +507,20 @@ export function OrdersPage() {
               <DialogTitle className="flex items-center gap-2">
                 <FileText className="text-violet-600 size-5" /> Save as Quotation
               </DialogTitle>
-              <DialogDescription>
-                A new quotation will be created for <span className="text-foreground font-semibold">{quotingDraft.customerName}</span> with
-                this draft&apos;s items and rates. The draft order stays where it is — delete it separately if you no longer need it.
+              <DialogDescription asChild>
+                <div className="space-y-2">
+                  <p>
+                    A quotation will be created for <span className="text-foreground font-semibold">{quotingDraft.customerName}</span> with this
+                    draft&apos;s items and rates.
+                  </p>
+                  {/* Spelling out the park-and-reuse deal, because "where did my
+                      draft go?" is the obvious first reaction otherwise. */}
+                  <p>
+                    This draft then moves out of View Orders and lives as the quotation. Order&nbsp;
+                    <span className="text-foreground font-semibold">{shortOrderCode(quotingDraft.code, quotingDraft.id)}</span> is held for it — when
+                    you convert the quotation, it comes back under that same number. Cancelling or deleting the quotation puts it back as a draft.
+                  </p>
+                </div>
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>

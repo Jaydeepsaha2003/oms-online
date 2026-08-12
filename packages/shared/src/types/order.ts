@@ -7,6 +7,26 @@ export const ORDER_STATUSES = ['PENDING', 'CONFIRMED', 'CANCELLED'] as const;
 export type OrderPriority = (typeof ORDER_PRIORITIES)[number];
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
+/**
+ * Statuses an order can hold while it is NOT yet a commitment to anybody, and
+ * so must be kept out of the order lists, Order Modify, dispatch and bookings:
+ *
+ *  - DRAFT  — still being written; saved so it isn't lost, nothing promised.
+ *  - QUOTED — parked because it was saved as a quotation. The quotation is the
+ *             live document from then on; converting it revives this exact order
+ *             (same Order #) instead of creating a duplicate. See
+ *             QuotationDto.sourceOrderId.
+ *
+ * Neither appears in {@link ORDER_STATUSES}: they're lifecycle states the
+ * system sets, never something a user picks from a dropdown.
+ */
+export const ORDER_UNCOMMITTED_STATUSES = ['DRAFT', 'QUOTED'] as const;
+
+/** True while an order is only a draft or parked as a quotation — see
+ *  {@link ORDER_UNCOMMITTED_STATUSES}. */
+export const isUncommittedOrder = (status: string | null | undefined): boolean =>
+  !!status && (ORDER_UNCOMMITTED_STATUSES as readonly string[]).includes(status);
+
 /** Columns offered by Order Modify's Excel export, in the order they're written
  *  to the sheet. Shared so the "which columns?" picker on the frontend and the
  *  xlsx builder on the backend can never drift apart (mirrors
@@ -93,6 +113,15 @@ export interface OrderItemDto {
    *  quantity/rate/product details are then frozen server-side; only status
    *  (e.g. Cancel) and comment may still change. Add further changes as a new line. */
   dispatched?: boolean;
+  /**
+   * How far THIS line has shipped, so Order Modify can show it per line rather
+   * than only rolling it up per order:
+   *   NONE    — nothing dispatched yet
+   *   PARTIAL — at least one dispatch exists, none marked "FULLY DISPATCH"
+   *   FULL    — a "FULLY DISPATCH" record exists for it
+   * Same source as {@link OrderDto.dispatchState}, just not collapsed to the order.
+   */
+  dispatchState?: 'NONE' | 'PARTIAL' | 'FULL';
   /** Set when this line was drawn from a bag Booking (rates frozen at that booking's date). */
   bookingId: number | null;
   /** The source booking's code (e.g. BKG-00001), when bookingId is set. */

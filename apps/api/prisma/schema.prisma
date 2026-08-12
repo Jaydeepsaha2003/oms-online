@@ -525,6 +525,10 @@ model Order {
 
   // Set when this order was created by converting a quotation.
   fromQuotation Quotation? @relation("OrderFromQuotation")
+  // Set when this order was PARKED by "Save as Quotation" (status QUOTED): the
+  // quotation below is the live document, and converting it revives this order
+  // rather than minting a second one. The reverse of fromQuotation.
+  quotationSource Quotation? @relation("QuotationFromOrder")
   dispatches    Dispatch[]
 
   @@index([customerId])
@@ -563,6 +567,14 @@ model Quotation {
   convertedAt      DateTime?
   // How it was converted: DIRECT (as-is) or EDITED (changed first).
   convertMode      String?
+
+  // Set when this quotation was produced from a DRAFT order ("Save as
+  // Quotation" in View Orders). That order is parked at status QUOTED so it
+  // stops showing as an order, and convert() revives THAT order — same id, same
+  // Order # — instead of creating a duplicate alongside it. Deleting or
+  // cancelling this quotation puts the order back to DRAFT.
+  sourceOrderId Int?   @unique
+  sourceOrder   Order? @relation("QuotationFromOrder", fields: [sourceOrderId], references: [id])
 
   // Cancellation tracking — why it was cancelled, for analysis.
   cancelReason    String?

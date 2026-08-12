@@ -157,7 +157,10 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
     resource: RESOURCES.QUOTATION,
     label: 'Quotations',
     group: 'Sales',
-    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.EXPORT, ACTIONS.CONVERT, ACTIONS.CANCEL, ACTIONS.MANAGE],
+    // PRINT was missing here even though GET /quotations/:id/bill.pdf asks for
+    // it, so it was an ungrantable permission — listing it makes the PDF a real
+    // per-role choice instead of something only wildcard/manage holders had.
+    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.EXPORT, ACTIONS.PRINT, ACTIONS.CONVERT, ACTIONS.CANCEL, ACTIONS.MANAGE],
   },
   {
     resource: RESOURCES.DISPATCH,

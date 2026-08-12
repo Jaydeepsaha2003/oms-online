@@ -3,7 +3,7 @@ import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
-import { Permissions } from '../common/decorators/permissions.decorator';
+import { AnyPermission, Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { QuotationsService } from './quotations.service';
 import { OrdersService } from '../orders/orders.service';
@@ -38,8 +38,14 @@ export class QuotationsController {
     return this.quotations.findOne(id);
   }
 
+  // VIEW is accepted alongside PRINT: 'quotation:print' was missing from the
+  // permission catalog until now, so no role could ever be granted it, and the
+  // quotation bill has always been reachable by anyone who can view the
+  // quotation (the /quotations/:id/bill screen renders the same document
+  // client-side). Requiring PRINT alone here would take away a capability that
+  // view-holders already have rather than adding a real restriction.
   @Get(':id/bill.pdf')
-  @Permissions(perm(R, ACTIONS.PRINT))
+  @AnyPermission(perm(R, ACTIONS.PRINT), perm(R, ACTIONS.VIEW))
   async billPdf(@Param('id', ParseIntPipe) id: number, @Res() res: Response) {
     try {
       const { buffer, filename } = await this.orders.generateOrderBillPdf(id, true);

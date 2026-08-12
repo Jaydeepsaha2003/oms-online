@@ -3,10 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import {
   ArrowRightLeft,
   Ban,
-  ChevronDown,
+  Bookmark,
   ChevronLeft,
   ChevronRight,
+  EllipsisVertical,
   Eye,
+  FileSearch,
   Filter,
   Loader2,
   Pencil,
@@ -33,6 +35,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { openPdf } from '@/lib/pdf';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { settingValues, useSettings } from '@/features/settings/use-settings';
 import {
@@ -56,7 +60,18 @@ const StatusBadge = ({ s }: { s: string }) => (
 const isOpen = (s: string) => s === 'DRAFT' || s === 'SENT';
 
 const COLUMNS: DataColumn<QuotationDto>[] = [
-  { id: 'code', label: 'Quote #', pin: 'left0', fixed: true, cell: (q) => <span className="font-mono text-xs font-medium">{q.code ?? `#${q.id}`}</span> },
+  {
+    id: 'code',
+    label: 'Quote #',
+    pin: 'left0',
+    fixed: true,
+    cell: (q) => (
+      <div className="flex flex-col items-start gap-1">
+        <span className="font-mono text-xs font-medium">{q.code ?? `#${q.id}`}</span>
+        {isOpen(q.status) && q.sourceOrderCode && <HeldOrder code={q.sourceOrderCode} />}
+      </div>
+    ),
+  },
   { id: 'date', label: 'Date', cell: (q) => <span className="whitespace-nowrap">{formatDate(q.orderDate)}</span> },
   { id: 'customer', label: 'Customer', cell: (q) => <span className="font-medium">{q.customerName}</span> },
   { id: 'items', label: 'Items', align: 'right', cell: (q) => <span className="tabular-nums">{q.itemCount}</span> },
@@ -80,6 +95,17 @@ const COLUMNS: DataColumn<QuotationDto>[] = [
       ),
   },
 ];
+
+/** Shown while a quotation still holds the order number it was saved from, so
+ *  it's obvious the Order # isn't lost — converting brings it back. */
+const HeldOrder = ({ code }: { code: string }) => (
+  <span
+    className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700 ring-1 ring-inset ring-indigo-200"
+    title={`Saved from order ${code} — that order is parked and comes back under the same number when this quotation is converted.`}
+  >
+    <Bookmark className="size-3" /> Holds {code}
+  </span>
+);
 
 export function QuotationsPage() {
   const navigate = useNavigate();
@@ -153,6 +179,105 @@ export function QuotationsPage() {
     });
   };
 
+  /** Opens the quotation statement in a new tab rather than saving a file —
+   *  a quick look at what the customer would receive, no download involved. */
+  const handlePreview = (q: QuotationDto) => {
+    void openPdf(`/quotations/${q.id}/bill.pdf`, `${q.code ?? `Quotation-${q.id}`}.pdf`).catch((e) =>
+      toast.error(getApiErrorMessage(e, 'Preview failed')),
+    );
+  };
+
+  /** Every row action behind one kebab, same as Orders and Bag Bookings.
+   *
+   *  Converting is the point of no return: from then on the ORDER is the live
+   *  document, so editing its lines (or deleting the quotation that produced it)
+   *  would either be silently discarded or destroy the order's provenance. Those
+   *  entries stay visible but disabled, with the reason on hover, rather than
+   *  disappearing — otherwise the menu changes shape row to row and it's not
+   *  obvious the action ever existed. The API enforces the same rules. */
+  const quotationActionsMenu = (q: QuotationDto) => {
+    const open = isOpen(q.status);
+    const converted = q.status === 'CONVERTED';
+    // Why an entry is disabled — shown on hover so it doesn't look broken.
+    const lockedWhy = converted
+      ? `Already converted to ${q.convertedOrderCode ?? 'an order'} — change the order instead`
+      : 'This quotation is cancelled';
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" className="size-8" aria-label={`Actions for quotation ${q.code ?? q.id}`} title="Quotation actions">
+            <EllipsisVertical className="size-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-64 font-sans">
+          {can('quotation:view') && (
+            <>
+              <DropdownMenuItem onSelect={() => handlePreview(q)}>
+                <FileSearch className="text-violet-600" /> Preview PDF
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => navigate(`/quotations/${q.id}/bill`)}>
+                <Printer /> Print / view quotation
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          )}
+          {can('quotation:update') && (
+            <DropdownMenuItem disabled={!open} onSelect={() => navigate(`/quotations/${q.id}/edit`)} title={open ? undefined : lockedWhy}>
+              <Pencil /> Edit quotation (items &amp; rates)
+            </DropdownMenuItem>
+          )}
+          {can('quotation:convert') && (
+            <DropdownMenuItem
+              disabled={!open || convert.isPending}
+              onSelect={() => doConvert(q, 'DIRECT')}
+              title={
+                !open
+                  ? lockedWhy
+                  : q.sourceOrderCode
+                    ? `Brings back order ${q.sourceOrderCode}, the draft this quotation was saved from`
+                    : undefined
+              }
+            >
+              {/* When the quotation holds a parked order, converting revives THAT
+                  order — say its number so nobody expects a fresh one. */}
+              <ArrowRightLeft /> {q.sourceOrderCode ? `Convert back to ${q.sourceOrderCode}` : 'Convert to order'}
+            </DropdownMenuItem>
+          )}
+          {can('quotation:update') && (
+            <DropdownMenuItem
+              disabled={!open || q.status === 'SENT' || markSent.isPending}
+              onSelect={() => doSent(q)}
+              title={q.status === 'SENT' ? 'Already marked as sent' : open ? undefined : lockedWhy}
+            >
+              <Send /> Mark as sent to customer
+            </DropdownMenuItem>
+          )}
+          {converted && q.convertedOrderId != null && can('order:view') && (
+            <DropdownMenuItem onSelect={() => navigate(`/orders/${q.convertedOrderId}/edit`)}>
+              <Eye className="text-emerald-600" /> View {q.convertedOrderCode ?? 'the order'}
+            </DropdownMenuItem>
+          )}
+          {(can('quotation:cancel') || can('quotation:delete')) && <DropdownMenuSeparator />}
+          {can('quotation:cancel') && (
+            <DropdownMenuItem variant="destructive" disabled={!open} onSelect={() => setCancelling(q)} title={open ? undefined : lockedWhy}>
+              <Ban /> Cancel with reason
+            </DropdownMenuItem>
+          )}
+          {can('quotation:delete') && (
+            <DropdownMenuItem
+              variant="destructive"
+              disabled={converted}
+              onSelect={() => void handleDelete(q)}
+              title={converted ? lockedWhy : undefined}
+            >
+              <Trash2 /> Delete permanently
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  };
+
   // Phones: one stacked card per quotation instead of a horizontally-scrolling table.
   const quotationMobileCard = (q: QuotationDto) => (
     <div className="space-y-2.5">
@@ -161,6 +286,7 @@ export function QuotationsPage() {
           <p className="text-muted-foreground font-mono text-xs font-semibold">{q.code ?? `#${q.id}`}</p>
           <p className="truncate leading-tight font-medium">{q.customerName}</p>
           <p className="text-muted-foreground text-xs">{formatDate(q.orderDate)}</p>
+          {isOpen(q.status) && q.sourceOrderCode && <div className="mt-1"><HeldOrder code={q.sourceOrderCode} /></div>}
         </div>
         <StatusBadge s={q.status} />
       </div>
@@ -185,25 +311,7 @@ export function QuotationsPage() {
         <p className="text-xs text-sky-700">Sent {q.sentAt ? formatDate(q.sentAt) : ''}</p>
       ) : null}
       <div className="flex items-center justify-end gap-1.5 border-t pt-2.5" onClick={(e) => e.stopPropagation()}>
-        {((isOpen(q.status) && (can('quotation:convert') || can('quotation:cancel') || can('quotation:update'))) ||
-          (q.status === 'CONVERTED' && q.convertedOrderId != null && can('order:view'))) && (
-          <>
-            <Button variant="outline" size="sm" className="h-8" onClick={() => setActing(q)}>
-              Action <ChevronDown className="size-3.5" />
-            </Button>
-            {(can('quotation:view') || can('quotation:delete')) && <div className="bg-border mx-0.5 h-5 w-px shrink-0" aria-hidden="true" />}
-          </>
-        )}
-        {can('quotation:view') && (
-          <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-primary size-8" onClick={() => navigate(`/quotations/${q.id}/bill`)} aria-label="Print" title="Print / view quotation">
-            <Printer className="size-4" />
-          </Button>
-        )}
-        {can('quotation:delete') && (
-          <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => handleDelete(q)} aria-label="Delete">
-            <Trash2 className="size-4" />
-          </Button>
-        )}
+        {quotationActionsMenu(q)}
       </div>
     </div>
   );
@@ -286,29 +394,7 @@ export function QuotationsPage() {
         emptyText="No quotations yet."
         onRowClick={(q) => { if (isOpen(q.status) || q.status === 'CONVERTED') setActing(q); }}
         mobileCard={quotationMobileCard}
-        actions={(q) => (
-          <div className="flex items-center justify-end gap-1.5">
-            {((isOpen(q.status) && (can('quotation:convert') || can('quotation:cancel') || can('quotation:update'))) ||
-              (q.status === 'CONVERTED' && q.convertedOrderId != null && can('order:view'))) && (
-              <>
-                <Button variant="outline" size="sm" className="h-8" onClick={() => setActing(q)} title="Choose an action">
-                  Action <ChevronDown className="size-3.5" />
-                </Button>
-                {(can('quotation:view') || can('quotation:delete')) && <div className="bg-border mx-0.5 h-5 w-px shrink-0" aria-hidden="true" />}
-              </>
-            )}
-            {can('quotation:view') && (
-              <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-primary size-8" onClick={() => navigate(`/quotations/${q.id}/bill`)} aria-label="Print" title="Print / view quotation">
-                <Printer className="size-4" />
-              </Button>
-            )}
-            {can('quotation:delete') && (
-              <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => handleDelete(q)} aria-label="Delete" title="Delete">
-                <Trash2 className="size-4" />
-              </Button>
-            )}
-          </div>
-        )}
+        actions={(q) => <div className="flex items-center justify-end">{quotationActionsMenu(q)}</div>}
       />
 
       <div className="flex items-center justify-between gap-3">
@@ -431,8 +517,12 @@ function ActionDialog({
             show={isOpen(q.status) && can('quotation:convert')}
             icon={ArrowRightLeft}
             color="bg-emerald-100 text-emerald-700"
-            title="Convert to order directly"
-            desc="Create a sales order from this quotation as-is, then open it to print."
+            title={q.sourceOrderCode ? `Convert back to ${q.sourceOrderCode}` : 'Convert to order directly'}
+            desc={
+              q.sourceOrderCode
+                ? `Bring back order ${q.sourceOrderCode} — the draft this was saved from — with these lines, then open it to print.`
+                : 'Create a sales order from this quotation as-is, then open it to print.'
+            }
             onClick={onConvertDirect}
           />
           <Option

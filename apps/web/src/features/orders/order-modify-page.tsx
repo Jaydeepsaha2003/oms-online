@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Ban, ChevronLeft, ChevronRight, ExternalLink, Filter, Loader2, RotateCcw, Save, Trash2, Undo2 } from 'lucide-react';
+import { Ban, ChevronLeft, ChevronRight, ExternalLink, Filter, Loader2, Pencil, RotateCcw, Save, Trash2, Truck, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { OrderDto, OrderInput, OrderItemDto, QtyField } from '@oms/shared';
-import { ORDER_LINE_EXPORT_COLUMNS, ORDER_PRIORITIES, qtyOrderForCategory, resolveSpecialRates } from '@oms/shared';
+import { isUncommittedOrder, ORDER_LINE_EXPORT_COLUMNS, ORDER_PRIORITIES, qtyOrderForCategory, resolveSpecialRates } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn, shortOrderCode } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
@@ -82,6 +82,27 @@ interface Row {
   line: OrderItemDto;
 }
 
+/** Per-line shipping state. Nothing renders for an undispatched line — a chip on
+ *  every row would just be noise when most of the list hasn't shipped. */
+function DispatchChip({ state }: { state?: OrderItemDto['dispatchState'] }) {
+  if (state !== 'PARTIAL' && state !== 'FULL') return null;
+  const full = state === 'FULL';
+  return (
+    <span
+      className={cn(
+        'mt-1 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold ring-1 ring-inset',
+        full
+          ? 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/25'
+          : 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/25',
+      )}
+      title={full ? 'Fully dispatched — quantities and rate are locked' : 'Partly dispatched — quantities and rate are locked'}
+    >
+      <Truck className="size-2.5" />
+      {full ? 'Fully dispatched' : 'Part dispatched'}
+    </span>
+  );
+}
+
 /** Build the full update payload from an order + a (possibly edited) item set. */
 function toInput(o: OrderDto, items: OrderItemDto[]): OrderInput {
   return {
@@ -148,7 +169,15 @@ const COLUMNS: DataColumn<Row>[] = [
     label: 'Status',
     cell: (r) => {
       const cancelled = r.line.status === 'CANCELLED';
-      return <StatusPill status={cancelled ? 'CANCELLED' : r.order.status} />;
+      // The pill shows the ORDER's status; the chip below it shows how far THIS
+      // line has shipped. Folded into the existing column rather than added as a
+      // new one, so nobody's saved column order gets rearranged.
+      return (
+        <div className="flex flex-col items-start gap-0.5">
+          <StatusPill status={cancelled ? 'CANCELLED' : r.order.status} />
+          {!cancelled && <DispatchChip state={r.line.dispatchState} />}
+        </div>
+      );
     },
   },
 ];
@@ -223,8 +252,9 @@ export function OrderModifyPage() {
     setPage(1);
   };
 
-  // Draft orders are work-in-progress and stay hidden from Order Modify.
-  const orders = useMemo(() => (data?.items ?? []).filter((o) => o.status !== 'DRAFT'), [data]);
+  // Drafts are work-in-progress and orders parked as a quotation aren't orders
+  // yet — neither belongs on Order Modify.
+  const orders = useMemo(() => (data?.items ?? []).filter((o) => !isUncommittedOrder(o.status)), [data]);
   const totalPages = data?.totalPages ?? 1;
 
   // Flatten every order's lines into a single list (order info repeats per line).
@@ -552,7 +582,19 @@ export function OrderModifyPage() {
                     {lines.map((r) => {
                       const cancelled = r.line.status === 'CANCELLED';
                       return (
-                        <div key={r.line.id} className="active:bg-muted cursor-pointer px-3 py-2" onClick={() => setEdit(r)}>
+                        <div
+                          key={r.line.id}
+                          role="button"
+                          tabIndex={0}
+                          className="active:bg-muted cursor-pointer px-3 py-2"
+                          onClick={() => setEdit(r)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setEdit(r);
+                            }
+                          }}
+                        >
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
                               <p className={cn('truncate text-[13px] font-bold', cancelled ? 'text-muted-foreground line-through' : 'text-slate-800 dark:text-slate-200')}>
@@ -562,8 +604,17 @@ export function OrderModifyPage() {
                                 {r.line.designType || '—'}
                                 {r.line.priority === 'URGENT' && <span className="ml-1.5 font-bold text-rose-600 dark:text-rose-400">URGENT</span>}
                               </p>
+                              {/* Per-line shipping state — the phone view showed nothing at
+                                  all, so there was no way to tell a shipped line from a
+                                  pending one, or to know why editing one is restricted. */}
+                              <DispatchChip state={r.line.dispatchState} />
                             </div>
-                            <span className="shrink-0 text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">₹{(r.line.rate ?? 0).toLocaleString('en-IN')}</span>
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">₹{(r.line.rate ?? 0).toLocaleString('en-IN')}</span>
+                              {/* The row was already tappable, but nothing said so — on a
+                                  phone there's no hover to discover it with. */}
+                              <Pencil className="text-muted-foreground size-3.5" aria-hidden />
+                            </div>
                           </div>
                           <div className="mt-1 grid grid-cols-4 gap-1.5 text-[11px]">
                             {([['Bags', r.line.bags], ['Pcs', r.line.pcs], ['Kgs', r.line.gram], ['Box', r.line.box]] as const).map(([lbl, v]) => (

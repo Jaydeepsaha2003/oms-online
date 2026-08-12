@@ -2,7 +2,17 @@ import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { type OrderDto, type OrderFilterOptions, type OrderItemPhotoDto, type OrderLookupsWire, type OrderTimeline, type OrderTimelineChallanRef, type Paginated } from '@oms/shared';
+import {
+  isUncommittedOrder,
+  ORDER_UNCOMMITTED_STATUSES,
+  type OrderDto,
+  type OrderFilterOptions,
+  type OrderItemPhotoDto,
+  type OrderLookupsWire,
+  type OrderTimeline,
+  type OrderTimelineChallanRef,
+  type Paginated,
+} from '@oms/shared';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import { PrismaService } from '../prisma/prisma.service';
 import { formatDate } from '../common/date.util';
@@ -99,7 +109,15 @@ export class OrdersService {
   }
 
   async findMany(query: OrderQueryDto): Promise<Paginated<OrderDto>> {
-    const where = this.buildWhere(query);
+    // A QUOTED order is parked: it was saved as a quotation, so the quotation is
+    // the document people work with and this row must not show up as an order —
+    // otherwise the same job appears twice, once in each list. Drafts DO show
+    // here (that's the point of saving one). Skipped when an explicit status
+    // filter is in play, since QUOTED is never one of the choices anyway.
+    const where: Prisma.OrderWhereInput = {
+      ...this.buildWhere(query),
+      ...(query.status ? {} : { status: { not: 'QUOTED' } }),
+    };
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.order.findMany({
         where,
@@ -136,7 +154,7 @@ export class OrdersService {
     };
 
     return {
-      items: rows.map((r) => this.toDto(r, stateOf(r), hasDispatch)),
+      items: rows.map((r) => this.toDto(r, stateOf(r), hasDispatch, hasFull)),
       total,
       page: query.page,
       pageSize: query.pageSize,
@@ -151,7 +169,10 @@ export class OrdersService {
    * way the list does it, so the sheet and the screen can't disagree.
    */
   async exportLines(query: OrderQueryDto): Promise<OrderLineExportRow[]> {
-    const where: Prisma.OrderWhereInput = { ...this.buildWhere(query), status: { not: 'DRAFT' } };
+    const where: Prisma.OrderWhereInput = {
+      ...this.buildWhere(query),
+      status: { notIn: [...ORDER_UNCOMMITTED_STATUSES] },
+    };
     const rows = await this.prisma.order.findMany({ where, include: this.includeFor(query), orderBy: [{ id: 'desc' }] });
     const out: OrderLineExportRow[] = [];
     for (const o of rows) {
@@ -182,9 +203,17 @@ export class OrdersService {
     const row = await this.prisma.order.findUnique({ where: { id }, include: INCLUDE });
     if (!row) throw new NotFoundException('Order not found.');
     const dispatched = row.items.length
-      ? await this.prisma.dispatch.findMany({ where: { orderItemId: { in: row.items.map((it) => it.id) } }, select: { orderItemId: true } })
+      ? await this.prisma.dispatch.findMany({
+          where: { orderItemId: { in: row.items.map((it) => it.id) } },
+          select: { orderItemId: true, dispatchStatus: true },
+        })
       : [];
-    const dto = this.toDto(row, null, new Set(dispatched.map((d) => d.orderItemId)));
+    const dto = this.toDto(
+      row,
+      null,
+      new Set(dispatched.map((d) => d.orderItemId)),
+      new Set(dispatched.filter((d) => d.dispatchStatus === 'FULLY DISPATCH').map((d) => d.orderItemId)),
+    );
     // Only the single-order fetch needs this (the printable bill's "Bill To"
     // address line) — skipped in findMany's list rows to avoid an extra join per row.
     const customer = row.customerId
@@ -229,8 +258,29 @@ export class OrdersService {
     return this.toDto(await this.ensureCode(row));
   }
 
-  async update(id: number, dto: UpdateOrderDto, actorName?: string | null): Promise<OrderDto> {
-    await this.ensureExists(id);
+  /**
+   * @param opts.revivingQuotation set only by QuotationsService.convert(), which
+   *   is the one caller allowed to write a QUOTED (parked) order — that IS the
+   *   revive. Everything else must be turned away, or edits made here would be
+   *   silently overwritten by the quotation's lines the moment it converts.
+   */
+  async update(
+    id: number,
+    dto: UpdateOrderDto,
+    actorName?: string | null,
+    opts?: { revivingQuotation?: boolean },
+  ): Promise<OrderDto> {
+    const current = await this.prisma.order.findUnique({
+      where: { id },
+      select: { status: true, quotationSource: { select: { code: true } } },
+    });
+    if (!current) throw new NotFoundException('Order not found.');
+    if (current.status === 'QUOTED' && !opts?.revivingQuotation) {
+      throw new BadRequestException(
+        `This order is parked as quotation ${current.quotationSource?.code ?? ''}`.trim() +
+          ' — edit the quotation instead. Converting it brings this order back.',
+      );
+    }
     const data = await this.toHeaderData(dto as CreateOrderDto);
     // Bookings that were already drawn into this order — they may lose lines (which
     // frees their quantity) so they must be recomputed even if no line references
@@ -503,10 +553,10 @@ export class OrdersService {
       return [...s].sort((a, b) => a.localeCompare(b));
     };
 
-    // Drafts never show on Order Modify (see the client's own filter), so the
-    // Order ID picker excludes them too — picking one would otherwise land on
-    // an id the visible list can never match.
-    const orderPool = poolFor('orderId').filter((l) => l.order.status !== 'DRAFT');
+    // Drafts and quotation-parked orders never show on Order Modify (see the
+    // client's own filter), so the Order ID picker excludes them too — picking
+    // one would otherwise land on an id the visible list can never match.
+    const orderPool = poolFor('orderId').filter((l) => !isUncommittedOrder(l.order.status));
     const byId = new Map<number, { id: number; code: string | null }>();
     for (const l of orderPool) if (!byId.has(l.order.id)) byId.set(l.order.id, { id: l.order.id, code: l.order.code });
 
@@ -1213,7 +1263,12 @@ export class OrdersService {
     if (!c) throw new NotFoundException('Order not found.');
   }
 
-  private toDto(r: Row, dispatchState: OrderDto['dispatchState'] = null, dispatchedItemIds?: Set<number>): OrderDto {
+  private toDto(
+    r: Row,
+    dispatchState: OrderDto['dispatchState'] = null,
+    dispatchedItemIds?: Set<number>,
+    fullyDispatchedItemIds?: Set<number>,
+  ): OrderDto {
     const items = r.items.map((it) => ({
       id: it.id,
       pCategory: it.pCategory,
@@ -1236,6 +1291,15 @@ export class OrdersService {
       status: it.status ?? 'CONFIRMED',
       comment: it.comment,
       dispatched: dispatchedItemIds?.has(it.id) ?? false,
+      // Per-line shipping state. `hasFull`/`hasDispatch` are already computed for
+      // the order-level rollup, so this costs no extra query — it was simply
+      // never surfaced per line, which is why Order Modify couldn't show
+      // "Dispatched" vs "Fully dispatched" against an individual item.
+      dispatchState: fullyDispatchedItemIds?.has(it.id)
+        ? ('FULL' as const)
+        : (dispatchedItemIds?.has(it.id) ?? false)
+          ? ('PARTIAL' as const)
+          : ('NONE' as const),
       bookingId: it.bookingId ?? null,
       // Booking codes use the fixed BKG-##### format (see BookingsService), so the
       // source code can be derived without another query.

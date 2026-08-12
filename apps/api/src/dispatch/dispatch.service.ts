@@ -2,6 +2,8 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException, 
 import { Dispatch, Prisma } from '@prisma/client';
 import {
   isRealDesign,
+  isUncommittedOrder,
+  ORDER_UNCOMMITTED_STATUSES,
   resolveLineDesign,
   type DispatchBackdatePayload,
   type DispatchDateChangePayload,
@@ -307,8 +309,9 @@ export class DispatchService implements OnModuleInit {
       return this.pendingCache.lines;
     }
     const items = await this.prisma.orderItem.findMany({
-      // Cancelled lines (and cancelled/draft orders) are not dispatchable.
-      where: { status: { not: 'CANCELLED' }, order: { status: { notIn: ['CANCELLED', 'DRAFT'] } } },
+      // Cancelled lines are not dispatchable, nor are lines on an order that is
+      // cancelled, still a draft, or parked as a quotation.
+      where: { status: { not: 'CANCELLED' }, order: { status: { notIn: ['CANCELLED', ...ORDER_UNCOMMITTED_STATUSES] } } },
       include: { order: true, dispatches: true },
       // Fetched in ORD# order; the list is re-sorted below (URGENT first, then by
       // due severity) — this orderBy only decides the tiebreak within a bucket.
@@ -745,7 +748,7 @@ export class DispatchService implements OnModuleInit {
       include: { order: true, dispatches: true },
     });
     if (!it) throw new NotFoundException('Order line not found.');
-    if (it.order.status === 'CANCELLED' || it.order.status === 'DRAFT') {
+    if (it.order.status === 'CANCELLED' || isUncommittedOrder(it.order.status)) {
       throw new BadRequestException('This order is not available for dispatch.');
     }
     if (it.status === 'CANCELLED') {
@@ -823,7 +826,7 @@ export class DispatchService implements OnModuleInit {
         include: { order: true, dispatches: true },
       });
       if (!it) throw new NotFoundException('Order line not found.');
-      if (it.order.status === 'CANCELLED' || it.order.status === 'DRAFT') {
+      if (it.order.status === 'CANCELLED' || isUncommittedOrder(it.order.status)) {
         throw new BadRequestException('This order is not available for dispatch.');
       }
       if (it.status === 'CANCELLED') {
@@ -945,7 +948,7 @@ export class DispatchService implements OnModuleInit {
       include: { items: { include: { dispatches: true } } },
     });
     if (!order) throw new NotFoundException('Order not found.');
-    if (order.status === 'CANCELLED' || order.status === 'DRAFT') {
+    if (order.status === 'CANCELLED' || isUncommittedOrder(order.status)) {
       throw new BadRequestException('This order is not available for dispatch.');
     }
 
