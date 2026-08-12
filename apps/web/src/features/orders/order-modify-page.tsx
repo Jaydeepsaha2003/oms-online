@@ -84,8 +84,22 @@ interface Row {
 
 /** Per-line shipping state. Nothing renders for an undispatched line — a chip on
  *  every row would just be noise when most of the list hasn't shipped. */
-function DispatchChip({ state }: { state?: OrderItemDto['dispatchState'] }) {
-  if (state !== 'PARTIAL' && state !== 'FULL') return null;
+/**
+ * @param showPending render an explicit "Not dispatched" chip instead of nothing
+ *   when the line hasn't shipped. Used by the phone card: there, absence of a
+ *   chip is indistinguishable from information the card failed to show, so the
+ *   state is always spelled out. The desktop table leaves it off — it has a
+ *   Status column header, and most lines are pending, so a chip on every row
+ *   would be noise.
+ */
+function DispatchChip({ state, showPending }: { state?: OrderItemDto['dispatchState']; showPending?: boolean }) {
+  if (state !== 'PARTIAL' && state !== 'FULL') {
+    return showPending ? (
+      <span className="text-muted-foreground inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold ring-1 ring-inset ring-slate-200 dark:ring-white/15">
+        <Truck className="size-2.5" /> Not dispatched
+      </span>
+    ) : null;
+  }
   const full = state === 'FULL';
   return (
     <span
@@ -570,13 +584,24 @@ export function OrderModifyPage() {
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="text-[11px] font-bold tabular-nums text-indigo-700 dark:text-indigo-300">{shortOrderCode(o.code, o.id)}</p>
-                        <p className="truncate text-[14px] font-bold text-slate-900 dark:text-slate-100">{o.customerName}</p>
+                        <p className="text-[14px] font-bold break-words text-slate-900 dark:text-slate-100">{o.customerName}</p>
                       </div>
                       <StatusPill status={o.status} />
                     </div>
-                    <p className="text-muted-foreground text-[11px] font-medium">
-                      {formatDate(o.orderDate)} → {formatDate(o.completionDate)} · {lines.length} line{lines.length === 1 ? '' : 's'}
-                    </p>
+                    {/* Labelled rather than "date → date": on a phone there's no
+                        column header above it to say which is which. */}
+                    <div className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] font-medium">
+                      <span>
+                        Ordered <span className="text-foreground font-semibold tabular-nums">{formatDate(o.orderDate)}</span>
+                      </span>
+                      <span>
+                        Due <span className="text-foreground font-semibold tabular-nums">{formatDate(o.completionDate)}</span>
+                      </span>
+                      {o.agentName && <span>Agent <span className="text-foreground font-semibold">{o.agentName}</span></span>}
+                      <span>
+                        {lines.length} line{lines.length === 1 ? '' : 's'}
+                      </span>
+                    </div>
                   </div>
                   <div className="divide-y divide-slate-200 dark:divide-white/10">
                     {lines.map((r) => {
@@ -595,19 +620,19 @@ export function OrderModifyPage() {
                             }
                           }}
                         >
+                          {/* Nothing here truncates. A phone card is the ONLY view of
+                              this line on mobile — there is no column to widen and no
+                              hover title to fall back on — so a clipped product name or
+                              comment is information the user simply cannot reach. Long
+                              values wrap instead. */}
                           <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <p className={cn('truncate text-[13px] font-bold', cancelled ? 'text-muted-foreground line-through' : 'text-slate-800 dark:text-slate-200')}>
+                            <div className="min-w-0 flex-1">
+                              <p className={cn('text-[13px] font-bold break-words', cancelled ? 'text-muted-foreground line-through' : 'text-slate-800 dark:text-slate-200')}>
                                 {r.line.productName || r.line.product || '—'}
                               </p>
-                              <p className="text-muted-foreground truncate text-[11px] font-medium">
-                                {r.line.designType || '—'}
-                                {r.line.priority === 'URGENT' && <span className="ml-1.5 font-bold text-rose-600 dark:text-rose-400">URGENT</span>}
+                              <p className="text-muted-foreground text-[11px] font-medium break-words">
+                                Design <span className="text-foreground font-semibold">{r.line.designType || '—'}</span>
                               </p>
-                              {/* Per-line shipping state — the phone view showed nothing at
-                                  all, so there was no way to tell a shipped line from a
-                                  pending one, or to know why editing one is restricted. */}
-                              <DispatchChip state={r.line.dispatchState} />
                             </div>
                             <div className="flex shrink-0 items-center gap-1.5">
                               <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">₹{(r.line.rate ?? 0).toLocaleString('en-IN')}</span>
@@ -615,6 +640,22 @@ export function OrderModifyPage() {
                                   phone there's no hover to discover it with. */}
                               <Pencil className="text-muted-foreground size-3.5" aria-hidden />
                             </div>
+                          </div>
+                          {/* Every badge the desktop Status column carries: the line's own
+                              CANCELLED state, how far it has shipped, and its priority —
+                              including NORMAL, which the phone used to leave blank so a
+                              normal line looked like one with no priority set at all. */}
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                            {cancelled && <StatusPill status="CANCELLED" />}
+                            {!cancelled && <DispatchChip state={r.line.dispatchState} showPending />}
+                            {r.line.priority === 'URGENT' ? (
+                              <span className="rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-600 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:ring-rose-400/25">
+                                URGENT
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground text-[10px] font-semibold">{r.line.priority || 'NORMAL'}</span>
+                            )}
+                            {r.line.ordType && <span className="text-muted-foreground text-[10px] font-semibold">{r.line.ordType}</span>}
                           </div>
                           <div className="mt-1 grid grid-cols-4 gap-1.5 text-[11px]">
                             {([['Bags', r.line.bags], ['Pcs', r.line.pcs], ['Kgs', r.line.gram], ['Box', r.line.box]] as const).map(([lbl, v]) => (
@@ -624,7 +665,12 @@ export function OrderModifyPage() {
                               </div>
                             ))}
                           </div>
-                          {r.line.comment && <p className="text-muted-foreground mt-1 truncate text-[11px]">{r.line.comment}</p>}
+                          {r.line.comment && (
+                            <p className="text-muted-foreground mt-1 text-[11px] break-words">
+                              <span className="text-[9px] font-bold uppercase tracking-widest">Comment </span>
+                              {r.line.comment}
+                            </p>
+                          )}
                         </div>
                       );
                     })}
