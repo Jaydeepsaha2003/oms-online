@@ -6,6 +6,8 @@ import type {
   DispatchList,
   DispatchPhotoCheckDto,
   DispatchQuery,
+  DraftPhotoCheckInput,
+  DraftPhotoCheckResult,
   PendingList,
   PendingQuery,
   SubmitDispatchResult,
@@ -137,6 +139,25 @@ export function useDispatchPhotoCheck(orderItemId?: number) {
     queryKey: [...KEY, 'photo-check', orderItemId],
     queryFn: () => http.get<DispatchPhotoCheckDto>(`/dispatch/photo-check/${orderItemId}`),
     enabled: orderItemId != null,
+  });
+}
+
+/**
+ * The same check for lines that don't exist yet — the New Order form, where
+ * "Create & Dispatch" ships them the moment the order is written.
+ *
+ * Keyed on the lines themselves so it re-runs as the form is built up, and
+ * `placeholderData` keeps the previous answers on screen while a new set is in
+ * flight — otherwise every keystroke that changes a line would blank the photo
+ * indicators and make them flicker.
+ */
+export function useDraftPhotoCheck(input: DraftPhotoCheckInput, enabled = true) {
+  return useQuery({
+    queryKey: [...KEY, 'photo-check-draft', input],
+    queryFn: () => http.post<DraftPhotoCheckResult>('/dispatch/photo-check/draft', input),
+    enabled: enabled && input.lines.length > 0,
+    placeholderData: (prev) => prev,
+    staleTime: 30_000,
   });
 }
 

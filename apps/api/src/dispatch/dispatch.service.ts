@@ -4,12 +4,14 @@ import {
   isRealDesign,
   isUncommittedOrder,
   ORDER_UNCOMMITTED_STATUSES,
-  resolveLineDesign,
+  lineNeedsReferencePhoto,
   type DispatchBackdatePayload,
   type DispatchDateChangePayload,
   type DispatchDto,
   type DispatchFilterOptions,
   type DispatchPhotoCheckDto,
+  type DraftPhotoCheckInput,
+  type DraftPhotoCheckResult,
   type DispatchStatus,
   type PendingLineDto,
   type Paginated,
@@ -648,8 +650,10 @@ export class DispatchService implements OnModuleInit {
     });
     if (!it) throw new NotFoundException('Order line not found.');
 
-    const design = resolveLineDesign(it);
-    if (!design) {
+    // Logo-only designs are exempt — see lineNeedsReferencePhoto. There is
+    // nothing to document on a piece whose only "design" is the party's own
+    // logo stamped on it, so asking for a photo was pure friction.
+    if (!lineNeedsReferencePhoto(it)) {
       return { hasPhoto: true, fromHistory: false, sampleUrl: null, needsPhoto: false };
     }
     if (it.photos.length) {
@@ -680,6 +684,75 @@ export class DispatchService implements OnModuleInit {
     return historic
       ? { hasPhoto: true, fromHistory: true, sampleUrl: historic.url, needsPhoto: true }
       : { hasPhoto: false, fromHistory: false, sampleUrl: null, needsPhoto: true };
+  }
+
+  /**
+   * {@link photoCheck} for lines that don't exist yet — the New Order form's
+   * "Create & Dispatch", which creates and ships in one go and so has to answer
+   * the photo question BEFORE anything is written.
+   *
+   * Same rules, same design matching; the only difference is that the lines
+   * arrive as values rather than rows, and there is no "this line's own photos"
+   * step (a draft line's photos are still on the client). Answered in one round
+   * trip: the candidate pool is fetched once for every distinct product+size on
+   * the form instead of once per line.
+   */
+  async photoCheckDraft(input: DraftPhotoCheckInput): Promise<DraftPhotoCheckResult> {
+    const out: DraftPhotoCheckResult = {};
+    const NO_DESIGN = { hasPhoto: true, fromHistory: false, sampleUrl: null, needsPhoto: false } as const;
+    const MISSING = { hasPhoto: false, fromHistory: false, sampleUrl: null, needsPhoto: true } as const;
+
+    // Only designed lines fall under the rule at all.
+    const designed = input.lines.filter((l) => {
+      if (!lineNeedsReferencePhoto(l)) {
+        out[l.key] = { ...NO_DESIGN };
+        return false;
+      }
+      return true;
+    });
+    if (!designed.length) return out;
+    if (input.customerId == null) {
+      for (const l of designed) out[l.key] = { ...MISSING };
+      return out;
+    }
+
+    // One query for the whole form. `product`/`psize` narrow it in SQL; the
+    // design is matched in JS below for the reason photoCheck explains — it can
+    // live in either column, so filtering on designType here would match every
+    // imported line ("NA") against every other.
+    // psize is only constrained when the caller actually knows it. The order
+    // form derives it from the item name's leading number and can legitimately
+    // come up empty; pinning the query to psize = NULL in that case would hide
+    // every historic photo instead of matching more loosely, which is the wrong
+    // way to be wrong — it would wave through a line that IS documented.
+    const candidates = await this.prisma.orderItemPhoto.findMany({
+      where: {
+        orderItem: {
+          OR: designed.map((l) => ({ product: l.product, ...(l.psize != null ? { psize: l.psize } : {}) })),
+          order: { customerId: input.customerId },
+          dispatches: { some: {} },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        url: true,
+        orderItem: { select: { product: true, psize: true, design: true, designType: true } },
+      },
+    });
+
+    for (const l of designed) {
+      const wanted = this.designKeyOf(l);
+      const hit = candidates.find(
+        (p) =>
+          p.orderItem.product === l.product &&
+          (l.psize == null || p.orderItem.psize === l.psize) &&
+          this.designKeyOf(p.orderItem) === wanted,
+      );
+      out[l.key] = hit
+        ? { hasPhoto: true, fromHistory: true, sampleUrl: hit.url, needsPhoto: true }
+        : { ...MISSING };
+    }
+    return out;
   }
 
   /**
@@ -961,7 +1034,7 @@ export class DispatchService implements OnModuleInit {
 
     const undocumented: string[] = [];
     for (const it of eligible) {
-      if (!resolveLineDesign(it)) continue; // no design → nothing to document
+      if (!lineNeedsReferencePhoto(it)) continue; // no design, or logo only → nothing to document
       const status = await this.photoCheck(it.id);
       if (!status.hasPhoto) undocumented.push(it.productName || it.product || `line #${it.id}`);
     }

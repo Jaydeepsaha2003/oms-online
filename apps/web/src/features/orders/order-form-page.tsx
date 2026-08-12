@@ -33,7 +33,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { settingValues, useOrderQtyLayout, useSettings } from '@/features/settings/use-settings';
 import { useCustomerSpecialRates } from '@/features/special-rates/use-special-rates';
 import { useCreateOrder, useOrder, useOrderLookups, useUpdateOrder } from './use-orders';
-import { useFulfillOrder } from '../dispatch/use-dispatch';
+import { useDraftPhotoCheck, useFulfillOrder } from '../dispatch/use-dispatch';
 import { useConvertQuotation, useCreateQuotation, useQuotation, useUpdateQuotation } from '../quotations/use-quotations';
 import { clearOrderDraft, loadOrderDraft, saveOrderDraft } from './order-draft';
 import { DraftLinePhotos, toPhotoInput, type LinePhoto } from './line-photos';
@@ -957,6 +957,54 @@ export function OrderFormPage() {
     toast.info('Editing item — change the fields above, then tap Update.');
   };
 
+  /**
+   * Reference-photo status per line, for "Create & Dispatch".
+   *
+   * That button creates the order AND ships every line immediately, so the
+   * photo rule the Dispatch screen enforces has to be answered HERE — once the
+   * lines are dispatched it's too late to ask. Plain Create/Save is untouched:
+   * an order on its own promises nothing about what shipped, and demanding a
+   * photo just to write one down would block the everyday case.
+   *
+   * The size is the leading number of the composite item name ("12 MIRROR DL"),
+   * which is how that name is built in the first place.
+   */
+  const photoLines = useMemo(
+    () =>
+      items
+        .filter((i) => i.product.trim())
+        .map((i) => ({
+          key: i.key,
+          product: i.product.trim(),
+          psize: (() => {
+            const n = Number(/^\s*([\d.]+)/.exec(i.itemName)?.[1]);
+            return Number.isFinite(n) ? n : null;
+          })(),
+          designType: i.designType.trim() || null,
+          design: i.designName.trim() || null,
+        })),
+    [items],
+  );
+  const canDispatch = !isEdit && docKind === 'order' && can('dispatch:create');
+  const { data: photoStatus } = useDraftPhotoCheck({ customerId: customerId ?? null, lines: photoLines }, canDispatch);
+
+  /** Lines that would ship undocumented: the rule applies, nothing on file from
+   *  an earlier dispatch, and nothing attached here either. */
+  const missingPhotoKeys = useMemo(() => {
+    if (!photoStatus) return new Set<string>();
+    const attached = new Map(items.map((i) => [i.key, (i.photos ?? []).length > 0]));
+    return new Set(
+      Object.entries(photoStatus)
+        .filter(([key, st]) => st.needsPhoto && !st.hasPhoto && !attached.get(key))
+        .map(([key]) => key),
+    );
+  }, [photoStatus, items]);
+
+  /** What the camera button for a line should say — undefined when this form
+   *  can't dispatch, so nothing changes for plain order entry. */
+  const photoStatusFor = (key: string) =>
+    canDispatch ? { required: missingPhotoKeys.has(key), onFile: photoStatus?.[key]?.sampleUrl ?? null } : undefined;
+
   const setItemPhotos = (key: string, photos: LinePhoto[]) =>
     setItems((its) => its.map((i) => (i.key === key ? { ...i, photos } : i)));
 
@@ -1168,6 +1216,20 @@ export function OrderFormPage() {
   const createAndDispatch = async () => {
     if (isEdit || docKind !== 'order' || !can('dispatch:create')) return;
     if (!validate()) return;
+    // Dispatching is what triggers the photo rule — see photoLines above. Block
+    // before the confirm, not after: the order must not be created either, or
+    // the user is left with a half-done job they didn't ask for.
+    if (missingPhotoKeys.size) {
+      const names = items
+        .filter((i) => missingPhotoKeys.has(i.key))
+        .map((i) => i.itemName.trim() || i.product.trim())
+        .filter(Boolean);
+      toast.error(
+        `Reference photo required before dispatching: ${names.join(', ')}. Add a photo on ${names.length === 1 ? 'that line' : 'those lines'} (red camera), or use Save without dispatching.`,
+        { duration: 8000 },
+      );
+      return;
+    }
     const ok = await confirm({
       title: 'Create & fully dispatch this order?',
       description: `${items.length} item${items.length === 1 ? '' : 's'} · total ₹${total.toLocaleString('en-IN')} for ${customer.trim()}. The order is created and every line is dispatched in full right away.`,
@@ -1701,7 +1763,7 @@ export function OrderFormPage() {
                       <td>
                         <div className="flex items-center justify-center gap-0.5">
                           {docKind === 'order' && (
-                            <LinePhotoButton photos={i.photos ?? []} onChange={(photos) => setItemPhotos(i.key, photos)} />
+                            <LinePhotoButton photos={i.photos ?? []} onChange={(photos) => setItemPhotos(i.key, photos)} status={photoStatusFor(i.key)} />
                           )}
                           {i.id != null ? (
                           // A saved line — deleting it belongs on the Order Modify page,
@@ -1801,7 +1863,7 @@ export function OrderFormPage() {
                           </p>
                         </div>
                         <div className="flex shrink-0 items-center gap-0.5">
-                          {docKind === 'order' && <LinePhotoButton photos={i.photos ?? []} onChange={(photos) => setItemPhotos(i.key, photos)} />}
+                          {docKind === 'order' && <LinePhotoButton photos={i.photos ?? []} onChange={(photos) => setItemPhotos(i.key, photos)} status={photoStatusFor(i.key)} />}
                           {i.id != null ? (
                             <span className="text-slate-400 inline-flex size-8 items-center justify-center" title="Existing order line — edit it on the Order Modify page">
                               <Lock className="size-4" />
@@ -1956,8 +2018,25 @@ export function OrderFormPage() {
 }
 
 /** Per-row camera button → popover with the line's draft photo manager. */
-function LinePhotoButton({ photos, onChange }: { photos: LinePhoto[]; onChange: (photos: LinePhoto[]) => void }) {
+/**
+ * @param status the line's reference-photo standing when the form can dispatch
+ *   (see `photoLines`). `required` turns the camera red — the line would be
+ *   shipped with nothing on file. `onFile` is a photo from an earlier dispatch
+ *   of the same party + item + design: nothing to do, but shown so the user can
+ *   see WHAT is on file rather than just being told there is something.
+ */
+function LinePhotoButton({
+  photos,
+  onChange,
+  status,
+}: {
+  photos: LinePhoto[];
+  onChange: (photos: LinePhoto[]) => void;
+  status?: { required: boolean; onFile: string | null };
+}) {
   const count = photos.length;
+  const required = !!status?.required;
+  const onFile = status?.onFile ?? null;
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -1965,15 +2044,33 @@ function LinePhotoButton({ photos, onChange }: { photos: LinePhoto[]; onChange: 
           type="button"
           variant="ghost"
           size="icon"
-          className="relative size-8 text-indigo-600 hover:text-indigo-800"
-          aria-label="Line photos"
-          title={count ? `${count} photo${count === 1 ? '' : 's'}` : 'Add photos'}
+          className={cn(
+            'relative size-8',
+            required
+              ? 'text-rose-600 hover:text-rose-700 ring-1 ring-rose-300 ring-inset'
+              : 'text-indigo-600 hover:text-indigo-800',
+          )}
+          aria-label={required ? 'Line photos — required before dispatch' : 'Line photos'}
+          title={
+            required
+              ? 'No reference photo on file for this party + item + design — required before Create & Dispatch'
+              : count
+                ? `${count} photo${count === 1 ? '' : 's'}`
+                : onFile
+                  ? 'A reference photo is already on file for this party + item + design'
+                  : 'Add photos'
+          }
         >
           <Camera className="size-5" />
           {count > 0 && (
             <span className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-indigo-600 px-0.5 text-[9px] font-bold text-white tabular-nums">
               {count}
             </span>
+          )}
+          {/* No count to show, but there IS one on file — a quiet dot, so the
+              line reads as "documented" without pretending it has attachments. */}
+          {count === 0 && !required && onFile && (
+            <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-emerald-500" />
           )}
         </Button>
       </PopoverTrigger>
@@ -1984,6 +2081,18 @@ function LinePhotoButton({ photos, onChange }: { photos: LinePhoto[]; onChange: 
           past the screen — tiles this size stack up fast on a line with many
           photos, where the old small ones stayed comfortably short. */}
       <PopoverContent align="end" className="max-h-[70vh] w-[min(34rem,calc(100vw-2rem))] overflow-y-auto">
+        {required && (
+          <p className="mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-400/25 dark:bg-rose-500/10 dark:text-rose-300">
+            This party has never been sent this item and design with a photo on record. Add one before using Create &amp; Dispatch —
+            saving the order on its own is fine without it.
+          </p>
+        )}
+        {onFile && (
+          <div className="mb-3 rounded-md border p-2">
+            <p className="text-muted-foreground mb-2 text-xs font-medium">Already on file from an earlier dispatch</p>
+            <img src={onFile} alt="Reference photo on file" className="max-h-40 w-full rounded object-contain" />
+          </div>
+        )}
         <DraftLinePhotos value={photos} onChange={onChange} gridClassName="grid-cols-2 gap-3" />
       </PopoverContent>
     </Popover>

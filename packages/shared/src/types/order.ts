@@ -424,9 +424,41 @@ export function resolveLineDesign(line: { design?: string | null; designType?: s
   return null;
 }
 
-/** True when the line carries a design, and so needs a reference photo. */
+/** True when the line carries a design of any kind. */
 export const lineHasDesign = (line: { design?: string | null; designType?: string | null }): boolean =>
   resolveLineDesign(line) !== null;
+
+/** Design parts that are just the customer's logo stamped on — nothing about
+ *  the piece's shape or finish, so there is no craftsmanship to photograph. */
+const LOGO_PARTS = new Set(['LOGO']);
+
+/**
+ * True when the line's design is NOTHING BUT a logo — "15 MALBORO LOGO".
+ *
+ * Both columns are considered and combinations are split on "+", so a single
+ * other part anywhere makes it false: "DL" and "DL+LOGO" are real designs that
+ * still have to be photographed, and only "LOGO" on its own is not. A
+ * decorative design NAME ("ZEBRA") counts as a part too, so a logo type
+ * carrying a named design is not waved through either — when in doubt this
+ * errs towards asking for the photo.
+ */
+export function isLogoOnlyDesign(line: { design?: string | null; designType?: string | null }): boolean {
+  const parts = [line.designType, line.design]
+    .flatMap((v) => (v ?? '').split('+'))
+    .map((s) => s.trim().toUpperCase())
+    .filter((s) => s !== '' && isRealDesign(s));
+  return parts.length > 0 && parts.every((p) => LOGO_PARTS.has(p));
+}
+
+/**
+ * Does this line fall under the reference-photo rule?
+ *
+ * The single answer used by both photo checks (a saved dispatch line and a
+ * not-yet-created order line), so the New Order form and the Dispatch screen
+ * can never disagree about which lines need documenting.
+ */
+export const lineNeedsReferencePhoto = (line: { design?: string | null; designType?: string | null }): boolean =>
+  lineHasDesign(line) && !isLogoOnlyDesign(line);
 
 /**
  * The line's design TYPE specifically — the priced thing in the Design master

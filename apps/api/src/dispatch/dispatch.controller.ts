@@ -1,9 +1,9 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Res, StreamableFile } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
-import { ACTIONS, DISPATCH_EXPORT_COLUMNS, hasPermission, perm, RESOURCES } from '@oms/shared';
+import { ACTIONS, DISPATCH_EXPORT_COLUMNS, hasPermission, perm, RESOURCES, type DraftPhotoCheckInput } from '@oms/shared';
 import { Audit, SkipAudit } from '../common/decorators/audit.decorator';
-import { Permissions } from '../common/decorators/permissions.decorator';
+import { AnyPermission, Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { ExcelService } from '../excel/excel.service';
@@ -91,6 +91,16 @@ export class DispatchController {
   @Permissions(perm(R, ACTIONS.VIEW))
   photoCheck(@Param('orderItemId', ParseIntPipe) orderItemId: number) {
     return this.dispatch.photoCheck(orderItemId);
+  }
+
+  /** The same check for lines that aren't saved yet — the New Order form's
+   *  "Create & Dispatch". POST because it carries the whole form's lines; it
+   *  reads only. Answers for someone drafting an ORDER, so an order-creator
+   *  qualifies just as much as a dispatcher. */
+  @Post('photo-check/draft')
+  @AnyPermission(perm(R, ACTIONS.VIEW), perm(RESOURCES.ORDER, ACTIONS.CREATE))
+  photoCheckDraft(@Body() body: DraftPhotoCheckInput) {
+    return this.dispatch.photoCheckDraft(body);
   }
 
   /** Claim the editing lock on an order line — called when the Dispatch sheet

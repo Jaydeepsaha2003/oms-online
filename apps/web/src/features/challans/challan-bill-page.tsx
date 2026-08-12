@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { flushSync } from 'react-dom';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Download, Eye, Loader2, Printer } from 'lucide-react';
 import { toast } from 'sonner';
@@ -6,6 +7,7 @@ import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useFitToWidth } from '@/hooks/use-fit-to-width';
+import { useConfirm } from '@/components/common/confirm';
 import { Button } from '@/components/ui/button';
 import { buildBillFilename, captureScale, decodeImage, isIOS, savePdfBlob, takePendingPreviewTab } from '@/lib/pdf';
 import { formatDate } from '@/lib/date-format';
@@ -105,7 +107,11 @@ export function ChallanBillPage() {
   const terms = termsData?.terms ?? [];
   const { data: company } = useCompany();
   const logoSrc = company?.logo || kavishLogo;
+  const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
+  // Whether PCS-sold lines print their Kgs — see `askKgsForPcs`. Off by default,
+  // matching the desktop OMS, where "No" is the highlighted button.
+  const [kgsForPcs, setKgsForPcs] = useState(false);
   const [printImg, setPrintImg] = useState<string | null>(null);
   // iOS only: a finished PDF waiting for a fresh tap to hand it to the share
   // sheet (see `download`). Null everywhere else.
@@ -212,8 +218,11 @@ export function ChallanBillPage() {
     return pdf;
   };
 
-  const download = async () => {
+  /** @param asked true when the caller already put the Kgs question (the iOS
+   *   print path routes through here, and asking twice for one tap is nonsense). */
+  const download = async (asked = false) => {
     if (!challan) return;
+    if (!asked) await askKgsForPcs();
     setBusy(true);
     try {
       const pdf = await buildPdf();
@@ -253,7 +262,20 @@ export function ChallanBillPage() {
    */
   const previewPdf = async (reservedTab?: Window | null) => {
     if (!challan) return;
-    const tab = reservedTab ?? window.open('', '_blank');
+    // The Kgs question is answered in THIS tab, so a blank tab reserved before we
+    // got here (the challan list opens one inside its own click, before
+    // navigating) would be fronted by the browser and hide the dialog behind it —
+    // the user would stare at an empty tab wondering what happened. When there's
+    // something to ask, drop that tab and open a fresh one afterwards: the
+    // dialog's own button click carries the activation a popup needs.
+    let tab = reservedTab ?? null;
+    if (pcsLines) {
+      tab?.close();
+      await askKgsForPcs();
+      tab = window.open('', '_blank');
+    } else {
+      tab = tab ?? window.open('', '_blank');
+    }
     setBusy(true);
     try {
       const pdf = await buildPdf();
@@ -276,8 +298,9 @@ export function ChallanBillPage() {
     // (it prints a blank / whole page). Route to the PDF instead — the user then
     // taps Print from the iOS share sheet / Safari's PDF viewer. `download` opens
     // the tab synchronously inside this tap, so iOS doesn't block it.
+    await askKgsForPcs();
     if (isIOS()) {
-      await download();
+      await download(true);
       return;
     }
     setBusy(true);
@@ -299,6 +322,46 @@ export function ChallanBillPage() {
 
   const isKgs = (unit: string | null) => ['KGS', 'KG', 'KGS.'].includes((unit ?? '').trim().toUpperCase());
   const isScrap = (challan?.category ?? '').toUpperCase() === 'SCRAP';
+  /** Sold by the piece. Substring match, like the desktop OMS — the unit is free
+   *  text and turns up as "PCS", "PCS.", "NOS/PCS" and so on. */
+  const isPcs = (unit: string | null) => (unit ?? '').trim().toUpperCase().includes('PCS');
+  /** Does this line's Kgs go on the printed challan? */
+  const showKgs = (unit: string | null) => kgsForPcs || !isPcs(unit);
+
+  const pcsLines = useMemo(() => (challan?.items ?? []).filter((it) => isPcs(it.unit)).length, [challan]);
+
+  /**
+   * Ask, once per print/download/preview, whether the PCS-sold lines should also
+   * print their Kgs — carried over from the desktop OMS (Form14), where the same
+   * question is asked as the challan is written to the Excel template.
+   *
+   * The reason it's a question and not a setting: a line sold by the piece still
+   * carries a weight, and whether the customer should see it depends on the deal
+   * — some parties are billed per piece and reading a Kgs figure next to it
+   * invites an argument about the rate. So the operator decides at print time.
+   *
+   * No PCS lines on the challan means no question, exactly as before. "No" is the
+   * default (the dialog focuses Cancel), so an absent-minded Enter prints dashes
+   * rather than disclosing weights.
+   *
+   * `flushSync` + two frames matter: the PDF is a raster capture of the live DOM,
+   * so the table must be repainted with the answer applied BEFORE the capture
+   * starts, or the choice silently misses the document it was made for.
+   */
+  const askKgsForPcs = async (): Promise<void> => {
+    if (!pcsLines) {
+      if (kgsForPcs) flushSync(() => setKgsForPcs(false));
+      return;
+    }
+    const yes = await confirm({
+      title: 'Print Kgs for the PCS items?',
+      description: `${pcsLines} item${pcsLines > 1 ? 's are' : ' is'} sold by PCS on this challan. Choose No to print a dash in the Kgs column for ${pcsLines > 1 ? 'those lines' : 'that line'} — the Kgs total will leave ${pcsLines > 1 ? 'them' : 'it'} out too.`,
+      confirmText: 'Yes, print Kgs',
+      cancelText: 'No',
+    });
+    flushSync(() => setKgsForPcs(yes));
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  };
 
   const totals = useMemo(() => {
     const items = challan?.items ?? [];
@@ -306,10 +369,13 @@ export function ChallanBillPage() {
       bags: items.reduce((s, it) => s + (it.bags ?? 0), 0),
       box: items.reduce((s, it) => s + (it.box ?? 0), 0),
       pcs: items.reduce((s, it) => s + (it.pcs ?? 0), 0),
-      kgs: items.reduce((s, it) => s + (it.kgs ?? 0), 0),
+      // Only the Kgs actually printed are totalled — a total that counted lines
+      // showing "-" would contradict the column right above it.
+      kgs: items.reduce((s, it) => s + (showKgs(it.unit) ? (it.kgs ?? 0) : 0), 0),
       subTotal: items.reduce((s, it) => s + (it.amount ?? 0), 0),
     };
-  }, [challan]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [challan, kgsForPcs]);
 
   if (isLoading || !challan) {
     return (
@@ -352,7 +418,7 @@ export function ChallanBillPage() {
           <Button variant="outline" onClick={() => void previewPdf()} disabled={busy}>
             <Eye /> Preview
           </Button>
-          <Button onClick={download} disabled={busy}>
+          <Button onClick={() => void download()} disabled={busy}>
             {busy ? <Loader2 className="animate-spin" /> : <Download />} Download PDF
           </Button>
         </div>
@@ -522,7 +588,9 @@ export function ChallanBillPage() {
                     <td style={{ ...td, textAlign: 'right' }}>{it.bags ? numf(it.bags) : '-'}</td>
                     <td style={{ ...td, textAlign: 'right' }}>{it.box ? numf(it.box) : '-'}</td>
                     <td style={{ ...td, textAlign: 'right' }}>{it.pcs ? numf(it.pcs) : '-'}</td>
-                    <td style={{ ...td, textAlign: 'right' }}>{it.kgs ? numf(it.kgs) : '-'}</td>
+                    {/* A PCS-sold line only shows its Kgs when the operator said
+                        so at print time (see askKgsForPcs). */}
+                    <td style={{ ...td, textAlign: 'right' }}>{showKgs(it.unit) && it.kgs ? numf(it.kgs) : '-'}</td>
                     <td style={{ ...td, textAlign: 'center' }}>{isKgs(it.unit) ? 'KGS' : it.unit || '-'}</td>
                     <td style={{ ...td, textAlign: 'right' }}>{rateFmt(it.price)}</td>
                     <td style={{ ...td, textAlign: 'right', fontWeight: 700 }}>{money(it.amount)}</td>

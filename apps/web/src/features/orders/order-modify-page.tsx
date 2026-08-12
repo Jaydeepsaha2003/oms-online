@@ -728,6 +728,11 @@ function LineEditor({
   // Blocks Save while onItemPick's rate check is in flight, so a fast
   // double-click can't submit before the confirm dialog even has a chance to appear.
   const [checkingRate, setCheckingRate] = useState(false);
+  // The "this changes the line's rate" question. It has three answers, so it
+  // can't be the app's yes/no confirm — see RateChoiceDialog below.
+  const [rateAsk, setRateAsk] = useState<(RateAskProps & { resolve: (c: RateChoice) => void }) | null>(null);
+  const askRate = (props: RateAskProps) =>
+    new Promise<RateChoice>((resolve) => setRateAsk({ ...props, resolve }));
   const { data: lookups } = useOrderLookups();
   const { data: special } = useCustomerSpecialRates(order.customerId ?? undefined);
   const { data: qtyLayout } = useOrderQtyLayout();
@@ -914,6 +919,22 @@ function LineEditor({
     // The rate already sitting on this line — what "keep the old rate" means.
     const existingRate = (num(form.productRate) ?? 0) + (num(form.designRate) ?? 0);
 
+    // The identity change lands FIRST, before anything is asked. It is not in
+    // question — the user picked this item — and tying it to the rate answer is
+    // what made a dismissed dialog lose the new name as well. It also stops the
+    // combobox reverting its text to the old name (its blur handler does that
+    // when the value hasn't changed yet) while the dialog is still on screen,
+    // which read as "it ignored my pick".
+    set({
+      itemName: label,
+      pCategory: it.category,
+      subCategory: it.subCategory,
+      product: it.product,
+      designType: it.designType ?? '',
+      designName: realName,
+      psize: it.size != null ? String(it.size) : '',
+    });
+
     // Nothing to protect if the line had no rate yet — just fill it in.
     if (itemChanged && existingRate > 0) {
       setCheckingRate(true);
@@ -938,17 +959,22 @@ function LineEditor({
         }
         const newRate = (finalProductRate ?? 0) + (finalDesignRate ?? 0);
         if (Math.abs(newRate - existingRate) > 0.001) {
-          const inr = (v: number) => `₹${v.toLocaleString('en-IN')}`;
-          const useNew = await confirm({
-            title: 'This changes the line’s rate',
-            description: `"${label}" prices at ${inr(newRate)}${order.orderDate ? ` as of ${formatDate(order.orderDate)}` : ''}, but this line is currently ${inr(existingRate)}. Apply the new rate, or keep the existing one?`,
-            confirmText: `Yes, use ${inr(newRate)}`,
-            cancelText: `No, keep ${inr(existingRate)}`,
+          const choice = await askRate({
+            label,
+            asOf: order.orderDate ?? null,
+            newProductRate: finalProductRate,
+            newDesignRate: finalDesignRate,
+            oldProductRate: num(form.productRate),
+            oldDesignRate: num(form.designRate),
+            hasDesignRate,
           });
-          if (!useNew) {
-            // Keep exactly what was on the line — the item identity still changes.
+          if (choice.kind === 'keep') {
+            // Keep exactly what was on the line — the item identity still changed.
             finalProductRate = num(form.productRate);
             finalDesignRate = num(form.designRate);
+          } else if (choice.kind === 'custom') {
+            finalProductRate = choice.productRate;
+            finalDesignRate = choice.designRate;
           }
         }
       } catch {
@@ -959,14 +985,8 @@ function LineEditor({
       }
     }
 
+    // Only the rate is left to apply — the identity went in before the question.
     set({
-      itemName: label,
-      pCategory: it.category,
-      subCategory: it.subCategory,
-      product: it.product,
-      designType: it.designType ?? '',
-      designName: realName,
-      psize: it.size != null ? String(it.size) : '',
       productRate: finalProductRate != null ? String(finalProductRate) : '',
       designRate: finalDesignRate != null ? String(finalDesignRate) : '',
     });
@@ -1157,6 +1177,16 @@ function LineEditor({
         </div>
       </SheetFooter>
 
+      {rateAsk && (
+        <RateChoiceDialog
+          {...rateAsk}
+          onDone={(choice) => {
+            rateAsk.resolve(choice);
+            setRateAsk(null);
+          }}
+        />
+      )}
+
       <Dialog open={cancelOpen} onOpenChange={setCancelOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -1179,6 +1209,121 @@ function LineEditor({
         </DialogContent>
       </Dialog>
     </SheetContent>
+  );
+}
+
+/* ── "This changes the line's rate" ─────────────────────────────────────────── */
+
+interface RateAskProps {
+  /** The item just picked, as shown in the Item name field. */
+  label: string;
+  /** The order's date — the basis the new rate was priced on. */
+  asOf: string | null;
+  newProductRate: number | null;
+  newDesignRate: number | null;
+  oldProductRate: number | null;
+  oldDesignRate: number | null;
+  /** False for items with no design, so the design row is hidden entirely. */
+  hasDesignRate: boolean;
+}
+
+type RateChoice =
+  | { kind: 'new' }
+  | { kind: 'keep' }
+  | { kind: 'custom'; productRate: number | null; designRate: number | null };
+
+const inr = (v: number) => `₹${v.toLocaleString('en-IN')}`;
+
+/**
+ * Three answers, not two — so this can't be the app's yes/no `confirm()`.
+ *
+ * "Custom" asks for the product and design parts separately rather than one
+ * total, because that is how a line actually stores its rate. Taking a single
+ * figure would mean inventing a split, and a rate the user didn't choose
+ * appearing on the line is the exact complaint this whole dialog exists to
+ * answer — so it asks for what it needs instead of guessing.
+ *
+ * Dismissing without answering (Escape, clicking away, the X) means KEEP: the
+ * line is left as it was priced, which is the choice that changes nothing.
+ */
+function RateChoiceDialog({
+  label,
+  asOf,
+  newProductRate,
+  newDesignRate,
+  oldProductRate,
+  oldDesignRate,
+  hasDesignRate,
+  onDone,
+}: RateAskProps & { onDone: (choice: RateChoice) => void }) {
+  const newRate = (newProductRate ?? 0) + (newDesignRate ?? 0);
+  const oldRate = (oldProductRate ?? 0) + (oldDesignRate ?? 0);
+  const [custom, setCustom] = useState(false);
+  // Seeded from the new rate — the most likely starting point for a tweak.
+  const [cProd, setCProd] = useState(newProductRate != null ? String(newProductRate) : '');
+  const [cDsgn, setCDsgn] = useState(newDesignRate != null ? String(newDesignRate) : '');
+  const customTotal = (num(cProd) ?? 0) + (num(cDsgn) ?? 0);
+  const customValid = customTotal > 0;
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onDone({ kind: 'keep' })}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>This changes the line’s rate</DialogTitle>
+        </DialogHeader>
+        <p className="text-muted-foreground text-sm">
+          <span className="text-foreground font-medium">{label}</span> prices at{' '}
+          <span className="text-foreground font-semibold">{inr(newRate)}</span>
+          {asOf ? ` as of ${formatDate(asOf)}` : ''}, but this line is currently{' '}
+          <span className="text-foreground font-semibold">{inr(oldRate)}</span>.
+        </p>
+
+        {custom ? (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Product ₹">
+                <Input value={cProd} onChange={(e) => setCProd(e.target.value)} inputMode="decimal" autoFocus />
+              </Field>
+              {hasDesignRate && (
+                <Field label="Design ₹">
+                  <Input value={cDsgn} onChange={(e) => setCDsgn(e.target.value)} inputMode="decimal" />
+                </Field>
+              )}
+            </div>
+            <p className="text-sm">
+              Line rate: <span className="font-semibold tabular-nums">{inr(round2(customTotal))}</span>
+            </p>
+          </div>
+        ) : null}
+
+        <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:justify-end">
+          {custom ? (
+            <>
+              <Button variant="outline" onClick={() => setCustom(false)}>
+                Back
+              </Button>
+              <Button
+                disabled={!customValid}
+                title={customValid ? undefined : 'Enter a rate above zero'}
+                onClick={() => onDone({ kind: 'custom', productRate: num(cProd), designRate: hasDesignRate ? num(cDsgn) : null })}
+              >
+                Use {inr(round2(customTotal))}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button variant="outline" onClick={() => onDone({ kind: 'keep' })}>
+                Keep {inr(oldRate)}
+              </Button>
+              <Button variant="outline" onClick={() => setCustom(true)}>
+                Custom rate…
+              </Button>
+              <Button onClick={() => onDone({ kind: 'new' })}>Use {inr(newRate)}</Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

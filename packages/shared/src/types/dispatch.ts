@@ -101,6 +101,32 @@ export interface DispatchPhotoCheckDto {
   needsPhoto: boolean;
 }
 
+/**
+ * The same question as {@link DispatchPhotoCheckDto}, asked for lines that do
+ * NOT exist in the database yet — the New Order form, where "Create & Dispatch"
+ * would otherwise ship a designed line with no reference photo on file and no
+ * way to notice until it was too late.
+ *
+ * Sent as one batch per form rather than a request per line: an order is
+ * commonly ten-plus lines, and the answer is only needed all together (the
+ * button is gated on the whole set).
+ */
+export interface DraftPhotoCheckLine {
+  /** Echoed back untouched so the client can match answers to its own rows. */
+  key: string;
+  product: string | null;
+  psize: number | null;
+  designType: string | null;
+  design: string | null;
+}
+
+export interface DraftPhotoCheckInput {
+  customerId: number | null;
+  lines: DraftPhotoCheckLine[];
+}
+
+export type DraftPhotoCheckResult = Record<string, DispatchPhotoCheckDto>;
+
 export interface DispatchDto {
   id: number;
   code: string | null;
