@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ChallanTermsDto, ChallanTermsInput, CompanyProfileDto, CompanyProfileInput, DispatchAlertSettingsDto, DispatchAlertSettingsInput, DispatchBagThresholdDto, DispatchBagThresholdInput, OrderFooterDto, OrderFooterInput, OrderOptionDto, OrderOptionInput, OrderQtyLayout, OrderTermsDto, OrderTermsInput, TcsSettingDto, TcsSettingInput } from '@oms/shared';
+import type { ChallanTermsDto, ChallanTermsInput, CompanyProfileDto, CompanyProfileInput, DispatchAlertSettingsDto, DispatchAlertSettingsInput, DispatchBagThresholdDto, DispatchBagThresholdInput, OrderFooterDto, OrderFooterInput, OrderOptionDto, OrderOptionInput, OrderQtyLayout, OrderTermsDto, OrderTermsInput, QuotationTermsDto, QuotationTermsInput, TcsSettingDto, TcsSettingInput } from '@oms/shared';
 import { http } from '@/lib/api';
 
 const KEY = ['settings'] as const;
@@ -7,6 +7,7 @@ const COMPANY_KEY = ['company'] as const;
 const ORDER_TERMS_KEY = ['order-terms'] as const;
 const ORDER_FOOTER_KEY = ['order-footer'] as const;
 const CHALLAN_TERMS_KEY = ['challan-terms'] as const;
+const QUOTATION_TERMS_KEY = ['quotation-terms'] as const;
 const ORDER_QTY_LAYOUT_KEY = ['order-qty-layout'] as const;
 const TCS_PERCENT_KEY = ['tcs-percent'] as const;
 const DISPATCH_BAG_THRESHOLD_KEY = ['dispatch-bag-threshold'] as const;
@@ -59,6 +60,24 @@ export function useUpdateOrderFooter() {
   return useMutation({
     mutationFn: (input: OrderFooterInput) => http.put<OrderFooterDto>('/settings/order-footer', input),
     onSuccess: () => qc.invalidateQueries({ queryKey: ORDER_FOOTER_KEY }),
+  });
+}
+
+/** Quotation bill's "Terms & Conditions" list. Falls back to the Sales Order
+ *  terms server-side until a quotation-specific list is saved. */
+export function useQuotationTerms() {
+  return useQuery({
+    queryKey: QUOTATION_TERMS_KEY,
+    queryFn: () => http.get<QuotationTermsDto>('/settings/quotation-terms'),
+    staleTime: 60_000,
+  });
+}
+
+export function useUpdateQuotationTerms() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: QuotationTermsInput) => http.put<QuotationTermsDto>('/settings/quotation-terms', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: QUOTATION_TERMS_KEY }),
   });
 }
 

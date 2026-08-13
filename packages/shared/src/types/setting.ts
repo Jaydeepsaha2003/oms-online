@@ -77,6 +77,18 @@ export interface OrderFooterInput {
   lines: string[];
 }
 
+/** Quotation bill's "Terms & Conditions" list — editable in Settings.
+ *  Until the business saves a quotation-specific list, the printed quotation
+ *  falls back to the Sales Order terms (that's what it always showed before
+ *  this list existed, so nothing changes until it's customised). */
+export interface QuotationTermsDto {
+  terms: string[];
+}
+
+export interface QuotationTermsInput {
+  terms: string[];
+}
+
 /** Challan / Tax Invoice bill's "Terms & Conditions" list — editable in Settings.
  *  Empty by default (no terms printed) until the business saves its own list. */
 export interface ChallanTermsDto {

@@ -11,7 +11,7 @@ import { formatDate } from '@/lib/date-format';
 import kavishLogo from '@/assets/kavish-logo-order.png';
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useFitToWidth } from '@/hooks/use-fit-to-width';
-import { useCompany, useOrderFooter, useOrderTerms } from '@/features/settings/use-settings';
+import { useCompany, useOrderFooter, useOrderTerms, useQuotationTerms } from '@/features/settings/use-settings';
 import { useOrder } from './use-orders';
 import { useQuotation } from '../quotations/use-quotations';
 
@@ -64,7 +64,12 @@ export function OrderBillPage() {
   const isLoading = isQuotation ? quotationQ.isLoading : orderQ.isLoading;
   // Editable from Settings → "Sales Order Terms & Conditions"; falls back to the
   // built-in default text until that loads (or if it's never been customised).
-  const { data: termsData } = useOrderTerms();
+  const { data: orderTermsData } = useOrderTerms();
+  // Quotations print their own list (Settings → "Quotation Terms & Conditions");
+  // the server hands back the Sales Order terms until one is saved, so the two
+  // documents only diverge once the business actually customises the quotation's.
+  const { data: quotationTermsData } = useQuotationTerms();
+  const termsData = isQuotation ? quotationTermsData : orderTermsData;
   const terms = termsData?.terms.length ? termsData.terms : FALLBACK_TERMS;
   const docTitle = isQuotation ? 'QUOTATION' : 'SALES ORDER';
   // Editable from Settings → "Sales Order footer text"; {DOC_TYPE} is swapped for docTitle.
@@ -352,7 +357,9 @@ export function OrderBillPage() {
                 {([
                   [isQuotation ? 'Quotation ID' : 'Order ID', `#${shortOrderCode(order.code, order.id)}`],
                   [isQuotation ? 'Quotation Date' : 'Order Date', fmtDate(order.orderDate)],
-                  ['Due Date', fmtDate(order.completionDate)],
+                  // The same stored date reads differently per document: an order is
+                  // DUE by it, a quotation merely stops being valid.
+                  [isQuotation ? 'Valid Till' : 'Due Date', fmtDate(order.completionDate)],
                 ] as const).map(([label, value]) => (
                   <tr key={label}>
                     {/* Label — right-aligned so the colon column always lines up */}

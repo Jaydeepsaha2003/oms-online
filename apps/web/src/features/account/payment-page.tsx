@@ -155,6 +155,17 @@ export function PaymentPage() {
   const bucket: 'BANK' | 'CASH' = payMode === 'CASH' ? 'CASH' : 'BANK';
   const allInvoices = ctx?.invoices ?? [];
   const bucketAmt = (r: PendingInvoiceRow) => (bucket === 'BANK' ? r.bankBal : r.cashBal);
+  /**
+   * What the grid PRINTS for a row, as opposed to what an allocation computes on
+   * ({@link bucketAmt}). Before a mode is picked there is no leg to report on,
+   * so each row shows its WHOLE outstanding (bank + cash) — `bucket` merely
+   * defaults to BANK then, and printing that bucket made every invoice whose
+   * bank side was settled but whose cash side wasn't render as an absurd "0"
+   * row (₹5L of real cash dues showing as a page of zeros). Once a mode is
+   * picked the two are the same thing, because the list is filtered to rows
+   * with money in that bucket.
+   */
+  const displayAmt = (r: PendingInvoiceRow) => (payMode ? bucketAmt(r) : Math.round((r.bankBal + r.cashBal) * 100) / 100);
   /** The grid only lists invoices that carry money in the CHOSEN bucket — the
    *  legacy form does the same, so a cash-only bill never shows as a "0" row
    *  while you're recording a bank receipt. Before a mode is picked, show all. */
@@ -254,7 +265,7 @@ export function PaymentPage() {
   };
 
   /* ── the six ledger-summary figures (legacy header block) ───────────────── */
-  const invoiceOutstanding = invoices.reduce((a, i) => a + bucketAmt(i), 0);
+  const invoiceOutstanding = invoices.reduce((a, i) => a + displayAmt(i), 0);
   /** Before a pay mode is picked there's no "leg" to report on, so the opening
    *  shows both sides added together — same as the legacy form does. */
   const openingDisplay = payMode ? preview.openingPend : ((ctx?.totals?.openingBank ?? 0) + (ctx?.totals?.openingCash ?? 0));
@@ -715,7 +726,7 @@ export function PaymentPage() {
                   </tr>
                 ) : (
                   invoices.map((r) => {
-                    const amt = bucketAmt(r);
+                    const amt = displayAmt(r);
                     const adj = preview.adjByInv.get(r.invNo) ?? 0;
                     const bal = Math.max(0, Math.round((amt - adj) * 100) / 100);
                     const ticked = selected.includes(r.invNo);
@@ -802,7 +813,7 @@ export function PaymentPage() {
               <p className="text-muted-foreground px-4 py-10 text-center text-[13px] font-medium">Nothing pending on the {bucket.toLowerCase()} leg.</p>
             ) : (
               invoices.map((r) => {
-                const amt = bucketAmt(r);
+                const amt = displayAmt(r);
                 const adj = preview.adjByInv.get(r.invNo) ?? 0;
                 const bal = Math.max(0, Math.round((amt - adj) * 100) / 100);
                 const ticked = selected.includes(r.invNo);
@@ -1147,8 +1158,12 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
   const showActions = canEdit || canDelete;
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<LedgerEntryDto | null>(null);
+  // Browsable date range — opens on the current financial year (the old fixed
+  // window), but the user can point it anywhere: last FY, one month, one day.
+  const [dateFrom, setDateFrom] = useState(fyStart());
+  const [dateTo, setDateTo] = useState(TODAY());
   const del = useDeletePayment();
-  const { data, isLoading } = usePaymentLedger({ customerId, agentName, dateFrom: fyStart(), dateTo: TODAY(), page, pageSize: 25 });
+  const { data, isLoading } = usePaymentLedger({ customerId, agentName, dateFrom, dateTo, page, pageSize: 25 });
   const rows = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
   const cols = showActions ? 9 : 8;
@@ -1182,8 +1197,44 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
           <DialogTitle className="flex items-center gap-2 text-lg">
             <BookOpenCheck className="text-primary size-5" /> Receipt Ledger — {ownerKind}: {owner}
           </DialogTitle>
-          <DialogDescription>Vouchers this financial year (Apr–Mar).</DialogDescription>
+          <DialogDescription>Every voucher in the chosen date range — opens on this financial year.</DialogDescription>
         </DialogHeader>
+        {/* Date range — page resets on change so the first page of the NEW range
+            shows, not page 4 of a range that may only have one. */}
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="space-y-1">
+            <Label htmlFor="ledger-from" className="text-muted-foreground text-[11px] font-bold tracking-wide uppercase">From</Label>
+            <Input
+              id="ledger-from"
+              type="date"
+              className="h-8 w-40 tabular-nums"
+              value={dateFrom}
+              max={dateTo || undefined}
+              onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="ledger-to" className="text-muted-foreground text-[11px] font-bold tracking-wide uppercase">To</Label>
+            <Input
+              id="ledger-to"
+              type="date"
+              className="h-8 w-40 tabular-nums"
+              value={dateTo}
+              min={dateFrom || undefined}
+              onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+            />
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8"
+            onClick={() => { setDateFrom(fyStart()); setDateTo(TODAY()); setPage(1); }}
+            disabled={dateFrom === fyStart() && dateTo === TODAY()}
+          >
+            <RotateCcw className="size-3.5" /> This FY
+          </Button>
+        </div>
         <div className="overflow-x-auto rounded-[4px] border">
           <table className="w-full border-collapse text-[12.5px]">
             <thead>
@@ -1203,7 +1254,7 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
               {isLoading ? (
                 <tr><td colSpan={cols} className="h-20 text-center"><Loader2 className="text-muted-foreground mx-auto size-5 animate-spin" /></td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={cols} className="text-muted-foreground h-20 text-center text-[13px] font-medium">No receipts recorded this financial year.</td></tr>
+                <tr><td colSpan={cols} className="text-muted-foreground h-20 text-center text-[13px] font-medium">No receipts recorded in this date range.</td></tr>
               ) : (
                 rows.map((r) => (
                   <tr key={r.id} className="border-b border-amber-200/70 even:bg-amber-50/70 hover:bg-amber-200/70 dark:border-amber-400/10 dark:even:bg-amber-400/[0.05] dark:hover:bg-amber-400/20">

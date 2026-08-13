@@ -12,6 +12,7 @@ import { UpdateCompanyDto } from './dto/company.dto';
 import { UpdateOrderTermsDto } from './dto/order-terms.dto';
 import { UpdateOrderFooterDto } from './dto/order-footer.dto';
 import { UpdateChallanTermsDto } from './dto/challan-terms.dto';
+import { UpdateQuotationTermsDto } from './dto/quotation-terms.dto';
 import { UpdateOrderQtyLayoutDto } from './dto/order-qty-layout.dto';
 import { UpdateTcsSettingDto } from './dto/tcs-setting.dto';
 import { UpdateDispatchBagThresholdDto } from './dto/dispatch-bag-threshold.dto';
@@ -73,6 +74,21 @@ export class SettingsController {
   @Audit({ action: ACTIONS.UPDATE, resource: R })
   updateOrderFooter(@Body() dto: UpdateOrderFooterDto) {
     return this.settings.updateOrderFooter(dto);
+  }
+
+  // Quotation terms — readable by any authenticated user (printed on the
+  // Quotation bill), editable only with setting:update. Falls back to the
+  // order terms until customised — see SettingsService.getQuotationTerms.
+  @Get('quotation-terms')
+  getQuotationTerms() {
+    return this.settings.getQuotationTerms();
+  }
+
+  @Put('quotation-terms')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R })
+  updateQuotationTerms(@Body() dto: UpdateQuotationTermsDto) {
+    return this.settings.updateQuotationTerms(dto);
   }
 
   // Challan terms — readable by any authenticated user (printed on the Challan

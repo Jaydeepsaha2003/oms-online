@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { ACTIONS, DEFAULT_ORDER_QTY_LAYOUT, isRealDesign, normalizeQtyOrder, RESOURCES, type ChallanTermsDto, type CompanyProfileDto, type DesignTrackTypesDto, type DispatchAlertSettingsDto, type DispatchBagThresholdDto, type OrderFooterDto, type OrderOptionDto, type OrderQtyLayout, type OrderTermsDto, type TcsSettingDto } from '@oms/shared';
+import { ACTIONS, DEFAULT_ORDER_QTY_LAYOUT, isRealDesign, normalizeQtyOrder, RESOURCES, type ChallanTermsDto, type CompanyProfileDto, type DesignTrackTypesDto, type DispatchAlertSettingsDto, type DispatchBagThresholdDto, type OrderFooterDto, type OrderOptionDto, type OrderQtyLayout, type OrderTermsDto, type QuotationTermsDto, type TcsSettingDto } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { uc } from '../common/coerce';
 import { AuditService } from '../audit/audit.service';
@@ -10,6 +10,7 @@ import { UpdateCompanyDto } from './dto/company.dto';
 import { UpdateOrderTermsDto } from './dto/order-terms.dto';
 import { UpdateOrderFooterDto } from './dto/order-footer.dto';
 import { UpdateChallanTermsDto } from './dto/challan-terms.dto';
+import { UpdateQuotationTermsDto } from './dto/quotation-terms.dto';
 import { UpdateTcsSettingDto } from './dto/tcs-setting.dto';
 import { UpdateDispatchBagThresholdDto } from './dto/dispatch-bag-threshold.dto';
 import { UpdateDesignTrackTypesDto } from './dto/design-track-types.dto';
@@ -22,6 +23,7 @@ const COMPANY_LOGO = 'COMPANY_LOGO';
 const ORDER_TERMS = 'ORDER_TERMS';
 const ORDER_FOOTER = 'ORDER_FOOTER';
 const CHALLAN_TERMS = 'CHALLAN_TERMS';
+const QUOTATION_TERMS = 'QUOTATION_TERMS';
 const ORDER_QTY_LAYOUT = 'ORDER_QTY_LAYOUT';
 const TCS_PERCENT = 'TCS_PERCENT';
 const DESIGN_TRACK_TYPES = 'DESIGN_TRACK_TYPES';
@@ -166,6 +168,34 @@ export class SettingsService {
     const value = JSON.stringify(lines);
     await this.prisma.appConfig.upsert({ where: { key: ORDER_FOOTER }, update: { value }, create: { key: ORDER_FOOTER, value } });
     return { lines };
+  }
+
+  /* ── Quotation "Terms & Conditions" ──────────────────────────────────────── */
+
+  /** Until a quotation-specific list is saved, the quotation keeps printing the
+   *  Sales Order terms — that is exactly what it showed before this list
+   *  existed, so adding the setting changes nothing until it's customised. */
+  async getQuotationTerms(): Promise<QuotationTermsDto> {
+    const row = await this.prisma.appConfig.findUnique({ where: { key: QUOTATION_TERMS } });
+    if (row?.value) {
+      try {
+        const parsed = JSON.parse(row.value);
+        if (Array.isArray(parsed) && parsed.length) {
+          return { terms: parsed.map((t) => String(t)) };
+        }
+      } catch {
+        /* fall through to the order-terms fallback */
+      }
+    }
+    return this.getOrderTerms();
+  }
+
+  async updateQuotationTerms(dto: UpdateQuotationTermsDto): Promise<QuotationTermsDto> {
+    const terms = dto.terms.map((t) => t.trim()).filter(Boolean);
+    if (!terms.length) throw new BadRequestException('Add at least one term.');
+    const value = JSON.stringify(terms);
+    await this.prisma.appConfig.upsert({ where: { key: QUOTATION_TERMS }, update: { value }, create: { key: QUOTATION_TERMS, value } });
+    return { terms };
   }
 
   /* ── Challan / Tax Invoice "Terms & Conditions" ──────────────────────────── */

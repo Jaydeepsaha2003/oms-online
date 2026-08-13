@@ -942,10 +942,13 @@ export function OrderFormPage() {
 
   // Keep the original row in the list while its values are edited above. This
   // preserves a safe copy and prevents a second edit from overwriting the first.
-  // Only new, manually-entered lines are editable here — saved lines (edit them on
-  // Order Modify) and booking-drawn lines (rate frozen) keep just the lock/remove.
+  // For an ORDER, saved lines are not editable here (their id carries dispatch
+  // history — Order Modify owns that), and booking-drawn lines are rate-frozen.
+  // A QUOTATION's saved lines have neither concern: the server replaces its
+  // items wholesale on save, so they stay editable right up to conversion.
+  const lineLocked = (item: Item) => (docKind === 'order' && item.id != null) || item.bookingId != null;
   const editItem = (item: Item) => {
-    if (item.id != null || item.bookingId != null) return;
+    if (lineLocked(item)) return;
     if (editingItemKey != null) {
       toast.info('Finish or cancel the current item edit first.');
       return;
@@ -1607,19 +1610,19 @@ export function OrderFormPage() {
           </div>
 
           {/* Row 2 */}
-          {/* 24 columns, not 12: at 12 the actions cell was one column (~100px),
-              too narrow for the camera + Add, so the flex row overflowed LEFT and
-              painted the camera on top of the Remarks input. Doubling the
-              resolution buys half-column precision — Remarks and the actions both
-              get wider, and the row now uses all 24 units instead of leaving one
-              empty on the right. */}
+          {/* 24 columns, and the spans MUST sum to 24: 5 (type) + 3 (priority) +
+              4×2 (quantities) + 5 (remarks) + 4 (actions). When they fall short
+              the whole row huddles into the left half of the form, Remarks
+              shrinks to a stub, and the 1-unit actions cell overflows leftward,
+              painting the camera on top of the Remarks input — which is exactly
+              how this row looked when the spans summed to 14. */}
           <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-4 lg:grid-cols-24">
             <div className="space-y-1 lg:col-span-4" data-tabfield="ordType">
               <Label className="text-base">Order type</Label>
               <NativeSelect value={entry.ordType} onChange={(v) => setEntryField({ ordType: v })} options={orderTypeOptions} placeholder="Type…" />
             </div>
-            {/* 3 units, not 4: "NORMAL" / "URGENT" are short, so this is the one
-                field with width to spare — it funds the wider Remarks. */}
+            {/* 3 units: "NORMAL" / "URGENT" are short, so this is the one field
+                that can stay narrow. */}
             <div className="space-y-1 lg:col-span-3" data-tabfield="priority">
               <Label className="text-base">Priority</Label>
               <NativeSelect value={entry.priority} onChange={(v) => setEntryField({ priority: v })} options={[...ORDER_PRIORITIES]} />
@@ -1629,33 +1632,33 @@ export function OrderFormPage() {
             {qtyOrderForCategory(qtyLayout, entry.category).map((f: QtyField) => {
               if (f === 'bags')
                 return (
-                  <div key="bags" className="space-y-1 lg:col-span-1" data-tabfield="bags">
+                  <div key="bags" className="space-y-1 lg:col-span-2" data-tabfield="bags">
                     <Label className="text-base">Bags</Label>
                     <Input type="number" step="any" min={0} value={entry.bags} onKeyDown={onlyNumericKey} onChange={(e) => onBags(e.target.value)} />
                   </div>
                 );
               if (f === 'pcs')
                 return (
-                  <div key="pcs" className="space-y-1 lg:col-span-1" data-tabfield="pcs">
+                  <div key="pcs" className="space-y-1 lg:col-span-2" data-tabfield="pcs">
                     <Label className={cn('text-base', showBy === 'PCS' && 'text-primary font-semibold')}>Pcs</Label>
                     <Input type="number" step="any" min={0} value={entry.pcs} onKeyDown={onlyNumericKey} onChange={(e) => onPcs(e.target.value)} />
                   </div>
                 );
               if (f === 'kgs')
                 return (
-                  <div key="kgs" className="space-y-1 lg:col-span-1" data-tabfield="gram">
+                  <div key="kgs" className="space-y-1 lg:col-span-2" data-tabfield="gram">
                     <Label className={cn('text-base', showBy === 'SIZE' && 'text-primary font-semibold')}>Kgs</Label>
                     <Input type="number" step="any" min={0} value={entry.gram} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ gram: e.target.value })} />
                   </div>
                 );
               return (
-                <div key="box" className="space-y-1 lg:col-span-1" data-tabfield="box">
+                <div key="box" className="space-y-1 lg:col-span-2" data-tabfield="box">
                   <Label className="text-base">Box</Label>
                   <Input type="number" step="any" min={0} value={entry.box} onKeyDown={onlyNumericKey} onChange={(e) => onBox(e.target.value)} />
                 </div>
               );
             })}
-            <div className="col-span-2 space-y-1 sm:col-span-3 lg:col-span-2" data-tabfield="comment">
+            <div className="col-span-2 space-y-1 sm:col-span-3 lg:col-span-5" data-tabfield="comment">
               <Label className="text-base">Remarks</Label>
               <Input value={entry.comment} onChange={(e) => setEntryField({ comment: e.target.value })} placeholder="Item remark…" />
             </div>
@@ -1664,7 +1667,7 @@ export function OrderFormPage() {
                 a photo can be attached to the line BEFORE it is added. The photos
                 ride along on `entry` and addItem() copies them onto the item, so
                 nothing extra is needed to persist them. */}
-            <div className="col-span-2 sm:col-span-1 lg:col-span-1">
+            <div className="col-span-2 sm:col-span-1 lg:col-span-4">
               {editingItemKey ? (
                 <div className="flex items-center justify-end gap-1.5">
                   {docKind === 'order' && (
@@ -1804,9 +1807,11 @@ export function OrderFormPage() {
                           {docKind === 'order' && (
                             <LinePhotoButton photos={i.photos ?? []} onChange={(photos) => setItemPhotos(i.key, photos)} status={photoStatusFor(i.key)} />
                           )}
-                          {i.id != null ? (
-                          // A saved line — deleting it belongs on the Order Modify page,
-                          // where the removal (and its dispatch guard) is handled properly.
+                          {docKind === 'order' && i.id != null ? (
+                          // A saved ORDER line — deleting it belongs on the Order Modify
+                          // page, where the removal (and its dispatch guard) is handled
+                          // properly. Quotation lines never lock: nothing dispatches off
+                          // a quotation, so editing is free until it converts.
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <span className="inline-flex cursor-help text-slate-400">
@@ -1903,7 +1908,7 @@ export function OrderFormPage() {
                         </div>
                         <div className="flex shrink-0 items-center gap-0.5">
                           {docKind === 'order' && <LinePhotoButton photos={i.photos ?? []} onChange={(photos) => setItemPhotos(i.key, photos)} status={photoStatusFor(i.key)} />}
-                          {i.id != null ? (
+                          {docKind === 'order' && i.id != null ? (
                             <span className="text-slate-400 inline-flex size-8 items-center justify-center" title="Existing order line — edit it on the Order Modify page">
                               <Lock className="size-4" />
                             </span>

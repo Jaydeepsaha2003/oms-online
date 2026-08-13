@@ -45,6 +45,7 @@ import {
   useDispatchBagThreshold,
   useOrderFooter,
   useOrderTerms,
+  useQuotationTerms,
   useSettings,
   useOrderQtyLayout,
   useTcsPercent,
@@ -54,6 +55,7 @@ import {
   useUpdateOrderFooter,
   useUpdateOrderQtyLayout,
   useUpdateOrderTerms,
+  useUpdateQuotationTerms,
   useUpdateTcsPercent,
 } from './use-settings';
 
@@ -119,6 +121,7 @@ export function SettingsPage() {
       {tab === 'orders' && (
         <div className="space-y-4">
           <OrderTermsCard canEdit={canEdit} />
+          <QuotationTermsCard canEdit={canEdit} />
           <OrderFooterCard canEdit={canEdit} />
           <OrderQtyLayoutCard canEdit={canEdit} />
           {isLoading ? (
@@ -446,6 +449,83 @@ function OrderTermsCard({ canEdit }: { canEdit: boolean }) {
                 value={t}
                 onChange={(e) => setTerm(i, e.target.value)}
                 placeholder="e.g. Payment Should Be Made Within 30 Days"
+                disabled={!canEdit}
+                maxLength={300}
+              />
+              {canEdit && (
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive flex size-8 shrink-0 items-center justify-center rounded-full transition-colors"
+                  onClick={() => remove(i)}
+                  aria-label={`Remove term ${i + 1}`}
+                >
+                  <Trash2 className="size-4" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {canEdit && (
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" onClick={add}>
+              <Plus /> Add term
+            </Button>
+            <Button onClick={onSave} disabled={save.isPending}>
+              {save.isPending ? <Loader2 className="animate-spin" /> : null} Save terms
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+
+/** The Quotation bill's "Terms & Conditions" list — same layout as the Sales
+ *  Order card above. Until saved here, the printed quotation keeps showing the
+ *  Sales Order terms (the server falls back), so this card starts pre-filled
+ *  with whatever the quotation currently prints. */
+function QuotationTermsCard({ canEdit }: { canEdit: boolean }) {
+  const { data } = useQuotationTerms();
+  const save = useUpdateQuotationTerms();
+  const [terms, setTerms] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (data) setTerms(data.terms);
+  }, [data]);
+
+  const setTerm = (i: number, value: string) => setTerms((t) => t.map((x, idx) => (idx === i ? value : x)));
+  const remove = (i: number) => setTerms((t) => t.filter((_, idx) => idx !== i));
+  const add = () => setTerms((t) => [...t, '']);
+
+  const onSave = () => {
+    const cleaned = terms.map((t) => t.trim()).filter(Boolean);
+    if (!cleaned.length) return toast.error('Add at least one term.');
+    save.mutate(
+      { terms: cleaned },
+      { onSuccess: () => { setTerms(cleaned); toast.success('Quotation Terms & Conditions saved'); }, onError: (e) => toast.error(getApiErrorMessage(e, 'Save failed')) },
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Quotation Terms &amp; Conditions</CardTitle>
+        <p className="text-muted-foreground text-xs">
+          Shown on the printed Quotation, above the Authorised Signatory line. Until saved here, the quotation shows the Sales Order terms.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="space-y-2">
+          {terms.length === 0 && <span className="text-muted-foreground text-sm">No terms yet.</span>}
+          {terms.map((t, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <span className="bg-foreground/70 size-2 shrink-0 rounded-[2px]" />
+              <Input
+                value={t}
+                onChange={(e) => setTerm(i, e.target.value)}
+                placeholder="e.g. This quotation is valid for 15 days"
                 disabled={!canEdit}
                 maxLength={300}
               />
