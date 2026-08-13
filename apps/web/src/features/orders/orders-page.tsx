@@ -207,9 +207,6 @@ export function OrdersPage() {
   // Phones: one stacked card per order instead of a horizontally-scrolling table.
   const orderMobileCard = (o: OrderDto) => {
     const truck = TRUCK_STATE[o.dispatchState ?? 'NONE'] ?? TRUCK_STATE.NONE;
-    const alreadyCancelled = o.status === 'CANCELLED';
-    const hasDispatches = (o.dispatchState ?? 'NONE') !== 'NONE';
-    const canCancel = !alreadyCancelled && !hasDispatches;
     return (
       <div className="space-y-2">
         <div className="flex items-start justify-between gap-2">
@@ -234,56 +231,24 @@ export function OrdersPage() {
           </div>
         </div>
         <div className="flex items-center justify-between border-t pt-2" onClick={(e) => e.stopPropagation()}>
-          <span className="text-muted-foreground text-[11px] font-medium tabular-nums" title={formatDateTime(o.updatedAt)}>
-            {formatDate(o.updatedAt)}
-          </span>
-          <div className="flex items-center gap-1">
-            {can('order:view') && (
-              <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(`/orders/${o.id}/edit`)} aria-label="View order">
-                <Eye className="size-4" />
-              </Button>
-            )}
-            {can('order:view') && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className={cn('size-8', truck.cls)}
-                onClick={() => setTimelineFor(o)}
-                aria-label={`Order journey — ${truck.label}`}
-                title={truck.label}
-              >
-                <Truck className="size-4" />
-              </Button>
-            )}
-            {can('order:print') && (
-              <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(`/orders/${o.id}/bill`)} aria-label="Bill / Invoice">
-                <Printer className="size-4" />
-              </Button>
-            )}
-            {can('order:update') && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-8 text-destructive hover:text-destructive disabled:text-slate-300"
-                disabled={!canCancel}
-                onClick={() => handleCancel(o)}
-                aria-label={alreadyCancelled ? 'Order already cancelled' : hasDispatches ? 'Cannot cancel — items dispatched' : 'Cancel order'}
-              >
-                <Ban className="size-4" />
-              </Button>
-            )}
-            {canDelete && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-8 text-destructive hover:text-destructive"
-                onClick={() => setDeleting(o)}
-                aria-label="Delete order permanently"
-              >
-                <Trash2 className="size-4" />
-              </Button>
-            )}
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="text-muted-foreground text-[11px] font-medium tabular-nums" title={formatDateTime(o.updatedAt)}>
+              {formatDate(o.updatedAt)}
+            </span>
+            {/* The truck icon used to carry this state by its colour alone. Moving
+                the actions into the kebab would have taken the only at-a-glance
+                sign of how far an order had shipped with it, so it becomes a
+                labelled chip instead — readable rather than colour-coded. */}
+            <span className={cn('inline-flex items-center gap-1 text-[10px] font-bold whitespace-nowrap', truck.cls)}>
+              <Truck className="size-3" /> {truck.label}
+            </span>
           </div>
+          {/* The SAME kebab the desktop rows use, rather than a hand-picked row of
+              icons. The icons only ever covered five of the actions, so anything
+              added to the menu later — Save as Quotation being the one that
+              prompted this — silently never reached a phone. One menu, one place
+              to add to, and the two views can't drift apart again. */}
+          {orderActionsMenu(o)}
         </div>
       </div>
     );
