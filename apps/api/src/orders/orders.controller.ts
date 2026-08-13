@@ -7,12 +7,10 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AnyPermission, Permissions } from '../common/decorators/permissions.decorator';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { ExcelService } from '../excel/excel.service';
-import { formatDate } from '../common/date.util';
 import { OrdersService } from './orders.service';
 import { AddOrderItemPhotoDto, CreateOrderDto, OrderQueryDto, PriceAsOfDto, UpdateOrderDto, UpdateOrderStatusDto } from './dto/order.dto';
 
 const R = RESOURCES.ORDER;
-const fmtDate = (d?: Date | null): string => formatDate(d, '');
 
 @ApiTags('Orders')
 @ApiBearerAuth()
@@ -38,8 +36,11 @@ export class OrdersController {
     const lines = await this.orders.exportLines(query);
     const rows = lines.map((l) => ({
       'Order ID': l.orderCode ?? `#${l.orderId}`,
-      'Order Date': fmtDate(l.orderDate),
-      'Due Date': fmtDate(l.dueDate),
+      // Real Dates, not preformatted strings: ExcelService turns these into proper
+      // date cells so "sort oldest first" and Excel's Date Filters work. As text
+      // they sorted by day-of-month, so 28-05-2026 came out above 30-06-2025.
+      'Order Date': l.orderDate ?? null,
+      'Due Date': l.dueDate ?? null,
       'Customer Name': l.customerName,
       'Product Name': l.productName,
       'Design Type': l.designType,

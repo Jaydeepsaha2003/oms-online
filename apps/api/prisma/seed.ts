@@ -11,7 +11,11 @@
  *      the Roles & Permissions screen from then on. Re-wiping them on every
  *      restart would silently discard an admin's in-app customization, which is
  *      not acceptable in production.
- *   3. Creates the bootstrap admin (super_admin) from SEED_ADMIN_* env vars.
+ *   3. Creates the bootstrap admin (super_admin) from SEED_ADMIN_* env vars on
+ *      first run only. An admin that already exists keeps the password and PIN
+ *      it has now — this seed will NOT push SEED_ADMIN_PASSWORD back over a
+ *      password changed from the app. Run reset-admin-password.bat (which sets
+ *      SEED_ADMIN_FORCE_RESET=1) if that password is ever forgotten.
  */
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
@@ -121,9 +125,19 @@ async function seedAdmin() {
   const passwordHash = await bcrypt.hash(password, 12);
   const pinHash = pin ? await bcrypt.hash(pin, 12) : null;
 
+  // Recovery hatch: only a deliberate SEED_ADMIN_FORCE_RESET=1 puts the
+  // credentials back to the .env values (see reset-admin-password.bat).
+  const forceReset = process.env.SEED_ADMIN_FORCE_RESET === '1';
+  const existed = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+
   const user = await prisma.user.upsert({
     where: { email },
-    update: { name, passwordHash, ...(pinHash ? { pinHash } : {}) },
+    // BOOTSTRAP ONLY — credentials are set when this row is first created and
+    // never rewritten afterwards. This seed re-runs on every start.bat whose
+    // DB-sync stamp is stale, so re-hashing SEED_ADMIN_PASSWORD here silently
+    // threw away a password the admin had changed in the app: it reverted to
+    // the .env default on the next reboot, every time.
+    update: forceReset ? { passwordHash, ...(pinHash ? { pinHash } : {}) } : { name },
     create: { email, name, passwordHash, status: 'active', ...(pinHash ? { pinHash } : {}) },
   });
 
@@ -133,9 +147,16 @@ async function seedAdmin() {
     create: { userId: user.id, roleId: superAdmin.id },
   });
 
-  console.log(`✓ Admin user ready: ${email}`);
-  console.log(`  (password from SEED_ADMIN_PASSWORD — change it after first login)`);
-  if (pinHash) console.log(`  quick-login PIN set from SEED_ADMIN_PIN`);
+  if (!existed) {
+    console.log(`✓ Admin user created: ${email}`);
+    console.log(`  (password from SEED_ADMIN_PASSWORD — change it after first login)`);
+    if (pinHash) console.log(`  quick-login PIN set from SEED_ADMIN_PIN`);
+  } else if (forceReset) {
+    console.log(`✓ Admin password RESET to SEED_ADMIN_PASSWORD (forced): ${email}`);
+    if (pinHash) console.log(`  quick-login PIN also reset from SEED_ADMIN_PIN`);
+  } else {
+    console.log(`✓ Admin user ready: ${email} — existing password left untouched`);
+  }
 }
 
 async function main() {

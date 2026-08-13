@@ -281,6 +281,25 @@ export function OrderModifyPage() {
     [orders],
   );
 
+  // Quantity totals for the lines this page is holding — deliberately the same
+  // scope as the line/order counts in the footer they sit above, so the two
+  // never disagree. CANCELLED lines still carry their old quantities in the
+  // data but no longer represent real work, so they are counted OUT and the
+  // strip says how many it dropped (otherwise re-adding the column by hand
+  // gives a different number and the total looks wrong).
+  const totals = useMemo(() => {
+    let bags = 0, pcs = 0, kgs = 0, box = 0, cancelled = 0;
+    for (const { line } of rows) {
+      if (line.status === 'CANCELLED') { cancelled++; continue; }
+      bags += line.bags ?? 0;
+      pcs += line.pcs ?? 0;
+      kgs += line.gram ?? 0;
+      box += line.box ?? 0;
+    }
+    // Kgs are fractional, so sum then round — 0.1 + 0.2 must not surface as 0.30000000000000004.
+    return { bags: round2(bags), pcs: round2(pcs), kgs: round2(kgs), box: round2(box), cancelled };
+  }, [rows]);
+
   // Phones: group lines by their parent order — one card per order, its lines
   // nested underneath, instead of repeating the order/customer on every line.
   const groupedByOrder = useMemo(() => {
@@ -681,6 +700,26 @@ export function OrderModifyPage() {
           )}
         </div>
       </div>
+
+      {/* ── Quantity totals for the lines on this page ──────────────────────────── */}
+      {rows.length > 0 && (
+        <div className="bg-card flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-[4px] border px-3 py-2 shadow-sm">
+          <span className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Totals — this page</span>
+          {totals.cancelled > 0 && (
+            <span className="text-muted-foreground text-[11px] font-medium">
+              {totals.cancelled.toLocaleString('en-IN')} cancelled line{totals.cancelled === 1 ? '' : 's'} not counted
+            </span>
+          )}
+          <div className="ml-auto flex flex-wrap items-center gap-x-5 gap-y-1.5">
+            {([['Bags', totals.bags], ['Pcs', totals.pcs], ['Kgs', totals.kgs], ['Box', totals.box]] as const).map(([label, value]) => (
+              <span key={label} className="flex items-baseline gap-1.5">
+                <span className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">{label}</span>
+                <span className={cn(TEXT_CELL, 'tabular-nums')}>{dash(value)}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Footer: line/order counts + paging ─────────────────────────────────── */}
       <div className="bg-card flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-[4px] border px-3 py-2 shadow-sm">

@@ -30,7 +30,10 @@ REM    [3] prisma db push         (sync schema - also refreshes the Prisma clien
 REM                                 this project's migrations/ history is known to
 REM                                 be incomplete, so this is the step that actually
 REM                                 guarantees the schema is correct)
-REM    [4] prisma db seed         (roles, permissions, admin user)
+REM    [4] prisma db seed         (roles, permissions, admin user - creates the
+REM                                 admin only if missing; an existing admin's
+REM                                 password/PIN are never overwritten. Use
+REM                                 reset-admin-password.bat if one is forgotten)
 REM    [5] npm run build          (build shared -> api -> web, bundled+minified)
 REM ============================================================
 cd /d "%~dp0"
@@ -188,6 +191,7 @@ if errorlevel 1 (
 )
 
 echo.
+REM This never touches an existing admin's password - see prisma/seed.ts.
 echo [3/3] Seeding database (roles, permissions, admin user)...
 call npm run db:seed -w @oms/api
 if errorlevel 1 (
