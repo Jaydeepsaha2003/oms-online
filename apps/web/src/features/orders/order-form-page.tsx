@@ -97,6 +97,9 @@ const blankEntry = (): Omit<Item, 'key'> => ({
   box: '',
   comment: '',
   calField: 'KGS',
+  // Explicit so the reset after each add visibly clears the entry row's photos —
+  // they belong to the line just added, not to the next one.
+  photos: [],
 });
 
 /** Number → compact string for the item label (drops trailing ".0"). */
@@ -1327,6 +1330,14 @@ export function OrderFormPage() {
       if ((e.ctrlKey || e.metaKey) && k === 's') {
         e.preventDefault();
         a.save();
+      } else if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && k === 'a') {
+        // Ctrl+A adds the item, alongside Alt+A. This DELIBERATELY takes over the
+        // browser's select-all on this page: the whole point is to add without
+        // leaving the keyboard, and your hands are normally still inside a field
+        // when you want it — a handler that backed off inside inputs would never
+        // fire where it is actually needed.
+        e.preventDefault();
+        a.add();
       } else if (alt && k === 'a') {
         e.preventDefault();
         a.add();
@@ -1596,12 +1607,20 @@ export function OrderFormPage() {
           </div>
 
           {/* Row 2 */}
-          <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-4 lg:grid-cols-12">
-            <div className="space-y-1 lg:col-span-2" data-tabfield="ordType">
+          {/* 24 columns, not 12: at 12 the actions cell was one column (~100px),
+              too narrow for the camera + Add, so the flex row overflowed LEFT and
+              painted the camera on top of the Remarks input. Doubling the
+              resolution buys half-column precision — Remarks and the actions both
+              get wider, and the row now uses all 24 units instead of leaving one
+              empty on the right. */}
+          <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-4 lg:grid-cols-24">
+            <div className="space-y-1 lg:col-span-4" data-tabfield="ordType">
               <Label className="text-base">Order type</Label>
               <NativeSelect value={entry.ordType} onChange={(v) => setEntryField({ ordType: v })} options={orderTypeOptions} placeholder="Type…" />
             </div>
-            <div className="space-y-1 lg:col-span-2" data-tabfield="priority">
+            {/* 3 units, not 4: "NORMAL" / "URGENT" are short, so this is the one
+                field with width to spare — it funds the wider Remarks. */}
+            <div className="space-y-1 lg:col-span-3" data-tabfield="priority">
               <Label className="text-base">Priority</Label>
               <NativeSelect value={entry.priority} onChange={(v) => setEntryField({ priority: v })} options={[...ORDER_PRIORITIES]} />
             </div>
@@ -1640,10 +1659,22 @@ export function OrderFormPage() {
               <Label className="text-base">Remarks</Label>
               <Input value={entry.comment} onChange={(e) => setEntryField({ comment: e.target.value })} placeholder="Item remark…" />
             </div>
+            {/* Actions sit at the RIGHT of the row, camera first then Add — the
+                same order and the same button as each line in the list below, so
+                a photo can be attached to the line BEFORE it is added. The photos
+                ride along on `entry` and addItem() copies them onto the item, so
+                nothing extra is needed to persist them. */}
             <div className="col-span-2 sm:col-span-1 lg:col-span-1">
               {editingItemKey ? (
-                <div className="flex justify-end gap-1.5">
-                  <Button onClick={addItem} size="icon" aria-label="Update item" title="Update this item (Alt+A)">
+                <div className="flex items-center justify-end gap-1.5">
+                  {docKind === 'order' && (
+                    <LinePhotoButton
+                      photos={entry.photos ?? []}
+                      onChange={(photos) => setEntryField({ photos })}
+                      status={photoStatusFor(editingItemKey)}
+                    />
+                  )}
+                  <Button onClick={addItem} size="icon" aria-label="Update item" title="Update this item (Alt+A or Ctrl+A)">
                     <Check className="size-4" />
                   </Button>
                   <Button type="button" variant="outline" size="icon" onClick={cancelItemEdit} aria-label="Cancel item edit" title="Cancel item edit">
@@ -1651,9 +1682,17 @@ export function OrderFormPage() {
                   </Button>
                 </div>
               ) : (
-                <Button onClick={addItem} disabled={noCustomer} className="w-full" aria-label="Add item" title={noCustomer ? 'Select a customer first' : 'Add item (Alt+A)'}>
-                  <Plus /> Add
-                </Button>
+                <div className="flex items-center justify-end gap-1.5">
+                  {/* No `status` here: the required/on-file check is keyed by an
+                      item key, which this row does not have until it is added.
+                      The line picks its status up in the list below. */}
+                  {docKind === 'order' && (
+                    <LinePhotoButton photos={entry.photos ?? []} onChange={(photos) => setEntryField({ photos })} />
+                  )}
+                  <Button onClick={addItem} disabled={noCustomer} aria-label="Add item" title={noCustomer ? 'Select a customer first' : 'Add item (Alt+A or Ctrl+A)'}>
+                    <Plus /> Add
+                  </Button>
+                </div>
               )}
             </div>
           </div>
@@ -2099,6 +2138,20 @@ function LinePhotoButton({
   );
 }
 
+/** One key combination rendered as Kbd chips joined by "+". */
+function KeyCombo({ keys }: { keys: string[] }) {
+  return (
+    <>
+      {keys.map((k, i) => (
+        <span key={k} className="flex items-center gap-0.5">
+          {i > 0 && <span className="text-muted-foreground text-[10px]">+</span>}
+          <Kbd>{k}</Kbd>
+        </span>
+      ))}
+    </>
+  );
+}
+
 /** Gear-button popover: reorder/enable the Tab sequence + view keyboard shortcuts. */
 function SettingsPanel({
   tabOrder,
@@ -2107,8 +2160,10 @@ function SettingsPanel({
   tabOrder: TabEntry[];
   setTabOrder: Dispatch<SetStateAction<TabEntry[]>>;
 }) {
-  const SHORTCUTS: { label: string; keys: string[] }[] = [
-    { label: 'Add item', keys: ['Alt', 'A'] },
+  // `or` is a second, equivalent combo for the same action — one row, not two,
+  // so the list doesn't read as if there were two different actions.
+  const SHORTCUTS: { label: string; keys: string[]; or?: string[] }[] = [
+    { label: 'Add item', keys: ['Alt', 'A'], or: ['Ctrl', 'A'] },
     { label: 'Save / Create order', keys: ['Ctrl', 'S'] },
     { label: 'Create quotation', keys: ['Alt', 'Q'] },
     { label: 'Focus Item name', keys: ['Alt', 'I'] },
@@ -2201,12 +2256,13 @@ function SettingsPanel({
                 <div key={s.label} className="flex items-center justify-between text-sm">
                   <span className="text-muted-foreground">{s.label}</span>
                   <span className="flex items-center gap-0.5">
-                    {s.keys.map((k, i) => (
-                      <span key={k} className="flex items-center gap-0.5">
-                        {i > 0 && <span className="text-muted-foreground text-[10px]">+</span>}
-                        <Kbd>{k}</Kbd>
-                      </span>
-                    ))}
+                    <KeyCombo keys={s.keys} />
+                    {s.or && (
+                      <>
+                        <span className="text-muted-foreground mx-1 text-[10px]">or</span>
+                        <KeyCombo keys={s.or} />
+                      </>
+                    )}
                   </span>
                 </div>
               ))}
