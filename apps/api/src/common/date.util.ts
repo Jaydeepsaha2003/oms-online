@@ -15,3 +15,20 @@ export function formatDate(value?: string | Date | null, fallback = '—'): stri
   if (Number.isNaN(d.getTime())) return fallback;
   return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()}`;
 }
+
+/**
+ * A real Date for an Excel cell, or null to leave the cell blank.
+ *
+ * Excel exports must carry dates, NOT `formatDate()` strings. As text, Excel
+ * sorts them character by character — day of month first, then month, then year
+ * — so 28-05-2026 sorts above 30-06-2025 and "oldest first" looks broken.
+ * `ExcelService` turns the Date returned here into a proper date cell.
+ *
+ * Parsing deliberately mirrors `formatDate` (same `new Date()`, same local
+ * calendar day), so an exported cell shows exactly the day the screen shows.
+ */
+export function toExcelDate(value?: string | Date | null): Date | null {
+  if (!value) return null;
+  const d = typeof value === 'string' ? new Date(value) : value;
+  return Number.isNaN(d.getTime()) ? null : d;
+}

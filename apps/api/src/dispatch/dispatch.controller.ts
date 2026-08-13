@@ -7,14 +7,11 @@ import { AnyPermission, Permissions } from '../common/decorators/permissions.dec
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { ExcelService } from '../excel/excel.service';
-import { formatDate } from '../common/date.util';
+import { toExcelDate } from '../common/date.util';
 import { DispatchService } from './dispatch.service';
 import { CreateDispatchDto, DispatchQueryDto, PendingQueryDto, UpdateDispatchDto } from './dto/dispatch.dto';
 
 const R = RESOURCES.DISPATCH;
-
-/** System-wide date format (dd-mm-yy) for the export cells; blank when no date. */
-const fmtDate = (d?: string | null): string => formatDate(d, '');
 
 @ApiTags('Dispatch')
 @ApiBearerAuth()
@@ -49,8 +46,10 @@ export class DispatchController {
     const lines = await this.dispatch.pendingExport(query);
     const rows = lines.map((l) => ({
       'Order #': l.orderCode ?? '',
-      'Order Date': fmtDate(l.orderDate),
-      'Due Date': fmtDate(l.dueDate),
+      // Real Dates, not strings — see toExcelDate(). As text these sorted by
+      // day-of-month, which put 28-05-2026 above 30-06-2025.
+      'Order Date': toExcelDate(l.orderDate),
+      'Due Date': toExcelDate(l.dueDate),
       Due: l.dueType,
       Customer: l.customerName,
       Product: l.productName || l.product || '',

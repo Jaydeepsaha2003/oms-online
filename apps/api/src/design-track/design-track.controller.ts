@@ -5,13 +5,12 @@ import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { formatDate } from '../common/date.util';
+import { toExcelDate } from '../common/date.util';
 import { ExcelService } from '../excel/excel.service';
 import { DesignTrackService } from './design-track.service';
 import { DesignTrackQueryDto, SetKalwatDto } from './dto/design-track.dto';
 
 const R = RESOURCES.DESIGN_TRACK;
-const fmtDate = (d?: string | null): string => formatDate(d, '');
 
 @ApiTags('Design Track')
 @ApiBearerAuth()
@@ -48,7 +47,9 @@ export class DesignTrackController {
   @Audit({ action: ACTIONS.EXPORT, resource: R, description: 'Exported Design Track' })
   async export(@Query() query: DesignTrackQueryDto, @Res({ passthrough: true }) res: Response) {
     const rows = (await this.designTrack.findAll(query)).map((r) => ({
-      'Order Date': fmtDate(r.orderDate),
+      // Real Date, not a string — see toExcelDate(). As text these sorted by
+      // day-of-month, which put 28-05-2026 above 30-06-2025.
+      'Order Date': toExcelDate(r.orderDate),
       'Customer Name': r.customerName,
       'Product Name': r.productName ?? '',
       'Design Type': r.designType ?? '',
