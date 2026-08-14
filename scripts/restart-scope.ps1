@@ -2,8 +2,9 @@
 #  Decide how much of OMS needs relaunching after a build.
 #
 #  Prints exactly one word for restart.bat to read:
-#    full  - shared package changed (API and web are both built from it),
-#            or a build output is missing entirely
+#    full  - shared package changed (API and web are both built from it), a
+#            build output is missing entirely, or a DATABASE sync is pending
+#            (only the full path runs start.bat, where migrations are applied)
 #    api   - only backend sources / the Prisma schema changed
 #    web   - only frontend sources changed; NOTHING needs relaunching, because
 #            both servers serve apps\web\dist straight off disk
@@ -60,6 +61,33 @@ $webOut    = Newest @('apps\web\dist')
 
 # Shared feeds both, so treat any change to it as a full relaunch.
 if ($sharedSrc -gt $sharedOut) { Write-Output 'full'; exit 0 }
+
+# A pending DATABASE sync is invisible to every source-vs-dist test in this file.
+# Migrations are not build inputs — nothing in any dist folder ever reflects them,
+# and after any build dist is newer than the migration file anyway — so a
+# migration-only change (a data backfill, a new index) compares as 'none'.
+# restart.bat then exits early and start.bat's DB-sync step, the ONLY thing that
+# runs `prisma migrate deploy`, is never reached: the migration sits unapplied
+# indefinitely, with no error printed anywhere and every timestamp here insisting
+# nothing changed. Observed directly — a receipts backfill migration reported
+# 'none' and silently never applied.
+#
+# start.bat already tracks this correctly via .db-sync-stamp (the newest of
+# schema / migrations / seed / .env, compared against the last SUCCESSFUL sync),
+# so mirror that test rather than inventing a second rule.
+#
+# This must report 'full', NOT 'api', even though a migration is a backend
+# concern: 'api' takes restart.bat's fast path, which bounces the API process
+# directly and never calls start.bat — and start.bat is the only place
+# `prisma migrate deploy` runs. Only 'full' stops everything and goes through
+# start.bat, which is also what lets the sync happen with the database free of
+# the running API, exactly what start.bat defers it for.
+$syncNewest = Newest @('apps\api\prisma\schema.prisma', 'apps\api\prisma\migrations', 'apps\api\prisma\seed.ts', 'apps\api\.env')
+$syncStamp = if (Test-Path '.db-sync-stamp') { Get-Content '.db-sync-stamp' -EA SilentlyContinue } else { $null }
+# Fail safe: no stamp (fresh clone / never synced) counts as pending. Being wrong
+# this way costs one unnecessary relaunch; being wrong the other way ships an
+# unapplied migration, which is the failure this whole block exists to prevent.
+if (-not $syncStamp -or $syncStamp -ne $syncNewest.Ticks.ToString()) { Write-Output 'full'; exit 0 }
 
 # A build output being current does NOT mean it is the code that is running.
 # The API is a long-lived node process that reads dist once, at launch; the web
