@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Camera, CalendarClock, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Filter, Flame, Hourglass, Loader2, Lock, Package, PackageCheck, RotateCcw, TriangleAlert, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { DISPATCH_EXPORT_COLUMNS, qtyOrderForCategory, type DispatchStatus, type PendingLineDto, type QtyField } from '@oms/shared';
+import { ALL_PERMISSIONS, DISPATCH_EXPORT_COLUMNS, qtyOrderForCategory, type DispatchStatus, type PendingLineDto, type QtyField } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn, shortOrderCode } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
@@ -91,7 +91,7 @@ const DISPATCH_CARD_CSS = `
 const RAIL_TONE: Record<string, string> = { Due: 'bg-emerald-500', 'Past Due': 'bg-amber-500', 'Over Due': 'bg-rose-500' };
 
 /** A tactile, native-feeling pending-line card for phones. Tap anywhere to dispatch. */
-function DispatchCard({ line, index, showRates, onClick }: { line: PendingLineDto; index: number; showRates: boolean; onClick: () => void }) {
+function DispatchCard({ line, index, showRates, canDeletePhotos, onClick }: { line: PendingLineDto; index: number; showRates: boolean; canDeletePhotos: boolean; onClick: () => void }) {
   const urgent = line.priority === 'URGENT';
   const locked = !!line.lockedByName;
   const qtys = ([['Bags', line.remBags], ['Pcs', line.remPcs], ['Kgs', line.remKgs], ['Box', line.remBox]] as const).filter(([, v]) => v > 0);
@@ -218,7 +218,12 @@ function DispatchCard({ line, index, showRates, onClick }: { line: PendingLineDt
                 {line.productName || line.product || '—'} · {line.customerName}
               </DialogDescription>
             </DialogHeader>
-            <LiveLinePhotos orderItemId={line.orderItemId} canEdit={false} canDelete={false} hideHeader gridClassName="grid-cols-2 gap-3" />
+            {/* A pending line has no challan yet — the "billed lines are frozen"
+                rule (see Modify Dispatch) can't apply, so the only gate here is
+                who may remove a reference photo at all. Phones previously got no
+                delete whatsoever, which left a mis-shot photo unfixable on the
+                one screen packers actually use. */}
+            <LiveLinePhotos orderItemId={line.orderItemId} canEdit={false} canDelete={canDeletePhotos} hideHeader gridClassName="grid-cols-2 gap-3" />
           </DialogContent>
         </Dialog>
       )}
@@ -407,9 +412,11 @@ export function DispatchOrderPage() {
   // the filter-icon badge counts only what lives behind it
   // (Agent/Due/Design/Sub category/ALL).
   const sheetFilterCount = (agent ? 1 : 0) + (dueType ? 1 : 0) + (design ? 1 : 0) + (subCategory ? 1 : 0) + (all ? 1 : 0);
-  const { can } = usePermissions();
+  const { can, permissions } = usePermissions();
   const canViewRates = can('dispatch:viewrates');
   const canApproveDispatch = can('dispatch:approve');
+  // Same gate Modify Dispatch uses for removing a reference photo.
+  const canDeletePhotos = permissions.includes(ALL_PERMISSIONS);
   // The date every dispatch created from this page uses — defaults to today,
   // sticks for the rest of the calendar day once changed, resets on its own the
   // next day. See use-dispatch-date.ts.
@@ -705,7 +712,7 @@ export function DispatchOrderPage() {
               No pending order lines — everything is dispatched.
             </div>
           ) : (
-            items.map((r, i) => <DispatchCard key={r.orderItemId} line={r} index={i} showRates={canViewRates} onClick={() => setActive(r)} />)
+            items.map((r, i) => <DispatchCard key={r.orderItemId} line={r} index={i} showRates={canViewRates} canDeletePhotos={canDeletePhotos} onClick={() => setActive(r)} />)
           )}
         </div>
       </div>
@@ -854,7 +861,8 @@ function DispatchSheet({
     onClose();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lockDenied]);
-  const { can } = usePermissions();
+  const { can, permissions } = usePermissions();
+  const isSuperAdmin = permissions.includes(ALL_PERMISSIONS);
   const isMobile = useIsMobile();
   const { data: existingPhotos } = useOrderItemPhotos(line.orderItemId);
   // Has this party + item (product + size) + design ever been documented with a
@@ -1192,7 +1200,7 @@ function DispatchSheet({
                   order:update — a shop-floor dispatch role otherwise gets
                   blocked by the mandatory-photo rule above with no way to
                   satisfy it, since it usually doesn't hold order:update. */}
-              <LiveLinePhotos orderItemId={line.orderItemId} canEdit={can('dispatch:create')} canDelete={false} hideHeader />
+              <LiveLinePhotos orderItemId={line.orderItemId} canEdit={can('dispatch:create')} canDelete={isSuperAdmin} hideHeader />
             </div>
           )}
         </div>

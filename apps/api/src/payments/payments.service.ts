@@ -505,11 +505,31 @@ export class PaymentsService {
 
   /** Undo every row the chain's vouchers wrote, most-recent first. `sourceVoucherNo`
    *  is stamped on all three child tables precisely so this is exact. */
+  /**
+   * Undo a chain of vouchers, newest first.
+   *
+   * Two linkages, because the book has two generations of rows:
+   *
+   *  - `sourceVoucherNo` — stamped by this system on everything it writes.
+   *  - `refRecId` — how the ORIGINAL Access app tied an allocation to its
+   *    voucher. Its DeleteReceiptEverywhere deleted from ACCT PAYMENT RECEIPT /
+   *    ACCT PARTY ADVANCE / ACCT OPENING TRANS on `[REF REC ID] = voucherNo`,
+   *    which is exactly this. Imported rows have no `sourceVoucherNo`, so
+   *    without this second clause a replay would leave the old allocations in
+   *    place and add a fresh set on top — the money would be spent twice.
+   *
+   * Matching both is what lets an imported receipt be edited or deleted at all.
+   * A row whose `refRecId` is an ADV- id (an allocation funded by an older
+   * advance rather than by this receipt) is deliberately NOT swept up — the
+   * legacy app left those too, and the replay reads live invoice balances, so
+   * whatever they still cover is simply seen as already paid.
+   */
   private async reverseChain(tx: Db, chain: LedgerRow[]): Promise<void> {
     for (const row of [...chain].reverse()) {
-      await tx.acctPaymentReceipt.deleteMany({ where: { sourceVoucherNo: row.voucherNo } });
-      await tx.acctPartyAdvance.deleteMany({ where: { sourceVoucherNo: row.voucherNo } });
-      await tx.acctOpeningTrans.deleteMany({ where: { sourceVoucherNo: row.voucherNo } });
+      const owned = { OR: [{ sourceVoucherNo: row.voucherNo }, { refRecId: row.voucherNo }] };
+      await tx.acctPaymentReceipt.deleteMany({ where: owned });
+      await tx.acctPartyAdvance.deleteMany({ where: owned });
+      await tx.acctOpeningTrans.deleteMany({ where: owned });
       await tx.acctLedger.delete({ where: { id: row.id } });
     }
   }
