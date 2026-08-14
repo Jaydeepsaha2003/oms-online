@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties, useRef } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Download, Loader2, Printer } from 'lucide-react';
 import { toast } from 'sonner';
@@ -206,6 +206,41 @@ export function OrderBillPage() {
       setBusy(false);
     }
   };
+
+  /**
+   * Arrived here from a one-tap action elsewhere (View Orders' card buttons):
+   * run it without a second click. Same shape as the challan bill page.
+   *
+   * The capture rasterises the live DOM, so it has to wait for the document to
+   * actually be on screen with fonts and logo resolved — firing on data arrival
+   * alone yields a half-drawn page. Once fired the flag is stripped from history
+   * so a refresh or Back/Forward doesn't repeat it.
+   */
+  const autoFired = useRef(false);
+  const autoState = location.state as { autoPrint?: boolean; autoPdf?: boolean } | null;
+  const wantsPrint = !!autoState?.autoPrint;
+  const wantsPdf = !!autoState?.autoPdf;
+  const ready = !!order;
+  useEffect(() => {
+    if ((!wantsPrint && !wantsPdf) || !ready || autoFired.current) return;
+    autoFired.current = true;
+    void (async () => {
+      const node = document.getElementById('sales-order');
+      const images = node ? [...node.querySelectorAll('img')] : [];
+      await Promise.all([
+        document.fonts?.ready ?? Promise.resolve(),
+        ...images.map((img) => (img.complete ? Promise.resolve() : new Promise<void>((res) => {
+          img.addEventListener('load', () => res(), { once: true });
+          img.addEventListener('error', () => res(), { once: true });
+        }))),
+      ]);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      if (wantsPrint) await print();
+      else await download();
+      navigate(location.pathname, { replace: true, state: null });
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantsPrint, wantsPdf, ready]);
 
   const totals = useMemo(() => {
     // Cancelled lines are excluded from the order totals.

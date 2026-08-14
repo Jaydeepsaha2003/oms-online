@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Ban, ChevronLeft, ChevronRight, EllipsisVertical, Eye, FileText, Filter, Loader2, Plus, Printer, RotateCcw, Search, Trash2, Truck } from 'lucide-react';
+import { Ban, ChevronLeft, ChevronRight, EllipsisVertical, Eye, FileDown, FileText, Filter, Loader2, Plus, Printer, RotateCcw, Search, Trash2, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 import type { OrderDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -231,17 +231,53 @@ export function OrdersPage() {
           </div>
         </div>
         <div className="flex items-center justify-between border-t pt-2" onClick={(e) => e.stopPropagation()}>
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="text-muted-foreground text-[11px] font-medium tabular-nums" title={formatDateTime(o.updatedAt)}>
-              {formatDate(o.updatedAt)}
-            </span>
-            {/* The truck icon used to carry this state by its colour alone. Moving
-                the actions into the kebab would have taken the only at-a-glance
-                sign of how far an order had shipped with it, so it becomes a
-                labelled chip instead — readable rather than colour-coded. */}
-            <span className={cn('inline-flex items-center gap-1 text-[10px] font-bold whitespace-nowrap', truck.cls)}>
-              <Truck className="size-3" /> {truck.label}
-            </span>
+          <span className="text-muted-foreground text-[11px] font-medium tabular-nums" title={formatDateTime(o.updatedAt)}>
+            {formatDate(o.updatedAt)}
+          </span>
+          {/* Quick actions, then the kebab for everything else. The truck both
+              opens the order's journey AND carries how far it has shipped in its
+              colour — which is why the written "Fully dispatched" chip that used
+              to sit here is gone: it said the same thing twice and cost a line of
+              the card. Print and PDF fire on the bill page without a second tap
+              (see its autoPrint/autoPdf effect). */}
+          <div className="flex items-center gap-0.5">
+            {can('order:view') && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn('size-8', truck.cls)}
+                onClick={() => setTimelineFor(o)}
+                aria-label={`Order journey — ${truck.label}`}
+                title={`Order journey — ${truck.label}`}
+              >
+                <Truck className="size-4" />
+              </Button>
+            )}
+            {can('order:print') && (
+              <>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-muted-foreground hover:text-primary size-8"
+                  onClick={() => navigate(`/orders/${o.id}/bill`, { state: { autoPrint: true } })}
+                  aria-label="Print order"
+                  title="Print"
+                >
+                  <Printer className="size-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-muted-foreground hover:text-primary size-8"
+                  onClick={() => navigate(`/orders/${o.id}/bill`, { state: { autoPdf: true } })}
+                  aria-label="Download order PDF"
+                  title="PDF"
+                >
+                  <FileDown className="size-4" />
+                </Button>
+              </>
+            )}
+            {orderActionsMenu(o)}
           </div>
           {/* The SAME kebab the desktop rows use, rather than a hand-picked row of
               icons. The icons only ever covered five of the actions, so anything
