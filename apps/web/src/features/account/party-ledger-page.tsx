@@ -299,6 +299,10 @@ export function PartyLedgerPage() {
      legs on screen and walked forward in the server's chronological order, so the
      last row lands exactly on the Closing Balance the footer reports. */
   const openingNet = footer && footer.opening ? legs.reduce((sum, l) => sum + (l.openNet(footer) ?? 0), 0) : null;
+  /** How many rows the sticky footer renders — Opening (when there is one),
+   *  Current Total (always), Closing (when not filtered to one voucher type).
+   *  Drives the body spacer that stops it covering the last invoices. */
+  const footRowCount = (footer?.opening ? 1 : 0) + 1 + (footer?.closing && closingNet != null ? 1 : 0);
   // No opening to seed from (voucher-type filter) → there is no running balance to
   // walk, so the column stays empty rather than counting up from a made-up zero.
   const running = useMemo(() => {
@@ -677,6 +681,16 @@ export function PartyLedgerPage() {
                     </tr>
                   );
                 })
+              )}
+              {/* Spacer: the tfoot below is `sticky bottom-0`, so it OVERLAYS the
+                  end of the body rather than pushing it up — scrolled to the
+                  bottom, the last one to three invoices sat hidden behind the
+                  Opening / Current / Closing rows and simply could not be read.
+                  Reserving the footer's own height lets them scroll clear of it. */}
+              {footer && (
+                <tr aria-hidden="true">
+                  <td colSpan={99} className="p-0" style={{ height: footRowCount * 30 }} />
+                </tr>
               )}
             </tbody>
 
