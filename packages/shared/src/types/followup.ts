@@ -70,6 +70,13 @@ export interface FollowupDto {
   orderItemId: number | null;
   /** Free-text item when there's no linked order line. */
   itemText: string | null;
+  /** The agent this commitment was made by, when the promise came from an agent
+   *  rather than the party ("he'll arrange an RTGS instead of the cheque"). */
+  agentId: number | null;
+  agentName: string | null;
+  /** The cheque the conversation was about, so the promise stays attached to it. */
+  chequeId: number | null;
+  chequeNo: string | null;
   title: string;
   detail: string | null;
   /** Current stuck-stage, e.g. POLISHING / SUPPLIER / DISPATCH / READY (free text). */
@@ -168,6 +175,10 @@ export type FollowupQuery = PaginationQuery & {
   party?: string;
   /** 'attention' = overdue + due today + active nudges; 'overdue'; 'today'; 'upcoming'. */
   bucket?: string;
+  agentId?: number;
+  chequeId?: number;
+  /** Only commitments an agent made, whichever agent that is (§8). */
+  agentOnly?: boolean;
 };
 export type FollowupList = Paginated<FollowupDto>;
 
@@ -199,6 +210,10 @@ export interface SaveFollowupInput {
   orderCode?: string | null;
   orderItemId?: number | null;
   itemText?: string | null;
+  /** §8 — the agent who made this commitment, and the cheque it was about. */
+  agentId?: number | null;
+  agentName?: string | null;
+  chequeId?: number | null;
   title: string;
   detail?: string | null;
   stage?: string | null;

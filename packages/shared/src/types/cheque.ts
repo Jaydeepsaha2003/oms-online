@@ -30,6 +30,11 @@ export interface ChequeDto {
   payeeBank: string | null;
   /** Our deposit bank account ("BANK NAME-1234"); legacy DRAWER BANK. */
   drawerBank: string | null;
+  /** The agent who physically brought this cheque in, when one did. Null means
+   *  the party handed it over directly — which is also what decides whether a
+   *  bounce charge is proposed against an agent at settlement. */
+  agentId: number | null;
+  agentName: string | null;
   /** Receipt date (ISO). */
   recDate: string;
   /** Due date — earliest the cheque may be deposited (ISO). */

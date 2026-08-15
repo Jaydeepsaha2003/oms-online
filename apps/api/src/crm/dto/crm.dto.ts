@@ -1,5 +1,5 @@
 import { PartialType } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, MaxLength, Min, ValidateNested } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
@@ -26,6 +26,10 @@ export class CreateFollowupDto {
   @IsOptional() @IsString() @MaxLength(64) orderCode?: string | null;
   @IsOptional() @IsInt() orderItemId?: number | null;
   @IsOptional() @IsString() @MaxLength(500) itemText?: string | null;
+  /** §8 — the agent who made the commitment, and the cheque it was about. */
+  @IsOptional() @IsInt() agentId?: number | null;
+  @IsOptional() @IsString() @MaxLength(255) agentName?: string | null;
+  @IsOptional() @IsInt() chequeId?: number | null;
   @IsString() @MaxLength(255) title!: string;
   @IsOptional() @IsString() @MaxLength(2000) detail?: string | null;
   @IsOptional() @IsString() @MaxLength(64) stage?: string | null;
@@ -62,6 +66,10 @@ export class FollowupQueryDto extends PaginationDto {
   @IsOptional() @IsString() status?: string;
   @IsOptional() @IsString() party?: string;
   @IsOptional() @IsString() bucket?: string;
+  @IsOptional() @Type(() => Number) @IsInt() agentId?: number;
+  @IsOptional() @Type(() => Number) @IsInt() chequeId?: number;
+  /** Only commitments made by an agent, whichever agent that is. */
+  @IsOptional() @Transform(({ value }) => value === true || value === 'true' || value === '1') @IsBoolean() agentOnly?: boolean;
 }
 
 export class CrmSettingsDto {

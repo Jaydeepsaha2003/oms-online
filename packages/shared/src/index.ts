@@ -13,6 +13,7 @@ export * from './types/user';
 export * from './types/audit';
 export * from './types/customer';
 export * from './types/agent';
+export * from './types/agent-commission';
 export * from './types/transporter';
 export * from './types/gst-rate';
 export * from './types/trans-rate';

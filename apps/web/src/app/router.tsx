@@ -54,6 +54,9 @@ const AdvancesPage = lazy(() => import('@/features/account/advances-page').then(
 const SalesDiscountPage = lazy(() => import('@/features/account/sales-discount-page').then((m) => ({ default: m.SalesDiscountPage })));
 const NotesPage = lazy(() => import('@/features/account/notes-page').then((m) => ({ default: m.NotesPage })));
 const PartyLedgerPage = lazy(() => import('@/features/account/party-ledger-page').then((m) => ({ default: m.PartyLedgerPage })));
+const AgentSettlementPage = lazy(() => import('@/features/agent-commission/agent-settlement-page').then((m) => ({ default: m.AgentSettlementPage })));
+const CommissionRatesPage = lazy(() => import('@/features/agent-commission/commission-rates-page').then((m) => ({ default: m.CommissionRatesPage })));
+const AgentCoversPage = lazy(() => import('@/features/agent-commission/agent-covers-page').then((m) => ({ default: m.AgentCoversPage })));
 const DaybookPage = lazy(() => import('@/features/account/daybook-page').then((m) => ({ default: m.DaybookPage })));
 const TallyReconPage = lazy(() => import('@/features/account/tally-recon-page').then((m) => ({ default: m.TallyReconPage })));
 const SettingsPage = lazy(() => import('@/features/settings/settings-page').then((m) => ({ default: m.SettingsPage })));
@@ -427,6 +430,31 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.PARTY_LEDGER, ACTIONS.VIEW)}>
                 <PartyLedgerPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/account/agent-settlement"
+            element={
+              <RequirePermission permission={perm(RESOURCES.AGENT_COMMISSION, ACTIONS.VIEW)}>
+                <AgentSettlementPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/account/commission-rates"
+            element={
+              /* The rate master is money, so it needs viewrates rather than plain view. */
+              <RequirePermission permission={perm(RESOURCES.AGENT_COMMISSION, ACTIONS.VIEWRATES)}>
+                <CommissionRatesPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/account/agent-covers"
+            element={
+              <RequirePermission permission={perm(RESOURCES.AGENT_COMMISSION, ACTIONS.VIEW)}>
+                <AgentCoversPage />
               </RequirePermission>
             }
           />

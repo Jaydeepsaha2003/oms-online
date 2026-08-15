@@ -409,6 +409,29 @@ export const MENU: MenuNode[] = [
         permission: perm(RESOURCES.PARTY_LEDGER, ACTIONS.VIEW),
       },
       {
+        id: 'agent-settlement',
+        label: 'Agent Settlement',
+        to: '/account/agent-settlement',
+        icon: 'BadgeIndianRupee',
+        permission: perm(RESOURCES.AGENT_COMMISSION, ACTIONS.VIEW),
+      },
+      {
+        id: 'commission-rates',
+        label: 'Commission Rates',
+        to: '/account/commission-rates',
+        icon: 'Percent',
+        permission: perm(RESOURCES.AGENT_COMMISSION, ACTIONS.VIEWRATES),
+      },
+      {
+        id: 'agent-covers',
+        label: 'Agent Covers',
+        to: '/account/agent-covers',
+        icon: 'HandCoins',
+        permission: perm(RESOURCES.AGENT_COMMISSION, ACTIONS.VIEW),
+      },
+      // Cheque bounces are not a menu entry of their own — they live as a tab
+      // inside Manage Cheques, beside the cheques they happen to.
+      {
         id: 'daybook',
         label: 'Daybook',
         to: '/account/daybook',

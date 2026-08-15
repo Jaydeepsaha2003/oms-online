@@ -54,6 +54,7 @@ import { SettingsModule } from './settings/settings.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { BackupModule } from './backup/backup.module';
 import { ApprovalsModule } from './approvals/approvals.module';
+import { AgentCommissionModule } from './agent-commission/agent-commission.module';
 
 @Module({
   imports: [
@@ -114,6 +115,7 @@ import { ApprovalsModule } from './approvals/approvals.module';
     NotificationsModule,
     BackupModule,
     ApprovalsModule,
+    AgentCommissionModule,
   ],
   controllers: [AppController],
   providers: [

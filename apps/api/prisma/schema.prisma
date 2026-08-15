@@ -207,6 +207,12 @@ model Agent {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  commissionRates AgentCommissionRate[]
+  accruals        AgentCommissionAccrual[]
+  covers          AgentPartyCover[]
+  settlements     AgentSettlement[]
+  cheques         Cheque[]
+
   @@map("agents")
 }
 
@@ -822,6 +828,8 @@ model Challan {
   // Used by the "un-challaned dispatch" subquery behind the Pending Challan list.
   @@index([challanStatus])
   @@map("challans")
+
+  commissionAccruals AgentCommissionAccrual[]
 }
 
 // Gaps in a prefix/FY invoice-number series that were explicitly acknowledged
@@ -994,12 +1002,18 @@ model Followup {
   nextRemindAt         DateTime?
   lastRemindedAt       DateTime?
   pushSentAt           DateTime? // set once a push has fired for the current due-cycle; cleared on re-promise/snooze/reopen
+  // §8: a commitment made BY an agent ("I'll get you an RTGS instead"), and the
+  // cheque it was about. Both optional — ordinary party follow-ups set neither.
+  agentId              Int?
+  agentName            String?
+  chequeId             Int?
   createdByName        String?
   resolvedByName       String?
   resolvedAt           DateTime?
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
+  cheque    Cheque?   @relation(fields: [chequeId], references: [id], onDelete: SetNull)
   logs      FollowupLog[]
   checklist FollowupChecklistItem[]
   items     FollowupItem[]
@@ -1009,6 +1023,8 @@ model Followup {
   @@index([partyName])
   @@index([promisedAt])
   @@index([customerId])
+  @@index([agentId])
+  @@index([chequeId])
   @@map("followups")
 }
 
@@ -1276,16 +1292,32 @@ model Cheque {
   // JSON-encoded array of invoice/challan codes this cheque is meant to clear
   // (e.g. '["SSS/26-27/362","SSS/26-27/365"]'), null when none were tagged.
   invoiceNos    String?
+  // The agent who physically brought this cheque in, when one did (§6). Party
+  // cheques handed over directly leave this null — which is also what decides
+  // whether a bounce charge is proposed against an agent at settlement.
+  agentId       Int?
+  agentName     String?
+  // Set when this cheque REPLACES a bounced one (§12), so the full story —
+  // original, its bounces, the replacement, the eventual clearance — stays
+  // walkable in either direction.
+  replacesChequeId Int?
   // PENDING | DEPOSITED | CLEARED | BOUNCED.
   status        String    @default("PENDING")
   userName      String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
+  agent          Agent?              @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  replaces       Cheque?             @relation("ChequeReplacement", fields: [replacesChequeId], references: [id], onDelete: SetNull)
+  replacedBy     Cheque[]            @relation("ChequeReplacement")
+  bounceEvents   ChequeBounceEvent[]
+  followups      Followup[]
+
   @@index([status])
   @@index([dueDate])
   @@index([customerId])
   @@index([chequeNo])
+  @@index([agentId])
   @@map("cheques")
 }
 
@@ -1685,4 +1717,255 @@ model TallyReconMark {
 
   @@index([review])
   @@map("tally_recon_mark")
+}
+
+// ── Agent commission, cheque bounce history & settlement ────────────────────
+// A self-contained subsystem: nothing here writes to the party's own accounting
+// tables (AcctPaymentReceipt / AcctLedger). That separation is a hard rule —
+// section 5 of the process doc requires a party's outstanding to stay
+// outstanding even when the AGENT has personally covered it.
+
+/// What an agent earns per kg, per product category. Date-effective rather than
+/// a single mutable number: a settlement run months later must price an invoice
+/// with the rate that applied when it was raised, not today's.
+model AgentCommissionRate {
+  id            Int      @id @default(autoincrement())
+  agentId       Int
+  agentName     String
+  /// Product category as it appears on a challan LINE (ChallanItem.pCategory,
+  /// e.g. "GLASS") — not the customer category on the challan header.
+  pCategory     String
+  /// KGS or PCS — categories are priced by weight or by piece, and commission
+  /// follows the same unit the product master already uses for that category.
+  basis         String   @default("KGS")
+  ratePerUnit   Float
+  effectiveFrom DateTime
+  note          String?
+  userName      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId, pCategory, effectiveFrom])
+  @@map("agent_commission_rates")
+}
+
+/// Gross commission one invoice generated for an agent, split by category.
+/// This is the ENTITLEMENT, not the payable: how much is actually due depends on
+/// how much of the invoice the party has paid (pro-rata), which is resolved at
+/// settlement time so a later payment automatically increases what is payable.
+model AgentCommissionAccrual {
+  id           Int       @id @default(autoincrement())
+  agentId      Int
+  agentName    String
+  challanId    Int
+  invNo        String
+  customerId   Int?
+  customerName String
+  pCategory    String
+  /// KGS or PCS, copied from the rate in force when this was accrued.
+  basis        String    @default("KGS")
+  /// The quantity actually charged on — kilos or pieces, per `basis`.
+  qty          Float
+  /// Both totals are kept whatever the basis, so a figure can be checked
+  /// against the invoice without re-reading the challan lines.
+  kgs          Float
+  pcs          Float     @default(0)
+  ratePerUnit  Float
+  amount       Float
+  invDate      DateTime
+  /// Copied from the challan so overdue can be judged without re-joining, and
+  /// stays correct even if the party's credit period is edited later.
+  dueDate      DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  agent   Agent   @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  challan Challan @relation(fields: [challanId], references: [id], onDelete: Cascade)
+
+  @@unique([challanId, pCategory])
+  @@index([agentId])
+  @@index([invNo])
+  @@map("agent_commission_accruals")
+}
+
+/// Section 5 — the agent personally covered a defaulting party's amount.
+///
+/// Deliberately NOT a payment: nothing here reduces the party's outstanding, so
+/// the party ledger keeps showing the money as receivable exactly as before.
+/// When the party eventually does pay, status moves to RECOVERED and the agent
+/// is reimbursed — which is why the link to the party and invoice is kept.
+model AgentPartyCover {
+  id           Int       @id @default(autoincrement())
+  agentId      Int
+  agentName    String
+  customerId   Int?
+  customerName String
+  /// The bill this covers, when it was for a specific one.
+  invNo        String?
+  amount       Float
+  /// CASH | BANK — how the agent handed it over. COMMISSION_ADJUST when the
+  /// agent asked for it to come off his commission instead of paying it in.
+  mode         String
+  coveredAt    DateTime
+  remarks      String?
+  /// OPEN | RECOVERED | WRITTEN_OFF
+  status       String    @default("OPEN")
+  recoveredAt  DateTime?
+  /// How it came back — a party receipt voucher no, or a settlement code.
+  recoveredVia String?
+  userName     String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId])
+  @@index([customerId])
+  @@index([status])
+  @@map("agent_party_covers")
+}
+
+/// Sections 9-11 — one row per actual bounce. The same cheque can be deposited
+/// and bounce any number of times, and each attempt carries its own charge, so
+/// this cannot be a column on Cheque (which held a single bounceCharges float).
+model ChequeBounceEvent {
+  id          Int      @id @default(autoincrement())
+  chequeId    Int
+  bounceDate  DateTime
+  /// Our bank that levied the charge — the rate comes from BankBounceCharge.
+  bankName    String?
+  charge      Float    @default(0)
+  gstPercent  Float    @default(0)
+  /// charge + GST, stored rather than derived so a later change to the bank's
+  /// configured rate cannot silently rewrite what was actually charged.
+  totalCharge Float    @default(0)
+  reason      String?
+  /// Photograph of the bank's bounce memo (section 11) — the proof if an agent
+  /// later disputes the deduction. Uploaded from the phone like dispatch photos.
+  receiptUrl  String?
+  receiptPath String?
+  userName    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  cheque Cheque @relation(fields: [chequeId], references: [id], onDelete: Cascade)
+
+  @@index([chequeId])
+  @@index([bounceDate])
+  @@map("cheque_bounce_events")
+}
+
+/// Section 10 — bounce charge per bank of ours (e.g. Axis 100 + 18% GST = 118).
+/// Applies to agent- and party-provided cheques alike.
+model BankBounceCharge {
+  id         Int      @id @default(autoincrement())
+  bankName   String   @unique
+  charge     Float    @default(0)
+  gstPercent Float    @default(18)
+  userName   String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("bank_bounce_charges")
+}
+
+/// Sections 3 and 13 — one settlement run: gross commission, what was taken off,
+/// and the net handed over. DRAFT while the owner is still deciding rates and
+/// deductions; PAID freezes it as the record of what was actually settled.
+model AgentSettlement {
+  id              Int       @id @default(autoincrement())
+  code            String?   @unique
+  agentId         Int
+  agentName       String
+  /// Which invoices' payments this run covers.
+  periodFrom      DateTime
+  periodTo        DateTime
+  grossCommission Float     @default(0)
+  bounceDeduction Float     @default(0)
+  coverDeduction  Float     @default(0)
+  otherDeduction  Float     @default(0)
+  /// CASH | BANK. TDS applies to BANK only (section 3).
+  payMode         String?
+  tdsPercent      Float     @default(0)
+  tdsAmount       Float     @default(0)
+  netPayable      Float     @default(0)
+  /// DRAFT | PAID | CANCELLED
+  status          String    @default("DRAFT")
+  paidAt          DateTime?
+  remarks         String?
+  userName        String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  agent      Agent                      @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  lines      AgentSettlementLine[]
+  deductions AgentSettlementDeduction[]
+
+  @@index([agentId])
+  @@index([status])
+  @@map("agent_settlements")
+}
+
+/// One invoice inside a settlement. Keeps BOTH the configured rate and the rate
+/// the owner actually applied (section 4) — an overdue party can be settled at
+/// 20/kg against a 40/kg master rate, and the pair plus the reason is what makes
+/// that decision explainable months later.
+model AgentSettlementLine {
+  id               Int      @id @default(autoincrement())
+  settlementId     Int
+  challanId        Int?
+  invNo            String
+  customerName     String
+  pCategory        String
+  /// KGS or PCS — what `qty` and the rates below are counted in.
+  basis            String   @default("KGS")
+  qty              Float
+  baseRatePerUnit  Float
+  appliedRatePerUnit Float
+  /// The share of the invoice THIS LINE pays commission on — not the invoice's
+  /// running total. On a first settlement they're the same; on a top-up this is
+  /// only the extra collected since. Summing it across paid lines is how the
+  /// engine knows what's still claimable.
+  paidRatio        Float    @default(0)
+  invoiceAmount    Float    @default(0)
+  paidAmount       Float    @default(0)
+  amount           Float    @default(0)
+  /// This line is the balance on an invoice settled earlier at a lower
+  /// collection level, kept so the payout can be explained months later.
+  isTopUp          Boolean  @default(false)
+  /// What had already been commissioned on the invoice before this line.
+  priorSettledRatio Float   @default(0)
+  /// Why the owner moved off the configured rate, when they did.
+  reason           String?
+  createdAt        DateTime @default(now())
+
+  settlement AgentSettlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+
+  @@index([settlementId])
+  @@map("agent_settlement_lines")
+}
+
+/// A single deduction on a settlement — a bounce charge pulled from Cheque
+/// Management, an agent-cover being recouped, or a manual entry. Each keeps a
+/// pointer back to what it came from so the deduction can be justified (13).
+model AgentSettlementDeduction {
+  id            Int       @id @default(autoincrement())
+  settlementId  Int
+  /// BOUNCE | COVER | MANUAL
+  kind          String
+  bounceEventId Int?
+  coverId       Int?
+  chequeNo      String?
+  bankName      String?
+  refDate       DateTime?
+  amount        Float
+  note          String?
+  createdAt     DateTime  @default(now())
+
+  settlement AgentSettlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+
+  @@index([settlementId])
+  @@map("agent_settlement_deductions")
 }

@@ -28,6 +28,8 @@ const INCLUDE = {
   logs: { orderBy: { createdAt: 'asc' } },
   checklist: { orderBy: { sortOrder: 'asc' } },
   items: { orderBy: { sortOrder: 'asc' } },
+  // Only for the cheque number — a commitment about a cheque has to name it.
+  cheque: { select: { chequeNo: true } },
 } as const;
 type Row = Prisma.FollowupGetPayload<{ include: typeof INCLUDE }>;
 
@@ -71,6 +73,10 @@ export class CrmService {
         orderCode: toStr(dto.orderCode),
         orderItemId: dto.orderItemId ?? null,
         itemText: toStr(dto.itemText),
+        // §8 — who promised, and which cheque the promise was about.
+        agentId: dto.agentId ?? null,
+        agentName: toStr(dto.agentName),
+        chequeId: dto.chequeId ?? null,
         title: dto.title.trim(),
         detail: toStr(dto.detail),
         stage: uc(dto.stage),
@@ -124,6 +130,9 @@ export class CrmService {
         ...(dto.orderCode !== undefined ? { orderCode: toStr(dto.orderCode) } : {}),
         ...(dto.orderItemId !== undefined ? { orderItemId: dto.orderItemId ?? null } : {}),
         ...(dto.itemText !== undefined ? { itemText: toStr(dto.itemText) } : {}),
+        ...(dto.agentId !== undefined ? { agentId: dto.agentId ?? null } : {}),
+        ...(dto.agentName !== undefined ? { agentName: toStr(dto.agentName) } : {}),
+        ...(dto.chequeId !== undefined ? { chequeId: dto.chequeId ?? null } : {}),
         ...(dto.title !== undefined ? { title: dto.title.trim() } : {}),
         ...(dto.detail !== undefined ? { detail: toStr(dto.detail) } : {}),
         ...(dto.stage !== undefined ? { stage: uc(dto.stage) } : {}),
@@ -285,7 +294,14 @@ export class CrmService {
   async board(q: FollowupQueryDto): Promise<FollowupPartyGroup[]> {
     const status = uc(q.status) || 'OPEN';
     const isOpen = status === 'OPEN';
-    const where: Prisma.FollowupWhereInput = { status, ...(q.kind ? { kind: uc(q.kind)! } : {}), ...(q.party ? { partyName: q.party } : {}) };
+    const where: Prisma.FollowupWhereInput = {
+      status,
+      ...(q.kind ? { kind: uc(q.kind)! } : {}),
+      ...(q.party ? { partyName: q.party } : {}),
+      ...(q.agentId ? { agentId: q.agentId } : {}),
+      ...(q.chequeId ? { chequeId: q.chequeId } : {}),
+      ...(q.agentOnly ? { agentId: { not: null } } : {}),
+    };
     const rows = await this.prisma.followup.findMany({ where, include: INCLUDE, orderBy: this.listOrder() });
     const now = new Date();
     const settings = await this.getSettings();
@@ -671,7 +687,21 @@ export class CrmService {
       ...(q.kind ? { kind: uc(q.kind)! } : {}),
       ...(q.status ? { status: uc(q.status)! } : {}),
       ...(q.party ? { partyName: q.party } : {}),
-      ...(search ? { OR: [{ partyName: { contains: search } }, { title: { contains: search } }, { orderCode: { contains: search } }, { itemText: { contains: search } }] } : {}),
+      ...(q.agentId ? { agentId: q.agentId } : {}),
+      ...(q.chequeId ? { chequeId: q.chequeId } : {}),
+      // "Show me only what an agent promised" — the §8 review list.
+      ...(q.agentOnly ? { agentId: { not: null } } : {}),
+      ...(search
+        ? {
+            OR: [
+              { partyName: { contains: search } },
+              { title: { contains: search } },
+              { orderCode: { contains: search } },
+              { itemText: { contains: search } },
+              { agentName: { contains: search } },
+            ],
+          }
+        : {}),
     };
   }
 
@@ -736,6 +766,10 @@ export class CrmService {
       orderCode: r.orderCode,
       orderItemId: r.orderItemId,
       itemText: r.itemText,
+      agentId: r.agentId,
+      agentName: r.agentName,
+      chequeId: r.chequeId,
+      chequeNo: r.cheque?.chequeNo ?? null,
       title: r.title,
       detail: r.detail,
       stage: r.stage,

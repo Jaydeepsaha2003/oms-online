@@ -14,10 +14,13 @@ export class ChequeQueryDto extends PaginationDto {
 /** Add a new (PENDING) cheque — legacy "ADD CHEQUE". A customer must be selected
  *  (customerId), mirroring the legacy "Customer ID is missing" guard. */
 export class CreateChequeDto {
+  /** Set when an AGENT brought the party's cheque in — see ChequeDto.agentId. */
+  @IsOptional() @Type(() => Number) @IsInt() agentId?: number;
+  @IsOptional() @IsString() agentName?: string;
   @IsString() @MinLength(1) @MaxLength(255) partyName!: string;
   @Type(() => Number) @IsInt() customerId!: number;
   @IsString() @MinLength(1) @MaxLength(100) chequeNo!: string;
-  @Type(() => Number) @IsNumber() @Min(0.01) chequeAmt!: number;
+  @Type(() => Number) @IsNumber({}, { message: 'The cheque amount must be a number.' }) @Min(0.01, { message: 'Enter a cheque amount above zero.' }) chequeAmt!: number;
   @IsOptional() @IsString() @MaxLength(255) payeeBank?: string | null;
   @IsString() @MinLength(1) @MaxLength(255) drawerBank!: string;
   @IsString() recDate!: string;
@@ -32,7 +35,7 @@ export class UpdateChequeDto {
   @IsOptional() @IsString() @MaxLength(255) partyName?: string;
   @IsOptional() @Type(() => Number) @IsInt() customerId?: number;
   @IsOptional() @IsString() @MaxLength(100) chequeNo?: string;
-  @IsOptional() @Type(() => Number) @IsNumber() @Min(0.01) chequeAmt?: number;
+  @IsOptional() @Type(() => Number) @IsNumber({}, { message: 'The cheque amount must be a number.' }) @Min(0.01, { message: 'Enter a cheque amount above zero.' }) chequeAmt?: number;
   @IsOptional() @IsString() @MaxLength(255) payeeBank?: string | null;
   @IsOptional() @IsString() @MaxLength(255) drawerBank?: string;
   @IsOptional() @IsString() recDate?: string;

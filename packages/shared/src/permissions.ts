@@ -29,6 +29,10 @@ export const ACTIONS = {
   CONVERT: 'convert',
   /** Cancel a quotation (with a tracked reason). */
   CANCEL: 'cancel',
+  /** Mark an agent commission settlement PAID — the point money leaves. Kept
+   *  apart from `create`, so a clerk can prepare a settlement while only the
+   *  owner can actually settle it. */
+  SETTLE: 'settle',
   /** Write off a bag booking's still-pending qty and close it for good. */
   PRECLOSE: 'preclose',
   /** Exceed a configured guardrail that would otherwise block the action outright
@@ -68,6 +72,8 @@ export const RESOURCES = {
   COMBINATION: 'combination',
   CUSTOMER: 'customer',
   AGENT: 'agent',
+  /** Agent commission: rates, accruals, covers and settlement runs. */
+  AGENT_COMMISSION: 'agentcommission',
   TRANSPORTER: 'transporter',
   TRANS_RATE: 'transrate',
   GST_RATE: 'gstrate',
@@ -195,6 +201,14 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
   },
   { resource: RESOURCES.CUSTOMER, label: 'Customers', group: 'Sales', actions: STANDARD },
   { resource: RESOURCES.AGENT, label: 'Agents', group: 'Sales', actions: STANDARD },
+  {
+    resource: RESOURCES.AGENT_COMMISSION,
+    label: 'Agent Commission',
+    group: 'Accounts',
+    // VIEWRATES gates the ₹/kg master and the money columns; SETTLE is the
+    // separate right to actually pay a settlement out.
+    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE, ACTIONS.VIEWRATES, ACTIONS.SETTLE, ACTIONS.EXPORT, ACTIONS.PRINT, ACTIONS.MANAGE],
+  },
   { resource: RESOURCES.TRANSPORTER, label: 'Transporters', group: 'Sales', actions: STANDARD },
   { resource: RESOURCES.GST_RATE, label: 'Customer GST Rates', group: 'Sales', actions: STANDARD },
   { resource: RESOURCES.TRANS_RATE, label: 'Customer Transport Rates', group: 'Sales', actions: STANDARD },

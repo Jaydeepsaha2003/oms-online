@@ -13,12 +13,13 @@ import {
   ReceiptIndianRupee,
   RotateCcw,
   Trash2,
+  TriangleAlert,
   X,
   XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ChequeDto, ChequeStatus } from '@oms/shared';
-import { CHARGES_PAID_BY, RESOURCES } from '@oms/shared';
+import { CHARGES_PAID_BY, chequeTimingVerdict, RESOURCES } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { getApiErrorMessage } from '@/lib/api';
@@ -35,6 +36,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useCustomers } from '@/features/customers/use-customers';
+import { useAgents } from '@/features/agents/use-agents';
+import { ChequeTimingModal, ChequeTimingPanel } from '@/features/agent-commission/cheque-timing';
+import { BankChargesDialog, ChequeBounceRegister, RecordBounceDialog } from '@/features/agent-commission/cheque-bounces';
+import { useChequeTiming } from '@/features/agent-commission/use-agent-commission';
 import {
   useActiveBankAccounts,
   useCheques,
@@ -121,6 +126,11 @@ export function ManageChequesPage() {
   const [settleOpen, setSettleOpen] = useState(false);
   const [settleId, setSettleId] = useState<number | ''>('');
   const [depositCheque, setDepositCheque] = useState<ChequeDto | null>(null);
+  const [timingCheque, setTimingCheque] = useState<ChequeDto | null>(null);
+  // 'any' = opened from the header with no cheque chosen yet.
+  const [bounceFor, setBounceFor] = useState<ChequeDto | 'any' | null>(null);
+  const [chargesOpen, setChargesOpen] = useState(false);
+  const [view, setView] = useState<'cheques' | 'bounces'>('cheques');
 
   const openSettle = (id: number | '') => {
     setSettleId(id);
@@ -177,6 +187,11 @@ export function ManageChequesPage() {
             <span className="text-muted-foreground">—</span>
           ),
       },
+      {
+        id: 'agent',
+        label: 'Brought By',
+        cell: (c) => (c.agentName ? <span className="font-medium">{c.agentName}</span> : <span className="text-muted-foreground">party</span>),
+      },
       { id: 'depDate', label: 'Deposit Date', cell: (c) => <span className="whitespace-nowrap">{prettyDate(c.depositDate)}</span> },
       { id: 'transDate', label: 'Clear/Bounce Date', cell: (c) => <span className="whitespace-nowrap">{prettyDate(c.acctTransDate)}</span> },
       { id: 'bounce', label: 'Bounce Chg', align: 'right', cell: (c) => (c.bounceCharges != null ? <span className="tabular-nums text-rose-700">{money(c.bounceCharges)}</span> : <span className="text-muted-foreground">—</span>) },
@@ -191,6 +206,11 @@ export function ManageChequesPage() {
   const rowActions = (c: ChequeDto) => (
     <div className="flex items-center justify-end gap-1.5">
       <RecordHistory resource={RESOURCES.CHEQUE} resourceId={c.id} label={c.chequeNo} />
+      {/* §7/§8 — how this cheque's date sits against the party's due date, and
+          somewhere to write down what the agent promised about it. */}
+      <button onClick={() => setTimingCheque(c)} className="text-muted-foreground hover:text-amber-600" title="Payment timing & agent commitment">
+        <CalendarClock className="size-4" />
+      </button>
       {canUpdate && c.status === 'PENDING' && (
         <button onClick={() => setFormModal(c)} className="text-muted-foreground hover:text-primary" title="Edit (due date, remarks, invoices)">
           <Pencil className="size-4" />
@@ -204,6 +224,13 @@ export function ManageChequesPage() {
       {canUpdate && c.status === 'DEPOSITED' && (
         <button onClick={() => openSettle(c.id)} className="text-muted-foreground hover:text-emerald-600" title="Clear / Bounce">
           <CheckCircle2 className="size-4" />
+        </button>
+      )}
+      {/* A cheque can bounce repeatedly, so this stays available after the
+          first one — and it arrives with the cheque already filled in. */}
+      {can('agentcommission:create') && c.status !== 'CLEARED' && (
+        <button onClick={() => setBounceFor(c)} className="text-muted-foreground hover:text-rose-600" title="Record a bounce on this cheque">
+          <TriangleAlert className="size-4" />
         </button>
       )}
       {canDelete && (
@@ -223,20 +250,64 @@ export function ManageChequesPage() {
         </div>
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">Manage Cheques</h2>
-          <p className="text-muted-foreground text-sm">Add received cheques, deposit on/after due date, and record clear/bounce outcomes.</p>
+          <p className="text-muted-foreground text-sm">
+            {view === 'cheques'
+              ? 'Add received cheques, deposit on/after due date, and record clear/bounce outcomes.'
+              : 'Every bounce, its bank charge and the bank memo behind it — a cheque can bounce more than once.'}
+          </p>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          {canUpdate && (
-            <Button variant="outline" onClick={() => openSettle('')} title="Mark a deposited cheque cleared or bounced">
-              <CheckCircle2 className="text-emerald-600" /> Clear / Bounce
-            </Button>
-          )}
-          {canCreate && (
-            <Button className="bg-gradient-brand text-white shadow-sm hover:opacity-95" onClick={() => setFormModal('new')}>
-              <Plus /> Add Cheque
-            </Button>
+          {view === 'cheques' ? (
+            <>
+              {canUpdate && (
+                <Button variant="outline" onClick={() => openSettle('')} title="Mark a deposited cheque cleared or bounced">
+                  <CheckCircle2 className="text-emerald-600" /> Clear / Bounce
+                </Button>
+              )}
+              {canCreate && (
+                <Button className="bg-gradient-brand text-white shadow-sm hover:opacity-95" onClick={() => setFormModal('new')}>
+                  <Plus /> Add Cheque
+                </Button>
+              )}
+            </>
+          ) : (
+            <>
+              {can('agentcommission:update') && (
+                <Button variant="outline" onClick={() => setChargesOpen(true)} title="Set the bounce charge each bank levies">
+                  <Landmark className="size-4" /> Bank charges
+                </Button>
+              )}
+              {can('agentcommission:create') && (
+                <Button className="bg-gradient-brand text-white shadow-sm hover:opacity-95" onClick={() => setBounceFor('any')}>
+                  <Plus /> Record a bounce
+                </Button>
+              )}
+            </>
           )}
         </div>
+      </div>
+
+      {/* Cheques and their bounces are the same subject, so they share a screen
+          rather than sitting on two menu entries. */}
+      <div className="bg-card inline-flex rounded-[4px] border p-0.5 shadow-sm">
+        {(['cheques', 'bounces'] as const).map((v) => (
+          <button
+            key={v}
+            type="button"
+            onClick={() => setView(v)}
+            className={cn(
+              'rounded-[3px] px-3 py-1.5 text-[13px] font-semibold transition-colors',
+              view === v ? 'bg-gradient-brand text-white shadow-sm' : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {v === 'cheques' ? 'Cheques' : 'Bounce history'}
+            {v === 'bounces' && !!summary?.bounced.count && (
+              <span className={cn('ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold', view === v ? 'bg-white/20' : 'bg-rose-50 text-rose-700')}>
+                {summary.bounced.count}
+              </span>
+            )}
+          </button>
+        ))}
       </div>
 
       {/* KPI chips */}
@@ -248,6 +319,9 @@ export function ManageChequesPage() {
         <Kpi label="Bounced" count={summary?.bounced.count} amount={summary?.bounced.amount} tone="rose" />
       </div>
 
+      {view === 'bounces' ? (
+        <ChequeBounceRegister />
+      ) : (
       <div className="grid gap-4 xl:grid-cols-[1fr_350px]">
         {/* LEFT: filters + grid */}
         <div className="min-w-0 space-y-3">
@@ -332,10 +406,19 @@ export function ManageChequesPage() {
         {/* RIGHT: reminder cards */}
         <ReminderColumn onOpen={setDepositCheque} />
       </div>
+      )}
 
       {formModal && <ChequeFormModal cheque={formModal === 'new' ? null : formModal} onClose={() => setFormModal(null)} />}
       {settleOpen && <SettleModal initialId={settleId} onClose={() => { setSettleOpen(false); setSettleId(''); }} />}
       {depositCheque && <DepositModal cheque={depositCheque} onClose={() => setDepositCheque(null)} />}
+      {timingCheque && <ChequeTimingModal cheque={timingCheque} onClose={() => setTimingCheque(null)} />}
+      {bounceFor && (
+        <RecordBounceDialog
+          forCheque={bounceFor === 'any' ? null : bounceFor}
+          onClose={() => setBounceFor(null)}
+        />
+      )}
+      {chargesOpen && <BankChargesDialog onClose={() => setChargesOpen(false)} />}
     </div>
   );
 }
@@ -391,8 +474,14 @@ function ChequeFormModal({ cheque, onClose }: { cheque: ChequeDto | null; onClos
   const [dueDate, setDueDate] = useState(cheque ? ymdOf(cheque.dueDate) : TODAY());
   const [comments, setComments] = useState(cheque?.comments ?? '');
   const [selectedInvoices, setSelectedInvoices] = useState<string[]>(cheque?.invoiceNos ?? []);
+  // §6 — a cheque an agent hands over has to say which agent, otherwise the
+  // bounce charges and commitments have nobody to attach to.
+  const [agentName, setAgentName] = useState(cheque?.agentName ?? '');
 
   const customerId = byLabel.get(party) ?? cheque?.customerId ?? undefined;
+  const { data: agentData } = useAgents({ page: 1, pageSize: 500 });
+  const agentOptions = useMemo(() => (agentData?.items ?? []).map((a) => a.name).sort((a, b) => a.localeCompare(b)), [agentData]);
+  const agentId = useMemo(() => (agentData?.items ?? []).find((a) => a.name === agentName)?.id, [agentData, agentName]);
 
   // Open invoices for the chosen party, so the user can tag which one(s) this
   // cheque is meant to clear — and so we can compare due dates for the delay check.
@@ -442,6 +531,14 @@ function ChequeFormModal({ cheque, onClose }: { cheque: ChequeDto | null; onClos
   const lateDelays = delays.filter((d) => d.days > 0);
   const avgDelayDays = lateDelays.length ? lateDelays.reduce((a, d) => a + d.days, 0) / lateDelays.length : 0;
 
+  // §7 — the same question asked of the whole party, not just the invoices that
+  // happen to be tagged: was this cheque dated after their money was due? The
+  // tagged-invoice check above can only fire once the user ticks something.
+  const { data: timing, isFetching: timingLoading } = useChequeTiming(
+    { customerId, partyName: party, chequeDate: dueDate, chequeAmount: chequeAmtNum, invoiceNos: selectedInvoices, agentName },
+    customerId != null && chequeAmtNum > 0 && !!dueDate,
+  );
+
   const clear = () => {
     setParty('');
     setChequeNo('');
@@ -452,6 +549,7 @@ function ChequeFormModal({ cheque, onClose }: { cheque: ChequeDto | null; onClos
     setDueDate(TODAY());
     setComments('');
     setSelectedInvoices([]);
+    setAgentName('');
   };
 
   const submit = async () => {
@@ -487,6 +585,31 @@ function ChequeFormModal({ cheque, onClose }: { cheque: ChequeDto | null; onClos
         destructive: true,
       });
       if (!ok) return;
+    } else if (timing && chequeTimingVerdict(timing.delayDays) === 'LATE') {
+      // No invoice was tagged, so the check above stayed quiet — but the party's
+      // own due date still says this cheque is late (§7).
+      const ok = await confirm({
+        title: `This cheque is ${timing.delayDays} days later than ${timing.partyName} was due to pay`,
+        description: (
+          <>
+            <p>
+              {timing.partyName} was due on <b>{prettyDate(timing.expectedDueDate!)}</b>
+              {timing.dueBasis === 'CREDIT_PERIOD' && timing.creditPeriodDays != null
+                ? ` (invoice dated ${prettyDate(timing.oldestInvoiceDate!)} plus ${timing.creditPeriodDays} days credit)`
+                : ''}
+              , and this cheque is dated <b>{prettyDate(new Date(dueDate).toISOString())}</b>.
+            </p>
+            <p className="mt-2">
+              They still owe <b>{money(timing.partyOutstanding)}</b>.
+              {agentName ? ` Ask ${agentName} for an NEFT/RTGS instead before accepting it.` : ''}
+            </p>
+          </>
+        ),
+        confirmText: 'Accept the cheque anyway',
+        cancelText: 'Cancel',
+        destructive: true,
+      });
+      if (!ok) return;
     }
 
     const payload = {
@@ -500,6 +623,8 @@ function ChequeFormModal({ cheque, onClose }: { cheque: ChequeDto | null; onClos
       dueDate,
       comments: comments.trim().toUpperCase() || null,
       invoiceNos: selectedInvoices,
+      agentId: agentId ?? null,
+      agentName: agentName.trim() || null,
     };
     const opts = {
       onSuccess: () => {
@@ -558,6 +683,10 @@ function ChequeFormModal({ cheque, onClose }: { cheque: ChequeDto | null; onClos
             <Label className="text-sm">Due Date *</Label>
             <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="h-10 text-base" />
           </div>
+          <div className="space-y-1.5">
+            <Label className="text-sm">Brought by agent</Label>
+            <NativeSelect value={agentName} onChange={setAgentName} options={['', ...agentOptions]} placeholder="Party handed it over directly" className="h-10 text-base" />
+          </div>
         </div>
 
         {/* Tag which invoice(s) this cheque is FOR — a reference note only. It does
@@ -601,6 +730,11 @@ function ChequeFormModal({ cheque, onClose }: { cheque: ChequeDto | null; onClos
             ledger; that still happens separately when you receipt this cheque through Account → Payment.
           </p>
         </div>
+
+        {/* §7 — the party-level timing check, live as soon as there's an amount
+            and a date. The per-invoice breakdown below adds the detail once
+            invoices are actually tagged. */}
+        <ChequeTimingPanel timing={timing} loading={timingLoading && !timing} />
 
         {lateDelays.length > 0 && (
           <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">

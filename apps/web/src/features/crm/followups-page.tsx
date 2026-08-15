@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AlarmClock, Bell, Check, ChevronDown, CircleCheck, Clock, Eye, HandCoins, Info, Loader2, Mic, Pencil, Plus, RotateCcw, Search, Trash2, TriangleAlert } from 'lucide-react';
+import { AlarmClock, Bell, Check, ChevronDown, CircleCheck, Clock, Eye, HandCoins, Handshake, Info, Loader2, Mic, Pencil, Plus, RotateCcw, Search, Trash2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { type FollowupDto, type FollowupKind, type FollowupPartyGroup } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -64,10 +64,11 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
   // Open vs Completed. The urgency buckets only describe outstanding work, so
   // they're cleared (and hidden) while reviewing what's already been closed.
   const [status, setStatus] = useState<'OPEN' | 'DONE'>('OPEN');
+  const [agentOnly, setAgentOnly] = useState(false);
   const showingDone = status === 'DONE';
   const query = useMemo(
-    () => ({ kind, status, bucket: showingDone ? undefined : bucket || undefined, search: search || undefined }),
-    [kind, status, showingDone, bucket, search],
+    () => ({ kind, status, bucket: showingDone ? undefined : bucket || undefined, search: search || undefined, agentOnly: agentOnly || undefined }),
+    [kind, status, showingDone, bucket, search, agentOnly],
   );
   const { data: groups = [], isLoading } = useFollowupBoard(query);
   const { data: summary } = useFollowupSummary(kind);
@@ -168,6 +169,19 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
                 used to read "attention" / "today" back at you. */}
             <NativeSelect value={bucket} onChange={setBucket} options={BUCKETS.map((b) => ({ value: b.v, label: b.label }))} placeholder="All open" />
           </div>
+        )}
+        {/* §8 — what agents promised, as opposed to what parties promised. */}
+        {isPay && (
+          <Button
+            type="button"
+            variant={agentOnly ? 'default' : 'outline'}
+            size="sm"
+            className="h-9"
+            onClick={() => setAgentOnly((v) => !v)}
+            title="Only commitments an agent made"
+          >
+            <Handshake className="size-4" /> Agent promises
+          </Button>
         )}
       </div>
 
@@ -329,6 +343,23 @@ function FollowupRow({ f, canEdit, onEdit, done }: { f: FollowupDto; canEdit: bo
               </span>
             );
           })}
+        </div>
+      )}
+
+      {/* §8 — a promise an agent made, and the cheque it was about. Shown on the
+          card so it's obvious this is the agent's word, not the party's. */}
+      {(f.agentName || f.chequeNo) && (
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {f.agentName && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] text-violet-700">
+              <Handshake className="size-3" /> promised by <span className="font-semibold">{f.agentName}</span>
+            </span>
+          )}
+          {f.chequeNo && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 font-mono text-[11px] text-slate-700">
+              cheque {f.chequeNo}
+            </span>
+          )}
         </div>
       )}
 

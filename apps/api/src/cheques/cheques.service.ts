@@ -82,15 +82,29 @@ export class ChequesService {
   async create(dto: CreateChequeDto, userName?: string | null): Promise<ChequeDto> {
     const recDate = parseDate(dto.recDate, 'Receipt date');
     const dueDate = parseDate(dto.dueDate, 'Due date');
+    if (dueDate < recDate) {
+      throw new BadRequestException(`A cheque cannot fall due (${fmt(dueDate)}) before it was received (${fmt(recDate)}).`);
+    }
+    if (!Number.isFinite(dto.chequeAmt) || dto.chequeAmt <= 0) throw new BadRequestException('Enter a cheque amount above zero.');
+    const chequeNo = dto.chequeNo.trim();
+    // The same number from the same party is a double entry, not two cheques.
+    const dup = await this.prisma.cheque.findFirst({ where: { chequeNo, partyName: dto.partyName.trim() } });
+    if (dup) {
+      throw new BadRequestException(
+        `Cheque ${chequeNo} from ${dup.partyName} is already recorded (${fmt(dup.recDate)}, ₹${dup.chequeAmt.toLocaleString('en-IN')}, ${dup.status}).`,
+      );
+    }
 
     const row = await this.prisma.cheque.create({
       data: {
         customerId: dto.customerId,
         partyName: dto.partyName.trim(),
-        chequeNo: dto.chequeNo.trim(),
+        chequeNo,
         chequeAmt: dto.chequeAmt,
         payeeBank: dto.payeeBank?.trim() || null,
         drawerBank: dto.drawerBank.trim(),
+        agentId: dto.agentId ?? null,
+        agentName: dto.agentName?.trim() || null,
         recDate,
         dueDate,
         comments: dto.comments?.trim() || null,
@@ -109,6 +123,17 @@ export class ChequesService {
     if (existing.status !== 'PENDING') {
       throw new BadRequestException('Only a pending cheque can be edited; deposited/cleared/bounced cheques are locked.');
     }
+    // The same rule on edit: whichever of the two dates is being changed, the
+    // pair still has to make sense together.
+    const nextRec = dto.recDate !== undefined ? parseDate(dto.recDate, 'Receipt date') : existing.recDate;
+    const nextDue = dto.dueDate !== undefined ? parseDate(dto.dueDate, 'Due date') : existing.dueDate;
+    if (nextDue < nextRec) {
+      throw new BadRequestException(`A cheque cannot fall due (${fmt(nextDue)}) before it was received (${fmt(nextRec)}).`);
+    }
+    if (dto.chequeAmt !== undefined && (!Number.isFinite(dto.chequeAmt) || dto.chequeAmt <= 0)) {
+      throw new BadRequestException('Enter a cheque amount above zero.');
+    }
+
     const data: Prisma.ChequeUncheckedUpdateInput = {};
     if (dto.partyName !== undefined) data.partyName = dto.partyName.trim();
     if (dto.customerId !== undefined) data.customerId = dto.customerId;
@@ -216,6 +241,8 @@ export class ChequesService {
       chequeAmt: r.chequeAmt,
       payeeBank: r.payeeBank,
       drawerBank: r.drawerBank,
+      agentId: r.agentId,
+      agentName: r.agentName,
       recDate: r.recDate.toISOString(),
       dueDate: r.dueDate.toISOString(),
       depositDate: r.depositDate ? r.depositDate.toISOString() : null,

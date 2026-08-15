@@ -1,5 +1,6 @@
 /** Maps the string icon names used in the shared MENU registry to lucide components. */
 import {
+  BadgeIndianRupee,
   BadgePercent,
   BarChart3,
   GitCompareArrows,
@@ -92,6 +93,7 @@ const ICONS: Record<string, LucideIcon> = {
   SlidersHorizontal,
   FileText,
   FilePlus,
+  BadgeIndianRupee,
   BadgePercent,
   BellRing,
   BookOpen,
