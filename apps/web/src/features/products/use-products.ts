@@ -24,9 +24,15 @@ const KEY = ['products'] as const;
 // A product's name/rate/category feeds the order item picker (composeOrderLookups
 // → /orders/lookups), same as useSetProductFlags and useSaveCategoryFields below
 // already account for — a plain create/update/delete/import needs the same reach.
+//
+// The customer Rate List is built from products too, and `showOnRateList` decides
+// which appear on it. Without this the sheet kept serving its cached payload, so
+// hiding a product left it on screen — and in the downloaded PDF/Excel, which are
+// built from exactly that payload — until the page was reloaded.
 const invalidateProducts = (qc: ReturnType<typeof useQueryClient>) => {
   qc.invalidateQueries({ queryKey: KEY });
   qc.invalidateQueries({ queryKey: ['orders', 'lookups'] });
+  qc.invalidateQueries({ queryKey: ['customers', 'rate-list'] });
 };
 
 export function useProducts(query: ProductQuery) {
@@ -75,11 +81,9 @@ export function useSetProductFlags() {
   return useMutation({
     mutationFn: ({ id, ...flags }: CatalogFlagsInput & { id: number }) =>
       http.patch<ProductDto>(`/products/${id}/flags`, flags),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: KEY });
-      // Order item pickers depend on active; the rate list depends on showOnRateList.
-      qc.invalidateQueries({ queryKey: ['orders', 'lookups'] });
-    },
+    // Order item pickers depend on `active`; the customer Rate List depends on
+    // `showOnRateList` — the shared helper reaches both.
+    onSuccess: () => invalidateProducts(qc),
   });
 }
 
@@ -89,10 +93,7 @@ export function useBulkSetProductFlags() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: BulkCatalogFlagsInput) => http.patch<BulkCatalogFlagsResult>('/products/bulk-flags', input),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: KEY });
-      qc.invalidateQueries({ queryKey: ['orders', 'lookups'] });
-    },
+    onSuccess: () => invalidateProducts(qc),
   });
 }
 

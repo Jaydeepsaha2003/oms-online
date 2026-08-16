@@ -51,6 +51,31 @@ function ymd(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 const TODAY = () => ymd(new Date());
+/**
+ * Money as a person actually types it.
+ *
+ * The amount box is a free-text field and every figure on this screen is
+ * PRINTED with Indian grouping ("20,51,094"), so typing it back with commas is
+ * the natural thing to do — but `Number("1,00,000")` is NaN, which fell through
+ * to 0. The whole voucher then behaved as though nothing had been entered: no
+ * Clear Amt on any row, a ₹0 summary, and on save the contradictory "Receipt
+ * Amount must be greater than 0" while the box plainly showed a figure. That is
+ * the "sometimes works, sometimes not" — plain digits worked, grouped ones
+ * silently did nothing.
+ *
+ * Anything that isn't a digit or a decimal point is dropped, so commas, spaces,
+ * "₹" and a trailing "/-" all read correctly. A minus is dropped too: a negative
+ * receipt has no meaning here.
+ */
+export const parseAmount = (s: string): number => {
+  const cleaned = (s ?? '').replace(/[^\d.]/g, '');
+  const dot = cleaned.indexOf('.');
+  // Keep only the FIRST decimal point ("1.2.3" is a typo, not 1.23).
+  const single = dot === -1 ? cleaned : cleaned.slice(0, dot + 1) + cleaned.slice(dot + 1).replace(/\./g, '');
+  const n = Number(single);
+  return Number.isFinite(n) ? n : 0;
+};
+
 /** Indian FY start (Apr 1) for the Receipt Ledger default range. */
 function fyStart(): string {
   const t = new Date();
@@ -198,7 +223,7 @@ export function PaymentPage() {
   const advanceAvail = (ctx?.totals && (bucket === 'BANK' ? ctx.totals.advanceBank : ctx.totals.advanceCash)) ?? 0;
 
   /* ── live allocation preview (mirrors the engine exactly) ───────────────── */
-  const receipt = Number(receiptStr) || 0;
+  const receipt = parseAmount(receiptStr);
   const preview = useMemo(() => {
     const openingPend = (ctx?.openings ?? []).reduce((a, o) => a + (bucket === 'BANK' ? o.pendingBank : o.pendingCash), 0);
     const openingUse = Math.min(openingPend, Math.max(0, receipt));
@@ -573,6 +598,10 @@ export function PaymentPage() {
                 id="rec-amt"
                 value={receiptStr}
                 onChange={(e) => setReceiptStr(e.target.value)}
+                // Rewrite what was typed into the figure the voucher will use,
+                // so "1,00,000" visibly becomes 100000 rather than leaving the
+                // user to wonder which of the two the app took.
+                onBlur={() => setReceiptStr((v) => (v.trim() === '' ? '' : String(parseAmount(v))))}
                 inputMode="decimal"
                 placeholder="0"
                 className="bg-background h-10 rounded-[4px] text-right text-[17px] font-bold tabular-nums"
@@ -1025,7 +1054,7 @@ function EditPaymentDialog({ entry, onClose }: { entry: LedgerEntryDto; onClose:
   const [recDate, setRecDate] = useState(entry.transDate.slice(0, 10));
   const [remarks, setRemarks] = useState(entry.transRemarks ?? '');
 
-  const receipt = Number(receiptStr) || 0;
+  const receipt = parseAmount(receiptStr);
   const needsBank = payMode === 'BANK' || payMode === 'CHEQUE';
 
   const submit = () => {
@@ -1166,7 +1195,13 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
   const { data, isLoading } = usePaymentLedger({ customerId, agentName, dateFrom, dateTo, page, pageSize: 25 });
   const rows = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
-  const cols = showActions ? 9 : 8;
+  // Opened from a party or an agent, whose name is already the dialog's title —
+  // repeating it on every row cost three wrapped lines per row and told the
+  // reader nothing. The column only earns its place on an unscoped ledger.
+  const scoped = customerId != null || !!agentName;
+  const cols = (scoped ? 7 : 8) + (showActions ? 1 : 0);
+  const bankTotal = rows.reduce((s, r) => s + (r.bankCredit ?? 0), 0);
+  const cashTotal = rows.reduce((s, r) => s + (r.cashCredit ?? 0), 0);
 
   const handleDelete = async (r: LedgerEntryDto) => {
     const amount = inr(r.bankCredit || r.cashCredit);
@@ -1192,7 +1227,13 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
   return (
     <>
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[90dvh] w-[min(900px,96vw)] max-w-[96vw] overflow-y-auto sm:!max-w-[900px]">
+      {/* The dialog itself no longer scrolls — only the rows do, so the title,
+          the date range and the totals stay put while a long ledger is read. */}
+      {/* `overflow-y-hidden` is explicit: DialogContent's base sets
+          `overflow-y-auto`, and tailwind-merge treats `overflow` and
+          `overflow-y` as separate groups — a plain `overflow-hidden` would not
+          displace it, leaving the dialog scrolling behind the inner scroller. */}
+      <DialogContent className="flex max-h-[90dvh] w-[min(940px,96vw)] max-w-[96vw] flex-col overflow-hidden overflow-y-hidden sm:!max-w-[940px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-lg">
             <BookOpenCheck className="text-primary size-5" /> Receipt Ledger — {ownerKind}: {owner}
@@ -1235,13 +1276,13 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
             <RotateCcw className="size-3.5" /> This FY
           </Button>
         </div>
-        <div className="overflow-x-auto rounded-[4px] border">
+        <div className="min-h-0 flex-1 overflow-auto rounded-[4px] border">
           <table className="w-full border-collapse text-[12.5px]">
             <thead>
               <tr>
                 <th scope="col" className={cn(TH, TH_LINE)}>Voucher</th>
                 <th scope="col" className={cn(TH, TH_LINE)}>Date</th>
-                <th scope="col" className={cn(TH, TH_LINE)}>Customer</th>
+                {!scoped && <th scope="col" className={cn(TH, TH_LINE)}>Customer</th>}
                 <th scope="col" className={cn(TH, TH_LINE)}>Mode</th>
                 <th scope="col" className={cn(TH, TH_LINE)}>Particulars</th>
                 <th scope="col" className={cn(TH, TH_LINE, 'text-right')}>Bank Cr</th>
@@ -1260,11 +1301,17 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
                   <tr key={r.id} className="border-b border-amber-200/70 even:bg-amber-50/70 hover:bg-amber-200/70 dark:border-amber-400/10 dark:even:bg-amber-400/[0.05] dark:hover:bg-amber-400/20">
                     <td className={cn(TD, 'font-mono font-bold whitespace-nowrap')}>{r.voucherNo}</td>
                     <td className={cn(TD, 'font-semibold whitespace-nowrap tabular-nums')}>{prettyDate(r.transDate)}</td>
-                    <td className={cn(TD, 'font-semibold')}>{r.customerName}</td>
-                    <td className={cn(TD, 'text-[12px] font-medium text-slate-600 dark:text-slate-400')}>{r.transMode}</td>
+                    {!scoped && <td className={cn(TD, 'font-semibold')}>{r.customerName}</td>}
+                    <td className={cn(TD, 'whitespace-nowrap')}>
+                      <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10.5px] font-bold text-slate-600 dark:bg-white/10 dark:text-slate-300">
+                        {r.transMode}
+                      </span>
+                    </td>
                     <td className={cn(TD, 'max-w-56 truncate')} title={r.particulars ?? ''}>{r.particulars ?? '—'}</td>
-                    <td className={cn(TD, NUM, 'font-bold')}>{r.bankCredit ? inr(r.bankCredit) : '-'}</td>
-                    <td className={cn(TD, NUM, 'font-bold')}>{r.cashCredit ? inr(r.cashCredit) : '-'}</td>
+                    {/* Only one of the two ever carries a figure, so the empty
+                        side is dimmed right down and the eye lands on the money. */}
+                    <td className={cn(TD, NUM, r.bankCredit ? 'font-bold' : 'text-muted-foreground/40')}>{r.bankCredit ? inr(r.bankCredit) : '–'}</td>
+                    <td className={cn(TD, NUM, r.cashCredit ? 'font-bold' : 'text-muted-foreground/40')}>{r.cashCredit ? inr(r.cashCredit) : '–'}</td>
                     <td className={cn(TD, 'text-muted-foreground max-w-40 truncate')} title={r.transRemarks ?? ''}>{r.transRemarks ?? '—'}</td>
                     {showActions && (
                       <td className="px-1 py-[3px]">
@@ -1322,11 +1369,39 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
             </tbody>
           </table>
         </div>
-        <DialogFooter className="bg-card flex items-center justify-between rounded-[4px] border px-3 py-2 shadow-sm sm:justify-between">
-          <p className="text-muted-foreground text-[12px] font-medium">
-            {data?.total ?? 0} voucher(s) · Page <span className="text-foreground font-bold tabular-nums">{data?.page ?? page}</span> of{' '}
-            <span className="text-foreground font-bold tabular-nums">{totalPages}</span>
-          </p>
+        {/* Totals live here rather than in a sticky <tfoot>: a sticky footer row
+            inside the scroller overlays the last rows instead of displacing
+            them. Here they stay visible however far the list is scrolled.
+            Labelled "on this page" whenever the range spans more than one, so
+            the figure is never mistaken for the range total. */}
+        <DialogFooter className="bg-card flex flex-wrap items-center justify-between gap-2 rounded-[4px] border px-3 py-2 shadow-sm sm:justify-between">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <p className="text-muted-foreground text-[12px] font-medium">
+              {data?.total ?? 0} voucher(s) · Page <span className="text-foreground font-bold tabular-nums">{data?.page ?? page}</span> of{' '}
+              <span className="text-foreground font-bold tabular-nums">{totalPages}</span>
+            </p>
+            {rows.length > 0 && (
+              <p className="text-[12px] font-medium">
+                <span className="text-muted-foreground">{totalPages > 1 ? 'On this page:' : 'Total:'}</span>{' '}
+                {bankTotal > 0 && (
+                  <span className="ml-1">
+                    <span className="text-muted-foreground">bank</span>{' '}
+                    <span className="font-bold tabular-nums">{inr(bankTotal)}</span>
+                  </span>
+                )}
+                {cashTotal > 0 && (
+                  <span className="ml-2">
+                    <span className="text-muted-foreground">cash</span>{' '}
+                    <span className="font-bold tabular-nums">{inr(cashTotal)}</span>
+                  </span>
+                )}
+                <span className="ml-2 border-l pl-2">
+                  <span className="text-muted-foreground">received</span>{' '}
+                  <span className="font-extrabold tabular-nums text-emerald-700 dark:text-emerald-400">{inr(bankTotal + cashTotal)}</span>
+                </span>
+              </p>
+            )}
+          </div>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}><ChevronLeft /> Prev</Button>
             <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>Next <ChevronRight /></Button>

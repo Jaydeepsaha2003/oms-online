@@ -16,6 +16,53 @@ import kavishLogo from '@/assets/kavish-logo.png';
 
 const APP_NAME = import.meta.env.VITE_APP_NAME ?? 'OMS';
 
+/**
+ * Is `pathname` at, or inside, `to` — counted in whole path segments?
+ *
+ * A bare `startsWith` also matches half a segment, so "/orders" would light up
+ * on "/orders-archive". The root is exact-only: every path is nominally "under"
+ * "/", which would make Dashboard the fallback highlight for any URL with no
+ * menu entry of its own — better to light nothing than the wrong thing.
+ */
+const isUnder = (pathname: string, to: string): boolean => {
+  const base = to.endsWith('/') ? to.slice(0, -1) : to;
+  if (base === '') return pathname === '/';
+  return pathname === base || pathname.startsWith(`${base}/`);
+};
+
+/** Every `to` in the tree, parents included. */
+function collectPaths(nodes: MenuNode[]): string[] {
+  const out: string[] = [];
+  const walk = (list: MenuNode[]) => {
+    for (const n of list) {
+      if (n.to) out.push(n.to);
+      if (n.children?.length) walk(n.children);
+    }
+  };
+  walk(nodes);
+  return out;
+}
+
+/**
+ * The ONE menu entry the current URL belongs to: the longest `to` it sits under.
+ *
+ * Menu paths nest — "View Orders" is /orders while "Order Modify" is
+ * /orders/modify — and NavLink's own matching is prefix-based unless `end` is
+ * set, so /orders/modify lit up BOTH of them at once. Marking every exact match
+ * `end` instead would break the opposite case: a detail route like
+ * /orders/1242/bill has no menu entry of its own and should keep View Orders
+ * highlighted. Longest-match satisfies both — the deepest entry that owns the
+ * URL wins, and everything above it stays quiet.
+ */
+function activeMenuPath(paths: string[], pathname: string): string | null {
+  let best: string | null = null;
+  for (const p of paths) {
+    if (!isUnder(pathname, p)) continue;
+    if (best === null || p.length > best.length) best = p;
+  }
+  return best;
+}
+
 interface SidebarProps {
   collapsed?: boolean;
   /** Called after navigating (used to close the mobile drawer). */
@@ -55,12 +102,17 @@ export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
     return filtered;
   }, [permissions, nudges, pendingApprovals]);
 
+  // The one entry that owns this URL — passed down so exactly one link lights up.
+  const activePath = useMemo(
+    () => activeMenuPath(collectPaths(items), location.pathname),
+    [items, location.pathname],
+  );
+
   // Accordion: only one group is open at a time. Default to the active route's group.
   const activeGroupId = useMemo(
     () =>
-      items.find(
-        (n) => n.children?.length && n.children.some((c) => c.to && location.pathname.startsWith(c.to)),
-      )?.id ?? null,
+      items.find((n) => n.children?.length && n.children.some((c) => c.to && isUnder(location.pathname, c.to)))?.id ??
+      null,
     [items, location.pathname],
   );
   const [openGroup, setOpenGroup] = useState<string | null>(activeGroupId);
@@ -103,11 +155,12 @@ export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
                 node={node}
                 collapsed={collapsed}
                 onNavigate={onNavigate}
+                activePath={activePath}
                 open={openGroup === node.id}
                 onToggle={() => setOpenGroup((prev) => (prev === node.id ? null : node.id))}
               />
             ) : (
-              <MenuLeaf key={node.id} node={node} collapsed={collapsed} onNavigate={onNavigate} />
+              <MenuLeaf key={node.id} node={node} collapsed={collapsed} onNavigate={onNavigate} activePath={activePath} />
             ),
           )}
         </nav>
@@ -148,22 +201,28 @@ function MenuLeaf({
   node,
   collapsed,
   onNavigate,
+  activePath,
 }: {
   node: MenuNode;
   collapsed: boolean;
   onNavigate?: () => void;
+  /** The single menu path that owns the current URL (see `activeMenuPath`). */
+  activePath?: string | null;
 }) {
   const Icon = getMenuIcon(node.icon);
+  // Deliberately NOT NavLink's own `isActive`: its prefix matching lights up
+  // every ancestor entry as well, so /orders/modify highlighted View Orders too.
+  const active = node.to === activePath;
   const link = (
     <NavLink
       to={node.to!}
       end={node.to === '/'}
       onClick={onNavigate}
-      className={({ isActive }) =>
+      className={() =>
         cn(
           'group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-sidebar-foreground/80 transition-all',
           'hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
-          isActive &&
+          active &&
             'bg-sidebar-accent font-semibold text-sidebar-accent-foreground shadow-sm before:absolute before:inset-y-1.5 before:left-0 before:w-1 before:rounded-full before:bg-brand-amber',
           collapsed && 'justify-center px-0 py-1.5',
         )
@@ -193,19 +252,19 @@ function MenuGroup({
   node,
   collapsed,
   onNavigate,
+  activePath,
   open,
   onToggle,
 }: {
   node: MenuNode;
   collapsed: boolean;
   onNavigate?: () => void;
+  activePath?: string | null;
   open: boolean;
   onToggle: () => void;
 }) {
   const location = useLocation();
-  const childActive = (node.children ?? []).some(
-    (c) => c.to && location.pathname.startsWith(c.to),
-  );
+  const childActive = (node.children ?? []).some((c) => c.to && isUnder(location.pathname, c.to));
   const Icon = getMenuIcon(node.icon);
 
   // Collapsed rail: render the group's children as icon links with tooltips.
@@ -213,7 +272,7 @@ function MenuGroup({
     return (
       <div className="flex flex-col gap-0">
         {(node.children ?? []).map((child) => (
-          <MenuLeaf key={child.id} node={child} collapsed onNavigate={onNavigate} />
+          <MenuLeaf key={child.id} node={child} collapsed onNavigate={onNavigate} activePath={activePath} />
         ))}
       </div>
     );
@@ -240,7 +299,7 @@ function MenuGroup({
       {open && (
         <div className="mt-0.5 ml-4 flex flex-col gap-0.5 border-l pl-2">
           {(node.children ?? []).map((child) => (
-            <MenuLeaf key={child.id} node={child} collapsed={false} onNavigate={onNavigate} />
+            <MenuLeaf key={child.id} node={child} collapsed={false} onNavigate={onNavigate} activePath={activePath} />
           ))}
         </div>
       )}

@@ -317,13 +317,26 @@ export function OrderFormPage() {
     if (i === -1) return;
     // Advance to the next field that actually has a focusable control — skipping
     // ones that are disabled or hidden right now (so Tab never dead-ends).
-    for (let j = i + step; j >= 0 && j < seq.length; j += step) {
-      if (focusField(root, seq[j])) {
-        e.preventDefault();
-        return;
+    const advance = () => {
+      for (let j = i + step; j >= 0 && j < seq.length; j += step) {
+        if (focusField(root, seq[j])) return true;
       }
+      return false;
+    };
+
+    // Leaving a field whose dropdown was open: that same keypress just committed
+    // the highlighted option, and the pick reshapes the form — choosing an item
+    // is what gives Design Name its choices, so until this render lands that
+    // field is still disabled and "next focusable field" skips right past it to
+    // Product ₹. Resolve after the DOM has caught up so Tab lands where the
+    // finished form says it should.
+    if ((e.target as HTMLElement).getAttribute('aria-expanded') === 'true') {
+      e.preventDefault();
+      requestAnimationFrame(advance);
+      return;
     }
     // Nothing focusable ahead in the sequence — let natural Tab continue.
+    if (advance()) e.preventDefault();
   };
 
   const completionDayOptions = useMemo(() => settingValues(settings, 'COMPLETION_DAYS'), [settings]);

@@ -125,10 +125,17 @@ export function Combobox({
   // closure is stale by the time it fires. These refs give it the CURRENT value —
   // without them, clicking a "Reset filters" button while a field was focused left
   // the old text sitting in the box after the filter state had already cleared.
+  // `text` needs the same treatment for the same reason: a selection made in the
+  // very act of leaving the field (Tab commits the highlighted row, below) lands
+  // AFTER the blur closure was captured, so the closure still holds the half-typed
+  // search text. The timer would then judge the field against what was typed
+  // rather than what was picked, and report a perfectly good pick as invalid.
   const valueRef = React.useRef(value);
   const labelForRef = React.useRef(labelFor);
+  const textRef = React.useRef(text);
   valueRef.current = value;
   labelForRef.current = labelFor;
+  textRef.current = text;
 
   // Reflect external value changes into the field. "Not actively editing" means
   // either unfocused, or focused but with nothing typed yet — so a filter reset
@@ -404,7 +411,7 @@ export function Combobox({
       focused.current = false;
       setOpen(false);
       if (!creatable) {
-        const typed = text.trim();
+        const typed = textRef.current.trim();
         // Read through the refs, not the closure: the value may have changed during
         // the 120ms wait (a Reset button clearing every filter is the common case),
         // and reverting to the stale label would put a filter back on screen that
@@ -464,6 +471,23 @@ export function Combobox({
         e.preventDefault();
         commit(rows[active].value);
       }
+    } else if (e.key === 'Tab') {
+      // Tab accepts the highlighted row, exactly as Enter does — it just leaves
+      // the field as well. Deliberately NO preventDefault: the whole point is
+      // that focus moves on.
+      //
+      // Without this, "type until one row is left, then Tab" — which looks and
+      // feels like picking, since that row is highlighted — committed nothing.
+      // The field was left holding search text that matched no option, and on a
+      // pick-only field the blur handler below reported it as an invalid entry.
+      // On Item name (New Order) that meant a "Please select a correct item"
+      // toast and focus pulled straight back, so Tab appeared to be dead: you
+      // could never leave the field by keyboard, only by mouse.
+      //
+      // Only when the user has actually typed (`dirty`) — a bare Tab through an
+      // untouched field must leave its existing value alone — and never on the
+      // "Create …" row, whose free text is already live via onChange.
+      if (open && dirty && rows[active] && !rows[active].create) commit(rows[active].value);
     } else if (e.key === 'Escape') {
       setOpen(false);
     } else if (e.key === 'Home' && open) {

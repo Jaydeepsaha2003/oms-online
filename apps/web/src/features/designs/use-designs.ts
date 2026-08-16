@@ -15,10 +15,14 @@ const KEY = ['designs'] as const;
 // refresh the (live-computed) combinations list too — and the order item picker
 // (composeOrderLookups → /orders/lookups), same as useSetDesignFlags already knew
 // to do; the plain create/update/delete/import paths need the same reach.
+// The customer Rate List is built from designs too, and `showOnRateList` decides
+// which appear on it — without this, hiding a design left it on the cached sheet
+// and in the PDF/Excel downloaded from it.
 function invalidateDesignsAndCombos(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: KEY });
   qc.invalidateQueries({ queryKey: ['combinations'] });
   qc.invalidateQueries({ queryKey: ['orders', 'lookups'] });
+  qc.invalidateQueries({ queryKey: ['customers', 'rate-list'] });
 }
 
 export function useDesigns(query: DesignQuery) {
@@ -67,10 +71,9 @@ export function useSetDesignFlags() {
   return useMutation({
     mutationFn: ({ id, ...flags }: CatalogFlagsInput & { id: number }) =>
       http.patch<DesignDto>(`/designs/${id}/flags`, flags),
-    onSuccess: () => {
-      invalidateDesignsAndCombos(qc);
-      qc.invalidateQueries({ queryKey: ['orders', 'lookups'] });
-    },
+    // Order item pickers depend on `active`; the customer Rate List depends on
+    // `showOnRateList` — the shared helper reaches both.
+    onSuccess: () => invalidateDesignsAndCombos(qc),
   });
 }
 

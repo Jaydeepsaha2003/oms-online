@@ -94,6 +94,44 @@ export function takePendingPreviewTab(): Window | null {
 }
 
 /**
+ * Put a holding page in a reserved tab.
+ *
+ * The tab has to be opened inside the click (or the popup blocker eats it), but
+ * the PDF behind it isn't ready for several seconds — the page must load, its
+ * fonts and logo resolve, then html2canvas rasterises the invoice. Left as
+ * `about:blank` the browser fronts a blank white tab for all of that, which
+ * reads as "the preview opened an empty page and nothing happened".
+ *
+ * Same-origin `about:blank` inherits the opener's document, so this can be
+ * written directly. Guarded because a user may close the tab at any moment.
+ */
+export function showPreviewPlaceholder(tab: Window | null, note = 'Preparing your preview…'): void {
+  if (!tab || tab.closed) return;
+  try {
+    tab.document.open();
+    tab.document.write(
+      `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${note}</title>` +
+        `<style>` +
+        `html,body{height:100%;margin:0}` +
+        `body{display:flex;align-items:center;justify-content:center;background:#f8fafc;` +
+        `font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#334155}` +
+        `.box{text-align:center}` +
+        `.ring{width:34px;height:34px;margin:0 auto 14px;border:3px solid #dbeafe;border-top-color:#1d4ed8;` +
+        `border-radius:50%;animation:spin .9s linear infinite}` +
+        `@keyframes spin{to{transform:rotate(360deg)}}` +
+        `p{margin:0;font-size:14px;font-weight:600}` +
+        `small{display:block;margin-top:6px;font-size:12px;color:#64748b;font-weight:500}` +
+        `</style></head><body><div class="box"><div class="ring"></div>` +
+        `<p>${note}</p><small>This tab will show the PDF as soon as it is ready.</small>` +
+        `</div></body></html>`,
+    );
+    tab.document.close();
+  } catch {
+    // Closed or otherwise unwritable — it just stays blank, as before.
+  }
+}
+
+/**
  * Save/show a client-generated PDF blob (e.g. a jsPDF export).
  *
  * On mobile (iOS/Android) it first tries the native share sheet with a properly

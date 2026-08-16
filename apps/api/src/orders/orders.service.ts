@@ -1246,7 +1246,7 @@ export class OrdersService {
   }
 
   private codeFor(id: number): string {
-    return `ORD-${String(id).padStart(5, '0')}`;
+    return `ORD-${id}`;
   }
 
   private async ensureCode(row: Row): Promise<Row> {

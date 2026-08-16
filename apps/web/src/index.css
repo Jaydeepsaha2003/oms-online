@@ -53,6 +53,12 @@
   --brand-blue: oklch(0.55 0.205 262);
   --brand-amber: oklch(0.80 0.16 82);
   --brand-orange: oklch(0.70 0.19 48);
+
+  /* Search boxes wear a hard navy edge instead of the hairline every other field
+     gets — the search box is the first thing reached for on a list screen, and it
+     should be findable without hunting for it. */
+  --search-border: oklch(0.33 0.095 264);
+  --search-ring: oklch(0.33 0.095 264 / 20%);
 }
 
 .dark {
@@ -93,6 +99,11 @@
   --brand-blue: oklch(0.62 0.19 260);
   --brand-amber: oklch(0.80 0.16 82);
   --brand-orange: oklch(0.70 0.19 48);
+
+  /* On the navy background a dark navy border is invisible, so the emphasis has
+     to run the other way — a bright, cool edge against the dark surface. */
+  --search-border: oklch(0.78 0.10 258);
+  --search-ring: oklch(0.78 0.10 258 / 28%);
 }
 
 /* ── Dark-mode neutral remap ───────────────────────────────────────────────
@@ -375,4 +386,39 @@
   transform: translateY(-2px);
   box-shadow: 0 12px 30px -12px color-mix(in oklch, var(--brand-blue) 35%, transparent);
   border-color: color-mix(in oklch, var(--brand-blue) 30%, var(--border));
+}
+
+/* ── Search fields ─────────────────────────────────────────────────────────
+   Every search box in the app, on every screen, gets the same thick navy
+   border so it stands apart from the ordinary form fields around it.
+
+   Matched by placeholder rather than by a prop, deliberately: the app has ~35
+   search boxes spread across as many pages, none of them sharing a component,
+   and half of them pass their own `className` with borders in it. A rule here
+   covers all of them at once — including ones written later — and being
+   unlayered it also wins over Tailwind's utilities, which sit in @layer.
+
+   "Find" and "Filter" are included because a handful of screens label the same
+   control that way. */
+input[placeholder^='Search' i],
+input[placeholder^='Find' i],
+input[placeholder^='Filter' i] {
+  border-width: 2px;
+  border-color: var(--search-border);
+}
+
+/* Focus still has to read as focus — keep the ring, tint it to match the border
+   rather than letting the default blue ring fight it. */
+input[placeholder^='Search' i]:focus-visible,
+input[placeholder^='Find' i]:focus-visible,
+input[placeholder^='Filter' i]:focus-visible {
+  border-color: var(--search-border);
+  box-shadow: 0 0 0 3px var(--search-ring);
+}
+
+/* An invalid field's red border outranks the search styling. */
+input[placeholder^='Search' i][aria-invalid='true'],
+input[placeholder^='Find' i][aria-invalid='true'],
+input[placeholder^='Filter' i][aria-invalid='true'] {
+  border-color: var(--destructive);
 }

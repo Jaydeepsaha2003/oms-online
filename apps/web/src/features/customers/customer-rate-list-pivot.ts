@@ -187,6 +187,18 @@ function pivotDesigns(title: string, lines: { name: string; pcs: number | null; 
   return { title, rows };
 }
 
+/**
+ * A design type that is several designs applied together, e.g. "WL+FULL
+ * LASER+TOOL+LOGO".
+ *
+ * The master holds both the individual designs and every combination of them —
+ * on current data, 58 of 79 design types are combinations. Listing them turns a
+ * one-page rate card into pages of permutations while telling the customer
+ * nothing they can't read off the individual rows, so the sheet carries only the
+ * unique designs.
+ */
+export const isCombinationDesign = (designType: string): boolean => /[+&]/.test(designType);
+
 export function buildSections(list: CustomerRateList): { products: PivotTable[]; designs: DesignPivotTable[] } {
   const byCat = <T>(rows: T[], cat: (r: T) => string) => {
     const m = new Map<string, T[]>();
@@ -200,11 +212,18 @@ export function buildSections(list: CustomerRateList): { products: PivotTable[];
   const products = byCat(list.products, (p: CustomerRateListProduct) => p.category).map(([cat, rows]) =>
     pivot(`${cat} — RATE LIST`, rows.map((p) => ({ name: p.product, pcs: p.pcs, rate: p.rate, special: p.delta !== 0 }))),
   );
-  const designs = byCat(list.designs, (d: CustomerRateListDesign) => d.category).map(([cat, rows]) =>
-    pivotDesigns(
-      `RATE OF DESIGNS ON ${cat} (per kg)`,
-      rows.map((d) => ({ name: d.designType, pcs: pcsFromSub(d.subCategory), rate: d.rate, special: d.delta !== 0 })),
-    ),
-  );
+  // Only the unique designs reach the sheet — combinations are dropped here, so
+  // the PDF, the Excel export and the on-screen preview can never disagree.
+  const uniqueDesigns = list.designs.filter((d) => !isCombinationDesign(d.designType));
+  const designs = byCat(uniqueDesigns, (d: CustomerRateListDesign) => d.category)
+    .map(([cat, rows]) =>
+      pivotDesigns(
+        `RATE OF DESIGNS ON ${cat} (per kg)`,
+        rows.map((d) => ({ name: d.designType, pcs: pcsFromSub(d.subCategory), rate: d.rate, special: d.delta !== 0 })),
+      ),
+    )
+    // A category whose designs were all combinations would otherwise print an
+    // empty table under a heading.
+    .filter((t) => t.rows.length > 0);
   return { products, designs };
 }

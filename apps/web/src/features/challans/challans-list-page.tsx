@@ -26,7 +26,7 @@ import {
 import { toast } from 'sonner';
 import type { ChallanDto } from '@oms/shared';
 import { cn } from '@/lib/utils';
-import { reservePreviewTab } from '@/lib/pdf';
+import { isIOS, reservePreviewTab } from '@/lib/pdf';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -373,8 +373,12 @@ export function ChallansListPage() {
                     // Opened synchronously here (still inside the click) so the
                     // popup blocker doesn't catch it once the bill page navigates
                     // to and asynchronously builds the PDF a moment later.
-                    reservePreviewTab();
-                    navigate(`/challans/${r.id}/bill`, { state: { autoPreview: true } });
+                    // The preview now opens IN PAGE, so no popup is needed —
+                    // except on iOS, which can't render a PDF in an iframe and
+                    // still needs a tab reserved inside this click.
+                    // `returnTo` brings the user back here when they close it.
+                    if (isIOS()) reservePreviewTab();
+                    navigate(`/challans/${r.id}/bill`, { state: { autoPreview: true, returnTo: '/challans' } });
                   }}
                 >
                   <FileSearch className="text-violet-600" /> Preview PDF

@@ -7,7 +7,11 @@
  *
  * The PDF is the customer-facing artefact, so it gets the premium treatment:
  * a gradient brand masthead, amber accents, airy zebra tables, the faint KAVISH
- * watermark from the original printed sheet, and special-rate markers.
+ * watermark from the original printed sheet.
+ *
+ * Every row is styled identically: the sheet quotes the customer's effective
+ * price, and deliberately does not mark which of those prices came from a
+ * special adjustment.
  */
 import { jsPDF } from 'jspdf';
 import * as XLSX from 'xlsx';
@@ -24,7 +28,7 @@ const stampFull = (iso: string) =>
 
 /* ─────────────────────────── palette ───────────────────────────
  * White-paper document in the brand's own three: BLUE (structure + identity),
- * ORANGE and AMBER (accents, special rates). The KAVISH mark is itself blue +
+ * ORANGE and AMBER (accents). The KAVISH mark is itself blue +
  * orange, so the sheet reads as an extension of the logo. Everything else is a
  * neutral ink/slate for body text and hairlines — no heavy fills, so the page
  * stays white and the very-light logo watermark can breathe through it. */
@@ -43,8 +47,7 @@ const BLUE_ZEBRA: RGB = [243, 247, 255]; // barely-there blue banding for alt ro
 const BLUE_SOFT: RGB = [219, 234, 254]; // blue-100 — chip fills / keylines
 
 const ORANGE: RGB = [234, 88, 12]; // orange-600 — gradient start, section accents
-const AMBER: RGB = [245, 158, 11]; // amber-500 — gradient end, special-rate marker
-const AMBER_SOFT: RGB = [254, 243, 199]; // amber-100 — special-rate row wash
+const AMBER: RGB = [245, 158, 11]; // amber-500 — gradient end, section accents
 
 /** Linear blend between two RGBs (used for the orange→amber accent rules). */
 const mix = (a: RGB, b: RGB, t: number): RGB => [
@@ -129,7 +132,11 @@ export function exportRateListExcel(list: CustomerRateList): void {
  *  exact same document to a file for visual review. */
 export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF> {
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-  const margin = 36;
+  /** Narrow margins (24pt ≈ 8.5mm), so the rate columns get the width instead of
+   *  the paper edge. Everything else is measured off `usable`, so the whole
+   *  document reflows from this one number. Kept above ~6mm because most office
+   *  printers can't image closer than that to the edge. */
+  const margin = 24;
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   const usable = pageW - margin * 2;
@@ -138,25 +145,36 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
   let headerH = 0;
 
   const { products, designs } = buildSections(list);
-  const productCount = list.products.length;
-  const designCount = list.designs.length;
-  const anySpecial = [...products, ...designs].some((t) => t.rows.some((r) => r.special));
+  // Both counted off the BUILT sections rather than the raw payload, so each
+  // pill states the number of rows actually printed below it. Counting the
+  // source would over-report: the pivot merges a product's pcs variants into one
+  // row, and combination designs are dropped from the sheet entirely.
+  const productCount = products.reduce((n, t) => n + t.rows.length, 0);
+  const designCount = designs.reduce((n, t) => n + t.rows.length, 0);
 
   const wm = await loadWatermark(doc).catch(() => null);
 
   /* ── Items-table typography ─────────────────────────────────────────────
-   * The rate grid is set in Calibri (Carlito — see lib/pdf-fonts) at 14pt bold,
-   * which is what the printed sheet uses. Calibri runs visually smaller than
-   * Helvetica at the same size, but 14pt still needs a taller row than the old
-   * 9.5pt text did, so the row grows with it. If the font fails to load we fall
-   * back to Helvetica at a size that suits its larger appearance, and keep the
-   * compact row — the document degrades rather than breaks. */
+   * The rate grid is set in Calibri (Carlito — see lib/pdf-fonts) at 11pt BOLD,
+   * matching the printed sheet. Everything in the grid is bold: this is a price
+   * list read across a counter, so the figures carry the page and a mix of
+   * weights would only make some of them look provisional.
+   *
+   * Row height tracks the type size — at 11pt the old 24pt row left the text
+   * swimming, so it comes down in proportion. If the font fails to load we fall
+   * back to Helvetica, which runs visually larger, at a size that matches — the
+   * document degrades rather than breaks. */
   const hasCalibri = await registerCalibriFont(doc);
+  /** Calibri (Carlito) everywhere — masthead, section headings, grid, footer.
+   *  The grid was already set in it; leaving the chrome in Helvetica put two
+   *  typefaces on one page for no reason. Falls back to Helvetica as a set if
+   *  the font can't be loaded. */
   const TABLE_FONT = hasCalibri ? CALIBRI_FONT : 'helvetica';
-  const DATA_SIZE = hasCalibri ? 14 : 10.5;
-  const META_SIZE = hasCalibri ? 11 : 8.5;
-  const HEAD_SIZE = hasCalibri ? 10 : 8;
-  const rowH = hasCalibri ? 24 : 18;
+  const UI_FONT = TABLE_FONT;
+  const DATA_SIZE = hasCalibri ? 11 : 10.5;
+  const META_SIZE = hasCalibri ? 9 : 8.5;
+  const HEAD_SIZE = hasCalibri ? 11 : 8;
+  const rowH = hasCalibri ? 19 : 18;
 
   /** Draw one line of text shrunk (then ellipsised) to fit `maxW` — rows never wrap. */
   const fitText = (txt: string, x: number, yy: number, maxW: number, size: number, opts?: { align?: 'right'; minSize?: number }) => {
@@ -187,6 +205,54 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
     doc.restoreGraphicsState();
   };
 
+  /** Widest of `values` at `size`, using whatever font face is currently set. */
+  const maxWidthAt = (values: string[], size: number): number => {
+    if (!values.length) return 0;
+    const prev = doc.getFontSize();
+    doc.setFontSize(size);
+    const w = Math.max(...values.map((v) => doc.getTextWidth(v)));
+    doc.setFontSize(prev);
+    return w;
+  };
+
+  /**
+   * ONE type size for a whole column — the largest (≤ `base`) at which every
+   * value fits `maxW`.
+   *
+   * Sizing each cell on its own, as {@link fitText} does, left a single column
+   * rendering at three or four different sizes depending on how long each entry
+   * happened to be; that reads as a defect rather than as fitting. Used for
+   * columns whose values are alike (the pcs lists) — NOT for item names, where
+   * lengths vary so wildly that one long outlier would shrink every other row.
+   */
+  const columnSize = (values: string[], maxW: number, base: number, min = 7.5): number => {
+    let s = base;
+    while (s > min && maxWidthAt(values, s) > maxW) s -= 0.25;
+    return s;
+  };
+
+  /**
+   * ONE type size for a row of labels that each have their OWN column width —
+   * the largest at which every label still fits its cell.
+   *
+   * The header row needs this rather than {@link columnSize}: a wide label like
+   * "13–18PCS" sits in a narrow rate column while "8PCS" sits in an identical
+   * one, so sizing each header on its own printed the same header row at two or
+   * three different sizes, which reads as a defect.
+   */
+  const rowFitSize = (items: { text: string; maxW: number }[], base: number, min = 6.5): number => {
+    if (!items.length) return base;
+    const prev = doc.getFontSize();
+    let s = base;
+    const fits = () => {
+      doc.setFontSize(s);
+      return items.every((it) => doc.getTextWidth(it.text) <= it.maxW);
+    };
+    while (s > min && !fits()) s -= 0.25;
+    doc.setFontSize(prev);
+    return s;
+  };
+
   /** Measure-only sibling of {@link fitText}: ellipsise `txt` until it fits
    *  `maxW` at the CURRENT font settings, and return the string. */
   const truncate = (txt: string, maxW: number): string => {
@@ -213,63 +279,74 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
     }
   };
 
-  /** A small stat pill: coloured dot + label + value, on a soft tinted card. */
-  const statPill = (x: number, yy: number, label: string, value: string, dot: RGB, fill: RGB): number => {
-    doc.setFont('helvetica', 'bold').setFontSize(9);
+  /* Summary-pill metrics, kept in one place so measuring and drawing can never
+   * disagree — the pills are right-aligned, which needs their width BEFORE the
+   * first one is drawn. */
+  const PILL = { valueSize: 12, labelSize: 8.5, h: 30, pad: 32, textX: 19, gap: 9 };
+
+  /** Width of a pill, without drawing it. */
+  const pillWidth = (label: string, value: string): number => {
+    doc.setFont(UI_FONT, 'bold').setFontSize(PILL.valueSize);
     const valW = doc.getTextWidth(value);
-    doc.setFont('helvetica', 'normal').setFontSize(7.5);
+    doc.setFont(UI_FONT, 'normal').setFontSize(PILL.labelSize);
     const labW = doc.getTextWidth(label.toUpperCase());
-    const w = Math.max(valW, labW) + 26;
+    return Math.max(valW, labW) + PILL.pad;
+  };
+
+  /** A stat pill: coloured dot + value + label, on a soft tinted card. */
+  const statPill = (x: number, yy: number, label: string, value: string, dot: RGB, fill: RGB): number => {
+    const w = pillWidth(label, value);
     doc.setFillColor(...fill);
-    doc.roundedRect(x, yy, w, 26, 3, 3, 'F');
+    doc.roundedRect(x, yy, w, PILL.h, 3.5, 3.5, 'F');
     doc.setFillColor(...dot);
-    doc.circle(x + 9, yy + 9.5, 2.4, 'F');
-    doc.setFont('helvetica', 'bold').setFontSize(9).setTextColor(...BLUE_DEEP);
-    doc.text(value, x + 15, yy + 12);
-    doc.setFont('helvetica', 'normal').setFontSize(7).setTextColor(...MUTED);
-    doc.text(label.toUpperCase(), x + 15, yy + 21, { charSpace: 0.6 });
+    doc.circle(x + 11, yy + 11.5, 2.8, 'F');
+    doc.setFont(UI_FONT, 'bold').setFontSize(PILL.valueSize).setTextColor(...BLUE_DEEP);
+    doc.text(value, x + PILL.textX, yy + 14.5);
+    doc.setFont(UI_FONT, 'normal').setFontSize(PILL.labelSize).setTextColor(...MUTED);
+    doc.text(label.toUpperCase(), x + PILL.textX, yy + 25, { charSpace: 0.6 });
     return w;
   };
 
   /** Page-1 masthead — white stationery: logo lockup, blue wordmark, the
    *  orange→amber rule, then the "prepared for" block and summary pills. */
   const heroHeader = () => {
+    // The brand mark leads the page, so it is sized to hold its own against the
+    // RATE LIST wordmark opposite it rather than sitting as a small corner tag.
+    const logoH = 60;
     if (wm) {
-      const logoH = 42;
       const logoW = (logoH * wm.w) / wm.h;
-      doc.addImage(wm.data, 'PNG', margin, 34, logoW, logoH, 'kavish-mark', 'FAST');
+      doc.addImage(wm.data, 'PNG', margin, 28, logoW, logoH, 'kavish-mark', 'FAST');
     } else {
-      doc.setFont('helvetica', 'bold').setFontSize(15).setTextColor(...BLUE_DEEP);
-      doc.text('KAVISH', margin, 62);
+      doc.setFont(UI_FONT, 'bold').setFontSize(20).setTextColor(...BLUE_DEEP);
+      doc.text('KAVISH', margin, 68);
     }
 
-    doc.setFont('helvetica', 'bold').setFontSize(25).setTextColor(...BLUE_DEEP);
-    rightTracked('RATE LIST', pageW - margin, 62, 2.5);
-    doc.setFont('helvetica', 'normal').setFontSize(8).setTextColor(...MUTED);
-    doc.text(stampFull(list.generatedAt), pageW - margin, 78, { align: 'right' });
+    doc.setFont(UI_FONT, 'bold').setFontSize(31).setTextColor(...BLUE_DEEP);
+    rightTracked('RATE LIST', pageW - margin, 66, 2.5);
+    doc.setFont(UI_FONT, 'normal').setFontSize(9).setTextColor(...MUTED);
+    doc.text(stampFull(list.generatedAt), pageW - margin, 84, { align: 'right' });
 
-    accentRule(margin, 92, usable, 3);
+    accentRule(margin, 100, usable, 3);
 
-    doc.setFont('helvetica', 'bold').setFontSize(7).setTextColor(...ORANGE);
-    doc.text('PREPARED FOR', margin, 116, { charSpace: 1.8 });
-    doc.setFontSize(15).setTextColor(...BLUE_DEEP);
-    fitText(list.customerName, margin, 135, usable, 15, { minSize: 10 });
-    doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...MUTED);
-    doc.text('Effective rates  ·  base chart rate + your special adjustments  ·  all amounts in INR', margin, 150);
+    /* The "prepared for" block reads left, the totals sit right, on one band —
+     * the two are different kinds of fact and shouldn't queue up in a column. */
+    doc.setFont(UI_FONT, 'bold').setFontSize(8.5).setTextColor(...ORANGE);
+    doc.text('PREPARED FOR', margin, 126, { charSpace: 1.8 });
 
-    let px = margin;
-    px += statPill(px, 162, 'Products', String(productCount), BLUE, BLUE_ZEBRA) + 8;
-    statPill(px, 162, 'Designs', String(designCount), BLUE, BLUE_ZEBRA);
+    const pills = [
+      { label: 'Products', value: String(productCount) },
+      { label: 'Designs', value: String(designCount) },
+    ];
+    const pillsW = pills.reduce((n, p) => n + pillWidth(p.label, p.value), 0) + PILL.gap * (pills.length - 1);
+    let px = pageW - margin - pillsW;
+    for (const p of pills) px += statPill(px, 122, p.label, p.value, BLUE, BLUE_ZEBRA) + PILL.gap;
 
-    // The special-rate legend is stated once, here — not repeated under each table.
-    if (anySpecial) {
-      doc.setFillColor(...AMBER);
-      doc.rect(pageW - margin - 152, 172, 2.5, 8, 'F');
-      doc.setFont('helvetica', 'normal').setFontSize(7.5).setTextColor(...MUTED);
-      doc.text('Amber rows carry your special rate', pageW - margin, 179, { align: 'right' });
-    }
+    // The name takes whatever the pills leave, so a long one shrinks to fit
+    // rather than running underneath them.
+    doc.setFont(UI_FONT, 'bold').setFontSize(22).setTextColor(...BLUE_DEEP);
+    fitText(list.customerName, margin, 150, usable - pillsW - 24, 22, { minSize: 12 });
 
-    headerH = 196;
+    headerH = 172;
     y = headerH + 20;
     drawWatermark();
   };
@@ -281,9 +358,9 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
       const logoW = (logoH * wm.w) / wm.h;
       doc.addImage(wm.data, 'PNG', margin, 26, logoW, logoH, 'kavish-mark', 'FAST');
     }
-    doc.setFont('helvetica', 'bold').setFontSize(10).setTextColor(...BLUE_DEEP);
+    doc.setFont(UI_FONT, 'bold').setFontSize(10).setTextColor(...BLUE_DEEP);
     rightTracked('RATE LIST', pageW - margin, 38, 1.5);
-    doc.setFont('helvetica', 'normal').setFontSize(7.5).setTextColor(...MUTED);
+    doc.setFont(UI_FONT, 'normal').setFontSize(8).setTextColor(...MUTED);
     doc.text(list.customerName, pageW - margin, 50, { align: 'right' });
     accentRule(margin, 58, usable, 2);
     headerH = 60;
@@ -321,6 +398,9 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
     }
     const widths = [26, itemW, ...(showAvail ? [availW] : []), ...t.columns.map(() => rateW)];
     const headers = ['SR', 'ITEM', ...(showAvail ? ['AVAILABLE PCS'] : []), ...t.columns.map((c) => c.toUpperCase())];
+    // One size for the whole pcs column, so it never renders ragged.
+    doc.setFont(TABLE_FONT, 'bold');
+    const availSize = showAvail ? columnSize(t.rows.map((r) => r.available).filter(Boolean), availW - 12, DATA_SIZE) : DATA_SIZE;
     const firstRateCol = showAvail ? 3 : 2;
 
     ensure(rowH * 4 + 40);
@@ -330,9 +410,9 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
     // views; under a sheet already titled RATE LIST it's just noise, so the PDF
     // drops it (display only — the shared title itself is untouched).
     accentRule(margin, y - 10.5, 3.5, 14);
-    doc.setFont('helvetica', 'bold').setFontSize(11.5).setTextColor(...BLUE_DEEP);
+    doc.setFont(UI_FONT, 'bold').setFontSize(12.5).setTextColor(...BLUE_DEEP);
     doc.text(t.title.replace(/\s*—\s*RATE LIST\s*$/i, ''), margin + 11, y);
-    doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...FAINT);
+    doc.setFont(UI_FONT, 'normal').setFontSize(9).setTextColor(...FAINT);
     doc.text(`${t.rows.length} item${t.rows.length === 1 ? '' : 's'}`, margin + usable, y, { align: 'right' });
     y += 11;
 
@@ -340,6 +420,8 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
     // it a single block (rather than the old two-tone navy/peach split) is what
     // lets the white paper and the watermark carry the page.
     const identityW = widths[0] + widths[1] + (showAvail ? widths[2] : 0);
+    doc.setFont(TABLE_FONT, 'bold');
+    const headSize = rowFitSize(headers.map((h, i) => ({ text: h, maxW: widths[i] - 12 })), HEAD_SIZE);
     const headerRow = () => {
       doc.setFillColor(...BLUE);
       doc.roundedRect(margin, y, usable, rowH + 2, 2.5, 2.5, 'F');
@@ -348,7 +430,10 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
       headers.forEach((h, i) => {
         const right = i >= firstRateCol;
         doc.setTextColor(...WHITE);
-        fitText(h, right ? x + widths[i] - 6 : x + 7, y + rowH / 2 + 4, widths[i] - 12, HEAD_SIZE, right ? { align: 'right' } : undefined);
+        fitText(h, right ? x + widths[i] - 6 : x + 7, y + rowH / 2 + 4, widths[i] - 12, headSize, {
+          ...(right ? { align: 'right' as const } : {}),
+          minSize: headSize,
+        });
         x += widths[i];
       });
       y += rowH + 5;
@@ -360,14 +445,10 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
         breakPage();
         headerRow();
       }
-      // Zebra: a whisper of blue on alternate rows; special-rate rows get an
-      // amber wash + amber left tab so they're findable at a glance.
-      if (r.special) {
-        doc.setFillColor(...AMBER_SOFT);
-        doc.rect(margin, y - 2, usable, rowH, 'F');
-        doc.setFillColor(...AMBER);
-        doc.rect(margin, y - 2, 2.5, rowH, 'F');
-      } else if (idx % 2 === 1) {
+      // Zebra: a whisper of blue on alternate rows. Every row is presented the
+      // same way — the sheet quotes the customer's effective price and doesn't
+      // annotate how it was arrived at.
+      if (idx % 2 === 1) {
         doc.setFillColor(...BLUE_ZEBRA);
         doc.rect(margin, y - 2, usable, rowH, 'F');
       }
@@ -375,15 +456,14 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
       const ty = y + rowH / 2 + DATA_SIZE * 0.34;
       let x = margin;
       // SR
-      doc.setFont(TABLE_FONT, 'normal').setFontSize(META_SIZE).setTextColor(...FAINT);
+      doc.setFont(TABLE_FONT, 'bold').setFontSize(META_SIZE).setTextColor(...FAINT);
       doc.text(String(r.sr), x + 7, ty);
       x += widths[0];
       // Hairline boxing in the ITEM column on its left (SR | ITEM).
       doc.setDrawColor(...HAIRLINE);
       doc.setLineWidth(0.5);
       doc.line(x, y - 2, x, y + rowH - 2);
-      // ITEM — special-rate items read in blue so the eye pairs them with the tab.
-      doc.setFont(TABLE_FONT, 'bold').setTextColor(...(r.special ? BLUE_DEEP : INK));
+      doc.setFont(TABLE_FONT, 'bold').setTextColor(...INK);
       fitText(r.item, x + 6, ty, widths[1] - 10, DATA_SIZE, { minSize: 8 });
       x += widths[1];
       // Hairline boxing in the ITEM column on its right (ITEM | Available Pcs).
@@ -393,8 +473,8 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
       // AVAILABLE PCS — same size as the rate figures, so it reads as data
       // rather than a faint footnote next to them.
       if (showAvail) {
-        doc.setFont(TABLE_FONT, 'normal').setTextColor(...MUTED);
-        fitText(r.available, x + 6, ty, widths[2] - 10, DATA_SIZE, { minSize: 8 });
+        doc.setFont(TABLE_FONT, 'bold').setTextColor(...MUTED);
+        fitText(r.available, x + 6, ty, widths[2] - 10, availSize, { minSize: availSize });
         x += widths[2];
       }
       // Hairline separating identity columns from the rate block — guides the
@@ -409,7 +489,7 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
           doc.setFont(TABLE_FONT, 'bold').setTextColor(...INK);
           fitText(cell, x + w - 6, ty, w - 12, DATA_SIZE, { align: 'right', minSize: 7.5 });
         } else {
-          doc.setFont(TABLE_FONT, 'normal').setFontSize(META_SIZE).setTextColor(...FAINT);
+          doc.setFont(TABLE_FONT, 'bold').setFontSize(META_SIZE).setTextColor(...FAINT);
           doc.text('–', x + w - 6, ty, { align: 'right' });
         }
         x += w;
@@ -420,8 +500,7 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
       y += rowH;
     });
 
-    // Close the section with a soft blue keyline, then breathe. (The special-rate
-    // legend is stated once in the masthead, not repeated under every table.)
+    // Close the section with a soft blue keyline, then breathe.
     doc.setDrawColor(...BLUE_SOFT);
     doc.setLineWidth(1);
     doc.line(margin, y - 1.5, margin + usable, y - 1.5);
@@ -437,24 +516,41 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
    */
   const drawDesignPivot = (t: DesignPivotTable) => {
     const showAvail = t.rows.some((r) => r.available !== '');
-    const availW = showAvail ? 78 : 0;
-    const itemW = 210;
-    const rateW = usable - 26 - availW - itemW;
+    const availValues = t.rows.map((r) => r.available).filter(Boolean);
+
+    /* Column plan. RATE used to take everything left over — around 200pt for a
+     * three-digit number — while AVAILABLE PCS was pinned at 78pt, so the long
+     * pcs lists had to shrink and ellipsise inside a cramped column next to a
+     * mostly-empty one. RATE now takes only what a rate needs, and the pcs
+     * column is sized to its own content. */
+    doc.setFont(TABLE_FONT, 'bold');
+    const rateW = 92;
+    let availW = showAvail ? Math.min(Math.max(78, Math.ceil(maxWidthAt(availValues, DATA_SIZE)) + 14), 210) : 0;
+    let itemW = usable - 26 - availW - rateW;
+    // The design name still comes first if the two ever compete for space.
+    if (itemW < 150) {
+      availW = Math.max(70, availW - (150 - itemW));
+      itemW = usable - 26 - availW - rateW;
+    }
     const widths = [26, itemW, ...(showAvail ? [availW] : []), rateW];
     const headers = ['SR', 'DESIGN TYPE', ...(showAvail ? ['AVAILABLE PCS'] : []), 'RATE'];
+    // One size for the whole pcs column, so it never renders ragged.
+    const availSize = showAvail ? columnSize(availValues, availW - 12, DATA_SIZE) : DATA_SIZE;
     const rateColIdx = showAvail ? 3 : 2;
     const identityW = widths[0] + widths[1] + (showAvail ? widths[2] : 0);
 
     ensure(rowH * 4 + 40);
 
     accentRule(margin, y - 10.5, 3.5, 14);
-    doc.setFont('helvetica', 'bold').setFontSize(11.5).setTextColor(...BLUE_DEEP);
+    doc.setFont(UI_FONT, 'bold').setFontSize(12.5).setTextColor(...BLUE_DEEP);
     doc.text(t.title.replace(/\s*—\s*RATE LIST\s*$/i, ''), margin + 11, y);
-    doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(...FAINT);
+    doc.setFont(UI_FONT, 'normal').setFontSize(9).setTextColor(...FAINT);
     const note = `${t.rows.length} design${t.rows.length === 1 ? '' : 's'}`;
     doc.text(note, margin + usable, y, { align: 'right' });
     y += 11;
 
+    doc.setFont(TABLE_FONT, 'bold');
+    const headSize = rowFitSize(headers.map((h, i) => ({ text: h, maxW: widths[i] - 12 })), HEAD_SIZE);
     const headerRow = () => {
       doc.setFillColor(...BLUE);
       doc.roundedRect(margin, y, usable, rowH + 2, 2.5, 2.5, 'F');
@@ -463,7 +559,10 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
       headers.forEach((h, i) => {
         const right = i >= rateColIdx;
         doc.setTextColor(...WHITE);
-        fitText(h, right ? x + widths[i] - 6 : x + 7, y + rowH / 2 + 4, widths[i] - 12, HEAD_SIZE, right ? { align: 'right' } : undefined);
+        fitText(h, right ? x + widths[i] - 6 : x + 7, y + rowH / 2 + 4, widths[i] - 12, headSize, {
+          ...(right ? { align: 'right' as const } : {}),
+          minSize: headSize,
+        });
         x += widths[i];
       });
       y += rowH + 5;
@@ -475,32 +574,27 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
         breakPage();
         headerRow();
       }
-      if (r.special) {
-        doc.setFillColor(...AMBER_SOFT);
-        doc.rect(margin, y - 2, usable, rowH, 'F');
-        doc.setFillColor(...AMBER);
-        doc.rect(margin, y - 2, 2.5, rowH, 'F');
-      } else if (idx % 2 === 1) {
+      if (idx % 2 === 1) {
         doc.setFillColor(...BLUE_ZEBRA);
         doc.rect(margin, y - 2, usable, rowH, 'F');
       }
       const ty = y + rowH / 2 + DATA_SIZE * 0.34;
       let x = margin;
-      doc.setFont(TABLE_FONT, 'normal').setFontSize(META_SIZE).setTextColor(...FAINT);
+      doc.setFont(TABLE_FONT, 'bold').setFontSize(META_SIZE).setTextColor(...FAINT);
       doc.text(String(r.sr), x + 7, ty);
       x += widths[0];
       doc.setDrawColor(...HAIRLINE);
       doc.setLineWidth(0.5);
       doc.line(x, y - 2, x, y + rowH - 2);
-      doc.setFont(TABLE_FONT, 'bold').setTextColor(...(r.special ? BLUE_DEEP : INK));
+      doc.setFont(TABLE_FONT, 'bold').setTextColor(...INK);
       fitText(r.item, x + 6, ty, widths[1] - 10, DATA_SIZE, { minSize: 8 });
       x += widths[1];
       doc.setDrawColor(...HAIRLINE);
       doc.setLineWidth(0.5);
       doc.line(x, y - 2, x, y + rowH - 2);
       if (showAvail) {
-        doc.setFont(TABLE_FONT, 'normal').setTextColor(...MUTED);
-        fitText(r.available, x + 6, ty, widths[2] - 10, DATA_SIZE, { minSize: 8 });
+        doc.setFont(TABLE_FONT, 'bold').setTextColor(...MUTED);
+        fitText(r.available, x + 6, ty, widths[2] - 10, availSize, { minSize: availSize });
         x += widths[2];
       }
       doc.setDrawColor(...HAIRLINE);
@@ -532,11 +626,11 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
 
     const brand = 'KAVISH · THE UNIQUE';
     const pageLabel = `Page ${i} of ${pages}`;
-    doc.setFont('helvetica', 'bold').setFontSize(7).setTextColor(...BLUE_DEEP);
+    doc.setFont(UI_FONT, 'bold').setFontSize(7.5).setTextColor(...BLUE_DEEP);
     const brandW = doc.getTextWidth(brand) + 1 * (brand.length - 1); // + charSpace
     doc.text(brand, margin, footerTop + 19, { charSpace: 1 });
 
-    doc.setFont('helvetica', 'normal').setFontSize(7.5).setTextColor(...MUTED);
+    doc.setFont(UI_FONT, 'normal').setFontSize(7.5).setTextColor(...MUTED);
     const pageW_ = doc.getTextWidth(pageLabel);
     doc.text(pageLabel, pageW - margin, footerTop + 19, { align: 'right' });
 

@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { flushSync } from 'react-dom';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Download, Eye, Loader2, Printer } from 'lucide-react';
+import { ArrowLeft, Download, ExternalLink, Eye, Loader2, Printer } from 'lucide-react';
 import { toast } from 'sonner';
 import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
@@ -9,7 +9,8 @@ import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useFitToWidth } from '@/hooks/use-fit-to-width';
 import { useConfirm } from '@/components/common/confirm';
 import { Button } from '@/components/ui/button';
-import { buildBillFilename, captureScale, decodeImage, isIOS, savePdfBlob, takePendingPreviewTab } from '@/lib/pdf';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { buildBillFilename, captureScale, decodeImage, isIOS, savePdfBlob, showPreviewPlaceholder, takePendingPreviewTab } from '@/lib/pdf';
 import { formatDate } from '@/lib/date-format';
 import kavishLogo from '@/assets/kavish-logo-order.png';
 import { useChallanTerms, useCompany } from '@/features/settings/use-settings';
@@ -116,6 +117,11 @@ export function ChallanBillPage() {
   // iOS only: a finished PDF waiting for a fresh tap to hand it to the share
   // sheet (see `download`). Null everywhere else.
   const [readyPdf, setReadyPdf] = useState<{ blob: Blob; filename: string } | null>(null);
+  // The blob URL currently shown in the on-page preview overlay (desktop route).
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  // Where to go when that overlay is closed, when the preview was launched from
+  // a list row rather than from this page's own button.
+  const [returnAfterPreview, setReturnAfterPreview] = useState<string | null>(null);
   // On phones, shrink the fixed-width A4 challan to fit the screen (see hook).
   const isMobile = useIsMobile();
   const fit = useFitToWidth(CHALLAN_DESIGN_W, isMobile);
@@ -127,6 +133,13 @@ export function ChallanBillPage() {
     return () => window.removeEventListener('afterprint', clear);
   }, []);
 
+  // A preview blob is a few MB; don't strand it if the page is left with the
+  // overlay still open. Reads the latest URL from a ref so the effect can stay
+  // mount-only rather than revoking on every change.
+  const previewUrlRef = useRef<string | null>(null);
+  previewUrlRef.current = previewUrl;
+  useEffect(() => () => { if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current); }, []);
+
   /**
    * Arriving here straight from Ctrl+P in the challan form, or from "Print / PDF"
    * / "Preview PDF" in the challan list: run that action without a second click.
@@ -137,7 +150,7 @@ export function ChallanBillPage() {
    * history so a refresh or a Back/Forward doesn't repeat it.
    */
   const autoActionFired = useRef(false);
-  const autoState = location.state as { autoPrint?: boolean; autoPreview?: boolean; backTo?: string } | null;
+  const autoState = location.state as { autoPrint?: boolean; autoPreview?: boolean; backTo?: string; returnTo?: string } | null;
   const wantsAutoPrint = !!autoState?.autoPrint;
   const wantsAutoPreview = !!autoState?.autoPreview;
   const challanReady = !!challan;
@@ -155,12 +168,24 @@ export function ChallanBillPage() {
         }))),
       ]);
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      if (wantsAutoPrint) await print();
-      // The list's "Preview PDF" action reserved a tab before navigating here
-      // (inside the click, so it isn't blocked); hand it over now.
-      else await previewPdf(takePendingPreviewTab());
-      // Drop the flag so a refresh or Back/Forward doesn't repeat it.
-      navigate(location.pathname, { replace: true, state: { backTo: autoState?.backTo } });
+      if (wantsAutoPrint) {
+        await print();
+        navigate(location.pathname, { replace: true, state: { backTo: autoState?.backTo } });
+        return;
+      }
+      // On iOS the list reserved a tab inside its click (a popup opened later
+      // would be blocked); everywhere else the preview lands on this page.
+      const how = await previewPdf(takePendingPreviewTab());
+      if (how === 'inline' && autoState?.returnTo) {
+        // The user is looking at the overlay — closing it takes them back.
+        setReturnAfterPreview(autoState.returnTo);
+        navigate(location.pathname, { replace: true, state: { backTo: autoState?.backTo } });
+      } else if (autoState?.returnTo) {
+        navigate(autoState.returnTo, { replace: true });
+      } else {
+        // Drop the flag so a refresh or Back/Forward doesn't repeat it.
+        navigate(location.pathname, { replace: true, state: { backTo: autoState?.backTo } });
+      }
     })();
     // Deps are booleans, and there is no cleanup that aborts the run: saving
     // invalidates the challan query, so a refetch lands mid-capture and would
@@ -251,44 +276,79 @@ export function ChallanBillPage() {
   };
 
   /**
-   * Shows the actual generated PDF in a new tab — a quick look before deciding to
-   * print or download, not a save. Unlike Download, this never offers the mobile
-   * share sheet: the point is an inline look, so it always opens straight into the
-   * browser's own PDF viewer.
+   * Show the generated PDF **on this screen**, in an overlay, rather than firing
+   * it into another tab.
    *
-   * `reservedTab` lets a caller that already navigated here (the challan list's
-   * "Preview PDF" action, reserved before the route change) hand over the tab it
-   * opened; a direct click on the on-page Preview button reserves its own.
+   * The tab route was the source of the "it opens a blank page and then jumps
+   * somewhere else" behaviour: the tab has to be opened inside the click (or the
+   * popup blocker eats it), but the PDF only exists several seconds later, so
+   * the browser fronted an empty tab for the whole rasterise — and any question
+   * we had to ask meanwhile was stranded behind it. Previewing in place removes
+   * the popup entirely: nothing is opened until there is something to show, and
+   * the question is asked on the page the user is already looking at.
+   *
+   * iOS is the exception — Safari won't render a PDF inside an iframe — so there
+   * it still hands the document to a tab. `reservedTab` is that pre-opened tab.
+   *
+   * Returns how the preview was delivered, so an auto-preview knows whether the
+   * user is now looking at an overlay (stay put) or a tab (this page is done).
    */
-  const previewPdf = async (reservedTab?: Window | null) => {
-    if (!challan) return;
-    // The Kgs question is answered in THIS tab, so a blank tab reserved before we
-    // got here (the challan list opens one inside its own click, before
-    // navigating) would be fronted by the browser and hide the dialog behind it —
-    // the user would stare at an empty tab wondering what happened. When there's
-    // something to ask, drop that tab and open a fresh one afterwards: the
-    // dialog's own button click carries the activation a popup needs.
+  const previewPdf = async (reservedTab?: Window | null): Promise<'inline' | 'tab' | 'none'> => {
+    if (!challan) return 'none';
     let tab = reservedTab ?? null;
     if (pcsLines) {
+      // The question is answered on THIS page, so any reserved tab has to go —
+      // it would be fronted by the browser and hide the dialog behind it.
       tab?.close();
+      tab = null;
       await askKgsForPcs();
-      tab = window.open('', '_blank');
-    } else {
-      tab = tab ?? window.open('', '_blank');
+      // iOS still needs a tab, and it must be opened while the dialog's own
+      // click still carries activation — a popup after the rasterise is blocked.
+      if (isIOS()) tab = window.open('', '_blank');
     }
+    // Only iOS keeps a tab open across the build; give it something to look at.
+    if (isIOS()) showPreviewPlaceholder(tab);
     setBusy(true);
     try {
       const pdf = await buildPdf();
-      if (!pdf) { tab?.close(); return; }
+      if (!pdf) {
+        tab?.close();
+        return 'none';
+      }
       const url = URL.createObjectURL(pdf.output('blob'));
-      if (tab && !tab.closed) tab.location.href = url;
-      else window.location.href = url; // popup blocked → same-tab view
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+
+      if (isIOS()) {
+        if (tab && !tab.closed) tab.location.href = url;
+        else window.location.href = url; // popup blocked → same-tab view
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        return 'tab';
+      }
+
+      tab?.close(); // nothing to put in it — the preview stays here
+      setPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return url;
+      });
+      return 'inline';
     } catch {
       tab?.close();
       toast.error('Could not preview the PDF');
+      return 'none';
     } finally {
       setBusy(false);
+    }
+  };
+
+  /** Close the overlay, free the blob, and go back if we came from a list row. */
+  const closePreview = () => {
+    setPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    if (returnAfterPreview) {
+      const to = returnAfterPreview;
+      setReturnAfterPreview(null);
+      navigate(to, { replace: true });
     }
   };
 
@@ -692,6 +752,46 @@ export function ChallanBillPage() {
       </div>
       </div>
       </div>
+
+      {/* ── The PDF itself, previewed in place ───────────────────────────────
+          An <iframe> hands the blob to the browser's own PDF viewer, so this is
+          the real generated document — the same bytes Download writes — not a
+          re-render of the page that might differ from it. */}
+      {previewUrl && (
+        <Dialog open onOpenChange={(o) => !o && closePreview()}>
+          <DialogContent
+            className="flex h-[92dvh] w-[min(1100px,96vw)] max-w-[96vw] flex-col gap-3 overflow-hidden overflow-y-hidden p-4 sm:!max-w-[1100px]"
+          >
+            <DialogHeader className="space-y-0">
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <Eye className="text-violet-600 size-4.5" /> Preview — {challan?.code}
+              </DialogTitle>
+            </DialogHeader>
+
+            <iframe
+              src={previewUrl}
+              title={`Challan ${challan?.code ?? ''} preview`}
+              className="min-h-0 w-full flex-1 rounded-[4px] border bg-slate-100"
+            />
+
+            <DialogFooter className="gap-2 sm:justify-end">
+              <Button variant="outline" onClick={closePreview}>Close</Button>
+              <Button
+                variant="outline"
+                onClick={() => window.open(previewUrl, '_blank')}
+                title="Open this PDF in a browser tab"
+              >
+                <ExternalLink /> Open in tab
+              </Button>
+              {/* Already asked about Kgs before the preview was built, so this
+                  saves exactly the document on screen rather than asking again. */}
+              <Button onClick={() => void download(true)} disabled={busy}>
+                {busy ? <Loader2 className="animate-spin" /> : <Download />} Download PDF
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

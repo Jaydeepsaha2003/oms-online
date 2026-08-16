@@ -417,7 +417,7 @@ export class CrmService {
         const active = r.items.filter((i) => i.status !== 'CANCELLED');
         return {
           id: r.id,
-          code: r.code ?? `ORD-${String(r.id).padStart(5, '0')}`,
+          code: r.code ?? `ORD-${r.id}`,
           customerName: r.customerName,
           customerId: r.customerId,
           orderDate: r.orderDate.toISOString(),
@@ -487,7 +487,7 @@ export class CrmService {
         return {
           orderItemId: it.id,
           orderId: it.orderId,
-          orderCode: it.order.code ?? `ORD-${String(it.orderId).padStart(5, '0')}`,
+          orderCode: it.order.code ?? `ORD-${it.orderId}`,
           orderDate: it.order.orderDate.toISOString(),
           productName: it.productName,
           design: it.design,

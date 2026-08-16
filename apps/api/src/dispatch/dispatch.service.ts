@@ -1406,7 +1406,7 @@ export class DispatchService implements OnModuleInit {
   }
 
   private orderCodeFor(id: number): string {
-    return `ORD-${String(id).padStart(5, '0')}`;
+    return `ORD-${id}`;
   }
   private codeFor(id: number): string {
     return `DSP-${String(id).padStart(5, '0')}`;

@@ -253,9 +253,9 @@ export function OrderModifyPage() {
     }
   };
   const hasFilters = !!customer || !!agent || !!product || !!design || !!priority || !!orderId;
-  // Product/Agent/Design/Priority move behind the Filter icon on phones — this
+  // Agent/Design/Priority move behind the Filter icon on phones — this
   // count feeds its badge and drives the mobile sheet's own Reset button.
-  const activeFilterCount = (product ? 1 : 0) + (agent ? 1 : 0) + (design ? 1 : 0) + (priority ? 1 : 0);
+  const activeFilterCount = (agent ? 1 : 0) + (design ? 1 : 0) + (priority ? 1 : 0);
   const resetFilters = () => {
     setCustomer('');
     setAgent('');
@@ -381,8 +381,8 @@ export function OrderModifyPage() {
       {/* ── Toolbar: search + filters, then column settings — one card. */}
       <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
         <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
-          {/* Filter order follows the house pattern: Order ID, Customer, Item Name, Agent, Design. */}
-          <div className="w-full sm:w-36">
+          {/* Filter order follows the house pattern: Order ID, Customer, Product, Agent, Design. */}
+          <div className="min-w-0 flex-1 basis-[calc(50%-0.25rem)] sm:w-36 sm:flex-none sm:basis-auto">
             <NativeSelect
               value={orderId}
               onChange={(v) => { setOrderId(v); setPage(1); }}
@@ -391,7 +391,7 @@ export function OrderModifyPage() {
               className={cn(CONTROL, 'font-medium tabular-nums', orderId && CONTROL_ON)}
             />
           </div>
-          <div className="w-full sm:w-56">
+          <div className="min-w-0 flex-1 basis-[calc(50%-0.25rem)] sm:w-56 sm:flex-none sm:basis-auto">
             <NativeSelect
               value={customer}
               onChange={(v) => { setCustomer(v); setPage(1); }}
@@ -400,8 +400,20 @@ export function OrderModifyPage() {
               className={cn(CONTROL, 'font-medium', customer && CONTROL_ON)}
             />
           </div>
-          {/* Phones: Product / Agent / Design / Priority move behind this icon
-              (see the sheet below) — they don't fit the toolbar at phone widths. */}
+          {/* Product sits out here with Order ID and Customer rather than behind
+              the Filter icon: on this screen you are usually hunting one item
+              across orders, so it is reached as often as the customer is. */}
+          <div className="w-full sm:w-48">
+            <NativeSelect
+              value={product}
+              onChange={(v) => { setProduct(v); setPage(1); }}
+              options={['', ...(filterOptions?.products ?? [])]}
+              placeholder="All products"
+              className={cn(CONTROL, 'font-medium', product && CONTROL_ON)}
+            />
+          </div>
+          {/* Phones: Agent / Design / Priority move behind this icon (see the
+              sheet below) — they don't fit the toolbar at phone widths. */}
           <Button
             variant="outline"
             size="icon"
@@ -416,15 +428,6 @@ export function OrderModifyPage() {
               </span>
             )}
           </Button>
-          <div className="hidden w-40 lg:block">
-            <NativeSelect
-              value={product}
-              onChange={(v) => { setProduct(v); setPage(1); }}
-              options={['', ...(filterOptions?.products ?? [])]}
-              placeholder="All products"
-              className={cn(CONTROL, 'font-medium', product && CONTROL_ON)}
-            />
-          </div>
           <div className="hidden w-36 lg:block">
             <NativeSelect
               value={agent}
@@ -478,7 +481,7 @@ export function OrderModifyPage() {
         </div>
       </div>
 
-      {/* Phones only: Product / Agent / Design / Priority live behind the Filter icon above. */}
+      {/* Phones only: Agent / Design / Priority live behind the Filter icon above. */}
       <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
         <SheetContent side="bottom" className="font-poppins lg:hidden">
           <SheetHeader>
@@ -489,22 +492,16 @@ export function OrderModifyPage() {
                 size="sm"
                 className="text-muted-foreground -mr-2 gap-1.5 font-semibold"
                 onClick={resetFilters}
-                disabled={activeFilterCount === 0}
+                // Clears every filter, not just the ones in this sheet — so it
+                // stays live whenever anything is set, including the Product and
+                // Customer pickers that now live out on the toolbar.
+                disabled={!hasFilters}
               >
                 <RotateCcw className="size-3.5" /> Reset
               </Button>
             </div>
           </SheetHeader>
           <div className="space-y-4">
-            <div className="space-y-1.5">
-              <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Product</Label>
-              <NativeSelect
-                value={product}
-                onChange={(v) => { setProduct(v); setPage(1); }}
-                options={['', ...(filterOptions?.products ?? [])]}
-                placeholder="All products"
-              />
-            </div>
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Agent</Label>
               <NativeSelect
@@ -596,20 +593,23 @@ export function OrderModifyPage() {
           ) : groupedByOrder.length === 0 ? (
             <div className="text-muted-foreground rounded-[4px] border px-4 py-10 text-center text-sm">No order lines found.</div>
           ) : (
-            <div className="space-y-2.5">
+            <div className="space-y-3 pb-1">
               {groupedByOrder.map(({ order: o, lines }) => (
-                <div key={o.id} className="bg-card overflow-hidden rounded-[4px] border shadow-sm">
-                  <div className="bg-muted/40 border-b px-3 py-1.5">
+                <div key={o.id} className="bg-card overflow-hidden rounded-2xl border shadow-sm ring-1 ring-black/[0.02]">
+                  {/* Sticky, so you always know which order the line under your
+                      thumb belongs to — a long order scrolls its own header away
+                      otherwise and every card starts to look alike. */}
+                  <div className="sticky top-0 z-10 border-b bg-gradient-to-r from-indigo-50 to-white px-3.5 py-2.5 dark:from-indigo-500/10 dark:to-transparent">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="text-[11px] font-bold tabular-nums text-indigo-700 dark:text-indigo-300">{shortOrderCode(o.code, o.id)}</p>
-                        <p className="text-[14px] font-bold break-words text-slate-900 dark:text-slate-100">{o.customerName}</p>
+                        <p className="text-[15px] leading-tight font-extrabold break-words text-slate-900 dark:text-slate-100">{o.customerName}</p>
+                        <p className="mt-0.5 text-[11.5px] font-bold tabular-nums text-indigo-700 dark:text-indigo-300">{shortOrderCode(o.code, o.id)}</p>
                       </div>
                       <StatusPill status={o.status} />
                     </div>
                     {/* Labelled rather than "date → date": on a phone there's no
                         column header above it to say which is which. */}
-                    <div className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] font-medium">
+                    <div className="text-muted-foreground mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-medium">
                       <span>
                         Ordered <span className="text-foreground font-semibold tabular-nums">{formatDate(o.orderDate)}</span>
                       </span>
@@ -617,12 +617,12 @@ export function OrderModifyPage() {
                         Due <span className="text-foreground font-semibold tabular-nums">{formatDate(o.completionDate)}</span>
                       </span>
                       {o.agentName && <span>Agent <span className="text-foreground font-semibold">{o.agentName}</span></span>}
-                      <span>
+                      <span className="rounded-full bg-white/70 px-1.5 py-0.5 text-[10px] font-bold text-slate-600 ring-1 ring-inset ring-slate-200 dark:bg-white/10 dark:text-slate-300 dark:ring-white/10">
                         {lines.length} line{lines.length === 1 ? '' : 's'}
                       </span>
                     </div>
                   </div>
-                  <div className="divide-y divide-slate-200 dark:divide-white/10">
+                  <div className="divide-y divide-slate-100 dark:divide-white/[0.06]">
                     {lines.map((r) => {
                       const cancelled = r.line.status === 'CANCELLED';
                       return (
@@ -630,7 +630,7 @@ export function OrderModifyPage() {
                           key={r.line.id}
                           role="button"
                           tabIndex={0}
-                          className="active:bg-muted cursor-pointer px-3 py-2"
+                          className="active:bg-muted/70 cursor-pointer px-3.5 py-2.5 transition-colors"
                           onClick={() => setEdit(r)}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter' || e.key === ' ') {
@@ -644,49 +644,78 @@ export function OrderModifyPage() {
                               hover title to fall back on — so a clipped product name or
                               comment is information the user simply cannot reach. Long
                               values wrap instead. */}
-                          <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-start justify-between gap-2.5">
                             <div className="min-w-0 flex-1">
-                              <p className={cn('text-[13px] font-bold break-words', cancelled ? 'text-muted-foreground line-through' : 'text-slate-800 dark:text-slate-200')}>
+                              <p className={cn('text-[14px] leading-snug font-bold break-words', cancelled ? 'text-muted-foreground line-through' : 'text-slate-900 dark:text-slate-100')}>
                                 {r.line.productName || r.line.product || '—'}
                               </p>
-                              <p className="text-muted-foreground text-[11px] font-medium break-words">
-                                Design <span className="text-foreground font-semibold">{r.line.designType || '—'}</span>
-                              </p>
+                              {/* Only when there IS one. "Design —" on every line
+                                  was a row of nothing on most cards. */}
+                              {r.line.designType && (
+                                <p className="text-muted-foreground mt-0.5 text-[11.5px] font-medium break-words">
+                                  Design <span className="text-foreground font-semibold">{r.line.designType}</span>
+                                </p>
+                              )}
                             </div>
-                            <div className="flex shrink-0 items-center gap-1.5">
-                              <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">₹{(r.line.rate ?? 0).toLocaleString('en-IN')}</span>
+                            <div className="flex shrink-0 flex-col items-end gap-1">
+                              <span className="text-[15px] leading-none font-extrabold tabular-nums text-emerald-700 dark:text-emerald-400">
+                                ₹{(r.line.rate ?? 0).toLocaleString('en-IN')}
+                              </span>
                               {/* The row was already tappable, but nothing said so — on a
-                                  phone there's no hover to discover it with. */}
-                              <Pencil className="text-muted-foreground size-3.5" aria-hidden />
+                                  phone there's no hover to discover it with. A round
+                                  target also reads as a control rather than decoration. */}
+                              <span className="text-muted-foreground/70 inline-flex size-6 items-center justify-center rounded-full bg-slate-100 dark:bg-white/10" aria-hidden>
+                                <Pencil className="size-3" />
+                              </span>
                             </div>
                           </div>
                           {/* Every badge the desktop Status column carries: the line's own
                               CANCELLED state, how far it has shipped, and its priority —
                               including NORMAL, which the phone used to leave blank so a
                               normal line looked like one with no priority set at all. */}
-                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                          {/* Every badge the desktop Status column carries, all
+                              rendered AS badges — priority and order type used to
+                              be bare grey words sitting beside real chips, which
+                              read as leftover text rather than status. */}
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                             {cancelled && <StatusPill status="CANCELLED" />}
                             {!cancelled && <DispatchChip state={r.line.dispatchState} showPending />}
                             {r.line.priority === 'URGENT' ? (
-                              <span className="rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-600 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:ring-rose-400/25">
+                              <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-600 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:ring-rose-400/25">
                                 URGENT
                               </span>
                             ) : (
-                              <span className="text-muted-foreground text-[10px] font-semibold">{r.line.priority || 'NORMAL'}</span>
+                              <span className="text-muted-foreground rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold dark:bg-white/10">
+                                {r.line.priority || 'NORMAL'}
+                              </span>
                             )}
-                            {r.line.ordType && <span className="text-muted-foreground text-[10px] font-semibold">{r.line.ordType}</span>}
+                            {r.line.ordType && (
+                              <span className="text-muted-foreground rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold dark:bg-white/10">
+                                {r.line.ordType}
+                              </span>
+                            )}
                           </div>
-                          <div className="mt-1 grid grid-cols-4 gap-1.5 text-[11px]">
-                            {([['Bags', r.line.bags], ['Pcs', r.line.pcs], ['Kgs', r.line.gram], ['Box', r.line.box]] as const).map(([lbl, v]) => (
-                              <div key={lbl}>
-                                <p className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">{lbl}</p>
-                                <p className="font-bold tabular-nums text-slate-700 dark:text-slate-200">{dash(v)}</p>
+                          {/* Only the quantities this line actually carries. The
+                              fixed four-column grid printed "—" for the ones it
+                              didn't, so half of every card was empty placeholders
+                              competing with the figures that mattered. */}
+                          {(() => {
+                            const qty = ([['Bags', r.line.bags], ['Pcs', r.line.pcs], ['Kgs', r.line.gram], ['Box', r.line.box]] as const)
+                              .filter(([, v]) => v != null && v !== 0);
+                            if (!qty.length) return null;
+                            return (
+                              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg bg-slate-50 px-2.5 py-1.5 dark:bg-white/[0.04]">
+                                {qty.map(([lbl, v]) => (
+                                  <span key={lbl} className="flex items-baseline gap-1.5">
+                                    <span className="text-muted-foreground text-[9.5px] font-bold uppercase tracking-widest">{lbl}</span>
+                                    <span className="text-[13px] font-bold tabular-nums text-slate-800 dark:text-slate-100">{(v as number).toLocaleString('en-IN')}</span>
+                                  </span>
+                                ))}
                               </div>
-                            ))}
-                          </div>
+                            );
+                          })()}
                           {r.line.comment && (
-                            <p className="text-muted-foreground mt-1 text-[11px] break-words">
-                              <span className="text-[9px] font-bold uppercase tracking-widest">Comment </span>
+                            <p className="text-muted-foreground mt-1.5 border-l-2 border-amber-300 pl-2 text-[11.5px] break-words dark:border-amber-400/40">
                               {r.line.comment}
                             </p>
                           )}
@@ -698,12 +727,68 @@ export function OrderModifyPage() {
               ))}
             </div>
           )}
+
+          {/* ── Phones: totals, counts and paging in ONE two-line bar ───────────
+              Inside the scroller, after the last card, so it behaves like the end
+              of the list rather than a bar bolted across the bottom of the screen
+              — on a phone that strip was taking permanent height from the cards
+              while only being wanted once you had read them.
+
+              It also replaces the desktop pair below, which costs six lines here:
+              a caption, four wrapping totals, a count line and a pager. Same
+              information, minus the words that only repeat what the numbers say. */}
+          {rows.length > 0 && (
+            <div className="bg-card mt-3 space-y-1 rounded-xl border px-2.5 py-1.5 shadow-sm">
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+                {([['Bags', totals.bags], ['Pcs', totals.pcs], ['Kgs', totals.kgs], ['Box', totals.box]] as const)
+                  .filter(([, v]) => v != null && v !== 0)
+                  .map(([label, value]) => (
+                    <span key={label} className="flex items-baseline gap-1">
+                      <span className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">{label}</span>
+                      <span className="text-[12px] font-bold tabular-nums text-slate-800 dark:text-slate-100">{value.toLocaleString('en-IN')}</span>
+                    </span>
+                  ))}
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground text-[11px] font-medium">
+                  <span className="text-foreground font-bold tabular-nums">{rows.length}</span> lines ·{' '}
+                  <span className="text-foreground font-bold tabular-nums">{new Set(rows.map((r) => r.order.id)).size}</span> orders
+                </span>
+                <div className="ml-auto flex items-center gap-1.5">
+                  <PageSizeSelect value={pageSize} onChange={setPageSize} hideLabel />
+                  <span className="text-[11px] font-bold tabular-nums whitespace-nowrap">
+                    {data?.page ?? page}/{totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="size-7 rounded-[4px]"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page <= 1}
+                    aria-label="Previous page"
+                  >
+                    <ChevronLeft className="size-4" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="size-7 rounded-[4px]"
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page >= totalPages}
+                    aria-label="Next page"
+                  >
+                    <ChevronRight className="size-4" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* ── Quantity totals for the lines on this page ──────────────────────────── */}
+      {/* ── Quantity totals for the lines on this page (tablet and up) ──────────── */}
       {rows.length > 0 && (
-        <div className="bg-card flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-[4px] border px-3 py-2 shadow-sm">
+        <div className="bg-card hidden flex-wrap items-center gap-x-4 gap-y-1.5 rounded-[4px] border px-3 py-2 shadow-sm sm:flex">
           <span className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Totals — this page</span>
           {totals.cancelled > 0 && (
             <span className="text-muted-foreground text-[11px] font-medium">
@@ -721,8 +806,8 @@ export function OrderModifyPage() {
         </div>
       )}
 
-      {/* ── Footer: line/order counts + paging ─────────────────────────────────── */}
-      <div className="bg-card flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-[4px] border px-3 py-2 shadow-sm">
+      {/* ── Footer: line/order counts + paging (tablet and up) ─────────────────── */}
+      <div className="bg-card hidden flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-[4px] border px-3 py-2 shadow-sm sm:flex">
         <p className="text-muted-foreground text-[12px] font-medium">
           <span className="font-bold tabular-nums text-foreground">{rows.length}</span> line(s) across{' '}
           <span className="font-bold tabular-nums text-foreground">{new Set(rows.map((r) => r.order.id)).size}</span> order(s)

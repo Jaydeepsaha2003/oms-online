@@ -260,7 +260,7 @@ export class BookingsService {
       let group = groups.get(it.order.id);
       if (!group) {
         group = {
-          orderCode: it.order.code ?? `ORD-${String(it.order.id).padStart(5, '0')}`,
+          orderCode: it.order.code ?? `ORD-${it.order.id}`,
           orderDate: it.order.orderDate,
           orderStatus: it.order.status,
           lines: [],
@@ -302,7 +302,7 @@ export class BookingsService {
       let group = groups.get(orderKey);
       if (!group) {
         group = {
-          orderCode: c.orderCode ?? (c.orderId ? `ORD-${String(c.orderId).padStart(5, '0')}` : 'Deleted order'),
+          orderCode: c.orderCode ?? (c.orderId ? `ORD-${c.orderId}` : 'Deleted order'),
           orderDate: c.orderDate ?? c.convertedAt,
           orderStatus: 'DELETED',
           lines: [],
@@ -415,7 +415,7 @@ export class BookingsService {
     return rows.map((it) => ({
       orderItemId: it.id,
       orderId: it.order.id,
-      orderCode: it.order.code ?? `ORD-${String(it.order.id).padStart(5, '0')}`,
+      orderCode: it.order.code ?? `ORD-${it.order.id}`,
       orderDate: it.order.orderDate.toISOString(),
       pCategory: it.pCategory,
       productName: it.productName,
@@ -893,7 +893,7 @@ export class BookingsService {
         userName: booking.userName,
       },
     });
-    const code = order.code ?? `ORD-${String(order.id).padStart(5, '0')}`;
+    const code = order.code ?? `ORD-${order.id}`;
     if (!order.code) await this.prisma.order.update({ where: { id: order.id }, data: { code } });
     await this.prisma.booking.update({ where: { id: booking.id }, data: { orderId: order.id } });
     return order.id;
@@ -960,7 +960,7 @@ export class BookingsService {
     const ids = rows.map((r) => r.orderId).filter((v): v is number => v != null);
     if (!ids.length) return new Map();
     const orders = await this.prisma.order.findMany({ where: { id: { in: ids } }, select: { id: true, code: true } });
-    return new Map(orders.map((o) => [o.id, o.code ?? `ORD-${String(o.id).padStart(5, '0')}`]));
+    return new Map(orders.map((o) => [o.id, o.code ?? `ORD-${o.id}`]));
   }
 
   private toDto(r: Row, orderCodes: Map<number, string>): BookingDto {
