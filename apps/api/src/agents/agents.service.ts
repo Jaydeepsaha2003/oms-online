@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { type AgentDto, type Paginated } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
@@ -6,6 +6,27 @@ import { uc } from '../common/coerce';
 import { AgentQueryDto, CreateAgentDto, ImportAgentsDto, UpdateAgentDto } from './dto/agent.dto';
 
 type Row = Prisma.AgentGetPayload<object>;
+
+/**
+ * "SELF" is not an agent — it is the sentinel a customer carries when the house
+ * sold to them directly, with nobody in between. It shares the `agentName`
+ * column with real agent names, which is what makes it look like one.
+ *
+ * It must never reach the agent master: an agent there is somebody commission
+ * gets calculated for and settlements get paid to, and a SELF row invites both
+ * against the 98 direct parties that answer to no agent at all. The customer
+ * service has always skipped it when auto-creating agents from a party's
+ * agentName; this closes the two doors that were left open — the Agents screen
+ * and its Excel import.
+ */
+const SELF_SENTINEL = 'SELF';
+const assertNotSelf = (name: string | null | undefined): void => {
+  if ((name ?? '').trim().toUpperCase() !== SELF_SENTINEL) return;
+  throw new BadRequestException(
+    '"SELF" is not an agent — it marks a party the house sells to directly, with no agent involved. ' +
+      'Leave those parties on party source SELF; they earn nobody commission.',
+  );
+};
 
 @Injectable()
 export class AgentsService {
@@ -40,6 +61,7 @@ export class AgentsService {
   }
 
   async create(dto: CreateAgentDto): Promise<AgentDto> {
+    assertNotSelf(dto.name);
     try {
       const row = await this.prisma.agent.create({
         data: { name: uc(dto.name)!, contactNo: uc(dto.contactNo), state: uc(dto.state), city: uc(dto.city) },
@@ -55,6 +77,7 @@ export class AgentsService {
 
   async update(id: number, dto: UpdateAgentDto): Promise<AgentDto> {
     await this.ensureExists(id);
+    if (dto.name !== undefined) assertNotSelf(dto.name);
     try {
       const row = await this.prisma.agent.update({
         where: { id },
@@ -108,6 +131,13 @@ export class AgentsService {
         const name = uc(row['AGENT NAME'] ?? row['NAME']);
         if (!name) {
           result.errors.push(`Row ${i + 2}: AGENT NAME required — skipped.`);
+          continue;
+        }
+        if (name === SELF_SENTINEL) {
+          // Reported rather than thrown: one bad row must not abandon the rest
+          // of the sheet, and an export of the customer master is exactly the
+          // kind of file that carries SELF in an agent-name column.
+          result.errors.push(`Row ${i + 2}: "SELF" is the no-agent marker, not an agent — skipped.`);
           continue;
         }
         const data = {

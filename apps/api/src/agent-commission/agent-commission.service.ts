@@ -330,6 +330,12 @@ export class AgentCommissionService {
       : await this.prisma.customer.findFirst({ where: { partyName: challan.customerName } });
     const agentName = customer?.agentName?.trim();
     if (!agentName) return 0;
+    // "SELF" in that column means the house sold to this party directly — it is
+    // the ABSENCE of an agent, spelled in the same field as a name. Checked here
+    // and not only at the agent master, because this is where the money starts:
+    // if a SELF row ever exists in `agents` (it did), every direct party would
+    // silently start accruing commission payable to nobody.
+    if (agentName.toUpperCase() === 'SELF') return 0;
     const agent = await this.prisma.agent.findFirst({ where: { name: agentName } });
     if (!agent) return 0;
 
