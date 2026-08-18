@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CalendarRange, Loader2, Sigma, X } from 'lucide-react';
 import type { DaybookDayGroup, DaybookRow } from '@oms/shared';
@@ -12,6 +12,18 @@ import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { usePartyLedgerLookups } from './use-party-ledger';
 import { useDaybook } from './use-daybook';
+
+/** Remembered like the other per-screen view preferences (page size, column
+ *  order): whoever reads the daybook as a flat voucher list shouldn't have to
+ *  switch the day subtotals off on every visit. */
+const SUBTOTALS_KEY = 'oms:daybook-subtotals';
+const loadSubtotals = () => {
+  try {
+    return localStorage.getItem(SUBTOTALS_KEY) !== '0';
+  } catch {
+    return true; // private mode / quota — fall back to the default view
+  }
+};
 
 const inr = (v: number) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 /** Blank/zero cells fill with "-" — standard accounting-statement style, matching
@@ -166,6 +178,15 @@ export function DaybookPage() {
   const [party, setParty] = useState('');
   const [voucherType, setVoucherType] = useState('');
   const [dateOpen, setDateOpen] = useState(false);
+  const [subtotals, setSubtotals] = useState(loadSubtotals);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SUBTOTALS_KEY, subtotals ? '1' : '0');
+    } catch {
+      /* ignore quota / private-mode errors */
+    }
+  }, [subtotals]);
 
   const { data: lookups } = usePartyLedgerLookups();
   const custByName = useMemo(() => new Map((lookups?.customers ?? []).map((c) => [c.name, c.id])), [lookups]);
