@@ -66,10 +66,11 @@ export class TransRatesService {
   }
 
   /**
-   * Save a whole category×type grid for one customer. Each row is upserted by
-   * (customerName, category, type) — so editing a row's transporter/rate updates
-   * the same record instead of leaving an orphan. Rows with a blank category/type
-   * are skipped.
+   * Save a whole category×type grid for one customer. A row carrying an `id`
+   * updates that exact record; otherwise it's matched on
+   * (customerName, category, type) — preferring the row whose transporter you
+   * picked, since the same customer/category/type can have one row per
+   * transporter. Rows with a blank category/type are skipped.
    */
   async bulkUpsert(dto: BulkTransRateDto): Promise<{ saved: number }> {
     const customerName = uc(dto.customerName)!;
@@ -86,11 +87,14 @@ export class TransRatesService {
       const transporter = await this.resolveTransporter(r.transportName ?? null);
       const transporterId = transporter?.id ?? null;
       const transportName = transporter?.name ?? null;
-      const existing = await this.prisma.transRate.findFirst({ where: { customerName, category, type } });
+      const existing = await this.findTarget(r.id ?? null, customerName, category, type, transporterId);
       if (existing) {
+        // customerName/category/type included because a row targeted by id may be
+        // having any of them edited — without them the dialog's change to those
+        // fields would silently do nothing.
         await this.prisma.transRate.update({
           where: { id: existing.id },
-          data: { customerId, customerCode, transporterId, transportName, rate },
+          data: { customerId, customerCode, customerName, category, type, transporterId, transportName, rate },
         });
       } else {
         await this.prisma.transRate.create({
@@ -238,14 +242,14 @@ export class TransRatesService {
         // Blank rate = a template row left unfilled — skip (don't create a null rate).
         const rateRaw = row['RATE'];
         if (rateRaw === undefined || rateRaw === null || String(rateRaw).trim() === '') continue;
-        const before = await this.prisma.transRate.findFirst({
-          where: {
-            customerName: uc(customerName)!,
-            category: uc(category)!,
-            type: uc(type)!,
-            transporterId: (await this.resolveTransporter(toStr(row['TRANSPORT NAME'])))?.id ?? null,
-          },
-        });
+        // Same row upsert() will land on, so created/updated counts match reality.
+        const before = await this.findTarget(
+          null,
+          uc(customerName)!,
+          uc(category)!,
+          uc(type)!,
+          (await this.resolveTransporter(toStr(row['TRANSPORT NAME'])))?.id ?? null,
+        );
         await this.upsert({
           customerName,
           category,
@@ -263,6 +267,31 @@ export class TransRatesService {
   }
 
   // ── helpers ────────────────────────────────────────────────────────────────
+
+  /**
+   * The row a save should write to. `id` (sent by the edit dialog / grid) wins —
+   * without it, a customer/category/type that has more than one row (one per
+   * transporter) would silently update whichever happened to be oldest, so the
+   * edited row appeared to save while nothing about it changed. With no id, the
+   * row for the chosen transporter is preferred, else the first one.
+   */
+  private async findTarget(
+    id: number | null,
+    customerName: string,
+    category: string,
+    type: string,
+    transporterId: number | null,
+  ): Promise<Row | null> {
+    if (id) {
+      const byId = await this.prisma.transRate.findUnique({ where: { id } });
+      if (byId) return byId;
+    }
+    const matches = await this.prisma.transRate.findMany({
+      where: { customerName, category, type },
+      orderBy: { id: 'asc' },
+    });
+    return matches.find((m) => transporterId != null && m.transporterId === transporterId) ?? matches[0] ?? null;
+  }
 
   private async resolveTransporter(name?: string | null): Promise<{ id: number; name: string } | null> {
     const n = uc(name);
@@ -285,14 +314,15 @@ export class TransRatesService {
     const transporterId = transporter?.id ?? null;
     const transportName = transporter?.name ?? null;
 
-    const existing = await this.prisma.transRate.findFirst({
-      where: { customerName, category, type, transporterId },
-    });
+    // Matched WITHOUT transporterId on purpose: keying on it meant that changing
+    // (or renaming) a customer's transporter created a second row for the same
+    // customer/category/type instead of updating the existing one.
+    const existing = await this.findTarget(null, customerName, category, type, transporterId);
     await this.recordHistory(customerName, category, type, transportName, existing?.rate ?? null, rate);
     if (existing) {
       return this.prisma.transRate.update({
         where: { id: existing.id },
-        data: { customerId, customerCode, transportName, rate },
+        data: { customerId, customerCode, transporterId, transportName, rate },
       });
     }
     return this.prisma.transRate.create({

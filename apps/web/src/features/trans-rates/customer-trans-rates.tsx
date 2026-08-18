@@ -106,6 +106,9 @@ export function CustomerTransRates({ customerName }: { customerName: string }) {
     const payload = lines
       .filter((l) => l.category.trim() !== '' && l.type.trim() !== '' && l.rate.trim() !== '')
       .map((l) => ({
+        // Existing rows save by id, so the write lands on the row shown here even
+        // when the customer has more than one row for this category/type.
+        id: l.id ?? null,
         category: l.category.trim(),
         type: l.type.trim(),
         transportName: l.transportName.trim() || null,

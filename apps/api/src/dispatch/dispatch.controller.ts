@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Res, StreamableFile } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
-import { ACTIONS, DISPATCH_EXPORT_COLUMNS, hasPermission, perm, RESOURCES, type DraftPhotoCheckInput } from '@oms/shared';
+import { ACTIONS, DISPATCH_EXPORT_COLUMNS, DISPATCH_RATE_EXPORT_COLUMN_IDS, hasPermission, perm, RESOURCES, type DraftPhotoCheckInput } from '@oms/shared';
 import { Audit, SkipAudit } from '../common/decorators/audit.decorator';
 import { AnyPermission, Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -42,8 +42,13 @@ export class DispatchController {
   @Get('pending/export')
   @Permissions(perm(R, ACTIONS.EXPORT))
   @Audit({ action: ACTIONS.EXPORT, resource: R, description: 'Exported pending dispatch lines' })
-  async pendingExport(@Query() query: PendingQueryDto, @Res({ passthrough: true }) res: Response) {
+  async pendingExport(
+    @Query() query: PendingQueryDto,
+    @Res({ passthrough: true }) res: Response,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
     const lines = await this.dispatch.pendingExport(query);
+    const canViewRates = hasPermission(user.permissions, perm(R, ACTIONS.VIEWRATES));
     const rows = lines.map((l) => ({
       'Order #': l.orderCode ?? '',
       // Real Dates, not strings — see toExcelDate(). As text these sorted by
@@ -60,14 +65,23 @@ export class DispatchController {
       Pcs: l.remPcs,
       Kgs: l.remKgs,
       Box: l.remBox,
+      'Product ₹': l.productRate ?? '',
+      'Design ₹': l.designRate ?? '',
+      'Rate ₹': l.rate ?? '',
+      // Same as the on-screen "Pending ₹": rate × the still-pending qty, taken
+      // from whichever of pcs/kgs the line is priced by (calField).
+      'Pending ₹': l.rate == null ? '' : Math.round(l.rate * ((l.calField ?? '').toUpperCase() === 'PCS' ? l.remPcs : l.remKgs)),
       Comment: l.comment ?? '',
     }));
     // Which columns the user picked in the "Choose columns to export" dialog —
     // json_to_sheet only writes keys named in `headers`, so an unrecognised or
     // empty request just falls back to every column rather than an empty sheet.
     const requested = new Set((query.columns ?? '').split(',').map((s) => s.trim()).filter(Boolean));
-    const active = requested.size ? DISPATCH_EXPORT_COLUMNS.filter((c) => requested.has(c.id)) : DISPATCH_EXPORT_COLUMNS;
-    const headers = (active.length ? active : DISPATCH_EXPORT_COLUMNS).map((c) => c.header);
+    // The ₹ columns are dropped outright without `dispatch:viewrates`, so an
+    // ids-in-the-URL request can't export rates the user can't see on screen.
+    const offered = canViewRates ? DISPATCH_EXPORT_COLUMNS : DISPATCH_EXPORT_COLUMNS.filter((c) => !DISPATCH_RATE_EXPORT_COLUMN_IDS.includes(c.id));
+    const active = requested.size ? offered.filter((c) => requested.has(c.id)) : offered;
+    const headers = (active.length ? active : offered).map((c) => c.header);
     this.excel.setDownloadHeaders(res, 'pending-dispatch');
     return new StreamableFile(this.excel.jsonToBuffer(rows, { sheetName: 'Pending Dispatch', headers }));
   }

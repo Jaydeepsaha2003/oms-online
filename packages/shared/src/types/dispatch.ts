@@ -23,9 +23,17 @@ export const DISPATCH_EXPORT_COLUMNS = [
   { id: 'pcs', header: 'Pcs' },
   { id: 'kgs', header: 'Kgs' },
   { id: 'box', header: 'Box' },
+  { id: 'productRate', header: 'Product ₹' },
+  { id: 'designRate', header: 'Design ₹' },
+  { id: 'rate', header: 'Rate ₹' },
+  { id: 'amount', header: 'Pending ₹' },
   { id: 'comment', header: 'Comment' },
 ] as const;
 export type DispatchExportColumnId = (typeof DISPATCH_EXPORT_COLUMNS)[number]['id'];
+
+/** The ₹ columns above. Offered/written only for users with
+ *  `dispatch:viewrates` — same gate the on-screen rate columns use. */
+export const DISPATCH_RATE_EXPORT_COLUMN_IDS: readonly string[] = ['productRate', 'designRate', 'rate', 'amount'];
 
 /** An order line with its still-to-dispatch (remaining) quantities. */
 export interface PendingLineDto {

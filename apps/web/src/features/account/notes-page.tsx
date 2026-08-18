@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check, FolderOpen, Loader2, Plus, Printer, RotateCcw, Trash2 } from 'lucide-react';
+import { ArrowUpRight, Check, FolderOpen, Loader2, Plus, Printer, RotateCcw, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   computeNoteBreakup,
@@ -27,6 +27,7 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { openPdf } from '@/lib/pdf';
 import { useCustomers } from '@/features/customers/use-customers';
+import { ChallanPreviewDialog } from '@/features/challans/challan-preview-dialog';
 import { fetchNote, useDeleteNote, useNextNoteNo, useNoteDirectory, useRecentSold, useSaveNote } from './use-notes';
 
 const money = (v: number) => `₹ ${(v ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -77,7 +78,21 @@ const DOC_TITLE = 'truncate text-[12px] font-extrabold tracking-wide text-amber-
 /** An item on the working note (input + the fields the grid shows). */
 type Line = NoteItemInput & { gstRate?: number; invDate?: string };
 
-const EMPTY_ENTRY = { product: '', design: '', unit: '', bags: '', pcs: '', kgs: '', box: '', price: '', comment: '', refInvNo: '', dispatchId: 0, pCategory: '', gstRate: 0, invDate: '' };
+/** The quantity boxes on the add-line bar. */
+const QTY_FIELDS = [
+  ['bags', 'Bags'],
+  ['pcs', 'Pcs'],
+  ['kgs', 'Kgs'],
+  ['box', 'Box'],
+] as const;
+type QtyField = (typeof QTY_FIELDS)[number][0];
+/** What the referenced sale actually carried — the ceiling for a note line. A
+ *  unit the sale never had is nothing to credit or debit back, so its box is
+ *  locked; the rest can't be typed past what was sold. null = no sale picked
+ *  (hand-typed line), so nothing to check against. */
+type QtyLimits = Record<QtyField, number>;
+
+const EMPTY_ENTRY = { product: '', design: '', unit: '', bags: '', pcs: '', kgs: '', box: '', price: '', comment: '', refInvNo: '', dispatchId: 0, pCategory: '', gstRate: 0, invDate: '', limits: null as QtyLimits | null };
 
 export function NotesPage() {
   const { can } = usePermissions();
@@ -104,6 +119,9 @@ export function NotesPage() {
   const [remarks, setRemarks] = useState('');
 
   const [dirOpen, setDirOpen] = useState(false);
+  /** Ref Inv whose source challan is open in the preview dialog. */
+  const [previewInv, setPreviewInv] = useState<string | null>(null);
+  const canViewChallans = can('challan:view');
 
   const { data: customerData } = useCustomers({ page: 1, pageSize: 1000 });
   const custByName = useMemo(() => {
@@ -191,7 +209,19 @@ export function NotesPage() {
       pCategory: r.pCategory,
       gstRate: r.gstRate,
       invDate: r.invDate,
+      limits: { bags: r.bags || 0, pcs: r.pcs || 0, kgs: r.kgs || 0, box: r.box || 0 },
     });
+  };
+
+  /** Quantity typing, held to what the referenced sale carried: over-typing is
+   *  clamped back to the sold figure rather than silently accepted. */
+  const setQty = (field: QtyField, raw: string) => {
+    const max = entry.limits?.[field];
+    if (max != null && raw.trim() !== '' && Number(raw) > max) {
+      toast.error(`Only ${max} ${field} on ${entry.refInvNo || 'the selected sale'}.`);
+      return setEntry((s) => ({ ...s, [field]: String(max) }));
+    }
+    setEntry((s) => ({ ...s, [field]: raw }));
   };
 
   const entryAmount = noteItemAmount({ bags: numOrU(entry.bags), pcs: numOrU(entry.pcs), kgs: numOrU(entry.kgs), box: numOrU(entry.box), unit: entry.unit, price: numOrU(entry.price) });
@@ -200,6 +230,8 @@ export function NotesPage() {
     if (!entry.product.trim()) return toast.error('Pick a product from the dropdown first.');
     const qtyOk = [entry.bags, entry.pcs, entry.kgs, entry.box].some((q) => Number(q) > 0);
     if (!qtyOk) return toast.error('Enter at least one quantity (Bags / Pcs / Kgs / Box).');
+    const over = entry.limits && QTY_FIELDS.find(([f]) => Number(entry[f] || 0) > entry.limits![f]);
+    if (over) return toast.error(`${over[1]} is more than the ${entry.limits![over[0]]} sold on ${entry.refInvNo || 'this sale'}.`);
     const dup = lines.some((l) => (l.refInvNo ?? '') === entry.refInvNo && l.productName === entry.product && (l.design ?? '') === entry.design);
     if (dup) return toast.error('This item already exists (same Ref Inv + Product + Design).');
     setLines((prev) => [
@@ -443,6 +475,7 @@ export function NotesPage() {
             <div className="space-y-0.5 bg-amber-50/60 px-2.5 py-2 dark:bg-amber-400/[0.07]">
               <Row2 label="Items total" value={money(breakup.tAmt)} />
               <Row2 label={`GST${breakup.gstPercent ? ` @ ${breakup.gstPercent}%` : ''}`} value={money(breakup.tax)} />
+              <Row2 label="Round off" value={money(breakup.roundOff)} />
             </div>
             <div className={cn('flex items-center justify-between px-2.5 py-2 text-white', mode === 'DEBIT' ? 'bg-slate-800 dark:bg-slate-700' : 'bg-emerald-600')}>
               <span className="text-[11px] font-extrabold tracking-widest uppercase">{mode === 'DEBIT' ? 'Total Dr' : 'Total Cr'}</span>
@@ -497,13 +530,29 @@ export function NotesPage() {
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
               <div className="col-span-2 space-y-1 lg:col-span-3">
                 <Label className={FIELD_LABEL}>Pick a past sale (last 12 months)</Label>
-                <Combobox
-                  value=""
-                  onChange={pickRecent}
-                  options={recentSold.map((r: RecentSoldRow, i) => ({ value: String(i), label: `${r.invNo} · ${r.productName}${r.design ? ` · ${r.design}` : ''} · ${money(r.price)}` }))}
-                  placeholder={customerId ? 'Search a past sale…' : 'Select a party first'}
-                  className={cn(CONTROL, 'w-full')}
-                />
+                <div className="flex items-center gap-1.5">
+                  <Combobox
+                    value=""
+                    onChange={pickRecent}
+                    options={recentSold.map((r: RecentSoldRow, i) => ({ value: String(i), label: `${r.invNo} · ${r.productName}${r.design ? ` · ${r.design}` : ''} · ${money(r.price)}` }))}
+                    placeholder={customerId ? 'Search a past sale…' : 'Select a party first'}
+                    className={cn(CONTROL, 'w-full')}
+                  />
+                  {canViewChallans && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="size-9 shrink-0"
+                      disabled={!entry.refInvNo}
+                      onClick={() => setPreviewInv(entry.refInvNo)}
+                      title={entry.refInvNo ? `View challan ${entry.refInvNo}` : 'Pick a past sale to view its challan'}
+                      aria-label={entry.refInvNo ? `View challan ${entry.refInvNo}` : 'View challan'}
+                    >
+                      <ArrowUpRight className="size-4" />
+                    </Button>
+                  )}
+                </div>
               </div>
               <div className="space-y-1"><Label className={FIELD_LABEL}>Product *</Label><Input value={entry.product} onChange={(e) => setEntry((s) => ({ ...s, product: e.target.value }))} className={cn(CONTROL, 'bg-background')} /></div>
               <div className="space-y-1"><Label className={FIELD_LABEL}>Design</Label><Input value={entry.design} onChange={(e) => setEntry((s) => ({ ...s, design: e.target.value }))} className={cn(CONTROL, 'bg-background')} /></div>
@@ -511,10 +560,26 @@ export function NotesPage() {
             </div>
             <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-8">
               <div className="space-y-1"><Label className={FIELD_LABEL}>Unit</Label><Input value={entry.unit} onChange={(e) => setEntry((s) => ({ ...s, unit: e.target.value }))} placeholder="KGS" className={cn(CONTROL, 'bg-background uppercase')} /></div>
-              <div className="space-y-1"><Label className={FIELD_LABEL}>Bags</Label><Input value={entry.bags} onChange={(e) => setEntry((s) => ({ ...s, bags: e.target.value }))} inputMode="decimal" className={cn(CONTROL, 'bg-background text-right tabular-nums')} /></div>
-              <div className="space-y-1"><Label className={FIELD_LABEL}>Pcs</Label><Input value={entry.pcs} onChange={(e) => setEntry((s) => ({ ...s, pcs: e.target.value }))} inputMode="decimal" className={cn(CONTROL, 'bg-background text-right tabular-nums')} /></div>
-              <div className="space-y-1"><Label className={FIELD_LABEL}>Kgs</Label><Input value={entry.kgs} onChange={(e) => setEntry((s) => ({ ...s, kgs: e.target.value }))} inputMode="decimal" className={cn(CONTROL, 'bg-background text-right tabular-nums')} /></div>
-              <div className="space-y-1"><Label className={FIELD_LABEL}>Box</Label><Input value={entry.box} onChange={(e) => setEntry((s) => ({ ...s, box: e.target.value }))} inputMode="decimal" className={cn(CONTROL, 'bg-background text-right tabular-nums')} /></div>
+              {QTY_FIELDS.map(([field, label]) => {
+                const max = entry.limits?.[field] ?? null;
+                const locked = max === 0;
+                return (
+                  <div key={field} className="space-y-1">
+                    <Label className={FIELD_LABEL}>
+                      {label}
+                      {max ? <span className="ml-1 font-semibold tracking-normal normal-case opacity-70">max {max}</span> : null}
+                    </Label>
+                    <Input
+                      value={entry[field]}
+                      onChange={(e) => setQty(field, e.target.value)}
+                      disabled={locked}
+                      title={locked ? `${entry.refInvNo || 'This sale'} has no ${label.toLowerCase()} to adjust` : undefined}
+                      inputMode="decimal"
+                      className={cn(CONTROL, 'bg-background text-right tabular-nums', locked && 'text-muted-foreground cursor-not-allowed opacity-60')}
+                    />
+                  </div>
+                );
+              })}
               <div className="space-y-1"><Label className={FIELD_LABEL}>Price</Label><Input value={entry.price} onChange={(e) => setEntry((s) => ({ ...s, price: e.target.value }))} inputMode="decimal" className={cn(CONTROL, 'bg-background text-right tabular-nums')} /></div>
               <div className="space-y-1"><Label className={FIELD_LABEL}>Amount</Label><Input value={money(entryAmount)} readOnly tabIndex={-1} className={cn(CONTROL, 'bg-muted/50 cursor-default text-right font-bold tabular-nums')} /></div>
               <div className="flex items-end">
@@ -542,7 +607,7 @@ export function NotesPage() {
                   <th scope="col" className={cn(TH, TH_LINE, 'w-24 text-right')}>Price</th>
                   <th scope="col" className={cn(TH, TH_LINE, 'w-28 text-right')}>Amount</th>
                   <th scope="col" className={cn(TH, TH_LINE, 'w-14 text-right')}>GST%</th>
-                  <th scope="col" className={cn(TH, 'w-10')} aria-label="Remove" />
+                  <th scope="col" className={cn(TH, 'w-20')} aria-label="Actions" />
                 </tr>
               </thead>
               <tbody>
@@ -567,7 +632,12 @@ export function NotesPage() {
                       <td className={cn(TD, NUM, 'font-semibold')}>{money(l.price ?? 0)}</td>
                       <td className={cn(TD, NUM, 'font-bold text-slate-900 dark:text-slate-100')}>{money(noteItemAmount(l))}</td>
                       <td className={cn(TD, NUM, 'text-[12px] font-medium text-slate-600 dark:text-slate-400')}>{l.gstRate ?? 0}</td>
-                      <td className={cn(TD, 'text-center')}>
+                      <td className={cn(TD, 'text-center whitespace-nowrap')}>
+                        {canViewChallans && l.refInvNo && (
+                          <Button variant="ghost" size="icon" className="size-7" onClick={() => setPreviewInv(l.refInvNo!)} title={`View challan ${l.refInvNo}`} aria-label={`View challan ${l.refInvNo}`}>
+                            <ArrowUpRight className="size-4" />
+                          </Button>
+                        )}
                         <Button variant="ghost" size="icon" className="size-7 text-destructive hover:text-destructive" onClick={() => removeLine(i)} aria-label={`Remove line ${i + 1}`}>
                           <Trash2 className="size-4" />
                         </Button>
@@ -609,6 +679,9 @@ export function NotesPage() {
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
                       <span className="text-[13.5px] font-extrabold tabular-nums">{money(noteItemAmount(l))}</span>
+                      {canViewChallans && l.refInvNo && (
+                        <Button variant="ghost" size="icon" className="size-8" onClick={() => setPreviewInv(l.refInvNo!)} aria-label={`View challan ${l.refInvNo}`}><ArrowUpRight className="size-4" /></Button>
+                      )}
                       <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => removeLine(i)} aria-label={`Remove line ${i + 1}`}><Trash2 className="size-4" /></Button>
                     </div>
                   </div>
@@ -620,6 +693,7 @@ export function NotesPage() {
       </div>
 
       <NoteDirectoryDialog open={dirOpen} onOpenChange={setDirOpen} mode={mode} onEdit={loadForEdit} onDelete={del} canDelete={can('note:delete')} canPrint={can('note:print')} confirm={confirm} />
+      <ChallanPreviewDialog code={previewInv} onClose={() => setPreviewInv(null)} />
     </div>
   );
 }

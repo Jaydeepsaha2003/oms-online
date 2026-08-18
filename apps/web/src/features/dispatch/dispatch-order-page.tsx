@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Camera, CalendarClock, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Filter, Flame, Hourglass, Loader2, Lock, Package, PackageCheck, RotateCcw, TriangleAlert, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { ALL_PERMISSIONS, DISPATCH_EXPORT_COLUMNS, qtyOrderForCategory, type DispatchStatus, type PendingLineDto, type QtyField } from '@oms/shared';
+import { ALL_PERMISSIONS, DISPATCH_EXPORT_COLUMNS, DISPATCH_RATE_EXPORT_COLUMN_IDS, qtyOrderForCategory, type DispatchStatus, type PendingLineDto, type QtyField } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn, shortOrderCode } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
@@ -28,8 +28,11 @@ import { Switch } from '@/components/ui/switch';
 import { exportPendingDispatch, useCreateDispatch, useDispatchPhotoCheck, useLineLock, usePendingFilterOptions, usePendingOrders } from './use-dispatch';
 import { useDispatchDate } from './use-dispatch-date';
 
-/** {@link DISPATCH_EXPORT_COLUMNS} reshaped for the export dialog's `{id, label}` prop. */
+/** {@link DISPATCH_EXPORT_COLUMNS} reshaped for the export dialog's `{id, label}` prop.
+ *  The ₹ columns are only offered to users with `dispatch:viewrates` (the API
+ *  drops them regardless). */
 const EXPORT_COLUMN_OPTIONS = DISPATCH_EXPORT_COLUMNS.map((c) => ({ id: c.id, label: c.header }));
+const EXPORT_COLUMN_OPTIONS_NO_RATES = EXPORT_COLUMN_OPTIONS.filter((c) => !DISPATCH_RATE_EXPORT_COLUMN_IDS.includes(c.id));
 const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? 0 : Number(s));
 const qty = (v: number | null) => (v ? v.toLocaleString('en-IN') : '—');
 
@@ -755,7 +758,7 @@ export function DispatchOrderPage() {
       <ExportColumnsDialog
         open={exportDialogOpen}
         onOpenChange={setExportDialogOpen}
-        columns={EXPORT_COLUMN_OPTIONS}
+        columns={canViewRates ? EXPORT_COLUMN_OPTIONS : EXPORT_COLUMN_OPTIONS_NO_RATES}
         storageKey="oms:dispatch-pending-export-columns:v1"
         onExport={onExport}
         exporting={exporting}

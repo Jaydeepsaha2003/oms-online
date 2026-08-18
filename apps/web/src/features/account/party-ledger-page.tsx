@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   CalendarRange,
   ChevronLeft,
@@ -136,25 +136,58 @@ function Balance({ net, className }: { net: number; className?: string }) {
   );
 }
 
+/** Filters kept in the URL rather than in component state. "View challan"
+ *  leaves this route, so the page unmounts; on Back it mounts fresh and plain
+ *  useState comes back empty — the party, the dates and the mode you had set
+ *  were gone. The query string survives that trip (Back restores the entry's
+ *  full URL), and makes a ledger view shareable as a bonus. Writes are
+ *  `replace`, so changing a filter never adds a history step of its own —
+ *  Back still means "leave the ledger", not "undo my last filter". */
+function useLedgerFilters() {
+  const [params, setParams] = useSearchParams();
+  const get = (key: string, fallback: string) => params.get(key) ?? fallback;
+  const filters = {
+    party: get('party', ''),
+    agent: get('agent', ''),
+    from: get('from', ymd(fyStart(new Date()))),
+    to: get('to', ymd(new Date())),
+    mode: get('mode', 'BOTH') as 'BOTH' | 'B' | 'C',
+    voucherType: get('vtype', ''),
+    preset: get('preset', ''),
+    showBalance: params.get('balance') === '1',
+  };
+  /** One writer for the whole set: several filters move together (a preset sets
+   *  from+to+preset, picking a party clears the agent), and separate setters
+   *  would each compute from the same pre-update query string and clobber one
+   *  another. */
+  const patch = (changes: Partial<typeof filters>) => {
+    const next = new URLSearchParams(params);
+    const write = (key: string, value: string) => (value ? next.set(key, value) : next.delete(key));
+    if (changes.party !== undefined) write('party', changes.party);
+    if (changes.agent !== undefined) write('agent', changes.agent);
+    if (changes.from !== undefined) write('from', changes.from);
+    if (changes.to !== undefined) write('to', changes.to);
+    if (changes.mode !== undefined) write('mode', changes.mode === 'BOTH' ? '' : changes.mode);
+    if (changes.voucherType !== undefined) write('vtype', changes.voucherType);
+    if (changes.preset !== undefined) write('preset', changes.preset);
+    if (changes.showBalance !== undefined) write('balance', changes.showBalance ? '1' : '');
+    setParams(next, { replace: true });
+  };
+  return { ...filters, patch, clear: () => setParams(new URLSearchParams(), { replace: true }) };
+}
+
 export function PartyLedgerPage() {
   const navigate = useNavigate();
   const { can } = usePermissions();
   const canPrintLedger = can('partyledger:print');
   const { data: lookups } = usePartyLedgerLookups();
 
-  const [party, setParty] = useState('');
-  const [agent, setAgent] = useState('');
-  const [from, setFrom] = useState(() => ymd(fyStart(new Date())));
-  const [to, setTo] = useState(() => ymd(new Date()));
-  const [mode, setMode] = useState<'BOTH' | 'B' | 'C'>('BOTH');
-  const [voucherType, setVoucherType] = useState('');
+  // Off by default (`balance=1` in the URL turns it on): the running Balance per
+  // transaction is a detail, not something every glance at the ledger needs —
+  // Closing Balance (the actual bottom line) always shows regardless.
+  const { party, agent, from, to, mode, voucherType, preset, showBalance, patch, clear } = useLedgerFilters();
   const [receiptFor, setReceiptFor] = useState<PartyLedgerRow | null>(null);
   const [dateOpen, setDateOpen] = useState(false);
-  const [preset, setPreset] = useState('');
-  // Off by default: the running Balance per transaction is a detail, not
-  // something every glance at the ledger needs — Closing Balance (the actual
-  // bottom line) always shows regardless of this toggle.
-  const [showBalance, setShowBalance] = useState(false);
 
   const custByName = useMemo(() => new Map((lookups?.customers ?? []).map((c) => [c.name, c.id])), [lookups]);
   const partyOptions = useMemo(() => (lookups?.customers ?? []).map((c) => c.name), [lookups]);
@@ -184,20 +217,10 @@ export function PartyLedgerPage() {
       ? footer.closingBankNet * (mode === 'C' ? 0 : 1) + footer.closingCashNet * (mode === 'B' ? 0 : 1)
       : null;
 
-  const onReset = () => {
-    setParty('');
-    setAgent('');
-    setMode('BOTH');
-    setVoucherType('');
-    setPreset('');
-    setFrom(ymd(fyStart(new Date())));
-    setTo(ymd(new Date()));
-  };
+  const onReset = () => clear();
   const applyPreset = (p: Preset) => {
     const { from: f, to: t } = presetRange(p);
-    setFrom(ymd(f));
-    setTo(ymd(t));
-    setPreset(p);
+    patch({ from: ymd(f), to: ymd(t), preset: p });
   };
 
   const exportUrl = (fmt: 'pdf' | 'xlsx') => {
@@ -354,11 +377,7 @@ export function PartyLedgerPage() {
         <DateRangeCalendar
           from={from}
           to={to}
-          onChange={(f, t) => {
-            setFrom(f);
-            if (t) setTo(t);
-            setPreset('');
-          }}
+          onChange={(f, t) => patch({ from: f, ...(t ? { to: t } : {}), preset: '' })}
         />
       </div>
       <div className="flex items-center justify-between gap-2 border-t pt-2">
@@ -386,20 +405,14 @@ export function PartyLedgerPage() {
           <FitSelect
             label="Customer"
             value={party}
-            onChange={(v) => {
-              setParty(v);
-              if (v) setAgent('');
-            }}
+            onChange={(v) => patch({ party: v, ...(v ? { agent: '' } : {}) })}
             options={partyOptions}
             className="w-full sm:w-52"
           />
           <FitSelect
             label="Agent"
             value={agent === 'All' ? '' : agent}
-            onChange={(v) => {
-              setAgent(v);
-              if (v) setParty('');
-            }}
+            onChange={(v) => patch({ agent: v, ...(v ? { party: '' } : {}) })}
             options={agentOptions.filter((a) => a !== 'All')}
             className="w-full sm:w-40"
           />
@@ -423,7 +436,7 @@ export function PartyLedgerPage() {
           <FitSelect
             label="Voucher type"
             value={voucherType}
-            onChange={setVoucherType}
+            onChange={(v) => patch({ voucherType: v })}
             options={data?.voucherTypes ?? []}
             className="w-full sm:w-40"
           />
@@ -438,7 +451,7 @@ export function PartyLedgerPage() {
               <button
                 key={m}
                 type="button"
-                onClick={() => setMode(m)}
+                onClick={() => patch({ mode: m })}
                 aria-pressed={mode === m}
                 className={cn(
                   'cursor-pointer rounded-[3px] px-2.5 py-1 text-[12px] font-semibold transition-colors duration-150',
@@ -463,7 +476,7 @@ export function PartyLedgerPage() {
             )}
             title={running ? undefined : 'Clear the voucher type filter to see running balances'}
           >
-            <Switch checked={showBalance && !!running} onCheckedChange={setShowBalance} disabled={!running} /> Show Balance
+            <Switch checked={showBalance && !!running} onCheckedChange={(v) => patch({ showBalance: v })} disabled={!running} /> Show Balance
           </label>
 
           <Button variant="outline" className="h-9 rounded-[4px] text-[12.5px] font-semibold" onClick={onReset}>
@@ -649,7 +662,7 @@ export function PartyLedgerPage() {
                         {r.voucherNo}
                       </td>
                       <td className={cn(TD, 'text-center')}>
-                        <StatusChip status={r.status} />
+                        <StatusChip status={r.status} side={mode === 'BOTH' ? r.pendingSide : null} />
                       </td>
                       <td className={cn(TD, 'whitespace-nowrap')}>
                         <DueFrom text={r.dueFrom} />
@@ -779,7 +792,7 @@ export function PartyLedgerPage() {
                     </div>
                     {(r.status || r.dueFrom) && (
                       <div className="mt-1 flex items-center gap-1.5">
-                        <StatusChip status={r.status} />
+                        <StatusChip status={r.status} side={mode === 'BOTH' ? r.pendingSide : null} />
                         <DueFrom text={r.dueFrom} />
                       </div>
                     )}
@@ -955,8 +968,12 @@ function FootRow({
  * The one-letter settlement chip this system has always used: F = fully paid,
  * P = partially paid, D = due. Kept exactly as-is — only the palette gained dark
  * variants — because it's the shorthand the ledger is read by.
+ *
+ * A part-paid bill additionally names the leg the money is still owed on —
+ * `P (B)` / `P (C)` — but only when exactly ONE leg is open. With both still
+ * open there is no single answer, so it stays a plain P rather than pick a side.
  */
-function StatusChip({ status }: { status: string }) {
+function StatusChip({ status, side }: { status: string; side?: 'B' | 'C' | null }) {
   if (status === 'F')
     return (
       <span className="rounded bg-emerald-100 px-1.5 text-[11.5px] font-bold text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300" title="Fully paid">
@@ -967,8 +984,11 @@ function StatusChip({ status }: { status: string }) {
     // Pale like the other two, but sky rather than amber: the rows behind it
     // are amber-banded, so a pale amber chip would disappear into the banding.
     return (
-      <span className="rounded bg-sky-100 px-1.5 text-[11.5px] font-bold text-sky-700 dark:bg-sky-400/15 dark:text-sky-300" title="Partially paid">
-        P
+      <span
+        className="rounded bg-sky-100 px-1.5 text-[11.5px] font-bold whitespace-nowrap text-sky-700 dark:bg-sky-400/15 dark:text-sky-300"
+        title={side ? `Partially paid — ${side === 'B' ? 'bank' : 'cash'} balance still pending` : 'Partially paid'}
+      >
+        P{side ? <span className="ml-0.5 opacity-75">({side})</span> : null}
       </span>
     );
   if (status === 'D')

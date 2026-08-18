@@ -34,9 +34,10 @@ export class BulkTransRateDto {
   @MinLength(1)
   customerName!: string;
 
-  /** [{ category, type, transportName?, rate }] — coerced in the service. */
+  /** [{ id?, category, type, transportName?, rate }] — coerced in the service.
+   *  `id` targets one exact existing row (see TransRateBulkInput). */
   @IsArray()
-  rates!: { category: string; type: string; transportName?: string | null; rate: number | null }[];
+  rates!: { id?: number | null; category: string; type: string; transportName?: string | null; rate: number | null }[];
 }
 
 export class TransRateQueryDto extends PaginationDto {

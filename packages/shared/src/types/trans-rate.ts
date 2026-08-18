@@ -25,10 +25,13 @@ export interface TransRateInput {
 }
 
 /** Save many category×type rates for one customer in a single call (the grid editor).
- *  Upsert key here = customer + category + type (transporter/rate are updated). */
+ *  Pass `id` to update one exact row — the same customer + category + type can
+ *  exist more than once (one row per transporter), and without an id the server
+ *  can only guess which of them you meant. With no `id` the key is
+ *  customer + category + type, preferring the row whose transporter matches. */
 export interface TransRateBulkInput {
   customerName: string;
-  rates: { category: string; type: string; transportName?: string | null; rate: number | null }[];
+  rates: { id?: number | null; category: string; type: string; transportName?: string | null; rate: number | null }[];
 }
 
 export interface TransRateQuery extends PaginationQuery {

@@ -367,6 +367,7 @@ export class PartyLedgerService {
       dueFrom: '',
       status: '',
       pendingAmount: 0,
+      pendingSide: null,
       bankDr: rr.bankDr,
       bankCr: rr.bankCr,
       cashDr: rr.cashDr,
@@ -383,11 +384,13 @@ export class PartyLedgerService {
       // A confirmed invoice without a pending snapshot is treated as wholly due.
       base.status = invoiceAmt > EPS ? 'D' : '';
       base.pendingAmount = r0(Math.max(0, invoiceAmt));
+      base.pendingSide = this.pendingSideOf(rr.bankDr, rr.cashDr);
       base.dueFrom = this.dueFromText(dueDate, today);
       return base;
     }
     const pend = Math.max(0, mode === 'B' ? info.bankBal : mode === 'C' ? info.cashBal : info.bankBal + info.cashBal);
     base.pendingAmount = r0(pend);
+    base.pendingSide = this.pendingSideOf(info.bankBal, info.cashBal);
     if (pend <= EPS) {
       base.status = 'F';
       const paid = lastRec.get(rr.voucherNo);
@@ -400,6 +403,15 @@ export class PartyLedgerService {
       base.dueFrom = this.dueFromText(dueDate, today);
     }
     return base;
+  }
+
+  /** 'B' / 'C' when the money still owed sits on exactly one leg, else null. */
+  private pendingSideOf(bank: number, cash: number): 'B' | 'C' | null {
+    const onBank = bank > EPS;
+    const onCash = cash > EPS;
+    if (onBank && !onCash) return 'B';
+    if (onCash && !onBank) return 'C';
+    return null;
   }
 
   private dueFromText(dueDate: Date, today: Date): string {
@@ -1009,7 +1021,7 @@ async function buildLedgerXlsx(res: PartyLedgerResult, mode: string, company: st
     { header: 'Particulars', width: 38, align: 'left', get: (r) => r.particulars },
     { header: 'Vch Type', width: 16, align: 'left', get: (r) => r.voucherType },
     { header: 'Vch No', width: 16, align: 'left', get: (r) => r.voucherNo },
-    { header: 'St', width: 5, align: 'center', get: (r) => r.status || '' },
+    { header: 'St', width: 6, align: 'center', get: (r) => (r.status === 'P' && r.pendingSide ? `P(${r.pendingSide})` : r.status || '') },
     { header: 'Due From', width: 12, align: 'left', get: (r) => r.dueFrom || '' },
     ...legs.flatMap((l): Col[] => [
       { header: 'Debit', group: l.group, width: 15, align: 'right', num: true, get: (r) => q(r[l.dr]), bal: (b) => b[l.dr] },

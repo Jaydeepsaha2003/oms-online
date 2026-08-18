@@ -189,6 +189,16 @@ export function useChallan(id?: number) {
   });
 }
 
+/** A single saved challan by its invoice number — for screens that only carry a
+ *  Ref Inv (the note preview), not the challan's row id. */
+export function useChallanByCode(code?: string | null) {
+  return useQuery({
+    queryKey: [...KEY, 'by-code', code],
+    queryFn: () => http.get<ChallanDto>('/challans/by-code', { params: { code } }),
+    enabled: Boolean(code),
+  });
+}
+
 /** Load a saved challan for editing (stored header + lines + the customer's add-more pool).
  *  Same reasoning as {@link useChallanDraft}: opening an edit should always be a
  *  real fetch, not a possibly-stale cache hit. */

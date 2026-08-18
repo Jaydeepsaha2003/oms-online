@@ -254,6 +254,8 @@ export interface NoteBreakup {
   tax: number;
   /** Grand total (rounded to whole rupees). */
   total: number;
+  /** The whole-rupee rounding baked into `total` (+ = rounded up). */
+  roundOff: number;
   /** BANK portion. */
   b: number;
   /** CASH portion. */
@@ -267,6 +269,24 @@ export interface NoteBreakup {
  *   • Full bill   → billingRate ≤ 0 → whole challan billed on bank (B).
  *   • Half bill   → billingRate > 0 → B = rate × billable-kgs (+GST), rest on C.
  */
+/**
+ * The rounding adjustment sitting inside a note's TOTAL: the printed total minus
+ * the lines above it. One helper so the entry screen, the PDF and a re-opened
+ * note can never show a different figure.
+ */
+export function noteRoundOff(parts: {
+  tAmt: number;
+  packing?: number | null;
+  freight?: number | null;
+  pouch?: number | null;
+  tax?: number | null;
+  total: number;
+}): number {
+  const beforeRounding =
+    parts.tAmt + (parts.packing ?? 0) + (parts.freight ?? 0) + (parts.pouch ?? 0) + (parts.tax ?? 0);
+  return round2(parts.total - beforeRounding);
+}
+
 export function computeNoteBreakup(input: NoteBreakupInput): NoteBreakup {
   const amounts = input.items.map((it) => noteItemAmount(it));
   const tAmt = round2(amounts.reduce((a, b) => a + b, 0));
@@ -325,5 +345,8 @@ export function computeNoteBreakup(input: NoteBreakupInput): NoteBreakup {
     b = total;
   }
 
-  return { amounts, tAmt, gstPercent, tax: round2(effTax), total, b, c };
+  // Round off against the ROUNDED tax, i.e. the numbers actually on screen, so
+  // the column adds up exactly for whoever checks it by hand.
+  const tax = round2(effTax);
+  return { amounts, tAmt, gstPercent, tax, total, b, c, roundOff: noteRoundOff({ tAmt, packing, freight, pouch, tax, total }) };
 }

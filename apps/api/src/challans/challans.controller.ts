@@ -138,6 +138,14 @@ export class ChallansController {
     return { ok: true };
   }
 
+  /** Invoice number goes in the query, not the path: codes carry slashes
+   *  ("SSS/26-27/01") and an encoded %2F is mangled by some proxies. */
+  @Get('by-code')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  getByCode(@Query('code') code: string) {
+    return this.challans.findByCode(code);
+  }
+
   @Get(':id')
   @Permissions(perm(R, ACTIONS.VIEW))
   get(@Param('id', ParseIntPipe) id: number) {

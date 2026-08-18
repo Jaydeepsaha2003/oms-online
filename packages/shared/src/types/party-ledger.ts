@@ -31,6 +31,10 @@ export interface PartyLedgerRow {
   status: LedgerRowStatus;
   /** Outstanding amount for the selected Bank/Cash print mode. */
   pendingAmount: number;
+  /** Which leg the outstanding sits on when only ONE of them still carries a
+   *  balance — 'B' bank, 'C' cash. null when both legs are still open (or
+   *  neither is), because then naming a side would be a half-truth. */
+  pendingSide: 'B' | 'C' | null;
   bankDr: number;
   bankCr: number;
   cashDr: number;

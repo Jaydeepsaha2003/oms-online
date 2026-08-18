@@ -1,6 +1,6 @@
 import { useMemo, useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CalendarRange, Loader2, X } from 'lucide-react';
+import { CalendarRange, Loader2, Sigma, X } from 'lucide-react';
 import type { DaybookDayGroup, DaybookRow } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
@@ -90,7 +90,21 @@ function FitSelect({
 
 /** One voucher line — date is blank after the first row of its group (Tally never
  *  repeats the date down a day's block). */
-function DayRows({ group, showDate, canViewChallan, onOpenChallan }: { group: DaybookDayGroup; showDate: boolean; canViewChallan: boolean; onOpenChallan: (row: DaybookRow) => void }) {
+function DayRows({
+  group,
+  showDate,
+  canViewChallan,
+  onOpenChallan,
+  subtotals,
+}: {
+  group: DaybookDayGroup;
+  showDate: boolean;
+  canViewChallan: boolean;
+  onOpenChallan: (row: DaybookRow) => void;
+  /** Off hides this day's "Day total" strip — the vouchers then read as one
+   *  continuous list. The Grand Total is unaffected either way. */
+  subtotals: boolean;
+}) {
   return (
     <>
       {group.rows.map((r, i) => {
@@ -129,12 +143,14 @@ function DayRows({ group, showDate, canViewChallan, onOpenChallan }: { group: Da
           </tr>
         );
       })}
-      <tr className="bg-amber-100/80 font-bold dark:bg-amber-400/10">
-        <td className={TD} colSpan={4} />
-        <td className={cn(TD, 'text-[11.5px] font-bold tracking-wide text-amber-950 uppercase dark:text-amber-100')}>Day total</td>
-        <td className={cn(TD, NUM, 'font-bold')}>{moneyOrDash(group.totalDr)}</td>
-        <td className={cn(TD, NUM, 'font-bold')}>{moneyOrDash(group.totalCr)}</td>
-      </tr>
+      {subtotals && (
+        <tr className="bg-amber-100/80 font-bold dark:bg-amber-400/10">
+          <td className={TD} colSpan={4} />
+          <td className={cn(TD, 'text-[11.5px] font-bold tracking-wide text-amber-950 uppercase dark:text-amber-100')}>Day total</td>
+          <td className={cn(TD, NUM, 'font-bold')}>{moneyOrDash(group.totalDr)}</td>
+          <td className={cn(TD, NUM, 'font-bold')}>{moneyOrDash(group.totalCr)}</td>
+        </tr>
+      )}
     </>
   );
 }
@@ -236,6 +252,18 @@ export function DaybookPage() {
 
           <FitSelect label="Voucher type" value={voucherType} onChange={setVoucherType} options={data?.voucherTypes ?? []} className="w-full sm:w-44" />
 
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-pressed={subtotals}
+            onClick={() => setSubtotals((v) => !v)}
+            title={subtotals ? 'Hide the per-day subtotal rows' : 'Show a subtotal row under each day'}
+            className={cn(CONTROL, 'shrink-0 px-2.5 font-semibold', subtotals && CONTROL_ON)}
+          >
+            <Sigma className="size-3.5" /> Subtotals {subtotals ? 'ON' : 'OFF'}
+          </Button>
+
           {hasFilters && (
             <Button variant="ghost" size="sm" className="h-9 rounded-[4px] text-[12.5px] font-semibold text-amber-700 hover:bg-amber-50 hover:text-amber-900 dark:text-amber-300 dark:hover:bg-amber-400/10" onClick={resetFilters}>
               <X className="size-3.5" /> Reset
@@ -291,7 +319,9 @@ export function DaybookPage() {
                   </td>
                 </tr>
               ) : (
-                data.groups.map((g) => <DayRows key={g.date} group={g} showDate canViewChallan={canViewChallan} onOpenChallan={onOpenChallan} />)
+                data.groups.map((g) => (
+                  <DayRows key={g.date} group={g} showDate canViewChallan={canViewChallan} onOpenChallan={onOpenChallan} subtotals={subtotals} />
+                ))
               )}
             </tbody>
             {!!data?.groups.length && (
@@ -347,10 +377,12 @@ export function DaybookPage() {
                     );
                   })}
                 </div>
-                <div className="flex items-center justify-between border-t border-amber-300/60 bg-amber-100/80 px-3 py-1.5 text-[11.5px] font-bold uppercase tracking-wide text-amber-950 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-100">
-                  <span>Day total</span>
-                  <span className="tabular-nums normal-case">{moneyOrDash(g.totalDr)} / {moneyOrDash(g.totalCr)}</span>
-                </div>
+                {subtotals && (
+                  <div className="flex items-center justify-between border-t border-amber-300/60 bg-amber-100/80 px-3 py-1.5 text-[11.5px] font-bold uppercase tracking-wide text-amber-950 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-100">
+                    <span>Day total</span>
+                    <span className="tabular-nums normal-case">{moneyOrDash(g.totalDr)} / {moneyOrDash(g.totalCr)}</span>
+                  </div>
+                )}
               </div>
             ))
           )}

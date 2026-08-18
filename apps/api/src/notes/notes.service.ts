@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import {
   computeNoteBreakup,
+  noteRoundOff,
   type NoteDirectoryRow,
   type NoteDto,
   type NoteMode,
@@ -771,6 +772,7 @@ function buildNoteDoc(c: NoteDto): TDocumentDefinitions {
     line('Packing', money(c.packing)),
     line('Box / Pouch', money(c.pouch)),
     line(`GST${c.gst ? ` @ ${c.gst}%` : ''}`, money(c.tax)),
+    line('Round Off', money(noteRoundOff({ tAmt, packing: c.packing, freight: c.freight, pouch: c.pouch, tax: c.tax, total }))),
     line('TOTAL', money(total), { bold: true, color: BLUE }),
     line('B (Bank)', money(c.b), { color: '#1D4ED8' }),
     line('C (Cash)', money(c.c), { color: '#15803D' }),

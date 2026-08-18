@@ -513,6 +513,14 @@ export class ChallansService {
     return this.map(row);
   }
 
+  /** By invoice number. Lets a screen holding only a Ref Inv (the Credit/Debit
+   *  Note lines) pull up the sale it refers to without tracking its row id. */
+  async findByCode(code: string): Promise<ChallanDto> {
+    const row = await this.prisma.challan.findUnique({ where: { code }, include: { items: true } });
+    if (!row) throw new NotFoundException('Challan not found');
+    return this.map(row);
+  }
+
   /** Customer GST-by-category + freight/packing rate resolver (Form14 grid subqueries). */
   /**
    * Rate resolvers for MANY parties at once.

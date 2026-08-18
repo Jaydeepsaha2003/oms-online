@@ -559,6 +559,10 @@ function TransRateDialog({ rate, onClose }: { rate: TransRateDto | null; onClose
         customerName: customer.trim(),
         rates: [
           {
+            // Edit updates THIS row — a customer/category/type can have several
+            // rows (one per transporter), so the id is what keeps the save on
+            // the row you opened.
+            id: rate?.id ?? null,
             category: category.trim(),
             type: type.trim(),
             transportName: transportName.trim() || null,
