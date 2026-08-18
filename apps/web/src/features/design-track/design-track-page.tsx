@@ -251,13 +251,16 @@ export function DesignTrackPage() {
 
       {/* Grid. Header stays put while scrolling the rows. */}
       <div className="max-h-[min(70vh,44rem)] overflow-auto rounded-lg border">
-        <table className="w-full min-w-[62rem] border-separate border-spacing-0 text-[13px]">
+        <table className="w-full min-w-[68rem] border-separate border-spacing-0 text-[13px]">
           <thead>
             <tr className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:border-b [&_th]:bg-gradient-to-b [&_th]:from-blue-800 [&_th]:to-indigo-800 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:text-[11.5px] [&_th]:font-extrabold [&_th]:tracking-wide [&_th]:text-white [&_th]:uppercase">
               <th className="w-24">Order Date</th>
               <th>Customer Name</th>
               <th>Product Name</th>
+              {/* Type is the parent being tracked ("DL+TOOL"); name is its child
+                  variant ("ZEBRA"), blank on lines that were never given one. */}
               <th className="w-28">Design Type</th>
+              <th className="w-28">Design Name</th>
               <th className="w-20 text-right">Bags</th>
               <th>Comment</th>
               <th className="w-24 text-right">Kalwat</th>
@@ -267,13 +270,13 @@ export function DesignTrackPage() {
           <tbody className="[&_td]:border-b [&_td]:px-3 [&_td]:py-1">
             {isLoading ? (
               <tr>
-                <td colSpan={8} className="text-muted-foreground py-10 text-center">
+                <td colSpan={9} className="text-muted-foreground py-10 text-center">
                   <Loader2 className="mx-auto size-5 animate-spin" />
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={8} className="text-muted-foreground py-10 text-center text-sm">
+                <td colSpan={9} className="text-muted-foreground py-10 text-center text-sm">
                   {nothingTracked ? 'Nothing tracked yet.' : 'No pending lines for the tracked designs.'}
                 </td>
               </tr>
@@ -284,6 +287,7 @@ export function DesignTrackPage() {
                   <td className="font-semibold">{r.customerName}</td>
                   <td className="font-semibold">{r.productName || '—'}</td>
                   <td className="whitespace-nowrap">{r.designType || '—'}</td>
+                  <td className="whitespace-nowrap">{r.designName || '—'}</td>
                   <td className="text-right font-medium tabular-nums">{r.bags.toFixed(2)}</td>
                   <td className="text-muted-foreground max-w-[16rem] truncate" title={r.comment ?? undefined}>
                     {r.comment || ''}
@@ -307,7 +311,8 @@ export function DesignTrackPage() {
           {rows.length > 0 && (
             <tfoot>
               <tr className="[&_td]:sticky [&_td]:bottom-0 [&_td]:border-t-2 [&_td]:border-slate-300 [&_td]:bg-slate-100 [&_td]:px-3 [&_td]:py-1.5 [&_td]:font-bold dark:[&_td]:border-white/20 dark:[&_td]:bg-slate-800">
-                <td colSpan={4} className="text-[11.5px] tracking-wide uppercase">
+                {/* Spans Order Date → Design Name, so Bags still lines up. */}
+                <td colSpan={5} className="text-[11.5px] tracking-wide uppercase">
                   Page total
                 </td>
                 <td className="text-right tabular-nums">{totals.bags.toFixed(2)}</td>

@@ -1,6 +1,6 @@
 import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   isUncommittedOrder,
@@ -268,11 +268,11 @@ export class OrdersService {
     id: number,
     dto: UpdateOrderDto,
     actorName?: string | null,
-    opts?: { revivingQuotation?: boolean },
+    opts?: { revivingQuotation?: boolean; isSuperAdmin?: boolean },
   ): Promise<OrderDto> {
     const current = await this.prisma.order.findUnique({
       where: { id },
-      select: { status: true, quotationSource: { select: { code: true } } },
+      select: { status: true, completionDate: true, quotationSource: { select: { code: true } } },
     });
     if (!current) throw new NotFoundException('Order not found.');
     if (current.status === 'QUOTED' && !opts?.revivingQuotation) {
@@ -282,6 +282,7 @@ export class OrdersService {
       );
     }
     const data = await this.toHeaderData(dto as CreateOrderDto);
+    await this.assertMayRescheduleAfterDispatch(id, current.completionDate, data.completionDate ?? null, opts?.isSuperAdmin ?? false);
     // Bookings that were already drawn into this order — they may lose lines (which
     // frees their quantity) so they must be recomputed even if no line references
     // them any more.
@@ -317,7 +318,9 @@ export class OrdersService {
           designRate: true,
           rate: true,
           calField: true,
-          _count: { select: { dispatches: true } },
+          // The dispatch rows themselves, not just a count: the quantity guard
+          // below needs how much has actually shipped, per field.
+          dispatches: { select: { bags: true, pcs: true, gram: true, box: true, dispatchStatus: true } },
         },
       });
       const existingById = new Map(existing.map((e) => [e.id, e]));
@@ -331,27 +334,58 @@ export class OrdersService {
           kept.add(itemId);
           const current = existingById.get(itemId)!;
           const incoming = this.toItemData(it);
-          // A dispatched line's quantity/rate/product details are frozen — the
-          // dispatch already reflects what shipped. Only status (e.g. Cancel) and
-          // comment may still change; anything else must become a new line instead
-          // (see OrdersController's client-side "add as new item" recommendation).
-          if (current._count.dispatches > 0) {
-            const changed =
+          if (current.dispatches.length > 0) {
+            const label = current.productName || current.product || 'This item';
+            // WHAT was shipped, and at what price, is settled by the dispatch —
+            // changing the product, design, size or rate would rewrite history.
+            const identityChanged =
               current.product !== incoming.product ||
               current.designType !== incoming.designType ||
               current.psize !== incoming.psize ||
-              current.bags !== incoming.bags ||
-              current.pcs !== incoming.pcs ||
-              current.gram !== incoming.gram ||
-              current.box !== incoming.box ||
               current.productRate !== incoming.productRate ||
               current.designRate !== incoming.designRate ||
               current.rate !== incoming.rate ||
               current.calField !== incoming.calField;
-            if (changed) {
+            if (identityChanged) {
               throw new BadRequestException(
-                `"${current.productName || current.product || 'This item'}" has already been dispatched — its details can't be edited. Add the change as a new line instead.`,
+                `"${label}" has already been dispatched — its product, design and rate can't be edited. Add the change as a new line instead.`,
               );
+            }
+            // HOW MUCH was ordered may still move on a part-shipped line. Ordering
+            // 1.5 bags / 170 kgs, shipping 1.5 bags / 97 kgs and then finding the
+            // remaining 73 kgs needs another bag is ordinary; forcing that onto a
+            // second line splits one physical item in two on every report. Two
+            // limits keep the books straight — see each throw.
+            const qtyChanged =
+              current.bags !== incoming.bags ||
+              current.pcs !== incoming.pcs ||
+              current.gram !== incoming.gram ||
+              current.box !== incoming.box;
+            if (qtyChanged) {
+              // A fully-dispatched line is skipped by the pending pool, so raising
+              // it here would never reach the shop floor — it would just look edited.
+              if (current.dispatches.some((d) => d.dispatchStatus === 'FULLY DISPATCH')) {
+                throw new BadRequestException(
+                  `"${label}" is fully dispatched, so changing its quantity would have no effect on what still ships. Add the extra quantity as a new line instead.`,
+                );
+              }
+              const shipped = current.dispatches.reduce(
+                (a, d) => ({ bags: a.bags + (d.bags ?? 0), pcs: a.pcs + (d.pcs ?? 0), gram: a.gram + (d.gram ?? 0), box: a.box + (d.box ?? 0) }),
+                { bags: 0, pcs: 0, gram: 0, box: 0 },
+              );
+              // Dropping below what has already gone out would make the dispatch
+              // exceed the order and show a negative pending quantity.
+              const short = ([
+                ['Bags', incoming.bags, shipped.bags],
+                ['Pcs', incoming.pcs, shipped.pcs],
+                ['Kgs', incoming.gram, shipped.gram],
+                ['Box', incoming.box, shipped.box],
+              ] as const).find(([, want, sent]) => (want ?? 0) + 0.0001 < sent);
+              if (short) {
+                throw new BadRequestException(
+                  `"${label}" already has ${short[2]} ${short[0]} dispatched, so the order line can't be set to ${short[1] ?? 0}. Correct or delete that dispatch first.`,
+                );
+              }
             }
           }
           toUpdate.push({ where: { id: itemId }, data: { ...this.toItemData(it), ...this.photoUpdateNested(it) } });
@@ -362,7 +396,7 @@ export class OrdersService {
       const removed = existing.filter((e) => !kept.has(e.id));
       // Removing a line would cascade-delete its dispatches — refuse it and steer
       // the user to Cancel the line (which keeps the record) instead.
-      if (removed.some((e) => e._count.dispatches > 0)) {
+      if (removed.some((e) => e.dispatches.length > 0)) {
         throw new BadRequestException(
           'Cannot remove an order line that already has dispatches. Mark it Cancelled instead.',
         );
@@ -1011,6 +1045,40 @@ export class OrdersService {
   }
 
   // ── helpers ────────────────────────────────────────────────────────────────
+
+  /**
+   * Moving the completion (due) date once an order has started shipping is
+   * restricted to a super admin.
+   *
+   * The due date is not just a label: Pending Dispatch buckets lines as
+   * Due / Past Due / Over Due against it (see `dueStatusOf`), and the party
+   * ledger ages invoices by it. Pushing it out after goods have gone makes a
+   * late order read as on-time for everyone looking at those screens, so it is
+   * a deliberate, auditable act rather than an ordinary edit. Nothing changes
+   * before the first dispatch, or when the date is left alone.
+   */
+  private async assertMayRescheduleAfterDispatch(
+    orderId: number,
+    currentDate: Date | null,
+    // Prisma's input type widens this to `string | Date | null`, so accept both.
+    incomingDate: string | Date | null,
+    isSuperAdmin: boolean,
+  ): Promise<void> {
+    if (isSuperAdmin) return;
+    // Compare the calendar day, not the instant — the incoming value is parsed
+    // from a 'YYYY-MM-DD' string and needn't match the stored time exactly.
+    const day = (v: string | Date | null) => {
+      if (!v) return '';
+      const d = typeof v === 'string' ? new Date(v) : v;
+      return Number.isNaN(d.getTime()) ? '' : `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    };
+    if (day(currentDate) === day(incomingDate)) return;
+    const dispatched = await this.prisma.dispatch.count({ where: { orderItem: { orderId } } });
+    if (!dispatched) return;
+    throw new ForbiddenException(
+      'This order has already been dispatched, so its completion date is locked — only a System Administrator can change it now. Every other detail is still editable.',
+    );
+  }
 
   private async toHeaderData(dto: CreateOrderDto): Promise<Prisma.OrderUncheckedCreateInput> {
     const customerName = (uc(dto.customerName) ?? '') as string;

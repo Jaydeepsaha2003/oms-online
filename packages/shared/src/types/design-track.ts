@@ -18,9 +18,14 @@ export interface DesignTrackRow {
   orderDate: string;
   customerName: string;
   productName: string | null;
-  /** The tracked design type this line matched. */
+  /** The tracked design type this line matched — the PARENT, e.g. "DL+TOOL". */
   designType: string | null;
-  /** Bags ORDERED on the line — the figure Remaining is measured against. */
+  /** The design NAME chosen on the line — the CHILD of the type above, e.g.
+   *  "ZEBRA". Null when the line was never given one. Tracking never keys off
+   *  this; it is shown alongside the type so the shop floor knows which variant
+   *  of that design to make. */
+  designName: string | null;
+  /** Bags still PENDING on the line — the figure Remaining is measured against. */
   bags: number;
   comment: string | null;
   /** Processed so far, typed in by hand. Null = nothing entered yet. */

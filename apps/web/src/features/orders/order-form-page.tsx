@@ -13,7 +13,7 @@ import {
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRightLeft, BadgePercent, Camera, Check, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Lock, PackageOpen, Pencil, Plus, RotateCcw, Save, Settings2, Trash2, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { ORDER_PRIORITIES, RESOURCES, resolveSpecialRates, qtyOrderForCategory, type OrderInput, type QtyField } from '@oms/shared';
+import { ALL_PERMISSIONS, ORDER_PRIORITIES, RESOURCES, resolveSpecialRates, qtyOrderForCategory, type OrderInput, type QtyField } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useAutoSizePcs } from '@/lib/auto-size-pcs';
@@ -224,7 +224,8 @@ export function OrderFormPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const confirm = useConfirm();
-  const { can } = usePermissions();
+  const { can, permissions } = usePermissions();
+  const isSuperAdmin = permissions.includes(ALL_PERMISSIONS);
   const params = useParams<{ id?: string }>();
   const id = params.id ? Number(params.id) : undefined;
   const isEdit = id != null;
@@ -244,6 +245,13 @@ export function OrderFormPage() {
   const quotationQuery = useQuotation(docKind === 'quotation' ? id : undefined);
   const existing = docKind === 'quotation' ? quotationQuery.data : orderQuery.data;
   const isLoading = docKind === 'quotation' ? quotationQuery.isLoading : orderQuery.isLoading;
+  /** Completion date is frozen once anything has shipped — super admin excepted.
+   *  Quotations never dispatch, so this only ever applies to a saved order. */
+  const completionLocked =
+    isEdit &&
+    docKind === 'order' &&
+    !isSuperAdmin &&
+    (orderQuery.data?.items ?? []).some((it) => it.dispatched);
   const create = useCreateOrder();
   const update = useUpdateOrder(id ?? 0);
   const createQuotation = useCreateQuotation();
@@ -905,7 +913,11 @@ export function OrderFormPage() {
         calField === 'PCS' ? 'Enter Pcs — this item is billed by pieces' : 'Enter Kgs — this item is billed by weight',
       );
     }
-    const designName = noDesignNames ? 'NA' : entry.designName;
+    // Same rule as Order Modify: an empty (and disabled) name picker means the
+    // user chose nothing, so don't write 'NA' over a value the line already had.
+    // On imported lines this field carries the design TYPE ("WL+TOOL"), and
+    // losing it unlinks the line from Design Track and the photo rules.
+    const designName = noDesignNames ? entry.designName.trim() || 'NA' : entry.designName;
     // Duplicate guard: same item + design name already on the list → confirm.
     const dupIdx = items.findIndex(
       (i) =>
@@ -1531,13 +1543,31 @@ export function OrderFormPage() {
             <Label className="text-base">Order date <span className="text-rose-500">*</span></Label>
             <DatePicker value={orderDate} onChange={setOrderDate} clearable={false} />
           </div>
-          <div className="min-w-0 space-y-1.5" data-tabfield="completionDay">
-            <Label className="text-base">Com. days <span className="text-rose-500">*</span></Label>
+          {/* Once anything on this order has shipped, its completion date is the
+              yardstick Pending Dispatch and the party ledger age everything
+              against — so only a System Administrator may move it. The server
+              enforces this too; this only saves the user a failed save. */}
+          <div
+            className="min-w-0 space-y-1.5"
+            data-tabfield="completionDay"
+            // On the wrapper, not the select: a disabled control swallows hover,
+            // so a title on it would never surface.
+            title={
+              completionLocked
+                ? 'This order has already been dispatched — only a System Administrator can change the completion date now.'
+                : undefined
+            }
+          >
+            <Label className="text-base">
+              Com. days <span className="text-rose-500">*</span>
+              {completionLocked && <Lock className="ml-1 inline size-3 align-[-1px] text-slate-400" />}
+            </Label>
             <NativeSelect
               value={completionDay}
               onChange={setCompletionDay}
               options={completionDayOptions}
               placeholder="Days…"
+              disabled={completionLocked}
             />
           </div>
           <div className="min-w-0 space-y-1.5">

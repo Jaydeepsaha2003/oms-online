@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  isRealDesign,
   resolveLineDesignType,
   type DesignTrackFilterOptions,
   type DesignTrackList,
@@ -13,7 +14,23 @@ import { SettingsService } from '../settings/settings.service';
 import { DesignTrackQueryDto } from './dto/design-track.dto';
 
 /** A pending line paired with its hand-entered Kalwat, ready to become a row. */
-type Tracked = { line: PendingLineDto; kalwat: number | null };
+/**
+ * A pending line, its Kalwat, and the line's REAL design type.
+ *
+ * `designType` is carried separately because `line.designType` is not the type —
+ * it is the Dispatch screens' display string (see `dispatchDesign`), which
+ * prefers the human-readable design NAME and falls back to "NA". Matching
+ * tracked designs against that made every combination line ("WL+TOOL") arrive as
+ * "NA" and drop out, which emptied this grid entirely.
+ */
+type Tracked = {
+  line: PendingLineDto;
+  kalwat: number | null;
+  /** The design TYPE (parent, e.g. "DL+TOOL") — what tracking matches on. */
+  designType: string;
+  /** The design NAME (child, e.g. "ZEBRA"), or null when the line has none. */
+  designName: string | null;
+};
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
 
@@ -47,8 +64,26 @@ export class DesignTrackService {
     const matchesTracked = (type: string) =>
       tracked.has(type) || (type.includes('+') && type.split('+').some((part) => tracked.has(part.trim())));
 
-    const lines = (await this.dispatch.pendingPool()).filter((l) => {
-      const type = resolveLineDesignType(l, knownTypes);
+    const pending = await this.dispatch.pendingPool();
+    if (!pending.length) return [];
+
+    // Resolve the design type from the ORDER LINE's own columns, not from
+    // `line.designType` — that field holds the Dispatch screens' display string,
+    // which is the design NAME (or "NA") on natively-entered rows and therefore
+    // never matches a tracked type. Scoped to the pending ids, so this is one
+    // small lookup rather than a scan.
+    const raw = await this.prisma.orderItem.findMany({
+      where: { id: { in: pending.map((l) => l.orderItemId) } },
+      select: { id: true, design: true, designType: true, productName: true },
+    });
+    const typeById = new Map<number, string>();
+    for (const r of raw) {
+      const type = this.designTypeOf(r, knownTypes);
+      if (type != null) typeById.set(r.id, type);
+    }
+
+    const lines = pending.filter((l) => {
+      const type = typeById.get(l.orderItemId);
       return type != null && matchesTracked(type);
     });
     if (!lines.length) return [];
@@ -58,10 +93,51 @@ export class DesignTrackService {
       select: { orderItemId: true, kalwat: true },
     });
     const kalwatBy = new Map<number, number | null>(entries.map((e) => [e.orderItemId, e.kalwat]));
-    return lines.map((line) => ({ line, kalwat: kalwatBy.get(line.orderItemId) ?? null }));
+    return lines.map((line) => {
+      const type = typeById.get(line.orderItemId)!;
+      // `line.designType` is the Dispatch screens' display string (dispatchDesign),
+      // which resolves to the design NAME across all three column shapes — the
+      // same value Dispatch Order prints as "ZEBRA". "NA" means none was chosen.
+      const name = (line.designType ?? '').trim();
+      return {
+        line,
+        kalwat: kalwatBy.get(line.orderItemId) ?? null,
+        designType: type,
+        // Never let the name echo the type: on imported lines dispatchDesign
+        // falls back to the type itself, which would just duplicate the column.
+        designName: isRealDesign(name) && name.toUpperCase() !== type.toUpperCase() ? name : null,
+      };
+    });
   }
 
-  private toRow({ line, kalwat }: Tracked): DesignTrackRow {
+  /**
+   * The design TYPE (parent) for a line — "DL+TOOL", never the name "ZEBRA".
+   *
+   * Three shapes exist in this book:
+   *   design=TYPE, designType="NA"    imported, no name ever chosen
+   *   design=TYPE, designType=NAME    imported, a name chosen later
+   *   design=NAME, designType=TYPE    entered here
+   *
+   * The shared resolver reads `designType` first, so on the middle shape it
+   * returns the NAME as if it were the type. The tell is the product name: when
+   * it ends with the `design` value, that value is the type (the same test
+   * `dispatchDesign` uses to decide the mirror question). Checked here rather
+   * than in the shared helper because that one also drives the reference-photo
+   * rules, which are out of scope for this screen.
+   */
+  private designTypeOf(
+    line: { design: string | null; designType: string | null; productName: string | null },
+    knownTypes: ReadonlySet<string>,
+  ): string | null {
+    const design = (line.design ?? '').trim();
+    const productName = (line.productName ?? '').toUpperCase();
+    if (design && isRealDesign(design) && productName.endsWith(` ${design.toUpperCase()}`)) {
+      return design.toUpperCase();
+    }
+    return resolveLineDesignType(line, knownTypes);
+  }
+
+  private toRow({ line, kalwat, designType, designName }: Tracked): DesignTrackRow {
     return {
       orderItemId: line.orderItemId,
       orderId: line.orderId,
@@ -69,13 +145,21 @@ export class DesignTrackService {
       orderDate: line.orderDate,
       customerName: line.customerName,
       productName: line.productName,
-      designType: line.designType,
-      bags: line.bags,
+      // The parent type ("WL+TOOL") and its child name ("ZEBRA") as separate
+      // columns — never the dispatch display string, which reads "NA" here.
+      designType,
+      designName,
+      // The bags still TO DO, not the bags originally ordered. This grid lists
+      // pending work, so a line ordered for 2 with 1 already dispatched has 1
+      // left to design — showing 2 double-counted the dispatched bag and
+      // disagreed with Pending Dispatch for the same line.
+      bags: line.remBags,
       comment: line.comment,
       kalwat,
-      // Ordered bags minus what's been processed. Derived every read so an edit
-      // to the order's bags is reflected without touching the Kalwat entry.
-      remaining: r2(line.bags - (kalwat ?? 0)),
+      // Pending bags minus what's been processed. Derived every read so a later
+      // dispatch (or an edit to the order) is reflected without touching the
+      // Kalwat entry.
+      remaining: r2(line.remBags - (kalwat ?? 0)),
     };
   }
 
@@ -84,14 +168,15 @@ export class DesignTrackService {
     const search = query.search?.trim().toLowerCase();
     if (search) {
       out = out.filter((t) =>
-        [t.line.customerName, t.line.productName, t.line.designType, t.line.comment].some((v) =>
+        [t.line.customerName, t.line.productName, t.designType, t.designName, t.line.comment].some((v) =>
           (v ?? '').toLowerCase().includes(search),
         ),
       );
     }
     if (query.customer) out = out.filter((t) => t.line.customerName === query.customer);
     if (query.product) out = out.filter((t) => (t.line.productName ?? '') === query.product);
-    if (query.design) out = out.filter((t) => t.line.designType === query.design);
+    // Filters on the TYPE — the thing being tracked, not the name.
+    if (query.design) out = out.filter((t) => t.designType === query.design);
     return out;
   }
 
@@ -142,7 +227,7 @@ export class DesignTrackService {
     return {
       customers: distinct(poolFor('customer'), (t) => t.line.customerName),
       products: distinct(poolFor('product'), (t) => t.line.productName),
-      designs: distinct(poolFor('design'), (t) => t.line.designType),
+      designs: distinct(poolFor('design'), (t) => t.designType),
     };
   }
 
@@ -159,8 +244,10 @@ export class DesignTrackService {
     });
     // Echo the recomputed row so the grid's Remaining updates from the server's
     // own arithmetic rather than the client repeating the formula.
-    const line = (await this.dispatch.pendingPool()).find((l) => l.orderItemId === orderItemId);
-    if (!line) {
+    // Via pool() rather than pendingPool(), so the echoed row carries the same
+    // resolved design type the grid shows — and comes back through one code path.
+    const tracked = (await this.pool()).find((t) => t.line.orderItemId === orderItemId);
+    if (!tracked) {
       // The line left the pending pool (fully dispatched meanwhile). The entry is
       // still saved; report what we can so the caller isn't left guessing.
       return {
@@ -171,13 +258,14 @@ export class DesignTrackService {
         customerName: '',
         productName: null,
         designType: null,
+        designName: null,
         bags: 0,
         comment: null,
         kalwat,
         remaining: r2(-(kalwat ?? 0)),
       };
     }
-    return this.toRow({ line, kalwat });
+    return this.toRow(tracked);
   }
 
   /** Selected + available design types, for the Settings picker. */

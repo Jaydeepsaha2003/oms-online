@@ -950,10 +950,18 @@ function LineEditor({
   // Snapshot of the untouched form — Save stays disabled until something differs.
   const baseline = useRef(form);
   const dirty = JSON.stringify(form) !== JSON.stringify(baseline.current);
-  // Quantity/rate/product fields — the exact set the backend freezes once a line
-  // has been dispatched (status/priority/order-type/comment stay editable there).
-  const MATERIAL_KEYS = ['itemName', 'pCategory', 'subCategory', 'product', 'designType', 'psize', 'bags', 'pcs', 'gram', 'box', 'productRate', 'designRate'] as const;
-  const materialDirty = MATERIAL_KEYS.some((k) => form[k] !== baseline.current[k]);
+  // Mirrors the backend's split for a dispatched line. WHAT shipped and at what
+  // price is settled and stays frozen; HOW MUCH was ordered may still move while
+  // the line is only PART shipped — under-counting the bags for the kgs still to
+  // go is ordinary, and a second line would split one physical item in two.
+  const IDENTITY_KEYS = ['itemName', 'pCategory', 'subCategory', 'product', 'designType', 'psize', 'productRate', 'designRate'] as const;
+  const QTY_KEYS = ['bags', 'pcs', 'gram', 'box'] as const;
+  const identityDirty = IDENTITY_KEYS.some((k) => form[k] !== baseline.current[k]);
+  const qtyDirty = QTY_KEYS.some((k) => form[k] !== baseline.current[k]);
+  // A fully-dispatched line is skipped by the pending pool, so raising it would
+  // never reach the shop floor — the server refuses that one too.
+  const fullyDispatched = line.dispatchState === 'FULL';
+  const needsAddAsNew = identityDirty || (qtyDirty && fullyDispatched);
 
   // Match New Order: show one item-name form at a time, using either the
   // catalogue size or pieces-per-box as the visible prefix.
@@ -1175,7 +1183,13 @@ function LineEditor({
     subCategory: form.subCategory.trim() || null,
     product: form.product.trim() || null,
     designType: form.designType.trim() || null,
-    design: noDesignNames ? 'NA' : form.designName.trim() || null,
+    // When the design type has no names to pick from, the picker is empty AND
+    // disabled — so the user cannot have chosen anything, and writing 'NA' here
+    // destroyed whatever `design` already held. On imported lines (the majority
+    // of this book) that column holds the design TYPE, e.g. "WL+TOOL"; wiping it
+    // silently unlinked the line from Design Track and the reference-photo rules.
+    // Keep what is there; only fall back to 'NA' when it really is empty.
+    design: noDesignNames ? line.design?.trim() || 'NA' : form.designName.trim() || null,
     productName: form.itemName.trim() || [form.product.trim(), form.designType.trim()].filter(Boolean).join(' ') || null,
     psize: num(form.psize),
     ordType: form.ordType || null,
@@ -1197,11 +1211,12 @@ function LineEditor({
 
     // A dispatched line's quantity/rate/product details are frozen server-side —
     // don't even attempt the save; offer to add the edit as a new line instead.
-    if (line.dispatched && materialDirty) {
+    if (line.dispatched && needsAddAsNew) {
       const ok = await confirm({
         title: 'This item has already been dispatched',
-        description:
-          'Its quantity, rate and product details can\'t be changed directly — the dispatch already reflects what was shipped. Add these changes as a NEW item with the same details instead? The original dispatched line stays untouched.',
+        description: fullyDispatched && !identityDirty
+          ? 'It is fully dispatched, so changing the quantity would not affect what still ships. Add the extra quantity as a NEW item with the same details instead? The original dispatched line stays untouched.'
+          : 'Its product, design and rate can\'t be changed directly — the dispatch already reflects what was shipped. Add these changes as a NEW item with the same details instead? The original dispatched line stays untouched.',
         confirmText: 'Add as new item',
         cancelText: 'Cancel',
       });

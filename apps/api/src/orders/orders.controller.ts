@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Res, StreamableFile } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { ACTIONS, ORDER_LINE_EXPORT_COLUMNS, perm, RESOURCES } from '@oms/shared';
+import { ACTIONS, ALL_PERMISSIONS, ORDER_LINE_EXPORT_COLUMNS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AnyPermission, Permissions } from '../common/decorators/permissions.decorator';
@@ -161,7 +161,11 @@ export class OrdersController {
   @Permissions(perm(R, ACTIONS.UPDATE))
   @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Edited a sales order' })
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateOrderDto, @CurrentUser() user: AuthenticatedUser | undefined) {
-    return this.orders.update(id, dto, user?.name ?? null);
+    // Super admins carry the '*' wildcard — the same check the dispatch screens
+    // use. It gates ONE thing here: moving the completion date after dispatch.
+    return this.orders.update(id, dto, user?.name ?? null, {
+      isSuperAdmin: user?.permissions?.includes(ALL_PERMISSIONS) ?? false,
+    });
   }
 
   @Delete(':id')

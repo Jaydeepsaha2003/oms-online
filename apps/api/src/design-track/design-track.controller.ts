@@ -53,6 +53,7 @@ export class DesignTrackController {
       'Customer Name': r.customerName,
       'Product Name': r.productName ?? '',
       'Design Type': r.designType ?? '',
+      'Design Name': r.designName ?? '',
       Bags: r.bags,
       Comment: r.comment ?? '',
       Kalwat: r.kalwat ?? '',
