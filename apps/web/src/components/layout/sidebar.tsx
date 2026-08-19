@@ -147,7 +147,7 @@ export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
             '[&_[data-slot=scroll-area-scrollbar]]:w-[3px] [&_[data-slot=scroll-area-scrollbar]]:border-l-0 [&_[data-slot=scroll-area-scrollbar]]:p-0 [&_[data-slot=scroll-area-thumb]]:bg-sidebar-foreground/45',
         )}
       >
-        <nav className={cn('flex flex-col', collapsed ? 'gap-0' : 'gap-0.5')}>
+        <nav className={cn('flex flex-col', collapsed ? 'gap-1' : 'gap-0.5')}>
           {items.map((node) =>
             node.children?.length ? (
               <MenuGroup
@@ -224,11 +224,15 @@ function MenuLeaf({
           'hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
           active &&
             'bg-sidebar-accent font-semibold text-sidebar-accent-foreground shadow-sm before:absolute before:inset-y-1.5 before:left-0 before:w-1 before:rounded-full before:bg-brand-amber',
-          collapsed && 'justify-center px-0 py-1.5',
+          // Rail: every row is the same fixed 36px height (groups use the same
+          // metrics), so the icons read as one evenly-spaced column instead of a
+          // cramped, ragged run. 36 rather than 40 keeps all 11 rows clear of a
+          // scrollbar on a short laptop screen, without shrinking the glyph.
+          collapsed && 'h-9 justify-center px-0 py-0',
         )
       }
     >
-      <Icon className="size-4 shrink-0 transition-colors group-hover:text-brand-amber" />
+      <Icon className={cn('shrink-0 transition-colors group-hover:text-brand-amber', collapsed ? 'size-[22px]' : 'size-4')} />
       {!collapsed && <span className="truncate">{node.label}</span>}
       {!collapsed && node.badge && (
         <span className="ml-auto rounded bg-brand-amber/20 px-1.5 py-0.5 text-xs font-semibold text-brand-amber">
@@ -267,14 +271,31 @@ function MenuGroup({
   const childActive = (node.children ?? []).some((c) => c.to && isUnder(location.pathname, c.to));
   const Icon = getMenuIcon(node.icon);
 
-  // Collapsed rail: render the group's children as icon links with tooltips.
+  // Collapsed rail: ONE icon for the group itself — its own icon, its own label
+  // in the tooltip. Rendering every child here instead flattened 11 menus into
+  // 53 icons, so the rail's Nth icon had nothing to do with the Nth menu and
+  // hovering one named a page you never expected. Clicking opens that group, so
+  // it is already the open one when the panel expands.
   if (collapsed) {
     return (
-      <div className="flex flex-col gap-0">
-        {(node.children ?? []).map((child) => (
-          <MenuLeaf key={child.id} node={child} collapsed onNavigate={onNavigate} activePath={activePath} />
-        ))}
-      </div>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-label={node.label}
+            className={cn(
+              'group relative flex h-9 items-center justify-center rounded-lg px-0 py-0 text-sm font-medium text-sidebar-foreground/80 transition-all',
+              'hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
+              childActive &&
+                'bg-sidebar-accent font-semibold text-sidebar-accent-foreground shadow-sm before:absolute before:inset-y-1.5 before:left-0 before:w-1 before:rounded-full before:bg-brand-amber',
+            )}
+          >
+            <Icon className="size-[22px] shrink-0 transition-colors group-hover:text-brand-amber" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="right">{node.label}</TooltipContent>
+      </Tooltip>
     );
   }
 

@@ -4,12 +4,18 @@
  *  pair per voucher, grouped by date with a running/day total — the classic
  *  Tally daybook read. */
 
+import type { LedgerTxnMode } from './party-ledger';
+
 export interface DaybookQuery {
   from: string;
   to: string;
   voucherType?: string;
   /** Restrict to one party — omit for every party's vouchers. */
   customerId?: number;
+  /** Which leg of each voucher to report: BOTH (bank+cash, the default), B or C.
+   *  Same vocabulary as Party Ledger. A voucher with nothing on the chosen leg
+   *  drops out of the day entirely, so Bank reads as a pure bank daybook. */
+  mode?: LedgerTxnMode;
 }
 
 export interface DaybookRow {

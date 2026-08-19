@@ -36,6 +36,15 @@ export function exportOrderLines(
   return downloadFile(`/orders/export/lines${qs ? `?${qs}` : ''}`, 'order-lines.xlsx');
 }
 
+/** One order with its COMPLETE line set, fetched on demand.
+ *  Order Modify saves through this: the list it renders from can carry a
+ *  filtered subset of each order's lines, and the update endpoint reconciles the
+ *  full set by id — so a payload built from the filtered view deletes every line
+ *  the filter hid. Always build the payload from this instead. */
+export function fetchOrder(id: number) {
+  return http.get<OrderDto>(`/orders/${id}`);
+}
+
 export function useOrder(id?: number) {
   return useQuery({
     queryKey: [...KEY, id],

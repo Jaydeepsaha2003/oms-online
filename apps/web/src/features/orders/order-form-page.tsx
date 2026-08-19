@@ -430,8 +430,10 @@ export function OrderFormPage() {
         designName: d.designName || 'NA',
         productRate: d.productRate,
         designRate: d.designRate,
-        weight: '',
-        pcsBox: '',
+        // Carried from the draw sheet so editing a drawn line here still
+        // cascades Pcs ⇄ Box ⇄ Kgs (editItem reloads the line into the entry row).
+        weight: d.weight,
+        pcsBox: d.pcsBox,
         ordType: entry.ordType,
         priority: d.priority || 'NORMAL',
         bags: d.bags,

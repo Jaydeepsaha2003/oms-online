@@ -10,10 +10,23 @@ function PopoverContent({
   className,
   align = 'center',
   sideOffset = 4,
+  container,
   ...props
-}: React.ComponentProps<typeof PopoverPrimitive.Content>) {
+}: React.ComponentProps<typeof PopoverPrimitive.Content> & {
+  /**
+   * Where to portal the content. Defaults to `document.body`.
+   *
+   * Pass the surrounding Sheet/Dialog panel when the popover opens inside one:
+   * Radix's Dialog wraps its content in react-remove-scroll, which cancels wheel
+   * and touch-move events whose target sits OUTSIDE that content — and a
+   * body-portalled popover is outside it, so its list could not be scrolled at
+   * all while a sheet was open. Positioning is unaffected (Radix positions with
+   * `strategy: fixed`, so an ancestor's `overflow` cannot clip it).
+   */
+  container?: React.ComponentProps<typeof PopoverPrimitive.Portal>['container'];
+}) {
   return (
-    <PopoverPrimitive.Portal>
+    <PopoverPrimitive.Portal container={container}>
       <PopoverPrimitive.Content
         data-slot="popover-content"
         align={align}

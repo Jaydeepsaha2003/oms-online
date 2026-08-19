@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { flushSync } from 'react-dom';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Download, ExternalLink, Eye, Loader2, Printer } from 'lucide-react';
+import { ArrowLeft, Download, ExternalLink, Eye, Loader2, Printer, X } from 'lucide-react';
 import { toast } from 'sonner';
 import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
@@ -100,7 +100,21 @@ export function ChallanBillPage() {
   // plain browser-back. We fetch the pending count live so it reflects this save.
   const smartBack = (location.state as { backTo?: string } | null)?.backTo === 'challan-pending-or-list';
   const { data: pending } = usePendingChallans({ page: 1, pageSize: 1 }, { enabled: smartBack });
+  // `?from=tab` marks a bill the Credit/Debit Note screen popped into a SECOND
+  // tab. That tab has no history behind it, so browser-back is a dead button —
+  // the way out is to close the tab and return to the note still open in the
+  // first one. The opener sets the flag explicitly rather than us sniffing
+  // window.opener / history.length, neither of which is dependable once the
+  // user has clicked around inside the tab.
+  const inOwnTab = new URLSearchParams(location.search).get('from') === 'tab';
   const goBack = () => {
+    if (inOwnTab) {
+      window.close();
+      // Only reached if the browser refuses to close the tab (it will not for a
+      // script-opened one) — land somewhere real instead of doing nothing.
+      setTimeout(() => navigate('/challans'), 150);
+      return;
+    }
     if (smartBack) navigate((pending?.total ?? 0) > 0 ? '/challans/pending' : '/challans');
     else navigate(-1);
   };
@@ -467,8 +481,8 @@ export function ChallanBillPage() {
       {printImg && <img id="print-image" src={printImg} alt="Sales Challan" style={{ display: 'none' }} />}
 
       <div className="no-print flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={goBack} aria-label="Back">
-          <ArrowLeft />
+        <Button variant="ghost" size="icon" onClick={goBack} aria-label={inOwnTab ? 'Close this tab' : 'Back'} title={inOwnTab ? 'Close this tab' : 'Back'}>
+          {inOwnTab ? <X /> : <ArrowLeft />}
         </Button>
         <h2 className="text-xl font-bold tracking-tight">Sales Challan</h2>
         <div className="ml-auto flex gap-2">

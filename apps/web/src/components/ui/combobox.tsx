@@ -120,6 +120,10 @@ export function Combobox({
   // Fixed for the life of the field: the ABC button is pointless where there is
   // no on-screen keyboard to switch.
   const [touchDevice] = React.useState(isTouchPrimary);
+  // The Sheet/Dialog this field lives in, if any — the list is portalled into it
+  // so its scroll isn't cancelled by the dialog's scroll lock (see
+  // PopoverContent's `container`). null on an ordinary page: portal to the body.
+  const [overlayHost, setOverlayHost] = React.useState<HTMLElement | null>(null);
 
   // The blur handler runs on a 120ms timer, so anything it reads from the render
   // closure is stale by the time it fires. These refs give it the CURRENT value —
@@ -215,6 +219,20 @@ export function Combobox({
     setActive(0);
   }, [ql, open]);
 
+  // On open, find the Sheet/Dialog panel this field sits in (if any) and portal
+  // the list into it. Radix's Dialog hands react-remove-scroll its own content as
+  // the one "shard" that may still scroll, and the check is
+  // `shard.contains(event.target)` — a list portalled to <body> is never inside
+  // it, so every wheel/touch over the list was cancelled and it would not move.
+  // Rendering inside the panel puts the list back within the shard. Positioning
+  // is untouched: Radix positions with `strategy: fixed`.
+  React.useEffect(() => {
+    if (!open) return;
+    setOverlayHost(
+      anchorRef.current?.closest<HTMLElement>('[data-slot="sheet-content"], [data-slot="dialog-content"], [role="dialog"]') ?? null,
+    );
+  }, [open]);
+
   // Scroll the highlighted row into view ONLY for keyboard navigation — doing it
   // on hover would fight the user's wheel scroll (rows slide under the cursor).
   React.useEffect(() => {
@@ -223,14 +241,14 @@ export function Combobox({
     listRef.current?.querySelector<HTMLElement>(`[data-idx="${active}"]`)?.scrollIntoView({ block: 'nearest' });
   }, [active, open]);
 
-  // Inside a modal Sheet/Dialog, the scroll-lock (react-remove-scroll) swallows
-  // wheel/touch on portaled popovers — the list freezes. Take over with native
-  // non-passive listeners: when the body is scroll-locked, scroll the list
-  // manually and stop the event before the lock's document-level handler sees
-  // it. On normal (unlocked) pages the listeners do nothing — native scroll runs.
+  // Fallback for a scroll-lock we could NOT portal into (no dialog ancestor
+  // found, yet the body is locked): scroll the list by hand and stop the event
+  // before the lock's document-level listener sees it. Skipped when the list is
+  // already inside the overlay — there the lock allows it through and native
+  // scrolling runs, so taking over as well would scroll it twice per notch.
   React.useEffect(() => {
     const el = listRef.current;
-    if (!open || !el) return;
+    if (!open || !el || overlayHost) return;
     const locked = () => document.body.hasAttribute('data-scroll-locked');
     const onWheel = (e: WheelEvent) => {
       if (!locked()) return;
@@ -257,7 +275,7 @@ export function Combobox({
       el.removeEventListener('touchstart', onTouchStart);
       el.removeEventListener('touchmove', onTouchMove);
     };
-  }, [open]);
+  }, [open, overlayHost]);
 
   // Close ONLY when a scroll container that holds the FIELD scrolls (the page
   // moving under the anchor would leave the portal'd list floating detached).
@@ -566,13 +584,23 @@ export function Combobox({
         </div>
       </PopoverAnchor>
       <PopoverContent
+        container={overlayHost}
         align="start"
         sideOffset={4}
         collisionPadding={8}
-        className="p-0"
-        // Grow to fit the longest option (values no longer truncate to the trigger
-        // width) but never past the viewport edge.
-        style={{ minWidth: 'var(--radix-popover-trigger-width)', maxWidth: 'var(--radix-popover-content-available-width)' }}
+        // `w-auto` is load-bearing: PopoverContent's base class is a fixed `w-72`,
+        // which pinned every dropdown to 288px and ellipsised anything longer —
+        // an invoice row like "SSS/26-27/557 · 6 RAMPATRA GLASS SET · ₹350" lost
+        // the half that tells you which sale it is. Width auto lets the box size
+        // to its content, between the two bounds below.
+        className="w-auto p-0"
+        // At least as wide as the field, at most the room actually on screen (and
+        // never a full-width banner on a big monitor) — past that the row still
+        // truncates, but only once there is genuinely nowhere left to grow.
+        style={{
+          minWidth: 'var(--radix-popover-trigger-width)',
+          maxWidth: 'min(40rem, var(--radix-popover-content-available-width))',
+        }}
         onOpenAutoFocus={(e) => e.preventDefault()}
         onCloseAutoFocus={(e) => e.preventDefault()}
         onFocusOutside={(e) => e.preventDefault()}

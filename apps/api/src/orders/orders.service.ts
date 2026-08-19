@@ -1132,6 +1132,10 @@ export class OrdersService {
       status: uc(it.status) === 'CANCELLED' ? 'CANCELLED' : 'CONFIRMED',
       comment: toStr(it.comment),
       bookingId: toNum(it.bookingId),
+      // Carried through so a converted line keeps pointing at the quotation line
+      // it came from. A line added later has none, which is what keeps
+      // post-conversion additions out of the quotation.
+      quotationItemId: toNum(it.quotationItemId),
     };
   }
 

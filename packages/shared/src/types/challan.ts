@@ -169,6 +169,85 @@ export interface ChallanAnalytics {
   overdue: { count: number; total: number };
   /** All distinct categories in the master (for the filter dropdown). */
   categories: string[];
+  /** Trading-account statement over the same filters (see {@link TradingAccount}). */
+  trading: TradingAccount;
+}
+
+/**
+ * A trading-account style statement over the filtered date range: what was sold,
+ * what came back, and what was actually invoiced.
+ *
+ * Every figure is a GOODS value (the sum of the document's line amounts), not the
+ * document grand total — charges and tax are separate lines below, so the whole
+ * statement adds up in one column:
+ *
+ *   grossSales + debitNotes - salesReturns          = netSales
+ *   netSales + freight + packing + pouch            = netRevenue
+ *   netRevenue + gst + tcs - tds                    = totalInvoiced
+ *
+ * Charges and GST are NET of credit notes (a return can carry its own freight and
+ * tax), which is what makes `totalInvoiced` reconcile to the documents.
+ */
+export interface TradingAccount {
+  /**
+   * Where the statement opens: Σ challan totals for the filter — the same figure
+   * as the "Total Sales" KPI card, tax and charges included, returns not netted.
+   * The rows beneath strip those back out to reach a goods value.
+   */
+  totalSales: { amount: number; count: number };
+  /** GST / charges / TCS as invoiced (NOT net of credit notes) — the deductions
+   *  that take `totalSales` down to a goods value. */
+  grossGst: number;
+  grossCharges: number;
+  grossTcs: number;
+  /** Goods value of every challan in scope = grossSales + debitNotes. */
+  goodsInvoiced: number;
+  /**
+   * Residual on the opening block: totalSales − GST − charges − TCS − goods.
+   * Zero when every document decomposes cleanly; non-zero is the same drift
+   * `documentsOutOfLine` counts, shown as its own row so the column still ties
+   * instead of quietly absorbing it.
+   */
+  openingVariance: number;
+  /** SALES INVOICE documents. */
+  grossSales: { amount: number; count: number };
+  /** DEBIT NOTE documents — extra charged to the party, so added to sales. */
+  debitNotes: { amount: number; count: number };
+  /** Credit notes: goods returned / credited back, so deducted. */
+  salesReturns: { amount: number; count: number };
+  netSales: number;
+  /** Charges, net of any carried on a credit note. */
+  freight: number;
+  packing: number;
+  pouch: number;
+  netRevenue: number;
+  /** GST, net of credit-note GST. */
+  gst: number;
+  tcs: number;
+  tds: number;
+  totalInvoiced: number;
+  /** salesReturns / grossSales, as a percentage (0 when there are no sales). */
+  returnRatePercent: number;
+  /**
+   * Σ document totals (challans − credit notes). The statement is built from
+   * component sums, so this is an independent figure: if it differs from
+   * `totalInvoiced` the underlying documents don't decompose cleanly and the UI
+   * says so rather than quietly showing a statement that doesn't add up.
+   */
+  documentTotal: number;
+  /**
+   * How many challans in range carry a stored `total` that does not equal their
+   * own goods + charges + GST + TCS − TDS. The totals engine always composes a
+   * total that way, so a non-zero count means those documents' stored totals and
+   * stored components disagree — worth investigating, and the reason
+   * `documentTotal` can differ from `totalInvoiced`.
+   */
+  documentsOutOfLine: number;
+  /** Which challan statuses the figures cover — '' when unfiltered (all). */
+  statusScope: string;
+  /** Cancelled challans inside the range, so the UI can flag what's included or
+   *  left out under the current status filter. */
+  cancelled: { amount: number; count: number };
 }
 
 export interface UpdateChallanStatusInput {

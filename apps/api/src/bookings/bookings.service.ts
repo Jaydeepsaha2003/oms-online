@@ -468,8 +468,8 @@ export class BookingsService {
     const addKgs = round2(items.reduce((s, it) => s + (it.gram ?? 0), 0));
     const remBags = round2(booking.bags - booking.convertedBags);
     const remKgs = round2(booking.kgs - booking.convertedKgs);
-    if (addBags - remBags > 0.001) throw new BadRequestException(`Assigning ${addBags} bags exceeds the ${remBags} remaining on this booking.`);
-    if (addKgs - remKgs > 0.001) throw new BadRequestException(`Assigning ${addKgs} kgs exceeds the ${remKgs} remaining on this booking.`);
+    if (!withinBooked(addBags, remBags, booking.bags)) throw new BadRequestException(`Assigning ${addBags} bags exceeds the ${remBags} remaining on this booking.`);
+    if (!withinBooked(addKgs, remKgs, booking.kgs)) throw new BadRequestException(`Assigning ${addKgs} kgs exceeds the ${remKgs} remaining on this booking.`);
 
     await this.prisma.orderItem.updateMany({ where: { id: { in: dto.orderItemIds } }, data: { bookingId: booking.id } });
     await this.recompute(booking.id);
@@ -507,8 +507,8 @@ export class BookingsService {
     const addKgs = lines.reduce((s, l) => s + (toNum(l.gram) ?? 0), 0);
     const remBags = round2(booking.bags - booking.convertedBags);
     const remKgs = round2(booking.kgs - booking.convertedKgs);
-    if (addBags - remBags > 0.001) throw new BadRequestException(`Converting ${addBags} bags exceeds the ${remBags} remaining on this booking.`);
-    if (addKgs - remKgs > 0.001) throw new BadRequestException(`Converting ${addKgs} kgs exceeds the ${remKgs} remaining on this booking.`);
+    if (!withinBooked(addBags, remBags, booking.bags)) throw new BadRequestException(`Converting ${addBags} bags exceeds the ${remBags} remaining on this booking.`);
+    if (!withinBooked(addKgs, remKgs, booking.kgs)) throw new BadRequestException(`Converting ${addKgs} kgs exceeds the ${remKgs} remaining on this booking.`);
 
     // Per-category remaining check — best-effort: only enforced for a line whose
     // pCategory matches a category actually booked. A line with no match (or no
@@ -527,8 +527,8 @@ export class BookingsService {
       if (!item) continue;
       const remBagsCat = round2(item.bags - item.convertedBags);
       const remKgsCat = round2(item.kgs - item.convertedKgs);
-      if (add.bags - remBagsCat > 0.001) throw new BadRequestException(`Converting ${add.bags} bags of ${cat} exceeds the ${remBagsCat} remaining booked for ${cat}.`);
-      if (add.kgs - remKgsCat > 0.001) throw new BadRequestException(`Converting ${add.kgs} kgs of ${cat} exceeds the ${remKgsCat} remaining booked for ${cat}.`);
+      if (!withinBooked(add.bags, remBagsCat, item.bags)) throw new BadRequestException(`Converting ${add.bags} bags of ${cat} exceeds the ${remBagsCat} remaining booked for ${cat}.`);
+      if (!withinBooked(add.kgs, remKgsCat, item.kgs)) throw new BadRequestException(`Converting ${add.kgs} kgs of ${cat} exceeds the ${remKgsCat} remaining booked for ${cat}.`);
     }
 
     const snapshot = this.parseSnapshot(booking.rateSnapshot);
@@ -1055,6 +1055,21 @@ export class BookingsService {
 
 function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+/**
+ * Is a draw of `want` allowed against `remaining` of a dimension the booking
+ * reserved `booked` of?
+ *
+ * A booking is denominated in bags, in kgs, or in both. A bags-only booking
+ * (kgs = 0) reserves no kgs at all, so the kgs on a drawn line are a derived
+ * detail of that line (bags x the party's kgs-per-bag), NOT a draw against the
+ * booking — checking them against a remaining of 0 rejected every possible line.
+ * So a dimension only constrains the draw when the booking actually books it.
+ */
+function withinBooked(want: number, remaining: number, booked: number): boolean {
+  if (booked <= 0) return true;
+  return want - remaining <= 0.001;
 }
 
 /* ── Booking PDF document (Tally-style black & white) ────────────────────── */

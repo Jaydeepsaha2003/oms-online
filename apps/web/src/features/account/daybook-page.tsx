@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { CalendarRange, Loader2, Sigma, X } from 'lucide-react';
-import type { DaybookDayGroup, DaybookRow } from '@oms/shared';
+import type { DaybookDayGroup, DaybookRow, LedgerTxnMode } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -167,16 +167,56 @@ function DayRows({
   );
 }
 
+/** Filters live in the URL, not in component state. Clicking an invoice row
+ *  leaves this route for the challan bill page, so the daybook unmounts; on Back
+ *  it mounts fresh and plain useState comes back empty — the party, the dates
+ *  and the voucher type you had set would be gone. The query string survives
+ *  that trip and makes a filtered daybook shareable. Writes are `replace`, so a
+ *  filter change never becomes its own history step. Same hook shape as Party
+ *  Ledger's, deliberately: two sibling screens, one behaviour. */
+function useDaybookFilters() {
+  const [params, setParams] = useSearchParams();
+  const get = (key: string, fallback: string) => params.get(key) ?? fallback;
+  const filters = {
+    from: get('from', ymd(fyStart(new Date()))),
+    to: get('to', ymd(new Date())),
+    preset: get('preset', ''),
+    party: get('party', ''),
+    voucherType: get('vtype', ''),
+    mode: get('mode', 'BOTH') as LedgerTxnMode,
+  };
+  /** One writer for the whole set: a preset moves from+to+preset together, and
+   *  separate setters would each start from the same pre-update query string
+   *  and overwrite one another. */
+  const patch = (changes: Partial<typeof filters>) => {
+    const next = new URLSearchParams(params);
+    const write = (key: string, value: string) => (value ? next.set(key, value) : next.delete(key));
+    if (changes.from !== undefined) write('from', changes.from);
+    if (changes.to !== undefined) write('to', changes.to);
+    if (changes.preset !== undefined) write('preset', changes.preset);
+    if (changes.party !== undefined) write('party', changes.party);
+    if (changes.voucherType !== undefined) write('vtype', changes.voucherType);
+    if (changes.mode !== undefined) write('mode', changes.mode === 'BOTH' ? '' : changes.mode);
+    setParams(next, { replace: true });
+  };
+  return { ...filters, patch };
+}
+
+/** Bank / cash leg picker — the labels are spelled out rather than Party
+ *  Ledger's B / C, because the daybook has no Bank/Cash column headings to read
+ *  a lone letter against. */
+const MODE_OPTIONS: { value: LedgerTxnMode; label: string }[] = [
+  { value: 'BOTH', label: 'Both' },
+  { value: 'B', label: 'Bank' },
+  { value: 'C', label: 'Cash' },
+];
+
 export function DaybookPage() {
   const navigate = useNavigate();
   const { can } = usePermissions();
   const canViewChallan = can('challan:print');
 
-  const [from, setFrom] = useState(() => ymd(fyStart(new Date())));
-  const [to, setTo] = useState(() => ymd(new Date()));
-  const [preset, setPreset] = useState<string>('');
-  const [party, setParty] = useState('');
-  const [voucherType, setVoucherType] = useState('');
+  const { from, to, preset, party, voucherType, mode, patch } = useDaybookFilters();
   const [dateOpen, setDateOpen] = useState(false);
   const [subtotals, setSubtotals] = useState(loadSubtotals);
 
@@ -193,21 +233,17 @@ export function DaybookPage() {
   const partyOptions = useMemo(() => [...custByName.keys()].sort((a, b) => a.localeCompare(b)), [custByName]);
   const customerId = party ? custByName.get(party) : undefined;
 
-  const query = { from, to, voucherType: voucherType || undefined, customerId };
+  const query = { from, to, voucherType: voucherType || undefined, customerId, mode };
   const { data, isFetching } = useDaybook(query);
 
   const applyPreset = (p: Preset) => {
     const { from: f, to: t } = presetRange(p);
-    setFrom(ymd(f));
-    setTo(ymd(t));
-    setPreset(p);
+    patch({ from: ymd(f), to: ymd(t), preset: p });
     setDateOpen(false);
   };
-  const hasFilters = !!voucherType || !!party;
-  const resetFilters = () => {
-    setVoucherType('');
-    setParty('');
-  };
+  const hasFilters = !!voucherType || !!party || mode !== 'BOTH';
+  // Dates are deliberately left alone — Reset clears the pickers, not the period.
+  const resetFilters = () => patch({ voucherType: '', party: '', mode: 'BOTH' });
   const dateLabel = preset || `${prettyDate(from)} → ${prettyDate(to)}`;
 
   const totalRows = data?.groups.reduce((a, g) => a + g.rows.length, 0) ?? 0;
@@ -250,11 +286,7 @@ export function DaybookPage() {
                   <DateRangeCalendar
                     from={from}
                     to={to}
-                    onChange={(f, t) => {
-                      setFrom(f);
-                      if (t) setTo(t);
-                      setPreset('');
-                    }}
+                    onChange={(f, t) => patch({ from: f, ...(t ? { to: t } : {}), preset: '' })}
                   />
                 </div>
                 <div className="flex items-center justify-between gap-2 border-t pt-2">
@@ -269,9 +301,34 @@ export function DaybookPage() {
             </PopoverContent>
           </Popover>
 
-          <FitSelect label="Party" value={party} onChange={setParty} options={partyOptions} className="w-full sm:w-52" />
+          <FitSelect label="Party" value={party} onChange={(v) => patch({ party: v })} options={partyOptions} className="w-full sm:w-52" />
 
-          <FitSelect label="Voucher type" value={voucherType} onChange={setVoucherType} options={data?.voucherTypes ?? []} className="w-full sm:w-44" />
+          <FitSelect label="Voucher type" value={voucherType} onChange={(v) => patch({ voucherType: v })} options={data?.voucherTypes ?? []} className="w-full sm:w-44" />
+
+          {/* Bank / cash leg. A voucher with nothing on the chosen leg drops out
+              of the list, so Bank reads as a pure bank daybook. */}
+          <div
+            role="group"
+            aria-label="Bank or cash"
+            className="inline-flex shrink-0 items-center gap-0.5 rounded-[4px] border border-amber-300 bg-amber-50/40 p-0.5 dark:border-amber-400/40 dark:bg-transparent"
+          >
+            {MODE_OPTIONS.map((m) => (
+              <button
+                key={m.value}
+                type="button"
+                onClick={() => patch({ mode: m.value })}
+                aria-pressed={mode === m.value}
+                className={cn(
+                  'cursor-pointer rounded-[3px] px-2.5 py-1 text-[12px] font-semibold transition-colors duration-150',
+                  mode === m.value
+                    ? 'bg-primary text-primary-foreground shadow-sm'
+                    : 'text-amber-900/70 hover:bg-amber-100 hover:text-amber-900 dark:text-amber-200/70 dark:hover:bg-amber-400/10',
+                )}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
 
           <Button
             type="button"
@@ -308,6 +365,7 @@ export function DaybookPage() {
           <span className="hidden shrink-0 text-[11px] font-bold tracking-wide text-white tabular-nums sm:inline">
             {prettyDate(from)} — {prettyDate(to)}
             {voucherType ? ` · ${voucherType}` : ''}
+            {mode === 'BOTH' ? '' : mode === 'B' ? ' · BANK' : ' · CASH'}
           </span>
         </div>
 

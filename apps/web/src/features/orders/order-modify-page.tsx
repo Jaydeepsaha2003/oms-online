@@ -26,7 +26,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { settingValues, useOrderQtyLayout, useSettings } from '@/features/settings/use-settings';
 import { useCustomerSpecialRates } from '@/features/special-rates/use-special-rates';
 import { usePermissions } from '@/hooks/use-permissions';
-import { exportOrderLines, useOrderFilterOptions, useOrderLookups, useOrders, usePriceAsOf, useSaveOrder } from './use-orders';
+import { exportOrderLines, fetchOrder, useOrderFilterOptions, useOrderLookups, useOrders, usePriceAsOf, useSaveOrder } from './use-orders';
 import { LiveLinePhotos } from './line-photos';
 import { DesignNamePicker, resolveDesignNameChoices } from './design-name-picker';
 
@@ -318,9 +318,26 @@ export function OrderModifyPage() {
     });
   }, [rows]);
 
-  const saveItems = (order: OrderDto, items: OrderItemDto[], okMsg: string) => {
+  /**
+   * Save a line change.
+   *
+   * `apply` is handed the order's COMPLETE line set, freshly fetched — never the
+   * rows on screen. The list endpoint prunes each order's items to the ones
+   * matching the product / design / priority filters, while the update endpoint
+   * reconciles the whole set by id and deletes anything absent from the payload.
+   * Editing one line under a filter therefore used to delete every line the
+   * filter had hidden (and cascade away their photos with them). Re-reading the
+   * order first makes the payload complete however the list is filtered.
+   */
+  const saveItems = async (order: OrderDto, apply: (items: OrderItemDto[]) => OrderItemDto[], okMsg: string) => {
+    let full: OrderDto;
+    try {
+      full = await fetchOrder(order.id);
+    } catch (e) {
+      return toast.error(getApiErrorMessage(e, 'Could not load the order — nothing was saved'));
+    }
     save.mutate(
-      { id: order.id, input: toInput(order, items) },
+      { id: full.id, input: toInput(full, apply(full.items)) },
       { onSuccess: () => toast.success(okMsg), onError: (e) => toast.error(getApiErrorMessage(e, 'Save failed')) },
     );
   };
@@ -333,12 +350,12 @@ export function OrderModifyPage() {
       destructive: true,
     });
     if (!ok) return;
-    saveItems(order, order.items.filter((i) => i.id !== line.id), 'Item removed');
+    void saveItems(order, (items) => items.filter((i) => i.id !== line.id), 'Item removed');
     setEdit(null);
   };
 
   const saveLine = (order: OrderDto, updated: OrderItemDto) => {
-    saveItems(order, order.items.map((i) => (i.id === updated.id ? updated : i)), 'Item updated');
+    void saveItems(order, (items) => items.map((i) => (i.id === updated.id ? updated : i)), 'Item updated');
     setEdit(null);
   };
 
@@ -349,7 +366,7 @@ export function OrderModifyPage() {
     if (line.status === 'CANCELLED') return; // already cancelled — nothing to do
     const tag = `Cancelled — ${reason}${note.trim() ? `: ${note.trim()}` : ''}`;
     const updated: OrderItemDto = { ...line, status: 'CANCELLED', comment: [line.comment, tag].filter(Boolean).join(' | ') };
-    saveItems(order, order.items.map((i) => (i.id === line.id ? updated : i)), 'Item cancelled');
+    void saveItems(order, (items) => items.map((i) => (i.id === line.id ? updated : i)), 'Item cancelled');
     setEdit(null);
   };
 
@@ -361,7 +378,7 @@ export function OrderModifyPage() {
     });
     if (!ok) return;
     const updated: OrderItemDto = { ...line, status: 'CONFIRMED' };
-    saveItems(order, order.items.map((i) => (i.id === line.id ? updated : i)), 'Item restored');
+    void saveItems(order, (items) => items.map((i) => (i.id === line.id ? updated : i)), 'Item restored');
     setEdit(null);
   };
 
@@ -369,7 +386,7 @@ export function OrderModifyPage() {
   // rejects that edit outright) — this appends the edited details as a brand
   // new line instead, leaving the original dispatched line untouched.
   const addLineAsNew = (order: OrderDto, newItem: OrderItemDto) => {
-    saveItems(order, [...order.items, { ...newItem, id: 0 }], 'Added as a new item');
+    void saveItems(order, (items) => [...items, { ...newItem, id: 0 }], 'Added as a new item');
     setEdit(null);
   };
 

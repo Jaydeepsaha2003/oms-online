@@ -300,16 +300,16 @@ model CustomerRate {
 // Per-customer bag weight: for this customer + product category, one bag weighs
 // `kgsPerBag` kgs. The order form auto-fills Kgs = Bags × kgsPerBag as bags are typed.
 model CustomerBagWeight {
-  id         Int      @id @default(autoincrement())
-  customerId Int
-  category   String
-  kgsPerBag  Float
+  id                 Int      @id @default(autoincrement())
+  customerId         Int
+  category           String
+  kgsPerBag          Float
   // Max bags a non-admin may dispatch in one go for this customer + category.
   // Null = no party-specific limit (falls back to the global default in
   // Settings, if one is set). See dispatch:override in the permission catalog.
   maxBagsPerDispatch Float?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
@@ -530,12 +530,12 @@ model Order {
   items OrderItem[]
 
   // Set when this order was created by converting a quotation.
-  fromQuotation Quotation? @relation("OrderFromQuotation")
+  fromQuotation   Quotation? @relation("OrderFromQuotation")
   // Set when this order was PARKED by "Save as Quotation" (status QUOTED): the
   // quotation below is the live document, and converting it revives this order
   // rather than minting a second one. The reverse of fromQuotation.
   quotationSource Quotation? @relation("QuotationFromOrder")
-  dispatches    Dispatch[]
+  dispatches      Dispatch[]
 
   @@index([customerId])
   @@index([status])
@@ -631,31 +631,41 @@ model QuotationItem {
 
 /// A single line item on an order (a product × design + quantities + rates).
 model OrderItem {
-  id           Int      @id @default(autoincrement())
-  orderId      Int
-  pCategory    String? // product category (GLASS / CUP / …)
-  subCategory  String?
-  product      String?
-  design       String?
-  productName  String? // composite display name (e.g. "10 PLAIN")
-  designType   String?
-  psize        Float?
-  bags         Float?
-  pcs          Float?
-  gram         Float?
-  box          Float?
-  productRate  Float?
-  designRate   Float?
-  rate         Float? // total = productRate + designRate
-  calField     String? // pricing unit: KGS / PCS
-  priority     String? // URGENT / NORMAL (per line item)
-  ordType      String? // order type (e.g. SALES ORDER)
+  id              Int      @id @default(autoincrement())
+  orderId         Int
+  pCategory       String? // product category (GLASS / CUP / …)
+  subCategory     String?
+  product         String?
+  design          String?
+  productName     String? // composite display name (e.g. "10 PLAIN")
+  designType      String?
+  psize           Float?
+  bags            Float?
+  pcs             Float?
+  gram            Float?
+  box             Float?
+  productRate     Float?
+  designRate      Float?
+  rate            Float? // total = productRate + designRate
+  calField        String? // pricing unit: KGS / PCS
+  priority        String? // URGENT / NORMAL (per line item)
+  ordType         String? // order type (e.g. SALES ORDER)
   // Per-line status: CONFIRMED (active) or CANCELLED (kept for the record, excluded
   // from order totals and not dispatchable). Mirrors legacy ORDERTBL.STATUS.
-  status       String   @default("CONFIRMED")
-  comment      String?
+  status          String   @default("CONFIRMED")
+  comment         String?
   // Soft link to the bag Booking this line was converted from (null for normal lines).
-  bookingId    Int?
+  bookingId       Int?
+  /// The quotation line this one was converted FROM. Set by quotations.convert();
+  /// null for a line added straight to the order, or added after conversion —
+  /// which is exactly what keeps a post-conversion addition out of the quotation.
+  /// Edits to a linked line are mirrored back onto that quotation line.
+  ///
+  /// A SOFT link (no foreign key), like `bookingId` above: adding a real FK
+  /// column to this table makes SQLite rewrite all of order_items, and a table
+  /// rewrite is not worth the referential integrity on a link that is only ever
+  /// read to find the quotation line to mirror onto.
+  quotationItemId Int?
   // Set only when the MS Access import couldn't use the legacy ORDERTBL.ID as this
   // row's id (another row — usually a natively-created OrderItem whose Prisma
   // autoincrement id happened to land on the same number — already owns it).
@@ -663,18 +673,55 @@ model OrderItem {
   // column when it doesn't match any row's real id, so those dispatches still
   // resolve to the correct (remapped) line instead of silently landing on whichever
   // unrelated item now owns the original legacy id.
-  legacyItemId Int?
-  createdAt    DateTime @default(now())
+  legacyItemId    Int?
+  createdAt       DateTime @default(now())
 
   order       Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
   dispatches  Dispatch[]
   photos      OrderItemPhoto[]
   designTrack DesignTrackEntry?
+  changes     OrderItemChange[]
 
   @@index([orderId])
   @@index([bookingId])
   @@index([legacyItemId])
+  @@index([quotationItemId])
   @@map("order_items")
+}
+
+/// One field-level change to an order line, recorded whenever a line is edited,
+/// added or removed after the order exists. Immutable: rows are only ever
+/// inserted, so the trail survives even when the line itself is later deleted
+/// (hence orderItemId is nullable and NOT cascaded).
+///
+/// `quotationId` is carried on the row so a quotation can show every change made
+/// to the order it became — including changes to lines that have since been
+/// removed — without walking the (possibly deleted) order line to get there.
+model OrderItemChange {
+  id              Int      @id @default(autoincrement())
+  orderId         Int
+  /// The line changed. Null once that line has been deleted.
+  orderItemId     Int?
+  /// The quotation (and line) this order line came from, when it came from one.
+  quotationId     Int?
+  quotationItemId Int?
+  /// UPDATED / ADDED / REMOVED.
+  kind            String
+  /// Which field changed — '' for ADDED / REMOVED, which describe a whole line.
+  field           String
+  oldValue        String?
+  newValue        String?
+  /// Human label for the line, kept so a REMOVED row still reads meaningfully.
+  itemLabel       String?
+  changedByName   String?
+  changedAt       DateTime @default(now())
+
+  orderItem OrderItem? @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([quotationId])
+  @@index([orderItemId])
+  @@map("order_item_changes")
 }
 
 /// Design Track's hand-entered processed ("Kalwat") quantity for one order line.
@@ -823,13 +870,13 @@ model Challan {
 
   items ChallanItem[]
 
+  commissionAccruals AgentCommissionAccrual[]
+
   @@index([customerName])
   @@index([invDate])
   // Used by the "un-challaned dispatch" subquery behind the Pending Challan list.
   @@index([challanStatus])
   @@map("challans")
-
-  commissionAccruals AgentCommissionAccrual[]
 }
 
 // Gaps in a prefix/FY invoice-number series that were explicitly acknowledged
@@ -1013,7 +1060,7 @@ model Followup {
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
-  cheque    Cheque?   @relation(fields: [chequeId], references: [id], onDelete: SetNull)
+  cheque    Cheque?                 @relation(fields: [chequeId], references: [id], onDelete: SetNull)
   logs      FollowupLog[]
   checklist FollowupChecklistItem[]
   items     FollowupItem[]
@@ -1091,23 +1138,23 @@ model FollowupLog {
 /// lines (in parts). `rateSnapshot` captures the customer's special-rate rows at
 /// booking time so the effective rate can be reproduced exactly on conversion.
 model Booking {
-  id            Int      @id @default(autoincrement())
-  code          String?  @unique // BKG-00001
-  customerId    Int?
-  customerName  String
-  agentName     String?
-  category      String? // SALES etc.
-  bookingDate   DateTime @default(now()) // the rate-basis date
-  bags          Float    @default(0) // total booked
-  kgs           Float    @default(0) // total booked (weight)
-  convertedBags Float    @default(0) // drawn down by conversions
-  convertedKgs  Float    @default(0)
-  status        String   @default("OPEN") // OPEN | PARTIALLY_CONVERTED | CONVERTED | CANCELLED | PRECLOSED
-  comment       String?
-  orderId       Int? // the Order holding converted lines (created lazily)
+  id              Int       @id @default(autoincrement())
+  code            String?   @unique // BKG-00001
+  customerId      Int?
+  customerName    String
+  agentName       String?
+  category        String? // SALES etc.
+  bookingDate     DateTime  @default(now()) // the rate-basis date
+  bags            Float     @default(0) // total booked
+  kgs             Float     @default(0) // total booked (weight)
+  convertedBags   Float     @default(0) // drawn down by conversions
+  convertedKgs    Float     @default(0)
+  status          String    @default("OPEN") // OPEN | PARTIALLY_CONVERTED | CONVERTED | CANCELLED | PRECLOSED
+  comment         String?
+  orderId         Int? // the Order holding converted lines (created lazily)
   // JSON of the customer's { rates, logos } special-rate rows captured at booking.
-  rateSnapshot  String?
-  userName      String?
+  rateSnapshot    String?
+  userName        String?
   // Preclose: writes off whatever was still pending on a PARTIALLY_CONVERTED
   // booking and closes it for good — the qty written off (as of that moment) is
   // captured here so it isn't just silently dropped. Null until preclosed.
@@ -1116,8 +1163,8 @@ model Booking {
   precloseComment String?
   precloseByName  String?
   precloseAt      DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   conversions BookingConversion[]
   items       BookingItem[]
@@ -1152,13 +1199,13 @@ model BookingItem {
 /// Audit of one conversion step: which items were pulled from a booking, the
 /// booking-date rate used, and the order line created.
 model BookingConversion {
-  id              Int      @id @default(autoincrement())
+  id              Int       @id @default(autoincrement())
   bookingId       Int
   // Unique (not just indexed): an OrderItem is drawn from at most one booking
   // ever, so this is a stable 1:1 handle recompute() upserts against instead of
   // deleting/recreating the row — which is what lets `removedAt` below survive
   // across repeated recomputes instead of being wiped every time.
-  orderItemId     Int?     @unique
+  orderItemId     Int?      @unique
   productName     String?
   designType      String?
   bags            Float?
@@ -1168,7 +1215,7 @@ model BookingConversion {
   frozenRate      Float? // the effective rate as of the booking date
   amount          Float?
   convertedByName String?
-  convertedAt     DateTime @default(now())
+  convertedAt     DateTime  @default(now())
   // Snapshot of the order the line landed on, captured at every recompute —
   // survives even if the Order (or just this line) is later hard-deleted, which
   // is the only case `orderItemId`'s own join can no longer resolve.
@@ -1269,49 +1316,49 @@ model BankAccount {
 /// PENDING → DEPOSITED → CLEARED | BOUNCED. Deposit is only allowed on/after the
 /// due date. A bounced cheque may be re-deposited (isRepresent).
 model Cheque {
-  id            Int       @id @default(autoincrement())
+  id               Int       @id @default(autoincrement())
   // Snapshot of the party + FK to the customer (legacy CUS ID).
-  customerId    Int?
-  partyName     String
-  chequeNo      String
-  chequeAmt     Float
+  customerId       Int?
+  partyName        String
+  chequeNo         String
+  chequeAmt        Float
   // Party's/payer's bank (free text) and our deposit bank ("BANK NAME-1234").
-  payeeBank     String?
-  drawerBank    String?
-  recDate       DateTime  @default(now())
-  dueDate       DateTime
-  depositDate   DateTime?
+  payeeBank        String?
+  drawerBank       String?
+  recDate          DateTime  @default(now())
+  dueDate          DateTime
+  depositDate      DateTime?
   // Clear/bounce (account transaction) date.
-  acctTransDate DateTime?
-  bounceCharges Float?
+  acctTransDate    DateTime?
+  bounceCharges    Float?
   // SELF | PARTY (only when bounced).
-  chargesPaidBy String?
+  chargesPaidBy    String?
   // Bounced cheque being re-deposited (legacy IS CHEQUE REPRESENT).
-  isRepresent   Boolean   @default(false)
-  comments      String?
+  isRepresent      Boolean   @default(false)
+  comments         String?
   // JSON-encoded array of invoice/challan codes this cheque is meant to clear
   // (e.g. '["SSS/26-27/362","SSS/26-27/365"]'), null when none were tagged.
-  invoiceNos    String?
+  invoiceNos       String?
   // The agent who physically brought this cheque in, when one did (§6). Party
   // cheques handed over directly leave this null — which is also what decides
   // whether a bounce charge is proposed against an agent at settlement.
-  agentId       Int?
-  agentName     String?
+  agentId          Int?
+  agentName        String?
   // Set when this cheque REPLACES a bounced one (§12), so the full story —
   // original, its bounces, the replacement, the eventual clearance — stays
   // walkable in either direction.
   replacesChequeId Int?
   // PENDING | DEPOSITED | CLEARED | BOUNCED.
-  status        String    @default("PENDING")
-  userName      String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  status           String    @default("PENDING")
+  userName         String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  agent          Agent?              @relation(fields: [agentId], references: [id], onDelete: SetNull)
-  replaces       Cheque?             @relation("ChequeReplacement", fields: [replacesChequeId], references: [id], onDelete: SetNull)
-  replacedBy     Cheque[]            @relation("ChequeReplacement")
-  bounceEvents   ChequeBounceEvent[]
-  followups      Followup[]
+  agent        Agent?              @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  replaces     Cheque?             @relation("ChequeReplacement", fields: [replacesChequeId], references: [id], onDelete: SetNull)
+  replacedBy   Cheque[]            @relation("ChequeReplacement")
+  bounceEvents ChequeBounceEvent[]
+  followups    Followup[]
 
   @@index([status])
   @@index([dueDate])
@@ -1332,21 +1379,21 @@ model Cheque {
 /// Master ledger — one row per receipt voucher (legacy ACCT LEDGER). Voucher no is
 /// RN/<serial> (agent) or R/<serial> style; source of the running voucher number.
 model AcctLedger {
-  id           Int      @id @default(autoincrement())
-  voucherNo    String
-  transDate    DateTime
-  customerName String
-  custId       Int      @default(0)
-  agentName    String?
-  particulars  String?
-  voucherType  String   @default("RECEIPT")
-  transMode    String // BANK | CHEQUE | CASH
-  bankDebit    Float    @default(0)
-  cashDebit    Float    @default(0)
-  bankCredit   Float    @default(0)
-  cashCredit   Float    @default(0)
-  transRemarks String?
-  userName     String?
+  id                Int       @id @default(autoincrement())
+  voucherNo         String
+  transDate         DateTime
+  customerName      String
+  custId            Int       @default(0)
+  agentName         String?
+  particulars       String?
+  voucherType       String    @default("RECEIPT")
+  transMode         String // BANK | CHEQUE | CASH
+  bankDebit         Float     @default(0)
+  cashDebit         Float     @default(0)
+  bankCredit        Float     @default(0)
+  cashCredit        Float     @default(0)
+  transRemarks      String?
+  userName          String?
   // The full original save() input (RECEIPT vouchers only) — captured so this
   // voucher, and anything saved after it, can be reversed and replayed if its
   // amount/date/mode needs correcting. Null on vouchers saved before edit
@@ -1360,11 +1407,11 @@ model AcctLedger {
   cashRecBy         String?
   // This voucher's own generated REC-.../ADV-... ids (if any were created) —
   // reused verbatim on replay so later vouchers that reference them still resolve.
-  receiptRefId String?
-  advanceRefId String?
-  editedAt     DateTime?
-  editedByName String?
-  createdAt    DateTime @default(now())
+  receiptRefId      String?
+  advanceRefId      String?
+  editedAt          DateTime?
+  editedByName      String?
+  createdAt         DateTime  @default(now())
 
   @@index([custId])
   @@index([voucherNo])
@@ -1443,21 +1490,21 @@ model AcctPartyAdvance {
 /// (written when a receipt clears opening pending, linked via refRecId = voucher).
 /// A DEBIT opening = customer owes us (cleared by receipts); CREDIT = we owe them.
 model AcctOpeningTrans {
-  id           Int      @id @default(autoincrement())
-  kind         String   @default("OPENING") // OPENING | CLEARANCE
-  customerName String
-  custId       Int
-  transDate    DateTime
-  bankAmt      Float    @default(0)
-  cashAmt      Float    @default(0)
-  drCr         String? // DEBIT | CREDIT (OPENING rows only)
+  id              Int      @id @default(autoincrement())
+  kind            String   @default("OPENING") // OPENING | CLEARANCE
+  customerName    String
+  custId          Int
+  transDate       DateTime
+  bankAmt         Float    @default(0)
+  cashAmt         Float    @default(0)
+  drCr            String? // DEBIT | CREDIT (OPENING rows only)
   // Voucher no that cleared this opening (CLEARANCE rows only).
-  refRecId     String?
+  refRecId        String?
   // The voucher whose save() call created this row — see AcctPaymentReceipt.sourceVoucherNo.
   sourceVoucherNo String?
-  remarks      String?
-  userName     String?
-  createdAt    DateTime @default(now())
+  remarks         String?
+  userName        String?
+  createdAt       DateTime @default(now())
 
   @@index([custId])
   @@index([kind])
@@ -1577,17 +1624,17 @@ model TallyReconRun {
   userName   String?
 
   /// Headline counters, so the runs list needn't re-aggregate the rows.
-  ledgerCount    Int @default(0)
-  voucherCount   Int @default(0)
-  matchedCount   Int @default(0)
-  missingInOms   Int @default(0)
-  missingInTally Int @default(0)
-  mismatchCount  Int @default(0)
-  unmatchedParty Int @default(0)
+  ledgerCount          Int @default(0)
+  voucherCount         Int @default(0)
+  matchedCount         Int @default(0)
+  missingInOms         Int @default(0)
+  missingInTally       Int @default(0)
+  mismatchCount        Int @default(0)
+  unmatchedParty       Int @default(0)
   /// How many flagged lines the user has marked. Kept on the run so the history
   /// list can show review progress without loading every row.
-  pendingCount   Int @default(0)
-  solvedCount    Int @default(0)
+  pendingCount         Int @default(0)
+  solvedCount          Int @default(0)
   /// Parties whose closing balance disagrees with the register.
   balanceMismatchCount Int @default(0)
   balanceCheckedCount  Int @default(0)
@@ -1617,8 +1664,8 @@ model TallyReconRow {
   vchNo        String
   particulars  String?
   /// Bank-leg figures only, which is all the register carries.
-  dr           Float @default(0)
-  cr           Float @default(0)
+  dr           Float    @default(0)
+  cr           Float    @default(0)
 
   /// MATCHED | MISSING_IN_OMS | MISSING_IN_TALLY | AMOUNT_MISMATCH |
   /// DATE_MISMATCH | UNMATCHED_PARTY | NOT_APPLICABLE
@@ -1685,9 +1732,9 @@ model TallyReconBalance {
   agreedAtLastReceipt Boolean?
 
   /// First date the two running balances part company (null when they never do).
-  firstDivergenceOn DateTime?
+  firstDivergenceOn        DateTime?
   /// True when the divergence begins only after the last recorded receipt.
-  divergedAfterLastReceipt Boolean @default(false)
+  divergedAfterLastReceipt Boolean   @default(false)
 
   @@index([runId])
   @@index([runId, matched])
@@ -1913,33 +1960,33 @@ model AgentSettlement {
 /// 20/kg against a 40/kg master rate, and the pair plus the reason is what makes
 /// that decision explainable months later.
 model AgentSettlementLine {
-  id               Int      @id @default(autoincrement())
-  settlementId     Int
-  challanId        Int?
-  invNo            String
-  customerName     String
-  pCategory        String
+  id                 Int      @id @default(autoincrement())
+  settlementId       Int
+  challanId          Int?
+  invNo              String
+  customerName       String
+  pCategory          String
   /// KGS or PCS — what `qty` and the rates below are counted in.
-  basis            String   @default("KGS")
-  qty              Float
-  baseRatePerUnit  Float
+  basis              String   @default("KGS")
+  qty                Float
+  baseRatePerUnit    Float
   appliedRatePerUnit Float
   /// The share of the invoice THIS LINE pays commission on — not the invoice's
   /// running total. On a first settlement they're the same; on a top-up this is
   /// only the extra collected since. Summing it across paid lines is how the
   /// engine knows what's still claimable.
-  paidRatio        Float    @default(0)
-  invoiceAmount    Float    @default(0)
-  paidAmount       Float    @default(0)
-  amount           Float    @default(0)
+  paidRatio          Float    @default(0)
+  invoiceAmount      Float    @default(0)
+  paidAmount         Float    @default(0)
+  amount             Float    @default(0)
   /// This line is the balance on an invoice settled earlier at a lower
   /// collection level, kept so the payout can be explained months later.
-  isTopUp          Boolean  @default(false)
+  isTopUp            Boolean  @default(false)
   /// What had already been commissioned on the invoice before this line.
-  priorSettledRatio Float   @default(0)
+  priorSettledRatio  Float    @default(0)
   /// Why the owner moved off the configured rate, when they did.
-  reason           String?
-  createdAt        DateTime @default(now())
+  reason             String?
+  createdAt          DateTime @default(now())
 
   settlement AgentSettlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
 

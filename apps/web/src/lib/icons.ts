@@ -26,10 +26,12 @@ import {
   IndianRupee,
   KeyRound,
   Landmark,
+  Lightbulb,
   LayoutDashboard,
   PackageOpen,
   ListChecks,
   ListTree,
+  NotebookPen,
   Package,
   PackageCheck,
   PackagePlus,
@@ -103,6 +105,10 @@ const ICONS: Record<string, LucideIcon> = {
   HandCoins,
   Wallet,
   Tag,
+  // Referenced by MENU but previously absent here, so both rendered as the
+  // neutral fallback dot instead of their real icon.
+  Lightbulb,
+  NotebookPen,
 };
 
 /** Resolve a menu icon name to a component, falling back to a neutral dot. */

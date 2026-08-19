@@ -3,6 +3,7 @@ import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import { Prisma } from '@prisma/client';
 import {
   type ChallanAnalytics,
+  type TradingAccount,
   type ChallanDraft,
   type ChallanDraftItem,
   type ChallanDto,
@@ -22,6 +23,8 @@ import { CreateChallanDto, DraftChallanDto, ItemHistoryQueryDto, PendingChallanQ
 const PREFIX_KEY = 'CHALLAN_PREFIXES';
 const FALLBACK_PREFIX = 'SSS';
 const round5 = (x: number) => Math.round(x / 5) * 5;
+/** Money to 2dp — keeps the trading statement's rows from carrying float dust. */
+const r2 = (x: number) => Math.round((x + Number.EPSILON) * 100) / 100;
 const n = (v: number | null | undefined) => (Number.isFinite(v as number) ? (v as number) : 0);
 /** SCRAP parties are TCS-only — this guards against a stale client ever
  *  persisting a TDS deduction alongside it. */
@@ -489,10 +492,126 @@ export class ChallansService {
         .sort((a, b) => b.total - a.total),
       topParties: topPartyRows.map((r) => ({ customerName: r.customerName, count: r._count._all, total: r._sum.total ?? 0 })),
       overdue: { count: overdueAgg._count._all, total: overdueAgg._sum.total ?? 0 },
+      trading: await this.tradingAccount(q),
       categories: catRows
         .map((r) => (r.category ?? '').trim())
         .filter((c) => c.length > 0)
         .sort((a, b) => a.localeCompare(b)),
+    };
+  }
+
+  /**
+   * Trading-account statement over the same filters as the KPI modal.
+   *
+   * Sales and debit notes both live in `challans` (separated by `transaction`),
+   * returns live in `credit_notes`. Sales figures are GOODS values — the sum of
+   * each document's line amounts — because a document's `total` already carries
+   * freight, packing, GST and TCS/TDS, which the statement lists on their own
+   * rows. Summing totals into "sales" is what makes the plain KPI card overstate
+   * the trade.
+   *
+   * The credit-note side takes the range / category / customer filters but NOT
+   * the challan status filter: credit notes have no cancelled state, so there is
+   * nothing to match it against.
+   */
+  private async tradingAccount(q: ChallanQueryDto): Promise<TradingAccount> {
+    const where = this.listWhere(q);
+    const goodsOf = (rows: { items: { amount: number | null }[] }[]) =>
+      rows.reduce((sum, r) => sum + r.items.reduce((s, i) => s + (i.amount ?? 0), 0), 0);
+
+    // Credit notes share the challan filters except status (see doc comment).
+    const cnWhere: Prisma.CreditNoteWhereInput = {};
+    if (q.category?.trim()) cnWhere.category = q.category.trim();
+    if (q.dateFrom) {
+      const from = new Date(q.dateFrom);
+      from.setHours(0, 0, 0, 0);
+      cnWhere.invDate = { ...(cnWhere.invDate as object), gte: from };
+    }
+    if (q.dateTo) {
+      const to = new Date(q.dateTo);
+      to.setHours(23, 59, 59, 999);
+      cnWhere.invDate = { ...(cnWhere.invDate as object), lte: to };
+    }
+    const search = q.search?.trim();
+    if (search) cnWhere.OR = [{ code: { contains: search } }, { customerName: { contains: search } }];
+
+    const isDebitNote: Prisma.ChallanWhereInput = { OR: [{ transaction: 'DEBIT NOTE' }, { prefix: { startsWith: 'DN' } }] };
+    const salesWhere: Prisma.ChallanWhereInput = { AND: [where, { NOT: isDebitNote }] };
+    const dnWhere: Prisma.ChallanWhereInput = { AND: [where, isDebitNote] };
+
+    // Charge/tax columns come back with the items so each document's stored total
+    // can be checked against its own components in the same pass (see
+    // `documentsOutOfLine`) — an aggregate alone cannot see per-document drift.
+    const docSelect = {
+      freight: true,
+      packing: true,
+      pouch: true,
+      tax: true,
+      tcs: true,
+      tds: true,
+      total: true,
+      items: { select: { amount: true } },
+    } as const;
+    const [salesRows, dnRows, cnRows, challanAgg, cnAgg, cancelledAgg] = await Promise.all([
+      this.prisma.challan.findMany({ where: salesWhere, select: docSelect }),
+      this.prisma.challan.findMany({ where: dnWhere, select: docSelect }),
+      this.prisma.creditNote.findMany({ where: cnWhere, select: { items: { select: { amount: true } } } }),
+      this.prisma.challan.aggregate({ where, _sum: { freight: true, packing: true, pouch: true, tax: true, tcs: true, tds: true, total: true } }),
+      this.prisma.creditNote.aggregate({ where: cnWhere, _sum: { freight: true, packing: true, pouch: true, tax: true, total: true } }),
+      // Always measured, whatever the status filter is — the UI states plainly
+      // whether cancelled documents are inside these figures or outside them.
+      this.prisma.challan.aggregate({
+        where: { AND: [this.listWhere({ ...q, status: undefined } as ChallanQueryDto), { challanStatus: 'CANCELLED' }] },
+        _count: { _all: true },
+        _sum: { total: true },
+      }),
+    ]);
+
+    const grossSales = r2(goodsOf(salesRows));
+    const debitNotes = r2(goodsOf(dnRows));
+    const salesReturns = r2(goodsOf(cnRows));
+    const netSales = r2(grossSales + debitNotes - salesReturns);
+    const freight = r2(n(challanAgg._sum.freight) - n(cnAgg._sum.freight));
+    const packing = r2(n(challanAgg._sum.packing) - n(cnAgg._sum.packing));
+    const pouch = r2(n(challanAgg._sum.pouch) - n(cnAgg._sum.pouch));
+    const netRevenue = r2(netSales + freight + packing + pouch);
+    const gst = r2(n(challanAgg._sum.tax) - n(cnAgg._sum.tax));
+    const tcs = r2(n(challanAgg._sum.tcs));
+    const tds = r2(n(challanAgg._sum.tds));
+
+    const totalSales = r2(n(challanAgg._sum.total));
+    const grossGst = r2(n(challanAgg._sum.tax));
+    const grossCharges = r2(n(challanAgg._sum.freight) + n(challanAgg._sum.packing) + n(challanAgg._sum.pouch));
+    const grossTcs = r2(n(challanAgg._sum.tcs));
+    const goodsInvoiced = r2(grossSales + debitNotes);
+
+    return {
+      totalSales: { amount: totalSales, count: salesRows.length + dnRows.length },
+      grossGst,
+      grossCharges,
+      grossTcs,
+      goodsInvoiced,
+      openingVariance: r2(totalSales - grossGst - grossCharges - grossTcs - goodsInvoiced),
+      grossSales: { amount: grossSales, count: salesRows.length },
+      debitNotes: { amount: debitNotes, count: dnRows.length },
+      salesReturns: { amount: salesReturns, count: cnRows.length },
+      netSales,
+      freight,
+      packing,
+      pouch,
+      netRevenue,
+      gst,
+      tcs,
+      tds,
+      totalInvoiced: r2(netRevenue + gst + tcs - tds),
+      returnRatePercent: grossSales > 0 ? r2((salesReturns / grossSales) * 100) : 0,
+      documentTotal: r2(n(challanAgg._sum.total) - n(cnAgg._sum.total)),
+      documentsOutOfLine: [...salesRows, ...dnRows].filter((d) => {
+        const goods = d.items.reduce((s, i) => s + (i.amount ?? 0), 0);
+        return Math.abs(n(d.total) - (goods + n(d.freight) + n(d.packing) + n(d.pouch) + n(d.tax) + n(d.tcs) - n(d.tds))) > 1;
+      }).length,
+      statusScope: (q.status ?? '').toUpperCase(),
+      cancelled: { amount: r2(n(cancelledAgg._sum.total)), count: cancelledAgg._count._all },
     };
   }
 

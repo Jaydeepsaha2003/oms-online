@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import type { DaybookDayGroup, DaybookQuery, DaybookResult, DaybookRow } from '@oms/shared';
+import type { DaybookDayGroup, DaybookQuery, DaybookResult, DaybookRow, LedgerTxnMode } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 
 const r0 = (x: number) => Math.round(x);
@@ -48,7 +48,7 @@ export class DaybookService {
     if (to < from) throw new BadRequestException('To date is before From date.');
     const toExclusive = new Date(to.getTime() + DAY);
 
-    const raw = await this.collectRows(from, toExclusive, q.customerId ?? null);
+    const raw = await this.collectRows(from, toExclusive, q.customerId ?? null, q.mode ?? 'BOTH');
 
     const voucherTypes = [...new Set(raw.map((r) => r.voucherType).filter(Boolean))].sort();
     const filtered = q.voucherType ? raw.filter((r) => r.voucherType.toUpperCase() === q.voucherType!.toUpperCase()) : raw;
@@ -90,7 +90,19 @@ export class DaybookService {
     };
   }
 
-  private async collectRows(from: Date, toExclusive: Date, customerId: number | null): Promise<RawRow[]> {
+  /** Bank + cash, or just the one leg the caller asked for. */
+  private leg(mode: LedgerTxnMode, bank: number | null, cash: number | null): number {
+    if (mode === 'B') return r0(bank ?? 0);
+    if (mode === 'C') return r0(cash ?? 0);
+    return r0((bank ?? 0) + (cash ?? 0));
+  }
+
+  private async collectRows(
+    from: Date,
+    toExclusive: Date,
+    customerId: number | null,
+    mode: LedgerTxnMode,
+  ): Promise<RawRow[]> {
     const [challans, ledger, openings] = await Promise.all([
       this.prisma.challan.findMany({
         where: { challanStatus: 'CONFIRMED', invDate: { gte: from, lt: toExclusive }, ...(customerId ? { customerId } : {}) },
@@ -109,7 +121,9 @@ export class DaybookService {
     const raw: RawRow[] = [];
     for (const c of challans) {
       if (isDebitNoteChallan(c.prefix, c.transaction)) continue;
-      const dr = r0((c.b ?? 0) + (c.c ?? 0));
+      const dr = this.leg(mode, c.b, c.c);
+      // Nothing on the requested leg — a cash-only bill has no place in a Bank
+      // daybook, so it drops out rather than showing as a zero row.
       if (dr === 0) continue;
       raw.push({
         txnDate: c.invDate,
@@ -124,7 +138,7 @@ export class DaybookService {
       });
     }
     for (const o of openings) {
-      const amt = r0((o.bankAmt ?? 0) + (o.cashAmt ?? 0));
+      const amt = this.leg(mode, o.bankAmt, o.cashAmt);
       if (amt === 0) continue;
       const debit = (o.drCr ?? '').trim().toUpperCase() !== 'CREDIT';
       raw.push({
@@ -147,8 +161,8 @@ export class DaybookService {
           particulars = after ? `${l.customerName} (${after})` : l.customerName;
         }
       }
-      const dr = r0((l.bankDebit ?? 0) + (l.cashDebit ?? 0));
-      const cr = r0((l.bankCredit ?? 0) + (l.cashCredit ?? 0));
+      const dr = this.leg(mode, l.bankDebit, l.cashDebit);
+      const cr = this.leg(mode, l.bankCredit, l.cashCredit);
       if (dr === 0 && cr === 0) continue;
       raw.push({
         txnDate: l.transDate,

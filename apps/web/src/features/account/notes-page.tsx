@@ -27,7 +27,7 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { openPdf } from '@/lib/pdf';
 import { useCustomers } from '@/features/customers/use-customers';
-import { ChallanPreviewDialog } from '@/features/challans/challan-preview-dialog';
+import { fetchChallanByCode } from '@/features/challans/use-challans';
 import { fetchNote, useDeleteNote, useNextNoteNo, useNoteDirectory, useRecentSold, useSaveNote } from './use-notes';
 
 const money = (v: number) => `₹ ${(v ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -119,9 +119,40 @@ export function NotesPage() {
   const [remarks, setRemarks] = useState('');
 
   const [dirOpen, setDirOpen] = useState(false);
-  /** Ref Inv whose source challan is open in the preview dialog. */
-  const [previewInv, setPreviewInv] = useState<string | null>(null);
   const canViewChallans = can('challan:view');
+
+  /**
+   * Open a note line's source sale in the same Sales Challan view the Party
+   * Ledger opens — but in a SECOND TAB, because this screen holds unsaved work:
+   * the note's lines live in component state, so navigating away in this tab
+   * would throw away everything added since the last save.
+   *
+   * The tab is reserved synchronously inside the click (same trick as
+   * {@link openPdf}); opening it after the await would be swallowed as a popup.
+   * The lines carry a Ref Inv, not the challan's row id, so the id is looked up
+   * by code and the reserved tab is then pointed at the bill route.
+   */
+  const openChallan = (code: string) => {
+    const tab = window.open('', '_blank');
+    // Null means the browser refused the tab (pop-up blocker, or a strict mobile
+    // setting). Say so — the alternative is an arrow that looks broken, and the
+    // silent-nothing case is worse than the error.
+    if (!tab) {
+      toast.error('Your browser blocked the new tab. Allow pop-ups for this site to view the challan.');
+      return;
+    }
+    fetchChallanByCode(code)
+      .then((challan) => {
+        // ?from=tab tells the bill page it was popped into a tab of its own, so
+        // its Back control closes the tab instead of trying a browser-back that
+        // has no history to move through.
+        if (tab && !tab.closed) tab.location.href = `/challans/${challan.id}/bill?from=tab`;
+      })
+      .catch((e) => {
+        tab?.close();
+        toast.error(getApiErrorMessage(e, `Could not open challan ${code}`));
+      });
+  };
 
   const { data: customerData } = useCustomers({ page: 1, pageSize: 1000 });
   const custByName = useMemo(() => {
@@ -531,13 +562,19 @@ export function NotesPage() {
               <div className="col-span-2 space-y-1 lg:col-span-3">
                 <Label className={FIELD_LABEL}>Pick a past sale (last 12 months)</Label>
                 <div className="flex items-center gap-1.5">
-                  <Combobox
-                    value=""
-                    onChange={pickRecent}
-                    options={recentSold.map((r: RecentSoldRow, i) => ({ value: String(i), label: `${r.invNo} · ${r.productName}${r.design ? ` · ${r.design}` : ''} · ${money(r.price)}` }))}
-                    placeholder={customerId ? 'Search a past sale…' : 'Select a party first'}
-                    className={cn(CONTROL, 'w-full')}
-                  />
+                  {/* flex-1 + min-w-0: the Combobox's own wrapper is a plain block
+                      div, so as a bare flex item it shrinks to the input's
+                      intrinsic ~20ch and leaves the rest of the column empty
+                      (its `w-full` then resolves against that shrunken box). */}
+                  <div className="min-w-0 flex-1">
+                    <Combobox
+                      value=""
+                      onChange={pickRecent}
+                      options={recentSold.map((r: RecentSoldRow, i) => ({ value: String(i), label: `${r.invNo} · ${r.productName}${r.design ? ` · ${r.design}` : ''} · ${money(r.price)}` }))}
+                      placeholder={customerId ? 'Search a past sale…' : 'Select a party first'}
+                      className={cn(CONTROL, 'w-full')}
+                    />
+                  </div>
                   {canViewChallans && (
                     <Button
                       type="button"
@@ -545,7 +582,7 @@ export function NotesPage() {
                       size="icon"
                       className="size-9 shrink-0"
                       disabled={!entry.refInvNo}
-                      onClick={() => setPreviewInv(entry.refInvNo)}
+                      onClick={() => openChallan(entry.refInvNo)}
                       title={entry.refInvNo ? `View challan ${entry.refInvNo}` : 'Pick a past sale to view its challan'}
                       aria-label={entry.refInvNo ? `View challan ${entry.refInvNo}` : 'View challan'}
                     >
@@ -634,7 +671,7 @@ export function NotesPage() {
                       <td className={cn(TD, NUM, 'text-[12px] font-medium text-slate-600 dark:text-slate-400')}>{l.gstRate ?? 0}</td>
                       <td className={cn(TD, 'text-center whitespace-nowrap')}>
                         {canViewChallans && l.refInvNo && (
-                          <Button variant="ghost" size="icon" className="size-7" onClick={() => setPreviewInv(l.refInvNo!)} title={`View challan ${l.refInvNo}`} aria-label={`View challan ${l.refInvNo}`}>
+                          <Button variant="ghost" size="icon" className="size-7" onClick={() => openChallan(l.refInvNo!)} title={`View challan ${l.refInvNo}`} aria-label={`View challan ${l.refInvNo}`}>
                             <ArrowUpRight className="size-4" />
                           </Button>
                         )}
@@ -680,7 +717,7 @@ export function NotesPage() {
                     <div className="flex shrink-0 items-center gap-1.5">
                       <span className="text-[13.5px] font-extrabold tabular-nums">{money(noteItemAmount(l))}</span>
                       {canViewChallans && l.refInvNo && (
-                        <Button variant="ghost" size="icon" className="size-8" onClick={() => setPreviewInv(l.refInvNo!)} aria-label={`View challan ${l.refInvNo}`}><ArrowUpRight className="size-4" /></Button>
+                        <Button variant="ghost" size="icon" className="size-8" onClick={() => openChallan(l.refInvNo!)} aria-label={`View challan ${l.refInvNo}`}><ArrowUpRight className="size-4" /></Button>
                       )}
                       <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => removeLine(i)} aria-label={`Remove line ${i + 1}`}><Trash2 className="size-4" /></Button>
                     </div>
@@ -693,7 +730,6 @@ export function NotesPage() {
       </div>
 
       <NoteDirectoryDialog open={dirOpen} onOpenChange={setDirOpen} mode={mode} onEdit={loadForEdit} onDelete={del} canDelete={can('note:delete')} canPrint={can('note:print')} confirm={confirm} />
-      <ChallanPreviewDialog code={previewInv} onClose={() => setPreviewInv(null)} />
     </div>
   );
 }

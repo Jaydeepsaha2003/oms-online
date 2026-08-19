@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, BarChart3, Building2, Layers, TrendingUp } from 'lucide-react';
+import { AlertTriangle, BarChart3, Building2, Layers, Scale, TrendingUp } from 'lucide-react';
 import type { ChallanQuery } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { NativeSelect } from '@/components/common/combo';
@@ -53,6 +53,42 @@ function SectionTitle({ icon: Icon, children }: { icon: typeof Layers; children:
   );
 }
 
+
+/** One line of the trading statement. `kind` drives the styling: a plain row, a
+ *  subtotal rule, or the closing total. */
+function TradeRow({
+  label,
+  value,
+  note,
+  kind = 'row',
+  negative,
+}: {
+  label: string;
+  value: string;
+  note?: string;
+  kind?: 'row' | 'subtotal' | 'total';
+  /** Deducted from the running figure — shown in red with a leading minus. */
+  negative?: boolean;
+}) {
+  return (
+    <tr
+      className={cn(
+        'border-b last:border-b-0',
+        kind === 'subtotal' && 'bg-muted/40 font-semibold',
+        kind === 'total' && 'bg-primary/5 border-t-2 border-t-primary/30 font-bold',
+      )}
+    >
+      <td className={cn('py-1.5 pr-3 pl-3 text-sm', kind === 'row' && 'pl-6')}>
+        {label}
+        {note && <span className="text-muted-foreground ml-2 text-xs font-normal">{note}</span>}
+      </td>
+      <td className={cn('py-1.5 pr-3 text-right text-sm tabular-nums', negative && 'text-rose-600 dark:text-rose-400')}>
+        {negative ? `(${value})` : value}
+      </td>
+    </tr>
+  );
+}
+
 export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
   // The modal keeps its own filter state, (re)seeded from the list's current
   // filters each time it opens.
@@ -93,6 +129,7 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
 
   const { data, isLoading, isFetching } = useChallanAnalytics(query, open);
   const t = data?.totals;
+  const tr = data?.trading;
   const maxCat = Math.max(1, ...(data?.byCategory ?? []).map((c) => c.total));
   const maxParty = Math.max(1, ...(data?.topParties ?? []).map((p) => p.total));
 
@@ -143,13 +180,18 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
           </div>
         </div>
 
-        {isLoading || !t ? (
+        {isLoading || !t || !tr ? (
           <div className="text-muted-foreground grid place-items-center py-16 text-sm">Crunching numbers…</div>
         ) : (
           <div className="space-y-5">
             {/* Headline KPIs */}
             <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
-              <StatCard label="Total Sales" value={moneyShort(t.totalSales)} sub={money(t.totalSales)} />
+              {/* Says its basis outright: this is the invoice value of the
+                  challans (tax and charges in, returns not netted), which is a
+                  different measure from the Trading Account's goods-value Gross
+                  Sales. Two cards reading plain "Sales" is what made them look
+                  like they disagreed. */}
+              <StatCard label="Total Sales" value={moneyShort(t.totalSales)} sub={`${money(t.totalSales)} · incl. GST & charges`} />
               <StatCard label="Challans" value={count(t.count)} sub={`avg ${money(t.avgValue)}`} />
               <StatCard label="Total B (billed)" value={moneyShort(t.totalB)} sub={money(t.totalB)} />
               <StatCard label="Total C (cash)" value={moneyShort(t.totalC)} sub={money(t.totalC)} />
@@ -170,6 +212,82 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
               <StatCard label="Cancelled" value={count(data.byStatus.cancelled.count)} sub={money(data.byStatus.cancelled.total)} tone={data.byStatus.cancelled.count ? 'bad' : 'default'} />
               <StatCard label="Freight" value={money(t.totalFreight)} />
               <StatCard label="Packing" value={money(t.totalPacking)} />
+            </div>
+
+            {/* Trading account — the statement view: what was sold, what came
+                back, and what was actually invoiced over the selected range. */}
+            <div>
+              <SectionTitle icon={Scale}>
+                Trading Account · {dateFrom || 'start'} to {dateTo || 'today'}
+                <span className="text-muted-foreground ml-1 font-normal normal-case">
+                  ({status ? status.toLowerCase() : 'all statuses'}
+                  {category ? ` · ${category}` : ''})
+                </span>
+              </SectionTitle>
+              <div className="overflow-hidden rounded-lg border">
+                <table className="w-full border-collapse">
+                  <caption className="sr-only">Trading account for the selected filters</caption>
+                  <tbody>
+                    {/* Opens on the same figure as the Total Sales card, then
+                        strips tax and charges back out to reach a goods value —
+                        so the statement bridges to the KPI in its own column
+                        rather than in a footnote. */}
+                    <TradeRow label="Total Sales (invoice value)" value={money(tr.totalSales.amount)} note={`${count(tr.totalSales.count)} challan(s), incl. GST & charges`} kind="subtotal" />
+                    <TradeRow label="Less: GST charged" value={money(tr.grossGst)} negative />
+                    <TradeRow label="Less: Freight, Packing & Box" value={money(tr.grossCharges)} negative />
+                    {tr.grossTcs > 0 && <TradeRow label="Less: TCS collected" value={money(tr.grossTcs)} negative />}
+                    {/* Only when documents don't decompose — keeps the column tying. */}
+                    {Math.abs(tr.openingVariance) >= 1 && (
+                      <TradeRow
+                        label={tr.openingVariance > 0 ? 'Less: unreconciled document variance' : 'Add: unreconciled document variance'}
+                        value={money(Math.abs(tr.openingVariance))}
+                        note={`${count(tr.documentsOutOfLine)} challan(s)`}
+                        negative={tr.openingVariance > 0}
+                      />
+                    )}
+                    <TradeRow label="Goods value invoiced" value={money(tr.goodsInvoiced)} kind="subtotal" />
+                    {tr.debitNotes.amount !== 0 && (
+                      <TradeRow label="of which: Debit Notes" value={money(tr.debitNotes.amount)} note={`${count(tr.debitNotes.count)} note(s) — memo, already above`} />
+                    )}
+                    <TradeRow label="Less: Sales Returns" value={money(tr.salesReturns.amount)} note={tr.salesReturns.count ? `${count(tr.salesReturns.count)} credit note(s)` : 'none'} negative />
+                    <TradeRow label="Net Sales" value={money(tr.netSales)} kind="subtotal" />
+                    <TradeRow label="Add: Freight, Packing & Box" value={money(tr.freight + tr.packing + tr.pouch)} note="net of returns" />
+                    <TradeRow label="Net Revenue (before GST)" value={money(tr.netRevenue)} kind="subtotal" />
+                    <TradeRow label="Add: GST" value={money(tr.gst)} note="net of returns" />
+                    {tr.tcs > 0 && <TradeRow label="Add: TCS" value={money(tr.tcs)} />}
+                    {tr.tds > 0 && <TradeRow label="Less: TDS" value={money(tr.tds)} negative />}
+                    <TradeRow label="Total Invoiced (net of returns)" value={money(tr.totalInvoiced)} kind="total" />
+                  </tbody>
+                </table>
+              </div>
+              <div className="text-muted-foreground mt-2 space-y-1 text-xs">
+                <p>
+                  Sales figures are goods value (the sum of each document's line amounts); charges and tax are listed
+                  separately, so every row adds down the column. Return rate:{' '}
+                  <span className="text-foreground font-semibold tabular-nums">{tr.returnRatePercent}%</span> of gross sales.
+                </p>
+                <p>
+                  The opening row is the <span className="text-foreground font-medium">Total Sales</span> card above; the rows
+                  under it strip out GST and charges to reach the goods value the trade is measured on, then returns come off.
+                </p>
+                {/* The status filter drives these figures, so say what is inside them. */}
+                {tr.cancelled.count > 0 && (
+                  <p>
+                    {status.toUpperCase() === 'CONFIRMED'
+                      ? `Excludes ${count(tr.cancelled.count)} cancelled challan(s) worth ${money(tr.cancelled.amount)}.`
+                      : `Includes ${count(tr.cancelled.count)} cancelled challan(s) worth ${money(tr.cancelled.amount)} — set Status to Confirmed to leave them out.`}
+                  </p>
+                )}
+                {tr.salesReturns.count > 0 && <p>Credit notes take the date, category and search filters; they have no cancelled state to match Status against.</p>}
+                {tr.documentsOutOfLine > 0 && (
+                  <p className="text-amber-700 dark:text-amber-400">
+                    <AlertTriangle className="mr-1 inline size-3.5 align-[-2px]" />
+                    {count(tr.documentsOutOfLine)} challan(s) carry a stored total that differs from their own goods + charges + tax, a net{' '}
+                    {money(tr.documentTotal - tr.totalInvoiced)} against the {money(tr.documentTotal)} of document totals. The statement above is built
+                    from the components.
+                  </p>
+                )}
+              </div>
             </div>
 
             <div className="grid gap-5 lg:grid-cols-2">

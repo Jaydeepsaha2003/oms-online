@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BadgePercent, ExternalLink, History, Loader2, PackageOpen, Plus, Split, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { ORDER_PRIORITIES, type BookingDto, type BookingQuoteLine, type ConvertBookingLineInput, type CustomerBagWeightDto, type CustomerLogoDto, type OrderLookups } from '@oms/shared';
+import { ORDER_PRIORITIES, qtyOrderForCategory, type BookingDto, type BookingQuoteLine, type ConvertBookingLineInput, type CustomerBagWeightDto, type CustomerLogoDto, type OrderLookups, type QtyField } from '@oms/shared';
 import { formatDate } from '@/lib/date-format';
 import { cn } from '@/lib/utils';
+import { useAutoSizePcs } from '@/lib/auto-size-pcs';
 import { useConfirm } from '@/components/common/confirm';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { NativeSelect } from '@/components/common/combo';
+import { useOrderQtyLayout } from '@/features/settings/use-settings';
 import { useBookingQuote } from '@/features/bookings/use-bookings';
 import { DesignNamePicker, resolveDesignNameChoices } from './design-name-picker';
 
@@ -43,6 +45,11 @@ export interface DrawnBookingLine {
   designType: string;
   designName: string;
   psize: string;
+  /** Per-piece weight / pieces-per-box of the source product, carried through so
+   *  the order form's Pcs ⇄ Box ⇄ Kgs cascade still works when a drawn line is
+   *  edited there (it reloads the whole line back into its entry row). */
+  weight: string;
+  pcsBox: string;
   productRate: string;
   designRate: string;
   priority: string;
@@ -55,6 +62,9 @@ export interface DrawnBookingLine {
 }
 
 const fmtNum = (v: number | null) => (v == null ? '' : String(v));
+/** Word/punctuation splitter for matching a typed item name against catalogue
+ *  words — same separator the order form's own detector uses. */
+const NAME_SEP = /[\s(),+/-]+/;
 const n = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? null : Number(s));
 const money = (v: number) => v.toLocaleString('en-IN');
 const round2 = (x: number) => Math.round((x + Number.EPSILON) * 100) / 100;
@@ -68,6 +78,10 @@ interface EntryLine {
   designType: string;
   designName: string;
   psize: string;
+  /** Per-piece weight of the picked product (drives Pcs → Kgs). */
+  weight: string;
+  /** Pieces per box of the picked product (drives Pcs ⇄ Box). */
+  pcsBox: string;
   priority: string;
   bags: string;
   pcs: string;
@@ -81,7 +95,7 @@ interface EntryLine {
 }
 const blank = (priority = 'NORMAL'): Omit<EntryLine, 'key'> => ({
   itemName: '', product: '', category: '', subCategory: '', designType: '', designName: '',
-  psize: '', priority, bags: '', pcs: '', gram: '', box: '', calField: 'KGS', comment: '',
+  psize: '', weight: '', pcsBox: '', priority, bags: '', pcs: '', gram: '', box: '', calField: 'KGS', comment: '',
 });
 
 /**
@@ -118,6 +132,14 @@ export function BookingDrawSheet({
   const quote = useBookingQuote();
   const confirmDialog = useConfirm();
   const keyer = useRef(0);
+  // Same Size/Pcs behaviour as the New Order item picker: the label's leading
+  // number is the item's size or its pcs count depending on this, auto-detected
+  // from what's typed (shared per-browser preference — see useAutoSizePcs).
+  const { autoSizePcs } = useAutoSizePcs();
+  const [showBy, setShowBy] = useState<'PCS' | 'SIZE'>('SIZE');
+  // Per-category Bags/Pcs/Kgs/Box ordering from Settings, same source the New
+  // Order form reads.
+  const { data: qtyLayout } = useOrderQtyLayout();
 
   const [bookingId, setBookingId] = useState<number | null>(null);
   const booking = bookings.find((b) => b.id === bookingId) ?? null;
@@ -156,16 +178,23 @@ export function BookingDrawSheet({
           (l.scope === 'SUBCATEGORY' && norm(l.category) === norm(category) && norm(l.subCategory) === norm(subCategory)),
       );
     const map = new Map<string, (typeof list)[number]>();
-    const labels: string[] = [];
+    const options: { value: string; label: string; keywords: string }[] = [];
     for (const it of list) {
       if (isLogo(it.designType) && logoBlocked(it.category, it.subCategory)) continue;
-      const label = [fmtNum(it.size), it.product, it.designType ?? ''].filter(Boolean).join(' ');
+      // Leading number is the size or the pcs count depending on showBy — same
+      // composite-label rule the New Order item picker uses.
+      const prefix = showBy === 'PCS' ? fmtNum(it.pcs) : fmtNum(it.size);
+      const label = [prefix, it.product, it.designType ?? ''].filter(Boolean).join(' ');
       if (!label || map.has(label)) continue;
       map.set(label, it);
-      labels.push(label);
+      // Search-only tokens: BOTH size and pcs (whichever isn't the visible
+      // prefix) plus the sub-category, so a Size-view row is still found by
+      // typing its pcs and vice versa.
+      const keywords = [fmtNum(it.size), fmtNum(it.pcs), it.subCategory ?? ''].filter(Boolean).join(' ');
+      options.push({ value: label, label, keywords });
     }
-    return { labels, map };
-  }, [lookups, logos]);
+    return { options, map };
+  }, [lookups, logos, showBy]);
 
   const categoryFieldMap = useMemo(() => {
     const m = new Map<string, 'KGS' | 'PCS'>();
@@ -191,8 +220,46 @@ export function BookingDrawSheet({
       designType: it.designType ?? '',
       // Never pre-pick a design name — the user chooses it explicitly.
       designName: '',
+      // Always the item's actual SIZE, regardless of which number the label is
+      // currently showing — psize downstream means size, never a pcs count.
       psize: it.size != null ? String(it.size) : '',
+      // Feed the Pcs ⇄ Box ⇄ Kgs cascade below.
+      weight: it.weight != null ? String(it.weight) : '',
+      pcsBox: it.pcs != null ? String(it.pcs) : '',
     }));
+  };
+
+  // As the user types the item name, the leading number is either a size or a
+  // pcs value — auto-flip Size/Pcs to whichever the catalogue matches. Identical
+  // rule to the New Order item picker's detector, scoped to this booking's item
+  // list. Only runs when the auto-detect preference is on.
+  const detectShowBy = (text: string) => {
+    if (!autoSizePcs) return;
+    const t = text.trim();
+    const lead = t.match(/^(\d+(?:\.\d+)?)/)?.[1];
+    if (!lead) return;
+    const list = lookups?.items ?? [];
+    // Judge the leading number against ONLY the items whose name matches what's
+    // typed after it, so the decision is based on that product's own sizes/pcs,
+    // not unrelated products that happen to share the number.
+    const nameTerms = t.slice(lead.length).trim().toLowerCase().split(NAME_SEP).filter(Boolean);
+    const named = nameTerms.length
+      ? list.filter((it) => {
+          const words = `${it.product} ${it.designType ?? ''}`.toLowerCase().split(NAME_SEP).filter(Boolean);
+          return nameTerms.every((q) => words.some((w) => w.startsWith(q)));
+        })
+      : list;
+    const pool = named.length ? named : list;
+    const some = (key: 'size' | 'pcs', test: (v: string) => boolean) => pool.some((it) => it[key] != null && test(String(it[key])));
+    const sizeExact = some('size', (v) => v === lead);
+    const pcsExact = some('pcs', (v) => v === lead);
+    if (pcsExact && !sizeExact) return setShowBy('PCS');
+    if (sizeExact && !pcsExact) return setShowBy('SIZE');
+    if (sizeExact || pcsExact) return setShowBy('SIZE'); // both/ambiguous → Size
+    const sizePre = some('size', (v) => v.startsWith(lead));
+    const pcsPre = some('pcs', (v) => v.startsWith(lead));
+    if (pcsPre && !sizePre) return setShowBy('PCS');
+    if (sizePre) return setShowBy('SIZE');
   };
 
   // Auto-fill Kgs (= Bags × the customer's per-category bag weight) as bags are
@@ -207,6 +274,44 @@ export function BookingDrawSheet({
         ...e,
         bags: value,
         gram: bw && value.trim() !== '' ? String(round2(bags * bw.kgsPerBag)) : e.gram,
+      };
+    });
+  };
+
+  // Pcs ⇄ Box are linked by the product's pieces-per-box (pcsBox): typing Pcs fills
+  // Box (= Pcs ÷ pcs-per-box) AND Kgs (= Pcs × weight). Fully dynamic — onBox does
+  // the reverse. With no pcs-per-box on the product, Box is left untouched.
+  const onPcs = (value: string) => {
+    setEntry((e) => {
+      const pcs = n(value) ?? 0;
+      const w = n(e.weight);
+      const per = n(e.pcsBox);
+      const has = value.trim() !== '';
+      return {
+        ...e,
+        pcs: value,
+        gram: w != null && has ? String(round2(pcs * w)) : e.gram,
+        box: per != null && per > 0 && has ? String(round2(pcs / per)) : e.box,
+      };
+    });
+  };
+
+  // Box ⇄ Pcs reverse: typing Box fills Pcs (= Box × pcs-per-box) and cascades Kgs
+  // (= Pcs × weight). e.g. a cup with 6 pcs-per-box: Box 32 → Pcs 192. With no
+  // pcs-per-box, Box is just a plain number (nothing to derive).
+  const onBox = (value: string) => {
+    setEntry((e) => {
+      const per = n(e.pcsBox);
+      if (per == null || per <= 0) return { ...e, box: value };
+      const box = n(value) ?? 0;
+      const pcs = box * per;
+      const w = n(e.weight);
+      const has = value.trim() !== '';
+      return {
+        ...e,
+        box: value,
+        pcs: has ? String(round2(pcs)) : e.pcs,
+        gram: w != null && has ? String(round2(pcs * w)) : e.gram,
       };
     });
   };
@@ -243,14 +348,14 @@ export function BookingDrawSheet({
     // booking still has left (after the order's + this sheet's queued lines).
     const wantBags = n(entry.bags) ?? 0;
     const wantKgs = n(entry.gram) ?? 0;
-    if (wantBags - remaining.bags > 0.001) {
+    if (booksBags && wantBags - remaining.bags > 0.001) {
       return toast.error(
         remaining.bags <= 0
           ? `No bags left to draw on ${booking?.code ?? 'this booking'}.`
           : `Only ${money(remaining.bags)} bag(s) left on ${booking?.code ?? 'this booking'} — reduce the Bags.`,
       );
     }
-    if (wantKgs - remaining.kgs > 0.001) {
+    if (booksKgs && wantKgs - remaining.kgs > 0.001) {
       return toast.error(
         remaining.kgs <= 0
           ? `No kgs left to draw on ${booking?.code ?? 'this booking'}.`
@@ -325,8 +430,15 @@ export function BookingDrawSheet({
     return { bags: round2(booking.remainingBags - queued.bags - here.bags), kgs: round2(booking.remainingKgs - queued.kgs - here.kgs) };
   }, [booking, lines, alreadyQueued]);
 
-  const overBags = remaining.bags < -0.001;
-  const overKgs = remaining.kgs < -0.001;
+  // A booking is denominated in bags, in kgs, or in both. A bags-only booking
+  // (kgs = 0) reserves no kgs, so a line's Kgs — which auto-fills from the
+  // party's kgs-per-bag — is a detail of that line, not a draw against the
+  // booking. Only a dimension the booking actually books can limit the draw.
+  const booksBags = (booking?.bags ?? 0) > 0;
+  const booksKgs = (booking?.kgs ?? 0) > 0;
+
+  const overBags = booksBags && remaining.bags < -0.001;
+  const overKgs = booksKgs && remaining.kgs < -0.001;
 
   // Build the drawn lines and hand them to the order. Each line already carries the
   // user's per-item choice (`useLatest`, made at Add time) of latest vs booking price.
@@ -349,6 +461,8 @@ export function BookingDrawSheet({
         designType: l.designType,
         designName: l.designName || 'NA',
         psize: l.psize,
+        weight: l.weight,
+        pcsBox: l.pcsBox,
         productRate: productRate ? String(round2(productRate)) : '',
         designRate: designRate ? String(round2(designRate)) : '',
         priority: l.priority || 'NORMAL',
@@ -403,17 +517,48 @@ export function BookingDrawSheet({
             {booking && (
               <>
                 {/* Live remaining after this order + queued lines */}
-                <div className="grid grid-cols-2 gap-3 rounded-lg border bg-slate-50/70 px-3 py-2">
-                  <Stat label="Bags left to draw" value={money(Math.max(0, remaining.bags))} over={overBags} />
-                  <Stat label="Kgs left to draw" value={money(Math.max(0, remaining.kgs))} over={overKgs} />
+                {/* Only the dimension(s) this booking is actually denominated in —
+                    a bags-only booking showing "Kgs left to draw 0" reads as a
+                    blocker when nothing about kgs constrains the draw. */}
+                <div className={cn('grid gap-3 rounded-lg border bg-slate-50/70 px-3 py-2', booksBags && booksKgs ? 'grid-cols-2' : 'grid-cols-1')}>
+                  {booksBags && <Stat label="Bags left to draw" value={money(Math.max(0, remaining.bags))} over={overBags} />}
+                  {booksKgs && <Stat label="Kgs left to draw" value={money(Math.max(0, remaining.kgs))} over={overKgs} />}
                 </div>
 
                 {/* Item entry — mirrors the order form: item, design name, priority… */}
                 <div className="space-y-2.5 rounded-lg border bg-slate-50/70 p-3">
                   <div className="grid grid-cols-2 items-end gap-2.5 lg:grid-cols-12">
-                    <div className="col-span-2 space-y-1.5 lg:col-span-6">
+                    {/* Manual Size/Pcs picker — shown only when auto-detect is off,
+                        same as the New Order item picker. */}
+                    {!autoSizePcs && (
+                      <div className="col-span-2 space-y-1.5 lg:col-span-2">
+                        <Label className="text-base">Show item by</Label>
+                        <div className="flex h-11 items-center gap-4 text-sm">
+                          <label className="flex cursor-pointer items-center gap-1.5">
+                            <input type="radio" className="accent-indigo-600" checked={showBy === 'SIZE'} onChange={() => setShowBy('SIZE')} /> Size
+                          </label>
+                          <label className="flex cursor-pointer items-center gap-1.5">
+                            <input type="radio" className="accent-indigo-600" checked={showBy === 'PCS'} onChange={() => setShowBy('PCS')} /> Pcs
+                          </label>
+                        </div>
+                      </div>
+                    )}
+                    <div className={cn('col-span-2 space-y-1.5', autoSizePcs ? 'lg:col-span-6' : 'lg:col-span-4')}>
                       <Label className="text-base">Item name</Label>
-                      <NativeSelect value={entry.itemName} onChange={onItemPick} options={itemOptions.labels} placeholder="Pick an item…" className="h-11 text-left text-base" onInvalidEntry={() => toast.error('Please select a correct item')} />
+                      {/* Item labels are "{size|pcs} {product} {design}" — the
+                          keyboard opens on digits and hands over to letters the
+                          moment no item continues the typed number, same as the
+                          New Order picker. */}
+                      <NativeSelect
+                        value={entry.itemName}
+                        onChange={onItemPick}
+                        onType={detectShowBy}
+                        options={itemOptions.options}
+                        placeholder="Pick an item…"
+                        className="h-11 text-left text-base"
+                        digitsFirst
+                        onInvalidEntry={() => toast.error('Please select a correct item')}
+                      />
                     </div>
                     <div className="col-span-1 space-y-1.5 lg:col-span-3">
                       <Label className="text-base">Design Name</Label>
@@ -433,10 +578,27 @@ export function BookingDrawSheet({
                     </div>
                   </div>
                   <div className="grid grid-cols-4 items-end gap-2.5 lg:grid-cols-12">
-                    <div className="space-y-1.5 lg:col-span-2"><Label className="text-base">Bags</Label><Input type="number" step="any" min={0} className="h-11 text-right text-lg font-semibold tabular-nums" value={entry.bags} onChange={(e) => onBags(e.target.value)} /></div>
-                    <div className="space-y-1.5 lg:col-span-2"><Label className="text-base">Pcs</Label><Input type="number" step="any" min={0} className="h-11 text-right text-lg font-semibold tabular-nums" value={entry.pcs} onChange={(e) => setEntry((s) => ({ ...s, pcs: e.target.value }))} /></div>
-                    <div className="space-y-1.5 lg:col-span-2"><Label className="text-base">Kgs</Label><Input type="number" step="any" min={0} className="h-11 text-right text-lg font-semibold tabular-nums" value={entry.gram} onChange={(e) => setEntry((s) => ({ ...s, gram: e.target.value }))} /></div>
-                    <div className="space-y-1.5 lg:col-span-2"><Label className="text-base">Box</Label><Input type="number" step="any" min={0} className="h-11 text-right text-lg font-semibold tabular-nums" value={entry.box} onChange={(e) => setEntry((s) => ({ ...s, box: e.target.value }))} /></div>
+                    {/* Bags / Pcs / Kgs / Box in the order configured per product
+                        category in Settings -> Order quantity fields — the same
+                        call the New Order form makes, so the two screens can't
+                        disagree about where a field sits. */}
+                    {qtyOrderForCategory(qtyLayout, entry.category).map((f: QtyField) => {
+                      if (f === 'bags')
+                        return (
+                          <div key="bags" className="space-y-1.5 lg:col-span-2"><Label className="text-base">Bags</Label><Input type="number" step="any" min={0} className="h-11 text-right text-lg font-semibold tabular-nums" value={entry.bags} onChange={(e) => onBags(e.target.value)} /></div>
+                        );
+                      if (f === 'pcs')
+                        return (
+                          <div key="pcs" className="space-y-1.5 lg:col-span-2"><Label className={cn('text-base', showBy === 'PCS' && 'text-primary font-semibold')}>Pcs</Label><Input type="number" step="any" min={0} className="h-11 text-right text-lg font-semibold tabular-nums" value={entry.pcs} onChange={(e) => onPcs(e.target.value)} /></div>
+                        );
+                      if (f === 'kgs')
+                        return (
+                          <div key="kgs" className="space-y-1.5 lg:col-span-2"><Label className={cn('text-base', showBy === 'SIZE' && 'text-primary font-semibold')}>Kgs</Label><Input type="number" step="any" min={0} className="h-11 text-right text-lg font-semibold tabular-nums" value={entry.gram} onChange={(e) => setEntry((s) => ({ ...s, gram: e.target.value }))} /></div>
+                        );
+                      return (
+                        <div key="box" className="space-y-1.5 lg:col-span-2"><Label className="text-base">Box</Label><Input type="number" step="any" min={0} className="h-11 text-right text-lg font-semibold tabular-nums" value={entry.box} onChange={(e) => onBox(e.target.value)} /></div>
+                      );
+                    })}
                     <div className="col-span-4 space-y-1.5 lg:col-span-2"><Label className="text-base">Remarks</Label><Input className="h-11 text-base" value={entry.comment} onChange={(e) => setEntry((s) => ({ ...s, comment: e.target.value }))} placeholder="Item remark…" /></div>
                     <div className="col-span-4 lg:col-span-2"><Button onClick={addLine} className="h-11 w-full text-base"><Plus /> Add</Button></div>
                   </div>

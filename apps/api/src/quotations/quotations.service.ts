@@ -243,6 +243,9 @@ export class QuotationsService {
       status: 'CONFIRMED',
       comment: q.comment ?? undefined,
       items: q.items.map((it) => ({
+        // Links this order line back to the quotation line it came from, so a
+        // later edit can be mirrored onto the quotation and shown in its history.
+        quotationItemId: it.id,
         pCategory: it.pCategory,
         subCategory: it.subCategory,
         product: it.product,
