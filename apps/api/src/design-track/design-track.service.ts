@@ -137,20 +137,41 @@ export class DesignTrackService {
     return resolveLineDesignType(line, knownTypes);
   }
 
-  private async resolvePhotosForItems(pageItems: Tracked[]): Promise<Map<number, { id?: number; url: string; filename?: string | null; fromHistory?: boolean }[]>> {
-    const photoMap = new Map<number, { id?: number; url: string; filename?: string | null; fromHistory?: boolean }[]>();
+  private async resolvePhotosForItems(pageItems: Tracked[]): Promise<Map<number, { id?: number; url: string; filename?: string | null; title?: string | null; fromHistory?: boolean }[]>> {
+    const photoMap = new Map<number, { id?: number; url: string; filename?: string | null; title?: string | null; fromHistory?: boolean }[]>();
     if (!pageItems.length) return photoMap;
 
     const itemIds = pageItems.map((t) => t.line.orderItemId);
     const directPhotos = await this.prisma.orderItemPhoto.findMany({
       where: { orderItemId: { in: itemIds } },
-      select: { id: true, orderItemId: true, url: true, filename: true },
+      select: {
+        id: true,
+        orderItemId: true,
+        url: true,
+        filename: true,
+        orderItem: {
+          select: {
+            productName: true,
+            design: true,
+            designType: true,
+          },
+        },
+      },
       orderBy: { id: 'asc' },
     });
 
+    // Map item by orderItemId to get item details for title
+    const itemMap = new Map<number, Tracked>(pageItems.map((t) => [t.line.orderItemId, t]));
+
     for (const p of directPhotos) {
       if (!photoMap.has(p.orderItemId)) photoMap.set(p.orderItemId, []);
-      photoMap.get(p.orderItemId)!.push({ id: p.id, url: p.url, filename: p.filename, fromHistory: false });
+      const item = itemMap.get(p.orderItemId);
+      const parts = [
+        item?.line.productName || p.orderItem.productName,
+        item?.designName || item?.designType || p.orderItem.designType || p.orderItem.design,
+      ].filter(Boolean);
+      const title = parts.join(' · ');
+      photoMap.get(p.orderItemId)!.push({ id: p.id, url: p.url, filename: p.filename, title: title || p.filename, fromHistory: false });
     }
 
     const missingPhotoItems = pageItems.filter((t) => !photoMap.has(t.line.orderItemId) && t.line.customerId);
@@ -170,6 +191,8 @@ export class DesignTrackService {
             select: {
               product: true,
               productName: true,
+              design: true,
+              designType: true,
               order: { select: { customerId: true } },
             },
           },
@@ -178,29 +201,42 @@ export class DesignTrackService {
         take: 200,
       });
 
-      const historyMap = new Map<string, { id?: number; url: string; filename?: string | null; fromHistory?: boolean }[]>();
-      for (const hp of historyPhotos) {
-        const cId = hp.orderItem.order.customerId;
-        const pName = hp.orderItem.productName;
-        const pStr = hp.orderItem.product;
-        if (cId && pName) {
-          const k1 = `${cId}:${pName}`;
-          if (!historyMap.has(k1)) historyMap.set(k1, []);
-          if (historyMap.get(k1)!.length < 5) historyMap.get(k1)!.push({ id: hp.id, url: hp.url, filename: hp.filename, fromHistory: true });
-        }
-        if (cId && pStr) {
-          const k2 = `${cId}:${pStr}`;
-          if (!historyMap.has(k2)) historyMap.set(k2, []);
-          if (historyMap.get(k2)!.length < 5) historyMap.get(k2)!.push({ id: hp.id, url: hp.url, filename: hp.filename, fromHistory: true });
-        }
-      }
-
       for (const t of missingPhotoItems) {
         const cId = t.line.customerId!;
-        const k1 = t.line.productName ? `${cId}:${t.line.productName}` : '';
-        const k2 = t.line.product ? `${cId}:${t.line.product}` : '';
-        const hPhotos = (k1 && historyMap.get(k1)) || (k2 && historyMap.get(k2)) || [];
-        if (hPhotos.length) {
+        const targetType = (t.designType ?? '').trim().toUpperCase();
+        const targetDesign = (t.designName ?? '').trim().toUpperCase();
+        const targetProdName = (t.line.productName ?? '').trim().toUpperCase();
+        const targetProd = (t.line.product ?? '').trim().toUpperCase();
+
+        const matched = historyPhotos.filter((hp) => {
+          if (hp.orderItem.order.customerId !== cId) return false;
+          const hpProdName = (hp.orderItem.productName ?? '').trim().toUpperCase();
+          const hpProd = (hp.orderItem.product ?? '').trim().toUpperCase();
+          const prodMatches = (targetProdName && hpProdName === targetProdName) || (targetProd && hpProd === targetProd);
+          if (!prodMatches) return false;
+
+          const hpType = (hp.orderItem.designType ?? '').trim().toUpperCase();
+          const hpDesign = (hp.orderItem.design ?? '').trim().toUpperCase();
+
+          // Match design type or design name
+          if (targetType && targetType !== 'NA' && targetType !== 'N/A') {
+            if (hpType === targetType || hpDesign === targetType) return true;
+          }
+          if (targetDesign && targetDesign !== 'NA' && targetDesign !== 'N/A') {
+            if (hpDesign === targetDesign || hpType === targetDesign) return true;
+          }
+          return false;
+        });
+
+        if (matched.length) {
+          const hPhotos = matched.slice(0, 5).map((hp) => {
+            const parts = [
+              hp.orderItem.productName || t.line.productName,
+              t.designName || t.designType || hp.orderItem.designType || hp.orderItem.design,
+            ].filter(Boolean);
+            const title = parts.join(' · ');
+            return { id: hp.id, url: hp.url, filename: hp.filename, title: title || hp.filename, fromHistory: true };
+          });
           photoMap.set(t.line.orderItemId, hPhotos);
         }
       }
@@ -209,7 +245,7 @@ export class DesignTrackService {
     return photoMap;
   }
 
-  private toRow({ line, kalwat, designType, designName }: Tracked, photoList?: { id?: number; url: string; filename?: string | null; fromHistory?: boolean }[]): DesignTrackRow {
+  private toRow({ line, kalwat, designType, designName }: Tracked, photoList?: { id?: number; url: string; filename?: string | null; title?: string | null; fromHistory?: boolean }[]): DesignTrackRow {
     const dispatchedBags = r2(Math.max(0, line.bags - line.remBags));
     const photos = photoList ?? [];
     return {

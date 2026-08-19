@@ -410,9 +410,9 @@ export function DesignTrackPage() {
                         <button
                           key={i}
                           type="button"
-                          onClick={() => setViewingHistoryPhoto({ photos: arr.map((item) => ({ url: item.url, filename: item.filename })), index: i })}
+                          onClick={() => setViewingHistoryPhoto({ photos: arr.map((item) => ({ url: item.url, filename: item.filename, title: item.title })), index: i })}
                           className="group relative size-16 shrink-0 overflow-hidden rounded-md border border-amber-300 bg-white shadow-xs hover:ring-2 hover:ring-indigo-500 cursor-pointer"
-                          title={p.filename || 'View historical photo'}
+                          title={p.title || p.filename || 'View historical photo'}
                         >
                           <img src={p.url} alt={p.filename || 'Reference photo'} className="size-full object-cover" />
                         </button>

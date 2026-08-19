@@ -14,6 +14,7 @@ export interface DesignTrackPhotoDto {
   id?: number;
   url: string;
   filename?: string | null;
+  title?: string | null;
   fromHistory?: boolean;
 }
 
