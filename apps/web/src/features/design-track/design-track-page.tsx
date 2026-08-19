@@ -12,7 +12,7 @@ import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { LiveLinePhotos } from '@/features/orders/line-photos';
+import { LiveLinePhotos, PhotoLightbox, type LinePhoto } from '@/features/orders/line-photos';
 import { exportDesignTrack, useDesignTrack, useDesignTrackFilterOptions, useDesignTrackTypes, useSetKalwat } from './use-design-track';
 
 const qty = (v: number | null) => (v == null ? '—' : v.toLocaleString('en-IN', { maximumFractionDigits: 2 }));
@@ -121,6 +121,7 @@ export function DesignTrackPage() {
   const [product, setProduct] = useState('');
   const [design, setDesign] = useState('');
   const [activePhotoLine, setActivePhotoLine] = useState<DesignTrackRow | null>(null);
+  const [viewingHistoryPhoto, setViewingHistoryPhoto] = useState<{ photos: LinePhoto[]; index: number } | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -403,24 +404,34 @@ export function DesignTrackPage() {
                     <Sparkles className="size-3.5 text-amber-600" /> Historical Party Reference Photo:
                   </p>
                   <div className="flex gap-2 overflow-x-auto pt-1">
-                    {activePhotoLine.photos.filter((p) => p.fromHistory).map((p, i) => (
-                      <a
-                        key={i}
-                        href={p.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="group relative size-16 shrink-0 overflow-hidden rounded-md border border-amber-300 bg-white shadow-xs hover:ring-2 hover:ring-indigo-500"
-                        title={p.filename || 'View historical photo'}
-                      >
-                        <img src={p.url} alt={p.filename || 'Reference photo'} className="size-full object-cover" />
-                      </a>
-                    ))}
+                    {activePhotoLine.photos
+                      .filter((p) => p.fromHistory)
+                      .map((p, i, arr) => (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => setViewingHistoryPhoto({ photos: arr.map((item) => ({ url: item.url, filename: item.filename })), index: i })}
+                          className="group relative size-16 shrink-0 overflow-hidden rounded-md border border-amber-300 bg-white shadow-xs hover:ring-2 hover:ring-indigo-500 cursor-pointer"
+                          title={p.filename || 'View historical photo'}
+                        >
+                          <img src={p.url} alt={p.filename || 'Reference photo'} className="size-full object-cover" />
+                        </button>
+                      ))}
                   </div>
                 </div>
               )}
             </div>
           </DialogContent>
         </Dialog>
+      )}
+
+      {viewingHistoryPhoto && (
+        <PhotoLightbox
+          photos={viewingHistoryPhoto.photos}
+          index={viewingHistoryPhoto.index}
+          onIndex={(index) => setViewingHistoryPhoto((prev) => (prev ? { ...prev, index } : null))}
+          onClose={() => setViewingHistoryPhoto(null)}
+        />
       )}
     </div>
   );

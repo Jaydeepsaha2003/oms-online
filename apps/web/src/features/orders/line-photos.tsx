@@ -255,7 +255,9 @@ function PhotoManager({
 
 // ── Full-screen animated lightbox ──────────────────────────────────────────────
 
-function PhotoLightbox({
+// ── Full-screen animated lightbox ──────────────────────────────────────────────
+
+export function PhotoLightbox({
   photos,
   index,
   onIndex,
@@ -296,13 +298,27 @@ function PhotoLightbox({
 
   return createPortal(
     <div
-      className="lp-backdrop fixed inset-0 z-[200] flex flex-col bg-slate-950/90 backdrop-blur-md"
+      className="lp-backdrop fixed inset-0 z-[9999] flex flex-col bg-slate-950/95 backdrop-blur-md"
       onClick={onClose}
     >
       <style>{LIGHTBOX_CSS}</style>
 
+      {/* Floating Close Button at top-right — always visible on top of everything */}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
+        className="fixed top-4 right-4 z-[10000] flex items-center gap-1.5 rounded-full bg-slate-900/90 px-3.5 py-1.5 text-xs font-bold text-white shadow-2xl ring-1 ring-white/30 transition-all hover:scale-105 hover:bg-rose-600 hover:ring-rose-400 cursor-pointer"
+        title="Close photo viewer (Esc)"
+      >
+        <X className="size-4" />
+        <span>Close</span>
+      </button>
+
       {/* Top bar */}
-      <div className="flex items-center justify-between gap-3 px-4 py-3 text-white" onClick={(e) => e.stopPropagation()}>
+      <div className="flex items-center justify-between gap-3 px-4 py-3 pr-28 text-white" onClick={(e) => e.stopPropagation()}>
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold">{photo.filename ?? `Photo ${index + 1}`}</p>
           <p className="text-xs text-white/60">
@@ -320,14 +336,6 @@ function PhotoLightbox({
           >
             <Download className="size-4" />
           </a>
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex size-9 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-rose-500"
-            title="Close (Esc)"
-          >
-            <X className="size-5" />
-          </button>
         </div>
       </div>
 
