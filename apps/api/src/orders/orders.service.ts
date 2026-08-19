@@ -539,6 +539,24 @@ export class OrdersService {
           changedByName: actorName ?? 'User',
         });
 
+        // Preserve photos: if rem had photos, re-assign them to a matching item in the order
+        const remPhotos = await this.prisma.orderItemPhoto.findMany({ where: { orderItemId: rem.id } });
+        if (remPhotos.length > 0) {
+          const matchingItem = await this.prisma.orderItem.findFirst({
+            where: {
+              orderId: id,
+              id: { notIn: removed.map((r) => r.id) },
+              OR: [{ productName: rem.productName }, { product: rem.product }],
+            },
+          });
+          if (matchingItem) {
+            await this.prisma.orderItemPhoto.updateMany({
+              where: { orderItemId: rem.id },
+              data: { orderItemId: matchingItem.id },
+            });
+          }
+        }
+
         if (rem.quotationItemId) {
           await this.prisma.quotationItem.delete({ where: { id: rem.quotationItemId } }).catch(() => null);
         }
@@ -1314,14 +1332,18 @@ export class OrdersService {
    *  by `id` are kept; any others on the line are removed; new uploads are added. */
   private photoUpdateNested(it: Record<string, unknown>): Prisma.OrderItemUpdateWithoutOrderInput {
     if (!Array.isArray(it.photos)) return {};
-    const keptIds = (it.photos as Record<string, unknown>[])
+    const photosArr = it.photos as Record<string, unknown>[];
+    const keptIds = photosArr
       .map((p) => toNum(p.id))
       .filter((v): v is number => v != null);
     const create = this.newPhotoRows(it);
+
+    if (photosArr.length === 0 && !create.length && !it._photosManaged) {
+      return {};
+    }
+
     return {
       photos: {
-        // deleteMany:{} (empty filter) removes every photo of this line — correct
-        // when the user cleared them all; otherwise keep the ones still referenced.
         deleteMany: keptIds.length ? { id: { notIn: keptIds } } : {},
         ...(create.length ? { create } : {}),
       },
