@@ -38,6 +38,13 @@ export class QuotationsController {
     return this.quotations.findOne(id);
   }
 
+  @Get(':id/item-history')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  getItemHistory(@Param('id', ParseIntPipe) id: number) {
+    return this.quotations.getItemHistory(id);
+  }
+
+
   // VIEW is accepted alongside PRINT: 'quotation:print' was missing from the
   // permission catalog until now, so no role could ever be granted it, and the
   // quotation bill has always been reachable by anyone who can view the

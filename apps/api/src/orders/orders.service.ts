@@ -302,12 +302,19 @@ export class OrdersService {
       // therefore their dispatch history. A blanket deleteMany+create would give
       // every line a new id and cascade-delete its dispatches (Dispatch.orderItem
       // is onDelete: Cascade), making already-dispatched lines reappear as pending.
+      const quotation = await this.prisma.quotation.findFirst({
+        where: { OR: [{ convertedOrderId: id }, { sourceOrderId: id }] },
+        select: { id: true },
+      });
+      const quotationId = quotation?.id ?? null;
+
       const existing = await this.prisma.orderItem.findMany({
         where: { orderId: id },
         select: {
           id: true,
           product: true,
           productName: true,
+          design: true,
           designType: true,
           psize: true,
           bags: true,
@@ -318,6 +325,10 @@ export class OrdersService {
           designRate: true,
           rate: true,
           calField: true,
+          status: true,
+          comment: true,
+          priority: true,
+          quotationItemId: true,
           // The dispatch rows themselves, not just a count: the quantity guard
           // below needs how much has actually shipped, per field.
           dispatches: { select: { bags: true, pcs: true, gram: true, box: true, dispatchStatus: true } },
@@ -328,6 +339,8 @@ export class OrdersService {
       const kept = new Set<number>();
       const toUpdate: { where: { id: number }; data: Prisma.OrderItemUpdateWithoutOrderInput }[] = [];
       const toCreate: Prisma.OrderItemCreateWithoutOrderInput[] = [];
+      const changesToRecord: Prisma.OrderItemChangeCreateManyInput[] = [];
+
       for (const it of dto.items) {
         const itemId = toNum(it.id);
         if (itemId && existingIds.has(itemId)) {
@@ -388,9 +401,119 @@ export class OrdersService {
               }
             }
           }
-          toUpdate.push({ where: { id: itemId }, data: { ...this.toItemData(it), ...this.photoUpdateNested(it) } });
+
+          // Diff fields to log change history & update QuotationItem
+          const fieldsToDiff: Array<{ key: keyof typeof incoming; label: string }> = [
+            { key: 'productName', label: 'Product Name' },
+            { key: 'product', label: 'Product' },
+            { key: 'design', label: 'Design' },
+            { key: 'designType', label: 'Design Type' },
+            { key: 'psize', label: 'Size' },
+            { key: 'bags', label: 'Bags' },
+            { key: 'pcs', label: 'Pcs' },
+            { key: 'gram', label: 'Kgs' },
+            { key: 'box', label: 'Box' },
+            { key: 'productRate', label: 'Product Rate' },
+            { key: 'designRate', label: 'Design Rate' },
+            { key: 'rate', label: 'Rate' },
+            { key: 'calField', label: 'Calc Unit' },
+            { key: 'status', label: 'Status' },
+            { key: 'comment', label: 'Comment' },
+          ];
+
+          for (const f of fieldsToDiff) {
+            const oldV = current[f.key as keyof typeof current];
+            const newV = incoming[f.key];
+            if (oldV !== newV && (oldV != null || newV != null)) {
+              changesToRecord.push({
+                orderId: id,
+                orderItemId: itemId,
+                quotationId,
+                quotationItemId: current.quotationItemId ?? null,
+                kind: 'UPDATED',
+                field: f.label,
+                oldValue: oldV != null ? String(oldV) : '',
+                newValue: newV != null ? String(newV) : '',
+                itemLabel: (incoming.productName || incoming.product || current.productName || current.product || 'Line item') as string,
+                changedByName: actorName ?? 'User',
+              });
+            }
+          }
+
+          if (current.quotationItemId) {
+            await this.prisma.quotationItem.update({
+              where: { id: current.quotationItemId },
+              data: {
+                pCategory: incoming.pCategory,
+                subCategory: incoming.subCategory,
+                product: incoming.product,
+                design: incoming.design,
+                productName: incoming.productName,
+                designType: incoming.designType,
+                psize: incoming.psize,
+                bags: incoming.bags,
+                pcs: incoming.pcs,
+                gram: incoming.gram,
+                box: incoming.box,
+                productRate: incoming.productRate,
+                designRate: incoming.designRate,
+                rate: incoming.rate,
+                calField: incoming.calField,
+                priority: incoming.priority,
+                ordType: incoming.ordType,
+                comment: incoming.comment,
+              },
+            }).catch(() => null);
+          }
+
+          toUpdate.push({ where: { id: itemId }, data: { ...incoming, ...this.photoUpdateNested(it) } });
         } else {
-          toCreate.push({ ...this.toItemData(it), ...this.photoCreateNested(it) });
+          const incoming = this.toItemData(it);
+          const label = (incoming.productName || incoming.product || 'New item') as string;
+          changesToRecord.push({
+            orderId: id,
+            orderItemId: null,
+            quotationId,
+            quotationItemId: null,
+            kind: 'ADDED',
+            field: '',
+            oldValue: null,
+            newValue: label,
+            itemLabel: label,
+            changedByName: actorName ?? 'User',
+          });
+
+          if (quotationId) {
+            const newQuoItem = await this.prisma.quotationItem.create({
+              data: {
+                quotationId,
+                pCategory: incoming.pCategory,
+                subCategory: incoming.subCategory,
+                product: incoming.product,
+                design: incoming.design,
+                productName: incoming.productName,
+                designType: incoming.designType,
+                psize: incoming.psize,
+                bags: incoming.bags,
+                pcs: incoming.pcs,
+                gram: incoming.gram,
+                box: incoming.box,
+                productRate: incoming.productRate,
+                designRate: incoming.designRate,
+                rate: incoming.rate,
+                calField: incoming.calField,
+                priority: incoming.priority,
+                ordType: incoming.ordType,
+                comment: incoming.comment,
+              },
+            }).catch(() => null);
+
+            if (newQuoItem) {
+              incoming.quotationItemId = newQuoItem.id;
+            }
+          }
+
+          toCreate.push({ ...incoming, ...this.photoCreateNested(it) });
         }
       }
       const removed = existing.filter((e) => !kept.has(e.id));
@@ -400,6 +523,25 @@ export class OrdersService {
         throw new BadRequestException(
           'Cannot remove an order line that already has dispatches. Mark it Cancelled instead.',
         );
+      }
+      for (const rem of removed) {
+        const label = (rem.productName || rem.product || 'Line item') as string;
+        changesToRecord.push({
+          orderId: id,
+          orderItemId: rem.id,
+          quotationId,
+          quotationItemId: rem.quotationItemId ?? null,
+          kind: 'REMOVED',
+          field: '',
+          oldValue: label,
+          newValue: null,
+          itemLabel: label,
+          changedByName: actorName ?? 'User',
+        });
+
+        if (rem.quotationItemId) {
+          await this.prisma.quotationItem.delete({ where: { id: rem.quotationItemId } }).catch(() => null);
+        }
       }
       const toDelete = removed.map((e) => e.id);
       await this.prisma.order.update({
@@ -413,6 +555,10 @@ export class OrdersService {
           },
         },
       });
+
+      if (changesToRecord.length > 0) {
+        await this.prisma.orderItemChange.createMany({ data: changesToRecord }).catch(() => null);
+      }
     }
 
     const row = await this.prisma.order.findUnique({ where: { id }, include: INCLUDE });

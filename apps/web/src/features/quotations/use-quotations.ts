@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   CancelQuotationInput,
   OrderDto,
+  OrderItemChangeDto,
   QuotationDto,
   QuotationInput,
   QuotationList,
@@ -26,6 +27,15 @@ export function useQuotation(id?: number) {
     enabled: id != null,
   });
 }
+
+export function useQuotationItemHistory(id?: number) {
+  return useQuery({
+    queryKey: [...KEY, id, 'history'],
+    queryFn: () => http.get<OrderItemChangeDto[]>(`/quotations/${id}/item-history`),
+    enabled: id != null,
+  });
+}
+
 
 export function useCreateQuotation() {
   const qc = useQueryClient();

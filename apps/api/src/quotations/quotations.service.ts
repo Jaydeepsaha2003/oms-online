@@ -213,6 +213,43 @@ export class QuotationsService {
     return this.toDto(row);
   }
 
+  /** Line item change history for a quotation (including order modify history). */
+  async getItemHistory(id: number) {
+    const q = await this.prisma.quotation.findUnique({
+      where: { id },
+      select: { id: true, convertedOrderId: true, sourceOrderId: true },
+    });
+    if (!q) throw new NotFoundException('Quotation not found.');
+
+    const orderIds = [q.convertedOrderId, q.sourceOrderId].filter(Boolean) as number[];
+
+    const changes = await this.prisma.orderItemChange.findMany({
+      where: {
+        OR: [
+          { quotationId: id },
+          ...(orderIds.length ? [{ orderId: { in: orderIds } }] : []),
+        ],
+      },
+      orderBy: { changedAt: 'desc' },
+    });
+
+    return changes.map((c) => ({
+      id: c.id,
+      orderId: c.orderId,
+      orderItemId: c.orderItemId,
+      quotationId: c.quotationId,
+      quotationItemId: c.quotationItemId,
+      kind: c.kind,
+      field: c.field,
+      oldValue: c.oldValue,
+      newValue: c.newValue,
+      itemLabel: c.itemLabel,
+      changedByName: c.changedByName,
+      changedAt: c.changedAt.toISOString(),
+    }));
+  }
+
+
   /**
    * Convert a quotation into a real order and mark it CONVERTED.
    *

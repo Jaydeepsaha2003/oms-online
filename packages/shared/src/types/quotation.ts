@@ -70,3 +70,19 @@ export interface ConvertQuotationInput {
 
 export type QuotationQuery = PaginationQuery & { status?: string };
 export type QuotationList = Paginated<QuotationDto>;
+
+export interface OrderItemChangeDto {
+  id: number;
+  orderId: number;
+  orderItemId: number | null;
+  quotationId: number | null;
+  quotationItemId: number | null;
+  kind: 'UPDATED' | 'ADDED' | 'REMOVED';
+  field: string;
+  oldValue: string | null;
+  newValue: string | null;
+  itemLabel: string | null;
+  changedByName: string | null;
+  changedAt: string;
+}
+

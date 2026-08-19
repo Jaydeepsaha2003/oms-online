@@ -10,6 +10,7 @@ import {
   Eye,
   FileSearch,
   Filter,
+  History,
   Loader2,
   Pencil,
   Plus,
@@ -44,6 +45,7 @@ import {
   useConvertQuotation,
   useDeleteQuotation,
   useMarkQuotationSent,
+  useQuotationItemHistory,
   useQuotations,
 } from './use-quotations';
 
@@ -117,6 +119,7 @@ export function QuotationsPage() {
   const { page, setPage, pageSize, setPageSize } = usePageSize('quotations');
   const [acting, setActing] = useState<QuotationDto | null>(null);
   const [cancelling, setCancelling] = useState<QuotationDto | null>(null);
+  const [historyQuotation, setHistoryQuotation] = useState<QuotationDto | null>(null);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const activeFilterCount = statusFilter ? 1 : 0;
   const resetFilters = () => {
@@ -217,6 +220,9 @@ export function QuotationsPage() {
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => navigate(`/quotations/${q.id}/bill`)}>
                 <Printer /> Print / view quotation
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setHistoryQuotation(q)}>
+                <History className="text-indigo-600" /> View change history
               </DropdownMenuItem>
               <DropdownMenuSeparator />
             </>
@@ -439,6 +445,11 @@ export function QuotationsPage() {
         />
       )}
       {cancelling && <CancelDialog quotation={cancelling} onClose={() => setCancelling(null)} />}
+      <QuotationHistoryDialog
+        quotation={historyQuotation}
+        open={Boolean(historyQuotation)}
+        onOpenChange={(open) => !open && setHistoryQuotation(null)}
+      />
     </div>
   );
 }
@@ -606,4 +617,91 @@ function CancelDialog({ quotation, onClose }: { quotation: QuotationDto; onClose
   );
 }
 
+function QuotationHistoryDialog({
+  quotation,
+  open,
+  onOpenChange,
+}: {
+  quotation: QuotationDto | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { data: history, isLoading } = useQuotationItemHistory(open ? quotation?.id : undefined);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-xl max-h-[85vh] flex flex-col font-sans">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-base font-semibold">
+            <History className="size-5 text-indigo-600" />
+            Line Item Change History — {quotation?.code ?? `#${quotation?.id}`}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="flex-1 overflow-y-auto py-2 px-1 space-y-3">
+          {isLoading ? (
+            <div className="flex items-center justify-center py-10 text-muted-foreground text-sm">
+              <Loader2 className="size-5 animate-spin mr-2" /> Loading change history...
+            </div>
+          ) : !history || history.length === 0 ? (
+            <div className="text-center py-10 text-muted-foreground text-sm">
+              No line item changes recorded for this quotation yet.
+            </div>
+          ) : (
+            <div className="relative border-l-2 border-slate-200 ml-3 space-y-3.5 pl-4 py-1">
+              {history.map((h) => {
+                const isAdd = h.kind === 'ADDED';
+                const isRem = h.kind === 'REMOVED';
+                return (
+                  <div key={h.id} className="relative text-xs space-y-1">
+                    <span
+                      className={cn(
+                        'absolute -left-[23px] top-1 size-3 rounded-full border-2 border-white',
+                        isAdd ? 'bg-emerald-500' : isRem ? 'bg-rose-500' : 'bg-indigo-500',
+                      )}
+                    />
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-slate-800">{h.itemLabel || 'Line Item'}</span>
+                      <span className="text-[11px] text-muted-foreground">
+                        {formatDate(h.changedAt)} {h.changedByName ? `by ${h.changedByName}` : ''}
+                      </span>
+                    </div>
+
+                    {isAdd && (
+                      <span className="inline-flex rounded bg-emerald-50 text-emerald-700 px-2 py-0.5 font-medium text-[11px]">
+                        + Added item: {h.newValue}
+                      </span>
+                    )}
+
+                    {isRem && (
+                      <span className="inline-flex rounded bg-rose-50 text-rose-700 px-2 py-0.5 font-medium text-[11px]">
+                        - Removed item: {h.oldValue}
+                      </span>
+                    )}
+
+                    {!isAdd && !isRem && (
+                      <div className="flex items-center gap-2 bg-slate-50 px-2.5 py-1.5 rounded border border-slate-200 font-mono text-[11px]">
+                        <span className="font-sans font-medium text-slate-600">{h.field}:</span>
+                        <span className="line-through text-rose-600">{h.oldValue || 'empty'}</span>
+                        <span className="text-slate-400">→</span>
+                        <span className="font-bold text-emerald-700">{h.newValue || 'empty'}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default QuotationsPage;
+
