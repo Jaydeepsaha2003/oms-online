@@ -156,8 +156,8 @@ export class DesignTrackService {
       comment: line.comment,
       kalwat,
       dispatchedBags,
-      // Pending bags minus what's been processed by hand.
-      remaining: r2(line.remBags - (kalwat ?? 0)),
+      // Remaining pending bags still to dispatch (bags ordered − dispatched).
+      remaining: r2(line.remBags),
     };
   }
 
@@ -278,7 +278,7 @@ export class DesignTrackService {
         comment: null,
         kalwat,
         dispatchedBags: 0,
-        remaining: r2(-(kalwat ?? 0)),
+        remaining: 0,
       };
     }
     return this.toRow(tracked);

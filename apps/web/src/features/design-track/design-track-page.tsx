@@ -314,7 +314,7 @@ export function DesignTrackPage() {
                       'text-right font-bold tabular-nums',
                       r.remaining < 0 ? 'text-rose-700 dark:text-rose-300' : r.remaining === 0 ? 'text-emerald-700 dark:text-emerald-400' : '',
                     )}
-                    title="Bags ordered − Kalwat"
+                    title="Bags ordered − Dispatched"
                   >
                     {qty(r.remaining)}
                   </td>
@@ -360,7 +360,7 @@ export function DesignTrackPage() {
 
       <p className="text-muted-foreground text-[11px]">
         Kalwat is typed by hand — click the cell, enter the processed quantity, and it saves when you click away.
-        Remaining is always <span className="font-semibold">Bags ordered − Kalwat</span> and updates itself.
+        Remaining is always <span className="font-semibold">Bags ordered − Dispatched</span> and updates itself.
       </p>
     </div>
   );
