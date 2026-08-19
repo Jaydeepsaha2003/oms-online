@@ -163,6 +163,15 @@ export class DesignTrackService {
     };
   }
 
+  private baseProductName(full: string | null | undefined, product: string | null | undefined): string {
+    const name = (full ?? '').trim();
+    const prod = (product ?? '').trim();
+    if (!prod) return name;
+    const idx = name.toUpperCase().indexOf(prod.toUpperCase());
+    if (idx === -1) return name;
+    return name.slice(0, idx + prod.length).trim();
+  }
+
   private applyFilters(pool: Tracked[], query: DesignTrackQueryDto): Tracked[] {
     let out = pool;
     const search = query.search?.trim().toLowerCase();
@@ -174,7 +183,15 @@ export class DesignTrackService {
       );
     }
     if (query.customer) out = out.filter((t) => t.line.customerName === query.customer);
-    if (query.product) out = out.filter((t) => (t.line.productName ?? '') === query.product);
+    if (query.product) {
+      const qProd = query.product.trim().toLowerCase();
+      out = out.filter((t) => {
+        const full = (t.line.productName ?? '').trim().toLowerCase();
+        const base = this.baseProductName(t.line.productName || t.line.product, t.line.product).trim().toLowerCase();
+        const rawProd = (t.line.product ?? '').trim().toLowerCase();
+        return base === qProd || full === qProd || rawProd === qProd;
+      });
+    }
     // Filters on the TYPE — the thing being tracked, not the name.
     if (query.design) out = out.filter((t) => t.designType === query.design);
     return out;
@@ -226,7 +243,7 @@ export class DesignTrackService {
     };
     return {
       customers: distinct(poolFor('customer'), (t) => t.line.customerName),
-      products: distinct(poolFor('product'), (t) => t.line.productName),
+      products: distinct(poolFor('product'), (t) => this.baseProductName(t.line.productName || t.line.product, t.line.product)),
       designs: distinct(poolFor('design'), (t) => t.designType),
     };
   }
