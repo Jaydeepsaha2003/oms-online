@@ -80,10 +80,9 @@ interface ChallanFilters {
 }
 const loadFilters = (): Partial<ChallanFilters> => {
   try {
-    return JSON.parse(sessionStorage.getItem(FILTER_KEY) || '{}') as Partial<ChallanFilters>;
-  } catch {
-    return {};
-  }
+    sessionStorage.removeItem(FILTER_KEY);
+  } catch {}
+  return {};
 };
 
 /** Days-to-due text from the due date (the legacy PAID state needs the accounting
@@ -110,16 +109,14 @@ export function ChallansListPage() {
   const initialFilters = useMemo(() => loadFilters(), []);
   const defaultFy = useMemo(() => presetRange(DEFAULT_PRESET)!, []);
 
-  // Restore the last-used filters (kept in sessionStorage) so they survive a
-  // round-trip into a challan's edit form and back. A fresh visit starts at the
-  // current Indian financial year (April through today).
+  // Fresh visit or refresh starts at default clean filters (current Indian financial year).
   const [searchInput, setSearchInput] = useState(() => initialFilters.searchInput ?? '');
   const [search, setSearch] = useState(() => (initialFilters.searchInput ?? '').trim());
   const [dateFrom, setDateFrom] = useState(() => initialFilters.dateFrom ?? defaultFy.from);
   const [dateTo, setDateTo] = useState(() => initialFilters.dateTo ?? defaultFy.to);
   const [preset, setPreset] = useState(() => initialFilters.preset ?? DEFAULT_PRESET);
   const [status, setStatus] = useState(() => initialFilters.status ?? '');
-  const { page, setPage, pageSize, setPageSize } = usePageSize('challans-list', undefined, initialFilters.page ?? 1);
+  const { page, setPage, pageSize, setPageSize } = usePageSize('challans-list', undefined, 1);
   // Phones: date range / quick range / status live behind this Filter icon.
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [dateOpen, setDateOpen] = useState(false);
@@ -134,10 +131,12 @@ export function ChallansListPage() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  // Persist the current filters whenever they change.
+  // Filters reset on page refresh or navigation per user requirement.
   useEffect(() => {
-    sessionStorage.setItem(FILTER_KEY, JSON.stringify({ searchInput, dateFrom, dateTo, preset, status, page }));
-  }, [searchInput, dateFrom, dateTo, preset, status, page]);
+    try {
+      sessionStorage.removeItem(FILTER_KEY);
+    } catch {}
+  }, []);
 
   const query = {
     page,

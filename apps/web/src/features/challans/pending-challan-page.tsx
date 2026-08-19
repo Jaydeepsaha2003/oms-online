@@ -80,25 +80,12 @@ interface StoredFilters {
 
 const NO_FILTERS: StoredFilters = { search: '', customer: '', product: '', design: '', dateFrom: '', dateTo: '', preset: '' };
 
-/** Read saved filters, tolerating absent / corrupt / older-shaped values. */
+/** Read saved filters — reset to clean defaults. */
 function loadFilters(): StoredFilters {
   try {
-    const raw = localStorage.getItem(FILTER_KEY);
-    if (!raw) return NO_FILTERS;
-    const saved = JSON.parse(raw) as Partial<Record<keyof StoredFilters, unknown>>;
-    const str = (k: keyof StoredFilters) => (typeof saved[k] === 'string' ? (saved[k] as string) : '');
-    return {
-      search: str('search'),
-      customer: str('customer'),
-      product: str('product'),
-      design: str('design'),
-      dateFrom: str('dateFrom'),
-      dateTo: str('dateTo'),
-      preset: str('preset'),
-    };
-  } catch {
-    return NO_FILTERS;
-  }
+    localStorage.removeItem(FILTER_KEY);
+  } catch {}
+  return NO_FILTERS;
 }
 /**
  * The quick ranges offered on this page — a short, everyday set. Deliberately a
@@ -138,7 +125,7 @@ export function PendingChallanPage() {
   const { can } = usePermissions();
   const canCreate = can('challan:create');
 
-  // Restored from the last visit; read once (not on every render).
+  // Clean default filters on mount.
   const [saved] = useState(loadFilters);
   const [searchInput, setSearchInput] = useState(saved.search);
   const [search, setSearch] = useState(saved.search);
@@ -167,18 +154,12 @@ export function PendingChallanPage() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  // Persist on every change, so a reload (or a trip to another page and back)
-  // comes back to the same view. Reset writes the empty set, clearing it.
+  // Filters reset on page refresh or navigation per user requirement.
   useEffect(() => {
     try {
-      localStorage.setItem(
-        FILTER_KEY,
-        JSON.stringify({ search, customer, product, design, dateFrom, dateTo, preset } satisfies StoredFilters),
-      );
-    } catch {
-      /* private mode / quota — filters just won't persist */
-    }
-  }, [search, customer, product, design, dateFrom, dateTo, preset]);
+      localStorage.removeItem(FILTER_KEY);
+    } catch {}
+  }, []);
 
   const query = {
     page,
