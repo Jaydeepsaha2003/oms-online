@@ -52,6 +52,7 @@ export class DesignTrackController {
       'Order Date': toExcelDate(r.orderDate),
       'Customer Name': r.customerName,
       'Product Name': r.productName ?? '',
+      Priority: r.priority || 'NORMAL',
       'Design Type': r.designType ?? '',
       'Design Name': r.designName ?? '',
       Bags: r.bags,

@@ -146,6 +146,7 @@ export class DesignTrackService {
       orderDate: line.orderDate,
       customerName: line.customerName,
       productName: line.productName,
+      priority: line.priority,
       // The parent type ("WL+TOOL") and its child name ("ZEBRA") as separate
       // columns — never the dispatch display string, which reads "NA" here.
       designType,

@@ -18,6 +18,8 @@ export interface DesignTrackRow {
   orderDate: string;
   customerName: string;
   productName: string | null;
+  /** Order line priority ('URGENT' / 'NORMAL' / null). */
+  priority?: string | null;
   /** The tracked design type this line matched — the PARENT, e.g. "DL+TOOL". */
   designType: string | null;
   /** The design NAME chosen on the line — the CHILD of the type above, e.g.

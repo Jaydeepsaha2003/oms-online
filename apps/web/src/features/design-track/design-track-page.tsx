@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Download, Loader2, RotateCcw, Search, Sparkles } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, Flame, Loader2, RotateCcw, Search, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import type { DesignTrackRow } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -284,7 +284,20 @@ export function DesignTrackPage() {
                 <tr key={r.orderItemId} className={rowTone(r)}>
                   <td className="whitespace-nowrap tabular-nums">{formatDate(r.orderDate)}</td>
                   <td className="font-semibold">{r.customerName}</td>
-                  <td className="font-semibold">{r.productName || '—'}</td>
+                  <td className="font-semibold">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span>{r.productName || '—'}</span>
+                      {r.priority === 'URGENT' ? (
+                        <span className="inline-flex items-center gap-0.5 rounded bg-rose-100 px-1.5 py-[1px] text-[10px] font-bold text-rose-700 dark:bg-rose-500/20 dark:text-rose-300">
+                          <Flame className="size-2.5" /> URGENT
+                        </span>
+                      ) : (
+                        <span className="rounded bg-slate-100 px-1.5 py-[1px] text-[10px] font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                          {r.priority || 'NORMAL'}
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="whitespace-normal break-words max-w-[14rem]">{r.designName || '—'}</td>
                   <td className="text-right font-medium tabular-nums">{r.bags.toFixed(2)}</td>
                   <td className="text-muted-foreground max-w-[16rem] truncate" title={r.comment ?? undefined}>
