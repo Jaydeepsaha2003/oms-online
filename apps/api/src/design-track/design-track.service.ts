@@ -137,8 +137,81 @@ export class DesignTrackService {
     return resolveLineDesignType(line, knownTypes);
   }
 
-  private toRow({ line, kalwat, designType, designName }: Tracked): DesignTrackRow {
+  private async resolvePhotosForItems(pageItems: Tracked[]): Promise<Map<number, { id?: number; url: string; filename?: string | null; fromHistory?: boolean }[]>> {
+    const photoMap = new Map<number, { id?: number; url: string; filename?: string | null; fromHistory?: boolean }[]>();
+    if (!pageItems.length) return photoMap;
+
+    const itemIds = pageItems.map((t) => t.line.orderItemId);
+    const directPhotos = await this.prisma.orderItemPhoto.findMany({
+      where: { orderItemId: { in: itemIds } },
+      select: { id: true, orderItemId: true, url: true, filename: true },
+      orderBy: { id: 'asc' },
+    });
+
+    for (const p of directPhotos) {
+      if (!photoMap.has(p.orderItemId)) photoMap.set(p.orderItemId, []);
+      photoMap.get(p.orderItemId)!.push({ id: p.id, url: p.url, filename: p.filename, fromHistory: false });
+    }
+
+    const missingPhotoItems = pageItems.filter((t) => !photoMap.has(t.line.orderItemId) && t.line.customerId);
+    if (missingPhotoItems.length) {
+      const customerIds = [...new Set(missingPhotoItems.map((t) => t.line.customerId!).filter(Boolean))];
+      const historyPhotos = await this.prisma.orderItemPhoto.findMany({
+        where: {
+          orderItem: {
+            order: { customerId: { in: customerIds } },
+          },
+        },
+        select: {
+          id: true,
+          url: true,
+          filename: true,
+          orderItem: {
+            select: {
+              product: true,
+              productName: true,
+              order: { select: { customerId: true } },
+            },
+          },
+        },
+        orderBy: { id: 'desc' },
+        take: 200,
+      });
+
+      const historyMap = new Map<string, { id?: number; url: string; filename?: string | null; fromHistory?: boolean }[]>();
+      for (const hp of historyPhotos) {
+        const cId = hp.orderItem.order.customerId;
+        const pName = hp.orderItem.productName;
+        const pStr = hp.orderItem.product;
+        if (cId && pName) {
+          const k1 = `${cId}:${pName}`;
+          if (!historyMap.has(k1)) historyMap.set(k1, []);
+          if (historyMap.get(k1)!.length < 5) historyMap.get(k1)!.push({ id: hp.id, url: hp.url, filename: hp.filename, fromHistory: true });
+        }
+        if (cId && pStr) {
+          const k2 = `${cId}:${pStr}`;
+          if (!historyMap.has(k2)) historyMap.set(k2, []);
+          if (historyMap.get(k2)!.length < 5) historyMap.get(k2)!.push({ id: hp.id, url: hp.url, filename: hp.filename, fromHistory: true });
+        }
+      }
+
+      for (const t of missingPhotoItems) {
+        const cId = t.line.customerId!;
+        const k1 = t.line.productName ? `${cId}:${t.line.productName}` : '';
+        const k2 = t.line.product ? `${cId}:${t.line.product}` : '';
+        const hPhotos = (k1 && historyMap.get(k1)) || (k2 && historyMap.get(k2)) || [];
+        if (hPhotos.length) {
+          photoMap.set(t.line.orderItemId, hPhotos);
+        }
+      }
+    }
+
+    return photoMap;
+  }
+
+  private toRow({ line, kalwat, designType, designName }: Tracked, photoList?: { id?: number; url: string; filename?: string | null; fromHistory?: boolean }[]): DesignTrackRow {
     const dispatchedBags = r2(Math.max(0, line.bags - line.remBags));
+    const photos = photoList ?? [];
     return {
       orderItemId: line.orderItemId,
       orderId: line.orderId,
@@ -158,6 +231,9 @@ export class DesignTrackService {
       dispatchedBags,
       // Remaining pending bags still to dispatch (bags ordered − dispatched).
       remaining: r2(line.remBags),
+      photos,
+      photoCount: photos.length,
+      sampleUrl: photos[0]?.url ?? null,
     };
   }
 
@@ -205,8 +281,10 @@ export class DesignTrackService {
         a.line.orderDate.localeCompare(b.line.orderDate),
     );
     const total = rows.length;
+    const pageItems = rows.slice(query.skip, query.skip + query.pageSize);
+    const photoMap = await this.resolvePhotosForItems(pageItems);
     return {
-      items: rows.slice(query.skip, query.skip + query.pageSize).map((t) => this.toRow(t)),
+      items: pageItems.map((t) => this.toRow(t, photoMap.get(t.line.orderItemId))),
       total,
       page: query.page,
       pageSize: query.pageSize,
@@ -222,7 +300,8 @@ export class DesignTrackService {
         (a.line.productName ?? '').localeCompare(b.line.productName ?? '') ||
         a.line.orderDate.localeCompare(b.line.orderDate),
     );
-    return rows.map((t) => this.toRow(t));
+    const photoMap = await this.resolvePhotosForItems(rows);
+    return rows.map((t) => this.toRow(t, photoMap.get(t.line.orderItemId)));
   }
 
   /** Filter dropdowns, each cascaded off the OTHER active filters (same idiom as

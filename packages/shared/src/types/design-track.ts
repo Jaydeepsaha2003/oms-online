@@ -10,6 +10,13 @@
  */
 import type { Paginated, PaginationQuery } from './common';
 
+export interface DesignTrackPhotoDto {
+  id?: number;
+  url: string;
+  filename?: string | null;
+  fromHistory?: boolean;
+}
+
 export interface DesignTrackRow {
   /** The order line this row tracks — also the Kalwat entry's key. */
   orderItemId: number;
@@ -38,6 +45,10 @@ export interface DesignTrackRow {
    *  export and any future consumer can't drift apart. Negative means more was
    *  entered than was ordered — usually a typo, and shown as such. */
   remaining: number;
+  /** Reference photos attached to this line or available from party+item history. */
+  photos?: DesignTrackPhotoDto[];
+  photoCount?: number;
+  sampleUrl?: string | null;
 }
 
 export interface DesignTrackQuery extends PaginationQuery {

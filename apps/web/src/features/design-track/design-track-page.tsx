@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Download, Flame, Loader2, RotateCcw, Search, Sparkles } from 'lucide-react';
+import { Camera, ChevronLeft, ChevronRight, Download, Flame, Loader2, RotateCcw, Search, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import type { DesignTrackRow } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -11,6 +11,8 @@ import { PageSizeSelect } from '@/components/common/page-size-select';
 import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { LiveLinePhotos } from '@/features/orders/line-photos';
 import { exportDesignTrack, useDesignTrack, useDesignTrackFilterOptions, useDesignTrackTypes, useSetKalwat } from './use-design-track';
 
 const qty = (v: number | null) => (v == null ? '—' : v.toLocaleString('en-IN', { maximumFractionDigits: 2 }));
@@ -118,6 +120,7 @@ export function DesignTrackPage() {
   const [customer, setCustomer] = useState('');
   const [product, setProduct] = useState('');
   const [design, setDesign] = useState('');
+  const [activePhotoLine, setActivePhotoLine] = useState<DesignTrackRow | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -296,6 +299,20 @@ export function DesignTrackPage() {
                           {r.priority || 'NORMAL'}
                         </span>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => setActivePhotoLine(r)}
+                        className={cn(
+                          'inline-flex items-center gap-1 rounded px-1.5 py-[1px] text-[10px] font-semibold transition-all border shadow-2xs cursor-pointer',
+                          r.photoCount
+                            ? 'border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 hover:border-indigo-400 dark:border-indigo-500/40 dark:bg-indigo-500/10 dark:text-indigo-300'
+                            : 'border-slate-200 bg-slate-50 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:border-slate-800 dark:bg-slate-900',
+                        )}
+                        title={r.photoCount ? `${r.photoCount} reference photo(s) available` : 'Add or view reference photo'}
+                      >
+                        <Camera className="size-3" />
+                        {r.photoCount ? <span className="tabular-nums">{r.photoCount}</span> : null}
+                      </button>
                     </div>
                   </td>
                   <td className="whitespace-normal break-words max-w-[14rem]">{r.designName || '—'}</td>
@@ -362,6 +379,49 @@ export function DesignTrackPage() {
         Kalwat is typed by hand — click the cell, enter the processed quantity, and it saves when you click away.
         Remaining is always <span className="font-semibold">Bags ordered − Dispatched</span> and updates itself.
       </p>
+
+      {/* Reference Photo Dialog */}
+      {activePhotoLine && (
+        <Dialog open onOpenChange={() => setActivePhotoLine(null)}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base font-bold">
+                <Camera className="size-4 text-indigo-600" />
+                <span>Reference Photos</span>
+              </DialogTitle>
+              <p className="text-xs text-muted-foreground">
+                {activePhotoLine.customerName} · <span className="font-semibold">{activePhotoLine.productName || 'Item'}</span>
+              </p>
+            </DialogHeader>
+
+            <div className="space-y-3 py-2">
+              <LiveLinePhotos orderItemId={activePhotoLine.orderItemId} canEdit={canEdit} />
+
+              {activePhotoLine.photos && activePhotoLine.photos.some((p) => p.fromHistory) && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50/80 p-3 text-xs text-amber-900 dark:border-amber-400/30 dark:bg-amber-500/10 dark:text-amber-300">
+                  <p className="font-bold mb-1.5 flex items-center gap-1">
+                    <Sparkles className="size-3.5 text-amber-600" /> Historical Party Reference Photo:
+                  </p>
+                  <div className="flex gap-2 overflow-x-auto pt-1">
+                    {activePhotoLine.photos.filter((p) => p.fromHistory).map((p, i) => (
+                      <a
+                        key={i}
+                        href={p.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="group relative size-16 shrink-0 overflow-hidden rounded-md border border-amber-300 bg-white shadow-xs hover:ring-2 hover:ring-indigo-500"
+                        title={p.filename || 'View historical photo'}
+                      >
+                        <img src={p.url} alt={p.filename || 'Reference photo'} className="size-full object-cover" />
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }
