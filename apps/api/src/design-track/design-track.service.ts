@@ -138,6 +138,7 @@ export class DesignTrackService {
   }
 
   private toRow({ line, kalwat, designType, designName }: Tracked): DesignTrackRow {
+    const dispatchedBags = r2(Math.max(0, line.bags - line.remBags));
     return {
       orderItemId: line.orderItemId,
       orderId: line.orderId,
@@ -156,6 +157,7 @@ export class DesignTrackService {
       bags: line.remBags,
       comment: line.comment,
       kalwat,
+      dispatchedBags,
       // Pending bags minus what's been processed. Derived every read so a later
       // dispatch (or an edit to the order) is reflected without touching the
       // Kalwat entry.
@@ -279,6 +281,7 @@ export class DesignTrackService {
         bags: 0,
         comment: null,
         kalwat,
+        dispatchedBags: 0,
         remaining: r2(-(kalwat ?? 0)),
       };
     }

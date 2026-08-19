@@ -153,6 +153,7 @@ export function DesignTrackPage() {
     () => ({
       bags: rows.reduce((a, r) => a + r.bags, 0),
       kalwat: rows.reduce((a, r) => a + (r.kalwat ?? 0), 0),
+      dispatched: rows.reduce((a, r) => a + (r.dispatchedBags ?? 0), 0),
       remaining: rows.reduce((a, r) => a + r.remaining, 0),
     }),
     [rows],
@@ -261,19 +262,20 @@ export function DesignTrackPage() {
               <th className="w-20 text-right">Bags</th>
               <th>Comment</th>
               <th className="w-24 text-right">Kalwat</th>
+              <th className="w-24 text-right">Dispatched</th>
               <th className="w-24 text-right">Remaining</th>
             </tr>
           </thead>
           <tbody className="[&_td]:border-b [&_td]:px-3 [&_td]:py-1">
             {isLoading ? (
               <tr>
-                <td colSpan={8} className="text-muted-foreground py-10 text-center">
+                <td colSpan={9} className="text-muted-foreground py-10 text-center">
                   <Loader2 className="mx-auto size-5 animate-spin" />
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={8} className="text-muted-foreground py-10 text-center text-sm">
+                <td colSpan={9} className="text-muted-foreground py-10 text-center text-sm">
                   {nothingTracked ? 'Nothing tracked yet.' : 'No pending lines for the tracked designs.'}
                 </td>
               </tr>
@@ -290,6 +292,9 @@ export function DesignTrackPage() {
                   </td>
                   <td className="text-right">
                     <KalwatCell row={r} canEdit={canEdit} />
+                  </td>
+                  <td className="text-right font-semibold tabular-nums text-slate-700 dark:text-slate-300">
+                    {r.dispatchedBags ? r.dispatchedBags.toFixed(2) : '—'}
                   </td>
                   <td
                     className={cn(
@@ -314,6 +319,7 @@ export function DesignTrackPage() {
                 <td className="text-right tabular-nums">{totals.bags.toFixed(2)}</td>
                 <td />
                 <td className="text-right tabular-nums">{qty(totals.kalwat)}</td>
+                <td className="text-right tabular-nums">{totals.dispatched ? totals.dispatched.toFixed(2) : '0.00'}</td>
                 <td className="text-right tabular-nums">{qty(totals.remaining)}</td>
               </tr>
             </tfoot>

@@ -30,6 +30,8 @@ export interface DesignTrackRow {
   comment: string | null;
   /** Processed so far, typed in by hand. Null = nothing entered yet. */
   kalwat: number | null;
+  /** Bags dispatched so far on this order line. */
+  dispatchedBags: number;
   /** Always `bags - (kalwat ?? 0)`; derived server-side so the grid, the Excel
    *  export and any future consumer can't drift apart. Negative means more was
    *  entered than was ordered — usually a typo, and shown as such. */

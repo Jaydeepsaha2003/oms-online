@@ -57,6 +57,7 @@ export class DesignTrackController {
       Bags: r.bags,
       Comment: r.comment ?? '',
       Kalwat: r.kalwat ?? '',
+      Dispatched: r.dispatchedBags ?? 0,
       Remaining: r.remaining,
     }));
     this.excel.setDownloadHeaders(res, 'design-track');
