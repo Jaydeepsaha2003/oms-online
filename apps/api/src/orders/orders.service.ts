@@ -347,6 +347,13 @@ export class OrdersService {
           kept.add(itemId);
           const current = existingById.get(itemId)!;
           const incoming = this.toItemData(it);
+          // The quotation link is server-managed, not client-editable: it is set
+          // once by quotations.service.convert() and cleared only when a linked
+          // line is removed (below). The client never sends this field (it isn't
+          // in OrderItemDto), so `incoming.quotationItemId` from toItemData() is
+          // always null here — trusting it would null out `current`'s real value
+          // on every single save, severing the mirror after the first edit.
+          incoming.quotationItemId = current.quotationItemId ?? null;
           if (current.dispatches.length > 0) {
             const label = current.productName || current.product || 'This item';
             // WHAT was shipped, and at what price, is settled by the dispatch —
@@ -469,10 +476,19 @@ export class OrdersService {
           toUpdate.push({ where: { id: itemId }, data: { ...incoming, ...this.photoUpdateNested(it) } });
         } else {
           const incoming = this.toItemData(it);
+          // A line added to the order after conversion is NOT part of what was
+          // quoted — it must never gain a quotation link (which would grow that
+          // quotation's item count/total for something the customer was never
+          // sent), regardless of what the client payload happens to carry.
+          incoming.quotationItemId = null;
           const label = (incoming.productName || incoming.product || 'New item') as string;
           changesToRecord.push({
             orderId: id,
             orderItemId: null,
+            // Kept for traceability in the quotation's own history feed ("2 more
+            // items were added to the order after this was quoted") — but no
+            // QuotationItem is created, so the quotation's items/total are
+            // untouched by this addition.
             quotationId,
             quotationItemId: null,
             kind: 'ADDED',
@@ -482,36 +498,6 @@ export class OrdersService {
             itemLabel: label,
             changedByName: actorName ?? 'User',
           });
-
-          if (quotationId) {
-            const newQuoItem = await this.prisma.quotationItem.create({
-              data: {
-                quotationId,
-                pCategory: incoming.pCategory,
-                subCategory: incoming.subCategory,
-                product: incoming.product,
-                design: incoming.design,
-                productName: incoming.productName,
-                designType: incoming.designType,
-                psize: incoming.psize,
-                bags: incoming.bags,
-                pcs: incoming.pcs,
-                gram: incoming.gram,
-                box: incoming.box,
-                productRate: incoming.productRate,
-                designRate: incoming.designRate,
-                rate: incoming.rate,
-                calField: incoming.calField,
-                priority: incoming.priority,
-                ordType: incoming.ordType,
-                comment: incoming.comment,
-              },
-            }).catch(() => null);
-
-            if (newQuoItem) {
-              incoming.quotationItemId = newQuoItem.id;
-            }
-          }
 
           toCreate.push({ ...incoming, ...this.photoCreateNested(it) });
         }
