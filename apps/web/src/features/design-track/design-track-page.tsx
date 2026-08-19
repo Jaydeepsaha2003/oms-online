@@ -257,7 +257,7 @@ export function DesignTrackPage() {
               <th className="w-24">Order Date</th>
               <th>Customer Name</th>
               <th>Product Name</th>
-              <th className="w-28">Design Name</th>
+              <th className="min-w-[7rem] max-w-[14rem]">Design Name</th>
               <th className="w-20 text-right">Bags</th>
               <th>Comment</th>
               <th className="w-24 text-right">Kalwat</th>
@@ -283,7 +283,7 @@ export function DesignTrackPage() {
                   <td className="whitespace-nowrap tabular-nums">{formatDate(r.orderDate)}</td>
                   <td className="font-semibold">{r.customerName}</td>
                   <td className="font-semibold">{r.productName || '—'}</td>
-                  <td className="whitespace-nowrap">{r.designName || '—'}</td>
+                  <td className="whitespace-normal break-words max-w-[14rem]">{r.designName || '—'}</td>
                   <td className="text-right font-medium tabular-nums">{r.bags.toFixed(2)}</td>
                   <td className="text-muted-foreground max-w-[16rem] truncate" title={r.comment ?? undefined}>
                     {r.comment || ''}
