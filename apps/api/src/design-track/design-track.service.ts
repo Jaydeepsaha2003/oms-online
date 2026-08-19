@@ -151,17 +151,12 @@ export class DesignTrackService {
       // columns — never the dispatch display string, which reads "NA" here.
       designType,
       designName,
-      // The bags still TO DO, not the bags originally ordered. This grid lists
-      // pending work, so a line ordered for 2 with 1 already dispatched has 1
-      // left to design — showing 2 double-counted the dispatched bag and
-      // disagreed with Pending Dispatch for the same line.
-      bags: line.remBags,
+      // The total bags originally ordered on the line.
+      bags: line.bags,
       comment: line.comment,
       kalwat,
       dispatchedBags,
-      // Pending bags minus what's been processed. Derived every read so a later
-      // dispatch (or an edit to the order) is reflected without touching the
-      // Kalwat entry.
+      // Pending bags minus what's been processed by hand.
       remaining: r2(line.remBags - (kalwat ?? 0)),
     };
   }
