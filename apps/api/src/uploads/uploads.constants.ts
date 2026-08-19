@@ -15,7 +15,14 @@ import { isAbsolute, join, resolve } from 'node:path';
 export const UPLOADS_DIR = (() => {
   const fromEnv = process.env.UPLOADS_DIR;
   if (fromEnv) return isAbsolute(fromEnv) ? fromEnv : resolve(process.cwd(), fromEnv);
-  return resolve(process.cwd(), '..', '..', 'uploads');
+
+  const cwdUploads = resolve(process.cwd(), 'uploads');
+  if (existsSync(cwdUploads)) return cwdUploads;
+
+  const parentUploads = resolve(process.cwd(), '..', '..', 'uploads');
+  if (existsSync(parentUploads)) return parentUploads;
+
+  return resolve(__dirname, '..', '..', '..', '..', 'uploads');
 })();
 
 /** Sub-folder (under UPLOADS_DIR) for order-line photos. */
