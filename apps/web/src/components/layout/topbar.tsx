@@ -8,6 +8,7 @@ import { useLogout } from '@/hooks/use-auth';
 import { usePermissions } from '@/hooks/use-permissions';
 import { getMenuIcon } from '@/lib/icons';
 import { NotificationsBell } from '@/features/crm/notifications-bell';
+import { EnableNotificationsButton } from '@/features/notifications/enable-notifications';
 import { SystemStatus } from '@/components/common/system-status';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -91,6 +92,11 @@ export function Topbar({
         </Button>
         <ThemeToggle />
         <SystemStatus variant="compact" />
+        {/* Ungated on purpose: enrolling THIS device for notifications is not a
+            privileged action, and gating it (as /settings did) left every
+            non-super-admin with no way to switch alerts on. Renders nothing once
+            the device is enrolled. */}
+        <EnableNotificationsButton />
         {can('crm:view') && <NotificationsBell />}
         {user && (
           <DropdownMenu>

@@ -18,12 +18,36 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
   return outputArray;
 }
 
+/**
+ * The active service-worker registration, or null — WITHOUT hanging.
+ *
+ * `navigator.serviceWorker.ready` never settles when no worker is registered,
+ * and registration is allowed to fail silently (main.tsx swallows it — plain
+ * HTTP over the LAN is the documented case). Anything that awaited `.ready` to
+ * decide what to render therefore hung forever on exactly those devices and the
+ * control never appeared. Time-boxed so a missing or stuck worker resolves to
+ * "no registration" instead of a promise that never returns.
+ */
+async function currentRegistration(timeoutMs = 3000): Promise<ServiceWorkerRegistration | null> {
+  if (!('serviceWorker' in navigator)) return null;
+  // getRegistration() settles straight away (to undefined when there is none);
+  // `.ready` is raced only to pick up a worker that is mid-activation.
+  const settled = await Promise.race([
+    navigator.serviceWorker.getRegistration().catch(() => undefined),
+    navigator.serviceWorker.ready.catch(() => undefined),
+    new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), timeoutMs)),
+  ]);
+  return settled ?? null;
+}
+
 /** True if this browser has an active push subscription right now (used to render button state). */
 export async function hasActivePushSubscription(): Promise<boolean> {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) return false;
-  const registration = await navigator.serviceWorker.ready;
-  const existing = await registration.pushManager.getSubscription();
-  return !!existing && Notification.permission === 'granted';
+  if (Notification.permission !== 'granted') return false;
+  const registration = await currentRegistration();
+  if (!registration) return false;
+  const existing = await registration.pushManager.getSubscription().catch(() => null);
+  return !!existing;
 }
 
 /** Requests permission, subscribes to push, and registers the subscription with the server. */
@@ -37,7 +61,16 @@ export async function subscribeToPush(): Promise<SubscribeResult> {
     return { ok: false, reason: 'Notification permission was not granted.' };
   }
 
-  const registration = await navigator.serviceWorker.ready;
+  // Same guard as above: never await a `.ready` that may never settle — report
+  // it instead, so the button surfaces a reason rather than spinning forever.
+  const registration = await currentRegistration(8000);
+  if (!registration) {
+    return {
+      ok: false,
+      reason:
+        'Notifications need the app’s background service, which is not running on this device. Open OMS over its https:// address (not a plain http:// one), then reload and try again.',
+    };
+  }
   const { publicKey } = await http.get<VapidPublicKeyResult>('/notifications/vapid-public-key');
   const subscription = await registration.pushManager.subscribe({
     userVisibleOnly: true,
