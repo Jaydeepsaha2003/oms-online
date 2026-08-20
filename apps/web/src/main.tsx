@@ -48,14 +48,24 @@ if ('serviceWorker' in navigator) {
   // (nothing changed), so only reload when we're swapped OFF an older worker.
   const hadController = !!navigator.serviceWorker.controller;
 
-  window.addEventListener('load', () => {
-    // updateViaCache: 'none' — never answer the sw.js request from the HTTP
-    // cache. Without it an iPhone can keep re-validating against a cached copy
-    // of the worker and never notice a new build.
-    navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).catch(() => {
-      /* e.g. plain-HTTP LAN access — install still possible via Add to Home Screen */
+  // updateViaCache: 'none' — never answer the sw.js request from the HTTP
+  // cache. Without it an iPhone can keep re-validating against a cached copy
+  // of the worker and never notice a new build.
+  const registerWorker = () =>
+    navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).catch((err) => {
+      // e.g. plain-HTTP LAN access, or a TLS certificate the device does not
+      // trust. Still non-fatal — install works via Add to Home Screen — but it
+      // is LOGGED now rather than silently dropped: without a worker there are
+      // no notifications, and the swallowed error was the only clue why.
+      console.warn('[OMS] service worker registration failed:', err);
     });
-  });
+
+  // Registering on 'load' keeps startup light, but that event may already have
+  // fired by the time this module runs (bfcache restore, late evaluation) — and
+  // then it never registers at all. Check first, and only wait when it is still
+  // genuinely pending.
+  if (document.readyState === 'complete') void registerWorker();
+  else window.addEventListener('load', () => void registerWorker(), { once: true });
   // Once a new service worker takes over an already-open tab (a deploy shipped
   // while it was open, or the index.html recovery script unregistered a stuck
   // one), reload immediately so the tab reflects the fresh version instead of

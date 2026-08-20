@@ -6,6 +6,33 @@ export type SubscribeResult = { ok: true } | { ok: false; reason: string };
 const UNSUPPORTED_REASON =
   'This browser/app does not support push notifications. On iPhone, add OMS to your Home Screen first (needs iOS 16.4 or later).';
 
+/**
+ * Why the background service could not start, in terms the person holding the
+ * phone can act on.
+ *
+ * A service worker will not register unless the page is a secure context with a
+ * certificate the device TRUSTS — bypassing a browser warning is not enough, and
+ * this app is served over LAN https with its own CA (hence /oms-rootCA.crt). The
+ * generic "not running" message could not tell those cases apart, so it told
+ * nobody anything useful.
+ */
+function registrationFailureReason(err: unknown): string {
+  const detail = err instanceof Error && err.message ? ` (${err.message})` : '';
+
+  if (typeof window !== 'undefined' && !window.isSecureContext) {
+    return `Notifications need a secure connection. You’re on ${window.location.protocol}//${window.location.host} — open OMS on its https:// address instead, then try again.${detail}`;
+  }
+  // iOS only allows push for a PWA launched from the Home Screen.
+  const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const standalone =
+    (typeof window !== 'undefined' && window.matchMedia?.('(display-mode: standalone)').matches) ||
+    (navigator as Navigator & { standalone?: boolean }).standalone === true;
+  if (iOS && !standalone) {
+    return `On iPhone, notifications only work when OMS is opened from the Home Screen. Tap Share → Add to Home Screen, open OMS from that icon, then turn notifications on.${detail}`;
+  }
+  return `Notifications need the app’s background service, which this device refused to start. This is usually the security certificate: open https://${typeof window !== 'undefined' ? window.location.host : ''}/oms-rootCA.crt to install the OMS certificate, then reload and try again.${detail}`;
+}
+
 /** Converts a VAPID base64url public key into the Uint8Array pushManager.subscribe() needs. */
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -61,16 +88,26 @@ export async function subscribeToPush(): Promise<SubscribeResult> {
     return { ok: false, reason: 'Notification permission was not granted.' };
   }
 
-  // Same guard as above: never await a `.ready` that may never settle — report
-  // it instead, so the button surfaces a reason rather than spinning forever.
-  const registration = await currentRegistration(8000);
+  // Same guard as above: never await a `.ready` that may never settle.
+  let registration = await currentRegistration(4000);
   if (!registration) {
-    return {
-      ok: false,
-      reason:
-        'Notifications need the app’s background service, which is not running on this device. Open OMS over its https:// address (not a plain http:// one), then reload and try again.',
-    };
+    // Nothing registered yet — try NOW rather than reporting failure.
+    //
+    // main.tsx registers on window 'load' and swallows the error, so a device
+    // whose registration failed (or whose 'load' had already fired before that
+    // listener attached) is stuck with no worker and no explanation forever.
+    // Registering on the tap both repairs that and, crucially, surfaces the real
+    // reason when it genuinely can't work.
+    try {
+      registration = await navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
+      // register() resolves as soon as the worker is installing; push needs it
+      // active, which `.ready` waits for.
+      registration = (await currentRegistration(10000)) ?? registration;
+    } catch (err) {
+      return { ok: false, reason: registrationFailureReason(err) };
+    }
   }
+  if (!registration) return { ok: false, reason: registrationFailureReason(null) };
   const { publicKey } = await http.get<VapidPublicKeyResult>('/notifications/vapid-public-key');
   const subscription = await registration.pushManager.subscribe({
     userVisibleOnly: true,
