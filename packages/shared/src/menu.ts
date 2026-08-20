@@ -133,13 +133,6 @@ export const MENU: MenuNode[] = [
         permission: perm(RESOURCES.TRANSPORTER, ACTIONS.VIEW),
       },
       {
-        id: 'agents',
-        label: 'Agents',
-        to: '/agents',
-        icon: 'UserCog',
-        permission: perm(RESOURCES.AGENT, ACTIONS.VIEW),
-      },
-      {
         id: 'gst-rates',
         label: 'GST Rates',
         to: '/gst-rates',
@@ -167,6 +160,85 @@ export const MENU: MenuNode[] = [
         icon: 'IndianRupee',
         permission: perm(RESOURCES.CUSTOMER, ACTIONS.VIEW),
       },
+    ],
+  },
+  {
+    /**
+     * Everything about an agent in one place.
+     *
+     * These four screens were scattered: Agents sat among the Customers
+     * masters, while Settlement, Commission Rates and Covers sat in Account
+     * between Party Ledger and Daybook. Answering "what do we owe this agent,
+     * and on what rates?" meant crossing two sections, and the rate master —
+     * the thing every settlement is priced from — was the easiest of them to
+     * miss entirely.
+     *
+     * MOVED, not copied. Two menu entries pointing at one route would leave the
+     * sidebar unable to say which of them owns the URL, so each screen appears
+     * exactly once. The routes themselves are unchanged, so existing bookmarks
+     * and links still work.
+     */
+    id: 'agent-group',
+    label: 'Agent',
+    icon: 'Handshake',
+    anyPermission: [
+      perm(RESOURCES.AGENT, ACTIONS.VIEW),
+      perm(RESOURCES.AGENT_COMMISSION, ACTIONS.VIEW),
+      perm(RESOURCES.AGENT_COMMISSION, ACTIONS.VIEWRATES),
+    ],
+    children: [
+      {
+        id: 'agents',
+        label: 'Agents',
+        to: '/agents',
+        icon: 'UserCog',
+        permission: perm(RESOURCES.AGENT, ACTIONS.VIEW),
+      },
+      {
+        id: 'agent-settlement',
+        label: 'Agent Settlement',
+        to: '/account/agent-settlement',
+        icon: 'BadgeIndianRupee',
+        permission: perm(RESOURCES.AGENT_COMMISSION, ACTIONS.VIEW),
+      },
+      {
+        // The rate master is money, so it needs `viewrates`, not plain view —
+        // which is why it can be the only entry an accounts user sees here.
+        id: 'commission-rates',
+        label: 'Commission Rates',
+        to: '/account/commission-rates',
+        icon: 'Percent',
+        permission: perm(RESOURCES.AGENT_COMMISSION, ACTIONS.VIEWRATES),
+      },
+      {
+        // Where a saved DRAFT is paid or cancelled. Without it "Save as draft"
+        // was a one-way door: the draft held its invoices' claimable share and
+        // there was no screen that could act on it.
+        id: 'settlement-history',
+        label: 'Settlement History',
+        to: '/account/agent-settlement-history',
+        icon: 'ScrollText',
+        permission: perm(RESOURCES.AGENT_COMMISSION, ACTIONS.VIEW),
+      },
+      {
+        // The whole book, including the rows Settlement filters out — which are
+        // exactly the rows an agent disputing his statement asks about.
+        id: 'commission-ledger',
+        label: 'Commission Ledger',
+        to: '/account/commission-ledger',
+        icon: 'BookOpen',
+        permission: perm(RESOURCES.AGENT_COMMISSION, ACTIONS.VIEW),
+      },
+      {
+        id: 'agent-covers',
+        label: 'Agent Covers',
+        to: '/account/agent-covers',
+        icon: 'HandCoins',
+        permission: perm(RESOURCES.AGENT_COMMISSION, ACTIONS.VIEW),
+      },
+      // Cheque bounces and cheque timing are deliberately NOT entries here:
+      // both are tabs/panels inside Manage Cheques, beside the cheques they
+      // happen to. A bounce is only meaningful next to its cheque.
     ],
   },
   {
@@ -418,29 +490,6 @@ export const MENU: MenuNode[] = [
         icon: 'BookText',
         permission: perm(RESOURCES.PARTY_LEDGER, ACTIONS.VIEW),
       },
-      {
-        id: 'agent-settlement',
-        label: 'Agent Settlement',
-        to: '/account/agent-settlement',
-        icon: 'BadgeIndianRupee',
-        permission: perm(RESOURCES.AGENT_COMMISSION, ACTIONS.VIEW),
-      },
-      {
-        id: 'commission-rates',
-        label: 'Commission Rates',
-        to: '/account/commission-rates',
-        icon: 'Percent',
-        permission: perm(RESOURCES.AGENT_COMMISSION, ACTIONS.VIEWRATES),
-      },
-      {
-        id: 'agent-covers',
-        label: 'Agent Covers',
-        to: '/account/agent-covers',
-        icon: 'HandCoins',
-        permission: perm(RESOURCES.AGENT_COMMISSION, ACTIONS.VIEW),
-      },
-      // Cheque bounces are not a menu entry of their own — they live as a tab
-      // inside Manage Cheques, beside the cheques they happen to.
       {
         id: 'daybook',
         label: 'Daybook',

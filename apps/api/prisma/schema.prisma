@@ -208,6 +208,7 @@ model Agent {
   updatedAt DateTime @updatedAt
 
   commissionRates AgentCommissionRate[]
+  specialRates    AgentSpecialCommission[]
   accruals        AgentCommissionAccrual[]
   covers          AgentPartyCover[]
   settlements     AgentSettlement[]
@@ -1798,6 +1799,50 @@ model AgentCommissionRate {
   @@map("agent_commission_rates")
 }
 
+/// An override of an agent's base commission rate, aimed at one party, category,
+/// sub-category, product or design.
+///
+/// A REPLACEMENT rate, not a delta: commission is a whole number per unit, so
+/// two matching rules could never be added together. Exactly one wins, chosen
+/// most-specific-first with a party-specific rule outranking a general one — see
+/// `resolveCommissionRate` in @oms/shared, which is the single definition of
+/// that precedence and is used by both the accrual engine and the UI's tester.
+///
+/// Every narrowing column is nullable so one table expresses all five scopes;
+/// `scope` records which of them the rule was AIMED at, so a rule can never be
+/// silently reinterpreted as a broader one by a later edit that clears a column.
+model AgentSpecialCommission {
+  id            Int      @id @default(autoincrement())
+  agentId       Int
+  agentName     String
+  /// CUSTOMER | CATEGORY | SUBCATEGORY | PRODUCT | DESIGN
+  scope         String
+  /// Null = not tied to one party (applies across this agent's parties).
+  customerId    Int?
+  customerName  String?
+  /// Challan LINE category (ChallanItem.pCategory), as for the base rate.
+  pCategory     String?
+  subCategory   String?
+  product       String?
+  designType    String?
+  /// Kept for display and for a rule created before its category had a basis;
+  /// the CATEGORY's basis wins when the two disagree, since the basis decides
+  /// the quantity and a special only ever decides the rate.
+  basis         String   @default("KGS")
+  ratePerUnit   Float
+  effectiveFrom DateTime
+  note          String?
+  userName      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId, effectiveFrom])
+  @@index([agentId, customerId])
+  @@map("agent_special_commissions")
+}
+
 /// Gross commission one invoice generated for an agent, split by category.
 /// This is the ENTITLEMENT, not the payable: how much is actually due depends on
 /// how much of the invoice the party has paid (pro-rata), which is resolved at
@@ -1819,8 +1864,22 @@ model AgentCommissionAccrual {
   /// against the invoice without re-reading the challan lines.
   kgs          Float
   pcs          Float     @default(0)
+  /// The rate the money was calculated at. When the invoice's lines in this
+  /// category priced at DIFFERENT rates (a special aimed at one product, say),
+  /// this is the BLENDED rate — amount ÷ qty — so `qty × ratePerUnit` still
+  /// equals `amount` exactly for every consumer that recomputes it.
+  ///
+  /// Splitting the row per rate was the alternative and is not possible: the
+  /// unique key below, the settled-share map and the settlement lines all
+  /// identify an accrual by (invoice, category), so a second row for the same
+  /// pair would double-count against itself.
   ratePerUnit  Float
   amount       Float
+  /// Which rule priced this — "Base rate", "Product BREZZA · ANIL METAL", or
+  /// "blended (n rules)". Audit only; nothing computes from it. Without it a
+  /// figure derived from a special rate cannot be traced back to the rule that
+  /// set it, which is precisely the figure someone will question.
+  rateNote     String?
   invDate      DateTime
   /// Copied from the challan so overdue can be judged without re-joining, and
   /// stays correct even if the party's credit period is edited later.

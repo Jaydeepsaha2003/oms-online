@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { BadgeIndianRupee, History, Loader2, Pencil, Plus, RefreshCw, Trash2, TriangleAlert } from 'lucide-react';
+import { BadgeIndianRupee, History, Loader2, Pencil, Plus, Trash2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { basisUnit, COMMISSION_BASES, type AgentRateCoverageRow, type CommissionBasis } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -14,8 +14,8 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAgents } from '@/features/agents/use-agents';
 import { useOrderLookups } from '@/features/orders/use-orders';
+import { SpecialCommissionPanel } from './special-commission';
 import {
-  useBackfillAccruals,
   useCommissionRates,
   useCreateCommissionRate,
   useDeleteCommissionRate,
@@ -44,11 +44,11 @@ export function CommissionRatesPage() {
   const { data: agentList } = useAgents({ page: 1, pageSize: 500 });
   const { data: allRates } = useCommissionRates();
   const { data: lookups } = useOrderLookups();
-  const backfill = useBackfillAccruals();
 
   const [editing, setEditing] = useState<{ agentId: number; agentName: string; pCategory: string; basis: CommissionBasis } | null>(null);
   const [adding, setAdding] = useState(false);
   const [onlyGaps, setOnlyGaps] = useState(false);
+  const [tab, setTab] = useState<'BASE' | 'SPECIAL'>('BASE');
 
   const rows = coverage ?? [];
   const agentsInGrid = useMemo(() => [...new Set(rows.map((r) => r.agentName))].sort(), [rows]);
@@ -63,24 +63,6 @@ export function CommissionRatesPage() {
   const priced = rows.length - gaps.length;
   const visibleAgents = onlyGaps ? agentsInGrid.filter((a) => gaps.some((g) => g.agentName === a)) : agentsInGrid;
 
-  const runBackfill = async () => {
-    const ok = await confirm({
-      title: 'Re-price every invoice?',
-      description:
-        'Every confirmed invoice is re-checked against the rate master and its commission re-derived. ' +
-        'Run this after changing rates, since invoices already priced keep their old figures until you do. Safe to repeat.',
-      confirmText: 'Re-price',
-    });
-    if (!ok) return;
-    backfill.mutate(
-      {},
-      {
-        onSuccess: (r) => toast.success(`${r.challans} invoices scanned · ${r.accruals} commission rows written`),
-        onError: (e) => toast.error(getApiErrorMessage(e, 'Backfill failed')),
-      },
-    );
-  };
-
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 p-2.5 font-sans sm:p-3">
       {/* ── Header ──────────────────────────────────────────────────────── */}
@@ -94,12 +76,12 @@ export function CommissionRatesPage() {
             What each agent earns per kg or per piece, by product category. A category with no rate earns them nothing.
           </p>
         </div>
+        {/* No "re-price invoices" button any more: saving a rate prices the
+            invoices it reaches, there and then, and a new invoice prices itself
+            on save. A button for it was a step that could be skipped — and
+            skipping it left a rate on screen while every settlement still paid
+            the old one. */}
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          {can('agentcommission:manage') && (
-            <Button variant="outline" onClick={runBackfill} disabled={backfill.isPending} title="Re-derive commission on every confirmed invoice">
-              {backfill.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />} Re-price invoices
-            </Button>
-          )}
           {canEdit && (
             <Button className="bg-gradient-brand text-white shadow-sm hover:opacity-95" onClick={() => setAdding(true)}>
               <Plus /> Set a rate
@@ -108,6 +90,55 @@ export function CommissionRatesPage() {
         </div>
       </div>
 
+      {/* ── Base rates vs the exceptions to them ─────────────────────────
+          Two tabs rather than two screens: they are the same question at two
+          levels of detail, and a special rate is only understandable next to the
+          base rate it replaces. */}
+      <div className="flex h-9 w-full items-center gap-1 rounded-[4px] border border-indigo-200 bg-indigo-50/40 p-0.5 sm:w-auto sm:self-start dark:border-indigo-400/30 dark:bg-indigo-500/10">
+        {(
+          [
+            ['BASE', 'Base rates'],
+            ['SPECIAL', 'Special commission'],
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setTab(value)}
+            className={cn(
+              'flex-1 rounded-[3px] px-3 py-1 text-[12px] font-semibold transition-colors sm:flex-none',
+              tab === value ? 'bg-indigo-600 text-white shadow-sm' : 'text-indigo-900/70 hover:bg-indigo-100 dark:text-indigo-200/80 dark:hover:bg-indigo-500/20',
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Please set the missing rates ──────────────────────────────────
+          Shown above BOTH tabs, because it is the one thing standing between
+          the user and any figures at all: pricing runs by itself, so an empty
+          Ledger or Settlement means only that a rate is missing here. */}
+      {!!gaps.length && (
+        <div className="flex items-start gap-2 rounded-[4px] border border-rose-300 bg-rose-50 px-3 py-2.5 text-sm text-rose-900 dark:border-rose-400/40 dark:bg-rose-500/10 dark:text-rose-200">
+          <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+          <p>
+            <b>
+              Please set {gaps.length === 1 ? 'a rate' : `${gaps.length} rates`} — {gaps.length} agent–category{' '}
+              {gaps.length === 1 ? 'pairing has' : 'pairings have'} none
+            </b>{' '}
+            — {gaps.reduce((s, g) => s + g.invoiceCount, 0).toLocaleString('en-IN')} invoices already dispatched under{' '}
+            {gaps.length === 1 ? 'it' : 'them'} are earning the agent nothing.{' '}
+            {tab === 'BASE' ? 'Click any red square below to price it.' : 'Open the Base rates tab and click any red square.'}{' '}
+            The invoices price themselves the moment the rate is saved.
+          </p>
+        </div>
+      )}
+
+      {tab === 'SPECIAL' && <SpecialCommissionPanel />}
+
+      {tab === 'BASE' && (
+        <>
       {/* ── What the grid adds up to ────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
         <Stat label="Agents selling" value={agentsInGrid.length} tone="slate" />
@@ -122,20 +153,6 @@ export function CommissionRatesPage() {
           active={onlyGaps}
         />
       </div>
-
-      {/* The single most useful sentence on the page, when it applies. */}
-      {!!gaps.length && (
-        <div className="flex items-start gap-2 rounded-[4px] border border-rose-300 bg-rose-50 px-3 py-2.5 text-sm text-rose-900">
-          <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-          <p>
-            <b>
-              {gaps.length} agent–category {gaps.length === 1 ? 'pairing has' : 'pairings have'} no rate
-            </b>{' '}
-            — {gaps.reduce((s, g) => s + g.invoiceCount, 0).toLocaleString('en-IN')} invoices already dispatched under{' '}
-            {gaps.length === 1 ? 'it' : 'them'} are earning the agent nothing. Click any red square to price it.
-          </p>
-        </div>
-      )}
 
       {/* ── The grid ────────────────────────────────────────────────────── */}
       <div className="bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[4px] border shadow-sm">
@@ -215,9 +232,12 @@ export function CommissionRatesPage() {
 
         <p className="text-muted-foreground border-t px-3 py-1.5 text-[11.5px]">
           Rates are dated, never overwritten — an invoice always prices at the rate in force on its invoice date, so changing one here never rewrites
-          what has already been settled.
+          what has already been settled. Saving a rate prices every invoice it reaches straight away, and a new invoice prices itself when it is raised.
         </p>
       </div>
+
+        </>
+      )}
 
       {(editing || adding) && (
         <RateDialog
@@ -398,8 +418,15 @@ function RateDialog({ seed, agents, categories, lookups, history, onClose }: {
     create.mutate(
       { agentId, pCategory: pCategory.trim().toUpperCase(), basis, ratePerUnit: value, effectiveFrom, note: note.trim() || null },
       {
-        onSuccess: () => {
-          toast.success(`₹${value}/${basisUnit(basis)} set for ${agentName} · ${pCategory.toUpperCase()}`);
+        onSuccess: (saved) => {
+          // Say what the save actually DID. "Saved" would leave the user
+          // wondering whether the figures downstream had moved yet — which is
+          // exactly the doubt the old re-price button existed to answer.
+          const n = saved.repriced?.challans ?? 0;
+          toast.success(
+            `₹${value}/${basisUnit(basis)} set for ${agentName} · ${pCategory.toUpperCase()}` +
+              (n ? ` — ${n} invoice${n === 1 ? '' : 's'} priced` : ' — no invoices in range yet'),
+          );
           onClose();
         },
         onError: (e) => toast.error(getApiErrorMessage(e, 'Could not save the rate')),
@@ -511,7 +538,14 @@ function RateDialog({ seed, agents, categories, lookups, history, onClose }: {
                           confirmText: 'Remove',
                           destructive: true,
                         });
-                        if (ok) del.mutate(h.id, { onError: (e) => toast.error(getApiErrorMessage(e, 'Delete failed')) });
+                        if (!ok) return;
+                        del.mutate(h.id, {
+                          onSuccess: (r) => {
+                            const n = r?.repriced?.challans ?? 0;
+                            toast.success(n ? `Rate removed — ${n} invoice${n === 1 ? '' : 's'} re-priced` : 'Rate removed');
+                          },
+                          onError: (e) => toast.error(getApiErrorMessage(e, 'Delete failed')),
+                        });
                       }}
                       className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive inline-flex size-6 shrink-0 items-center justify-center rounded-[4px]"
                       aria-label={`Remove the ₹${h.ratePerUnit} rate from ${formatDate(h.effectiveFrom)}`}

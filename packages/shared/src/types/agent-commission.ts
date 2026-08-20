@@ -138,7 +138,24 @@ export interface AgentCommissionAccrualDto {
   settledAmount: number;
   /** Share now claimable — the party has paid this much more since last time. */
   payableRatio: number;
+  /** Which rule priced this — "Base rate", a special's label, or
+   *  "blended (n rules)" when the invoice's lines in this category did not all
+   *  price the same. Audit only. Null on rows accrued before it was tracked. */
+  rateNote?: string | null;
 }
+
+/**
+ * Which rows of the commission ledger to show.
+ *
+ * `CLAIMED` and `UNPAID` both mean "nothing claimable right now", but for
+ * opposite reasons — the agent has already been paid for it, versus the party
+ * has not paid at all. The old vocabulary had one value (`SETTLED`) covering
+ * both, which reads as "this is dealt with" over invoices where nobody has paid
+ * anybody. `UNSETTLED`/`SETTLED` are still accepted as aliases for CLAIMABLE and
+ * "not claimable".
+ */
+export const ACCRUAL_STATES = ['CLAIMABLE', 'CLAIMED', 'UNPAID', 'ALL'] as const;
+export type AccrualState = (typeof ACCRUAL_STATES)[number];
 
 export type AgentCommissionQuery = PaginationQuery & {
   agentId?: number;
@@ -146,8 +163,8 @@ export type AgentCommissionQuery = PaginationQuery & {
   pCategory?: string;
   dateFrom?: string;
   dateTo?: string;
-  /** UNSETTLED (default) | SETTLED | ALL */
-  settledState?: string;
+  /** CLAIMABLE (default) | CLAIMED | UNPAID | ALL — see {@link ACCRUAL_STATES}. */
+  settledState?: AccrualState | string;
 };
 export type AgentCommissionAccrualList = Paginated<AgentCommissionAccrualDto>;
 
@@ -332,6 +349,20 @@ export function daysBetween(from: Date | string, to: Date | string): number {
 }
 
 /* ── Settlement ──────────────────────────────────────────────────────────── */
+
+/**
+ * How many invoices a rate change re-priced, reported back so the screen can say
+ * what actually happened instead of "saved".
+ *
+ * Pricing is a consequence of the rate change itself — there is no separate
+ * "re-price" step to remember, and nothing to forget.
+ */
+export interface RepriceResult {
+  /** Invoices re-examined. */
+  challans: number;
+  /** Commission rows written across them. */
+  accruals: number;
+}
 
 export const AGENT_SETTLEMENT_STATUSES = ['DRAFT', 'PAID', 'CANCELLED'] as const;
 export type AgentSettlementStatus = (typeof AGENT_SETTLEMENT_STATUSES)[number];

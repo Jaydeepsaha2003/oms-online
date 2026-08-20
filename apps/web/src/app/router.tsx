@@ -58,6 +58,8 @@ const PartyLedgerPage = lazy(() => import('@/features/account/party-ledger-page'
 const AgentSettlementPage = lazy(() => import('@/features/agent-commission/agent-settlement-page').then((m) => ({ default: m.AgentSettlementPage })));
 const CommissionRatesPage = lazy(() => import('@/features/agent-commission/commission-rates-page').then((m) => ({ default: m.CommissionRatesPage })));
 const AgentCoversPage = lazy(() => import('@/features/agent-commission/agent-covers-page').then((m) => ({ default: m.AgentCoversPage })));
+const SettlementHistoryPage = lazy(() => import('@/features/agent-commission/settlement-history-page').then((m) => ({ default: m.SettlementHistoryPage })));
+const CommissionLedgerPage = lazy(() => import('@/features/agent-commission/commission-ledger-page').then((m) => ({ default: m.CommissionLedgerPage })));
 const DaybookPage = lazy(() => import('@/features/account/daybook-page').then((m) => ({ default: m.DaybookPage })));
 const TallyReconPage = lazy(() => import('@/features/account/tally-recon-page').then((m) => ({ default: m.TallyReconPage })));
 const SettingsPage = lazy(() => import('@/features/settings/settings-page').then((m) => ({ default: m.SettingsPage })));
@@ -466,6 +468,26 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.AGENT_COMMISSION, ACTIONS.VIEW)}>
                 <AgentCoversPage />
+              </RequirePermission>
+            }
+          />
+          {/* Deliberately NOT "/account/agent-settlement/history": that would sit
+              UNDER the settlement builder's route, and the sidebar resolves the
+              active entry by longest matching path — the builder would stay lit
+              while you were on this screen. A sibling segment keeps them apart. */}
+          <Route
+            path="/account/agent-settlement-history"
+            element={
+              <RequirePermission permission={perm(RESOURCES.AGENT_COMMISSION, ACTIONS.VIEW)}>
+                <SettlementHistoryPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/account/commission-ledger"
+            element={
+              <RequirePermission permission={perm(RESOURCES.AGENT_COMMISSION, ACTIONS.VIEW)}>
+                <CommissionLedgerPage />
               </RequirePermission>
             }
           />

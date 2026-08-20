@@ -14,7 +14,9 @@ import {
   CreateCoverDto,
   CreateRateDto,
   CreateSettlementDto,
+  CreateSpecialCommissionDto,
   PaySettlementDto,
+  TestRateQueryDto,
 } from './dto/agent-commission.dto';
 
 const R = RESOURCES.AGENT_COMMISSION;
@@ -46,6 +48,39 @@ export class AgentCommissionController {
   @Audit({ action: ACTIONS.CREATE, resource: R, description: 'Set an agent commission rate' })
   createRate(@Body() dto: CreateRateDto, @CurrentUser() user: AuthenticatedUser) {
     return this.svc.createRate(dto, user.name);
+  }
+
+  /* ── Special Commission ───────────────────────────────────────────────── */
+  //
+  // Declared before 'rates/:id' so "special" is matched as a route rather than
+  // parsed as a rate id. Same permissions as the base rate master: it IS the
+  // rate master, only aimed more narrowly.
+  @Get('rates/special')
+  @Permissions(perm(R, ACTIONS.VIEWRATES))
+  specials(@Query('agentId') agentId?: string) {
+    return this.svc.listSpecials(agentId ? Number(agentId) : undefined);
+  }
+
+  /** "What rate would apply here?" — resolved by the same code that prices an
+   *  invoice, so the answer cannot drift from the money. */
+  @Get('rates/special/test')
+  @Permissions(perm(R, ACTIONS.VIEWRATES))
+  testRate(@Query() q: TestRateQueryDto) {
+    return this.svc.testRate(q);
+  }
+
+  @Post('rates/special')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.CREATE, resource: R, description: 'Set a special agent commission rate' })
+  createSpecial(@Body() dto: CreateSpecialCommissionDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.svc.createSpecial(dto, user.name);
+  }
+
+  @Delete('rates/special/:id')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.DELETE, resource: R, description: 'Removed a special agent commission rate' })
+  deleteSpecial(@Param('id', ParseIntPipe) id: number) {
+    return this.svc.deleteSpecial(id);
   }
 
   @Delete('rates/:id')

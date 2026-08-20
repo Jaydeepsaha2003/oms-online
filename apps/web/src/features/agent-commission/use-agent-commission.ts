@@ -14,6 +14,10 @@ import type {
   ChequeBounceEventDto,
   ChequeBounceEventInput,
   ChequeTimingDto,
+  AgentSpecialCommissionDto,
+  AgentSpecialCommissionInput,
+  ResolvedCommissionRate,
+  RepriceResult,
 } from '@oms/shared';
 import { http } from '@/lib/api';
 
@@ -41,7 +45,8 @@ export function useRateCoverage() {
 export function useCreateCommissionRate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: AgentCommissionRateInput) => http.post<AgentCommissionRateDto>('/agent-commission/rates', input),
+    mutationFn: (input: AgentCommissionRateInput) =>
+      http.post<AgentCommissionRateDto & { repriced: RepriceResult }>('/agent-commission/rates', input),
     // A new rate changes what invoices are worth, so the accrual/preview views
     // must not keep showing figures priced on the old one.
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
@@ -51,7 +56,7 @@ export function useCreateCommissionRate() {
 export function useDeleteCommissionRate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: number) => http.delete<void>(`/agent-commission/rates/${id}`),
+    mutationFn: (id: number) => http.delete<{ repriced: RepriceResult }>(`/agent-commission/rates/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
@@ -248,5 +253,57 @@ export function useCancelSettlement() {
   return useMutation({
     mutationFn: (id: number) => http.post<void>(`/agent-commission/settlements/${id}/cancel`, {}),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+/* ── Special Commission (per party / category / product / design) ────────── */
+
+export function useSpecialCommissions(agentId?: number) {
+  return useQuery({
+    queryKey: [...KEY, 'specials', agentId ?? 'all'],
+    queryFn: () => http.get<AgentSpecialCommissionDto[]>('/agent-commission/rates/special', { params: { agentId } }),
+    staleTime: 30_000,
+  });
+}
+
+export function useCreateSpecialCommission() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: AgentSpecialCommissionInput) =>
+      http.post<AgentSpecialCommissionDto & { repriced: RepriceResult }>('/agent-commission/rates/special', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export function useDeleteSpecialCommission() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => http.delete<{ repriced: RepriceResult }>(`/agent-commission/rates/special/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+/**
+ * "What rate would apply here?" — answered by the server's own resolver, never
+ * re-implemented here. A tester that disagreed with the money would be worse
+ * than no tester.
+ */
+export function useTestCommissionRate(q: {
+  agentId?: number;
+  customerId?: number | null;
+  pCategory?: string | null;
+  subCategory?: string | null;
+  product?: string | null;
+  designType?: string | null;
+}) {
+  const enabled = q.agentId != null;
+  return useQuery({
+    queryKey: [...KEY, 'rate-test', q],
+    queryFn: () =>
+      http.get<ResolvedCommissionRate | null>('/agent-commission/rates/special/test', {
+        params: Object.fromEntries(Object.entries(q).filter(([, v]) => v != null && v !== '')),
+      }),
+    enabled,
+    placeholderData: (prev) => prev,
   });
 }

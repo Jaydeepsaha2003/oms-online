@@ -1,6 +1,13 @@
 import { Transform, Type } from 'class-transformer';
 import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, Min, ValidateNested } from 'class-validator';
-import { AGENT_COVER_MODES, AGENT_DEDUCTION_KINDS, AGENT_PAY_MODES, COMMISSION_BASES } from '@oms/shared';
+import {
+  AGENT_COVER_MODES,
+  AGENT_DEDUCTION_KINDS,
+  AGENT_PAY_MODES,
+  COMMISSION_BASES,
+  SPECIAL_COMMISSION_SCOPES,
+  type SpecialCommissionScope,
+} from '@oms/shared';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 export class AgentCommissionQueryDto extends PaginationDto {
@@ -115,4 +122,36 @@ export class PaySettlementDto {
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) tdsPercent?: number;
   @IsOptional() @IsString() paidAt?: string;
   @IsOptional() @IsString() remarks?: string;
+}
+
+/** Add a Special Commission rule. The `scope` decides which of the narrowing
+ *  fields are required — enforced in the service, where the party lookup is. */
+export class CreateSpecialCommissionDto {
+  @Type(() => Number) @IsInt() agentId!: number;
+  @IsIn([...SPECIAL_COMMISSION_SCOPES], { message: 'Choose what this rule applies to.' })
+  scope!: SpecialCommissionScope;
+  @IsOptional() @Type(() => Number) @IsInt() customerId?: number | null;
+  @IsOptional() @IsString() pCategory?: string | null;
+  @IsOptional() @IsString() subCategory?: string | null;
+  @IsOptional() @IsString() product?: string | null;
+  @IsOptional() @IsString() designType?: string | null;
+  @IsIn([...COMMISSION_BASES], { message: 'Choose whether this rate is per kg or per piece.' })
+  basis!: (typeof COMMISSION_BASES)[number];
+  @Type(() => Number) @IsNumber({}, { message: 'The rate must be a number.' })
+  @Min(0, { message: 'The rate cannot be negative.' })
+  ratePerUnit!: number;
+  @IsString() effectiveFrom!: string;
+  @IsOptional() @IsString() note?: string;
+}
+
+/** "What rate would apply here?" — the Special Commission screen's tester. */
+export class TestRateQueryDto {
+  @Type(() => Number) @IsInt() agentId!: number;
+  @IsOptional() @Type(() => Number) @IsInt() customerId?: number | null;
+  @IsOptional() @IsString() pCategory?: string | null;
+  @IsOptional() @IsString() subCategory?: string | null;
+  @IsOptional() @IsString() product?: string | null;
+  @IsOptional() @IsString() designType?: string | null;
+  /** Defaults to today — the rate history is date-effective. */
+  @IsOptional() @IsString() on?: string | null;
 }

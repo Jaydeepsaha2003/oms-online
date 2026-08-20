@@ -10,6 +10,8 @@ import {
   RATIO_EPSILON,
   earnedCommission,
   expectedPaymentDate,
+  resolveCommissionRate,
+  resolveLineDesignParts,
   settlementNet,
   type AgentCommissionAccrualDto,
   type AgentCommissionRateDto,
@@ -21,11 +23,17 @@ import {
   type CommissionBasis,
   type ChequeDueBasis,
   type ChequeTimingDto,
+  type CommissionRateContext,
   type Paginated,
+  type RepriceResult,
+  type ResolvedCommissionRate,
+  type AgentSpecialCommissionDto,
+  type SpecialCommissionScope,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { formatDate } from '../common/date.util';
 import { readCategoryFields } from '../common/category-fields';
+import { loadKnownDesignTypes } from '../common/design-types';
 import {
   AgentCommissionQueryDto,
   CreateBankBounceChargeDto,
@@ -33,8 +41,22 @@ import {
   CreateCoverDto,
   CreateRateDto,
   CreateSettlementDto,
+  CreateSpecialCommissionDto,
   PaySettlementDto,
+  TestRateQueryDto,
 } from './dto/agent-commission.dto';
+
+/**
+ * Pre-loaded data a caller may hand to {@link AgentCommissionService.rebuildForChallan}
+ * so a bulk re-price does not re-query it per invoice.
+ *
+ * `specials` may span every agent and every date — the rebuild narrows it to the
+ * invoice's own agent and date, which is what makes handing it the whole table
+ * safe.
+ */
+interface RebuildContext {
+  specials: AgentSpecialCommissionDto[];
+}
 
 type Db = Prisma.TransactionClient;
 const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -63,6 +85,22 @@ const day = (v: string | Date | undefined, label: string): Date => {
 };
 
 /** Money a party has actually paid against an invoice, and what was collectible. */
+/**
+ * Normalise the ledger's state filter, accepting the older vocabulary.
+ *
+ * `SETTLED` used to mean "nothing claimable", which lumped invoices the agent
+ * had been paid for together with invoices nobody had paid at all. It maps to
+ * CLAIMED here — the reading someone asking for "settled" almost certainly
+ * wants — and UNPAID is now sayable on its own.
+ */
+function normAccrualState(value?: string): 'CLAIMABLE' | 'CLAIMED' | 'UNPAID' | 'ALL' {
+  const v = (value ?? '').trim().toUpperCase();
+  if (v === 'ALL') return 'ALL';
+  if (v === 'CLAIMED' || v === 'SETTLED') return 'CLAIMED';
+  if (v === 'UNPAID') return 'UNPAID';
+  return 'CLAIMABLE'; // also covers the legacy 'UNSETTLED' and the default
+}
+
 interface InvoicePayState {
   /** The invoice's bank + cash legs — what the party was billed. */
   invoiceAmount: number;
@@ -211,7 +249,7 @@ export class AgentCommissionService {
     return out.sort((a, b) => a.agentName.localeCompare(b.agentName) || a.pCategory.localeCompare(b.pCategory));
   }
 
-  async createRate(dto: CreateRateDto, userName?: string | null): Promise<AgentCommissionRateDto> {
+  async createRate(dto: CreateRateDto, userName?: string | null): Promise<AgentCommissionRateDto & { repriced: RepriceResult }> {
     const agent = await this.prisma.agent.findUnique({ where: { id: dto.agentId } });
     if (!agent) throw new NotFoundException('Agent not found.');
     const pCategory = dto.pCategory.trim().toUpperCase();
@@ -278,10 +316,15 @@ export class AgentCommissionService {
         userName: userName ?? null,
       },
     });
-    return (await this.listRates(agent.id)).find((r) => r.id === row.id)!;
+    // Price the invoices this rate reaches, now, as part of the same action.
+    // Waiting for someone to press a button is how a rate ends up on screen
+    // while every settlement still pays the old one.
+    const repriced = await this.repriceAffected({ agentId: agent.id, from: effectiveFrom, pCategory });
+    const saved = (await this.listRates(agent.id)).find((r) => r.id === row.id)!;
+    return { ...saved, repriced };
   }
 
-  async deleteRate(id: number): Promise<void> {
+  async deleteRate(id: number): Promise<{ repriced: RepriceResult }> {
     const rate = await this.prisma.agentCommissionRate.findUnique({ where: { id } });
     if (!rate) throw new NotFoundException('Rate not found.');
 
@@ -296,6 +339,10 @@ export class AgentCommissionService {
       );
     }
     await this.prisma.agentCommissionRate.delete({ where: { id } });
+    // The invoices it priced fall back to the previous dated rate, or to nothing.
+    return {
+      repriced: await this.repriceAffected({ agentId: rate.agentId, from: rate.effectiveFrom, pCategory: rate.pCategory }),
+    };
   }
 
   /* ── Accrual engine ───────────────────────────────────────────────────── */
@@ -313,7 +360,7 @@ export class AgentCommissionService {
    * last case is silent on purpose — a business may only pay commission on some
    * categories, and an un-rated one is simply not commissionable.
    */
-  async rebuildForChallan(challanId: number): Promise<number> {
+  async rebuildForChallan(challanId: number, preloaded?: RebuildContext): Promise<number> {
     const challan = await this.prisma.challan.findUnique({
       where: { id: challanId },
       include: { items: true },
@@ -339,29 +386,78 @@ export class AgentCommissionService {
     const agent = await this.prisma.agent.findFirst({ where: { name: agentName } });
     if (!agent) return 0;
 
-    // Commission is per unit of the LINE's product category (§1) — "Ashwin ji /
-    // Glass / ₹40" is about the goods, not the customer's own category. Both
-    // totals are collected because whether the category is charged by weight or
-    // by piece is the rate's decision, not the line's.
-    const byCategory = new Map<string, { kgs: number; pcs: number }>();
+    /*
+     * ── Price every LINE, then blend per category ──────────────────────────
+     *
+     * Commission is per unit of the LINE's product category (§1) — "Ashwin ji /
+     * Glass / ₹40" is about the goods, not the customer's own category.
+     *
+     * Each line is priced separately because a Special Commission can be aimed
+     * at one product, sub-category or design, so two GLASS lines on the same
+     * invoice can legitimately earn different rates. The results are then
+     * blended into ONE accrual row per category, with `ratePerUnit` = amount ÷
+     * qty: the accrual table is uniquely keyed on (challan, category), and the
+     * settled-share map and settlement lines identify a claim the same way, so
+     * a second row for the same pair would double-count against itself. The
+     * money is exact either way; only the displayed rate becomes an average,
+     * and `rateNote` records what went into it.
+     */
+    const lineCtx = await this.lineContexts(challan.items);
+    // The preloaded set spans EVERY agent and date (loaded once for a backfill),
+    // so it has to be narrowed here — handing it to the resolver as-is would let
+    // one agent's negotiated rate price another agent's invoice, and a rule
+    // dated next month price an invoice from last week.
+    const specials = preloaded
+      ? preloaded.specials.filter((r) => r.agentId === agent.id && new Date(r.effectiveFrom) <= challan.invDate)
+      : await this.specialsFor(agent.id, challan.invDate);
+    const baseCache = new Map<string, { ratePerUnit: number; basis: CommissionBasis } | null>();
+
+    interface CatTotals {
+      kgs: number;
+      pcs: number;
+      qty: number;
+      amount: number;
+      /** Distinct rules that priced this category, in the order first seen. */
+      notes: string[];
+    }
+    const byCategory = new Map<string, CatTotals>();
+
     for (const it of challan.items) {
-      const cat = (it.pCategory ?? '').trim().toUpperCase();
+      const pCategory = (it.pCategory ?? '').trim().toUpperCase();
       const kgs = it.kgs ?? 0;
       const pcs = it.pcs ?? 0;
-      if (!cat || (kgs <= 0 && pcs <= 0)) continue;
-      const cur = byCategory.get(cat) ?? { kgs: 0, pcs: 0 };
-      byCategory.set(cat, { kgs: r2(cur.kgs + kgs), pcs: r2(cur.pcs + pcs) });
+      if (!pCategory || (kgs <= 0 && pcs <= 0)) continue;
+
+      if (!baseCache.has(pCategory)) {
+        baseCache.set(pCategory, await this.rateFor(this.prisma, agent.id, pCategory, challan.invDate));
+      }
+      const base = baseCache.get(pCategory) ?? null;
+      const ctx = lineCtx.get(it.id) ?? { customerId: challan.customerId, pCategory, subCategory: null, product: null, designType: null };
+      const rate = resolveCommissionRate(specials, base, { ...ctx, customerId: ctx.customerId ?? challan.customerId, pCategory });
+      // No base rate and no special: this line is simply not commissionable.
+      // Silent on purpose — a business may pay commission on only some
+      // categories, and an un-priced one is not an error.
+      if (rate == null) continue;
+
+      const qty = commissionQty(rate.basis, kgs, pcs);
+      // A PCS category on a line that recorded no pieces earns nothing — better
+      // a zero than a number derived from the wrong measure.
+      if (qty <= 0) continue;
+
+      const cur = byCategory.get(pCategory) ?? { kgs: 0, pcs: 0, qty: 0, amount: 0, notes: [] };
+      cur.kgs = r2(cur.kgs + kgs);
+      cur.pcs = r2(cur.pcs + pcs);
+      cur.qty = r2(cur.qty + qty);
+      cur.amount = r2(cur.amount + qty * rate.ratePerUnit);
+      if (!cur.notes.includes(rate.label)) cur.notes.push(rate.label);
+      byCategory.set(pCategory, cur);
     }
     if (!byCategory.size) return 0;
 
     let written = 0;
-    for (const [pCategory, totals] of byCategory) {
-      const rate = await this.rateFor(this.prisma, agent.id, pCategory, challan.invDate);
-      if (rate == null) continue;
-      const qty = commissionQty(rate.basis, totals.kgs, totals.pcs);
-      // A PCS category on an invoice that recorded no pieces earns nothing —
-      // better a zero than a number derived from the wrong measure.
-      if (qty <= 0) continue;
+    for (const [pCategory, t] of byCategory) {
+      if (t.qty <= 0) continue;
+      const basis = baseCache.get(pCategory)?.basis ?? normBasis(undefined);
       await this.prisma.agentCommissionAccrual.create({
         data: {
           agentId: agent.id,
@@ -371,12 +467,16 @@ export class AgentCommissionService {
           customerId: challan.customerId,
           customerName: challan.customerName,
           pCategory,
-          basis: rate.basis,
-          qty,
-          kgs: totals.kgs,
-          pcs: totals.pcs,
-          ratePerUnit: rate.ratePerUnit,
-          amount: r2(qty * rate.ratePerUnit),
+          basis,
+          qty: t.qty,
+          // Only the quantity that was actually priced. Counting un-rated lines
+          // here would report commission "charged on" goods that earned none,
+          // and would dilute the blended rate into a number matching nothing.
+          kgs: t.kgs,
+          pcs: t.pcs,
+          ratePerUnit: r4(t.amount / t.qty),
+          amount: r2(t.amount),
+          rateNote: t.notes.length === 1 ? t.notes[0] : `blended (${t.notes.length} rules)`,
           invDate: challan.invDate,
           dueDate: challan.dueDate,
         },
@@ -384,6 +484,83 @@ export class AgentCommissionService {
       written += 1;
     }
     return written;
+  }
+
+  /**
+   * What each challan line IS, for the purpose of matching a Special Commission.
+   *
+   * A challan line records only a composite product name, a design string and a
+   * category — not the product, sub-category or design TYPE a rule is aimed at.
+   * The dispatch behind it does: it is a full snapshot of the order line taken
+   * when the goods went out, which is also the right moment to price from.
+   *
+   * The order line is read as well, because the design lives in one of two of
+   * its columns depending on how the line was created — `resolveLineDesignParts`
+   * is what tells a real type from a design NAME sitting in the same column, and
+   * a DESIGN-scope rule has to match the same type Design Track displays.
+   *
+   * SCRAP and manually-added challan rows have no dispatch (22 of 4,109 here).
+   * They fall back to the category alone, so only CATEGORY and CUSTOMER rules
+   * can reach them — which is correct: you cannot aim a product rule at a line
+   * that names no product.
+   */
+  private async lineContexts(
+    items: { id: number; dispatchId: number | null; pCategory: string | null }[],
+  ): Promise<Map<number, CommissionRateContext>> {
+    const out = new Map<number, CommissionRateContext>();
+    const ids = [...new Set(items.map((i) => i.dispatchId).filter((d): d is number => !!d && d > 0))];
+    if (!ids.length) return out;
+
+    const [dispatches, knownTypes] = await Promise.all([
+      this.prisma.dispatch.findMany({
+        where: { id: { in: ids } },
+        select: {
+          id: true,
+          customerId: true,
+          pCategory: true,
+          subCategory: true,
+          product: true,
+          designType: true,
+          productName: true,
+          orderItem: { select: { design: true, designType: true, productName: true } },
+        },
+      }),
+      loadKnownDesignTypes(this.prisma),
+    ]);
+    const byDispatch = new Map(dispatches.map((d) => [d.id, d]));
+
+    for (const it of items) {
+      const d = it.dispatchId ? byDispatch.get(it.dispatchId) : undefined;
+      if (!d) continue;
+      // The order line first (it carries both design columns); the dispatch
+      // snapshot is the fallback for a line whose order row has since gone.
+      const designSource = d.orderItem ?? { design: null, designType: d.designType, productName: d.productName };
+      const design = resolveLineDesignParts(designSource, knownTypes);
+      out.set(it.id, {
+        customerId: d.customerId,
+        pCategory: (d.pCategory ?? it.pCategory ?? '').trim().toUpperCase() || null,
+        subCategory: d.subCategory,
+        product: d.product,
+        designType: design.type,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * This agent's special rules that are in force on a date, newest first.
+   *
+   * Newest-first matters: `resolveCommissionRate` keeps the FIRST of equally
+   * specific matches, so a rule superseded by a later one at the same scope
+   * loses without needing a separate "supersede" concept — same shape as the
+   * base rate's date-effective history.
+   */
+  private async specialsFor(agentId: number, on: Date): Promise<AgentSpecialCommissionDto[]> {
+    const rows = await this.prisma.agentSpecialCommission.findMany({
+      where: { agentId, effectiveFrom: { lte: on } },
+      orderBy: [{ effectiveFrom: 'desc' }, { id: 'desc' }],
+    });
+    return rows.map((r) => this.toSpecialDto(r));
   }
 
   /**
@@ -400,8 +577,75 @@ export class AgentCommissionService {
       };
     }
     const ids = await this.prisma.challan.findMany({ where, select: { id: true }, orderBy: { id: 'asc' } });
+    // Every special rule once, rather than a fresh query per invoice: a backfill
+    // walks thousands of challans, and the date filter is applied per invoice in
+    // `resolveEffective` below rather than per query.
+    const allSpecials = (await this.prisma.agentSpecialCommission.findMany({
+      orderBy: [{ effectiveFrom: 'desc' }, { id: 'desc' }],
+    })).map((r) => this.toSpecialDto(r));
     let accruals = 0;
-    for (const { id } of ids) accruals += await this.rebuildForChallan(id);
+    for (const { id } of ids) accruals += await this.rebuildForChallan(id, { specials: allSpecials });
+    return { challans: ids.length, accruals };
+  }
+
+  /**
+   * Re-price every invoice a rate change could have moved — and only those.
+   *
+   * Setting a rate used to leave the books untouched until somebody remembered
+   * to press "Re-price invoices", so the screen could show a rate while every
+   * settlement still paid the old one (or nothing at all). Pricing now happens
+   * as a consequence of the change that caused it, which is the only version of
+   * this that cannot be forgotten.
+   *
+   * Narrowed hard, because the alternative is walking every invoice in the book
+   * on each rate edit:
+   *   - `invDate >= from`   nothing before the rate took effect can be affected;
+   *                         an April invoice keeps April's rate by design.
+   *   - the agent's parties only, via the customer master — a challan carries no
+   *     agent of its own.
+   *   - one party, when the rule names one.
+   *   - invoices that actually have a line in that category.
+   */
+  private async repriceAffected(opts: {
+    agentId: number;
+    from: Date;
+    customerId?: number | null;
+    pCategory?: string | null;
+  }): Promise<RepriceResult> {
+    const agent = await this.prisma.agent.findUnique({ where: { id: opts.agentId }, select: { name: true } });
+    if (!agent) return { challans: 0, accruals: 0 };
+
+    // The parties this rate can reach. Matched on agentName because that is the
+    // only link between a challan and an agent.
+    const parties = await this.prisma.customer.findMany({
+      where: {
+        agentName: agent.name,
+        ...(opts.customerId != null ? { id: opts.customerId } : {}),
+      },
+      select: { partyName: true },
+    });
+    const names = [...new Set(parties.map((p) => p.partyName).filter((n): n is string => !!n))];
+    if (!names.length) return { challans: 0, accruals: 0 };
+
+    const ids = await this.prisma.challan.findMany({
+      where: {
+        challanStatus: 'CONFIRMED',
+        invDate: { gte: opts.from },
+        customerName: { in: names },
+        ...(opts.pCategory ? { items: { some: { pCategory: opts.pCategory } } } : {}),
+      },
+      select: { id: true },
+      orderBy: { id: 'asc' },
+    });
+    if (!ids.length) return { challans: 0, accruals: 0 };
+
+    // Loaded once for the whole sweep; `rebuildForChallan` narrows it per invoice.
+    const specials = (
+      await this.prisma.agentSpecialCommission.findMany({ orderBy: [{ effectiveFrom: 'desc' }, { id: 'desc' }] })
+    ).map((r) => this.toSpecialDto(r));
+
+    let accruals = 0;
+    for (const { id } of ids) accruals += await this.rebuildForChallan(id, { specials });
     return { challans: ids.length, accruals };
   }
 
@@ -595,20 +839,75 @@ export class AgentCommissionService {
           }
         : {}),
     };
-    const [rows, total] = await this.prisma.$transaction([
-      this.prisma.agentCommissionAccrual.findMany({ where, orderBy: [{ invDate: 'desc' }, { id: 'desc' }], skip: q.skip, take: q.pageSize }),
-      this.prisma.agentCommissionAccrual.count({ where }),
-    ]);
-    const pay = await this.payStateFor([...new Set(rows.map((r) => r.invNo))]);
+    const order: Prisma.AgentCommissionAccrualOrderByWithRelationInput[] = [{ invDate: 'desc' }, { id: 'desc' }];
+    const state = normAccrualState(q.settledState);
+
+    // ── ALL: the state is not being asked about, so SQL can do the paging ──
+    if (state === 'ALL') {
+      const [rows, total] = await this.prisma.$transaction([
+        this.prisma.agentCommissionAccrual.findMany({ where, orderBy: order, skip: q.skip, take: q.pageSize }),
+        this.prisma.agentCommissionAccrual.count({ where }),
+      ]);
+      const pay = await this.payStateFor([...new Set(rows.map((r) => r.invNo))]);
+      const settled = await this.settledState(q.agentId);
+      return {
+        items: rows.map((r) => this.toAccrualDto(r, pay.get(r.invNo), settled)),
+        total,
+        page: q.page,
+        pageSize: q.pageSize,
+        totalPages: Math.max(1, Math.ceil(total / q.pageSize)),
+      };
+    }
+
+    /*
+     * ── A state filter: decide WHICH rows qualify, THEN page them ─────────
+     *
+     * The state is not a column — it is the invoice's receipts joined against
+     * the settlement lines that already claimed it — so SQL cannot filter on
+     * it. This used to take one page from the database and drop the
+     * non-matching rows out of it afterwards, which was wrong twice over: a
+     * "50 per page" page came back with however many survived (sometimes
+     * none, while later pages held matches), and `total` counted the
+     * UNFILTERED set, so the pager advertised pages of rows that did not
+     * exist. Switching the filter therefore changed the list but never the
+     * count — 36 rows claimable, 36 settled, 36 in total.
+     *
+     * So the qualifying ids are resolved first, over light rows, and only the
+     * ids on the requested page are read in full.
+     */
+    const light = await this.prisma.agentCommissionAccrual.findMany({
+      where,
+      orderBy: order,
+      select: { id: true, invNo: true, pCategory: true },
+    });
     const settled = await this.settledState(q.agentId);
+    const pay = await this.payStateFor([...new Set(light.map((r) => r.invNo))]);
 
-    let items = rows.map((r) => this.toAccrualDto(r, pay.get(r.invNo), settled));
-    // Applied after mapping because "settled" isn't a column — it's a join.
-    const state = (q.settledState ?? 'UNSETTLED').toUpperCase();
-    if (state === 'UNSETTLED') items = items.filter((i) => !i.settled);
-    else if (state === 'SETTLED') items = items.filter((i) => i.settled);
+    const qualifies = (r: { invNo: string; pCategory: string }): boolean => {
+      const paidRatio = Math.round((pay.get(r.invNo)?.paidRatio ?? 0) * 10000) / 10000;
+      const done = settled.get(`${r.invNo}|${r.pCategory}`);
+      const claimable = claimableRatio(paidRatio, done?.ratio ?? 0);
+      if (state === 'CLAIMABLE') return claimable > RATIO_EPSILON;
+      // Nothing claimable, split by WHY — "already paid for" and "the party
+      // never paid" are opposite problems, and one heading for both is what
+      // makes people think commission has gone missing.
+      if (claimable > RATIO_EPSILON) return false;
+      return state === 'CLAIMED' ? (done?.ratio ?? 0) > RATIO_EPSILON : (done?.ratio ?? 0) <= RATIO_EPSILON;
+    };
 
-    return { items, total, page: q.page, pageSize: q.pageSize, totalPages: Math.max(1, Math.ceil(total / q.pageSize)) };
+    const ids = light.filter(qualifies).map((r) => r.id);
+    const pageIds = ids.slice(q.skip, q.skip + q.pageSize);
+    const rows = pageIds.length
+      ? await this.prisma.agentCommissionAccrual.findMany({ where: { id: { in: pageIds } }, orderBy: order })
+      : [];
+
+    return {
+      items: rows.map((r) => this.toAccrualDto(r, pay.get(r.invNo), settled)),
+      total: ids.length,
+      page: q.page,
+      pageSize: q.pageSize,
+      totalPages: Math.max(1, Math.ceil(ids.length / q.pageSize)),
+    };
   }
 
   private toAccrualDto(
@@ -1425,5 +1724,184 @@ export class AgentCommissionService {
     const otherDeduction = sum('MANUAL');
     const net = settlementNet({ grossCommission, bounceDeduction, coverDeduction, otherDeduction, payMode, tdsPercent });
     return { grossCommission, bounceDeduction, coverDeduction, otherDeduction, ...net };
+  }
+
+  /* ── Special Commission (per party / category / product / design) ──────── */
+
+  /**
+   * Every special rule, newest-effective first, with `current` marking the one
+   * actually in force for each distinct scope.
+   *
+   * "Distinct scope" is the rule's whole aim — party, category, sub-category,
+   * product and design together — because two rules differing in any one of
+   * those are not competing, they apply to different lines. Keying `current` on
+   * anything coarser would show a live rule as superseded.
+   */
+  async listSpecials(agentId?: number): Promise<AgentSpecialCommissionDto[]> {
+    const rows = await this.prisma.agentSpecialCommission.findMany({
+      where: agentId ? { agentId } : {},
+      orderBy: [{ agentName: 'asc' }, { effectiveFrom: 'desc' }, { id: 'desc' }],
+    });
+    const now = new Date();
+    const seen = new Set<string>();
+    return rows.map((r) => {
+      const key = [r.agentId, r.scope, r.customerId ?? '', r.pCategory ?? '', r.subCategory ?? '', r.product ?? '', r.designType ?? ''].join('|');
+      const current = r.effectiveFrom <= now && !seen.has(key);
+      if (current) seen.add(key);
+      return this.toSpecialDto(r, current);
+    });
+  }
+
+  /**
+   * Add a special rule.
+   *
+   * The scope decides which fields are REQUIRED, and everything the scope does
+   * not name is cleared rather than stored: a DESIGN rule still carrying a
+   * product from an earlier pass over the form would silently stop matching
+   * anything, and the list would show a rule that looks live and never fires.
+   */
+  async createSpecial(dto: CreateSpecialCommissionDto, userName?: string | null): Promise<AgentSpecialCommissionDto & { repriced: RepriceResult }> {
+    const agent = await this.prisma.agent.findUnique({ where: { id: dto.agentId } });
+    if (!agent) throw new NotFoundException('Agent not found.');
+    if (!Number.isFinite(dto.ratePerUnit) || dto.ratePerUnit < 0) {
+      throw new BadRequestException('The rate must be a number and cannot be negative.');
+    }
+
+    const norm = (v?: string | null) => {
+      const t = (v ?? '').trim().toUpperCase();
+      return t === '' ? null : t;
+    };
+    const scope = dto.scope;
+    const pCategory = norm(dto.pCategory);
+    const subCategory = norm(dto.subCategory);
+    const product = norm(dto.product);
+    const designType = norm(dto.designType);
+
+    let customer: { id: number; partyName: string | null } | null = null;
+    if (dto.customerId != null) {
+      customer = await this.prisma.customer.findUnique({ where: { id: dto.customerId }, select: { id: true, partyName: true } });
+      if (!customer) throw new NotFoundException('Party not found.');
+    }
+
+    // Each scope must carry the thing it aims at, or it matches far more than
+    // intended — a DESIGN rule with no design named is a category-wide rule
+    // wearing the wrong label.
+    if (scope === 'CUSTOMER' && customer == null) {
+      throw new BadRequestException('A party rule needs a party. Pick one, or choose a different scope.');
+    }
+    if (scope !== 'CUSTOMER' && !pCategory) {
+      throw new BadRequestException('Choose the product category this rule applies to.');
+    }
+    if (scope === 'SUBCATEGORY' && !subCategory) {
+      throw new BadRequestException('Choose the sub-category this rule applies to.');
+    }
+    if (scope === 'PRODUCT' && !product) throw new BadRequestException('Choose the product this rule applies to.');
+    if (scope === 'DESIGN' && !designType) throw new BadRequestException('Choose the design this rule applies to.');
+
+    const row = await this.prisma.agentSpecialCommission.create({
+      data: {
+        agentId: agent.id,
+        agentName: agent.name,
+        scope,
+        customerId: customer?.id ?? null,
+        customerName: customer?.partyName ?? null,
+        pCategory: scope === 'CUSTOMER' ? null : pCategory,
+        // A sub-category narrows a PRODUCT or DESIGN rule too, when one is given.
+        subCategory: scope === 'SUBCATEGORY' || scope === 'PRODUCT' || scope === 'DESIGN' ? subCategory : null,
+        product: scope === 'PRODUCT' ? product : null,
+        designType: scope === 'DESIGN' ? designType : null,
+        basis: normBasis(dto.basis),
+        ratePerUnit: dto.ratePerUnit,
+        effectiveFrom: day(dto.effectiveFrom, 'Effective from'),
+        note: dto.note?.trim() || null,
+        userName: userName ?? null,
+      },
+    });
+    const repriced = await this.repriceAffected({
+      agentId: agent.id,
+      from: row.effectiveFrom,
+      customerId: row.customerId,
+      pCategory: row.pCategory,
+    });
+    const saved = (await this.listSpecials(agent.id)).find((r) => r.id === row.id)!;
+    return { ...saved, repriced };
+  }
+
+  /**
+   * Remove a special rule.
+   *
+   * Refused once a settlement has been PAID covering dates the rule was in
+   * force, for the same reason the base rate is: those figures were derived from
+   * it, and deleting it leaves money nobody can explain. Supersede it with a new
+   * dated rule instead.
+   */
+  async deleteSpecial(id: number): Promise<{ repriced: RepriceResult }> {
+    const rule = await this.prisma.agentSpecialCommission.findUnique({ where: { id } });
+    if (!rule) throw new NotFoundException('Special commission rule not found.');
+    const paid = await this.prisma.agentSettlement.count({
+      where: { agentId: rule.agentId, status: 'PAID', periodTo: { gte: rule.effectiveFrom } },
+    });
+    if (paid) {
+      throw new BadRequestException(
+        `${rule.agentName} has already been paid on ${paid} settlement${paid === 1 ? '' : 's'} covering dates this rule was in force. ` +
+          'Deleting it would leave those figures unexplainable — supersede it with a new dated rule instead.',
+      );
+    }
+    await this.prisma.agentSpecialCommission.delete({ where: { id } });
+    return {
+      repriced: await this.repriceAffected({
+        agentId: rule.agentId,
+        from: rule.effectiveFrom,
+        customerId: rule.customerId,
+        pCategory: rule.pCategory,
+      }),
+    };
+  }
+
+  /**
+   * What rate WOULD apply to a given line — the screen's rate tester.
+   *
+   * Runs the identical resolver the accrual engine runs, deliberately: a tester
+   * with its own copy of the precedence rules would eventually disagree with the
+   * money, which is worse than having no tester at all.
+   */
+  async testRate(q: TestRateQueryDto): Promise<ResolvedCommissionRate | null> {
+    const agent = await this.prisma.agent.findUnique({ where: { id: q.agentId } });
+    if (!agent) throw new NotFoundException('Agent not found.');
+    const on = q.on ? day(q.on, 'Date') : new Date();
+    const norm = (v?: string | null) => (v ?? '').trim().toUpperCase() || null;
+    const pCategory = norm(q.pCategory);
+    const base = pCategory ? await this.rateFor(this.prisma, agent.id, pCategory, on) : null;
+    const specials = await this.specialsFor(agent.id, on);
+    return resolveCommissionRate(specials, base, {
+      customerId: q.customerId ?? null,
+      pCategory,
+      subCategory: norm(q.subCategory),
+      product: norm(q.product),
+      designType: norm(q.designType),
+    });
+  }
+
+  private toSpecialDto(r: Prisma.AgentSpecialCommissionGetPayload<object>, current = false): AgentSpecialCommissionDto {
+    return {
+      id: r.id,
+      agentId: r.agentId,
+      agentName: r.agentName,
+      scope: r.scope as SpecialCommissionScope,
+      customerId: r.customerId,
+      customerName: r.customerName,
+      pCategory: r.pCategory,
+      subCategory: r.subCategory,
+      product: r.product,
+      designType: r.designType,
+      basis: normBasis(r.basis),
+      ratePerUnit: r.ratePerUnit,
+      effectiveFrom: r.effectiveFrom.toISOString(),
+      note: r.note,
+      userName: r.userName,
+      current,
+      createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
+    };
   }
 }

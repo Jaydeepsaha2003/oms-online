@@ -14,6 +14,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { toNum, uc } from '../common/coerce';
 import { readCategoryFields, writeCategoryFields } from '../common/category-fields';
+import { loadKnownDesignTypes } from '../common/design-types';
 import { CreateProductDto, ImportProductsDto, ProductQueryDto, SetProductFlagsDto, UpdateProductDto } from './dto/product.dto';
 import { ProductPhotoQueryDto } from './dto/product-photo.dto';
 
@@ -497,10 +498,9 @@ export class ProductsService {
   }
 
   /** The design master's own type set — what lets a line's `design` column be
-   *  read as a type only when it really is one (see `resolveLineDesignType`). */
-  private async knownDesignTypes(): Promise<ReadonlySet<string>> {
-    const rows = await this.prisma.design.findMany({ select: { designType: true }, distinct: ['designType'] });
-    return new Set(rows.map((r) => r.designType.trim().toUpperCase()).filter(Boolean));
+   *  read as a type only when it really is one (see `resolveLineDesignParts`). */
+  private knownDesignTypes(): Promise<ReadonlySet<string>> {
+    return loadKnownDesignTypes(this.prisma);
   }
 
   private toDto(r: Row): ProductDto {

@@ -18,6 +18,7 @@ import { formatDate } from '../common/date.util';
 import { PdfService } from '../pdf/pdf.service';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
 import { SettingsService } from '../settings/settings.service';
+import { AgentCommissionService } from '../agent-commission/agent-commission.service';
 import { CreateChallanDto, DraftChallanDto, ItemHistoryQueryDto, PendingChallanQueryDto, ChallanQueryDto } from './dto/challan.dto';
 
 const PREFIX_KEY = 'CHALLAN_PREFIXES';
@@ -37,6 +38,7 @@ export class ChallansService {
     private readonly pdf: PdfService,
     private readonly notifications: NotificationsGateway,
     private readonly settings: SettingsService,
+    private readonly commission: AgentCommissionService,
   ) {}
 
   /** Dispatch lines still awaiting a challan (mirrors the legacy PendChallan query:
@@ -389,6 +391,7 @@ export class ChallansService {
     // A new challan removes its dispatched lines from the un-challaned pool —
     // ping open clients so their Pending Challan view refreshes live.
     this.notifications.emitPendingChallansChanged();
+    await this.priceCommission(row.id);
     return this.map(row);
   }
 
@@ -816,6 +819,8 @@ export class ChallansService {
     ]);
     // Edited lines may add/remove dispatches from the pool → refresh open views.
     this.notifications.emitPendingChallansChanged();
+    // Editing the lines changes the quantities commission is calculated on.
+    await this.priceCommission(id);
     return this.findOne(id);
   }
 
@@ -824,7 +829,30 @@ export class ChallansService {
     const row = await this.prisma.challan.update({ where: { id }, data: { challanStatus: status.toUpperCase() }, include: { items: true } });
     // Cancelling/reinstating a challan moves its lines out of / back into the pool.
     this.notifications.emitPendingChallansChanged();
+    // Only a CONFIRMED invoice earns commission, so cancelling must clear what
+    // it accrued and reinstating must put it back. rebuildForChallan does both.
+    await this.priceCommission(id);
     return this.map(row);
+  }
+
+  /**
+   * Keep this invoice's agent commission in step with it.
+   *
+   * Commission is a consequence of the invoice, so it is derived here rather
+   * than waiting for someone to press a "re-price" button — a button is a step
+   * that can be skipped, and skipping it leaves settlements paying on
+   * quantities the invoice no longer has.
+   *
+   * Deliberately swallowed on failure: commission is downstream bookkeeping, and
+   * it must never be the reason a challan cannot be saved. A rate change
+   * re-prices from the other direction anyway, so a miss here is self-healing.
+   */
+  private async priceCommission(challanId: number): Promise<void> {
+    try {
+      await this.commission.rebuildForChallan(challanId);
+    } catch {
+      /* the invoice is what matters here */
+    }
   }
 
   async remove(id: number): Promise<{ id: number }> {
