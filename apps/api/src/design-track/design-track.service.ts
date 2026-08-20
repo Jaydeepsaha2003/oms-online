@@ -255,8 +255,12 @@ export class DesignTrackService {
       comment: line.comment,
       kalwat,
       dispatchedBags,
-      // Remaining pending bags still to dispatch (bags ordered − dispatched).
-      remaining: r2(line.remBags),
+      // Bags still to PROCESS: ordered minus what has been Kalwat-ed. This is the
+      // whole point of the Kalwat column — it read `line.remBags` (bags left to
+      // DISPATCH), so typing a Kalwat changed nothing on screen and the figure
+      // contradicted the contract on DesignTrackRow.remaining. Dispatched bags are
+      // reported separately as `dispatchedBags`.
+      remaining: r2(line.bags - (kalwat ?? 0)),
       photos,
       photoCount: photos.length,
       sampleUrl: photos[0]?.url ?? null,

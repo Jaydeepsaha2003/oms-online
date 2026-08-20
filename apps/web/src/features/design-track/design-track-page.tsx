@@ -118,7 +118,9 @@ function TrackCard({
       ['Disp', r.dispatchedBags ?? 0],
       ['Rem', r.remaining],
     ] as const
-  ).filter(([, v]) => v !== 0);
+    // Disp always stays, even at zero: the desktop column is always there, and
+    // "nothing dispatched yet" is information on a tracking screen, not noise.
+  ).filter(([label, v]) => label === 'Disp' || v !== 0);
 
   return (
     <div
