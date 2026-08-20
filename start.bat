@@ -284,17 +284,23 @@ REM fall back to the full ordered build. Otherwise build API / web independently
 REM e.g. a backend-only change skips the ~7s web (vite) bundle entirely, and a
 REM frontend-only change skips the API rebuild. Delete a dist/ folder (or run
 REM `npm run clean`) to force that package to rebuild from scratch.
-powershell -NoProfile -Command "$src=@('packages\shared\src','packages\shared\package.json','package.json'); $n=$null; foreach($p in $src){ if(Test-Path $p -PathType Container){$i=Get-ChildItem $p -Recurse -File -EA SilentlyContinue}elseif(Test-Path $p){$i=Get-Item $p -EA SilentlyContinue}else{$i=@()}; foreach($f in $i){ if(-not $n -or $f.LastWriteTime -gt $n){$n=$f.LastWriteTime} } }; $m='packages\shared\dist\esm\index.js'; if((Test-Path $m) -and $n -and (Get-Item $m).LastWriteTime -gt $n){ exit 0 } else { exit 1 }"
+REM One shared definition of "has this package changed?" - see
+REM scripts\pkg-changed.ps1. These tests used to be inline copies here, and they
+REM had drifted from the copy in restart-scope.ps1: this one pinned the API to
+REM dist\src\main.js (which nest build often does not re-emit, so the API looked
+REM changed forever) and left apps\web\public out of the web inputs (so a
+REM service-worker change never rebuilt). One file, one answer, no drift.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\pkg-changed.ps1" -Package shared
 if errorlevel 1 goto bld_full
 
-powershell -NoProfile -Command "$src=@('apps\api\src','apps\api\prisma\schema.prisma','apps\api\package.json'); $n=$null; foreach($p in $src){ if(Test-Path $p -PathType Container){$i=Get-ChildItem $p -Recurse -File -EA SilentlyContinue}elseif(Test-Path $p){$i=Get-Item $p -EA SilentlyContinue}else{$i=@()}; foreach($f in $i){ if(-not $n -or $f.LastWriteTime -gt $n){$n=$f.LastWriteTime} } }; $m='apps\api\dist\src\main.js'; if((Test-Path $m) -and $n -and (Get-Item $m).LastWriteTime -gt $n){ exit 0 } else { exit 1 }"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\pkg-changed.ps1" -Package api
 if not errorlevel 1 goto bld_skip_api
 echo   - API changed - building API...
 call npm run build:api
 if errorlevel 1 goto bld_failed
 :bld_skip_api
 
-powershell -NoProfile -Command "$src=@('apps\web\src','apps\web\vite.config.ts','apps\web\package.json'); $n=$null; foreach($p in $src){ if(Test-Path $p -PathType Container){$i=Get-ChildItem $p -Recurse -File -EA SilentlyContinue}elseif(Test-Path $p){$i=Get-Item $p -EA SilentlyContinue}else{$i=@()}; foreach($f in $i){ if(-not $n -or $f.LastWriteTime -gt $n){$n=$f.LastWriteTime} } }; $m='apps\web\dist\index.html'; if((Test-Path $m) -and $n -and (Get-Item $m).LastWriteTime -gt $n){ exit 0 } else { exit 1 }"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\pkg-changed.ps1" -Package web
 if not errorlevel 1 goto bld_skip_web
 echo   - web changed - building web...
 call npm run build:web

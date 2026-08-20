@@ -60,7 +60,8 @@ $apiOut    = Newest @('apps\api\dist')
 $webOut    = Newest @('apps\web\dist')
 
 # Shared feeds both, so treat any change to it as a full relaunch.
-if ($sharedSrc -gt $sharedOut) { Write-Output 'full'; exit 0 }
+& (Join-Path $PSScriptRoot 'pkg-changed.ps1') -Package shared | Out-Null
+if ($LASTEXITCODE -eq 1) { Write-Output 'full'; exit 0 }
 
 # A pending DATABASE sync is invisible to every source-vs-dist test in this file.
 # Migrations are not build inputs — nothing in any dist folder ever reflects them,
@@ -110,8 +111,16 @@ if ($apiPid) {
   if ($started -and $started.ToUniversalTime() -lt $apiOut) { Write-Output 'api'; exit 0 }
 }
 
-$apiChanged = $apiSrc -gt $apiOut
-$webChanged = $webSrc -gt $webOut
+# Delegated to the same script start.bat uses, so the two can never disagree
+# about whether a package changed. They did: this file compared against the
+# newest file in dist while start.bat pinned the API to dist\src\main.js, which
+# nest build often does not re-emit - so this printed 'none' while start.bat
+# printed "API changed - building API", rebuilt, and nothing was relaunched.
+$pkg = Join-Path $PSScriptRoot 'pkg-changed.ps1'
+& powershell -NoProfile -ExecutionPolicy Bypass -File $pkg -Package api  | Out-Null
+$apiChanged = $LASTEXITCODE -eq 1
+& powershell -NoProfile -ExecutionPolicy Bypass -File $pkg -Package web  | Out-Null
+$webChanged = $LASTEXITCODE -eq 1
 
 if ($apiChanged) { Write-Output 'api'; exit 0 }   # API restart covers a web rebuild too
 if ($webChanged) { Write-Output 'web'; exit 0 }

@@ -67,6 +67,25 @@ if errorlevel 1 goto buildfailed
 echo.
 if defined STOPPEDFIRST goto launchstep
 
+REM -- Did the build we just ran leave the API behind? -----------------------
+REM SCOPE was decided BEFORE building - it has to be, because building is what
+REM moves the timestamps it compares. So a build that happened during this run
+REM can leave the running API older than its own fresh dist while SCOPE still
+REM says 'none', and the old process serves on with nothing to correct it. That
+REM was the reported failure: "Change scope: none", then "API changed - building
+REM API", then "running servers were left untouched".
+REM
+REM This check compares the PROCESS against dist and reads no source timestamps,
+REM so it is valid after the build and decisive when it fires. It can only ever
+REM escalate the work done, never skip any.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\api-stale.ps1"
+if errorlevel 1 (
+    if /i "%SCOPE%"=="none" set "SCOPE=api"
+    if /i "%SCOPE%"=="web"  set "SCOPE=api"
+    echo The running API predates the build just produced - bouncing it.
+    echo.
+)
+
 REM ── Relaunch only what the change actually touched ─────────────────────────
 if /i "%SCOPE%"=="none" goto nothingtodo
 if /i "%SCOPE%"=="web"  goto webonly
