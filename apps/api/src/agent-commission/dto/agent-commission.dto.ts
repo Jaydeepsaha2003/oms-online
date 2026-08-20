@@ -155,3 +155,12 @@ export class TestRateQueryDto {
   /** Defaults to today — the rate history is date-effective. */
   @IsOptional() @IsString() on?: string | null;
 }
+
+/** "How many invoices would a rate dated X reach?" — shown in the rate dialog
+ *  before saving, so a date that prices nothing is visible rather than a
+ *  surprise. */
+export class RateImpactQueryDto {
+  @Type(() => Number) @IsInt() agentId!: number;
+  @IsOptional() @IsString() pCategory?: string | null;
+  @IsOptional() @IsString() effectiveFrom?: string | null;
+}

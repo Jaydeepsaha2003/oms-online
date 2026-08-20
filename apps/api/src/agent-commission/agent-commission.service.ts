@@ -589,6 +589,42 @@ export class AgentCommissionService {
   }
 
   /**
+   * How many invoices a rate would reach, and how many it would leave behind.
+   *
+   * Exists because "Effective from" defaulted to today, and a rate dated today
+   * prices nothing when every invoice is older — which is correct (an April
+   * invoice must keep April's rate) but reads as the feature being broken. The
+   * dialog now shows this before saving, and seeds the date from
+   * `earliestInvDate` when it is the FIRST rate for that pairing, which is the
+   * case where "from today" is never what anybody means.
+   */
+  async rateImpact(q: { agentId: number; pCategory?: string | null; effectiveFrom?: string | null }): Promise<{
+    onOrAfter: number;
+    before: number;
+    earliestInvDate: string | null;
+  }> {
+    const agent = await this.prisma.agent.findUnique({ where: { id: q.agentId }, select: { name: true } });
+    if (!agent) throw new NotFoundException('Agent not found.');
+    const parties = await this.prisma.customer.findMany({ where: { agentName: agent.name }, select: { partyName: true } });
+    const names = [...new Set(parties.map((p) => p.partyName).filter((n): n is string => !!n))];
+    if (!names.length) return { onOrAfter: 0, before: 0, earliestInvDate: null };
+
+    const pCategory = (q.pCategory ?? '').trim().toUpperCase() || null;
+    const where: Prisma.ChallanWhereInput = {
+      challanStatus: 'CONFIRMED',
+      customerName: { in: names },
+      ...(pCategory ? { items: { some: { pCategory } } } : {}),
+    };
+    const from = q.effectiveFrom ? day(q.effectiveFrom, 'Effective from') : null;
+    const [onOrAfter, before, earliest] = await Promise.all([
+      from ? this.prisma.challan.count({ where: { ...where, invDate: { gte: from } } }) : this.prisma.challan.count({ where }),
+      from ? this.prisma.challan.count({ where: { ...where, invDate: { lt: from } } }) : Promise.resolve(0),
+      this.prisma.challan.findFirst({ where, orderBy: { invDate: 'asc' }, select: { invDate: true } }),
+    ]);
+    return { onOrAfter, before, earliestInvDate: earliest?.invDate.toISOString() ?? null };
+  }
+
+  /**
    * Re-price every invoice a rate change could have moved — and only those.
    *
    * Setting a rate used to leave the books untouched until somebody remembered

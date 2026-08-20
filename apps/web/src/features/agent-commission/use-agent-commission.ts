@@ -307,3 +307,21 @@ export function useTestCommissionRate(q: {
     placeholderData: (prev) => prev,
   });
 }
+
+/**
+ * How many invoices a rate dated X would price, and how many older ones it
+ * would leave alone. Drives the dialog's "prices N invoices" line and the
+ * sensible default date for a first rate.
+ */
+export function useRateImpact(q: { agentId?: number; pCategory?: string; effectiveFrom?: string }) {
+  const enabled = q.agentId != null && !!q.pCategory;
+  return useQuery({
+    queryKey: [...KEY, 'rate-impact', q],
+    queryFn: () =>
+      http.get<{ onOrAfter: number; before: number; earliestInvDate: string | null }>('/agent-commission/rates/impact', {
+        params: Object.fromEntries(Object.entries(q).filter(([, v]) => v != null && v !== '')),
+      }),
+    enabled,
+    staleTime: 30_000,
+  });
+}

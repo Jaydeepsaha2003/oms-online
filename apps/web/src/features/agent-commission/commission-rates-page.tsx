@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { BadgeIndianRupee, History, Loader2, Pencil, Plus, Trash2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { basisUnit, COMMISSION_BASES, type AgentRateCoverageRow, type CommissionBasis } from '@oms/shared';
@@ -17,6 +17,7 @@ import { useOrderLookups } from '@/features/orders/use-orders';
 import { SpecialCommissionPanel } from './special-commission';
 import {
   useCommissionRates,
+  useRateImpact,
   useCreateCommissionRate,
   useDeleteCommissionRate,
   useRateCoverage,
@@ -385,6 +386,32 @@ function RateDialog({ seed, agents, categories, lookups, history, onClose }: {
   );
   const current = past.find((h) => h.current);
 
+  /*
+   * What this date would actually price.
+   *
+   * "Effective from" defaulted to today, and a rate dated today prices nothing
+   * when every invoice for that agent is older — correct, since an invoice must
+   * keep the rate in force on its own date, but indistinguishable from the
+   * feature not working. So: a FIRST rate for this pairing starts from the
+   * agent's earliest invoice (from-today is never what anyone means when
+   * setting a rate up), and the count is shown live either way.
+   */
+  const impact = useRateImpact({
+    agentId: agents.find((a) => a.name === agentName)?.id,
+    pCategory: pCategory.trim().toUpperCase() || undefined,
+    effectiveFrom: effectiveFrom || undefined,
+  });
+  const seededRef = useRef('');
+  useEffect(() => {
+    const key = `${agentName}|${pCategory.trim().toUpperCase()}`;
+    const earliest = impact.data?.earliestInvDate;
+    // Only for the first rate on this pairing, and only once per pairing — a
+    // date the user has since typed must never be pulled back.
+    if (!earliest || past.length || seededRef.current === key || !agentName || !pCategory.trim()) return;
+    seededRef.current = key;
+    setEffectiveFrom(ymd(new Date(earliest)));
+  }, [impact.data?.earliestInvDate, past.length, agentName, pCategory]);
+
   const save = async () => {
     const agentId = agents.find((a) => a.name === agentName)?.id;
     if (!agentId) return toast.error('Choose an agent.');
@@ -494,6 +521,44 @@ function RateDialog({ seed, agents, categories, lookups, history, onClose }: {
             <Input type="date" className="h-10 w-44 tabular-nums" value={effectiveFrom} onChange={(e) => setEffectiveFrom(e.target.value)} />
           </div>
         </div>
+
+        {/* The consequence of that date, in invoices. */}
+        {!!impact.data && !!pCategory.trim() && (
+          <p
+            className={cn(
+              'rounded-[4px] px-2.5 py-1.5 text-[12px]',
+              impact.data.onOrAfter === 0
+                ? 'bg-rose-50 font-semibold text-rose-800 dark:bg-rose-500/10 dark:text-rose-300'
+                : 'text-muted-foreground',
+            )}
+          >
+            {impact.data.onOrAfter === 0 ? (
+              <>
+                No {pCategory.toUpperCase()} invoices for {agentName} are dated on or after {formatDate(effectiveFrom)}, so this
+                rate would price <b>nothing</b>.
+                {impact.data.earliestInvDate && (
+                  <>
+                    {' '}
+                    Their earliest is <b>{formatDate(impact.data.earliestInvDate)}</b> — set the date to that to price all{' '}
+                    {impact.data.before} of them.
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                Prices <b>{impact.data.onOrAfter}</b> {pCategory.toUpperCase()} invoice{impact.data.onOrAfter === 1 ? '' : 's'} as
+                soon as you save
+                {impact.data.before > 0 && (
+                  <>
+                    ; {impact.data.before} earlier {impact.data.before === 1 ? 'one keeps' : 'ones keep'} whatever rate applied on{' '}
+                    {impact.data.before === 1 ? 'its' : 'their'} own date
+                  </>
+                )}
+                .
+              </>
+            )}
+          </p>
+        )}
 
         {pCategory && suggested && (
           <p className={cn('rounded-[4px] px-2.5 py-1.5 text-[12px]', overridden ? 'bg-amber-50 font-semibold text-amber-800' : 'text-muted-foreground')}>

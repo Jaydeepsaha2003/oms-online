@@ -16,6 +16,7 @@ import {
   CreateSettlementDto,
   CreateSpecialCommissionDto,
   PaySettlementDto,
+  RateImpactQueryDto,
   TestRateQueryDto,
 } from './dto/agent-commission.dto';
 
@@ -41,6 +42,13 @@ export class AgentCommissionController {
   @Permissions(perm(R, ACTIONS.VIEWRATES))
   rates(@Query('agentId') agentId?: string) {
     return this.svc.listRates(agentId ? Number(agentId) : undefined);
+  }
+
+  /** How many invoices a rate dated X would price, and how many it would miss. */
+  @Get('rates/impact')
+  @Permissions(perm(R, ACTIONS.VIEWRATES))
+  rateImpact(@Query() q: RateImpactQueryDto) {
+    return this.svc.rateImpact(q);
   }
 
   @Post('rates')
