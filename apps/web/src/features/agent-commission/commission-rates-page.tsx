@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { BadgeIndianRupee, History, Loader2, Pencil, Plus, Trash2, TriangleAlert } from 'lucide-react';
+import { CalendarClock, History, Loader2, Pencil, Plus, Trash2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { basisUnit, COMMISSION_BASES, type AgentRateCoverageRow, type CommissionBasis } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAgents } from '@/features/agents/use-agents';
 import { useOrderLookups } from '@/features/orders/use-orders';
+import { AllRatesPanel } from './all-rates-panel';
 import { SpecialCommissionPanel } from './special-commission';
 import {
   useCommissionRates,
@@ -25,6 +26,12 @@ import {
 
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const num = (n: number) => n.toLocaleString('en-IN');
+
+/** Register header / body cell. Tight vertical rhythm on purpose — this is a
+ *  working list to scan, not a report to read. */
+const RTH =
+  'sticky top-0 border-b bg-gradient-to-b from-blue-800 to-indigo-800 px-2.5 py-2 text-left text-[10.5px] font-extrabold tracking-wide text-white uppercase whitespace-nowrap';
+const RTD = 'px-2.5 py-1.5 align-middle';
 
 /**
  * Agent → category → ₹ per kg or per piece.
@@ -49,49 +56,58 @@ export function CommissionRatesPage() {
   const [editing, setEditing] = useState<{ agentId: number; agentName: string; pCategory: string; basis: CommissionBasis } | null>(null);
   const [adding, setAdding] = useState(false);
   const [onlyGaps, setOnlyGaps] = useState(false);
-  const [tab, setTab] = useState<'BASE' | 'SPECIAL'>('BASE');
+  const [tab, setTab] = useState<'BASE' | 'SPECIAL' | 'ALL'>('BASE');
 
   const rows = coverage ?? [];
   const agentsInGrid = useMemo(() => [...new Set(rows.map((r) => r.agentName))].sort(), [rows]);
   const categories = useMemo(() => [...new Set(rows.map((r) => r.pCategory))].sort(), [rows]);
-  const cell = useMemo(() => {
-    const m = new Map<string, AgentRateCoverageRow>();
-    for (const r of rows) m.set(`${r.agentName}|${r.pCategory}`, r);
-    return m;
-  }, [rows]);
-
   const gaps = useMemo(() => rows.filter((r) => r.gap), [rows]);
   const priced = rows.length - gaps.length;
-  const visibleAgents = onlyGaps ? agentsInGrid.filter((a) => gaps.some((g) => g.agentName === a)) : agentsInGrid;
+
+  /**
+   * The oldest invoice sitting under an unpriced pairing.
+   *
+   * The count of gaps says how much is unpriced; this says how long it has been
+   * that way, which is the part that decides whether it matters. It also gives
+   * the date to type into "Effective from" to catch every one of them.
+   */
+  const oldestGap = useMemo(() => {
+    const dated = gaps.filter((g) => g.firstInvoiceDate);
+    if (!dated.length) return null;
+    return dated.reduce((a, b) => (a.firstInvoiceDate! <= b.firstInvoiceDate! ? a : b));
+  }, [gaps]);
+
+  /**
+   * The register, unpriced first and then by invoice volume.
+   *
+   * Sorted by what needs doing rather than alphabetically: the pairing with 65
+   * unpriced invoices is the one to fix first, and on an alphabetical list it
+   * could sit anywhere. Serial numbers follow this order, so "row 3" means the
+   * third most urgent, not the third agent by name.
+   */
+  const shown = useMemo(() => {
+    const list = onlyGaps ? rows.filter((r) => r.gap) : rows;
+    return [...list].sort(
+      (a, b) =>
+        Number(b.gap) - Number(a.gap) ||
+        b.invoiceCount - a.invoiceCount ||
+        a.agentName.localeCompare(b.agentName) ||
+        a.pCategory.localeCompare(b.pCategory),
+    );
+  }, [rows, onlyGaps]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 p-2.5 font-sans sm:p-3">
-      {/* ── Header ──────────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
-          <BadgeIndianRupee className="size-5" />
-        </div>
-        <div className="min-w-0">
-          <h2 className="text-2xl font-semibold tracking-tight">Commission Rates</h2>
-          <p className="text-muted-foreground text-sm">
-            What each agent earns per kg or per piece, by product category. A category with no rate earns them nothing.
-          </p>
-        </div>
-        {/* No "re-price invoices" button any more: saving a rate prices the
-            invoices it reaches, there and then, and a new invoice prices itself
-            on save. A button for it was a step that could be skipped — and
-            skipping it left a rate on screen while every settlement still paid
-            the old one. */}
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          {canEdit && (
-            <Button className="bg-gradient-brand text-white shadow-sm hover:opacity-95" onClick={() => setAdding(true)}>
-              <Plus /> Set a rate
-            </Button>
-          )}
-        </div>
-      </div>
+      {/* ── Tabs + the one action ─────────────────────────────────────────
+          No page title here: the app bar already shows "Commission Rates", and
+          printing it again pushed the actual content below the fold on a laptop.
+          The tab strip names the screen well enough.
 
-      {/* ── Base rates vs the exceptions to them ─────────────────────────
+          No "re-price invoices" button either — saving a rate prices the
+          invoices it reaches there and then, and a new invoice prices itself on
+          save. A button for it was a step that could be skipped, and skipping it
+          left a rate on screen while every settlement still paid the old one.
+          ── Base rates vs the exceptions to them ─────────────────────────
           Two tabs rather than two screens: they are the same question at two
           levels of detail, and a special rate is only understandable next to the
           base rate it replaces. */}
@@ -100,6 +116,7 @@ export function CommissionRatesPage() {
           [
             ['BASE', 'Base rates'],
             ['SPECIAL', 'Special commission'],
+            ['ALL', 'All rates'],
           ] as const
         ).map(([value, label]) => (
           <button
@@ -114,6 +131,11 @@ export function CommissionRatesPage() {
             {label}
           </button>
         ))}
+        {canEdit && (
+          <Button size="sm" className="bg-gradient-brand ml-auto h-9 text-white shadow-sm hover:opacity-95" onClick={() => setAdding(true)}>
+            <Plus /> Set a rate
+          </Button>
+        )}
       </div>
 
       {/* ── Please set the missing rates ──────────────────────────────────
@@ -130,18 +152,26 @@ export function CommissionRatesPage() {
             </b>{' '}
             — {gaps.reduce((s, g) => s + g.invoiceCount, 0).toLocaleString('en-IN')} invoices already dispatched under{' '}
             {gaps.length === 1 ? 'it' : 'them'} are earning the agent nothing.{' '}
-            {tab === 'BASE' ? 'Click any red square below to price it.' : 'Open the Base rates tab and click any red square.'}{' '}
+            {oldestGap && (
+              <>
+                {' '}The oldest is <b>{oldestGap.firstInvoiceNo ?? '—'}</b> of{' '}
+                <b>{formatDate(oldestGap.firstInvoiceDate!)}</b> ({oldestGap.agentName} · {oldestGap.pCategory}) — set
+                &ldquo;Effective from&rdquo; to that date to catch every invoice since.
+              </>
+            )}{' '}
+            {tab === 'BASE' ? 'Use the Set button on any red row below.' : 'Open the Base rates tab to price them.'}{' '}
             The invoices price themselves the moment the rate is saved.
           </p>
         </div>
       )}
 
       {tab === 'SPECIAL' && <SpecialCommissionPanel />}
+      {tab === 'ALL' && <AllRatesPanel />}
 
       {tab === 'BASE' && (
         <>
       {/* ── What the grid adds up to ────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
         <Stat label="Agents selling" value={agentsInGrid.length} tone="slate" />
         <Stat label="Categories sold" value={categories.length} tone="slate" />
         <Stat label="Priced" value={priced} tone="emerald" />
@@ -153,16 +183,34 @@ export function CommissionRatesPage() {
           onClick={gaps.length ? () => setOnlyGaps((v) => !v) : undefined}
           active={onlyGaps}
         />
+        {/* Not another count — the DATE. "6 unpriced" says how much; this says
+            since when, which is what decides whether it matters, and it is the
+            date to put in "Effective from" to catch all of it. */}
+        <Stat
+          label="Unpriced since"
+          value={oldestGap?.firstInvoiceDate ? formatDate(oldestGap.firstInvoiceDate) : '—'}
+          tone={oldestGap ? 'rose' : 'emerald'}
+          hint={oldestGap ? `${oldestGap.firstInvoiceNo ?? 'invoice'} · ${oldestGap.agentName}` : 'nothing unpriced'}
+          icon={CalendarClock}
+        />
       </div>
 
-      {/* ── The grid ────────────────────────────────────────────────────── */}
-      <div className="bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[4px] border shadow-sm">
-        <div className="flex flex-wrap items-center gap-2 border-b px-2.5 py-2">
-          <span className="text-[12.5px] font-semibold">Rate grid</span>
-          <span className="text-muted-foreground text-[11.5px]">agent × category, as actually invoiced</span>
+      {/* ── The rate register ───────────────────────────────────────────────
+          One row per agent–category pairing, numbered, rather than the old
+          agent × category matrix. A matrix reads as mostly empty the moment
+          there are more categories than any one agent sells, gives every cell
+          the same width whatever is in it, and has nowhere to put the facts that
+          decide the work — how many invoices are affected, and how far back they
+          go. A register has a column for each of those. */}
+      <div className="bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[6px] border shadow-sm">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b bg-slate-50/80 px-3 py-2 dark:bg-white/[0.03]">
+          <span className="text-[12.5px] font-bold">Rate register</span>
+          <span className="text-muted-foreground text-[11.5px]">
+            {shown.length} of {rows.length} pairing{rows.length === 1 ? '' : 's'} · agent × category, as actually invoiced
+          </span>
           {onlyGaps && (
             <Button variant="ghost" size="sm" className="ml-auto h-7 text-[12px]" onClick={() => setOnlyGaps(false)}>
-              Showing gaps only — show all
+              Showing unpriced only — show all
             </Button>
           )}
         </div>
@@ -178,55 +226,121 @@ export function CommissionRatesPage() {
               <p>Once invoices exist for parties with an agent, every category they sell appears here to be priced.</p>
             </div>
           ) : (
-            <table className="w-full border-separate border-spacing-0">
+            <table className="w-full border-collapse text-[12.5px]">
               <thead className="sticky top-0 z-20">
                 <tr>
-                  <th className="bg-gradient-to-b from-blue-800 to-indigo-800 px-3 py-2 text-left text-[11px] font-extrabold uppercase tracking-wide text-white">
-                    Agent
-                  </th>
-                  {categories.map((c) => {
-                    const suggested = rows.find((r) => r.pCategory === c)?.suggestedBasis;
-                    return (
-                      <th
-                        key={c}
-                        className="bg-gradient-to-b from-blue-800 to-indigo-800 px-2 py-2 text-center text-[11px] font-extrabold uppercase tracking-wide text-white"
-                      >
-                        <div className="whitespace-nowrap">{c}</div>
-                        {suggested && <div className="text-[9.5px] font-semibold normal-case text-white/70">per {basisUnit(suggested)}</div>}
-                      </th>
-                    );
-                  })}
+                  <th className={cn(RTH, 'w-10 text-center')}>#</th>
+                  <th className={RTH}>Agent</th>
+                  <th className={RTH}>Category</th>
+                  <th className={cn(RTH, 'text-center')}>Unit</th>
+                  <th className={cn(RTH, 'text-right')}>Rate</th>
+                  <th className={cn(RTH, 'text-center')}>Status</th>
+                  <th className={cn(RTH, 'text-right')}>Invoices</th>
+                  <th className={cn(RTH, 'text-right')}>Quantity</th>
+                  <th className={RTH}>First invoice</th>
+                  <th className={RTH}>Last invoice</th>
+                  <th className={RTH}>Rate since</th>
+                  <th className={cn(RTH, 'w-20 text-center')}>Action</th>
                 </tr>
               </thead>
               <tbody>
-                {visibleAgents.map((agentName) => (
-                  <tr key={agentName} className="even:bg-amber-50/40">
-                    <td className="border-b border-amber-200/70 px-3 py-1.5 text-[12.5px] font-bold whitespace-nowrap">{agentName}</td>
-                    {categories.map((c) => {
-                      const r = cell.get(`${agentName}|${c}`);
-                      return (
-                        <td key={c} className="border-b border-l border-amber-200/70 p-1 text-center">
-                          <RateCell
-                            row={r}
-                            canEdit={canEdit}
-                            onClick={
-                              canEdit && r
-                                ? () =>
-                                    setEditing({
-                                      agentId: r.agentId,
-                                      agentName: r.agentName,
-                                      pCategory: r.pCategory,
-                                      basis: r.basis ?? r.suggestedBasis ?? 'KGS',
-                                    })
-                                : undefined
-                            }
-                          />
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
+                {shown.map((r, i) => {
+                  const unit = r.basis ?? r.suggestedBasis;
+                  const open = canEdit
+                    ? () => setEditing({ agentId: r.agentId, agentName: r.agentName, pCategory: r.pCategory, basis: r.basis ?? r.suggestedBasis ?? 'KGS' })
+                    : undefined;
+                  return (
+                    <tr
+                      key={`${r.agentId}|${r.pCategory}`}
+                      onClick={open}
+                      className={cn(
+                        'border-b transition-colors',
+                        // The unpriced rows are the work list, so they carry the
+                        // only colour in the table; everything else stays quiet
+                        // zebra striping so the numbers are what stands out.
+                        r.gap ? 'bg-rose-50/70 hover:bg-rose-100/70 dark:bg-rose-500/10' : 'odd:bg-slate-50/60 hover:bg-indigo-50/60 dark:odd:bg-white/[0.02]',
+                        open && 'cursor-pointer',
+                      )}
+                    >
+                      <td className={cn(RTD, 'text-muted-foreground text-center tabular-nums')}>{i + 1}</td>
+                      <td className={cn(RTD, 'font-bold whitespace-nowrap')}>{r.agentName}</td>
+                      <td className={cn(RTD, 'font-semibold whitespace-nowrap')}>{r.pCategory}</td>
+                      <td className={cn(RTD, 'text-muted-foreground text-center whitespace-nowrap')}>{unit ? `per ${basisUnit(unit)}` : '—'}</td>
+                      <td className={cn(RTD, 'text-right font-bold tabular-nums whitespace-nowrap')}>
+                        {r.ratePerUnit == null ? (
+                          <span className="text-muted-foreground font-normal">—</span>
+                        ) : (
+                          <span className="text-emerald-700 dark:text-emerald-400">
+                            ₹{r.ratePerUnit}
+                            <span className="text-muted-foreground text-[10px] font-normal">/{basisUnit(r.basis ?? 'KGS')}</span>
+                          </span>
+                        )}
+                      </td>
+                      <td className={cn(RTD, 'text-center')}>
+                        {r.gap ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700 ring-1 ring-inset ring-rose-300 dark:bg-rose-500/20 dark:text-rose-300">
+                            <TriangleAlert className="size-3" /> NOT SET
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300">
+                            PRICED
+                          </span>
+                        )}
+                      </td>
+                      <td className={cn(RTD, 'text-right font-semibold tabular-nums')}>{num(r.invoiceCount)}</td>
+                      <td className={cn(RTD, 'text-right tabular-nums whitespace-nowrap')}>
+                        {/* The quantity in the unit the rate is charged in — the
+                            other one is not what the money is calculated on. */}
+                        {unit ? `${num(unit === 'PCS' ? r.pcs : r.kgs)} ${basisUnit(unit)}` : '—'}
+                      </td>
+                      {/* The pair of dates says how long this has been the case:
+                          an unpriced row reaching back a year is a different
+                          problem from one that started last week. */}
+                      <td className={cn(RTD, 'whitespace-nowrap')}>
+                        {r.firstInvoiceDate ? (
+                          <>
+                            <span className="font-mono text-[11.5px] font-semibold">{r.firstInvoiceNo ?? '—'}</span>
+                            <span className="text-muted-foreground ml-1.5 text-[11px] tabular-nums">{formatDate(r.firstInvoiceDate)}</span>
+                          </>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className={cn(RTD, 'text-muted-foreground tabular-nums whitespace-nowrap')}>
+                        {r.lastInvoiceDate ? formatDate(r.lastInvoiceDate) : '—'}
+                      </td>
+                      <td className={cn(RTD, 'tabular-nums whitespace-nowrap')}>
+                        {r.effectiveFrom ? formatDate(r.effectiveFrom) : <span className="text-muted-foreground">—</span>}
+                      </td>
+                      <td className={cn(RTD, 'text-center')}>
+                        {canEdit && (
+                          <Button
+                            variant={r.gap ? 'default' : 'outline'}
+                            size="sm"
+                            className="h-7 px-2 text-[11.5px]"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              open?.();
+                            }}
+                          >
+                            {r.gap ? <Plus className="size-3.5" /> : <Pencil className="size-3.5" />}
+                            {r.gap ? 'Set' : 'Edit'}
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
+              <tfoot>
+                <tr className="[&_td]:sticky [&_td]:bottom-0 [&_td]:border-t-2 [&_td]:border-slate-300 [&_td]:bg-slate-100 [&_td]:px-2.5 [&_td]:py-1.5 [&_td]:font-bold dark:[&_td]:border-white/20 dark:[&_td]:bg-slate-800">
+                  <td colSpan={6} className="text-[11px] tracking-wide uppercase">
+                    Total — {shown.filter((r) => r.gap).length} unpriced of {shown.length}
+                  </td>
+                  <td className="text-right tabular-nums">{num(shown.reduce((a, r) => a + r.invoiceCount, 0))}</td>
+                  <td colSpan={5} />
+                </tr>
+              </tfoot>
             </table>
           )}
         </div>
@@ -257,13 +371,15 @@ export function CommissionRatesPage() {
   );
 }
 
-function Stat({ label, value, tone, hint, onClick, active }: {
+function Stat({ label, value, tone, hint, onClick, active, icon: Icon }: {
   label: string;
-  value: number;
+  /** A count, or a short string (a date) — the strip mixes both. */
+  value: number | string;
   tone: 'slate' | 'emerald' | 'rose';
   hint?: string;
   onClick?: () => void;
   active?: boolean;
+  icon?: typeof CalendarClock;
 }) {
   const tones = {
     slate: 'border-slate-200 bg-slate-50 text-slate-700',
@@ -283,57 +399,19 @@ function Stat({ label, value, tone, hint, onClick, active }: {
         !onClick && 'cursor-default',
       )}
     >
-      <div className="text-[11px] font-bold uppercase tracking-wide opacity-80">{label}</div>
-      <div className="text-[22px] font-extrabold leading-tight tabular-nums">{num(value)}</div>
+      <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide opacity-80">
+        {Icon && <Icon className="size-3.5" />}
+        {label}
+      </div>
+      <div className={cn('font-extrabold leading-tight tabular-nums', typeof value === 'number' ? 'text-[22px]' : 'text-[16px]')}>
+        {typeof value === 'number' ? num(value) : value}
+      </div>
       {hint && <div className="text-[10.5px] font-medium opacity-80">{hint}</div>}
     </button>
   );
 }
 
 /** One square: the rate, or a gap that says what it is costing. */
-function RateCell({ row, canEdit, onClick }: { row?: AgentRateCoverageRow; canEdit: boolean; onClick?: () => void }) {
-  // The agent doesn't sell this category at all — deliberately quiet, so the
-  // real gaps stand out against it.
-  if (!row) return <span className="text-muted-foreground/40 text-[12px]">·</span>;
-
-  const Wrapper = onClick ? 'button' : 'div';
-  const common = 'w-full rounded-[3px] px-2 py-1 transition-colors';
-
-  if (row.gap) {
-    return (
-      <Wrapper
-        {...(onClick ? { type: 'button' as const, onClick } : {})}
-        title={`${row.agentName} has invoiced ${row.invoiceCount} ${row.pCategory} invoice(s) with no commission rate — click to set one`}
-        className={cn(common, 'border border-rose-300 bg-rose-100/70 text-rose-800', onClick && 'hover:bg-rose-200')}
-      >
-        <div className="text-[12px] font-extrabold uppercase">not set</div>
-        <div className="text-[10px] font-medium">{row.invoiceCount} inv · earns ₹0</div>
-      </Wrapper>
-    );
-  }
-
-  const mismatch = !!row.suggestedBasis && !!row.basis && row.suggestedBasis !== row.basis;
-  return (
-    <Wrapper
-      {...(onClick ? { type: 'button' as const, onClick } : {})}
-      title={
-        `${row.agentName} · ${row.pCategory} · ₹${row.ratePerUnit}/${basisUnit(row.basis!)} from ${formatDate(row.effectiveFrom!)}` +
-        (row.invoiceCount ? ` · ${row.invoiceCount} invoices` : ' · not yet invoiced') +
-        (canEdit ? ' — click to change' : '')
-      }
-      className={cn(common, 'border border-transparent', onClick && 'hover:border-amber-300 hover:bg-amber-100/60')}
-    >
-      <div className="text-[13px] font-extrabold tabular-nums text-emerald-700">
-        ₹{num(row.ratePerUnit!)}
-        <span className="text-muted-foreground text-[9.5px] font-semibold">/{basisUnit(row.basis!)}</span>
-      </div>
-      <div className={cn('text-[9.5px] font-medium', mismatch ? 'font-bold text-amber-700' : 'text-muted-foreground')}>
-        {mismatch ? `sold per ${basisUnit(row.suggestedBasis!)}` : row.invoiceCount ? `${row.invoiceCount} inv` : 'unsold'}
-      </div>
-    </Wrapper>
-  );
-}
-
 /* ── Set / change a rate ──────────────────────────────────────────────────── */
 
 function RateDialog({ seed, agents, categories, lookups, history, onClose }: {

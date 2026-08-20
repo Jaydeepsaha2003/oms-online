@@ -296,14 +296,14 @@ export function AgentSettlementPage() {
                         <td className={cn(TD, 'font-semibold')}>{l.customerName}</td>
                         <td className={TD}>{l.pCategory}</td>
                         <td className={cn(TD, 'text-right tabular-nums')}>
-                          {l.qty.toLocaleString('en-IN')}
+                          <span className="text-[13px] font-bold text-slate-800 dark:text-slate-100">{l.qty.toLocaleString('en-IN')}</span>
                           <span className="text-muted-foreground ml-0.5 text-[10px]">{basisUnit(l.basis)}</span>
                         </td>
                         <td className={cn(TD, 'text-right tabular-nums')}>
                           <span className={cn('font-semibold', l.paidRatio >= 0.999 ? 'text-emerald-700' : 'text-amber-700')}>
                             {(l.paidRatio * 100).toFixed(0)}%
                           </span>
-                          <span className="text-muted-foreground ml-1 text-[11px]">{inr(l.paidAmount)}</span>
+                          <span className="ml-1.5 text-[12.5px] font-bold text-slate-800 dark:text-slate-100">{inr(l.paidAmount)}</span>
                           {late && <span className="ml-1 text-[10px] font-bold text-rose-600">{l.overdueDays}d late</span>}
                           {l.isTopUp && (
                             <div className="text-[10px] font-medium text-violet-700">
@@ -318,7 +318,7 @@ export function AgentSettlementPage() {
                             type="number"
                             step="any"
                             min={0}
-                            className="h-7 w-20 text-right text-[12.5px] tabular-nums"
+                            className="h-7 w-20 text-right text-[13px] font-bold tabular-nums"
                             value={l.appliedRatePerUnit}
                             onChange={(e) => {
                               const rate = Number(e.target.value);

@@ -65,6 +65,11 @@ export interface AgentRateCoverageRow {
   invoiceCount: number;
   kgs: number;
   pcs: number;
+  /** The OLDEST confirmed invoice in this pairing — how far back an unpriced
+   *  one reaches, i.e. since when it has been earning the agent nothing. */
+  firstInvoiceDate: string | null;
+  /** That invoice's number, so it can be looked up. */
+  firstInvoiceNo: string | null;
   lastInvoiceDate: string | null;
   /** The rate in force today, or null when nothing is set. */
   ratePerUnit: number | null;

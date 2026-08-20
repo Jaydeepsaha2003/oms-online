@@ -472,7 +472,7 @@ function ResolveDialog({ f, onClose }: { f: FollowupDto; onClose: () => void }) 
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } }}
             rows={3}
             placeholder="e.g. collected in full by cheque · settled on call"
-            className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 w-full rounded-md border px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-[3px]"
+            className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 w-full rounded-md border px-3 py-2 text-sm outline-none placeholder:text-placeholder focus-visible:ring-[3px]"
           />
           <p className="text-muted-foreground text-[11px]">Saved to this follow-up's timeline. Enter to save, Shift+Enter for a new line.</p>
         </div>
@@ -926,7 +926,7 @@ function FollowupForm({ kind, editing, prefill, onClose }: { kind: FollowupKind;
       onChange={(e) => setDescription(e.target.value)}
       rows={Math.min(8, Math.max(2, description.split('\n').length + 1))}
       placeholder="Type the note here — one line or many."
-      className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 w-full rounded-md border px-3 py-2 text-base outline-none placeholder:text-muted-foreground focus-visible:ring-[3px]"
+      className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 w-full rounded-md border px-3 py-2 text-base outline-none placeholder:text-placeholder focus-visible:ring-[3px]"
     />
   );
 

@@ -60,6 +60,15 @@ interface RebuildContext {
 
 type Db = Prisma.TransactionClient;
 const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+
+/**
+ * A DATETIME out of a raw aggregate query, as an ISO string.
+ *
+ * MIN()/MAX() over a DATETIME comes back as a raw epoch that SQLite types as
+ * INTEGER, so it arrives as a BigInt that `new Date` refuses outright.
+ */
+const rawDate = (v: Date | string | number | bigint | null | undefined): string | null =>
+  v == null ? null : new Date(typeof v === 'object' ? (v as Date) : Number(v)).toISOString();
 const r4 = (n: number) => Math.round((n + Number.EPSILON) * 10000) / 10000;
 const EPS = 0.005;
 /** A share as a percentage, for messages the owner has to act on. */
@@ -179,13 +188,22 @@ export class AgentCommissionService {
    */
   async rateCoverage(): Promise<AgentRateCoverageRow[]> {
     const sold = await this.prisma.$queryRaw<
-      { agentName: string; pCategory: string; invoiceCount: bigint | number; kgs: bigint | number | null; pcs: bigint | number | null; lastInvoiceDate: Date | string | null }[]
+      {
+        agentName: string;
+        pCategory: string;
+        invoiceCount: bigint | number;
+        kgs: bigint | number | null;
+        pcs: bigint | number | null;
+        firstInvoiceDate: Date | string | null;
+        lastInvoiceDate: Date | string | null;
+      }[]
     >`
       SELECT c.agentName          AS agentName,
              UPPER(TRIM(ci.pCategory)) AS pCategory,
              COUNT(DISTINCT ch.id) AS invoiceCount,
              SUM(COALESCE(ci.kgs, 0)) AS kgs,
              SUM(COALESCE(ci.pcs, 0)) AS pcs,
+             MIN(ch.invDate)      AS firstInvoiceDate,
              MAX(ch.invDate)      AS lastInvoiceDate
       FROM challan_items ci
       JOIN challans ch  ON ch.id = ci.challanId AND ch.challanStatus = 'CONFIRMED'
@@ -194,6 +212,34 @@ export class AgentCommissionService {
         AND ci.pCategory IS NOT NULL AND TRIM(ci.pCategory) <> ''
       GROUP BY c.agentName, UPPER(TRIM(ci.pCategory))
     `;
+
+    /*
+     * The invoice number belonging to that earliest date.
+     *
+     * Deliberately a second query with a window function, NOT a bare `ch.code`
+     * alongside MIN() in the query above. SQLite only pairs a bare column with
+     * the min/max row when min/max is the query's ONLY aggregate — with COUNT
+     * and SUM present too, the code returned is from an arbitrary row of the
+     * group. Every one of the eight pairings came back with the wrong invoice
+     * number when it was written that way.
+     */
+    const firstRows = await this.prisma.$queryRaw<{ agentName: string; pCategory: string; code: string | null }[]>`
+      SELECT agentName, pCategory, code FROM (
+        SELECT c.agentName                AS agentName,
+               UPPER(TRIM(ci.pCategory))  AS pCategory,
+               ch.code                    AS code,
+               ROW_NUMBER() OVER (
+                 PARTITION BY c.agentName, UPPER(TRIM(ci.pCategory))
+                 ORDER BY ch.invDate ASC, ch.id ASC
+               ) AS rn
+          FROM challan_items ci
+          JOIN challans ch  ON ch.id = ci.challanId AND ch.challanStatus = 'CONFIRMED'
+          JOIN customers c  ON c.id = ch.customerId
+         WHERE c.agentName IS NOT NULL AND TRIM(c.agentName) <> ''
+           AND ci.pCategory IS NOT NULL AND TRIM(ci.pCategory) <> ''
+      ) WHERE rn = 1
+    `;
+    const firstNo = new Map(firstRows.map((r) => [`${(r.agentName ?? '').trim().toUpperCase()}|${r.pCategory}`, r.code]));
 
     const [agents, rates, categoryFields] = await Promise.all([
       this.prisma.agent.findMany({ select: { id: true, name: true } }),
@@ -223,7 +269,11 @@ export class AgentCommissionService {
         pcs: r2(Number(s.pcs ?? 0)),
         // MAX() over a DATETIME comes back as a raw epoch, and SQLite types it
         // as INTEGER — so it arrives as a BigInt that `new Date` refuses.
-        lastInvoiceDate: s.lastInvoiceDate ? new Date(typeof s.lastInvoiceDate === 'object' ? s.lastInvoiceDate : Number(s.lastInvoiceDate)).toISOString() : null,
+        // The earliest invoice is what says how far back an unpriced pairing
+        // reaches — "since when has this been earning nothing".
+        firstInvoiceDate: rawDate(s.firstInvoiceDate),
+        firstInvoiceNo: firstNo.get(`${(s.agentName ?? '').trim().toUpperCase()}|${s.pCategory}`) ?? null,
+        lastInvoiceDate: rawDate(s.lastInvoiceDate),
         ratePerUnit: rate?.ratePerUnit ?? null,
         basis: rate?.basis ?? null,
         effectiveFrom: rate?.effectiveFrom ?? null,
@@ -239,7 +289,7 @@ export class AgentCommissionService {
       if (seen.has(key)) continue;
       out.push({
         agentId: r.agentId, agentName: r.agentName, pCategory: r.pCategory,
-        invoiceCount: 0, kgs: 0, pcs: 0, lastInvoiceDate: null,
+        invoiceCount: 0, kgs: 0, pcs: 0, firstInvoiceDate: null, firstInvoiceNo: null, lastInvoiceDate: null,
         ratePerUnit: r.ratePerUnit, basis: r.basis, effectiveFrom: r.effectiveFrom,
         suggestedBasis: suggested.get(r.pCategory) ?? null,
         gap: false,

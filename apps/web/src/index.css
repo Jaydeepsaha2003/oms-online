@@ -59,6 +59,16 @@
      should be findable without hunting for it. */
   --search-border: oklch(0.33 0.095 264);
   --search-ring: oklch(0.33 0.095 264 / 20%);
+
+  /* Placeholder text.
+     ---------------------------------------------------------------------
+     Its own token, NOT --muted-foreground. That one is body copy — labels,
+     hints, secondary figures — and has to stay readable, so it sits at 52%
+     lightness. A placeholder must read as ABSENT, and at 52% it does not: a
+     bold "40" in the rate box looked exactly like a rate somebody had already
+     typed. Deliberately lighter than any real text, and lighter than the
+     border, so an empty field looks empty. */
+  --placeholder: oklch(0.72 0.02 258);
 }
 
 .dark {
@@ -104,6 +114,10 @@
      to run the other way — a bright, cool edge against the dark surface. */
   --search-border: oklch(0.78 0.10 258);
   --search-ring: oklch(0.78 0.10 258 / 28%);
+
+  /* Below --muted-foreground (0.72) here too, so the ordering
+     foreground > muted > placeholder holds in both themes. */
+  --placeholder: oklch(0.55 0.02 258);
 }
 
 /* ── Dark-mode neutral remap ───────────────────────────────────────────────
@@ -172,6 +186,7 @@
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  --color-placeholder: var(--placeholder);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);

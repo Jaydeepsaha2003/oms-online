@@ -91,8 +91,30 @@ export function SettlementHistoryPage() {
     const sum = (list: AgentSettlementDto[]) => list.reduce((a, r) => a + r.netPayable, 0);
     const drafts = of('DRAFT');
     const paid = of('PAID');
-    return { drafts: drafts.length, draftValue: sum(drafts), paid: paid.length, paidValue: sum(paid) };
+    return {
+      drafts: drafts.length,
+      draftValue: sum(drafts),
+      paid: paid.length,
+      paidValue: sum(paid),
+      // TDS and deductions are counted over PAID rows only: on a draft they are
+      // still a proposal, and adding them here would overstate what has left.
+      tds: paid.reduce((a, r) => a + r.tdsAmount, 0),
+      deducted: paid.reduce((a, r) => a + r.bounceDeduction + r.coverDeduction + r.otherDeduction, 0),
+    };
   }, [rows]);
+
+  /**
+   * Drafts first, then newest.
+   *
+   * A draft is the only row that needs a decision — and it also holds its
+   * invoices' claimable share hostage until it is paid or cancelled, so burying
+   * one under months of paid history is how it gets forgotten. Within each group
+   * the server's newest-first order is kept.
+   */
+  const shown = useMemo(
+    () => [...rows].sort((a, b) => Number(b.status === 'DRAFT') - Number(a.status === 'DRAFT')),
+    [rows],
+  );
 
   const toggle = (id: number) =>
     setOpen((prev) => {
@@ -144,34 +166,28 @@ export function SettlementHistoryPage() {
 
   return (
     <div className="space-y-3 p-2.5 font-sans sm:p-3">
-      {/* ── Header ──────────────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center gap-2.5">
-        <div className="bg-gradient-brand flex size-9 items-center justify-center rounded-[4px] text-white shadow-md shadow-blue-600/20 ring-1 ring-white/20">
-          <FileText className="size-4" />
-        </div>
-        <div className="min-w-0">
-          <h2 className="truncate text-[17px] leading-tight font-bold tracking-tight">Settlement History</h2>
-          <p className="text-muted-foreground truncate text-[11.5px] font-medium">
-            Every settlement raised — and where a saved draft gets paid
-          </p>
-        </div>
-        <div className="ml-auto flex items-center gap-1.5">
-          <span className="text-muted-foreground rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold tabular-nums dark:bg-white/10">
-            {rows.length}
-          </span>
-          {isFetching && <Loader2 className="text-muted-foreground size-3.5 animate-spin" />}
-        </div>
-      </div>
+      {/* ── Where the money stands ───────────────────────────────────────────
+          No page title: the app bar already says "Settlement History", and
+          repeating it only pushed the figures below the fold.
 
-      {/* ── What is outstanding vs already gone ─────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-2.5">
+          Drafts and paid money are counted APART on purpose — a single total
+          mixing "still owed" with "already handed over" answers neither
+          question, and it is the drafts that need acting on. */}
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
         <Stat
           label="Awaiting payment"
           value={inr(totals.draftValue)}
-          hint={`${totals.drafts} draft${totals.drafts === 1 ? '' : 's'}`}
+          hint={`${totals.drafts} draft${totals.drafts === 1 ? '' : 's'} to pay or cancel`}
           tone={totals.drafts ? 'amber' : 'slate'}
         />
         <Stat label="Paid out" value={inr(totals.paidValue)} hint={`${totals.paid} settled`} tone="emerald" />
+        <Stat label="TDS deducted" value={inr(totals.tds)} hint="on paid settlements" tone="slate" />
+        <Stat
+          label="Deductions"
+          value={inr(totals.deducted)}
+          hint="bounces + covers recovered"
+          tone={totals.deducted ? 'rose' : 'slate'}
+        />
       </div>
 
       {/* ── Filters ─────────────────────────────────────────────────────────── */}
@@ -189,13 +205,25 @@ export function SettlementHistoryPage() {
           <Label className="text-muted-foreground text-[11px] font-bold tracking-wide uppercase">Status</Label>
           <NativeSelect value={status} onChange={setStatus} options={['', ...AGENT_SETTLEMENT_STATUSES]} placeholder="All statuses" />
         </div>
+        <div className="text-muted-foreground flex items-center gap-1.5 pb-1 text-[11.5px] sm:ml-auto">
+          <span className="text-foreground font-bold tabular-nums">{rows.length}</span> settlement{rows.length === 1 ? '' : 's'}
+          {isFetching && <Loader2 className="size-3.5 animate-spin" />}
+        </div>
       </div>
 
-      {/* ── Desktop table ───────────────────────────────────────────────────── */}
-      <div className="bg-card hidden overflow-auto rounded-[4px] border shadow-sm sm:block">
+      {/* ── Desktop register ─────────────────────────────────────────────────
+          Numbered rows, newest first, with the drafts pulled to the top: those
+          are the only ones with anything to do. */}
+      <div className="bg-card hidden flex-col overflow-hidden rounded-[6px] border shadow-sm sm:flex">
+        <div className="flex flex-wrap items-center gap-x-2 border-b bg-slate-50/80 px-3 py-2 dark:bg-white/[0.03]">
+          <span className="text-[12.5px] font-bold">Settlement register</span>
+          <span className="text-muted-foreground text-[11.5px]">drafts first, then newest — expand a row for its invoices</span>
+        </div>
+        <div className="max-h-[min(64vh,42rem)] overflow-auto">
         <table className="w-full border-collapse">
           <thead className="sticky top-0 z-10">
             <tr>
+              <th className={cn(TH, 'w-10 text-center')}>#</th>
               <th className={cn(TH, 'w-8')} />
               <th className={TH}>Settlement</th>
               <th className={TH}>Agent</th>
@@ -205,30 +233,42 @@ export function SettlementHistoryPage() {
               <th className={cn(TH, 'text-right')}>Deductions</th>
               <th className={cn(TH, 'text-right')}>TDS</th>
               <th className={cn(TH, 'text-right')}>Net</th>
-              <th className={TH}>Status</th>
-              <th className={TH} />
+              <th className={cn(TH, 'text-center')}>Status</th>
+              <th className={cn(TH, 'text-center')}>Action</th>
             </tr>
           </thead>
           <tbody>
             {isLoading ? (
               <tr>
-                <td colSpan={11} className="py-10 text-center">
+                <td colSpan={12} className="py-10 text-center">
                   <Loader2 className="text-muted-foreground mx-auto size-5 animate-spin" />
                 </td>
               </tr>
             ) : !rows.length ? (
               <tr>
-                <td colSpan={11} className="text-muted-foreground py-12 text-center text-[13px]">
+                <td colSpan={12} className="text-muted-foreground py-12 text-center text-[13px]">
                   No settlements yet. Raise one from <span className="font-semibold">Agent → Agent Settlement</span>.
                 </td>
               </tr>
             ) : (
-              rows.map((s) => {
+              shown.map((s, i) => {
                 const ded = s.bounceDeduction + s.coverDeduction + s.otherDeduction;
                 const expanded = open.has(s.id);
                 return (
                   <Fragment key={s.id}>
-                    <tr className={cn('border-b', expanded && 'bg-indigo-50/50 dark:bg-indigo-500/5')}>
+                    <tr
+                      className={cn(
+                        'border-b transition-colors',
+                        expanded
+                          ? 'bg-indigo-50/60 dark:bg-indigo-500/10'
+                          : s.status === 'DRAFT'
+                            // The only rows that need a decision, so the only
+                            // ones that carry colour.
+                            ? 'bg-amber-50/60 hover:bg-amber-100/60 dark:bg-amber-500/10'
+                            : cn('hover:bg-indigo-50/50 odd:bg-slate-50/50 dark:odd:bg-white/[0.02]', s.status === 'CANCELLED' && 'text-muted-foreground'),
+                      )}
+                    >
+                      <td className={cn(TD, 'text-muted-foreground text-center tabular-nums')}>{i + 1}</td>
                       <td className={cn(TD, 'text-center')}>
                         <button
                           type="button"
@@ -255,19 +295,19 @@ export function SettlementHistoryPage() {
                       <td className={cn(TD, 'text-right font-bold tabular-nums text-emerald-700 dark:text-emerald-400')}>
                         {inr(s.netPayable)}
                       </td>
-                      <td className={TD}>
+                      <td className={cn(TD, 'text-center')}>
                         <StatusChip status={s.status} />
                         {s.paidAt && (
                           <div className="text-muted-foreground text-[10.5px] tabular-nums">{formatDate(s.paidAt)}</div>
                         )}
                       </td>
-                      <td className={cn(TD, 'whitespace-nowrap')}>
+                      <td className={cn(TD, 'text-center whitespace-nowrap')}>
                         {s.status === 'DRAFT' && <DraftActions s={s} busy={busy} canSettle={canSettle} canCancel={canCancel} onPay={doPay} onCancel={doCancel} />}
                       </td>
                     </tr>
                     {expanded && (
                       <tr className="border-b bg-slate-50/70 dark:bg-white/[0.03]">
-                        <td />
+                        <td colSpan={2} />
                         <td colSpan={10} className="px-2 pt-1 pb-3">
                           <SettlementDetail s={s} formatDate={formatDate} />
                         </td>
@@ -278,7 +318,25 @@ export function SettlementHistoryPage() {
               })
             )}
           </tbody>
+          {shown.length > 0 && (
+            <tfoot>
+              <tr className="[&_td]:sticky [&_td]:bottom-0 [&_td]:border-t-2 [&_td]:border-slate-300 [&_td]:bg-slate-100 [&_td]:px-2.5 [&_td]:py-1.5 [&_td]:font-bold dark:[&_td]:border-white/20 dark:[&_td]:bg-slate-800">
+                <td colSpan={5} className="text-[11px] tracking-wide uppercase">
+                  Total — {shown.length} shown
+                </td>
+                <td className="text-right tabular-nums">{shown.reduce((a, r) => a + r.lines.length, 0)}</td>
+                <td className="text-right tabular-nums">{inr(shown.reduce((a, r) => a + r.grossCommission, 0))}</td>
+                <td className="text-right tabular-nums text-rose-700 dark:text-rose-300">
+                  {inr(shown.reduce((a, r) => a + r.bounceDeduction + r.coverDeduction + r.otherDeduction, 0))}
+                </td>
+                <td className="text-right tabular-nums text-rose-700 dark:text-rose-300">{inr(shown.reduce((a, r) => a + r.tdsAmount, 0))}</td>
+                <td className="text-right tabular-nums text-emerald-700 dark:text-emerald-400">{inr(shown.reduce((a, r) => a + r.netPayable, 0))}</td>
+                <td colSpan={2} />
+              </tr>
+            </tfoot>
+          )}
         </table>
+        </div>
       </div>
 
       {/* ── Phones: one card per settlement ─────────────────────────────────── */}
@@ -293,7 +351,7 @@ export function SettlementHistoryPage() {
           </div>
         ) : (
           <div className="space-y-2.5">
-            {rows.map((s) => {
+            {shown.map((s) => {
               const ded = s.bounceDeduction + s.coverDeduction + s.otherDeduction;
               const expanded = open.has(s.id);
               return (
@@ -486,12 +544,13 @@ function Stat({
   label: string;
   value: string;
   hint?: string;
-  tone: 'slate' | 'amber' | 'emerald';
+  tone: 'slate' | 'amber' | 'emerald' | 'rose';
 }) {
   const tones = {
     slate: 'border-slate-200 dark:border-white/10',
     amber: 'border-amber-300 bg-amber-50/50 dark:border-amber-400/30 dark:bg-amber-500/10',
     emerald: 'border-emerald-300 bg-emerald-50/50 dark:border-emerald-400/30 dark:bg-emerald-500/10',
+    rose: 'border-rose-300 bg-rose-50/50 dark:border-rose-400/30 dark:bg-rose-500/10',
   };
   return (
     <div className={cn('bg-card rounded-[4px] border px-2.5 py-2 shadow-sm', tones[tone])}>
