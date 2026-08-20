@@ -37,6 +37,13 @@ export interface LinePhoto {
   filename?: string | null;
   mimeType?: string | null;
   size?: number | null;
+  /**
+   * Human caption for the viewer, when the file name says nothing useful — an
+   * upload called "0249a195-c95a-4e0d-….jpeg" tells you nothing, "ANIL METAL ·
+   * 10 BREZZA WL+LOGO" tells you everything. Display only: the download still
+   * uses the real `filename`.
+   */
+  title?: string | null;
 }
 
 /** Convert draft photos to the order-line input shape sent on save. */
@@ -320,7 +327,7 @@ export function PhotoLightbox({
       {/* Top bar */}
       <div className="flex items-center justify-between gap-3 px-4 py-3 pr-28 text-white" onClick={(e) => e.stopPropagation()}>
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold">{photo.filename ?? `Photo ${index + 1}`}</p>
+          <p className="truncate text-sm font-semibold">{photo.title ?? photo.filename ?? `Photo ${index + 1}`}</p>
           <p className="text-xs text-white/60">
             {index + 1} of {photos.length}
           </p>

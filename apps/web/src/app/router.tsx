@@ -23,6 +23,7 @@ const AgentsPage = lazy(() => import('@/features/agents/agents-page').then((m) =
 const GstRatesPage = lazy(() => import('@/features/gst-rates/gst-rates-page').then((m) => ({ default: m.GstRatesPage })));
 const TransRatesPage = lazy(() => import('@/features/trans-rates/trans-rates-page').then((m) => ({ default: m.TransRatesPage })));
 const ProductsPage = lazy(() => import('@/features/products/products-page').then((m) => ({ default: m.ProductsPage })));
+const ProductPhotosPage = lazy(() => import('@/features/products/product-photos-page').then((m) => ({ default: m.ProductPhotosPage })));
 const DesignsPage = lazy(() => import('@/features/designs/designs-page').then((m) => ({ default: m.DesignsPage })));
 const DesignNamesPage = lazy(() => import('@/features/design-names/design-names-page').then((m) => ({ default: m.DesignNamesPage })));
 const OrdersPage = lazy(() => import('@/features/orders/orders-page').then((m) => ({ default: m.OrdersPage })));
@@ -206,6 +207,16 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.PRODUCT, ACTIONS.VIEW)}>
                 <ProductsPage />
+              </RequirePermission>
+            }
+          />
+          {/* Photos live on order lines, so an order viewer gets in too — same
+              rule as the menu entry in @oms/shared. */}
+          <Route
+            path="/products/photos"
+            element={
+              <RequirePermission anyPermission={[perm(RESOURCES.PRODUCT, ACTIONS.VIEW), perm(RESOURCES.ORDER, ACTIONS.VIEW)]}>
+                <ProductPhotosPage />
               </RequirePermission>
             }
           />

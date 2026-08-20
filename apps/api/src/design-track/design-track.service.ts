@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   isRealDesign,
-  resolveLineDesignType,
+  resolveLineDesignParts,
   type DesignTrackFilterOptions,
   type DesignTrackList,
   type DesignTrackRow,
@@ -113,28 +113,16 @@ export class DesignTrackService {
   /**
    * The design TYPE (parent) for a line — "DL+TOOL", never the name "ZEBRA".
    *
-   * Three shapes exist in this book:
-   *   design=TYPE, designType="NA"    imported, no name ever chosen
-   *   design=TYPE, designType=NAME    imported, a name chosen later
-   *   design=NAME, designType=TYPE    entered here
-   *
-   * The shared resolver reads `designType` first, so on the middle shape it
-   * returns the NAME as if it were the type. The tell is the product name: when
-   * it ends with the `design` value, that value is the type (the same test
-   * `dispatchDesign` uses to decide the mirror question). Checked here rather
-   * than in the shared helper because that one also drives the reference-photo
-   * rules, which are out of scope for this screen.
+   * The three-shape problem this untangles now lives in `resolveLineDesignParts`
+   * (@oms/shared), so Product Photos decides a line's design the same way this
+   * screen does. Two copies of the rule meant the same line could be filed under
+   * "GUCCI" on one screen and "FULL LASER+DL+LOGO" on the other.
    */
   private designTypeOf(
     line: { design: string | null; designType: string | null; productName: string | null },
     knownTypes: ReadonlySet<string>,
   ): string | null {
-    const design = (line.design ?? '').trim();
-    const productName = (line.productName ?? '').toUpperCase();
-    if (design && isRealDesign(design) && productName.endsWith(` ${design.toUpperCase()}`)) {
-      return design.toUpperCase();
-    }
-    return resolveLineDesignType(line, knownTypes);
+    return resolveLineDesignParts(line, knownTypes).type;
   }
 
   private async resolvePhotosForItems(pageItems: Tracked[]): Promise<Map<number, { id?: number; url: string; filename?: string | null; title?: string | null; fromHistory?: boolean }[]>> {

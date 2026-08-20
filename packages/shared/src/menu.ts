@@ -183,6 +183,16 @@ export const MENU: MenuNode[] = [
         permission: perm(RESOURCES.PRODUCT, ACTIONS.VIEW),
       },
       {
+        // The photos hang off order lines, so an order viewer can reach this
+        // too: same rows they already see one line at a time in Order Modify,
+        // grouped by party and by item instead.
+        id: 'product-photos',
+        label: 'Product Photos',
+        to: '/products/photos',
+        icon: 'Images',
+        anyPermission: [perm(RESOURCES.PRODUCT, ACTIONS.VIEW), perm(RESOURCES.ORDER, ACTIONS.VIEW)],
+      },
+      {
         id: 'designs',
         label: 'Designs',
         to: '/designs',

@@ -1,12 +1,83 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { type CategoryFieldDto, type Paginated, type ProductDto, type ProductLookups } from '@oms/shared';
+import {
+  resolveLineDesignParts,
+  type CategoryFieldDto,
+  type Paginated,
+  type PhotoGroupBy,
+  type ProductDto,
+  type ProductLookups,
+  type ProductPhotoDto,
+  type ProductPhotoFilterOptions,
+  type ProductPhotoGalleryDto,
+} from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { toNum, uc } from '../common/coerce';
 import { readCategoryFields, writeCategoryFields } from '../common/category-fields';
 import { CreateProductDto, ImportProductsDto, ProductQueryDto, SetProductFlagsDto, UpdateProductDto } from './dto/product.dto';
+import { ProductPhotoQueryDto } from './dto/product-photo.dto';
 
 type Row = Prisma.ProductGetPayload<object>;
+
+/**
+ * Exactly the columns the gallery captions from — never `include`.
+ *
+ * `include: { orderItem: { include: { order: true } } }` reads every column of
+ * both tables, which couples this screen to columns it has no interest in: it
+ * broke outright against a book whose `order_items` predates a pending
+ * migration, because Prisma selected a column that did not exist there yet.
+ * A narrow select cannot fail that way, and moves a fraction of the bytes.
+ */
+const PHOTO_SELECT = {
+  id: true,
+  url: true,
+  filename: true,
+  mimeType: true,
+  size: true,
+  uploadedBy: true,
+  createdAt: true,
+  orderItem: {
+    select: {
+      id: true,
+      product: true,
+      productName: true,
+      designType: true,
+      design: true,
+      order: { select: { id: true, code: true, orderDate: true, customerId: true, customerName: true } },
+    },
+  },
+} as const satisfies Prisma.OrderItemPhotoSelect;
+
+type PhotoRow = Prisma.OrderItemPhotoGetPayload<{ select: typeof PHOTO_SELECT }>;
+
+/**
+ * How many photo rows one gallery pass will group.
+ *
+ * Grouping has to see the whole filtered set before it knows where the section
+ * boundaries are, so it cannot be pushed into SQL's LIMIT. The book holds a few
+ * dozen photos today; the cap exists so that stays true if it ever holds a
+ * hundred thousand, and `truncated` tells the user when it bites instead of the
+ * screen quietly lying about the total.
+ */
+const PHOTO_SCAN_CAP = 4000;
+
+/**
+ * Local midnight at the start / end of a yyyy-mm-dd day.
+ *
+ * Built from the parts rather than `new Date(iso)`, which parses a bare date as
+ * UTC — in IST that lands at 05:30 on the day itself, so a "from" filter would
+ * silently drop everything uploaded that morning.
+ */
+const dayStart = (iso?: string): Date | undefined => {
+  const parts = (iso ?? '').trim().split('-').map(Number);
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return undefined;
+  return new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0);
+};
+const dayEnd = (iso?: string): Date | undefined => {
+  const d = dayStart(iso);
+  if (d) d.setHours(23, 59, 59, 999);
+  return d;
+};
 
 @Injectable()
 export class ProductsService {
@@ -258,6 +329,178 @@ export class ProductsService {
       return new ConflictException('A product with this category, sub-category, product and size already exists.');
     }
     return err;
+  }
+
+  /* ── Photo gallery (Products → Product Photos) ─────────────────────────── */
+
+  /**
+   * Every uploaded order-line photo, grouped by party or by item.
+   *
+   * Read-only by design: the photos belong to order lines, and the screens that
+   * own those lines own uploading and deleting them. A gallery that could
+   * delete would be able to strip the reference photo a dispatch depends on
+   * from a screen that shows no dispatch context at all.
+   *
+   * Pages count SECTIONS rather than photos, so a party is never split across
+   * two pages — the whole point of the screen is seeing one party's work
+   * together.
+   */
+  async photoGallery(query: ProductPhotoQueryDto): Promise<ProductPhotoGalleryDto> {
+    const groupBy: PhotoGroupBy = query.groupBy ?? 'PARTY';
+    const rows = await this.photoRows(query);
+    // One row over the cap is the signal that the filters matched more than a
+    // single grouping pass covers; the extra row is dropped and the flag says so
+    // rather than presenting a subset as the whole answer.
+    const truncated = rows.length > PHOTO_SCAN_CAP;
+    const scanned = truncated ? rows.slice(0, PHOTO_SCAN_CAP) : rows;
+    const knownTypes = await this.knownDesignTypes();
+    const photos = scanned.map((r) => this.toPhotoDto(r, knownTypes));
+
+    // Sections in order of first appearance, which — because the rows arrive
+    // newest-upload-first — puts the most recently photographed party or item at
+    // the top. That is the one you are most likely to be looking for.
+    const buckets = new Map<string, { label: string; photos: ProductPhotoDto[] }>();
+    for (const p of photos) {
+      const label = (groupBy === 'PARTY' ? p.customerName : p.productName || p.product || '—').trim() || '—';
+      const key = label.toUpperCase();
+      const bucket = buckets.get(key);
+      if (bucket) bucket.photos.push(p);
+      else buckets.set(key, { label, photos: [p] });
+    }
+
+    const all = [...buckets.entries()].map(([key, b]) => {
+      // The cross-reference: a party section counts its items, an item section
+      // counts the parties it was made for. Each is the question you ask next.
+      const others = new Set(
+        b.photos.map((p) =>
+          groupBy === 'PARTY' ? (p.productName || p.product || '—').toUpperCase() : p.customerName.toUpperCase(),
+        ),
+      );
+      const noun = groupBy === 'PARTY' ? 'item' : 'party';
+      const plural = groupBy === 'PARTY' ? 'items' : 'parties';
+      return {
+        key,
+        label: b.label,
+        subLabel: `${b.photos.length} photo${b.photos.length === 1 ? '' : 's'} · ${others.size} ${others.size === 1 ? noun : plural}`,
+        photos: b.photos,
+      };
+    });
+
+    const totalPages = Math.max(1, Math.ceil(all.length / query.pageSize));
+    return {
+      groups: all.slice(query.skip, query.skip + query.pageSize),
+      totalPhotos: photos.length,
+      totalGroups: all.length,
+      page: query.page,
+      pageSize: query.pageSize,
+      totalPages,
+      truncated,
+    };
+  }
+
+  /** Dropdown values, each cascaded off the OTHER active filters. */
+  async photoFilterOptions(query: ProductPhotoQueryDto): Promise<ProductPhotoFilterOptions> {
+    const knownTypes = await this.knownDesignTypes();
+    const without = async (drop: 'customer' | 'product' | 'designType') => {
+      const rows = await this.photoRows({ ...query, [drop]: undefined } as ProductPhotoQueryDto);
+      return rows.slice(0, PHOTO_SCAN_CAP).map((r) => this.toPhotoDto(r, knownTypes));
+    };
+    const distinct = (list: ProductPhotoDto[], pick: (p: ProductPhotoDto) => string | null) => {
+      const s = new Set<string>();
+      for (const p of list) {
+        const v = pick(p)?.trim();
+        if (v) s.add(v);
+      }
+      return [...s].sort((a, b) => a.localeCompare(b));
+    };
+    const [byCustomer, byProduct, byDesign] = await Promise.all([
+      without('customer'),
+      without('product'),
+      without('designType'),
+    ]);
+    return {
+      customers: distinct(byCustomer, (p) => p.customerName),
+      // The BARE product, so one entry covers every size of it — "BREZZA", not
+      // "10 BREZZA WL+LOGO" and eleven near-identical neighbours.
+      products: distinct(byProduct, (p) => p.product),
+      designTypes: distinct(byDesign, (p) => p.designType),
+    };
+  }
+
+  /** The filtered photo rows, newest upload first, with their line and order. */
+  private async photoRows(query: ProductPhotoQueryDto): Promise<PhotoRow[]> {
+    const and: Prisma.OrderItemPhotoWhereInput[] = [];
+    const search = query.search?.trim();
+    if (search) {
+      and.push({
+        OR: [
+          { filename: { contains: search } },
+          { uploadedBy: { contains: search } },
+          { orderItem: { product: { contains: search } } },
+          { orderItem: { productName: { contains: search } } },
+          { orderItem: { designType: { contains: search } } },
+          { orderItem: { design: { contains: search } } },
+          { orderItem: { order: { customerName: { contains: search } } } },
+          { orderItem: { order: { code: { contains: search } } } },
+        ],
+      });
+    }
+    if (query.customer?.trim()) and.push({ orderItem: { order: { customerName: query.customer.trim() } } });
+    // Bare product, matching what the dropdown offers.
+    if (query.product?.trim()) and.push({ orderItem: { product: query.product.trim() } });
+    // The design filter cannot go in the query: which column holds the TYPE
+    // varies row by row (see `toPhotoDto`), so it is applied after resolution.
+    const from = dayStart(query.from);
+    const to = dayEnd(query.to);
+    if (from || to) {
+      and.push({ createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } });
+    }
+
+    const rows = await this.prisma.orderItemPhoto.findMany({
+      where: and.length ? { AND: and } : {},
+      select: PHOTO_SELECT,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      // One past the cap, so `photoGallery` can tell "exactly full" from "more
+      // than we scanned" without a second count query.
+      take: PHOTO_SCAN_CAP + 1,
+    });
+
+    const design = query.designType?.trim().toUpperCase();
+    if (!design) return rows;
+    const knownTypes = await this.knownDesignTypes();
+    return rows.filter((r) => resolveLineDesignParts(r.orderItem, knownTypes).type === design);
+  }
+
+  private toPhotoDto(row: PhotoRow, knownTypes: ReadonlySet<string>): ProductPhotoDto {
+    const line = row.orderItem;
+    const order = line.order;
+    const design = resolveLineDesignParts(line, knownTypes);
+    return {
+      id: row.id,
+      url: row.url,
+      filename: row.filename,
+      mimeType: row.mimeType,
+      size: row.size,
+      uploadedBy: row.uploadedBy,
+      uploadedAt: row.createdAt.toISOString(),
+      orderItemId: line.id,
+      orderId: order.id,
+      orderCode: order.code,
+      orderDate: order.orderDate.toISOString(),
+      customerId: order.customerId,
+      customerName: order.customerName,
+      productName: line.productName,
+      product: line.product,
+      designType: design.type,
+      designName: design.name,
+    };
+  }
+
+  /** The design master's own type set — what lets a line's `design` column be
+   *  read as a type only when it really is one (see `resolveLineDesignType`). */
+  private async knownDesignTypes(): Promise<ReadonlySet<string>> {
+    const rows = await this.prisma.design.findMany({ select: { designType: true }, distinct: ['designType'] });
+    return new Set(rows.map((r) => r.designType.trim().toUpperCase()).filter(Boolean));
   }
 
   private toDto(r: Row): ProductDto {

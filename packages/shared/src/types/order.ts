@@ -485,3 +485,40 @@ export function resolveLineDesignType(
   if (isRealDesign(fallback) && knownTypes.has(fallback)) return fallback;
   return null;
 }
+
+/**
+ * The line's design TYPE and NAME, told apart even on the awkward middle shape.
+ *
+ * Order lines carry the design in three shapes, depending on how they were made:
+ *
+ *     design=TYPE, designType="NA"     imported, no name ever chosen
+ *     design=TYPE, designType=NAME     imported, a name chosen later
+ *     design=NAME, designType=TYPE     entered in this app
+ *
+ * {@link resolveLineDesignType} reads `designType` first, so on the middle shape
+ * it hands back the NAME as if it were the type — which is how "X BINDI" and
+ * "GUCCI" end up offered as design types in a picker. The tell is the product
+ * name: the composite is built as "<size> <product> <type>", so when it ENDS
+ * with the `design` value, that value is the type and `designType` is the name.
+ *
+ * Kept separate from `resolveLineDesignType` rather than folded into it, because
+ * that one also decides the reference-photo rules, where a name counts as good
+ * as a type — see {@link lineNeedsReferencePhoto}.
+ */
+export function resolveLineDesignParts(
+  line: { design?: string | null; designType?: string | null; productName?: string | null },
+  knownTypes: ReadonlySet<string>,
+): { type: string | null; name: string | null } {
+  const design = (line.design ?? '').trim();
+  const productName = (line.productName ?? '').toUpperCase();
+  const type =
+    design && isRealDesign(design) && productName.endsWith(` ${design.toUpperCase()}`)
+      ? design.toUpperCase()
+      : resolveLineDesignType(line, knownTypes);
+
+  // Never let the name echo the type: on the first shape above, `designType` is
+  // a placeholder, and on imported rows it can be the very same string.
+  const named = (line.designType ?? '').trim();
+  const name = isRealDesign(named) && named.toUpperCase() !== (type ?? '') ? named : null;
+  return { type, name };
+}

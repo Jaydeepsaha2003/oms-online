@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Camera, ChevronLeft, ChevronRight, Download, Flame, Loader2, RotateCcw, Search, Sparkles } from 'lucide-react';
+import { Camera, ChevronLeft, ChevronRight, Download, Flame, Loader2, Pencil, RotateCcw, Search, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import type { DesignTrackRow } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -18,16 +18,52 @@ import { exportDesignTrack, useDesignTrack, useDesignTrackFilterOptions, useDesi
 const qty = (v: number | null) => (v == null ? '—' : v.toLocaleString('en-IN', { maximumFractionDigits: 2 }));
 
 /**
- * Row tint by how far along the line is. Kept to four states so the grid is
- * scannable: untouched needs picking up, partial is in progress, done is clear,
- * and over-entered is almost always a typo worth spotting.
+ * How far along the line is. Kept to four states so the list is scannable:
+ * untouched needs picking up, partial is in progress, done is clear, and
+ * over-entered is almost always a typo worth spotting.
+ *
+ * Named states rather than a bare colour, because the two views need the same
+ * judgement expressed differently — the desktop grid tints the whole row, while
+ * a phone card gets an edge stripe and a worded chip. A colour alone cannot be
+ * read on a phone with no legend and no neighbouring rows to compare against.
  */
-function rowTone(r: DesignTrackRow): string {
-  if (r.remaining < 0) return 'bg-rose-100 dark:bg-rose-500/15'; // more processed than ordered
-  if (r.kalwat == null) return 'bg-red-50 dark:bg-red-500/10'; // nothing entered yet
-  if (r.remaining === 0) return 'bg-emerald-50 dark:bg-emerald-500/10'; // complete
-  return 'bg-amber-50 dark:bg-amber-500/10'; // part-way
+type TrackState = 'OVER' | 'NEW' | 'DONE' | 'PART';
+
+function rowState(r: DesignTrackRow): TrackState {
+  if (r.remaining < 0) return 'OVER'; // more processed than ordered
+  if (r.kalwat == null) return 'NEW'; // nothing entered yet
+  if (r.remaining === 0) return 'DONE'; // complete
+  return 'PART'; // part-way
 }
+
+const STATE_META: Record<TrackState, { label: string; tint: string; stripe: string; chip: string }> = {
+  OVER: {
+    label: 'Over-entered',
+    tint: 'bg-rose-100 dark:bg-rose-500/15',
+    stripe: 'bg-rose-500',
+    chip: 'bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/10 dark:text-rose-300 dark:ring-rose-400/25',
+  },
+  NEW: {
+    label: 'Not started',
+    tint: 'bg-red-50 dark:bg-red-500/10',
+    stripe: 'bg-red-400',
+    chip: 'bg-red-50 text-red-700 ring-red-200 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-400/25',
+  },
+  DONE: {
+    label: 'Done',
+    tint: 'bg-emerald-50 dark:bg-emerald-500/10',
+    stripe: 'bg-emerald-500',
+    chip: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-400/25',
+  },
+  PART: {
+    label: 'In progress',
+    tint: 'bg-amber-50 dark:bg-amber-500/10',
+    stripe: 'bg-amber-400',
+    chip: 'bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-400/25',
+  },
+};
+
+const rowTone = (r: DesignTrackRow): string => STATE_META[rowState(r)].tint;
 
 /**
  * Click-to-edit Kalwat cell: shows the number, becomes an input on click, saves
@@ -36,7 +72,22 @@ function rowTone(r: DesignTrackRow): string {
  * Only commits when the value actually changed, so tabbing through the grid
  * doesn't fire a write per cell.
  */
-function KalwatCell({ row, canEdit }: { row: DesignTrackRow; canEdit: boolean }) {
+function KalwatCell({
+  row,
+  canEdit,
+  variant = 'grid',
+}: {
+  row: DesignTrackRow;
+  canEdit: boolean;
+  /**
+   * 'grid' is the desktop table cell. 'card' is the phone control: a finger is
+   * not a mouse pointer, and a 20-unit-wide cell 5px tall is not something you
+   * can reliably hit or read at arm's length — the card version is a full-width
+   * 40px target that says what it is, since on a phone there is no column
+   * header above it to name the number.
+   */
+  variant?: 'grid' | 'card';
+}) {
   const save = useSetKalwat();
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState('');
@@ -86,7 +137,10 @@ function KalwatCell({ row, canEdit }: { row: DesignTrackRow; canEdit: boolean })
             setEditing(false);
           }
         }}
-        className="border-primary w-20 rounded-[3px] border-2 bg-white px-1.5 py-0.5 text-right text-[13px] font-semibold tabular-nums outline-none dark:bg-slate-900"
+        className={cn(
+          'border-primary rounded-[3px] border-2 bg-white text-right font-semibold tabular-nums outline-none dark:bg-slate-900',
+          variant === 'card' ? 'h-10 w-full px-2.5 text-[16px]' : 'w-20 px-1.5 py-0.5 text-[13px]',
+        )}
         autoFocus
       />
     );
@@ -99,12 +153,19 @@ function KalwatCell({ row, canEdit }: { row: DesignTrackRow; canEdit: boolean })
       disabled={!canEdit}
       title={canEdit ? 'Click to type the processed quantity' : 'You do not have permission to edit this'}
       className={cn(
-        'w-20 rounded-[3px] border px-1.5 py-0.5 text-right text-[13px] font-semibold tabular-nums',
+        'rounded-[3px] border font-semibold tabular-nums',
+        variant === 'card'
+          ? 'flex h-10 w-full items-center justify-between gap-2 px-2.5 text-[16px]'
+          : 'w-20 px-1.5 py-0.5 text-right text-[13px]',
         canEdit ? 'cursor-pointer border-amber-300 bg-amber-50/70 hover:border-amber-500 dark:border-amber-400/40 dark:bg-amber-500/10' : 'border-transparent',
         row.kalwat == null && 'text-muted-foreground font-normal',
       )}
     >
-      {save.isPending ? <Loader2 className="mx-auto size-3.5 animate-spin" /> : (row.kalwat ?? '—')}
+      {variant === 'card' && (
+        <span className="text-muted-foreground text-[9.5px] font-bold tracking-widest uppercase">Kalwat</span>
+      )}
+      {save.isPending ? <Loader2 className={cn('size-3.5 animate-spin', variant === 'grid' && 'mx-auto')} /> : <span>{row.kalwat ?? '—'}</span>}
+      {variant === 'card' && canEdit && <Pencil className="text-muted-foreground/70 size-3.5 shrink-0" />}
     </button>
   );
 }
@@ -178,27 +239,47 @@ export function DesignTrackPage() {
             Pending orders filtered by tracked designs
           </p>
         </div>
-        <div className="ml-auto flex items-center gap-2">
-          <span className="text-muted-foreground text-[12px] tabular-nums">{data?.total ?? 0} items</span>
-          <Button variant="outline" size="sm" onClick={() => void refetch()} disabled={isFetching}>
-            {isFetching ? <Loader2 className="animate-spin" /> : <RotateCcw />} Refresh
+        {/* Count as a chip beside the title, and icon-only buttons below sm, so
+            the whole header stays on ONE line on a phone. It used to wrap onto a
+            second row of full-width buttons, which pushed the list itself below
+            the fold before a single item could be seen. */}
+        <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
+          <span className="text-muted-foreground rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold tabular-nums dark:bg-white/10">
+            {data?.total ?? 0}
+            <span className="hidden sm:inline"> items</span>
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="size-9 p-0 sm:size-auto sm:px-3"
+            onClick={() => void refetch()}
+            disabled={isFetching}
+            aria-label="Refresh"
+          >
+            {isFetching ? <Loader2 className="animate-spin" /> : <RotateCcw />}
+            <span className="hidden sm:inline">Refresh</span>
           </Button>
           {can('designtrack:export') && (
             <Button
               size="sm"
+              className="size-9 p-0 sm:size-auto sm:px-3"
               onClick={() =>
                 void exportDesignTrack(filters).catch((e) => toast.error(getApiErrorMessage(e, 'Excel export failed')))
               }
+              aria-label="Export Excel"
             >
-              <Download /> Export Excel
+              <Download />
+              <span className="hidden sm:inline">Export Excel</span>
             </Button>
           )}
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative w-full sm:max-w-xs">
+      {/* Filters. On phones the three dropdowns sit in an even 2-up grid — with
+          fixed widths they filled neither the row nor each other, leaving the
+          ragged half-empty gaps the screenshot shows. */}
+      <div className="grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap">
+        <div className="relative col-span-2 w-full sm:max-w-xs">
           <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
           <Input
             value={searchInput}
@@ -207,7 +288,7 @@ export function DesignTrackPage() {
             className="h-9 pl-8"
           />
         </div>
-        <div className="w-52">
+        <div className="w-full min-w-0 sm:w-52">
           <NativeSelect
             value={customer}
             onChange={(v) => {
@@ -218,7 +299,7 @@ export function DesignTrackPage() {
             placeholder="All customers"
           />
         </div>
-        <div className="w-52">
+        <div className="w-full min-w-0 sm:w-52">
           <NativeSelect
             value={product}
             onChange={(v) => {
@@ -229,7 +310,7 @@ export function DesignTrackPage() {
             placeholder="All products"
           />
         </div>
-        <div className="w-48">
+        <div className="w-full min-w-0 sm:w-48">
           <NativeSelect
             value={design}
             onChange={(v) => {
@@ -241,7 +322,7 @@ export function DesignTrackPage() {
           />
         </div>
         {hasFilters && (
-          <Button variant="ghost" size="sm" onClick={reset}>
+          <Button variant="ghost" size="sm" className="h-9 w-full sm:w-auto" onClick={reset}>
             <RotateCcw /> Reset
           </Button>
         )}
@@ -254,8 +335,11 @@ export function DesignTrackPage() {
         </p>
       )}
 
-      {/* Grid. Header stays put while scrolling the rows. */}
-      <div className="max-h-[min(70vh,44rem)] overflow-auto rounded-lg border">
+      {/* Grid. Header stays put while scrolling the rows. Nine columns need
+          68rem to lay out, so on a phone it is replaced by the card list below
+          rather than left to scroll sideways — the screenshot's cut-off Order
+          Date column was the first casualty of that. */}
+      <div className="hidden max-h-[min(70vh,44rem)] overflow-auto rounded-lg border sm:block">
         <table className="w-full min-w-[68rem] border-separate border-spacing-0 text-[13px]">
           <thead>
             <tr className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:border-b [&_th]:bg-gradient-to-b [&_th]:from-blue-800 [&_th]:to-indigo-800 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:text-[11.5px] [&_th]:font-extrabold [&_th]:tracking-wide [&_th]:text-white [&_th]:uppercase">
@@ -358,8 +442,180 @@ export function DesignTrackPage() {
         </table>
       </div>
 
-      {/* Paging */}
-      <div className="flex items-center justify-between gap-3">
+      {/* ── Phones: one card per line ─────────────────────────────────────────
+          Nothing truncates here. A card is the ONLY view of this line on a
+          phone — there is no column to widen and no hover title to fall back on
+          — so a clipped product name, design name or comment is information the
+          user simply cannot reach. Long values wrap instead.
+
+          Every figure carries its own label for the same reason: the sticky
+          header naming the nine columns does not exist in this view. */}
+      <div className="sm:hidden">
+        {isLoading ? (
+          <div className="text-muted-foreground flex h-24 items-center justify-center rounded-2xl border">
+            <Loader2 className="size-5 animate-spin" />
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="text-muted-foreground rounded-2xl border px-4 py-10 text-center text-sm">
+            {nothingTracked ? 'Nothing tracked yet.' : 'No pending lines for the tracked designs.'}
+          </div>
+        ) : (
+          <div className="space-y-2.5">
+            {rows.map((r) => {
+              const st = STATE_META[rowState(r)];
+              return (
+                <div key={r.orderItemId} className="bg-card relative overflow-hidden rounded-2xl border shadow-sm ring-1 ring-black/[0.02]">
+                  {/* The row tint the desktop grid uses, reduced to an edge. A
+                      full-card wash behind wrapping text costs more legibility
+                      on a small screen than the state is worth; the worded chip
+                      below carries the meaning instead. */}
+                  <span className={cn('absolute inset-y-0 left-0 w-1.5', st.stripe)} aria-hidden />
+
+                  <div className="space-y-2 py-2.5 pr-3 pl-4">
+                    {/* Who, and when it was ordered */}
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="min-w-0 text-[14px] leading-tight font-extrabold break-words text-slate-900 dark:text-slate-100">
+                        {r.customerName}
+                      </p>
+                      <span className="text-muted-foreground shrink-0 text-[11px] font-semibold tabular-nums">
+                        {formatDate(r.orderDate)}
+                      </span>
+                    </div>
+
+                    {/* What */}
+                    <div>
+                      <p className="text-[14.5px] leading-snug font-bold break-words text-slate-900 dark:text-slate-100">
+                        {r.productName || '—'}
+                      </p>
+                      {/* Only when there IS one — "Design —" on every card was a
+                          line of nothing on most of them. */}
+                      {r.designName && (
+                        <p className="text-muted-foreground mt-0.5 text-[12px] font-medium break-words">
+                          Design <span className="text-foreground font-semibold">{r.designName}</span>
+                        </p>
+                      )}
+                    </div>
+
+                    {/* State, priority, photos */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ring-inset', st.chip)}>{st.label}</span>
+                      {r.priority === 'URGENT' ? (
+                        <span className="inline-flex items-center gap-0.5 rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-600 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:ring-rose-400/25">
+                          <Flame className="size-2.5" /> URGENT
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold dark:bg-white/10">
+                          {r.priority || 'NORMAL'}
+                        </span>
+                      )}
+                      {/* A real 32px target, not the grid's 14px chip. */}
+                      <button
+                        type="button"
+                        onClick={() => setActivePhotoLine(r)}
+                        className={cn(
+                          'ml-auto inline-flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-bold transition-colors',
+                          r.photoCount
+                            ? 'border-indigo-300 bg-indigo-50 text-indigo-700 active:bg-indigo-100 dark:border-indigo-500/40 dark:bg-indigo-500/10 dark:text-indigo-300'
+                            : 'text-muted-foreground border-slate-200 bg-slate-50 active:bg-slate-100 dark:border-slate-800 dark:bg-slate-900',
+                        )}
+                      >
+                        <Camera className="size-3.5" />
+                        {r.photoCount ? <span className="tabular-nums">{r.photoCount}</span> : 'Photo'}
+                      </button>
+                    </div>
+
+                    {/* The read-only figures together, then Kalwat on its own.
+                        Kalwat is the one value that is typed, so it gets its own
+                        control rather than sitting among the others looking like
+                        another number to read past. */}
+                    <div className="grid grid-cols-3 gap-2 rounded-lg bg-slate-50 px-2.5 py-1.5 dark:bg-white/[0.04]">
+                      <Metric label="Bags" value={r.bags.toFixed(2)} />
+                      <Metric label="Dispatched" value={r.dispatchedBags ? r.dispatchedBags.toFixed(2) : '—'} />
+                      <Metric
+                        label="Remaining"
+                        value={qty(r.remaining)}
+                        className={
+                          r.remaining < 0
+                            ? 'text-rose-700 dark:text-rose-300'
+                            : r.remaining === 0
+                              ? 'text-emerald-700 dark:text-emerald-400'
+                              : undefined
+                        }
+                      />
+                    </div>
+                    <KalwatCell row={r} canEdit={canEdit} variant="card" />
+
+                    {r.comment && (
+                      <p className="text-muted-foreground border-l-2 border-amber-300 pl-2 text-[12px] break-words dark:border-amber-400/40">
+                        {r.comment}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Totals and paging in one bar, after the last card — the same four
+            figures as the desktop footer row, which cannot exist here because
+            there is no table for it to align to. Inside the list rather than
+            pinned above it, so it reads as the end of the list. */}
+        {rows.length > 0 && (
+          <div className="bg-card mt-2.5 space-y-1 rounded-xl border px-2.5 py-1.5 shadow-sm">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+              {(
+                [
+                  ['Bags', totals.bags.toFixed(2)],
+                  ['Kalwat', qty(totals.kalwat)],
+                  ['Disp', totals.dispatched ? totals.dispatched.toFixed(2) : '0.00'],
+                  ['Rem', qty(totals.remaining)],
+                ] as const
+              ).map(([label, value]) => (
+                <span key={label} className="flex items-baseline gap-1">
+                  <span className="text-muted-foreground text-[9px] font-bold tracking-widest uppercase">{label}</span>
+                  <span className="text-[12px] font-bold tabular-nums text-slate-800 dark:text-slate-100">{value}</span>
+                </span>
+              ))}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground text-[11px] font-medium">
+                <span className="text-foreground font-bold tabular-nums">{rows.length}</span> of{' '}
+                <span className="text-foreground font-bold tabular-nums">{data?.total ?? 0}</span>
+              </span>
+              <div className="ml-auto flex items-center gap-1.5">
+                <PageSizeSelect value={pageSize} onChange={setPageSize} hideLabel />
+                <span className="text-[11px] font-bold tabular-nums whitespace-nowrap">
+                  {data?.page ?? page}/{totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="size-8 rounded-[4px]"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page <= 1}
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="size-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="size-8 rounded-[4px]"
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={page >= totalPages}
+                  aria-label="Next page"
+                >
+                  <ChevronRight className="size-4" />
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Paging (desktop — phones use the compact bar inside the card list) */}
+      <div className="hidden items-center justify-between gap-3 sm:flex">
         <p className="text-muted-foreground text-sm">
           Page {data?.page ?? page} of {totalPages}
         </p>
@@ -376,7 +632,10 @@ export function DesignTrackPage() {
         </div>
       </div>
 
-      <p className="text-muted-foreground text-[11px]">
+      {/* Desktop only: on a phone the Kalwat control is labelled and visibly
+          tappable, so these two lines would only sit between the user and the
+          list they came for. */}
+      <p className="text-muted-foreground hidden text-[11px] sm:block">
         Kalwat is typed by hand — click the cell, enter the processed quantity, and it saves when you click away.
         Remaining is always <span className="font-semibold">Bags ordered − Dispatched</span> and updates itself.
       </p>
@@ -433,6 +692,16 @@ export function DesignTrackPage() {
           onClose={() => setViewingHistoryPhoto(null)}
         />
       )}
+    </div>
+  );
+}
+
+/** One labelled figure inside a phone card's number strip. */
+function Metric({ label, value, className }: { label: string; value: string; className?: string }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-muted-foreground text-[9px] font-bold tracking-widest uppercase">{label}</p>
+      <p className={cn('text-[13.5px] font-bold tabular-nums text-slate-800 dark:text-slate-100', className)}>{value}</p>
     </div>
   );
 }

@@ -16,7 +16,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
-import { Permissions } from '../common/decorators/permissions.decorator';
+import { AnyPermission, Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ExcelService } from '../excel/excel.service';
 import { ProductsService } from './products.service';
@@ -29,6 +29,7 @@ import {
   SetProductFlagsDto,
   UpdateProductDto,
 } from './dto/product.dto';
+import { ProductPhotoQueryDto } from './dto/product-photo.dto';
 
 const R = RESOURCES.PRODUCT;
 
@@ -57,6 +58,27 @@ export class ProductsController {
   @Permissions(perm(R, ACTIONS.VIEW))
   categoryFields() {
     return this.products.getCategoryFields();
+  }
+
+  // ── Photo gallery (Products → Product Photos) ──────────────────────────────
+  //
+  // The photos live on order lines, so an order viewer is admitted too: the same
+  // rows they can already reach one line at a time from Order Modify, only
+  // grouped the other way round. Both are read-only here — uploading and
+  // deleting stay on the screens that own the line.
+  //
+  // Declared ABOVE ':id' so "photos" is matched as a route, not parsed as a
+  // product id (which would 400 on the ParseIntPipe).
+  @Get('photos')
+  @AnyPermission(perm(R, ACTIONS.VIEW), perm(RESOURCES.ORDER, ACTIONS.VIEW))
+  photoGallery(@Query() query: ProductPhotoQueryDto) {
+    return this.products.photoGallery(query);
+  }
+
+  @Get('photos/filter-options')
+  @AnyPermission(perm(R, ACTIONS.VIEW), perm(RESOURCES.ORDER, ACTIONS.VIEW))
+  photoFilterOptions(@Query() query: ProductPhotoQueryDto) {
+    return this.products.photoFilterOptions(query);
   }
 
   @Put('category-fields')

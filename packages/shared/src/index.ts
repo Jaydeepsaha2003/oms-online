@@ -25,6 +25,7 @@ export * from './types/booking';
 export * from './types/quotation';
 export * from './types/dispatch';
 export * from './types/design-track';
+export * from './types/product-photo';
 export * from './types/challan';
 export * from './types/cheque';
 export * from './types/bank-account';
