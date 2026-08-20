@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Camera, ChevronLeft, ChevronRight, Download, Flame, Loader2, Pencil, RotateCcw, Search, Sparkles } from 'lucide-react';
+import { Camera, ChevronLeft, ChevronRight, Download, Flame, Loader2, Pencil, RotateCcw, Search, Sparkles, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import type { DesignTrackRow } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
-import { cn } from '@/lib/utils';
+import { cn, shortOrderCode } from '@/lib/utils';
 import { useDateFormat } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { usePageSize } from '@/hooks/use-page-size';
@@ -36,11 +36,22 @@ function rowState(r: DesignTrackRow): TrackState {
   return 'PART'; // part-way
 }
 
-const STATE_META: Record<TrackState, { label: string; tint: string; stripe: string; chip: string }> = {
+const STATE_META: Record<
+  TrackState,
+  {
+    label: string;
+    /** Row wash on the desktop grid. */
+    tint: string;
+    /** Left rail on a phone card. */
+    stripe: string;
+    /** Worded chip, both views. */
+    chip: string;
+  }
+> = {
   OVER: {
     label: 'Over-entered',
     tint: 'bg-rose-100 dark:bg-rose-500/15',
-    stripe: 'bg-rose-500',
+    stripe: 'bg-rose-800',
     chip: 'bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/10 dark:text-rose-300 dark:ring-rose-400/25',
   },
   NEW: {
@@ -58,12 +69,157 @@ const STATE_META: Record<TrackState, { label: string; tint: string; stripe: stri
   PART: {
     label: 'In progress',
     tint: 'bg-amber-50 dark:bg-amber-500/10',
-    stripe: 'bg-amber-400',
+    stripe: 'bg-amber-500',
     chip: 'bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-400/25',
   },
 };
 
 const rowTone = (r: DesignTrackRow): string => STATE_META[rowState(r)].tint;
+
+/** Same staggered entry the Dispatch Orders cards use — the list settles in
+ *  order instead of appearing all at once. */
+const TRACK_CARD_CSS = `
+.track-card-in { animation: trackCardIn .34s cubic-bezier(.22,1,.36,1) both; }
+@keyframes trackCardIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .track-card-in { animation: none; } }
+`;
+
+/**
+ * A tracked line as a phone card, in the Dispatch Orders card language.
+ *
+ * Not a `role="button"` like a dispatch card is: there is no sheet to open here,
+ * and the two things you CAN do — type a Kalwat, look at the photos — are real
+ * buttons inside it. Making the whole card tappable would only add a target that
+ * does nothing, and nesting those buttons inside it makes the inner taps
+ * unreliable on a phone.
+ */
+function TrackCard({
+  row: r,
+  index,
+  canEdit,
+  formatDate,
+  onPhotos,
+}: {
+  row: DesignTrackRow;
+  index: number;
+  canEdit: boolean;
+  formatDate: (v: string) => string;
+  onPhotos: () => void;
+}) {
+  const state = rowState(r);
+  const st = STATE_META[state];
+  const urgent = r.priority === 'URGENT';
+  const photoCount = r.photoCount ?? 0;
+  // Only the quantities this line actually carries — a fixed row of four with
+  // "—" in half of them is placeholders competing with the real figures.
+  const qtys = (
+    [
+      ['Bags', r.bags],
+      ['Disp', r.dispatchedBags ?? 0],
+      ['Rem', r.remaining],
+    ] as const
+  ).filter(([, v]) => v !== 0);
+
+  return (
+    <div
+      className={cn(
+        'bg-card relative overflow-hidden rounded-2xl border shadow-sm',
+        // URGENT tints the whole card as well as the rail, exactly as on
+        // Dispatch Orders: it has to be unmissable while scanning.
+        urgent && 'border-rose-300 bg-rose-50/60 ring-1 ring-rose-200 dark:border-rose-400/30 dark:bg-rose-500/[0.06] dark:ring-rose-400/20',
+      )}
+    >
+      {/* The same 1.5-wide rail a dispatch card uses, so a thumb scrolling
+          either screen reads colour the same way. */}
+      <span className={cn('absolute inset-y-0 left-0 w-1.5', urgent ? 'bg-rose-800' : st.stripe)} aria-hidden />
+      <div className="track-card-in space-y-2.5 py-3.5 pr-3.5 pl-5 text-[13px]" style={{ animationDelay: `${Math.min(index, 10) * 45}ms` }}>
+        {/* Order code + priority left, state right — the dispatch card's top row. */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="bg-primary/10 text-primary rounded-md px-2 py-0.5 font-mono text-[13px] font-bold">
+              {shortOrderCode(r.orderCode, r.orderId)}
+            </span>
+            {urgent ? (
+              <span className="inline-flex items-center gap-0.5 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-500/20 dark:text-rose-300">
+                <Flame className="size-2.5" /> URGENT
+              </span>
+            ) : (
+              <span className="text-muted-foreground rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold dark:bg-white/10">
+                {r.priority || 'NORMAL'}
+              </span>
+            )}
+          </div>
+          <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ring-inset', st.chip)}>{st.label}</span>
+        </div>
+
+        <div>
+          <p className="text-[16px] leading-tight font-semibold break-words">{r.customerName}</p>
+          <p className="text-muted-foreground mt-1 text-[12px]">Ordered {formatDate(r.orderDate)}</p>
+        </div>
+
+        <div className="bg-muted/50 rounded-lg px-3 py-1.5">
+          <p className="text-[14.5px] leading-snug font-semibold break-words">{r.productName || '—'}</p>
+          {r.designName && <p className="text-muted-foreground text-[12px] break-words">{r.designName}</p>}
+        </div>
+
+        {/* Quantity pills + the round photo target, as on a dispatch card. */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-wrap gap-1.5">
+            {qtys.length ? (
+              qtys.map(([label, v]) => (
+                <span
+                  key={label}
+                  className={cn(
+                    'inline-flex items-baseline gap-1 rounded-full border px-2.5 py-1',
+                    label === 'Rem' && r.remaining < 0
+                      ? 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-400/25 dark:bg-rose-500/10 dark:text-rose-300'
+                      : 'border-primary/15 bg-primary/5 text-primary',
+                  )}
+                >
+                  <span className="text-[11px] font-semibold uppercase opacity-70">{label}</span>
+                  <span className="text-[14px] font-bold tabular-nums">{qty(v)}</span>
+                </span>
+              ))
+            ) : (
+              <span className="text-muted-foreground text-[13px]">Nothing pending</span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onPhotos}
+            className={cn(
+              'relative flex size-9 shrink-0 items-center justify-center rounded-full ring-1 active:scale-95',
+              photoCount
+                ? 'bg-indigo-50 text-indigo-600 ring-indigo-200 dark:bg-indigo-400/10 dark:text-indigo-300 dark:ring-indigo-400/25'
+                : 'text-muted-foreground bg-slate-50 ring-slate-200 dark:bg-white/5 dark:ring-white/10',
+            )}
+            aria-label={photoCount ? `View ${photoCount} photo${photoCount === 1 ? '' : 's'}` : 'Add a reference photo'}
+          >
+            <Camera className="size-4.5" />
+            {photoCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-indigo-600 text-[9px] font-bold tabular-nums text-white">
+                {photoCount > 9 ? '9+' : photoCount}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Kalwat is the one thing typed on this screen, so it sits apart from
+            the read-only pills, above the fold of the comment, at full width. */}
+        <div className="border-t pt-2">
+          <KalwatCell row={r} canEdit={canEdit} variant="card" />
+        </div>
+
+        {r.comment && (
+          <div className="flex items-start gap-1.5 rounded-lg bg-rose-50 px-2.5 py-2 ring-1 ring-rose-100 dark:bg-rose-500/10 dark:ring-rose-400/20">
+            <TriangleAlert className="mt-[1px] size-3.5 shrink-0 text-rose-600" />
+            <p className="text-[13.5px] leading-snug font-bold break-words text-rose-600 dark:text-rose-300">{r.comment}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 /**
  * Click-to-edit Kalwat cell: shows the number, becomes an input on click, saves
@@ -443,120 +599,27 @@ export function DesignTrackPage() {
       </div>
 
       {/* ── Phones: one card per line ─────────────────────────────────────────
-          Nothing truncates here. A card is the ONLY view of this line on a
-          phone — there is no column to widen and no hover title to fall back on
-          — so a clipped product name, design name or comment is information the
-          user simply cannot reach. Long values wrap instead.
+          Built in the same idiom as the Dispatch Orders cards — the same left
+          rail, order-code chip, muted product block, primary quantity pills,
+          round tap targets and staggered entry — because these two screens are
+          worked one after the other on the same phone, and two different card
+          languages for the same kind of row is just friction.
 
-          Every figure carries its own label for the same reason: the sticky
-          header naming the nine columns does not exist in this view. */}
-      <div className="sm:hidden">
+          Nothing truncates: a card is the ONLY view of this line on a phone, so
+          a clipped product name, design or comment is information the user
+          cannot reach. Long values wrap. */}
+      <div className="space-y-3 px-0.5 sm:hidden">
+        <style>{TRACK_CARD_CSS}</style>
         {isLoading ? (
-          <div className="text-muted-foreground flex h-24 items-center justify-center rounded-2xl border">
-            <Loader2 className="size-5 animate-spin" />
-          </div>
+          [0, 1, 2, 3].map((i) => <div key={i} className="bg-muted/40 h-44 animate-pulse rounded-2xl border" />)
         ) : rows.length === 0 ? (
-          <div className="text-muted-foreground rounded-2xl border px-4 py-10 text-center text-sm">
+          <div className="text-muted-foreground bg-card flex flex-col items-center gap-2 rounded-2xl border border-dashed px-4 py-12 text-center text-sm">
+            <Sparkles className="size-9 text-blue-500" />
             {nothingTracked ? 'Nothing tracked yet.' : 'No pending lines for the tracked designs.'}
           </div>
         ) : (
-          <div className="space-y-2.5">
-            {rows.map((r) => {
-              const st = STATE_META[rowState(r)];
-              return (
-                <div key={r.orderItemId} className="bg-card relative overflow-hidden rounded-2xl border shadow-sm ring-1 ring-black/[0.02]">
-                  {/* The row tint the desktop grid uses, reduced to an edge. A
-                      full-card wash behind wrapping text costs more legibility
-                      on a small screen than the state is worth; the worded chip
-                      below carries the meaning instead. */}
-                  <span className={cn('absolute inset-y-0 left-0 w-1.5', st.stripe)} aria-hidden />
-
-                  <div className="space-y-2 py-2.5 pr-3 pl-4">
-                    {/* Who, and when it was ordered */}
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="min-w-0 text-[14px] leading-tight font-extrabold break-words text-slate-900 dark:text-slate-100">
-                        {r.customerName}
-                      </p>
-                      <span className="text-muted-foreground shrink-0 text-[11px] font-semibold tabular-nums">
-                        {formatDate(r.orderDate)}
-                      </span>
-                    </div>
-
-                    {/* What */}
-                    <div>
-                      <p className="text-[14.5px] leading-snug font-bold break-words text-slate-900 dark:text-slate-100">
-                        {r.productName || '—'}
-                      </p>
-                      {/* Only when there IS one — "Design —" on every card was a
-                          line of nothing on most of them. */}
-                      {r.designName && (
-                        <p className="text-muted-foreground mt-0.5 text-[12px] font-medium break-words">
-                          Design <span className="text-foreground font-semibold">{r.designName}</span>
-                        </p>
-                      )}
-                    </div>
-
-                    {/* State, priority, photos */}
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ring-inset', st.chip)}>{st.label}</span>
-                      {r.priority === 'URGENT' ? (
-                        <span className="inline-flex items-center gap-0.5 rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-600 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:ring-rose-400/25">
-                          <Flame className="size-2.5" /> URGENT
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold dark:bg-white/10">
-                          {r.priority || 'NORMAL'}
-                        </span>
-                      )}
-                      {/* A real 32px target, not the grid's 14px chip. */}
-                      <button
-                        type="button"
-                        onClick={() => setActivePhotoLine(r)}
-                        className={cn(
-                          'ml-auto inline-flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-bold transition-colors',
-                          r.photoCount
-                            ? 'border-indigo-300 bg-indigo-50 text-indigo-700 active:bg-indigo-100 dark:border-indigo-500/40 dark:bg-indigo-500/10 dark:text-indigo-300'
-                            : 'text-muted-foreground border-slate-200 bg-slate-50 active:bg-slate-100 dark:border-slate-800 dark:bg-slate-900',
-                        )}
-                      >
-                        <Camera className="size-3.5" />
-                        {r.photoCount ? <span className="tabular-nums">{r.photoCount}</span> : 'Photo'}
-                      </button>
-                    </div>
-
-                    {/* The read-only figures together, then Kalwat on its own.
-                        Kalwat is the one value that is typed, so it gets its own
-                        control rather than sitting among the others looking like
-                        another number to read past. */}
-                    <div className="grid grid-cols-3 gap-2 rounded-lg bg-slate-50 px-2.5 py-1.5 dark:bg-white/[0.04]">
-                      <Metric label="Bags" value={r.bags.toFixed(2)} />
-                      <Metric label="Dispatched" value={r.dispatchedBags ? r.dispatchedBags.toFixed(2) : '—'} />
-                      <Metric
-                        label="Remaining"
-                        value={qty(r.remaining)}
-                        className={
-                          r.remaining < 0
-                            ? 'text-rose-700 dark:text-rose-300'
-                            : r.remaining === 0
-                              ? 'text-emerald-700 dark:text-emerald-400'
-                              : undefined
-                        }
-                      />
-                    </div>
-                    <KalwatCell row={r} canEdit={canEdit} variant="card" />
-
-                    {r.comment && (
-                      <p className="text-muted-foreground border-l-2 border-amber-300 pl-2 text-[12px] break-words dark:border-amber-400/40">
-                        {r.comment}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          rows.map((r, i) => <TrackCard key={r.orderItemId} row={r} index={i} canEdit={canEdit} formatDate={formatDate} onPhotos={() => setActivePhotoLine(r)} />)
         )}
-
         {/* Totals and paging in one bar, after the last card — the same four
             figures as the desktop footer row, which cannot exist here because
             there is no table for it to align to. Inside the list rather than
