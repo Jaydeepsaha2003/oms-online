@@ -142,8 +142,10 @@ export class OrdersController {
   @Post()
   @Permissions(perm(R, ACTIONS.CREATE))
   @Audit({ action: ACTIONS.CREATE, resource: R, description: 'Created a sales order' })
-  create(@Body() dto: CreateOrderDto) {
-    return this.orders.create(dto);
+  create(@Body() dto: CreateOrderDto, @CurrentUser() user: AuthenticatedUser | undefined) {
+    // The actor is passed only so they are left OUT of the new-order alert —
+    // nobody is notified about their own order.
+    return this.orders.create(dto, { id: user?.id ?? null, name: user?.name ?? null });
   }
 
   @Patch(':id/status')
@@ -165,6 +167,7 @@ export class OrdersController {
     // use. It gates ONE thing here: moving the completion date after dispatch.
     return this.orders.update(id, dto, user?.name ?? null, {
       isSuperAdmin: user?.permissions?.includes(ALL_PERMISSIONS) ?? false,
+      actorId: user?.id ?? null,
     });
   }
 
