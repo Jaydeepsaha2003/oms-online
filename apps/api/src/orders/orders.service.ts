@@ -18,6 +18,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { formatDate } from '../common/date.util';
 import { PdfService } from '../pdf/pdf.service';
 import { BookingsService } from '../bookings/bookings.service';
+import { ActivityNotifier } from '../notifications/activity-notifier.service';
 import { toNum, toStr, uc } from '../common/coerce';
 import { readCategoryFields } from '../common/category-fields';
 import { UPLOADS_DIR } from '../uploads/uploads.constants';
@@ -52,6 +53,7 @@ export class OrdersService {
     private readonly prisma: PrismaService,
     private readonly pdf: PdfService,
     private readonly bookings: BookingsService,
+    private readonly notifier: ActivityNotifier,
   ) {}
 
   /**
@@ -241,7 +243,7 @@ export class OrdersService {
     });
   }
 
-  async create(dto: CreateOrderDto): Promise<OrderDto> {
+  async create(dto: CreateOrderDto, actor?: { id?: string | null; name?: string | null }): Promise<OrderDto> {
     const data = await this.toHeaderData(dto);
     // Booking-sourced lines are re-priced at their booking's frozen date rates and
     // checked against what's left on the booking before anything is written.
@@ -255,7 +257,17 @@ export class OrdersService {
       include: INCLUDE,
     });
     await this.recomputeBookings(this.bookingIdsOf(row.items));
-    return this.toDto(await this.ensureCode(row));
+    const created = await this.ensureCode(row);
+    // Tell the floor a new order landed — they have to dispatch and process it.
+    this.notifier.orderCreated({
+      actorId: actor?.id,
+      userName: actor?.name,
+      orderId: created.id,
+      orderCode: created.code,
+      customerName: created.customerName,
+      itemCount: created.items.filter((i) => i.status !== 'CANCELLED').length,
+    });
+    return this.toDto(created);
   }
 
   /**
@@ -268,7 +280,7 @@ export class OrdersService {
     id: number,
     dto: UpdateOrderDto,
     actorName?: string | null,
-    opts?: { revivingQuotation?: boolean; isSuperAdmin?: boolean },
+    opts?: { revivingQuotation?: boolean; isSuperAdmin?: boolean; actorId?: string | null },
   ): Promise<OrderDto> {
     const current = await this.prisma.order.findUnique({
       where: { id },
@@ -571,7 +583,20 @@ export class OrdersService {
       [...this.bookingIdsOf(row!.items), ...bookingsBefore.map((b) => b.bookingId!)],
       actorName,
     );
-    return this.toDto(await this.ensureCode(row!));
+    const saved = await this.ensureCode(row!);
+    // Reviving a parked order IS the quotation conversion, not an edit — the
+    // conversion path announces itself, so this would double-report it.
+    if (!opts?.revivingQuotation) {
+      this.notifier.orderUpdated({
+        actorId: opts?.actorId,
+        userName: actorName,
+        orderId: saved.id,
+        orderCode: saved.code,
+        customerName: saved.customerName,
+        itemCount: saved.items.filter((i) => i.status !== 'CANCELLED').length,
+      });
+    }
+    return this.toDto(saved);
   }
 
   async remove(id: number, actorName?: string | null): Promise<void> {

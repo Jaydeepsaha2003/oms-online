@@ -11,6 +11,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { DispatchService } from '../dispatch/dispatch.service';
 import { SettingsService } from '../settings/settings.service';
+import { ActivityNotifier } from '../notifications/activity-notifier.service';
 import { DesignTrackQueryDto } from './dto/design-track.dto';
 
 /** A pending line paired with its hand-entered Kalwat, ready to become a row. */
@@ -40,6 +41,7 @@ export class DesignTrackService {
     private readonly prisma: PrismaService,
     private readonly dispatch: DispatchService,
     private readonly settings: SettingsService,
+    private readonly notifier: ActivityNotifier,
   ) {}
 
   /**
@@ -372,7 +374,12 @@ export class DesignTrackService {
    * is first typed into — the absence of a row is what means "not started",
    * which a 0 could not express.
    */
-  async setKalwat(orderItemId: number, kalwat: number | null, userName?: string | null): Promise<DesignTrackRow> {
+  async setKalwat(
+    orderItemId: number,
+    kalwat: number | null,
+    userName?: string | null,
+    actorId?: string | null,
+  ): Promise<DesignTrackRow> {
     await this.prisma.designTrackEntry.upsert({
       where: { orderItemId },
       update: { kalwat, updatedBy: userName ?? null },
@@ -402,7 +409,17 @@ export class DesignTrackService {
         remaining: 0,
       };
     }
-    return this.toRow(tracked);
+    const row = this.toRow(tracked);
+    this.notifier.designTrackUpdated({
+      actorId,
+      userName,
+      orderItemId,
+      customerName: row.customerName,
+      productName: row.productName,
+      designType: row.designType,
+      kalwat,
+    });
+    return row;
   }
 
   /** Selected + available design types, for the Settings picker. */

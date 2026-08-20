@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Ban, ChevronLeft, ChevronRight, ExternalLink, Filter, Loader2, Pencil, RotateCcw, Save, Trash2, Truck, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { OrderDto, OrderInput, OrderItemDto, QtyField } from '@oms/shared';
-import { isUncommittedOrder, ORDER_LINE_EXPORT_COLUMNS, ORDER_PRIORITIES, qtyOrderForCategory, resolveSpecialRates } from '@oms/shared';
+import { isUncommittedOrder, ORDER_LINE_EXPORT_COLUMNS, ORDER_PRIORITIES, qtyOrderForCategory, resolveLineDesignParts, resolveSpecialRates } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn, shortOrderCode } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
@@ -80,6 +80,11 @@ const isLogoDesign = (designType?: string | null) => (designType ?? '').toUpperC
 interface Row {
   order: OrderDto;
   line: OrderItemDto;
+  /** Design TYPE (parent, "WL+TOOL+LOGO") and NAME (child, "BUBBLE"), told
+   *  apart by resolveLineDesignParts. Reading line.designType directly put the
+   *  NAME in the Design Type column on imported rows, and "NA" where the type
+   *  actually sat in line.design. */
+  design: { type: string | null; name: string | null };
 }
 
 /** Per-line shipping state. Nothing renders for an undispatched line — a chip on
@@ -166,7 +171,8 @@ const COLUMNS: DataColumn<Row>[] = [
       </span>
     ),
   },
-  { id: 'designType', label: 'Design Type', cell: (r) => <span className={TEXT_CELL}>{r.line.designType || '—'}</span> },
+  { id: 'designType', label: 'Design Type', cell: (r) => <span className={TEXT_CELL}>{r.design.type || '—'}</span> },
+  { id: 'designName', label: 'Design Name', cell: (r) => <span className={TEXT_CELL}>{r.design.name || '—'}</span> },
   {
     id: 'priority',
     label: 'Priority',
@@ -226,6 +232,9 @@ export function OrderModifyPage() {
   // Same filters drive the dropdowns, so each one only offers values that would
   // actually return rows next to the others.
   const { data: filterOptions } = useOrderFilterOptions(filters);
+  // Shared with the line editor (React Query dedupes the request) — needed here
+  // to tell a design TYPE from a design NAME on each row.
+  const { data: lookups } = useOrderLookups();
   const save = useSaveOrder();
   const { data: settings } = useSettings();
   const orderTypeOptions = useMemo(() => settingValues(settings, 'ORDER_TYPE'), [settings]);
@@ -276,9 +285,18 @@ export function OrderModifyPage() {
   // filters, so everything here is already a row the user asked for — no
   // post-flatten filtering. (It used to only narrow the parent ORDER, which is
   // why filtering by one product still listed that order's other products.)
+  // The Design master's own type set — the tiebreak resolveLineDesignParts uses
+  // when only one of the two design columns is filled.
+  const knownDesignTypes = useMemo(
+    () => new Set((lookups?.designs ?? []).map((d) => d.designType.trim().toUpperCase())),
+    [lookups],
+  );
   const rows = useMemo<Row[]>(
-    () => orders.flatMap((order) => order.items.map((line) => ({ order, line }))),
-    [orders],
+    () =>
+      orders.flatMap((order) =>
+        order.items.map((line) => ({ order, line, design: resolveLineDesignParts(line, knownDesignTypes) })),
+      ),
+    [orders, knownDesignTypes],
   );
 
   // Quantity totals for the lines this page is holding — deliberately the same
@@ -1474,11 +1492,52 @@ function RateChoiceDialog({
           <DialogTitle>This changes the line’s rate</DialogTitle>
         </DialogHeader>
         <p className="text-muted-foreground text-sm">
-          <span className="text-foreground font-medium">{label}</span> prices at{' '}
-          <span className="text-foreground font-semibold">{inr(newRate)}</span>
-          {asOf ? ` as of ${formatDate(asOf)}` : ''}, but this line is currently{' '}
+          <span className="text-foreground font-medium">{label}</span> is priced{' '}
+          <span className="text-foreground font-semibold">{inr(newRate)}</span> on the rate list
+          {asOf ? ` as of ${formatDate(asOf)}` : ''}. This line was saved at{' '}
           <span className="text-foreground font-semibold">{inr(oldRate)}</span>.
         </p>
+
+        {/* WHICH PART moved, not just the total. A line can shift by ₹25 because
+            the design rate changed while the product rate stood still — the two
+            totals alone gave no way to tell that apart, so "use the current
+            price" read as an unexplained jump. */}
+        <div className="rounded-md border text-sm">
+          <div className="text-muted-foreground grid grid-cols-3 gap-2 border-b px-3 py-1.5 text-[11px] font-bold tracking-wide uppercase">
+            <span />
+            <span className="text-right">On this line</span>
+            <span className="text-right">Rate list</span>
+          </div>
+          {(
+            [
+              ['Product', oldProductRate ?? 0, newProductRate ?? 0, true],
+              ['Design', oldDesignRate ?? 0, newDesignRate ?? 0, hasDesignRate],
+            ] as const
+          )
+            .filter(([, , , show]) => show)
+            .map(([name, was, now]) => (
+              <div
+                key={name}
+                className={cn('grid grid-cols-3 gap-2 px-3 py-1.5', was !== now && 'bg-amber-50 dark:bg-amber-400/10')}
+              >
+                <span className="text-muted-foreground">
+                  {name} ₹
+                  {was !== now && (
+                    <span className="ml-1 text-[11px] font-bold tracking-wide text-amber-700 uppercase dark:text-amber-400">changed</span>
+                  )}
+                </span>
+                <span className="text-right tabular-nums">{inr(was)}</span>
+                <span className={cn('text-right tabular-nums', was !== now && 'font-bold text-amber-700 dark:text-amber-400')}>
+                  {inr(now)}
+                </span>
+              </div>
+            ))}
+          <div className="grid grid-cols-3 gap-2 border-t px-3 py-1.5 font-semibold">
+            <span>Total</span>
+            <span className="text-right tabular-nums">{inr(oldRate)}</span>
+            <span className="text-right tabular-nums">{inr(newRate)}</span>
+          </div>
+        </div>
 
         {custom ? (
           <div className="space-y-3">
@@ -1515,12 +1574,12 @@ function RateChoiceDialog({
           ) : (
             <>
               <Button variant="outline" onClick={() => onDone({ kind: 'keep' })}>
-                Keep {inr(oldRate)}
+                Keep {inr(oldRate)} (this line)
               </Button>
               <Button variant="outline" onClick={() => setCustom(true)}>
                 Custom rate…
               </Button>
-              <Button onClick={() => onDone({ kind: 'new' })}>Use {inr(newRate)}</Button>
+              <Button onClick={() => onDone({ kind: 'new' })}>Use {inr(newRate)} (rate list)</Button>
             </>
           )}
         </DialogFooter>

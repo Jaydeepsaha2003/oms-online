@@ -183,7 +183,20 @@ export class DispatchNotifier {
         const flags = await this.settings.getDispatchAlerts();
         if (!flags.enabled || !flags[event]) return;
 
-        const all = await this.audience.userIdsWith(perm(RESOURCES.DISPATCH_ALERT, ACTIONS.NOTIFY));
+        // Anyone who works the dispatch floor, plus anyone explicitly granted
+        // the dedicated alert permission.
+        //
+        // This used to ask ONLY for dispatchalert:notify, which no role holds
+        // except super_admin's blanket grant — and super_admin is normally the
+        // one performing the action, so it was filtered straight back out as the
+        // actor. The audience resolved to nobody and these alerts reached no
+        // phone at all. Reusing dispatch:view (which every operator already has,
+        // because it gates the screen they work on) makes them land without
+        // anybody having to be granted a new permission first.
+        const all = await this.audience.userIdsWithAny([
+          perm(RESOURCES.DISPATCH_ALERT, ACTIONS.NOTIFY),
+          perm(RESOURCES.DISPATCH, ACTIONS.VIEW),
+        ]);
         // Nobody is told about their own action.
         const recipients = actorId ? all.filter((id) => id !== actorId) : all;
         // An empty audience sends NOTHING. "Nobody is allowed" must never become

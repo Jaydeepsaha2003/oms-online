@@ -5,6 +5,7 @@ import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { toExcelDate } from '../common/date.util';
 import { ExcelService } from '../excel/excel.service';
 import { DesignTrackService } from './design-track.service';
@@ -72,8 +73,10 @@ export class DesignTrackController {
   setKalwat(
     @Param('orderItemId', ParseIntPipe) orderItemId: number,
     @Body() dto: SetKalwatDto,
-    @CurrentUser('name') userName: string,
+    @CurrentUser() user: AuthenticatedUser | undefined,
   ) {
-    return this.designTrack.setKalwat(orderItemId, dto.kalwat, userName);
+    // The id is passed only so the person who typed the figure is left OUT of
+    // the alert about it.
+    return this.designTrack.setKalwat(orderItemId, dto.kalwat, user?.name ?? null, user?.id ?? null);
   }
 }
