@@ -253,8 +253,26 @@ export class DesignTrackService {
       comment: line.comment,
       kalwat,
       dispatchedBags,
-      // Remaining pending bags still to dispatch (bags ordered − dispatched).
-      remaining: r2(line.remBags),
+      /*
+       * What is still to be processed: bags ordered, less whichever measure of
+       * progress is FURTHER ALONG — the Kalwat typed in, or the quantity already
+       * dispatched.
+       *
+       * Dispatched is a floor on progress, not an alternative to it: goods
+       * cannot ship before they are processed, so a line with 3.5 of 5 bags gone
+       * has had at least 3.5 processed whatever anybody typed. Taking the max
+       * means a forgotten or understated Kalwat can never make the screen claim
+       * less progress than physically happened, and a fully dispatched line
+       * reads 0 — which is the whole point: there is nothing left to do on it.
+       *
+       * Two earlier versions were each wrong in one direction. `line.remBags`
+       * (bags - dispatched) ignored Kalwat entirely, so the one number the screen
+       * asks you to type moved nothing. `bags - kalwat` ignored dispatch, so a
+       * line that had shipped in full still showed its whole quantity as
+       * outstanding. Negative still means over-entered — the typo this screen
+       * exists to catch — because only Kalwat can exceed the order.
+       */
+      remaining: r2(line.bags - Math.max(kalwat ?? 0, dispatchedBags)),
       photos,
       photoCount: photos.length,
       sampleUrl: photos[0]?.url ?? null,

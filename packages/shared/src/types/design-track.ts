@@ -42,9 +42,18 @@ export interface DesignTrackRow {
   kalwat: number | null;
   /** Bags dispatched so far on this order line. */
   dispatchedBags: number;
-  /** Always `bags - (kalwat ?? 0)`; derived server-side so the grid, the Excel
-   *  export and any future consumer can't drift apart. Negative means more was
-   *  entered than was ordered — usually a typo, and shown as such. */
+  /**
+   * Still to process: `bags - max(kalwat ?? 0, dispatchedBags)`.
+   *
+   * Whichever measure of progress is further along wins, because goods cannot
+   * ship before they are processed — so a fully dispatched line reads 0 even
+   * with no Kalwat typed, and an understated Kalwat cannot claim less progress
+   * than actually happened. Negative means more was ENTERED than was ordered
+   * (only Kalwat can exceed the order) — usually a typo, and shown as such.
+   *
+   * Derived server-side so the grid, the phone cards and the Excel export
+   * cannot drift apart.
+   */
   remaining: number;
   /** Reference photos attached to this line or available from party+item history. */
   photos?: DesignTrackPhotoDto[];

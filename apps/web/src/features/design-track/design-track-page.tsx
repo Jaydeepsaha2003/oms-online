@@ -24,15 +24,20 @@ const qty = (v: number | null) => (v == null ? '—' : v.toLocaleString('en-IN',
  *
  * Named states rather than a bare colour, because the two views need the same
  * judgement expressed differently — the desktop grid tints the whole row, while
- * a phone card gets an edge stripe and a worded chip. A colour alone cannot be
- * read on a phone with no legend and no neighbouring rows to compare against.
+ * a phone card says it in words. A colour alone cannot be read on a phone with
+ * no legend and no neighbouring rows to compare against, which is also why the
+ * card has no coloured rail: on a list where most lines are "not started" it
+ * painted the whole screen red while adding nothing the chip did not say.
  */
 type TrackState = 'OVER' | 'NEW' | 'DONE' | 'PART';
 
 function rowState(r: DesignTrackRow): TrackState {
-  if (r.remaining < 0) return 'OVER'; // more processed than ordered
-  if (r.kalwat == null) return 'NEW'; // nothing entered yet
-  if (r.remaining === 0) return 'DONE'; // complete
+  if (r.remaining < 0) return 'OVER'; // more entered than ordered
+  // Checked BEFORE "nothing typed yet": a line dispatched in full has nothing
+  // left to do, and calling it "Not started" beside a Remaining of 0 would
+  // contradict itself on the same card.
+  if (r.remaining === 0) return 'DONE';
+  if (r.kalwat == null) return 'NEW'; // nothing entered, and work still to do
   return 'PART'; // part-way
 }
 
@@ -42,35 +47,36 @@ const STATE_META: Record<
     label: string;
     /** Row wash on the desktop grid. */
     tint: string;
-    /** Left rail on a phone card. */
-    stripe: string;
-    /** Worded chip, both views. */
+    /** Worded chip on the desktop grid (ringed, to sit on a tinted row). */
     chip: string;
+    /** Filled chip for the phone card, where there is no row tint under it and
+     *  a ring would only add a third border to a card that already has two. */
+    chipSolid: string;
   }
 > = {
   OVER: {
     label: 'Over-entered',
     tint: 'bg-rose-100 dark:bg-rose-500/15',
-    stripe: 'bg-rose-800',
     chip: 'bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/10 dark:text-rose-300 dark:ring-rose-400/25',
+    chipSolid: 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300',
   },
   NEW: {
     label: 'Not started',
     tint: 'bg-red-50 dark:bg-red-500/10',
-    stripe: 'bg-red-400',
     chip: 'bg-red-50 text-red-700 ring-red-200 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-400/25',
+    chipSolid: 'bg-slate-100 text-slate-600 dark:bg-white/10 dark:text-slate-300',
   },
   DONE: {
     label: 'Done',
     tint: 'bg-emerald-50 dark:bg-emerald-500/10',
-    stripe: 'bg-emerald-500',
     chip: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-400/25',
+    chipSolid: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
   },
   PART: {
     label: 'In progress',
     tint: 'bg-amber-50 dark:bg-amber-500/10',
-    stripe: 'bg-amber-500',
     chip: 'bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-400/25',
+    chipSolid: 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300',
   },
 };
 
@@ -110,79 +116,80 @@ function TrackCard({
   const st = STATE_META[state];
   const urgent = r.priority === 'URGENT';
   const photoCount = r.photoCount ?? 0;
-  // Only the quantities this line actually carries — a fixed row of four with
-  // "—" in half of them is placeholders competing with the real figures.
-  const qtys = (
-    [
-      ['Bags', r.bags],
-      ['Disp', r.dispatchedBags ?? 0],
-      ['Rem', r.remaining],
-    ] as const
-  ).filter(([, v]) => v !== 0);
+  /*
+   * All three pills, always — including at zero.
+   *
+   * These were filtered on `v !== 0`, which is right for a card that lists
+   * whichever units a line happens to carry, and wrong here: Design Track shows
+   * PENDING lines, so "dispatched" is legitimately 0 on most of them, and hiding
+   * the pill made the figure look missing rather than nil. A zero is the answer
+   * to "how much has shipped?", not the absence of one.
+   */
+  const qtys = [
+    ['Bags', r.bags],
+    ['Disp', r.dispatchedBags ?? 0],
+    ['Rem', r.remaining],
+  ] as const;
 
   return (
     <div
       className={cn(
-        'bg-card relative overflow-hidden rounded-2xl border shadow-sm',
-        // URGENT tints the whole card as well as the rail, exactly as on
-        // Dispatch Orders: it has to be unmissable while scanning.
-        urgent && 'border-rose-300 bg-rose-50/60 ring-1 ring-rose-200 dark:border-rose-400/30 dark:bg-rose-500/[0.06] dark:ring-rose-400/20',
+        'bg-card relative overflow-hidden rounded-2xl border shadow-sm ring-1 ring-black/[0.03] dark:ring-white/[0.04]',
+        // URGENT still tints the whole card — that one IS worth shouting about,
+        // and unlike the progress state it is rare enough to stay quiet.
+        urgent && 'border-rose-300 bg-rose-50/60 ring-rose-200 dark:border-rose-400/30 dark:bg-rose-500/[0.06] dark:ring-rose-400/20',
       )}
     >
-      {/* The same 1.5-wide rail a dispatch card uses, so a thumb scrolling
-          either screen reads colour the same way. */}
-      <span className={cn('absolute inset-y-0 left-0 w-1.5', urgent ? 'bg-rose-800' : st.stripe)} aria-hidden />
-      <div className="track-card-in space-y-2.5 py-3.5 pr-3.5 pl-5 text-[13px]" style={{ animationDelay: `${Math.min(index, 10) * 45}ms` }}>
+      <div className="track-card-in space-y-2.5 p-3.5 text-[13px]" style={{ animationDelay: `${Math.min(index, 10) * 45}ms` }}>
         {/* Order code + priority left, state right — the dispatch card's top row. */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="bg-primary/10 text-primary rounded-md px-2 py-0.5 font-mono text-[13px] font-bold">
+            <span className="bg-primary/10 text-primary rounded-lg px-2 py-0.5 font-mono text-[12.5px] font-bold">
               {shortOrderCode(r.orderCode, r.orderId)}
             </span>
-            {urgent ? (
+            {/* URGENT only. Every card here also carries a state chip on the
+                right, so a "NORMAL" chip on the left was a third badge that
+                never varied — and the absence of an urgent flag IS normal. */}
+            {urgent && (
               <span className="inline-flex items-center gap-0.5 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-500/20 dark:text-rose-300">
                 <Flame className="size-2.5" /> URGENT
               </span>
-            ) : (
-              <span className="text-muted-foreground rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold dark:bg-white/10">
-                {r.priority || 'NORMAL'}
-              </span>
             )}
           </div>
-          <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ring-inset', st.chip)}>{st.label}</span>
+          <span className={cn('shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold', st.chipSolid)}>{st.label}</span>
         </div>
 
         <div>
-          <p className="text-[16px] leading-tight font-semibold break-words">{r.customerName}</p>
-          <p className="text-muted-foreground mt-1 text-[12px]">Ordered {formatDate(r.orderDate)}</p>
+          <p className="text-[16.5px] leading-tight font-bold break-words text-slate-900 dark:text-slate-50">{r.customerName}</p>
+          <p className="text-muted-foreground mt-0.5 text-[11.5px] font-medium">Ordered {formatDate(r.orderDate)}</p>
         </div>
 
-        <div className="bg-muted/50 rounded-lg px-3 py-1.5">
+        <div className="bg-muted/60 rounded-xl px-3 py-2">
           <p className="text-[14.5px] leading-snug font-semibold break-words">{r.productName || '—'}</p>
-          {r.designName && <p className="text-muted-foreground text-[12px] break-words">{r.designName}</p>}
+          {r.designName && (
+            <p className="text-muted-foreground mt-0.5 text-[11.5px] font-medium tracking-wide break-words">{r.designName}</p>
+          )}
         </div>
 
         {/* Quantity pills + the round photo target, as on a dispatch card. */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 flex-wrap gap-1.5">
-            {qtys.length ? (
-              qtys.map(([label, v]) => (
+            {qtys.map(([label, v]) => (
                 <span
                   key={label}
                   className={cn(
-                    'inline-flex items-baseline gap-1 rounded-full border px-2.5 py-1',
+                    'inline-flex items-baseline gap-1.5 rounded-full px-2.5 py-1',
                     label === 'Rem' && r.remaining < 0
-                      ? 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-400/25 dark:bg-rose-500/10 dark:text-rose-300'
-                      : 'border-primary/15 bg-primary/5 text-primary',
+                      ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300'
+                      : label === 'Rem' && r.remaining === 0
+                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
+                        : 'bg-primary/8 text-primary',
                   )}
                 >
-                  <span className="text-[11px] font-semibold uppercase opacity-70">{label}</span>
-                  <span className="text-[14px] font-bold tabular-nums">{qty(v)}</span>
+                  <span className="text-[10px] font-bold tracking-wider uppercase opacity-65">{label}</span>
+                  <span className="text-[14px] leading-none font-extrabold tabular-nums">{qty(v)}</span>
                 </span>
-              ))
-            ) : (
-              <span className="text-muted-foreground text-[13px]">Nothing pending</span>
-            )}
+            ))}
           </div>
           <button
             type="button"
@@ -294,8 +301,10 @@ function KalwatCell({
           }
         }}
         className={cn(
-          'border-primary rounded-[3px] border-2 bg-white text-right font-semibold tabular-nums outline-none dark:bg-slate-900',
-          variant === 'card' ? 'h-10 w-full px-2.5 text-[16px]' : 'w-20 px-1.5 py-0.5 text-[13px]',
+          'border-primary bg-background text-right font-bold tabular-nums outline-none',
+          variant === 'card'
+            ? 'h-11 w-full rounded-xl border-2 px-3 text-[17px]'
+            : 'w-20 rounded-[3px] border-2 px-1.5 py-0.5 text-[13px]',
         )}
         autoFocus
       />
@@ -309,19 +318,44 @@ function KalwatCell({
       disabled={!canEdit}
       title={canEdit ? 'Click to type the processed quantity' : 'You do not have permission to edit this'}
       className={cn(
-        'rounded-[3px] border font-semibold tabular-nums',
+        'font-semibold tabular-nums transition-colors',
         variant === 'card'
-          ? 'flex h-10 w-full items-center justify-between gap-2 px-2.5 text-[16px]'
-          : 'w-20 px-1.5 py-0.5 text-right text-[13px]',
-        canEdit ? 'cursor-pointer border-amber-300 bg-amber-50/70 hover:border-amber-500 dark:border-amber-400/40 dark:bg-amber-500/10' : 'border-transparent',
-        row.kalwat == null && 'text-muted-foreground font-normal',
+          ? // A field, not a chip: label on the left, the figure on the right at
+            // the size a figure deserves, and a pencil saying it can be typed.
+            // The old version put a lone "—" in the middle of a yellow box,
+            // which read as broken rather than empty.
+            cn(
+              'flex h-11 w-full items-center gap-2 rounded-xl border px-3 text-left',
+              canEdit
+                ? 'cursor-pointer border-amber-300 bg-amber-50/60 active:bg-amber-100/70 dark:border-amber-400/35 dark:bg-amber-500/10'
+                : 'border-border bg-muted/40',
+            )
+          : cn(
+              'w-20 rounded-[3px] border px-1.5 py-0.5 text-right text-[13px]',
+              canEdit ? 'cursor-pointer border-amber-300 bg-amber-50/70 hover:border-amber-500 dark:border-amber-400/40 dark:bg-amber-500/10' : 'border-transparent',
+              row.kalwat == null && 'text-muted-foreground font-normal',
+            ),
       )}
     >
-      {variant === 'card' && (
-        <span className="text-muted-foreground text-[9.5px] font-bold tracking-widest uppercase">Kalwat</span>
+      {variant === 'card' ? (
+        <>
+          <span className="text-muted-foreground text-[10px] font-bold tracking-widest uppercase">Kalwat</span>
+          <span className="ml-auto flex items-center gap-2">
+            {save.isPending ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : row.kalwat == null ? (
+              <span className="text-placeholder text-[13px] font-medium">{canEdit ? 'Tap to enter' : 'Not entered'}</span>
+            ) : (
+              <span className="text-[18px] leading-none font-extrabold">{row.kalwat}</span>
+            )}
+            {canEdit && <Pencil className="text-muted-foreground/60 size-3.5 shrink-0" />}
+          </span>
+        </>
+      ) : save.isPending ? (
+        <Loader2 className="mx-auto size-3.5 animate-spin" />
+      ) : (
+        <span>{row.kalwat ?? '—'}</span>
       )}
-      {save.isPending ? <Loader2 className={cn('size-3.5 animate-spin', variant === 'grid' && 'mx-auto')} /> : <span>{row.kalwat ?? '—'}</span>}
-      {variant === 'card' && canEdit && <Pencil className="text-muted-foreground/70 size-3.5 shrink-0" />}
     </button>
   );
 }
@@ -384,12 +418,16 @@ export function DesignTrackPage() {
 
   return (
     <div className="space-y-3 font-sans">
-      {/* Header */}
+      {/* Header. The title block is desktop-only: the app bar already shows
+          "Design Track" on a phone, and printing it twice cost a whole row of
+          vertical space above the search box — on a 375px screen that is the
+          difference between seeing the first card and not. The action buttons
+          stay, so the row is not empty. */}
       <div className="flex flex-wrap items-center gap-2.5">
-        <div className="bg-gradient-brand flex size-9 items-center justify-center rounded-[4px] text-white shadow-md shadow-blue-600/20 ring-1 ring-white/20">
+        <div className="bg-gradient-brand hidden size-9 items-center justify-center rounded-[4px] text-white shadow-md shadow-blue-600/20 ring-1 ring-white/20 sm:flex">
           <Sparkles className="size-4" />
         </div>
-        <div className="min-w-0">
+        <div className="hidden min-w-0 sm:block">
           <h2 className="truncate text-[17px] leading-tight font-bold tracking-tight">Design Track</h2>
           <p className="text-muted-foreground truncate text-[11.5px] font-medium">
             Pending orders filtered by tracked designs
@@ -572,7 +610,7 @@ export function DesignTrackPage() {
                       'text-right font-bold tabular-nums',
                       r.remaining < 0 ? 'text-rose-700 dark:text-rose-300' : r.remaining === 0 ? 'text-emerald-700 dark:text-emerald-400' : '',
                     )}
-                    title="Bags ordered − Dispatched"
+                    title="Bags ordered − whichever is further along: Kalwat entered, or already dispatched"
                   >
                     {qty(r.remaining)}
                   </td>
@@ -700,7 +738,9 @@ export function DesignTrackPage() {
           list they came for. */}
       <p className="text-muted-foreground hidden text-[11px] sm:block">
         Kalwat is typed by hand — click the cell, enter the processed quantity, and it saves when you click away.
-        Remaining is always <span className="font-semibold">Bags ordered − Dispatched</span> and updates itself.
+        Remaining is <span className="font-semibold">Bags ordered − whichever is further along, the Kalwat or the Dispatched</span>
+        , so it moves the moment you save and reads 0 once a line has shipped in full. Goods cannot ship before they are
+        processed, so Dispatched acts as a floor on progress. A negative Remaining means more was entered than was ordered.
       </p>
 
       {/* Reference Photo Dialog */}
