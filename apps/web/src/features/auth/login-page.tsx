@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import { PinPad } from '@/components/auth/pin-pad';
 import { IntroVideo } from '@/features/auth/intro-video';
 import { useCompany } from '@/features/settings/use-settings';
+import { UntrustedCertBanner } from '@/components/common/untrusted-cert-banner';
 import kavishLogo from '@/assets/kavish-logo-order.png';
 
 type Mode = 'password' | 'pin';
@@ -108,6 +109,15 @@ export function LoginPage() {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gradient-to-br from-blue-50 via-white to-amber-50 px-4 py-10">
+      {/* Absolute, not in the flex flow: the outer div centers the login card with
+          flex, and a normal-flow sibling here would push that card off-centre
+          or sit beside it. This has to be seen before login succeeds — an
+          untrusted phone will not necessarily fail the login POST itself, but
+          it explains the warning screen the person likely already clicked
+          through to get here. */}
+      <div className="absolute inset-x-0 top-0 z-20">
+        <UntrustedCertBanner />
+      </div>
       {/* Animated brand background (blue · amber · orange) */}
       <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="bg-dotted absolute inset-0 opacity-60" />

@@ -171,8 +171,16 @@ const COLUMNS: DataColumn<Row>[] = [
       </span>
     ),
   },
-  { id: 'designType', label: 'Design Type', cell: (r) => <span className={TEXT_CELL}>{r.design.type || '—'}</span> },
-  { id: 'designName', label: 'Design Name', cell: (r) => <span className={TEXT_CELL}>{r.design.name || '—'}</span> },
+  {
+    // Storage key stays 'designType': that is the slot already saved in every
+    // user's column order, so this appears where the old column was rather than
+    // being appended off the right edge. The design TYPE itself is gone — it is
+    // already the suffix of Product Name ("10 DAMRU DL+LOGO"), so the column only
+    // ever repeated it. The NAME ("ZEBRA") is the part not shown anywhere else.
+    id: 'designType',
+    label: 'Design Name',
+    cell: (r) => <span className={TEXT_CELL}>{r.design.name || '—'}</span>,
+  },
   {
     id: 'priority',
     label: 'Priority',

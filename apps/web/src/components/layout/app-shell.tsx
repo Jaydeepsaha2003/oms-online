@@ -6,6 +6,7 @@ import { connectNotificationsSocket } from '@/lib/notifications-socket';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useMenuShortcuts } from '@/hooks/use-menu-shortcuts';
 import { ApiStatusBanner } from '@/components/common/api-status-banner';
+import { UntrustedCertBanner } from '@/components/common/untrusted-cert-banner';
 import { UpdateReadyPill } from '@/components/common/update-ready-pill';
 import { FollowupNudge } from '@/features/crm/followup-nudge';
 import { TallyReconRunProvider } from '@/features/account/tally-recon-run-context';
@@ -178,6 +179,7 @@ export function AppShell() {
           {/* Sits above every screen while the server is being updated. Outside
               <main> so a flush route's own scroll region can't hide it. */}
           <ApiStatusBanner />
+          <UntrustedCertBanner />
           {/* Tight padding on phones (more width for cards/tables), roomier on desktop.
               Flush routes get no padding and own their whole scroll region. */}
           <main
