@@ -27,6 +27,10 @@ export class DispatchQueryDto extends PaginationDto {
   @IsOptional() @IsString() agent?: string;
   @IsOptional() @IsString() product?: string;
   @IsOptional() @IsString() design?: string;
+  /** Off (default) → `product` is a BASE item name and also matches its design
+   *  variants, because Modify Dispatch's picker lists base names. On → the exact
+   *  item only. Same meaning as on {@link PendingQueryDto}. */
+  @IsOptional() @Transform(({ value }) => value === true || value === 'true' || value === '1') @IsBoolean() all?: boolean;
   /** Dispatch-date range (inclusive), 'YYYY-MM-DD' — Modify Dispatch's Date filter
    *  and the Group-by-Date-&-Party view. */
   @IsOptional() @IsString() dateFrom?: string;

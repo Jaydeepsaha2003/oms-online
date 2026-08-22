@@ -21,7 +21,7 @@ import {
   type UpdateDispatchResult,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
-import { baseProductName, matchesProductName } from '../common/product-name';
+import { baseProductName, matchesProductName, productNameWhere } from '../common/product-name';
 import { ApprovalsService } from '../approvals/approvals.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
@@ -522,7 +522,9 @@ export class DispatchService implements OnModuleInit {
     if (query.status) and.push({ dispatchStatus: uc(query.status)! });
     if (query.customer) and.push({ customerName: query.customer });
     if (query.agent) and.push({ agentName: query.agent });
-    if (query.product) and.push({ OR: [{ productName: query.product }, { product: query.product }] });
+    // Modify Dispatch's item picker lists BASE names (like Dispatch Order), so a
+    // pick also brings in that base's design variants. ALL on → exact item only.
+    if (query.product) and.push(productNameWhere(query.product, !query.all));
     if (query.design) {
       and.push({ OR: [{ orderItem: { design: query.design } }, { designType: query.design }] });
     }
@@ -635,7 +637,7 @@ export class DispatchService implements OnModuleInit {
       if (q.status) out = out.filter((r) => r.dispatchStatus === q.status);
       if (q.customer) out = out.filter((r) => r.customerName === q.customer);
       if (q.agent) out = out.filter((r) => r.agentName === q.agent);
-      if (q.product) out = out.filter((r) => (r.productName || r.product) === q.product);
+      if (q.product) out = out.filter((r) => matchesProductName(r.productName || r.product, q.product!, !q.all));
       if (q.design) out = out.filter((r) => designNameOf(r) === q.design);
       return out;
     };
@@ -645,10 +647,12 @@ export class DispatchService implements OnModuleInit {
       for (const r of list) { const v = pick(r); if (v) s.add(v); }
       return [...s].sort((a, b) => a.localeCompare(b));
     };
+    const productPool = poolFor('product');
     return {
       customers: distinct(poolFor('customer'), (r) => r.customerName),
       agents: distinct(poolFor('agent'), (r) => r.agentName),
-      products: distinct(poolFor('product'), (r) => r.productName || r.product),
+      products: distinct(productPool, (r) => r.productName || r.product),
+      productBases: distinct(productPool, (r) => baseProductName(r.productName || r.product, r.product)),
       designs: distinct(poolFor('design'), designNameOf),
     };
   }

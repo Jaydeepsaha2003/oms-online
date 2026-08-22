@@ -20,7 +20,7 @@ import { PdfService } from '../pdf/pdf.service';
 import { BookingsService } from '../bookings/bookings.service';
 import { ActivityNotifier } from '../notifications/activity-notifier.service';
 import { toNum, toStr, uc } from '../common/coerce';
-import { baseProductName, matchesProductName } from '../common/product-name';
+import { baseProductName, matchesProductName, productNameWhere } from '../common/product-name';
 import { readCategoryFields } from '../common/category-fields';
 import { UPLOADS_DIR } from '../uploads/uploads.constants';
 import { AddOrderItemPhotoDto, CreateOrderDto, OrderQueryDto, PriceAsOfDto, UpdateOrderDto } from './dto/order.dto';
@@ -74,27 +74,14 @@ export class OrdersService {
    */
   private lineWhere(query: OrderQueryDto): Prisma.OrderItemWhereInput | undefined {
     const and: Prisma.OrderItemWhereInput[] = [];
-    if (query.product) and.push(this.productWhere(query.product, query.productBase));
+    // Full-name mode (Orders page) matches only the item picked; base-name mode
+    // (Order Modify, like Dispatch) also matches that base's design variants.
+    if (query.product) and.push(productNameWhere(query.product, query.productBase));
     if (query.design) and.push({ designType: query.design });
     if (query.priority) and.push({ priority: query.priority });
     return and.length ? { AND: and } : undefined;
   }
 
-  /** The product filter, in whichever mode the caller's picker is running.
-   *
-   *  Full-name mode (Orders page) matches only the item picked. Base-name mode
-   *  (Order Modify, like Dispatch Order) also matches that base's design
-   *  variants — "12 MALBORO" brings in "12 MALBORO DL+LOGO" — via the same
-   *  whole-word prefix `matchesProductName` applies in memory. */
-  private productWhere(product: string, base?: boolean): Prisma.OrderItemWhereInput {
-    return {
-      OR: [
-        { productName: product },
-        ...(base ? [{ productName: { startsWith: `${product} ` } }] : []),
-        { product },
-      ],
-    };
-  }
 
   /** Shared where-builder for the order list and the Order Modify export —
    *  every exact-match / search filter both screens offer. */

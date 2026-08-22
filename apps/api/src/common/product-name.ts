@@ -34,3 +34,20 @@ export function matchesProductName(full: string | null | undefined, target: stri
   const name = (full ?? '').trim();
   return name === target || (!!base && name.startsWith(`${target} `));
 }
+
+/**
+ * The same rule as a Prisma `where` fragment, for the filters that run in SQL.
+ *
+ * Shaped to fit any model carrying `productName` + `product` (OrderItem,
+ * Dispatch). Kept beside {@link matchesProductName} so the in-memory filters
+ * (option cascades) and the query filters can never answer differently.
+ */
+export function productNameWhere(product: string, base?: boolean) {
+  return {
+    OR: [
+      { productName: product },
+      ...(base ? [{ productName: { startsWith: `${product} ` } }] : []),
+      { product },
+    ],
+  };
+}

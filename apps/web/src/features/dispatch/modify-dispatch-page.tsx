@@ -717,6 +717,12 @@ export function ModifyDispatchPage() {
     design: designFilter || undefined,
   });
 
+  // Item names WITHOUT their design suffix — "12 MALBORO" stands for itself and
+  // for "12 MALBORO DL+LOGO" and the rest, exactly as on Dispatch Order. Picking
+  // one lists every variant in the grid, where the Item column still shows the
+  // full name with its design. Type in the search box to isolate one variant.
+  const itemOptions = options?.productBases ?? [];
+
   useEffect(() => {
     const t = setTimeout(() => {
       setSearch(searchInput.trim());
@@ -968,7 +974,7 @@ export function ModifyDispatchPage() {
               needing a second "apply" step inside the sheet. */}
           <div className="flex w-full flex-col gap-2 sm:hidden">
             <NativeSelect value={customerFilter} onChange={(v) => { setCustomerFilter(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="Customer" className={cn(CONTROL, 'font-medium', customerFilter && CONTROL_ON)} />
-            <NativeSelect value={productFilter} onChange={(v) => { setProductFilter(v); setPage(1); }} options={['', ...(options?.products ?? [])]} placeholder="Item" className={cn(CONTROL, 'font-medium', productFilter && CONTROL_ON)} digitsFirst />
+            <NativeSelect value={productFilter} onChange={(v) => { setProductFilter(v); setPage(1); }} options={['', ...itemOptions]} placeholder="Item" className={cn(CONTROL, 'font-medium', productFilter && CONTROL_ON)} digitsFirst />
             <div className="flex items-center gap-2">
               <Button variant="outline" size="icon" className={cn('relative size-9 shrink-0 rounded-[4px] border-amber-300', sheetFilterCount > 0 && CONTROL_ON)} onClick={openMobileFilters} aria-label="More filters">
                 <Filter className="size-4" />
@@ -1026,7 +1032,7 @@ export function ModifyDispatchPage() {
             </div>
             <div className="sm:w-40">
               {/* Digits-first keyboard: item names begin with a size number. */}
-              <NativeSelect value={productFilter} onChange={(v) => { setProductFilter(v); setPage(1); }} options={['', ...(options?.products ?? [])]} placeholder="All items" className={cn(CONTROL, 'font-medium', productFilter && CONTROL_ON)} digitsFirst />
+              <NativeSelect value={productFilter} onChange={(v) => { setProductFilter(v); setPage(1); }} options={['', ...itemOptions]} placeholder="All items" className={cn(CONTROL, 'font-medium', productFilter && CONTROL_ON)} digitsFirst />
             </div>
             <div className="sm:w-36">
               <NativeSelect value={agentFilter} onChange={(v) => { setAgentFilter(v); setPage(1); }} options={['', ...(options?.agents ?? [])]} placeholder="All agents" className={cn(CONTROL, 'font-medium', agentFilter && CONTROL_ON)} />
