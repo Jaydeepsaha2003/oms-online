@@ -845,6 +845,9 @@ model Challan {
   packing         Float?
   freight         Float?
   pouch           Float?
+  // "Other Charges from Party" — see CreditNote.otherCharges. Debit Notes live
+  // in this table, so the field has to exist on both.
+  otherCharges    Float?
   tcs             Float?
   // % used to compute `tcs` on SCRAP challans (Settings → SCRAP TCS Rate at save time).
   tcsPercent      Float?
@@ -947,6 +950,9 @@ model CreditNote {
   packing         Float?
   freight         Float?
   pouch           Float?
+  // "Other Charges from Party" — what the party is charging us on this note.
+  // Adds to the note base and is taxed with it, like the charges above.
+  otherCharges    Float?
   tax             Float? // GST amount
   total           Float?
   b               Float? // bank portion
@@ -989,6 +995,10 @@ model CreditNoteItem {
   amount       Float?
   pCategory    String?
   comment      String?
+  // The reversing Dispatch row this line created when the note was saved as
+  // "Undispatched" (null otherwise). Held here rather than on Dispatch so
+  // deleting the note can find and remove exactly its own reversals.
+  returnDispatchId Int?
   userName     String?
   createdAt    DateTime @default(now())
 

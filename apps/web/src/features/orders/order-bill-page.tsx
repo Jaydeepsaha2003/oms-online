@@ -99,7 +99,7 @@ export function OrderBillPage() {
 
   // Capture the exact rendered Sales Order as a crisp A4-proportioned JPEG — both
   // Download and Print use this, so they look identical to the preview.
-  const captureImage = async (): Promise<{ dataURL: string; ratio: number } | null> => {
+  const captureImage = async (): Promise<{ dataURL: string; ratio: number; renderW: number; rowBreaksPx: number[] } | null> => {
     const src = document.getElementById('sales-order');
     if (!src) return null;
     // Cap the render width at 960 px.  On a wide monitor the element may be
@@ -115,13 +115,52 @@ export function OrderBillPage() {
     holder.style.cssText = `position:fixed;left:-10000px;top:0;width:${PDF_RENDER_W}px;background:#ffffff`;
     holder.appendChild(clone);
     document.body.appendChild(holder);
+    // Safe places to later cut this into pages: the bottom edge of every block
+    // that must not be split — item rows, and every terms/footer line below the
+    // table. Measured on the clone (same 960px-wide layout the canvas below is
+    // captured from, so these positions map to the canvas 1:1 modulo scale).
+    // Anything NOT listed here can still be cut through, so the terms block has
+    // to be marked too — not just the table.
+    const cloneTop = clone.getBoundingClientRect().top;
+    const rowBreaksPx = [...clone.querySelectorAll('#items-table tr, [data-pdf-block]')].map(
+      (el) => el.getBoundingClientRect().bottom - cloneTop,
+    );
     const canvas = await html2canvas(clone, { scale: captureScale(), backgroundColor: '#ffffff' });
     holder.remove();
     const dataURL = canvas.toDataURL('image/jpeg', 0.95);
     // Safari returns a stub ("data:,") instead of throwing when it gives up on a
     // canvas. Catch it here rather than silently embedding a blank page.
     if (!dataURL.startsWith('data:image/')) throw new Error('Canvas capture failed');
-    return { dataURL, ratio: canvas.height / canvas.width };
+    return { dataURL, ratio: canvas.height / canvas.width, renderW: PDF_RENDER_W, rowBreaksPx };
+  };
+
+  /**
+   * Choose where each PDF page should start reading from the tall captured
+   * image, in image-space points.
+   *
+   * Slicing at a fixed height every page tears whatever row happens to sit at
+   * that height — the torn piece can then reappear in full at the top of the
+   * next page, which is what shows up as a row's text printing twice around a
+   * page break. Snapping every cut back to the nearest row boundary at or
+   * before the ideal cut means a page simply ends a little short of full
+   * rather than mid-row; the row itself moves to the next page whole.
+   */
+  const computePageOffsets = (imgH: number, contentH: number, rowBreaksPt: number[]): number[] => {
+    const offsets = [0];
+    let yOffset = 0;
+    while (yOffset + contentH < imgH) {
+      const idealNext = yOffset + contentH;
+      const safe = rowBreaksPt.filter((y) => y > yOffset && y <= idealNext);
+      // Math.max, not "the last one": the candidates come from querySelectorAll
+      // in document order, and a marked block nested inside another marked block
+      // reports a SMALLER bottom than its parent, so the list is not sorted.
+      // No boundary fits in this page at all (a single block taller than a full
+      // page) — fall back to the plain cut rather than looping forever.
+      const next = safe.length ? Math.max(...safe) : idealNext;
+      offsets.push(next);
+      yOffset = next;
+    }
+    return offsets;
   };
 
   const download = async () => {
@@ -145,17 +184,28 @@ export function OrderBillPage() {
         // Single page — image fits without slicing.
         pdf.addImage(cap.dataURL, 'JPEG', margin, margin, imgW, imgH);
       } else {
-        // Multi-page: slice the image by shifting its Y offset each page.
-        let yOffset = 0; // how many pts of the image have already been printed
-        let firstPage = true;
-        while (yOffset < imgH) {
-          if (!firstPage) pdf.addPage();
+        // Multi-page: slice the image by shifting its Y offset each page, at
+        // row-safe boundaries — see computePageOffsets.
+        const pxToPt = imgW / cap.renderW;
+        const rowBreaksPt = cap.rowBreaksPx.map((y) => y * pxToPt);
+        const offsets = computePageOffsets(imgH, contentH, rowBreaksPt);
+        offsets.forEach((yOffset, i) => {
+          if (i > 0) pdf.addPage();
           // Shift the image up by yOffset so the correct slice appears in the
           // content area of this page.
           pdf.addImage(cap.dataURL, 'JPEG', margin, margin - yOffset, imgW, imgH);
-          yOffset += contentH;
-          firstPage = false;
-        }
+          // The image is drawn at FULL height every page and merely clipped by
+          // the page edge — so when the next page's start was snapped backwards
+          // to a block boundary, the strip between that boundary and the page
+          // bottom is still painted here AND again at the top of the next page.
+          // That is the duplicated block. Cover it.
+          const sliceEnd = i + 1 < offsets.length ? offsets[i + 1] : imgH;
+          const sliceH = sliceEnd - yOffset;
+          if (sliceH < contentH) {
+            pdf.setFillColor(255, 255, 255);
+            pdf.rect(0, margin + sliceH, pageW, pageH - margin - sliceH, 'F');
+          }
+        });
       }
       const filename = buildBillFilename(isQuotation ? 'Quotation' : 'Order', order.code, `${fileSuffix}-${orderId}`);
       const blob = pdf.output('blob');
@@ -413,7 +463,7 @@ export function OrderBillPage() {
         <div style={{ padding: '0 24px 16px' }}>
           {/* table-layout: auto lets each column shrink/grow to fit its content
               (autofit).  minWidth guards against very narrow numeric columns. */}
-          <table style={{ width: '100%', tableLayout: 'auto', borderCollapse: 'collapse', fontSize: 18, fontWeight: 600, fontFamily: FONT }}>
+          <table id="items-table" style={{ width: '100%', tableLayout: 'auto', borderCollapse: 'collapse', fontSize: 18, fontWeight: 600, fontFamily: FONT }}>
             <thead style={{ textTransform: 'uppercase' }}>
               <tr>
                 <th style={{ ...th, textAlign: 'center', whiteSpace: 'nowrap' }}>#</th>
@@ -457,12 +507,14 @@ export function OrderBillPage() {
 
         {/* Terms & Conditions — shown on both the Sales Order and the Quotation,
             so the two documents share the exact same printed format. */}
-        <div style={{ padding: '0 24px', display: 'flex', justifyContent: 'space-between', gap: 16 }}>
+        {/* data-pdf-block marks a run of content the PDF slicer must not cut
+            through — see captureImage/computePageOffsets. */}
+        <div data-pdf-block style={{ padding: '0 24px', display: 'flex', justifyContent: 'space-between', gap: 16 }}>
           <div style={{ fontSize: 17 }}>
             <div style={{ color: '#ff8c01', fontWeight: 700, fontSize: 19, marginBottom: 6 }}>Terms &amp; Conditions</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {terms.map((t, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                <div key={i} data-pdf-block style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
                   <span style={{ width: 6, height: 6, marginTop: 5, flexShrink: 0, background: BLACK }} />
                   <span>{t}</span>
                 </div>
@@ -472,9 +524,9 @@ export function OrderBillPage() {
           <div style={{ fontSize: 15, fontStyle: 'italic', fontWeight: 700, whiteSpace: 'nowrap', alignSelf: 'flex-end' }}>Authorised Signatory</div>
         </div>
 
-        <div style={{ textAlign: 'center', fontSize: 13, fontWeight: 700, marginTop: 18, padding: '0 24px' }}>
+        <div data-pdf-block style={{ textAlign: 'center', fontSize: 13, fontWeight: 700, marginTop: 18, padding: '0 24px' }}>
           {footerLines.map((line, i) => (
-            <div key={i}>{line}</div>
+            <div key={i} data-pdf-block>{line}</div>
           ))}
         </div>
       </div>

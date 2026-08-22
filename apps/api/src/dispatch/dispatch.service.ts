@@ -13,6 +13,8 @@ import {
   type DraftPhotoCheckInput,
   type DraftPhotoCheckResult,
   type DispatchStatus,
+  RETURNED_DISPATCH_STATUS,
+  type DispatchReturnRef,
   type PendingLineDto,
   type Paginated,
   type SubmitDispatchResult,
@@ -338,7 +340,13 @@ export class DispatchService implements OnModuleInit {
 
     const lines: PendingLineDto[] = [];
     for (const it of items) {
-      if (it.dispatches.some((d) => d.dispatchStatus === 'FULLY DISPATCH')) continue;
+      // "FULLY DISPATCH" is a shortcut for "this line is closed". A credit note
+      // saved as Undispatched adds a RETURNED row carrying negative quantity —
+      // at which point the line is NOT closed any more, however it was marked.
+      // Without this the returned goods would net out correctly below and still
+      // never appear, because the shortcut would have skipped the line first.
+      const hasReturn = it.dispatches.some((d) => d.dispatchStatus === RETURNED_DISPATCH_STATUS);
+      if (!hasReturn && it.dispatches.some((d) => d.dispatchStatus === 'FULLY DISPATCH')) continue;
       const sum = it.dispatches.reduce(
         (a, d) => ({ bags: a.bags + (d.bags ?? 0), pcs: a.pcs + (d.pcs ?? 0), gram: a.gram + (d.gram ?? 0), box: a.box + (d.box ?? 0) }),
         { bags: 0, pcs: 0, gram: 0, box: 0 },
@@ -549,13 +557,59 @@ export class DispatchService implements OnModuleInit {
       this.prisma.dispatch.count({ where }),
     ]);
     const challans = await this.challanByDispatch(rows.map((r) => r.id));
+    const refs = await this.returnRefs(rows.map((r) => r.id));
     return {
-      items: rows.map((r) => this.toDto(r, challans.get(r.id))),
+      items: rows.map((r) => this.toDto(r, challans.get(r.id), refs)),
       total,
       page: query.page,
       pageSize: query.pageSize,
       totalPages: Math.max(1, Math.ceil(total / query.pageSize)),
     };
+  }
+
+  /**
+   * Return history for a page of dispatch rows, both directions in one pass:
+   *  - a RETURNED row → the credit note that created it and what it reverses;
+   *  - an outward row → every return since made against it.
+   *
+   * Read from `credit_note_items`, which is where the link lives: `dispatchId`
+   * is the outward dispatch and `returnDispatchId` the reversal it produced.
+   */
+  private async returnRefs(ids: number[]): Promise<{
+    byReturnRow: Map<number, DispatchReturnRef>;
+    byOutward: Map<number, DispatchReturnRef[]>;
+  }> {
+    const byReturnRow = new Map<number, DispatchReturnRef>();
+    const byOutward = new Map<number, DispatchReturnRef[]>();
+    if (!ids.length) return { byReturnRow, byOutward };
+    const links = await this.prisma.creditNoteItem.findMany({
+      where: { OR: [{ returnDispatchId: { in: ids } }, { dispatchId: { in: ids }, returnDispatchId: { not: null } }] },
+      select: {
+        dispatchId: true,
+        returnDispatchId: true,
+        bags: true,
+        pcs: true,
+        kgs: true,
+        box: true,
+        creditNote: { select: { code: true, invDate: true } },
+      },
+    });
+    for (const l of links) {
+      if (l.returnDispatchId == null) continue;
+      const ref: DispatchReturnRef = {
+        returnDispatchId: l.returnDispatchId,
+        dispatchId: l.dispatchId,
+        creditNoteCode: l.creditNote.code,
+        creditNoteDate: l.creditNote.invDate.toISOString(),
+        bags: l.bags,
+        pcs: l.pcs,
+        kgs: l.kgs,
+        box: l.box,
+      };
+      byReturnRow.set(l.returnDispatchId, ref);
+      if (l.dispatchId != null) byOutward.set(l.dispatchId, [...(byOutward.get(l.dispatchId) ?? []), ref]);
+    }
+    return { byReturnRow, byOutward };
   }
 
   /** Distinct customer / product / design values present in dispatch records,
@@ -1420,6 +1474,7 @@ export class DispatchService implements OnModuleInit {
   private toDto(
     r: Dispatch & { orderItem?: { design: string | null; designType: string | null; productName: string | null } },
     challan?: { id: number; code: string; challanStatus: string | null } | null,
+    refs?: { byReturnRow: Map<number, DispatchReturnRef>; byOutward: Map<number, DispatchReturnRef[]> },
   ): DispatchDto {
     return {
       id: r.id,
@@ -1457,6 +1512,12 @@ export class DispatchService implements OnModuleInit {
       challanId: challan?.id ?? null,
       challanCode: challan?.code ?? null,
       challanStatus: challan?.challanStatus ?? null,
+      ...(refs
+        ? {
+            returnOf: refs.byReturnRow.get(r.id) ?? null,
+            returns: refs.byOutward.get(r.id) ?? [],
+          }
+        : {}),
     };
   }
 }

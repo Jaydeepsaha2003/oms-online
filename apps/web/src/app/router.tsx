@@ -77,6 +77,7 @@ const PartyIntelPage = lazy(() => import('@/features/reports/party-intel-page').
 const ProductReportPage = lazy(() => import('@/features/reports/product-report-page').then((m) => ({ default: m.ProductReportPage })));
 const PatternsReportPage = lazy(() => import('@/features/reports/patterns-report-page').then((m) => ({ default: m.PatternsReportPage })));
 const FulfilmentReportPage = lazy(() => import('@/features/reports/fulfilment-report-page').then((m) => ({ default: m.FulfilmentReportPage })));
+const OrderJourneyPage = lazy(() => import('@/features/reports/order-journey-page').then((m) => ({ default: m.OrderJourneyPage })));
 const ForbiddenPage = lazy(() => import('@/features/errors/forbidden-page').then((m) => ({ default: m.ForbiddenPage })));
 const NotFoundPage = lazy(() => import('@/features/errors/not-found-page').then((m) => ({ default: m.NotFoundPage })));
 
@@ -688,6 +689,14 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.REPORT, ACTIONS.VIEW)}>
                 <FulfilmentReportPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/reports/order-journey"
+            element={
+              <RequirePermission permission={perm(RESOURCES.REPORT, ACTIONS.VIEW)}>
+                <OrderJourneyPage />
               </RequirePermission>
             }
           />

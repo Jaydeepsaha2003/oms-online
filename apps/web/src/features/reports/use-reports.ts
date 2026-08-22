@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import type { BusinessOverview, CollectionsReport, FulfilmentReport, PartyIntelReport, PatternsReport, ProductReport, ReportFilters, ReportMeasure, SalesReport, SummaryAnalysisReport } from '@oms/shared';
+import type { BusinessOverview, CollectionsReport, FulfilmentReport, OrderJourneyReport, PartyIntelReport, PatternsReport, ProductReport, ReportFilters, ReportMeasure, SalesReport, SummaryAnalysisReport } from '@oms/shared';
 import { http } from '@/lib/api';
 
 const KEY = ['reports'] as const;
@@ -41,6 +41,15 @@ export function usePatterns(f: ReportFilters = {}) {
   return useQuery({ queryKey: [...KEY, 'patterns', f], queryFn: () => http.get<PatternsReport>('/reports/patterns', { params: params(f) }), ...opts });
 }
 /** §8.10 — Orders & Fulfilment. */
+export function useOrderJourney(f: ReportFilters = {}, enabled = true) {
+  return useQuery({
+    queryKey: ['reports', 'order-journey', f],
+    queryFn: () => http.get<OrderJourneyReport>('/reports/order-journey', { params: params(f) }),
+    enabled,
+    placeholderData: (prev) => prev,
+  });
+}
+
 export function useFulfilment(f: ReportFilters = {}) {
   return useQuery({ queryKey: [...KEY, 'fulfilment', f], queryFn: () => http.get<FulfilmentReport>('/reports/fulfilment', { params: params(f) }), ...opts });
 }

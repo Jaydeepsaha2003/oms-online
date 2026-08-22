@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Camera, CalendarRange, ChevronDown, ChevronLeft, ChevronRight, Eye, Filter, Layers, Loader2, Lock, Pencil, Search, Trash2, TriangleAlert, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { ALL_PERMISSIONS, DISPATCH_STATUSES, MAX_PAGE_SIZE, RESOURCES, qtyOrderForCategory, type DispatchDto, type QtyField } from '@oms/shared';
+import { ALL_PERMISSIONS, DISPATCH_STATUSES, MAX_PAGE_SIZE, RESOURCES, RETURNED_DISPATCH_STATUS, qtyOrderForCategory, type DispatchDto, type QtyField } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn, shortDispatchCode, shortOrderCode } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
@@ -34,10 +34,14 @@ const qty = (v: number | null) => (v ? v.toLocaleString('en-IN') : '—');
 const STATUS_STYLE: Record<string, string> = {
   'PARTIALLY DISPATCH': 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/25',
   'FULLY DISPATCH': 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/25',
+  // A return gives quantity BACK, so it reads as its own thing rather than as a
+  // shade of "dispatched".
+  [RETURNED_DISPATCH_STATUS]: 'bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-400/25',
 };
 const STATUS_DOT: Record<string, string> = {
   'PARTIALLY DISPATCH': 'bg-amber-500',
   'FULLY DISPATCH': 'bg-emerald-500',
+  [RETURNED_DISPATCH_STATUS]: 'bg-rose-500',
 };
 /**
  * Whether this dispatch has been billed yet, and on which invoice. A dispatch
@@ -72,6 +76,75 @@ const CONTROL =
   'h-9 rounded-[4px] border-amber-300 dark:border-amber-400/40 text-[12.5px] focus-visible:border-amber-500 focus-visible:ring-amber-400/30';
 const CONTROL_ON = 'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
 
+/** True when this row is a return rather than an outward dispatch. */
+const isReturn = (d: DispatchDto) => d.dispatchStatus === RETURNED_DISPATCH_STATUS;
+
+/** A quantity cell. A return row stores NEGATIVE amounts (that is what puts the
+ *  quantity back in the pending pool), so it is shown in rose — the sign is the
+ *  whole point and must not read as a typo. */
+function QtyCell({ d, v }: { d: DispatchDto; v: number | null }) {
+  const ret = isReturn(d);
+  return (
+    <span className={cn(TEXT_CELL, 'tabular-nums', ret && 'text-rose-600 dark:text-rose-400')}>{qty(v)}</span>
+  );
+}
+
+/** Quantities of one return, as a readable phrase ("2 bags · 10 kgs"). */
+const returnQtyText = (r: { bags: number | null; pcs: number | null; kgs: number | null; box: number | null }) =>
+  ([
+    [r.bags, 'bags'],
+    [r.pcs, 'pcs'],
+    [r.kgs, 'kgs'],
+    [r.box, 'box'],
+  ] as const)
+    .filter(([v]) => v != null && v !== 0)
+    .map(([v, unit]) => `${qty(Math.abs(v as number))} ${unit}`)
+    .join(' · ') || '—';
+
+/**
+ * What the history panel says about one dispatch row.
+ *
+ * Billing never happens *on* the dispatch, so it leaves no audit entry here —
+ * the current position is stated explicitly instead. Returns are the same kind
+ * of fact: they are recorded on the credit note, not as an edit to this row, so
+ * without this the row gives no clue why its order line reopened.
+ */
+function DispatchSummary({ d }: { d: DispatchDto }) {
+  const returns = d.returns ?? [];
+  return (
+    <div className="space-y-1.5">
+      {d.returnOf ? (
+        <span className="text-rose-700 dark:text-rose-300">
+          Return recorded on credit note <span className="font-semibold">{d.returnOf.creditNoteCode}</span>
+          {d.returnOf.dispatchId ? <> — against dispatch #{d.returnOf.dispatchId}</> : null}. This quantity went back into
+          Dispatch Orders.
+        </span>
+      ) : d.challanCode ? (
+        <span>
+          Billed on challan <span className="font-semibold">{d.challanCode}</span>
+          {d.challanStatus ? ` · ${d.challanStatus}` : ''}
+        </span>
+      ) : (
+        <span className="text-muted-foreground">Not billed yet — still pending challan.</span>
+      )}
+
+      {!!returns.length && (
+        <div className="space-y-1 rounded-[4px] border border-rose-200 bg-rose-50/60 px-2 py-1.5 dark:border-rose-400/25 dark:bg-rose-500/10">
+          <div className="text-[11px] font-bold tracking-wide text-rose-800 uppercase dark:text-rose-300">
+            Returned {returns.length > 1 ? `· ${returns.length} times` : ''}
+          </div>
+          {returns.map((r) => (
+            <div key={r.returnDispatchId} className="text-[11.5px] text-rose-900 dark:text-rose-200">
+              <span className="font-semibold">{returnQtyText(r)}</span> on credit note{' '}
+              <span className="font-semibold">{r.creditNoteCode}</span> · {formatDate(r.creditNoteDate)}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const COLUMNS: DataColumn<DispatchDto>[] = [
   { id: 'code', label: 'DIS#', pin: 'left0', pinWidthClass: 'sm:w-16 sm:min-w-16', fixed: true, cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums text-indigo-700 dark:text-indigo-300')}>{shortDispatchCode(d.code, d.id)}</span> },
   { id: 'date', label: 'Date', cell: (d) => <span className={cn(TEXT_CELL, 'whitespace-nowrap tabular-nums')}>{formatDate(d.dispatchDate)}</span> },
@@ -79,10 +152,10 @@ const COLUMNS: DataColumn<DispatchDto>[] = [
   { id: 'customer', label: 'Customer', cell: (d) => <span className={TEXT_CELL}>{d.customerName}</span> },
   { id: 'product', label: 'Product', cell: (d) => <span className={TEXT_CELL}>{d.productName || d.product || '—'}</span> },
   { id: 'design', label: 'Design Name', cell: (d) => <span className={TEXT_CELL}>{d.designType || '—'}</span> },
-  { id: 'bags', label: 'Bags', align: 'right', cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(d.bags)}</span> },
-  { id: 'pcs', label: 'Pcs', align: 'right', cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(d.pcs)}</span> },
-  { id: 'kgs', label: 'Kgs', align: 'right', cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(d.gram)}</span> },
-  { id: 'box', label: 'Box', align: 'right', cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(d.box)}</span> },
+  { id: 'bags', label: 'Bags', align: 'right', cell: (d) => <QtyCell d={d} v={d.bags} /> },
+  { id: 'pcs', label: 'Pcs', align: 'right', cell: (d) => <QtyCell d={d} v={d.pcs} /> },
+  { id: 'kgs', label: 'Kgs', align: 'right', cell: (d) => <QtyCell d={d} v={d.gram} /> },
+  { id: 'box', label: 'Box', align: 'right', cell: (d) => <QtyCell d={d} v={d.box} /> },
   { id: 'status', label: 'Status', cell: (d) => <StatusBadge s={d.dispatchStatus} /> },
   { id: 'challan', label: 'Challan Status', cell: (d) => <ChallanBadge d={d} /> },
   { id: 'dispatchedBy', label: 'Dispatched By', cell: (d) => <span className={TEXT_CELL}>{d.userName || '—'}</span> },
@@ -372,7 +445,7 @@ function GroupedDesktopView({
                   {open && (
                     <div className="space-y-1.5 border-t bg-slate-50/60 px-3.5 py-2 dark:bg-white/[0.02]">
                       {p.lines.map((d) => (
-                        <GroupedLineRow key={d.id} d={d} canEdit={canEdit} canDelete={canDelete} showRates={showRates} isSuperAdmin={isSuperAdmin} onView={() => onView(d)} onEdit={() => onEdit(d)} onDelete={() => onDelete(d)} />
+                        <GroupedLineRow key={d.id} d={d} canEdit={canEdit && !isReturn(d)} canDelete={canDelete && !isReturn(d)} showRates={showRates} isSuperAdmin={isSuperAdmin} onView={() => onView(d)} onEdit={() => onEdit(d)} onDelete={() => onDelete(d)} />
                       ))}
                     </div>
                   )}
@@ -456,7 +529,7 @@ function GroupedMobileView({
                   {open && (
                     <div className="space-y-2 border-t bg-slate-50/60 p-3 dark:bg-white/[0.02]">
                       {p.lines.map((d, i) => (
-                        <ModifyDispatchCard key={d.id} d={d} index={i} canEdit={canEdit} canDelete={canDelete} showRates={showRates} isSuperAdmin={isSuperAdmin} onView={() => onView(d)} onEdit={() => onEdit(d)} onDelete={() => onDelete(d)} />
+                        <ModifyDispatchCard key={d.id} d={d} index={i} canEdit={canEdit && !isReturn(d)} canDelete={canDelete && !isReturn(d)} showRates={showRates} isSuperAdmin={isSuperAdmin} onView={() => onView(d)} onEdit={() => onEdit(d)} onDelete={() => onDelete(d)} />
                       ))}
                     </div>
                   )}
@@ -897,7 +970,7 @@ export function ModifyDispatchPage() {
               <NativeSelect value={designFilter} onChange={(v) => { setDesignFilter(v); setPage(1); }} options={['', ...(options?.designs ?? [])]} placeholder="All design names" className={cn(CONTROL, 'font-medium', designFilter && CONTROL_ON)} />
             </div>
             <div className="sm:w-36">
-              <NativeSelect value={statusFilter} onChange={(v) => { setStatusFilter(v); setPage(1); }} options={['', ...DISPATCH_STATUSES]} placeholder="All statuses" className={cn(CONTROL, 'font-medium', statusFilter && CONTROL_ON)} />
+              <NativeSelect value={statusFilter} onChange={(v) => { setStatusFilter(v); setPage(1); }} options={['', ...DISPATCH_STATUSES, RETURNED_DISPATCH_STATUS]} placeholder="All statuses" className={cn(CONTROL, 'font-medium', statusFilter && CONTROL_ON)} />
             </div>
 
             {/* Dispatch-date range — scopes the Group by Date & Party view (and the
@@ -977,7 +1050,7 @@ export function ModifyDispatchPage() {
             </div>
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-xs font-medium uppercase">Status</Label>
-              <NativeSelect value={draftStatus} onChange={setDraftStatus} options={['', ...DISPATCH_STATUSES]} placeholder="All statuses" />
+              <NativeSelect value={draftStatus} onChange={setDraftStatus} options={['', ...DISPATCH_STATUSES, RETURNED_DISPATCH_STATUS]} placeholder="All statuses" />
             </div>
           </div>
           <SheetFooter>
@@ -1037,7 +1110,7 @@ export function ModifyDispatchPage() {
             // Once a challan has billed this line, its qty is an invoiced fact —
             // editing/deleting it here would silently desync the two, so it's
             // read-only from this point on (backend enforces the same rule).
-            onRowClick={(d) => can('dispatch:update') && !d.challanCode && setEditing(d)}
+            onRowClick={(d) => can('dispatch:update') && !d.challanCode && !isReturn(d) && setEditing(d)}
             className={[
               'font-sans text-[13px]',
               // Rows are click-to-edit, so block accidental text selection (a
@@ -1065,18 +1138,15 @@ export function ModifyDispatchPage() {
                   label={d.code ?? `#${d.id}`}
                   // Billing never happens *on* the dispatch, so it leaves no audit
                   // entry here — state the current position explicitly instead.
-                  summary={
-                    d.challanCode ? (
-                      <span>
-                        Billed on challan <span className="font-semibold">{d.challanCode}</span>
-                        {d.challanStatus ? ` · ${d.challanStatus}` : ''}
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground">Not billed yet — still pending challan.</span>
-                    )
-                  }
+                  summary={<DispatchSummary d={d} />}
                 />
-                {can('dispatch:update') && (
+                {/* A return is a consequence of a credit note, not a dispatch
+                    somebody made — editing its quantities or flipping its status
+                    here would silently change what is available to dispatch
+                    while the credit note still says otherwise. It is undone by
+                    removing the credit note (or re-saving it without
+                    "Undispatched"), which is where it came from. */}
+                {can('dispatch:update') && !isReturn(d) && (
                   <Button
                     variant="ghost"
                     size="icon"
@@ -1088,7 +1158,7 @@ export function ModifyDispatchPage() {
                     <Pencil className="size-4" />
                   </Button>
                 )}
-                {can('dispatch:delete') && (
+                {can('dispatch:delete') && !isReturn(d) && (
                   <Button
                     variant="ghost"
                     size="icon"
@@ -1135,8 +1205,8 @@ export function ModifyDispatchPage() {
                 key={d.id}
                 d={d}
                 index={i}
-                canEdit={can('dispatch:update')}
-                canDelete={can('dispatch:delete')}
+                canEdit={can('dispatch:update') && !isReturn(d)}
+                canDelete={can('dispatch:delete') && !isReturn(d)}
                 showRates={canViewRates}
                 isSuperAdmin={permissions.includes(ALL_PERMISSIONS)}
                 onView={() => setViewing(d)}
@@ -1356,7 +1426,12 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
     pcs: s(dispatch.pcs),
     gram: s(dispatch.gram),
     box: s(dispatch.box),
-    dispatchStatus: dispatch.dispatchStatus,
+    // A return row is never edited through this dialog (see the guards on the
+    // Edit and Delete buttons), so narrowing to the two choosable statuses here
+    // cannot lose information — it just keeps the form's type honest.
+    dispatchStatus: (dispatch.dispatchStatus === RETURNED_DISPATCH_STATUS
+      ? 'PARTIALLY DISPATCH'
+      : dispatch.dispatchStatus) as (typeof DISPATCH_STATUSES)[number],
     comment: dispatch.comment ?? '',
     dispatchDate: toDateInput(dispatch.dispatchDate),
   });

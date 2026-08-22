@@ -351,10 +351,105 @@
   animation: recon-sweep 1.15s cubic-bezier(0.65, 0, 0.35, 1) infinite;
 }
 
+/* ── Order Journey (Reports) ─────────────────────────────────────────────────
+   The page tells a story in four beats, so the stages arrive one after another
+   rather than all at once. Every animation below is a ONE-SHOT entrance: nothing
+   loops, because a report you sit and read must settle. */
+
+/* A stage card rising into place. */
+@keyframes journey-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.animate-journey-rise {
+  animation: journey-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* The connector between two stages, drawing left to right. */
+@keyframes journey-draw {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+.animate-journey-draw {
+  transform-origin: left center;
+  animation: journey-draw 0.55s cubic-bezier(0.65, 0, 0.35, 1) both;
+}
+
+/* A progress/funnel bar filling to its real width, which is set inline. */
+@keyframes journey-fill {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+.animate-journey-fill {
+  transform-origin: left center;
+  animation: journey-fill 0.85s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* One pulse of light across a stage card as it lands — the "wow" beat. */
+@keyframes journey-sheen {
+  0% {
+    transform: translateX(-120%);
+    opacity: 0;
+  }
+  35% {
+    opacity: 0.55;
+  }
+  100% {
+    transform: translateX(320%);
+    opacity: 0;
+  }
+}
+.animate-journey-sheen {
+  animation: journey-sheen 1.1s cubic-bezier(0.65, 0, 0.35, 1) both;
+}
+
+/* Timeline entries sliding in from the rail. */
+@keyframes journey-slide {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.animate-journey-slide {
+  animation: journey-slide 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .oms-blob,
   .animate-bell-ring {
     animation: none !important;
+  }
+  /* The journey still has to READ correctly without motion: bars must be at
+     their true width and cards visible, so these end at their final state
+     rather than simply not running (which would leave scaleX(0) bars invisible). */
+  .animate-journey-rise,
+  .animate-journey-draw,
+  .animate-journey-fill,
+  .animate-journey-slide {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+  }
+  .animate-journey-sheen {
+    animation: none !important;
+    opacity: 0 !important;
   }
   /* Without the sweep a 40%-wide bar reads as stalled progress — fill the track
      instead, so "working" still comes across. */

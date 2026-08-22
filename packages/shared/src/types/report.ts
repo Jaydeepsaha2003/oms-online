@@ -311,3 +311,85 @@ export interface SummaryAnalysisReport {
   actions: SummaryAnalysisAction[];
   asOf: string;
 }
+
+/* ── Order Journey (Reports → Order Journey) ─────────────────────────────────
+   One party's goods followed all the way through: what they ORDERED, what was
+   DISPATCHED against it, what was BILLED on a challan, and what came BACK as a
+   return. Four stages of the same quantity, so the drop between them is the
+   story the page tells. */
+
+/** One stage of the journey, as a headline. */
+export interface JourneyStage {
+  key: 'ORDERS' | 'DISPATCHED' | 'CHALLAN' | 'RETURNS';
+  label: string;
+  /** Documents at this stage — orders, dispatch rows, challans, credit notes. */
+  docs: number;
+  /** Line items at this stage. */
+  lines: number;
+  bags: number;
+  pcs: number;
+  kgs: number;
+  /** Rupee value where the stage has one (challans bill, returns credit). */
+  amount: number;
+  /**
+   * Share of the FIRST stage this one represents, 0–1 — the number that makes
+   * the funnel readable ("83% of what was ordered actually shipped"). Null on
+   * the first stage, which is the base everything else is measured against.
+   */
+  ofFirst: number | null;
+}
+
+/** One order, followed through the whole pipeline. */
+export interface JourneyOrder {
+  orderId: number;
+  orderCode: string | null;
+  orderDate: string;
+  dueDate: string | null;
+  priority: string | null;
+  lines: number;
+  /** Ordered quantity. */
+  bags: number;
+  pcs: number;
+  kgs: number;
+  amount: number;
+  /** Dispatched against this order (net of returns — a return gives stock back). */
+  dispBags: number;
+  dispPcs: number;
+  dispKgs: number;
+  dispatches: number;
+  /** Billed. */
+  challanCodes: string[];
+  billedAmount: number;
+  /** Returned. */
+  returnedBags: number;
+  returnedPcs: number;
+  returnedKgs: number;
+  returns: number;
+  /** 0–1 of the ordered quantity that has shipped, on the line's own unit. */
+  progress: number;
+  /** Where this order currently stands. */
+  stage: 'PENDING' | 'PARTIAL' | 'DISPATCHED' | 'BILLED' | 'RETURNED';
+}
+
+/** One dated event on the party's timeline. */
+export interface JourneyEvent {
+  date: string;
+  kind: 'ORDER' | 'DISPATCH' | 'CHALLAN' | 'RETURN';
+  /** Human title — the document code. */
+  title: string;
+  /** Supporting line, e.g. "4 lines · 120 kgs". */
+  detail: string;
+  amount: number | null;
+}
+
+export interface OrderJourneyReport {
+  customerId: number | null;
+  customerName: string;
+  from: string | null;
+  to: string | null;
+  stages: JourneyStage[];
+  orders: JourneyOrder[];
+  events: JourneyEvent[];
+  /** Headline read-outs the page states in words. */
+  insights: string[];
+}

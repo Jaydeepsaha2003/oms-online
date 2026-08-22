@@ -4,6 +4,7 @@ import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import {
   computeNoteBreakup,
   noteRoundOff,
+  RETURNED_DISPATCH_STATUS,
   type NoteDirectoryRow,
   type NoteDto,
   type NoteMode,
@@ -16,6 +17,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { formatDate } from '../common/date.util';
 import { PdfService } from '../pdf/pdf.service';
 import { NoteDirectoryQueryDto, SaveNoteDto } from './dto/note.dto';
+
 
 const r2 = (x: number) => Math.round((x + Number.EPSILON) * 100) / 100;
 const EPS = 0.005;
@@ -174,6 +176,7 @@ export class NotesService {
         packing: cn.packing,
         freight: cn.freight,
         pouch: cn.pouch,
+        otherCharges: cn.otherCharges,
         tcs: null,
         gst: cn.gst,
         freightRate: cn.freightRate,
@@ -227,6 +230,7 @@ export class NotesService {
       packing: ch.packing,
       freight: ch.freight,
       pouch: ch.pouch,
+      otherCharges: ch.otherCharges,
       tcs: ch.tcs,
       gst: ch.gst,
       freightRate: ch.freightRate,
@@ -283,6 +287,7 @@ export class NotesService {
       packing: dto.packing,
       freight: dto.freight,
       pouch: dto.pouch,
+      otherCharges: dto.otherCharges,
       billingRate: dto.billingRate,
       noBill: dto.noBill,
       noBillWithoutGst: dto.noBillWithoutGst,
@@ -314,6 +319,11 @@ export class NotesService {
       userName: userName ?? null,
     }));
 
+    // Re-saving a credit note deletes and recreates its lines, which would
+    // cascade away the `returnDispatchId` links and strand any reversal rows the
+    // previous save created. Take them out first, while the links still exist.
+    if (mode === 'CREDIT' && dto.code?.trim()) await this.clearUndispatch(code);
+
     await this.prisma.$transaction(async (tx) => {
       if (mode === 'CREDIT') {
         await tx.creditNote.deleteMany({ where: { code } });
@@ -334,6 +344,7 @@ export class NotesService {
             packing: dto.packing ?? null,
             freight: dto.freight ?? null,
             pouch: dto.pouch ?? null,
+            otherCharges: dto.otherCharges ?? null,
             tax: breakup.tax,
             total: breakup.total,
             b,
@@ -377,6 +388,7 @@ export class NotesService {
             packing: dto.packing ?? null,
             freight: dto.freight ?? null,
             pouch: dto.pouch ?? null,
+            otherCharges: dto.otherCharges ?? null,
             tcs: dto.tcs ?? null,
             tax: breakup.tax,
             total: breakup.total,
@@ -406,8 +418,136 @@ export class NotesService {
       await this.insertDebitNoteLedger(code, invDate, dto.customerId, dto.customerName, b, c, dto.items, userName ?? null);
     }
 
+    // 3) "Undispatched" — credit notes only. The previous run's reversals were
+    //    already removed BEFORE the header was recreated (see above), so this
+    //    only has to apply the current choice.
+    let undispatched: SaveNoteResult['undispatched'];
+    if (mode === 'CREDIT' && dto.markUndispatched) {
+      undispatched = await this.applyUndispatch(code, userName ?? null);
+    }
+
     const saved = mode === 'CREDIT' ? await this.prisma.creditNote.findUnique({ where: { code } }) : await this.prisma.challan.findUnique({ where: { code } });
-    return { mode, id: saved?.id ?? 0, code, total: breakup.total };
+    return { mode, id: saved?.id ?? 0, code, total: breakup.total, ...(undispatched ? { undispatched } : {}) };
+  }
+
+  /* ── "Undispatched": put returned goods back in the pending pool ──────────── */
+
+  /**
+   * Turn the credit note's lines back into dispatchable quantity.
+   *
+   * HOW, and why this way. A dispatch that already happened is a fact — the
+   * goods left, a challan was raised against it, and `challan_items.dispatchId`
+   * points at it. So the original `Dispatch` row is never edited or deleted.
+   * Instead each returned line gets its OWN new `Dispatch` row carrying NEGATIVE
+   * quantities and `dispatchStatus = 'RETURNED'`.
+   *
+   * The pending pool is `ordered − Σ dispatched`, so a negative row lifts the
+   * remaining quantity back up with no change to that formula. The one thing
+   * that does need changing is the "FULLY DISPATCH closes the line" shortcut,
+   * which `DispatchService` now skips for a line that has a return — see there.
+   *
+   * IDs:
+   *  - the reversal gets a fresh auto-increment id and its own `RET-#####` code,
+   *    so it can never be confused with the outward dispatch it reverses;
+   *  - `orderItemId` / `orderId` are copied from the original, which is what puts
+   *    the quantity back on the right pending line;
+   *  - the new id is stored on the credit-note line (`returnDispatchId`), so
+   *    deleting or re-saving the note removes exactly its own reversals and
+   *    nobody else's.
+   */
+  private async applyUndispatch(
+    code: string,
+    userName: string | null,
+  ): Promise<{ returned: number; skipped: string[] }> {
+    const note = await this.prisma.creditNote.findUnique({
+      where: { code },
+      include: { items: { orderBy: { id: 'asc' } } },
+    });
+    if (!note) return { returned: 0, skipped: [] };
+
+    const skipped: string[] = [];
+    let returned = 0;
+
+    for (const it of note.items) {
+      const label = [it.productName, it.design].filter(Boolean).join(' · ') || `line #${it.id}`;
+      if (!it.dispatchId) {
+        // A manual row, or a sale old enough to predate the dispatch link. There
+        // is no pending line to give the quantity back to.
+        skipped.push(`${label} — not linked to a dispatch`);
+        continue;
+      }
+      const src = await this.prisma.dispatch.findUnique({ where: { id: it.dispatchId } });
+      if (!src) {
+        skipped.push(`${label} — its dispatch no longer exists`);
+        continue;
+      }
+      const qty = {
+        bags: -(it.bags ?? 0),
+        pcs: -(it.pcs ?? 0),
+        gram: -(it.kgs ?? 0),
+        box: -(it.box ?? 0),
+      };
+      if (!qty.bags && !qty.pcs && !qty.gram && !qty.box) {
+        skipped.push(`${label} — no quantity to return`);
+        continue;
+      }
+
+      await this.prisma.$transaction(async (tx) => {
+        const rev = await tx.dispatch.create({
+          data: {
+            orderItemId: src.orderItemId,
+            orderId: src.orderId,
+            orderCode: src.orderCode,
+            customerId: src.customerId,
+            customerName: src.customerName,
+            agentName: src.agentName,
+            category: src.category,
+            pCategory: src.pCategory,
+            subCategory: src.subCategory,
+            product: src.product,
+            productName: src.productName,
+            designType: src.designType,
+            psize: src.psize,
+            priority: src.priority,
+            calField: src.calField,
+            ordType: src.ordType,
+            productRate: src.productRate,
+            designRate: src.designRate,
+            rate: src.rate,
+            ...qty,
+            dispatchStatus: RETURNED_DISPATCH_STATUS,
+            dispatchDate: new Date(),
+            comment: `Returned on credit note ${code}`,
+            userName,
+          },
+        });
+        await tx.dispatch.update({ where: { id: rev.id }, data: { code: `RET-${String(rev.id).padStart(5, '0')}` } });
+        await tx.creditNoteItem.update({ where: { id: it.id }, data: { returnDispatchId: rev.id } });
+      });
+      returned += 1;
+    }
+    return { returned, skipped };
+  }
+
+  /**
+   * Undo whatever {@link applyUndispatch} did for this note — used when the note
+   * is deleted, and before a re-save so a note is never counted twice.
+   *
+   * Only rows this note's lines point at are removed, which is the whole reason
+   * the link is stored on the credit-note line rather than inferred.
+   */
+  private async clearUndispatch(code: string): Promise<void> {
+    const note = await this.prisma.creditNote.findUnique({
+      where: { code },
+      include: { items: { orderBy: { id: 'asc' } } },
+    });
+    if (!note) return;
+    const ids = note.items.map((i) => i.returnDispatchId).filter((v): v is number => v != null);
+    if (!ids.length) return;
+    await this.prisma.$transaction(async (tx) => {
+      await tx.dispatch.deleteMany({ where: { id: { in: ids }, dispatchStatus: RETURNED_DISPATCH_STATUS } });
+      await tx.creditNoteItem.updateMany({ where: { creditNoteId: note.id }, data: { returnDispatchId: null } });
+    });
   }
 
   /* ── Delete (+ reverse all accounting) ─────────────────────────────────────── */
@@ -417,6 +557,10 @@ export class NotesService {
       const cn = await this.prisma.creditNote.findUnique({ where: { code } });
       if (!cn) throw new NotFoundException('Credit Note not found.');
       await this.reverseCreditNote(code);
+      // Any quantity this note put back in the pending pool has to come out
+      // again — the return is only true for as long as the note exists. Runs
+      // before the delete, while the links are still there.
+      await this.clearUndispatch(code);
       await this.prisma.creditNote.deleteMany({ where: { code } });
     } else {
       const ch = await this.prisma.challan.findUnique({ where: { code } });
@@ -771,8 +915,11 @@ function buildNoteDoc(c: NoteDto): TDocumentDefinitions {
     line('Freight', money(c.freight)),
     line('Packing', money(c.packing)),
     line('Box / Pouch', money(c.pouch)),
+    // Only printed when it carries a figure — a zero row on every note would be
+    // noise on the many notes that never use it.
+    ...(c.otherCharges ? [line('Other Charges', money(c.otherCharges))] : []),
     line(`GST${c.gst ? ` @ ${c.gst}%` : ''}`, money(c.tax)),
-    line('Round Off', money(noteRoundOff({ tAmt, packing: c.packing, freight: c.freight, pouch: c.pouch, tax: c.tax, total }))),
+    line('Round Off', money(noteRoundOff({ tAmt, packing: c.packing, freight: c.freight, pouch: c.pouch, otherCharges: c.otherCharges, tax: c.tax, total }))),
     line('TOTAL', money(total), { bold: true, color: BLUE }),
     line('B (Bank)', money(c.b), { color: '#1D4ED8' }),
     line('C (Cash)', money(c.c), { color: '#15803D' }),

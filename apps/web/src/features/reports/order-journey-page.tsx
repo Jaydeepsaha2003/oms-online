@@ -1,0 +1,419 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ArrowRight,
+  ClipboardList,
+  FileText,
+  Loader2,
+  type LucideIcon,
+  Truck,
+  Undo2,
+  Users,
+} from 'lucide-react';
+import type { JourneyEvent, JourneyOrder, JourneyStage, OrderJourneyReport } from '@oms/shared';
+import { cn } from '@/lib/utils';
+import { formatDate } from '@/lib/date-format';
+import { Card, CardContent } from '@/components/ui/card';
+import { inrCompact, inrFull } from '@/features/dashboard/format';
+import { ReportFilterBar, useReportFilters } from './report-filters';
+import { ReportCard, ReportSummary } from './report-kit';
+import { useOrderJourney } from './use-reports';
+
+/* ── stage vocabulary ────────────────────────────────────────────────────────
+   One place decides what each stage is called, coloured and iconed, so the
+   funnel, the order rows and the timeline can never describe the same stage
+   two different ways. */
+
+type StageKey = JourneyStage['key'];
+
+const STAGE: Record<StageKey, { icon: LucideIcon; ring: string; fill: string; text: string; bar: string; soft: string }> = {
+  ORDERS: {
+    icon: ClipboardList,
+    ring: 'ring-blue-200 dark:ring-blue-400/25',
+    fill: 'from-blue-500 to-blue-600',
+    text: 'text-blue-700 dark:text-blue-300',
+    bar: 'bg-blue-500',
+    soft: 'bg-blue-50 dark:bg-blue-500/10',
+  },
+  DISPATCHED: {
+    icon: Truck,
+    ring: 'ring-violet-200 dark:ring-violet-400/25',
+    fill: 'from-violet-500 to-violet-600',
+    text: 'text-violet-700 dark:text-violet-300',
+    bar: 'bg-violet-500',
+    soft: 'bg-violet-50 dark:bg-violet-500/10',
+  },
+  CHALLAN: {
+    icon: FileText,
+    ring: 'ring-emerald-200 dark:ring-emerald-400/25',
+    fill: 'from-emerald-500 to-emerald-600',
+    text: 'text-emerald-700 dark:text-emerald-300',
+    bar: 'bg-emerald-500',
+    soft: 'bg-emerald-50 dark:bg-emerald-500/10',
+  },
+  RETURNS: {
+    icon: Undo2,
+    ring: 'ring-rose-200 dark:ring-rose-400/25',
+    fill: 'from-rose-500 to-rose-600',
+    text: 'text-rose-700 dark:text-rose-300',
+    bar: 'bg-rose-500',
+    soft: 'bg-rose-50 dark:bg-rose-500/10',
+  },
+};
+
+const ORDER_STAGE_STYLE: Record<JourneyOrder['stage'], string> = {
+  PENDING: 'bg-slate-100 text-slate-700 ring-slate-300 dark:bg-white/10 dark:text-slate-300 dark:ring-white/15',
+  PARTIAL: 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/25',
+  DISPATCHED: 'bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-500/15 dark:text-violet-300 dark:ring-violet-400/25',
+  BILLED: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/25',
+  RETURNED: 'bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-400/25',
+};
+
+const num = (v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+
+/**
+ * A number that counts up to its value once, on mount.
+ *
+ * Deliberately time-based rather than step-based: a count that takes the same
+ * ~0.9s whether it is climbing to 8 or to 84,000 reads as one deliberate motion
+ * across the whole page, instead of small numbers snapping while big ones crawl.
+ */
+function CountUp({ to, format = num, delay = 0 }: { to: number; format?: (v: number) => string; delay?: number }) {
+  const [v, setV] = useState(0);
+  const raf = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    // Respect the OS setting — no animation, just the final figure.
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      setV(to);
+      return;
+    }
+    const DURATION = 900;
+    let start: number | null = null;
+    const timer = window.setTimeout(() => {
+      const tick = (t: number) => {
+        start ??= t;
+        const p = Math.min(1, (t - start) / DURATION);
+        // easeOutCubic — fast off the mark, settling gently on the real figure.
+        setV(to * (1 - Math.pow(1 - p, 3)));
+        if (p < 1) raf.current = requestAnimationFrame(tick);
+        else setV(to);
+      };
+      raf.current = requestAnimationFrame(tick);
+    }, delay);
+    return () => {
+      window.clearTimeout(timer);
+      if (raf.current) cancelAnimationFrame(raf.current);
+    };
+  }, [to, delay]);
+  return <>{format(v)}</>;
+}
+
+/** One of the four big stage cards. */
+function StageCard({ s, index, unit }: { s: JourneyStage; index: number; unit: string }) {
+  const st = STAGE[s.key];
+  const Icon = st.icon;
+  const delay = index * 160;
+  const qty = s.key === 'CHALLAN' ? null : unit === 'kgs' ? s.kgs : unit === 'pcs' ? s.pcs : s.bags;
+
+  return (
+    <div
+      className={cn(
+        'bg-card relative flex-1 overflow-hidden rounded-2xl border p-4 shadow-sm ring-1 ring-inset',
+        st.ring,
+        'animate-journey-rise',
+      )}
+      style={{ animationDelay: `${delay}ms` }}
+    >
+      {/* One pass of light as the card lands. Purely decorative, so it is hidden
+          from assistive tech and disabled under reduced-motion. */}
+      <span
+        aria-hidden
+        className="animate-journey-sheen pointer-events-none absolute inset-y-0 -left-1/3 w-1/3 bg-gradient-to-r from-transparent via-white/70 to-transparent dark:via-white/20"
+        style={{ animationDelay: `${delay + 220}ms` }}
+      />
+      <div className="flex items-center gap-2">
+        <span className={cn('flex size-9 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm', st.fill)}>
+          <Icon className="size-4.5" />
+        </span>
+        <div className="min-w-0">
+          <div className="text-muted-foreground text-[11px] font-bold tracking-widest uppercase">{s.label}</div>
+          <div className={cn('text-[22px] leading-tight font-extrabold tabular-nums', st.text)}>
+            <CountUp to={s.docs} delay={delay} />
+            <span className="text-muted-foreground ml-1.5 text-[11px] font-semibold tracking-normal">
+              {s.key === 'ORDERS' ? 'orders' : s.key === 'DISPATCHED' ? 'dispatches' : s.key === 'CHALLAN' ? 'challans' : 'credit notes'}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 space-y-1.5 text-[12px]">
+        {qty != null && (
+          <div className="flex items-baseline justify-between">
+            <span className="text-muted-foreground font-medium">Quantity</span>
+            <span className="font-bold tabular-nums">
+              <CountUp to={qty} delay={delay} /> <span className="text-muted-foreground text-[10.5px]">{unit}</span>
+            </span>
+          </div>
+        )}
+        {s.amount > 0 && (
+          <div className="flex items-baseline justify-between">
+            <span className="text-muted-foreground font-medium">Value</span>
+            <span className="font-bold tabular-nums" title={inrFull(s.amount)}>
+              <CountUp to={s.amount} format={inrCompact} delay={delay} />
+            </span>
+          </div>
+        )}
+        {s.lines > 0 && (
+          <div className="flex items-baseline justify-between">
+            <span className="text-muted-foreground font-medium">Lines</span>
+            <span className="font-bold tabular-nums">
+              <CountUp to={s.lines} delay={delay} />
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Share of what was ordered — the number that makes the funnel readable. */}
+      {s.ofFirst != null && (
+        <div className="mt-3">
+          <div className="bg-muted h-1.5 overflow-hidden rounded-full">
+            <div
+              className={cn('h-full rounded-full animate-journey-fill', st.bar)}
+              style={{ width: `${Math.round(s.ofFirst * 100)}%`, animationDelay: `${delay + 260}ms` }}
+            />
+          </div>
+          <div className="text-muted-foreground mt-1 text-[11px] font-semibold">
+            {Math.round(s.ofFirst * 100)}% of ordered {unit}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The arrow between two stage cards, drawn after the left card has landed. */
+function Connector({ index }: { index: number }) {
+  return (
+    <div className="hidden shrink-0 items-center self-center lg:flex" aria-hidden>
+      <span
+        className="animate-journey-draw bg-gradient-to-r from-slate-300 to-slate-400 dark:from-white/20 dark:to-white/30 block h-0.5 w-7 rounded-full"
+        style={{ animationDelay: `${index * 160 + 120}ms` }}
+      />
+      <ArrowRight
+        className="text-muted-foreground/70 animate-journey-rise -ml-1 size-4"
+        style={{ animationDelay: `${index * 160 + 260}ms` }}
+      />
+    </div>
+  );
+}
+
+/** One order, as a track showing how far down the pipeline it got. */
+function OrderTrack({ o, unit, index }: { o: JourneyOrder; unit: string; index: number }) {
+  const ordered = unit === 'kgs' ? o.kgs : unit === 'pcs' ? o.pcs : o.bags;
+  const shipped = unit === 'kgs' ? o.dispKgs : unit === 'pcs' ? o.dispPcs : o.dispBags;
+  const returned = unit === 'kgs' ? o.returnedKgs : unit === 'pcs' ? o.returnedPcs : o.returnedBags;
+  const pct = Math.round(o.progress * 100);
+  // Stagger only the first rows: past ~20 the delay would outlast the reader's
+  // patience and the last rows would look broken rather than choreographed.
+  const delay = Math.min(index, 20) * 45;
+
+  return (
+    <div
+      className="animate-journey-rise rounded-xl border bg-card px-3 py-2.5 shadow-sm"
+      style={{ animationDelay: `${delay}ms` }}
+    >
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="text-[13px] font-bold tabular-nums text-indigo-700 dark:text-indigo-300">
+          {o.orderCode ?? `ORD-${o.orderId}`}
+        </span>
+        <span className="text-muted-foreground text-[11.5px] font-medium tabular-nums">{formatDate(o.orderDate)}</span>
+        {o.priority === 'URGENT' && (
+          <span className="rounded-[4px] bg-rose-50 px-1.5 py-0.5 text-[10.5px] font-extrabold text-rose-700 ring-1 ring-rose-200 ring-inset dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-400/25">
+            URGENT
+          </span>
+        )}
+        <span
+          className={cn(
+            'rounded-[4px] px-1.5 py-0.5 text-[10.5px] font-extrabold ring-1 ring-inset',
+            ORDER_STAGE_STYLE[o.stage],
+          )}
+        >
+          {o.stage}
+        </span>
+        <span className="text-muted-foreground ml-auto text-[11.5px] font-semibold tabular-nums">
+          {num(shipped)} / {num(ordered)} {unit}
+        </span>
+      </div>
+
+      {/* Ordered is the track; dispatched fills it; returns sit on top in rose. */}
+      <div className="bg-muted relative mt-2 h-2 overflow-hidden rounded-full">
+        <div
+          className="animate-journey-fill h-full rounded-full bg-gradient-to-r from-violet-500 to-violet-600"
+          style={{ width: `${pct}%`, animationDelay: `${delay + 120}ms` }}
+        />
+        {returned > 0 && ordered > 0 && (
+          <div
+            className="animate-journey-fill absolute inset-y-0 right-0 rounded-full bg-gradient-to-r from-rose-400 to-rose-500"
+            style={{ width: `${Math.min(100, (returned / ordered) * 100)}%`, animationDelay: `${delay + 320}ms` }}
+            title={`${num(returned)} ${unit} returned`}
+          />
+        )}
+      </div>
+
+      <div className="text-muted-foreground mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] font-medium">
+        <span>{o.lines} lines</span>
+        <span>· {pct}% dispatched</span>
+        {o.challanCodes.length > 0 && (
+          <span className="text-emerald-700 dark:text-emerald-400">
+            · Billed on {o.challanCodes.join(', ')}
+            {o.billedAmount > 0 ? ` (${inrCompact(o.billedAmount)})` : ''}
+          </span>
+        )}
+        {o.returns > 0 && (
+          <span className="text-rose-700 dark:text-rose-400">
+            · {num(returned)} {unit} returned
+          </span>
+        )}
+        {o.stage === 'PENDING' && <span className="text-amber-700 dark:text-amber-400">· nothing dispatched yet</span>}
+      </div>
+    </div>
+  );
+}
+
+const EVENT_STYLE: Record<JourneyEvent['kind'], { dot: string; icon: LucideIcon }> = {
+  ORDER: { dot: 'bg-blue-500', icon: ClipboardList },
+  DISPATCH: { dot: 'bg-violet-500', icon: Truck },
+  CHALLAN: { dot: 'bg-emerald-500', icon: FileText },
+  RETURN: { dot: 'bg-rose-500', icon: Undo2 },
+};
+
+/** The party's activity, newest first, on a single vertical rail. */
+function Timeline({ events }: { events: JourneyEvent[] }) {
+  if (!events.length) return <p className="text-muted-foreground py-8 text-center text-[13px]">Nothing happened in this window.</p>;
+  return (
+    <div className="relative space-y-2 pl-5">
+      {/* The rail itself. */}
+      <span aria-hidden className="bg-border absolute top-1 bottom-1 left-[7px] w-px" />
+      {events.map((e, i) => {
+        const st = EVENT_STYLE[e.kind];
+        const Icon = st.icon;
+        return (
+          <div
+            key={`${e.kind}-${e.title}-${i}`}
+            className="animate-journey-slide relative"
+            style={{ animationDelay: `${Math.min(i, 24) * 35}ms` }}
+          >
+            <span aria-hidden className={cn('absolute top-2 -left-[15px] size-2 rounded-full ring-2 ring-card', st.dot)} />
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <Icon className="text-muted-foreground size-3.5 self-center" />
+              <span className="text-[12.5px] font-bold">{e.title}</span>
+              <span className="text-muted-foreground text-[11.5px] font-medium tabular-nums">{formatDate(e.date)}</span>
+              {e.amount != null && e.amount > 0 && (
+                <span className="ml-auto text-[12px] font-bold tabular-nums" title={inrFull(e.amount)}>
+                  {inrCompact(e.amount)}
+                </span>
+              )}
+            </div>
+            <div className="text-muted-foreground text-[11.5px] font-medium">{e.detail}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export function OrderJourneyPage() {
+  const filters = useReportFilters();
+  const { data, isFetching } = useOrderJourney(filters.query);
+  const j: OrderJourneyReport | undefined = data;
+
+  /** The one unit the whole page reads in — whatever this party actually orders
+   *  in. Mixing kgs and pcs in one funnel makes the percentages meaningless. */
+  const unit = useMemo(() => {
+    const o = j?.stages[0];
+    if (!o) return 'kgs';
+    return o.kgs > 0 ? 'kgs' : o.pcs > 0 ? 'pcs' : 'bags';
+  }, [j]);
+
+  const [tab, setTab] = useState<'orders' | 'timeline'>('orders');
+  const hasParty = !!filters.f.customerId;
+
+  return (
+    <div className="space-y-4">
+      <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
+
+      {!hasParty && (
+        <Card className="border-dashed">
+          <CardContent className="flex flex-col items-center gap-2 py-10 text-center">
+            <Users className="text-muted-foreground/50 size-8" />
+            <p className="text-[13.5px] font-semibold">Pick a party to follow</p>
+            <p className="text-muted-foreground max-w-md text-[12.5px]">
+              Choose a customer above and the page traces their goods from the order that started it through to anything that
+              came back. Without a party this would average every customer together, which tells you nothing about any of them.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {hasParty && j && (
+        <>
+          {/* ── the four beats ── */}
+          <div className="flex flex-col gap-2.5 lg:flex-row lg:items-stretch">
+            {j.stages.map((s, i) => (
+              <div key={s.key} className="contents">
+                <StageCard s={s} index={i} unit={unit} />
+                {i < j.stages.length - 1 && <Connector index={i} />}
+              </div>
+            ))}
+          </div>
+
+          <ReportSummary points={j.insights.map((text) => ({ text }))} />
+
+          {/* ── detail ── */}
+          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 rounded-[4px] border border-amber-300 bg-amber-50/40 p-0.5 dark:border-amber-400/40 sm:w-auto">
+            {(
+              [
+                ['orders', `Orders (${j.orders.length})`],
+                ['timeline', `Timeline (${j.events.length})`],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setTab(id)}
+                className={cn(
+                  'flex-1 rounded-[3px] px-3 py-1.5 text-[12.5px] font-semibold transition-colors sm:flex-none',
+                  tab === id ? 'bg-primary text-primary-foreground shadow-sm' : 'text-amber-900/70 hover:bg-amber-100 dark:text-amber-200/70',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {isFetching && <Loader2 className="text-muted-foreground size-4 animate-spin" />}
+          </div>
+
+          {tab === 'orders' ? (
+            <ReportCard title={`Every order, followed through`}>
+              {j.orders.length === 0 ? (
+                <p className="text-muted-foreground py-8 text-center text-[13px]">No orders for this party in this window.</p>
+              ) : (
+                <div className="space-y-2">
+                  {j.orders.map((o, i) => (
+                    <OrderTrack key={o.orderId} o={o} unit={unit} index={i} />
+                  ))}
+                </div>
+              )}
+            </ReportCard>
+          ) : (
+            <ReportCard title="What happened, newest first">
+              <Timeline events={j.events} />
+            </ReportCard>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+export default OrderJourneyPage;

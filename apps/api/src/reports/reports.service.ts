@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
+import { RETURNED_DISPATCH_STATUS } from '@oms/shared';
 import type {
   BusinessOverview,
+  JourneyEvent,
+  JourneyOrder,
+  JourneyStage,
+  OrderJourneyReport,
   CollectionsReport,
   FulfilmentReport,
   PartyIntelReport,
@@ -897,6 +902,270 @@ export class ReportsService {
   }
 
   // ── §8.10 Orders & Fulfilment ───────────────────────────────────────────────
+  /**
+   * Order Journey — one party's goods followed end to end.
+   *
+   * Orders → Dispatched → Challan → Returns, measured on the SAME quantities so
+   * the drop between stages is meaningful rather than four unrelated counts.
+   *
+   * Everything is scoped to the orders PLACED in the window; a dispatch or a
+   * challan is counted because it belongs to one of those orders, not because it
+   * happens to fall in the same dates. Scoping each stage by its own date would
+   * compare this month's orders against last month's shipments, and every
+   * percentage on the page would be a lie.
+   */
+  async orderJourney(f: ReportFilters = {}): Promise<OrderJourneyReport> {
+    const fx = await this.resolveFilter(f);
+    const n = (v: number | null | undefined) => v ?? 0;
+    const r2 = (v: number) => Math.round(v * 100) / 100;
+
+    const orders = await this.prisma.order.findMany({
+      where: { status: { not: 'CANCELLED' } },
+      select: {
+        id: true,
+        code: true,
+        customerId: true,
+        customerName: true,
+        orderDate: true,
+        completionDate: true,
+        priority: true,
+        items: {
+          where: { status: { not: 'CANCELLED' } },
+          select: {
+            id: true,
+            bags: true,
+            pcs: true,
+            gram: true,
+            rate: true,
+            calField: true,
+            dispatches: { select: { id: true, bags: true, pcs: true, gram: true, dispatchStatus: true } },
+          },
+        },
+      },
+      orderBy: [{ orderDate: 'desc' }, { id: 'desc' }],
+    });
+    const scoped = orders.filter((o) => fx.custOk(o.customerId) && fx.dateOk(o.orderDate));
+
+    // Challans billing any of these orders' dispatches.
+    const dispatchIds = scoped.flatMap((o) => o.items.flatMap((it) => it.dispatches.map((d) => d.id)));
+    const challanItems = dispatchIds.length
+      ? await this.prisma.challanItem.findMany({
+          where: { dispatchId: { in: dispatchIds } },
+          select: { dispatchId: true, challan: { select: { id: true, code: true, invDate: true, total: true, challanStatus: true } } },
+        })
+      : [];
+    const challanByDispatch = new Map<number, (typeof challanItems)[number]['challan']>();
+    for (const ci of challanItems) if (ci.dispatchId != null) challanByDispatch.set(ci.dispatchId, ci.challan);
+
+    // Returns: credit-note lines that gave quantity back to one of these dispatches.
+    const returnLinks = dispatchIds.length
+      ? await this.prisma.creditNoteItem.findMany({
+          where: { dispatchId: { in: dispatchIds }, returnDispatchId: { not: null } },
+          select: {
+            dispatchId: true,
+            amount: true,
+            creditNote: { select: { code: true, invDate: true } },
+          },
+        })
+      : [];
+    const returnsByDispatch = new Map<number, typeof returnLinks>();
+    for (const r of returnLinks) {
+      if (r.dispatchId == null) continue;
+      returnsByDispatch.set(r.dispatchId, [...(returnsByDispatch.get(r.dispatchId) ?? []), r]);
+    }
+
+    const lineValue = (it: { rate: number | null; calField: string | null; pcs: number | null; gram: number | null }) =>
+      n(it.rate) * ((it.calField ?? '').trim().toUpperCase() === 'PCS' ? n(it.pcs) : n(it.gram));
+
+    const tot = { docs: 0, lines: 0, bags: 0, pcs: 0, kgs: 0, amount: 0 };
+    const disp = { docs: 0, bags: 0, pcs: 0, kgs: 0 };
+    const ret = { docs: 0, lines: 0, bags: 0, pcs: 0, kgs: 0, amount: 0 };
+    let billedAmountAll = 0;
+    let billedLines = 0;
+    const billedChallans = new Set<number>();
+    const returnNotes = new Set<string>();
+    const events: JourneyEvent[] = [];
+    const journeyOrders: JourneyOrder[] = [];
+
+    for (const o of scoped) {
+      const oq = { bags: 0, pcs: 0, kgs: 0, amount: 0 };
+      const dq = { bags: 0, pcs: 0, kgs: 0 };
+      const rq = { bags: 0, pcs: 0, kgs: 0 };
+      let dispatchCount = 0;
+      let returnCount = 0;
+      let orderBilled = 0;
+      const codes = new Set<string>();
+      const orderCode = o.code ?? `ORD-${o.id}`;
+
+      for (const it of o.items) {
+        oq.bags += n(it.bags);
+        oq.pcs += n(it.pcs);
+        oq.kgs += n(it.gram);
+        oq.amount += lineValue(it);
+
+        for (const d of it.dispatches) {
+          if (d.dispatchStatus === RETURNED_DISPATCH_STATUS) {
+            // Reversal rows carry NEGATIVE quantities — that is what puts stock
+            // back. Counted here as the return they represent.
+            rq.bags += Math.abs(n(d.bags));
+            rq.pcs += Math.abs(n(d.pcs));
+            rq.kgs += Math.abs(n(d.gram));
+            returnCount += 1;
+            continue;
+          }
+          dq.bags += n(d.bags);
+          dq.pcs += n(d.pcs);
+          dq.kgs += n(d.gram);
+          dispatchCount += 1;
+
+          const ch = challanByDispatch.get(d.id);
+          if (ch && (ch.challanStatus ?? 'CONFIRMED') !== 'CANCELLED') {
+            billedLines += 1;
+            codes.add(ch.code);
+            // A challan bills several dispatches; its total must be counted once.
+            if (!billedChallans.has(ch.id)) {
+              billedChallans.add(ch.id);
+              billedAmountAll += n(ch.total);
+              orderBilled += n(ch.total);
+              events.push({
+                date: ch.invDate.toISOString(),
+                kind: 'CHALLAN',
+                title: ch.code,
+                detail: `Billed against ${orderCode}`,
+                amount: Math.round(n(ch.total)),
+              });
+            }
+          }
+
+          for (const r of returnsByDispatch.get(d.id) ?? []) {
+            ret.amount += n(r.amount);
+            ret.lines += 1;
+            if (!returnNotes.has(r.creditNote.code)) {
+              returnNotes.add(r.creditNote.code);
+              events.push({
+                date: r.creditNote.invDate.toISOString(),
+                kind: 'RETURN',
+                title: r.creditNote.code,
+                detail: `Return against ${orderCode}`,
+                amount: Math.round(n(r.amount)),
+              });
+            }
+          }
+        }
+      }
+
+      tot.docs += 1;
+      tot.lines += o.items.length;
+      tot.bags += oq.bags;
+      tot.pcs += oq.pcs;
+      tot.kgs += oq.kgs;
+      tot.amount += oq.amount;
+      disp.docs += dispatchCount;
+      disp.bags += dq.bags;
+      disp.pcs += dq.pcs;
+      disp.kgs += dq.kgs;
+      ret.bags += rq.bags;
+      ret.pcs += rq.pcs;
+      ret.kgs += rq.kgs;
+
+      // Progress on whichever unit this order is actually measured in — a
+      // pcs-priced order has no meaningful kgs to divide by.
+      const base = oq.kgs > 0 ? oq.kgs : oq.pcs > 0 ? oq.pcs : oq.bags;
+      const done = oq.kgs > 0 ? dq.kgs : oq.pcs > 0 ? dq.pcs : dq.bags;
+      const progress = base > 0 ? Math.max(0, Math.min(1, done / base)) : 0;
+      const stage: JourneyOrder['stage'] =
+        returnCount > 0
+          ? 'RETURNED'
+          : codes.size > 0
+            ? 'BILLED'
+            : progress >= 0.999
+              ? 'DISPATCHED'
+              : progress > 0
+                ? 'PARTIAL'
+                : 'PENDING';
+
+      events.push({
+        date: o.orderDate.toISOString(),
+        kind: 'ORDER',
+        title: orderCode,
+        detail: `${o.items.length} line${o.items.length === 1 ? '' : 's'}`,
+        amount: Math.round(oq.amount),
+      });
+
+      journeyOrders.push({
+        orderId: o.id,
+        orderCode: o.code,
+        orderDate: o.orderDate.toISOString(),
+        dueDate: o.completionDate ? o.completionDate.toISOString() : null,
+        priority: o.priority,
+        lines: o.items.length,
+        bags: r2(oq.bags),
+        pcs: r2(oq.pcs),
+        kgs: r2(oq.kgs),
+        amount: Math.round(oq.amount),
+        dispBags: r2(dq.bags),
+        dispPcs: r2(dq.pcs),
+        dispKgs: r2(dq.kgs),
+        dispatches: dispatchCount,
+        challanCodes: [...codes],
+        billedAmount: Math.round(orderBilled),
+        returnedBags: r2(rq.bags),
+        returnedPcs: r2(rq.pcs),
+        returnedKgs: r2(rq.kgs),
+        returns: returnCount,
+        progress,
+        stage,
+      });
+    }
+
+    ret.docs = returnNotes.size;
+
+    // The funnel is read on ONE unit — whichever the party actually orders in —
+    // so the four bars are comparable instead of mixing kgs with pcs.
+    const first = tot.kgs > 0 ? tot.kgs : tot.pcs > 0 ? tot.pcs : tot.bags;
+    const pick = (o: { bags: number; pcs: number; kgs: number }) => (tot.kgs > 0 ? o.kgs : tot.pcs > 0 ? o.pcs : o.bags);
+    const share = (v: number) => (first > 0 ? Math.max(0, Math.min(1, v / first)) : null);
+
+    const stages: JourneyStage[] = [
+      { key: 'ORDERS', label: 'Ordered', docs: tot.docs, lines: tot.lines, bags: r2(tot.bags), pcs: r2(tot.pcs), kgs: r2(tot.kgs), amount: Math.round(tot.amount), ofFirst: null },
+      { key: 'DISPATCHED', label: 'Dispatched', docs: disp.docs, lines: disp.docs, bags: r2(disp.bags), pcs: r2(disp.pcs), kgs: r2(disp.kgs), amount: 0, ofFirst: share(pick(disp)) },
+      { key: 'CHALLAN', label: 'Billed', docs: billedChallans.size, lines: billedLines, bags: 0, pcs: 0, kgs: 0, amount: Math.round(billedAmountAll), ofFirst: null },
+      { key: 'RETURNS', label: 'Returned', docs: ret.docs, lines: ret.lines, bags: r2(ret.bags), pcs: r2(ret.pcs), kgs: r2(ret.kgs), amount: Math.round(ret.amount), ofFirst: share(pick(ret)) },
+    ];
+
+    events.sort((a, b) => b.date.localeCompare(a.date));
+
+    const unit = tot.kgs > 0 ? 'kgs' : tot.pcs > 0 ? 'pcs' : 'bags';
+    const waiting = journeyOrders.filter((o) => o.stage === 'PENDING' || o.stage === 'PARTIAL').length;
+    const insights: string[] = [];
+    if (!scoped.length) {
+      insights.push('No orders in this window.');
+    } else {
+      const shipped = stages[1].ofFirst;
+      if (shipped != null) insights.push(`${Math.round(shipped * 100)}% of the ${unit} ordered has been dispatched.`);
+      if (billedChallans.size) insights.push(`${billedChallans.size} challan${billedChallans.size === 1 ? '' : 's'} raised against these orders.`);
+      if (waiting) insights.push(`${waiting} order${waiting === 1 ? '' : 's'} still waiting on dispatch.`);
+      insights.push(
+        ret.docs
+          ? `${ret.docs} credit note${ret.docs === 1 ? '' : 's'} put ${r2(pick(ret))} ${unit} back into stock.`
+          : 'Nothing came back — no returns in this window.',
+      );
+    }
+
+    return {
+      customerId: f.customerId ?? null,
+      customerName: scoped[0]?.customerName ?? (f.customerId ? 'Selected party' : 'All parties'),
+      from: f.from ?? null,
+      to: f.to ?? null,
+      stages,
+      // Bounded: the page renders every row with its own animation, and a party
+      // with thousands of orders would stutter rather than impress.
+      orders: journeyOrders.slice(0, 200),
+      events: events.slice(0, 60),
+      insights,
+    };
+  }
+
   async fulfilment(f: ReportFilters = {}): Promise<FulfilmentReport> {
     const now = new Date();
     const DAY = 86_400_000;

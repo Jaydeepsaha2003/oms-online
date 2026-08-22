@@ -86,6 +86,10 @@ export interface SaveNoteInput {
   packing?: number;
   freight?: number;
   pouch?: number;
+  /** "Other Charges from Party" — anything the party is charging us that belongs
+   *  on this note (their freight, labour, a claim). Behaves exactly like the
+   *  other charge lines: it adds to the note base and is taxed with it. */
+  otherCharges?: number;
   tcs?: number;
   gst?: number;
   freightRate?: number;
@@ -103,6 +107,9 @@ export interface SaveNoteInput {
   noBillWithoutGst?: boolean;
   /** DN only — CONFIRMED / CANCELLED. */
   challanStatus?: string;
+  /** CREDIT only. Put the returned quantities back into the dispatch pending
+   *  pool, so the goods can be dispatched again. */
+  markUndispatched?: boolean;
   items: NoteItemInput[];
 }
 
@@ -125,6 +132,7 @@ export interface NoteDto {
   packing: number | null;
   freight: number | null;
   pouch: number | null;
+  otherCharges: number | null;
   tcs: number | null;
   gst: number | null;
   freightRate: number | null;
@@ -148,6 +156,14 @@ export interface SaveNoteResult {
   id: number;
   code: string;
   total: number;
+  /** Present only when the note was saved as "Undispatched" (credit notes). */
+  undispatched?: {
+    /** Lines whose quantity went back into the pending pool. */
+    returned: number;
+    /** Lines that could NOT be returned, each with the reason — a manual row or
+     *  a sale with no dispatch link has no pending line to go back to. */
+    skipped: string[];
+  };
 }
 
 export interface NextNoteNoResult {
@@ -233,6 +249,8 @@ export interface NoteBreakupInput {
   packing?: number | null;
   freight?: number | null;
   pouch?: number | null;
+  /** "Other Charges from Party" — see NoteSaveInput.otherCharges. */
+  otherCharges?: number | null;
   /** Half-bill rate (₹/kg). 0/absent → full bill on the bank side. */
   billingRate?: number | null;
   /** NoBill party → everything falls on the cash (C) side. */
@@ -279,11 +297,17 @@ export function noteRoundOff(parts: {
   packing?: number | null;
   freight?: number | null;
   pouch?: number | null;
+  otherCharges?: number | null;
   tax?: number | null;
   total: number;
 }): number {
   const beforeRounding =
-    parts.tAmt + (parts.packing ?? 0) + (parts.freight ?? 0) + (parts.pouch ?? 0) + (parts.tax ?? 0);
+    parts.tAmt +
+    (parts.packing ?? 0) +
+    (parts.freight ?? 0) +
+    (parts.pouch ?? 0) +
+    (parts.otherCharges ?? 0) +
+    (parts.tax ?? 0);
   return round2(parts.total - beforeRounding);
 }
 
@@ -301,7 +325,8 @@ export function computeNoteBreakup(input: NoteBreakupInput): NoteBreakup {
   const packing = input.packing ?? 0;
   const freight = input.freight ?? 0;
   const pouch = input.pouch ?? 0;
-  const challanBase = tAmt + packing + freight + pouch;
+  const otherCharges = input.otherCharges ?? 0;
+  const challanBase = tAmt + packing + freight + pouch + otherCharges;
   const rate = input.billingRate ?? 0;
   const manual = input.manualTax != null && Number.isFinite(input.manualTax);
 
@@ -348,5 +373,14 @@ export function computeNoteBreakup(input: NoteBreakupInput): NoteBreakup {
   // Round off against the ROUNDED tax, i.e. the numbers actually on screen, so
   // the column adds up exactly for whoever checks it by hand.
   const tax = round2(effTax);
-  return { amounts, tAmt, gstPercent, tax, total, b, c, roundOff: noteRoundOff({ tAmt, packing, freight, pouch, tax, total }) };
+  return {
+    amounts,
+    tAmt,
+    gstPercent,
+    tax,
+    total,
+    b,
+    c,
+    roundOff: noteRoundOff({ tAmt, packing, freight, pouch, otherCharges, tax, total }),
+  };
 }

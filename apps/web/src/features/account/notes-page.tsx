@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowUpRight, Check, FolderOpen, Loader2, Plus, Printer, RotateCcw, Trash2 } from 'lucide-react';
+import { ArrowUpRight, Check, FolderOpen, Layers, Loader2, Plus, Printer, RotateCcw, Trash2, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   computeNoteBreakup,
@@ -24,7 +24,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { DatePicker } from '@/components/ui/date-picker';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { openPdf } from '@/lib/pdf';
 import { useCustomers } from '@/features/customers/use-customers';
 import { fetchChallanByCode } from '@/features/challans/use-challans';
@@ -109,6 +109,7 @@ export function NotesPage() {
   const [packing, setPacking] = useState('');
   const [freight, setFreight] = useState('');
   const [pouch, setPouch] = useState('');
+  const [otherCharges, setOtherCharges] = useState('');
   const [tcs, setTcs] = useState('');
   const [billingRate, setBillingRate] = useState('');
   const [category, setCategory] = useState('');
@@ -178,11 +179,12 @@ export function NotesPage() {
         packing: numOrU(packing),
         freight: numOrU(freight),
         pouch: numOrU(pouch),
+        otherCharges: numOrU(otherCharges),
         billingRate: numOrU(billingRate),
         noBill,
         noBillWithoutGst,
       }),
-    [lines, packing, freight, pouch, billingRate, noBill, noBillWithoutGst],
+    [lines, packing, freight, pouch, otherCharges, billingRate, noBill, noBillWithoutGst],
   );
 
   const resetHeaderFromCustomer = (name: string) => {
@@ -193,6 +195,7 @@ export function NotesPage() {
     setBillingRate(c.billingRate != null ? String(c.billingRate) : '');
     setPaymentTerm(c.creditPeriod != null ? String(c.creditPeriod) : '0');
     setPacking(c.packing != null ? String(c.packing) : '');
+    setOtherCharges('');
     setFreight(c.freight != null ? String(c.freight) : '');
   };
 
@@ -207,6 +210,10 @@ export function NotesPage() {
     setEditingCode(null);
     setLines([]);
     setEntry({ ...EMPTY_ENTRY });
+    setOtherCharges('');
+    // A fresh note asks about each invoice again — the previous note's answers
+    // say nothing about this one.
+    setInvoiceChoice({});
     setNoBill(false);
     setNoBillWithoutGst(false);
     setRemarks('');
@@ -220,10 +227,62 @@ export function NotesPage() {
   };
 
   // ── item entry ────────────────────────────────────────────────────────────
+
+  /** Remembers, per invoice number, whether the user wanted the whole invoice or
+   *  just single items. Asked ONCE per invoice per note — picking a second item
+   *  off an invoice already answered for must not re-prompt. */
+  const [invoiceChoice, setInvoiceChoice] = useState<Record<string, 'ALL' | 'ONE'>>({});
+  const [askInvoice, setAskInvoice] = useState<{ invNo: string; rows: RecentSoldRow[]; picked: RecentSoldRow } | null>(null);
+
+  /** Build a note line straight from a sold row, at the full sold quantity —
+   *  what "add all items from this invoice" means: a full return of that
+   *  invoice. Individual lines can still be edited down afterwards. */
+  const lineFromSold = (r: RecentSoldRow): Line => ({
+    dispatchId: r.dispatchId || undefined,
+    refInvNo: r.invNo || undefined,
+    productName: r.productName,
+    design: r.design || undefined,
+    bags: r.bags || undefined,
+    pcs: r.pcs || undefined,
+    kgs: r.kgs || undefined,
+    box: r.box || undefined,
+    unit: r.unit || undefined,
+    price: r.price || undefined,
+    pCategory: r.pCategory || undefined,
+    gstRate: r.gstRate,
+    invDate: r.invDate,
+  });
+
+  /** Same identity the manual add uses, so both paths agree on "already there". */
+  const sameLine = (a: { refInvNo?: string; productName?: string; design?: string }, r: RecentSoldRow) =>
+    (a.refInvNo ?? '') === r.invNo && a.productName === r.productName && (a.design ?? '') === (r.design ?? '');
+
+  /** Add every remaining item of one invoice in one go. */
+  const addWholeInvoice = (invNo: string) => {
+    const rows = recentSold.filter((r: RecentSoldRow) => r.invNo === invNo);
+    setLines((prev) => {
+      const fresh = rows.filter((r) => !prev.some((l) => sameLine(l, r)));
+      if (!fresh.length) {
+        toast.info(`Every item on ${invNo} is already on this note.`);
+        return prev;
+      }
+      toast.success(`Added ${fresh.length} item${fresh.length === 1 ? '' : 's'} from ${invNo}.`);
+      return [...prev, ...fresh.map(lineFromSold)];
+    });
+    setEntry({ ...EMPTY_ENTRY });
+  };
+
   const pickRecent = (idxStr: string) => {
     const i = Number(idxStr);
     const r = recentSold[i];
     if (!r) return;
+    // First time an item from this invoice is picked, offer the whole invoice —
+    // but only when there is actually more than one item to offer.
+    const siblings = recentSold.filter((x: RecentSoldRow) => x.invNo === r.invNo);
+    if (r.invNo && siblings.length > 1 && !invoiceChoice[r.invNo]) {
+      setAskInvoice({ invNo: r.invNo, rows: siblings, picked: r });
+      return;
+    }
     setEntry({
       product: r.productName,
       design: r.design,
@@ -290,12 +349,29 @@ export function NotesPage() {
   const removeLine = (i: number) => setLines((prev) => prev.filter((_, idx) => idx !== i));
 
   // ── save ──────────────────────────────────────────────────────────────────
+
+  /** Set while the credit-note save is waiting on the Undispatched question. */
+  const [askUndispatch, setAskUndispatch] = useState(false);
+
+  /**
+   * A credit note is a money document; marking it Undispatched ALSO moves stock
+   * back into the dispatch pending pool. Those are different decisions, so the
+   * save asks rather than guessing. Debit notes never ask — nothing came back.
+   */
   const onSave = () => {
     if (!customerId) return toast.error('Select a customer.');
     if (!lines.length) return toast.error('Add at least one item.');
+    if (mode === 'CREDIT') return setAskUndispatch(true);
+    doSave(false);
+  };
+
+  const doSave = (markUndispatched: boolean) => {
+    setAskUndispatch(false);
+    if (!customerId) return;
     saveMut.mutate(
       {
         mode,
+        markUndispatched: markUndispatched || undefined,
         code: editingCode ?? undefined,
         invDate,
         customerId,
@@ -306,6 +382,7 @@ export function NotesPage() {
         packing: numOrU(packing),
         freight: numOrU(freight),
         pouch: numOrU(pouch),
+        otherCharges: numOrU(otherCharges),
         tcs: numOrU(tcs),
         billingRate: numOrU(billingRate),
         remarks: remarks || undefined,
@@ -316,6 +393,17 @@ export function NotesPage() {
       {
         onSuccess: (res) => {
           toast.success(`${mode === 'CREDIT' ? 'Credit' : 'Debit'} Note ${res.code} saved — ${money0(res.total)}`);
+          const u = res.undispatched;
+          if (u) {
+            if (u.returned) toast.success(`${u.returned} line${u.returned === 1 ? '' : 's'} put back for dispatch.`);
+            // Never silent: a line that did not come back is exactly the kind of
+            // thing that gets noticed weeks later.
+            if (u.skipped.length) {
+              toast.warning(`${u.skipped.length} line${u.skipped.length === 1 ? '' : 's'} could not be put back — ${u.skipped.join('; ')}`, {
+                duration: 10000,
+              });
+            }
+          }
           resetForNew();
         },
         onError: (e) => toast.error(getApiErrorMessage(e, 'Save failed')),
@@ -339,6 +427,7 @@ export function NotesPage() {
       setPacking(n.packing != null ? String(n.packing) : '');
       setFreight(n.freight != null ? String(n.freight) : '');
       setPouch(n.pouch != null ? String(n.pouch) : '');
+      setOtherCharges(n.otherCharges != null ? String(n.otherCharges) : '');
       setTcs(n.tcs != null ? String(n.tcs) : '');
       setBillingRate(n.billingRate != null ? String(n.billingRate) : '');
       setNoBill(n.noBill);
@@ -464,6 +553,17 @@ export function NotesPage() {
                 <div className="space-y-1">
                   <Label htmlFor="n-pouch" className={FIELD_LABEL}>Box / Pouch</Label>
                   <Input id="n-pouch" value={pouch} onChange={(e) => setPouch(e.target.value)} inputMode="decimal" className={cn(CONTROL, 'bg-background text-right tabular-nums')} />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="n-other" className={FIELD_LABEL}>Other Charges</Label>
+                  <Input
+                    id="n-other"
+                    value={otherCharges}
+                    onChange={(e) => setOtherCharges(e.target.value)}
+                    inputMode="decimal"
+                    placeholder="from party"
+                    className={cn(CONTROL, 'bg-background text-right tabular-nums')}
+                  />
                 </div>
                 {mode === 'DEBIT' ? (
                   <div className="space-y-1">
@@ -730,6 +830,81 @@ export function NotesPage() {
       </div>
 
       <NoteDirectoryDialog open={dirOpen} onOpenChange={setDirOpen} mode={mode} onEdit={loadForEdit} onDelete={del} canDelete={can('note:delete')} canPrint={can('note:print')} confirm={confirm} />
+
+      {/* Whole invoice, or just this item? Asked once per invoice per note. */}
+      <Dialog open={!!askInvoice} onOpenChange={(o) => !o && setAskInvoice(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Layers className="size-5 text-primary" /> Invoice {askInvoice?.invNo}
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-[13px]">
+            This invoice has <b>{askInvoice?.rows.length} items</b>. Add them all, or only{' '}
+            <b>{askInvoice?.picked.productName}</b>?
+          </p>
+          <p className="text-muted-foreground text-[11.5px]">
+            Adding all brings each item in at its full sold quantity — you can still change any line afterwards. You will not be
+            asked about {askInvoice?.invNo} again on this note.
+          </p>
+          <DialogFooter className="gap-2 sm:justify-between">
+            <Button
+              variant="outline"
+              className="h-11 flex-1"
+              onClick={() => {
+                if (!askInvoice) return;
+                setInvoiceChoice((m) => ({ ...m, [askInvoice.invNo]: 'ONE' }));
+                const only = askInvoice.picked;
+                setAskInvoice(null);
+                // Re-enter the normal single-item path now the choice is recorded.
+                pickRecent(String(recentSold.indexOf(only)));
+              }}
+            >
+              Only this item
+            </Button>
+            <Button
+              className="h-11 flex-1"
+              onClick={() => {
+                if (!askInvoice) return;
+                setInvoiceChoice((m) => ({ ...m, [askInvoice.invNo]: 'ALL' }));
+                addWholeInvoice(askInvoice.invNo);
+                setAskInvoice(null);
+              }}
+            >
+              Add all {askInvoice?.rows.length}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Credit note only: is this also a stock return? */}
+      <Dialog open={askUndispatch} onOpenChange={(o) => !o && setAskUndispatch(false)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Undo2 className="size-5 text-primary" /> Save this credit note
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-[13px]">Did these goods physically come back?</p>
+          <div className="text-muted-foreground space-y-1.5 text-[11.5px]">
+            <p>
+              <b className="text-foreground">Mark as Undispatched</b> — the credit note is raised <i>and</i> the returned
+              quantity goes back into Dispatch Orders, so it can be dispatched again.
+            </p>
+            <p>
+              <b className="text-foreground">Just the credit note</b> — money only. Nothing changes in dispatch.
+            </p>
+          </div>
+          <DialogFooter className="gap-2 sm:justify-between">
+            <Button variant="outline" className="h-11 flex-1" disabled={saveMut.isPending} onClick={() => doSave(false)}>
+              Just the credit note
+            </Button>
+            <Button className="h-11 flex-1" disabled={saveMut.isPending} onClick={() => doSave(true)}>
+              {saveMut.isPending ? <Loader2 className="animate-spin" /> : <Undo2 />} Mark as Undispatched
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

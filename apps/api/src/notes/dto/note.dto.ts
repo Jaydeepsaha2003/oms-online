@@ -59,6 +59,8 @@ export class SaveNoteDto {
   @IsOptional() @Type(() => Number) @IsNumber() packing?: number;
   @IsOptional() @Type(() => Number) @IsNumber() freight?: number;
   @IsOptional() @Type(() => Number) @IsNumber() pouch?: number;
+  /** "Other Charges from Party" — adds to the note base and is taxed with it. */
+  @IsOptional() @Type(() => Number) @IsNumber() otherCharges?: number;
   @IsOptional() @Type(() => Number) @IsNumber() tcs?: number;
   @IsOptional() @Type(() => Number) @IsNumber() gst?: number;
   @IsOptional() @Type(() => Number) @IsNumber() freightRate?: number;
@@ -70,6 +72,8 @@ export class SaveNoteDto {
   @IsOptional() @IsString() remarks?: string;
   @IsOptional() @IsBoolean() noBill?: boolean;
   @IsOptional() @IsBoolean() noBillWithoutGst?: boolean;
+  /** CREDIT only — put the returned quantities back in the dispatch pending pool. */
+  @IsOptional() @IsBoolean() markUndispatched?: boolean;
   @IsOptional() @IsString() challanStatus?: string;
   @IsArray() @ValidateNested({ each: true }) @Type(() => NoteItemDto) items!: NoteItemDto[];
 }

@@ -6,6 +6,34 @@ import type { Paginated, PaginationQuery } from './common';
 export const DISPATCH_STATUSES = ['PARTIALLY DISPATCH', 'FULLY DISPATCH'] as const;
 export type DispatchStatus = (typeof DISPATCH_STATUSES)[number];
 
+/**
+ * A dispatch row that gives quantity BACK, written when a credit note is saved
+ * as "Undispatched". It carries NEGATIVE quantities against the same order line,
+ * so `ordered − Σ dispatched` lifts the remaining quantity back up without the
+ * original outward dispatch — a real event, referenced by a challan — being
+ * edited or deleted.
+ *
+ * Deliberately NOT in {@link DISPATCH_STATUSES}: it is not a status a user can
+ * choose when dispatching, only one the system writes.
+ */
+export const RETURNED_DISPATCH_STATUS = 'RETURNED';
+
+/** One return event linking a credit note to the dispatch it gave back. */
+export interface DispatchReturnRef {
+  /** The reversing dispatch row (negative quantities). */
+  returnDispatchId: number;
+  /** The outward dispatch the quantity came off. */
+  dispatchId: number | null;
+  /** Credit note that recorded the return, e.g. "CN/7". */
+  creditNoteCode: string;
+  creditNoteDate: string;
+  /** Quantity returned, as positive figures. */
+  bags: number | null;
+  pcs: number | null;
+  kgs: number | null;
+  box: number | null;
+}
+
 /** Columns offered by the pending-dispatch Excel export, in the order they're
  *  written to the sheet. Shared so the "which columns?" picker on the frontend
  *  and the xlsx builder on the backend can never drift apart. */
@@ -161,7 +189,9 @@ export interface DispatchDto {
   pcs: number | null;
   gram: number | null;
   box: number | null;
-  dispatchStatus: DispatchStatus;
+  /** Includes {@link RETURNED_DISPATCH_STATUS}, which the system writes but no
+   *  user can choose — hence wider here than on the create/update input. */
+  dispatchStatus: DispatchStatus | typeof RETURNED_DISPATCH_STATUS;
   dispatchDate: string;
   comment: string | null;
   supItem: string | null;
@@ -176,6 +206,16 @@ export interface DispatchDto {
   challanId: number | null;
   challanCode: string | null;
   challanStatus: string | null;
+  /**
+   * Set when THIS row is a return (`dispatchStatus === RETURNED_DISPATCH_STATUS`):
+   * the credit note that created it and the outward dispatch it reverses.
+   */
+  returnOf?: DispatchReturnRef | null;
+  /**
+   * Set on an OUTWARD dispatch that has since had quantity returned against it.
+   * The history the Modify Dispatch row needs to explain why its line reopened.
+   */
+  returns?: DispatchReturnRef[];
 }
 
 export interface CreateDispatchInput {

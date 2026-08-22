@@ -110,6 +110,13 @@ export const MENU: MenuNode[] = [
         icon: 'Boxes',
         permission: perm(RESOURCES.REPORT, ACTIONS.VIEW),
       },
+      {
+        id: 'report-order-journey',
+        label: 'Order Journey',
+        to: '/reports/order-journey',
+        icon: 'Route',
+        permission: perm(RESOURCES.REPORT, ACTIONS.VIEW),
+      },
     ],
   },
   {

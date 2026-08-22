@@ -76,4 +76,11 @@ export class ReportsController {
   fulfilment(@Query() f: ReportFilterDto) {
     return this.reports.fulfilment(f);
   }
+
+  /** Order Journey — one party's goods followed Orders → Dispatched → Challan → Returns. */
+  @Get('order-journey')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  orderJourney(@Query() f: ReportFilterDto) {
+    return this.reports.orderJourney(f);
+  }
 }
