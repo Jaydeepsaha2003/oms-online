@@ -20,6 +20,7 @@ import { PdfService } from '../pdf/pdf.service';
 import { BookingsService } from '../bookings/bookings.service';
 import { ActivityNotifier } from '../notifications/activity-notifier.service';
 import { toNum, toStr, uc } from '../common/coerce';
+import { baseProductName, matchesProductName } from '../common/product-name';
 import { readCategoryFields } from '../common/category-fields';
 import { UPLOADS_DIR } from '../uploads/uploads.constants';
 import { AddOrderItemPhotoDto, CreateOrderDto, OrderQueryDto, PriceAsOfDto, UpdateOrderDto } from './dto/order.dto';
@@ -73,10 +74,26 @@ export class OrdersService {
    */
   private lineWhere(query: OrderQueryDto): Prisma.OrderItemWhereInput | undefined {
     const and: Prisma.OrderItemWhereInput[] = [];
-    if (query.product) and.push({ OR: [{ productName: query.product }, { product: query.product }] });
+    if (query.product) and.push(this.productWhere(query.product, query.productBase));
     if (query.design) and.push({ designType: query.design });
     if (query.priority) and.push({ priority: query.priority });
     return and.length ? { AND: and } : undefined;
+  }
+
+  /** The product filter, in whichever mode the caller's picker is running.
+   *
+   *  Full-name mode (Orders page) matches only the item picked. Base-name mode
+   *  (Order Modify, like Dispatch Order) also matches that base's design
+   *  variants — "12 MALBORO" brings in "12 MALBORO DL+LOGO" — via the same
+   *  whole-word prefix `matchesProductName` applies in memory. */
+  private productWhere(product: string, base?: boolean): Prisma.OrderItemWhereInput {
+    return {
+      OR: [
+        { productName: product },
+        ...(base ? [{ productName: { startsWith: `${product} ` } }] : []),
+        { product },
+      ],
+    };
   }
 
   /** Shared where-builder for the order list and the Order Modify export —
@@ -744,7 +761,7 @@ export class OrdersService {
       let out = list;
       if (q.customer) out = out.filter((l) => l.order.customerName === q.customer);
       if (q.agent) out = out.filter((l) => l.order.agentName === q.agent);
-      if (q.product) out = out.filter((l) => productOf(l) === q.product);
+      if (q.product) out = out.filter((l) => matchesProductName(productOf(l), q.product!, q.productBase));
       if (q.design) out = out.filter((l) => designOf(l) === q.design);
       if (q.priority) out = out.filter((l) => (l.priority ?? '') === q.priority);
       if (q.orderId) out = out.filter((l) => l.order.id === q.orderId);
@@ -773,6 +790,7 @@ export class OrdersService {
       customers: distinct(poolFor('customer'), (l) => l.order.customerName),
       agents: distinct(poolFor('agent'), (l) => l.order.agentName),
       products: distinct(poolFor('product'), productOf),
+      productBases: distinct(poolFor('product'), (l) => baseProductName(productOf(l), l.product)),
       designs: distinct(poolFor('design'), designOf),
       orders: [...byId.values()].sort((a, b) => b.id - a.id),
     };

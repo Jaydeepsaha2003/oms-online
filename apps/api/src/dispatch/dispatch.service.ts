@@ -19,6 +19,7 @@ import {
   type UpdateDispatchResult,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { baseProductName, matchesProductName } from '../common/product-name';
 import { ApprovalsService } from '../approvals/approvals.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
@@ -393,25 +394,6 @@ export class DispatchService implements OnModuleInit {
     return lines;
   }
 
-  /** The base product — "{size} {product}" with any trailing design / handle /
-   *  logo suffix dropped — e.g. "10 RDX WL+TOOL+LOGO" (product "RDX") → "10 RDX",
-   *  and "7 DECENT TOOL" (product "DECENT") → "7 DECENT". This is the legacy
-   *  Form13 SelectProduct value; the base-name picker (ALL off) groups every
-   *  design variant of a product under it.
-   *
-   *  We cut the name right after the product word rather than stripping the
-   *  `designType` token: on this data designType is almost always "NA"/null even
-   *  when the name carries a design suffix, so a design-based strip left the
-   *  suffix on and the "base" list still showed full, design-laden names. */
-  private static baseProductName(full: string | null | undefined, product: string | null | undefined): string {
-    const name = (full ?? '').trim();
-    const prod = (product ?? '').trim();
-    if (!prod) return name;
-    const idx = name.toUpperCase().indexOf(prod.toUpperCase());
-    if (idx === -1) return name; // product word not found in the name → leave as-is
-    return name.slice(0, idx + prod.length).trim();
-  }
-
   /** Distinct customer / agent / product / design values present in the *pending*
    *  pool, used to populate the Dispatch Order page's filter dropdowns. Cascading:
    *  each field's option list reflects the OTHER active filters (but not itself),
@@ -430,7 +412,7 @@ export class DispatchService implements OnModuleInit {
       customers: distinct(poolFor('customer'), (l) => l.customerName),
       agents: distinct(poolFor('agent'), (l) => l.agentName),
       products: distinct(productPool, (l) => l.productName || l.product),
-      productBases: distinct(productPool, (l) => DispatchService.baseProductName(l.productName || l.product, l.product)),
+      productBases: distinct(productPool, (l) => baseProductName(l.productName || l.product, l.product)),
       designs: distinct(poolFor('design'), (l) => (l.designType && l.designType.toUpperCase() !== 'NA' ? l.designType : null)),
       categories: distinct(poolFor('category'), (l) => l.pCategory),
       subCategories: distinct(poolFor('subCategory'), (l) => l.subCategory),
@@ -449,20 +431,11 @@ export class DispatchService implements OnModuleInit {
     if (query.customer) lines = lines.filter((l) => l.customerName === query.customer);
     if (query.agent) lines = lines.filter((l) => l.agentName === query.agent);
     if (query.product) {
+      // "ALL" on → the picker listed every design variant (full names), so match
+      // the exact item picked. Off (default) → it listed base names, so a pick
+      // also brings in that base's design variants. See matchesProductName.
       const target = query.product;
-      if (query.all) {
-        // "ALL" on → the picker lists every design variant (full names); match the
-        // exact item picked.
-        lines = lines.filter((l) => (l.productName || l.product) === target);
-      } else {
-        // Default → the picker lists base names only (short list). A base pick
-        // matches the base itself and all its design variants: "10 RDX" brings in
-        // "10 RDX DL", "10 RDX LOGO", etc. via a whole-word prefix.
-        lines = lines.filter((l) => {
-          const full = l.productName || l.product || '';
-          return full === target || full.startsWith(`${target} `);
-        });
-      }
+      lines = lines.filter((l) => matchesProductName(l.productName || l.product, target, !query.all));
     }
     if (query.design) lines = lines.filter((l) => l.designType === query.design);
     // Product category, not the order-level `category` — the Dispatch Order page

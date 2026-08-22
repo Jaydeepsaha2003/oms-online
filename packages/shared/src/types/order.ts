@@ -221,6 +221,11 @@ export type OrderQuery = PaginationQuery & {
    *  values come from {@link OrderFilterOptions}). */
   product?: string;
   design?: string;
+  /** Read `product` as a BASE item name — it then also matches that base's
+   *  design variants ("12 MALBORO" brings in "12 MALBORO DL+LOGO"). Set by the
+   *  screens whose picker lists {@link OrderFilterOptions.productBases}; left
+   *  off where the picker lists full names and a pick means just that item. */
+  productBase?: boolean;
   /** Exact match on the order's numeric id (the Order ID picker). */
   orderId?: number;
 };
@@ -232,6 +237,10 @@ export interface OrderFilterOptions {
   customers: string[];
   agents: string[];
   products: string[];
+  /** The same items with their design suffix dropped — "12 MALBORO DL+LOGO"
+   *  and its siblings collapse to "12 MALBORO". Backs the shorter, typeable
+   *  item picker on Order Modify; pair it with {@link OrderQuery.productBase}. */
+  productBases: string[];
   designs: string[];
   /** Every non-draft order's id + code, newest first — backs the Order ID filter
    *  picker on Order Modify. */

@@ -1,6 +1,6 @@
 import { PartialType } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsArray, IsIn, IsInt, IsNumber, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 export class CreateOrderDto {
@@ -69,6 +69,9 @@ export class OrderQueryDto extends PaginationDto {
   /** Keep orders containing this product / design on any line (exact match). */
   @IsOptional() @IsString() product?: string;
   @IsOptional() @IsString() design?: string;
+  /** Read `product` as a BASE item name, so it also matches that base's design
+   *  variants — Order Modify's item picker (mirrors Dispatch Order's ALL-off). */
+  @IsOptional() @Transform(({ value }) => value === true || value === 'true' || value === '1') @IsBoolean() productBase?: boolean;
   /** Exact match on the order's numeric id (Order Modify's Order ID picker). */
   @IsOptional() @Transform(({ value }) => (value === '' || value == null ? undefined : parseInt(value, 10))) @IsInt() orderId?: number;
   /** Line priority filter — 'URGENT' / 'NORMAL' (Order Modify's Priority dropdown;

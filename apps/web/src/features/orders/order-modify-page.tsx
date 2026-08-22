@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Combo, NativeSelect } from '@/components/common/combo';
+import { Switch } from '@/components/ui/switch';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { settingValues, useOrderQtyLayout, useSettings } from '@/features/settings/use-settings';
@@ -223,6 +224,10 @@ export function OrderModifyPage() {
   const [design, setDesign] = useState('');
   const [priority, setPriority] = useState('');
   const [orderId, setOrderId] = useState('');
+  // Item picker mode. Off (default) → the short BASE-name list, where one pick
+  // covers every design variant of that item. On → the full list, one entry per
+  // variant, so a pick targets exactly that item. Same control as Dispatch Order.
+  const [allVariants, setAllVariants] = useState(false);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const { page, setPage, pageSize, setPageSize } = usePageSize('order-modify');
 
@@ -232,6 +237,9 @@ export function OrderModifyPage() {
     customer: customer || undefined,
     agent: agent || undefined,
     product: product || undefined,
+    // Tells the server which list the pick came from, so a base name also pulls
+    // in its variants instead of matching only a line named exactly that.
+    productBase: allVariants ? undefined : true,
     design: design || undefined,
     priority: priority || undefined,
     orderId: orderId ? Number(orderId) : undefined,
@@ -269,7 +277,7 @@ export function OrderModifyPage() {
       setExporting(false);
     }
   };
-  const hasFilters = !!customer || !!agent || !!product || !!design || !!priority || !!orderId;
+  const hasFilters = !!customer || !!agent || !!product || !!design || !!priority || !!orderId || allVariants;
   // Agent/Design/Priority move behind the Filter icon on phones — this
   // count feeds its badge and drives the mobile sheet's own Reset button.
   const activeFilterCount = (agent ? 1 : 0) + (design ? 1 : 0) + (priority ? 1 : 0);
@@ -280,8 +288,21 @@ export function OrderModifyPage() {
     setDesign('');
     setPriority('');
     setOrderId('');
+    setAllVariants(false);
     setPage(1);
   };
+
+  // Flipping All swaps the item option set (base ↔ full), so whatever is picked
+  // is no longer in the list — clear it rather than leave a filter applied that
+  // the dropdown can no longer show.
+  const toggleAllVariants = (next: boolean) => {
+    setAllVariants(next);
+    setProduct('');
+    setPage(1);
+  };
+
+  // Off → base names ("12 MALBORO"); on → every variant ("12 MALBORO DL+LOGO").
+  const productOptions = allVariants ? (filterOptions?.products ?? []) : (filterOptions?.productBases ?? []);
 
   // Drafts are work-in-progress and orders parked as a quotation aren't orders
   // yet — neither belongs on Order Modify.
@@ -446,15 +467,22 @@ export function OrderModifyPage() {
           {/* Product sits out here with Order ID and Customer rather than behind
               the Filter icon: on this screen you are usually hunting one item
               across orders, so it is reached as often as the customer is. */}
-          <div className="w-full sm:w-48">
+          <div className="min-w-0 flex-1 sm:w-48 sm:flex-none">
             <NativeSelect
               value={product}
               onChange={(v) => { setProduct(v); setPage(1); }}
-              options={['', ...(filterOptions?.products ?? [])]}
-              placeholder="All products"
+              options={['', ...productOptions]}
+              placeholder={allVariants ? 'All items (any design)' : 'All items'}
               className={cn(CONTROL, 'font-medium', product && CONTROL_ON)}
+              digitsFirst
             />
           </div>
+          <label
+            className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[12.5px] font-semibold select-none"
+            title="ALL: list every design variant separately instead of grouping them under the item name"
+          >
+            <Switch checked={allVariants} onCheckedChange={toggleAllVariants} /> All
+          </label>
           {/* Phones: Agent / Design / Priority move behind this icon (see the
               sheet below) — they don't fit the toolbar at phone widths. */}
           <Button
