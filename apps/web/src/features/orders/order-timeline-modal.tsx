@@ -50,15 +50,27 @@ const Chip = ({ tone, children }: { tone: Tone; children: React.ReactNode }) => 
   </span>
 );
 
-/* ── Chronological events: order placed → dispatch days → challans → awaiting ── */
+/* ── Lifecycle events: order placed → dispatched → challaned → awaiting ─────── */
 
 type DispatchWithLine = { d: OrderTimelineDispatch; line: OrderTimelineLine };
+type DayGroup = { key: string; day: string; items: DispatchWithLine[] };
+type ChallanGroup = { key: string; code: string; status: string; date: string; items: DispatchWithLine[] };
 type Ev =
-  | { key: string; kind: 'ordered'; date: string; t: OrderTimeline }
-  | { key: string; kind: 'dispatchDay'; date: string; items: DispatchWithLine[] }
-  | { key: string; kind: 'challan'; date: string; code: string; status: string; items: DispatchWithLine[] }
+  | { key: string; kind: 'ordered'; t: OrderTimeline }
+  | { key: string; kind: 'dispatched'; days: DayGroup[]; items: DispatchWithLine[] }
+  | { key: string; kind: 'challans'; groups: ChallanGroup[]; items: DispatchWithLine[] }
   | { key: string; kind: 'awaiting'; lines: OrderTimelineLine[] };
 
+/**
+ * At most four nodes, one per stage of the order's life.
+ *
+ * Every dispatch DAY used to be its own node and every challan another, so a
+ * long-running order buried its own story in scroll — order 978 is a single
+ * line dispatched over 6 days on 6 challans, which came out as 13 stacked
+ * nodes. The days and challans survive as labelled groups INSIDE the two
+ * merged cards, so no detail is lost: it is one click away rather than one
+ * screenful away.
+ */
 function buildEvents(t: OrderTimeline): Ev[] {
   const all: DispatchWithLine[] = t.lines.flatMap((line) => line.dispatches.map((d) => ({ d, line })));
 
@@ -68,24 +80,25 @@ function buildEvents(t: OrderTimeline): Ev[] {
     const day = x.d.dispatchDate.slice(0, 10);
     (byDay.get(day) ?? byDay.set(day, []).get(day)!).push(x);
   }
+  const days: DayGroup[] = [...byDay.entries()]
+    .map(([day, items]) => ({ key: `day-${day}`, day, items }))
+    .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
 
   // Challans grouped by challan (each shown once, with every item it billed).
-  const byChallan = new Map<number, { code: string; status: string; date: string; items: DispatchWithLine[] }>();
+  const byChallan = new Map<number, ChallanGroup>();
   for (const x of all) {
     const c = x.d.challan;
     if (!c) continue;
-    const entry = byChallan.get(c.id) ?? byChallan.set(c.id, { code: c.code, status: c.challanStatus, date: c.invDate, items: [] }).get(c.id)!;
+    const entry =
+      byChallan.get(c.id) ??
+      byChallan.set(c.id, { key: `ch-${c.id}`, code: c.code, status: c.challanStatus, date: c.invDate.slice(0, 10), items: [] }).get(c.id)!;
     entry.items.push(x);
   }
+  const groups = [...byChallan.values()].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
-  type DatedEv = Extract<Ev, { kind: 'dispatchDay' | 'challan' }>;
-  const dated: DatedEv[] = [
-    ...[...byDay.entries()].map(([day, items]): DatedEv => ({ key: `day-${day}`, kind: 'dispatchDay', date: day, items })),
-    ...[...byChallan.entries()].map(([id, c]): DatedEv => ({ key: `ch-${id}`, kind: 'challan', date: c.date.slice(0, 10), code: c.code, status: c.status, items: c.items })),
-  ];
-  // One chronological story; a same-day challan follows its dispatch.
-  dated.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.kind === 'dispatchDay' ? -1 : 1));
-  const events: Ev[] = [{ key: 'ordered', kind: 'ordered', date: t.orderDate.slice(0, 10), t }, ...dated];
+  const events: Ev[] = [{ key: 'ordered', kind: 'ordered', t }];
+  if (days.length) events.push({ key: 'dispatched', kind: 'dispatched', days, items: all });
+  if (groups.length) events.push({ key: 'challans', kind: 'challans', groups, items: groups.flatMap((g) => g.items) });
 
   const awaiting = t.lines.filter((l) => l.status !== 'CANCELLED' && !l.fullyDispatched);
   if (awaiting.length) events.push({ key: 'awaiting', kind: 'awaiting', lines: awaiting });
@@ -182,6 +195,20 @@ function EventCard({
   );
 }
 
+/** One dispatch day, or one challan, inside an expanded merged card — carrying
+ *  the heading its own timeline node used to show. */
+function Group({ label, meta, children }: { label: React.ReactNode; meta?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="[&+&]:mt-2 [&+&]:border-t [&+&]:border-slate-200 [&+&]:pt-2">
+      <div className="flex flex-wrap items-center gap-2 py-1">
+        {label}
+        {meta}
+      </div>
+      {children}
+    </div>
+  );
+}
+
 /** One item row inside an expanded event. */
 function ItemRow({ x }: { x: DispatchWithLine }) {
   const full = x.d.dispatchStatus === 'FULLY DISPATCH';
@@ -271,47 +298,75 @@ export function OrderTimelineModal({ order, onClose }: { order: OrderDto; onClos
                 );
               }
 
-              if (ev.kind === 'dispatchDay') {
+              if (ev.kind === 'dispatched') {
                 const total = sumQty(ev.items.map((x) => x.d));
+                const from = ev.days[0].day;
+                const to = ev.days[ev.days.length - 1].day;
                 return (
                   <Node key={ev.key} index={i} last={last} dot={<Dot className="bg-sky-100 text-sky-700"><Truck className="size-4" /></Dot>}>
                     <EventCard
                       tone="sky"
                       header={<>
                         <span className="font-semibold">Dispatched</span>
-                        <span className="text-muted-foreground text-xs">{formatDate(ev.date)}</span>
+                        <span className="text-muted-foreground text-xs">{from === to ? formatDate(from) : `${formatDate(from)} – ${formatDate(to)}`}</span>
+                        {ev.days.length > 1 && <Chip tone="sky">{ev.days.length} days</Chip>}
                         {ev.items.some((x) => x.d.dispatchStatus === 'FULLY DISPATCH') && <Chip tone="emerald"><CircleCheck className="size-3" /> closes line(s)</Chip>}
                       </>}
-                      sub={<>{ev.items.length} item(s) · {qtyText(total)}</>}
+                      sub={<>{ev.items.length} dispatch(es) · {qtyText(total)}</>}
                       expandLabel={`${ev.items.length} items`}
                       expanded={open.has(ev.key)}
                       onToggle={() => toggle(ev.key)}
                     >
-                      {ev.items.map((x) => <ItemRow key={x.d.id} x={x} />)}
+                      {ev.days.map((g) => (
+                        <Group
+                          key={g.key}
+                          label={<span className="text-xs font-semibold text-sky-700">{formatDate(g.day)}</span>}
+                          meta={<span className="text-muted-foreground ml-auto text-[11px] tabular-nums">{g.items.length} item(s) · {qtyText(sumQty(g.items.map((x) => x.d)))}</span>}
+                        >
+                          {g.items.map((x) => <ItemRow key={x.d.id} x={x} />)}
+                        </Group>
+                      ))}
                     </EventCard>
                   </Node>
                 );
               }
 
-              if (ev.kind === 'challan') {
-                const cancelled = ev.status === 'CANCELLED';
+              if (ev.kind === 'challans') {
                 const total = sumQty(ev.items.map((x) => x.d));
+                const from = ev.groups[0].date;
+                const to = ev.groups[ev.groups.length - 1].date;
+                const cancelledCount = ev.groups.filter((g) => g.status === 'CANCELLED').length;
                 return (
                   <Node key={ev.key} index={i} last={last} dot={<Dot className="bg-violet-100 text-violet-700"><ScrollText className="size-4" /></Dot>}>
                     <EventCard
                       tone="violet"
                       header={<>
                         <span className="font-semibold">Challan created</span>
-                        <span className={cn('font-mono text-xs font-semibold', cancelled ? 'text-muted-foreground line-through' : 'text-violet-700')}>{ev.code}</span>
-                        <span className="text-muted-foreground text-xs">{formatDate(ev.date)}</span>
-                        {cancelled && <Chip tone="rose">CANCELLED</Chip>}
+                        <span className="text-muted-foreground text-xs">{from === to ? formatDate(from) : `${formatDate(from)} – ${formatDate(to)}`}</span>
+                        <Chip tone="violet">{ev.groups.length} challan(s)</Chip>
+                        {cancelledCount > 0 && <Chip tone="rose">{cancelledCount} cancelled</Chip>}
                       </>}
                       sub={<>bills {ev.items.length} dispatched item(s) · {qtyText(total)}</>}
                       expandLabel={`${ev.items.length} items`}
                       expanded={open.has(ev.key)}
                       onToggle={() => toggle(ev.key)}
                     >
-                      {ev.items.map((x) => <ItemRow key={`${ev.key}-${x.d.id}`} x={x} />)}
+                      {ev.groups.map((g) => {
+                        const cancelled = g.status === 'CANCELLED';
+                        return (
+                          <Group
+                            key={g.key}
+                            label={<span className={cn('font-mono text-xs font-semibold', cancelled ? 'text-muted-foreground line-through' : 'text-violet-700')}>{g.code}</span>}
+                            meta={<>
+                              <span className="text-muted-foreground text-[11px]">{formatDate(g.date)}</span>
+                              {cancelled && <Chip tone="rose">CANCELLED</Chip>}
+                              <span className="text-muted-foreground ml-auto text-[11px] tabular-nums">{g.items.length} item(s) · {qtyText(sumQty(g.items.map((x) => x.d)))}</span>
+                            </>}
+                          >
+                            {g.items.map((x) => <ItemRow key={`${g.key}-${x.d.id}`} x={x} />)}
+                          </Group>
+                        );
+                      })}
                     </EventCard>
                   </Node>
                 );
