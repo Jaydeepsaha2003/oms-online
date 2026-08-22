@@ -88,37 +88,39 @@ interface Row {
   design: { type: string | null; name: string | null };
 }
 
-/** Per-line shipping state. Nothing renders for an undispatched line — a chip on
- *  every row would just be noise when most of the list hasn't shipped. */
 /**
- * @param showPending render an explicit "Not dispatched" chip instead of nothing
- *   when the line hasn't shipped. Used by the phone card: there, absence of a
- *   chip is indistinguishable from information the card failed to show, so the
- *   state is always spelled out. The desktop table leaves it off — it has a
- *   Status column header, and most lines are pending, so a chip on every row
- *   would be noise.
+ * Per-line shipping state — always spelled out, including "Not dispatched".
+ *
+ * This used to render nothing for an undispatched line, on the reasoning that
+ * most of the list hasn't shipped so a chip on every row would be noise. That
+ * traded one problem for a worse one: a blank cell is indistinguishable from
+ * information the screen failed to load, so the state people most often need to
+ * find — what has NOT gone yet — was the only one you couldn't see.
  */
-function DispatchChip({ state, showPending }: { state?: OrderItemDto['dispatchState']; showPending?: boolean }) {
-  if (state !== 'PARTIAL' && state !== 'FULL') {
-    return showPending ? (
-      <span className="text-muted-foreground inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold ring-1 ring-inset ring-slate-200 dark:ring-white/15">
-        <Truck className="size-2.5" /> Not dispatched
-      </span>
-    ) : null;
-  }
+function DispatchChip({ state }: { state?: OrderItemDto['dispatchState'] }) {
   const full = state === 'FULL';
+  const partial = state === 'PARTIAL';
+  const tone = full
+    ? 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/25'
+    : partial
+      ? 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/25'
+      : // Deliberately the quietest of the three: it is the commonest state, so
+        // it should read as a fact rather than compete with the two that mean
+        // something has happened.
+        'bg-slate-50 text-slate-600 ring-slate-200 dark:bg-white/5 dark:text-slate-300 dark:ring-white/15';
   return (
     <span
-      className={cn(
-        'mt-1 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold ring-1 ring-inset',
+      className={cn('mt-1 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold ring-1 ring-inset', tone)}
+      title={
         full
-          ? 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/25'
-          : 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/25',
-      )}
-      title={full ? 'Fully dispatched — quantities and rate are locked' : 'Partly dispatched — quantities and rate are locked'}
+          ? 'Fully dispatched — quantities and rate are locked'
+          : partial
+            ? 'Partly dispatched — quantities and rate are locked'
+            : 'Not dispatched yet — this line can still be edited freely'
+      }
     >
       <Truck className="size-2.5" />
-      {full ? 'Fully dispatched' : 'Part dispatched'}
+      {full ? 'Fully dispatched' : partial ? 'Part dispatched' : 'Not dispatched'}
     </span>
   );
 }
@@ -750,7 +752,7 @@ export function OrderModifyPage() {
                               read as leftover text rather than status. */}
                           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                             {cancelled && <StatusPill status="CANCELLED" />}
-                            {!cancelled && <DispatchChip state={r.line.dispatchState} showPending />}
+                            {!cancelled && <DispatchChip state={r.line.dispatchState} />}
                             {r.line.priority === 'URGENT' ? (
                               <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-600 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:ring-rose-400/25">
                                 URGENT
@@ -1168,7 +1170,17 @@ function LineEditor({
     const norm = (v: string | null | undefined) => (v ?? '').trim().toUpperCase();
     // Compared against the CURRENT form values, not the original line: picking
     // A → B → C should ask on each real change, not just when it differs from A.
-    const itemChanged = norm(it.product) !== norm(form.product) || norm(it.designType) !== norm(form.designType);
+    //
+    // The two halves are tracked SEPARATELY. Swapping only the design leaves the
+    // product exactly as it was, and re-pricing a product the user never
+    // re-chose is an unasked-for change — that is what made a design swap
+    // announce "Product changed" and look broken.
+    const productChanged =
+      norm(it.product) !== norm(form.product) ||
+      norm(it.subCategory) !== norm(form.subCategory) ||
+      String(it.size ?? '') !== String(num(form.psize) ?? '');
+    const designChanged = norm(it.designType) !== norm(form.designType);
+    const itemChanged = productChanged || designChanged;
     // The rate already sitting on this line — what "keep the old rate" means.
     const existingRate = (num(form.productRate) ?? 0) + (num(form.designRate) ?? 0);
 
@@ -1212,27 +1224,67 @@ function LineEditor({
             appliedDesignDelta = asOf.designDelta;
           }
         }
-        const newRate = (finalProductRate ?? 0) + (finalDesignRate ?? 0);
-        if (Math.abs(newRate - existingRate) > 0.001) {
+        /*
+         * What KEEP means, and why it is not simply "the old rate".
+         *
+         * Same product, different design: the product rate stays exactly as
+         * negotiated on this line, and the new design rate applies — because the
+         * design is the thing that actually changed. So Keep = this line's
+         * product + the new design. Only when the PRODUCT changed too does Keep
+         * fall back to holding both halves.
+         *
+         * USE stays simple throughout: the whole rate list figure.
+         */
+        const lineProductRate = num(form.productRate);
+        const lineDesignRate = num(form.designRate);
+        // Product changed → Keep holds BOTH halves as saved. Only the design
+        // changed → Keep holds the product and takes the new design rate.
+        const keepProductRate = productChanged ? lineProductRate : (lineProductRate ?? finalProductRate);
+        const keepDesignRate = productChanged ? lineDesignRate : finalDesignRate;
+        const keepRate = round2((keepProductRate ?? 0) + (keepDesignRate ?? 0));
+        const listRate = (finalProductRate ?? 0) + (finalDesignRate ?? 0);
+
+        /*
+         * Is there actually a decision to make?
+         *
+         * Same product: only the DESIGN rate can be in question. If the new
+         * design costs what the old one did, nothing about this line moves and
+         * asking would be noise — offering "use the rate list" there would only
+         * be offering to re-price a product the user never re-chose.
+         *
+         * Product changed: the two outcomes are the whole old rate versus the
+         * whole rate-list rate, so ask whenever they differ.
+         */
+        const decisionToMake = productChanged
+          ? Math.abs(listRate - existingRate) > 0.001
+          : Math.abs((finalDesignRate ?? 0) - (lineDesignRate ?? 0)) > 0.001;
+
+        if (decisionToMake) {
           const choice = await askRate({
             label,
             asOf: order.orderDate ?? null,
             newProductRate: finalProductRate,
             newDesignRate: finalDesignRate,
-            oldProductRate: num(form.productRate),
+            oldProductRate: lineProductRate,
             oldDesignRate: num(form.designRate),
             hasDesignRate,
             newProductDelta: appliedProductDelta,
             newDesignDelta: appliedDesignDelta,
+            productChanged,
+            keepProductRate,
+            keepRate,
           });
           if (choice.kind === 'keep') {
-            // Keep exactly what was on the line — the item identity still changed.
-            finalProductRate = num(form.productRate);
-            finalDesignRate = num(form.designRate);
+            finalProductRate = keepProductRate;
+            finalDesignRate = keepDesignRate;
           } else if (choice.kind === 'custom') {
             finalProductRate = choice.productRate;
             finalDesignRate = choice.designRate;
           }
+        } else {
+          // Silent path: apply the keep-shaped rate rather than the list rate, so
+          // an unchanged product is never quietly re-priced.
+          finalProductRate = keepProductRate;
         }
       } catch {
         // A failed rate check shouldn't block picking the item — fall back to
@@ -1494,6 +1546,13 @@ interface RateAskProps {
    *  reads as arbitrary. */
   newProductDelta?: number;
   newDesignDelta?: number;
+  /** False when only the design was swapped — the product rate is then not in
+   *  question at all and is left out of the comparison. */
+  productChanged?: boolean;
+  /** The product rate "Keep" will apply. */
+  keepProductRate?: number | null;
+  /** The whole rate "Keep" will apply. */
+  keepRate?: number;
 }
 
 type RateChoice =
@@ -1525,6 +1584,9 @@ function RateChoiceDialog({
   hasDesignRate,
   newProductDelta,
   newDesignDelta,
+  productChanged = true,
+  keepProductRate,
+  keepRate,
   onDone,
 }: RateAskProps & { onDone: (choice: RateChoice) => void }) {
   const newRate = (newProductRate ?? 0) + (newDesignRate ?? 0);
@@ -1549,6 +1611,16 @@ function RateChoiceDialog({
           <span className="text-foreground font-semibold">{inr(oldRate)}</span>.
         </p>
 
+        {/* Same product → say so, and take it off the table. Re-pricing a product
+            the user never re-chose is not on offer here. */}
+        {!productChanged && (
+          <p className="rounded-md border border-dashed px-3 py-2 text-[12.5px]">
+            Same product — its rate of{' '}
+            <span className="font-semibold tabular-nums">{inr(keepProductRate ?? oldProductRate ?? 0)}</span> stays as it is. Only
+            the design rate changed.
+          </p>
+        )}
+
         {/* WHICH PART moved, and by how much — not just the total. A line can
             shift by ₹10 because the customer's special rate applies to the
             product while the design rate stood still; the two totals alone gave
@@ -1568,7 +1640,7 @@ function RateChoiceDialog({
             <tbody>
               {(
                 [
-                  ['Product', oldProductRate ?? 0, newProductRate ?? 0, true, newProductDelta ?? 0],
+                  ['Product', oldProductRate ?? 0, newProductRate ?? 0, productChanged, newProductDelta ?? 0],
                   ['Design', oldDesignRate ?? 0, newDesignRate ?? 0, hasDesignRate, newDesignDelta ?? 0],
                 ] as const
               )
@@ -1613,7 +1685,7 @@ function RateChoiceDialog({
                   );
                 })}
               <tr className="bg-muted/30 border-t font-semibold">
-                <td className="px-3 py-1.5">Total</td>
+                <td className="px-3 py-1.5">Line total</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{inr(oldRate)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{inr(newRate)}</td>
                 <td
@@ -1664,8 +1736,14 @@ function RateChoiceDialog({
             </>
           ) : (
             <>
+              {/* Keep is not always "the old total": on a design swap it holds
+                  this line's product rate and takes the new design rate, so the
+                  label states the figure it will actually apply. */}
               <Button variant="outline" onClick={() => onDone({ kind: 'keep' })}>
-                Keep {inr(oldRate)} (this line)
+                Keep {inr(keepRate ?? oldRate)}
+                <span className="text-muted-foreground ml-1 text-[11px] font-normal">
+                  {productChanged ? '(this line)' : '(my product + new design)'}
+                </span>
               </Button>
               <Button variant="outline" onClick={() => setCustom(true)}>
                 Custom rate…
