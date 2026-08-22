@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
   ArrowRight,
@@ -7,6 +8,7 @@ import {
   ClipboardList,
   HardDrive,
   ImageIcon,
+  Layers,
   Loader2,
   Plus,
   Receipt,
@@ -37,6 +39,7 @@ import { TestNotificationCard } from './test-notification-card';
 import { DatabaseBackupCard } from './database-backup-card';
 import { DesignTrackCard } from './design-track-card';
 import { DispatchAlertsCard } from './dispatch-alerts-card';
+import { RateListSettingsCard } from './rate-list-settings-card';
 import {
   useChallanTerms,
   useCompany,
@@ -59,23 +62,34 @@ import {
   useUpdateTcsPercent,
 } from './use-settings';
 
-type TabKey = 'general' | 'orders' | 'challan' | 'dispatch' | 'crm' | 'backup';
+type TabKey = 'general' | 'orders' | 'challan' | 'dispatch' | 'ratelist' | 'crm' | 'backup';
 
 export function SettingsPage() {
   const { data: all, isLoading } = useSettings();
   const { can } = usePermissions();
   const canEdit = can('setting:update');
   const canBackup = can('backup:export');
-  const [tab, setTab] = useState<TabKey>('general');
+  // Rate list configuration lives on the customer, so it follows customer rights
+  // rather than the generic settings right.
+  const canEditRateList = can('customer:update');
 
   const tabs: { id: TabKey; label: string; icon: LucideIcon }[] = [
     { id: 'general', label: 'General', icon: Building2 },
     { id: 'orders', label: 'Orders', icon: ClipboardList },
     { id: 'challan', label: 'Challan & Tax', icon: Receipt },
     { id: 'dispatch', label: 'Dispatch', icon: Truck },
+    { id: 'ratelist', label: 'Rate List', icon: Layers },
     { id: 'crm', label: 'CRM', icon: BellRing },
     ...(canBackup ? ([{ id: 'backup', label: 'Backup', icon: HardDrive }] as const) : []),
   ];
+
+  // The active tab lives in the URL (?tab=...) rather than plain component
+  // state, so a refresh — or a bookmarked/shared link — lands back on the same
+  // tab instead of always resetting to General.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requested = searchParams.get('tab');
+  const tab: TabKey = tabs.some((t) => t.id === requested) ? (requested as TabKey) : 'general';
+  const setTab = (id: TabKey) => setSearchParams((prev) => ({ ...Object.fromEntries(prev), tab: id }), { replace: true });
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">
@@ -149,6 +163,12 @@ export function SettingsPage() {
           <DispatchBagThresholdCard canEdit={canEdit} />
           <DispatchAlertsCard canEdit={canEdit} />
           <DesignTrackCard canEdit={canEdit} />
+        </div>
+      )}
+
+      {tab === 'ratelist' && (
+        <div className="space-y-4">
+          <RateListSettingsCard canEdit={canEditRateList} />
         </div>
       )}
 

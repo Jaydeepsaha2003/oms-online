@@ -1015,6 +1015,32 @@ model OrderOption {
 }
 
 /// Singleton key/value app configuration (e.g. company name, company logo data URL).
+/// Rate List Settings (spec §5/§9/§10): what a rate list contains and how it is
+/// laid out. One DEFAULT row, plus one row per party that wants something
+/// different.
+///
+/// The body is JSON in a TEXT column, which is right here and not laziness: it
+/// is a document (category list, sub-category picks, price combinations) that is
+/// always read and written whole and never queried by its innards. The scoping
+/// columns that ARE queried — scope and customerId — stay real columns. Same
+/// choice the existing app_config rows make, one level up.
+model RateListConfig {
+  id         Int      @id @default(autoincrement())
+  /// DEFAULT | PARTY. Recorded rather than inferred from customerId being null,
+  /// so a row cannot silently change meaning if that column is ever cleared.
+  scope      String
+  customerId Int?
+  /// JSON: RateListConfig (scope DEFAULT) or PartyRateListConfig (scope PARTY).
+  payload    String
+  userName   String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  /// One configuration per party, and exactly one DEFAULT (customerId NULL).
+  @@unique([scope, customerId])
+  @@map("rate_list_configs")
+}
+
 model AppConfig {
   key       String   @id
   value     String

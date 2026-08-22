@@ -32,6 +32,7 @@ export * from './types/cheque';
 export * from './types/bank-account';
 export * from './types/opening-balance';
 export * from './types/customer-rate-list';
+export * from './types/rate-list-config';
 export * from './types/payment';
 export * from './types/followup';
 export * from './types/setting';

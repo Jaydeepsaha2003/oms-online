@@ -20,7 +20,7 @@ import { dateStamp } from '@/lib/utils';
 import { preOpenPdfTab, savePdfBlob } from '@/lib/pdf';
 import { CALIBRI_FONT, registerCalibriFont } from '@/lib/pdf-fonts';
 import kavishLogo from '@/assets/kavish-logo.png';
-import { buildSections, type DesignPivotTable, type PivotTable } from './customer-rate-list-pivot';
+import { buildSections, type BuildSectionsOptions, type DesignPivotTable, type PivotTable } from './customer-rate-list-pivot';
 
 const sanitize = (s: string) => s.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, '_').slice(0, 40);
 const stampFull = (iso: string) =>
@@ -56,13 +56,25 @@ const mix = (a: RGB, b: RGB, t: number): RGB => [
   Math.round(a[2] + (b[2] - a[2]) * t),
 ];
 
-/** Load the KAVISH logo once as a base64 data URL (+ natural size). Used twice —
- *  as the masthead lockup and as the very-light page watermark. Uses only fetch +
- *  jsPDF itself so it runs in the browser AND in Node (where the design harness
- *  renders the same document). */
-let watermarkCache: Promise<{ data: string; w: number; h: number }> | null = null;
-function loadWatermark(doc: jsPDF): Promise<{ data: string; w: number; h: number }> {
-  watermarkCache ??= (async () => {
+/**
+ * Load the brand mark once as a base64 data URL (+ natural size). Used twice —
+ * as the masthead lockup and as the very-light page watermark.
+ *
+ * `logoUrl` is the company logo uploaded on Settings → General
+ * (`CompanyProfileDto.logo`, already a data: URL — no fetch needed). When the
+ * company hasn't uploaded one, this falls back to the bundled KAVISH mark, so
+ * the document is never bare. Only the fallback is cached: the uploaded logo
+ * can change between one download and the next.
+ */
+let fallbackWatermarkCache: Promise<{ data: string; w: number; h: number }> | null = null;
+function loadWatermark(doc: jsPDF, logoUrl?: string | null): Promise<{ data: string; w: number; h: number }> {
+  if (logoUrl) {
+    const { width, height } = doc.getImageProperties(logoUrl);
+    return Promise.resolve({ data: logoUrl, w: width, h: height });
+  }
+  // Uses only fetch + jsPDF itself so it runs in the browser AND in Node (where
+  // the design harness renders the same document with no company configured).
+  fallbackWatermarkCache ??= (async () => {
     const buf = new Uint8Array(await (await fetch(kavishLogo)).arrayBuffer());
     let bin = '';
     for (let i = 0; i < buf.length; i += 8192) bin += String.fromCharCode(...buf.subarray(i, i + 8192));
@@ -70,13 +82,13 @@ function loadWatermark(doc: jsPDF): Promise<{ data: string; w: number; h: number
     const { width, height } = doc.getImageProperties(data);
     return { data, w: width, h: height };
   })();
-  return watermarkCache;
+  return fallbackWatermarkCache;
 }
 
 /* ─────────────────────────── Excel ─────────────────────────── */
 
-export function exportRateListExcel(list: CustomerRateList): void {
-  const { products, designs } = buildSections(list);
+export function exportRateListExcel(list: CustomerRateList, opts: BuildSectionsOptions = {}): void {
+  const { products, designs } = buildSections(list, opts);
   const aoa: (string | number)[][] = [
     ['RATE LIST'],
     ['Customer', list.customerName],
@@ -88,7 +100,7 @@ export function exportRateListExcel(list: CustomerRateList): void {
 
   const pushTable = (t: PivotTable) => {
     aoa.push([`${t.title}  (${t.rows.length} item${t.rows.length === 1 ? '' : 's'})`]);
-    aoa.push(['SR', 'ITEM', 'AVAILABLE PCS', ...t.columns]);
+    aoa.push(['SR', 'ITEM', t.availableLabel.toUpperCase(), ...t.columns]);
     maxCols = Math.max(maxCols, 3 + t.columns.length);
     for (const r of t.rows) {
       aoa.push([
@@ -106,7 +118,7 @@ export function exportRateListExcel(list: CustomerRateList): void {
   // times over.
   const pushDesignTable = (t: DesignPivotTable) => {
     aoa.push([`${t.title}  (${t.rows.length} design${t.rows.length === 1 ? '' : 's'})`]);
-    aoa.push(['SR', 'DESIGN TYPE', 'AVAILABLE PCS', 'RATE']);
+    aoa.push(['SR', 'DESIGN TYPE', t.availableLabel.toUpperCase(), 'RATE']);
     maxCols = Math.max(maxCols, 4);
     for (const r of t.rows) {
       aoa.push([r.sr, r.special ? `${r.item} *` : r.item, r.available, r.rate]);
@@ -130,13 +142,13 @@ export function exportRateListExcel(list: CustomerRateList): void {
 /** Build the full A4 rate-list document (design work lives here; `exportRateListPdf`
  *  just saves it). Exported separately so the Node design harness can render the
  *  exact same document to a file for visual review. */
-export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF> {
+export async function buildRateListPdfDoc(list: CustomerRateList, opts: BuildSectionsOptions = {}, logo?: string | null): Promise<jsPDF> {
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-  /** Narrow margins (24pt ≈ 8.5mm), so the rate columns get the width instead of
-   *  the paper edge. Everything else is measured off `usable`, so the whole
-   *  document reflows from this one number. Kept above ~6mm because most office
-   *  printers can't image closer than that to the edge. */
-  const margin = 24;
+  /** Very narrow margins (14pt ≈ 5mm), so the rate columns get almost the full
+   *  paper width instead of the edge. Everything else is measured off `usable`,
+   *  so the whole document reflows from this one number. 5mm is close to what
+   *  most office printers can still image right to the edge of an A4 sheet. */
+  const margin = 14;
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   const usable = pageW - margin * 2;
@@ -144,7 +156,7 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
   let y = 0;
   let headerH = 0;
 
-  const { products, designs } = buildSections(list);
+  const { products, designs } = buildSections(list, opts);
   // Both counted off the BUILT sections rather than the raw payload, so each
   // pill states the number of rows actually printed below it. Counting the
   // source would over-report: the pivot merges a product's pcs variants into one
@@ -152,7 +164,7 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
   const productCount = products.reduce((n, t) => n + t.rows.length, 0);
   const designCount = designs.reduce((n, t) => n + t.rows.length, 0);
 
-  const wm = await loadWatermark(doc).catch(() => null);
+  const wm = await loadWatermark(doc, logo).catch(() => null);
 
   /* ── Items-table typography ─────────────────────────────────────────────
    * The rate grid is set in Calibri (Carlito — see lib/pdf-fonts) at 11pt BOLD,
@@ -380,6 +392,23 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
   // the "prepared for" name is shrink-to-fit.
   heroHeader();
 
+  /**
+   * Every column boundary gets a vertical rule and every row a horizontal one
+   * (spec §22), so the sheet prints as a complete grid rather than a set of
+   * banded rows. Drawn from the measured widths, so the rules always land on the
+   * real boundaries even after a column has been shrunk to fit.
+   */
+  const columnRules = (widths: number[], top: number, height: number) => {
+    doc.setDrawColor(...HAIRLINE);
+    doc.setLineWidth(0.5);
+    let x = margin;
+    doc.line(x, top, x, top + height);
+    for (const w of widths) {
+      x += w;
+      doc.line(x, top, x, top + height);
+    }
+  };
+
   const drawPivot = (t: PivotTable) => {
     const n = Math.max(1, t.columns.length);
     // Some sections (e.g. per-kg designs) have no pcs info at all — drop the
@@ -397,7 +426,7 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
       itemW = usable - 26 - availW - rateW * n;
     }
     const widths = [26, itemW, ...(showAvail ? [availW] : []), ...t.columns.map(() => rateW)];
-    const headers = ['SR', 'ITEM', ...(showAvail ? ['AVAILABLE PCS'] : []), ...t.columns.map((c) => c.toUpperCase())];
+    const headers = ['SR', 'ITEM', ...(showAvail ? [t.availableLabel.toUpperCase()] : []), ...t.columns.map((c) => c.toUpperCase())];
     // One size for the whole pcs column, so it never renders ragged.
     doc.setFont(TABLE_FONT, 'bold');
     const availSize = showAvail ? columnSize(t.rows.map((r) => r.available).filter(Boolean), availW - 12, DATA_SIZE) : DATA_SIZE;
@@ -419,7 +448,6 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
     // Header row: one solid blue bar across the full table, white caps. Keeping
     // it a single block (rather than the old two-tone navy/peach split) is what
     // lets the white paper and the watermark carry the page.
-    const identityW = widths[0] + widths[1] + (showAvail ? widths[2] : 0);
     doc.setFont(TABLE_FONT, 'bold');
     const headSize = rowFitSize(headers.map((h, i) => ({ text: h, maxW: widths[i] - 12 })), HEAD_SIZE);
     const headerRow = () => {
@@ -436,6 +464,15 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
         });
         x += widths[i];
       });
+      // Faint dividers inside the blue header bar, so the grid of §22 starts at
+      // the heading rather than only under it.
+      doc.setDrawColor(255, 255, 255);
+      doc.setLineWidth(0.5);
+      let hx = margin;
+      for (const w of widths.slice(0, -1)) {
+        hx += w;
+        doc.line(hx, y + 2, hx, y + rowH);
+      }
       y += rowH + 5;
     };
     headerRow();
@@ -459,29 +496,16 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
       doc.setFont(TABLE_FONT, 'bold').setFontSize(META_SIZE).setTextColor(...FAINT);
       doc.text(String(r.sr), x + 7, ty);
       x += widths[0];
-      // Hairline boxing in the ITEM column on its left (SR | ITEM).
-      doc.setDrawColor(...HAIRLINE);
-      doc.setLineWidth(0.5);
-      doc.line(x, y - 2, x, y + rowH - 2);
       doc.setFont(TABLE_FONT, 'bold').setTextColor(...INK);
       fitText(r.item, x + 6, ty, widths[1] - 10, DATA_SIZE, { minSize: 8 });
       x += widths[1];
-      // Hairline boxing in the ITEM column on its right (ITEM | Available Pcs).
-      doc.setDrawColor(...HAIRLINE);
-      doc.setLineWidth(0.5);
-      doc.line(x, y - 2, x, y + rowH - 2);
-      // AVAILABLE PCS — same size as the rate figures, so it reads as data
+      // Available column — same size as the rate figures, so it reads as data
       // rather than a faint footnote next to them.
       if (showAvail) {
-        doc.setFont(TABLE_FONT, 'bold').setTextColor(...MUTED);
+        doc.setFont(TABLE_FONT, 'bold').setTextColor(...INK);
         fitText(r.available, x + 6, ty, widths[2] - 10, availSize, { minSize: availSize });
         x += widths[2];
       }
-      // Hairline separating identity columns from the rate block — guides the
-      // eye across on wide tables without drawing a full grid.
-      doc.setDrawColor(...HAIRLINE);
-      doc.setLineWidth(0.5);
-      doc.line(margin + identityW, y - 2, margin + identityW, y + rowH - 2);
       // rate cells
       r.cells.forEach((cell, i) => {
         const w = widths[firstRateCol + i];
@@ -494,6 +518,7 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
         }
         x += w;
       });
+      columnRules(widths, y - 2, rowH);
       doc.setDrawColor(...HAIRLINE);
       doc.setLineWidth(0.4);
       doc.line(margin, y + rowH - 2, margin + usable, y + rowH - 2);
@@ -533,11 +558,10 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
       itemW = usable - 26 - availW - rateW;
     }
     const widths = [26, itemW, ...(showAvail ? [availW] : []), rateW];
-    const headers = ['SR', 'DESIGN TYPE', ...(showAvail ? ['AVAILABLE PCS'] : []), 'RATE'];
+    const headers = ['SR', 'DESIGN TYPE', ...(showAvail ? [t.availableLabel.toUpperCase()] : []), 'RATE'];
     // One size for the whole pcs column, so it never renders ragged.
     const availSize = showAvail ? columnSize(availValues, availW - 12, DATA_SIZE) : DATA_SIZE;
     const rateColIdx = showAvail ? 3 : 2;
-    const identityW = widths[0] + widths[1] + (showAvail ? widths[2] : 0);
 
     ensure(rowH * 4 + 40);
 
@@ -565,6 +589,15 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
         });
         x += widths[i];
       });
+      // Faint dividers inside the blue header bar, so the grid of §22 starts at
+      // the heading rather than only under it.
+      doc.setDrawColor(255, 255, 255);
+      doc.setLineWidth(0.5);
+      let hx = margin;
+      for (const w of widths.slice(0, -1)) {
+        hx += w;
+        doc.line(hx, y + 2, hx, y + rowH);
+      }
       y += rowH + 5;
     };
     headerRow();
@@ -583,26 +616,18 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
       doc.setFont(TABLE_FONT, 'bold').setFontSize(META_SIZE).setTextColor(...FAINT);
       doc.text(String(r.sr), x + 7, ty);
       x += widths[0];
-      doc.setDrawColor(...HAIRLINE);
-      doc.setLineWidth(0.5);
-      doc.line(x, y - 2, x, y + rowH - 2);
       doc.setFont(TABLE_FONT, 'bold').setTextColor(...INK);
       fitText(r.item, x + 6, ty, widths[1] - 10, DATA_SIZE, { minSize: 8 });
       x += widths[1];
-      doc.setDrawColor(...HAIRLINE);
-      doc.setLineWidth(0.5);
-      doc.line(x, y - 2, x, y + rowH - 2);
       if (showAvail) {
-        doc.setFont(TABLE_FONT, 'bold').setTextColor(...MUTED);
+        doc.setFont(TABLE_FONT, 'bold').setTextColor(...INK);
         fitText(r.available, x + 6, ty, widths[2] - 10, availSize, { minSize: availSize });
         x += widths[2];
       }
-      doc.setDrawColor(...HAIRLINE);
-      doc.setLineWidth(0.5);
-      doc.line(margin + identityW, y - 2, margin + identityW, y + rowH - 2);
       const rateW2 = widths[rateColIdx];
       doc.setFont(TABLE_FONT, 'bold').setTextColor(...INK);
       fitText(String(r.rate), x + rateW2 - 6, ty, rateW2 - 12, DATA_SIZE, { align: 'right', minSize: 7 });
+      columnRules(widths, y - 2, rowH);
       doc.setDrawColor(...HAIRLINE);
       doc.setLineWidth(0.4);
       doc.line(margin, y + rowH - 2, margin + usable, y + rowH - 2);
@@ -648,12 +673,16 @@ export async function buildRateListPdfDoc(list: CustomerRateList): Promise<jsPDF
   return doc;
 }
 
-export async function exportRateListPdf(list: CustomerRateList): Promise<void> {
+export async function exportRateListPdf(
+  list: CustomerRateList,
+  opts: BuildSectionsOptions = {},
+  logo?: string | null,
+): Promise<void> {
   // Reserve a tab now (in the tap gesture) so iOS Safari doesn't block the save
   // that fires after the async doc build. No-op off iOS.
   const iosTab = preOpenPdfTab();
   try {
-    const doc = await buildRateListPdfDoc(list);
+    const doc = await buildRateListPdfDoc(list, opts, logo);
     void savePdfBlob(doc.output('blob'), `RateList-${sanitize(list.customerName)}-${dateStamp()}.pdf`, iosTab);
   } catch (e) {
     iosTab?.close();

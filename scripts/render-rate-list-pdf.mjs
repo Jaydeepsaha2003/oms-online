@@ -194,8 +194,10 @@ const auditPage = async (page, pageNo) => {
   // a few percent high. Allow that much slack, else shrink-to-fit text that
   // actually lands exactly on the margin reads as a spill.
   const SLACK = 0.04;
+  // Kept in step with the document's own `margin` constant (customer-rate-list-export.ts).
+  const DOC_MARGIN = 14;
   for (const r of runs) {
-    if (r.x < 30 || r.x + r.w / (1 + SLACK) > W - 30) {
+    if (r.x < DOC_MARGIN - 4 || r.x + r.w / (1 + SLACK) > W - (DOC_MARGIN - 4)) {
       problems.push(`p${pageNo} margin spill: "${r.str}" (x=${r.x.toFixed(0)} w=${r.w.toFixed(0)})`);
     }
   }

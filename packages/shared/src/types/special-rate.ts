@@ -206,6 +206,38 @@ export interface SpecialRateResolution {
  * (ITEM → SUBCATEGORY → CATEGORY); only the first matching level applies — exactly
  * mirroring the legacy Form10 cascade.
  */
+/**
+ * WHICH saved rate wins for one line — the rule itself, not just its delta.
+ *
+ * The cascade is most-specific-first (ITEM → SUBCATEGORY → CATEGORY) and only
+ * the first match applies. {@link resolveSpecialRates} delegates its own lookup
+ * here so that anything attributing a price to a rule (the consolidated
+ * special-rate view, for instance) is reading the SAME cascade that priced it.
+ * A second implementation would eventually disagree, and the disagreement would
+ * show up as a rule the screen says affects nothing while it is quietly moving
+ * money.
+ */
+export function resolveSpecialRateRule(
+  rates: CustomerRateDto[],
+  kind: RateKind,
+  ctx: { category: string; subCategory: string; target?: string | null },
+): CustomerRateDto | null {
+  const norm = (v: string | null | undefined) => (v ?? '').trim().toUpperCase();
+  const cat = norm(ctx.category);
+  const sub = norm(ctx.subCategory);
+  const t = norm(ctx.target);
+  const rs = rates.filter((r) => r.kind === kind);
+  if (t) {
+    const item = rs.find(
+      (r) => r.scope === 'ITEM' && norm(r.category) === cat && norm(r.subCategory) === sub && norm(r.target) === t,
+    );
+    if (item) return item;
+  }
+  const subc = rs.find((r) => r.scope === 'SUBCATEGORY' && norm(r.category) === cat && norm(r.subCategory) === sub);
+  if (subc) return subc;
+  return rs.find((r) => r.scope === 'CATEGORY' && norm(r.category) === cat) ?? null;
+}
+
 export function resolveSpecialRates(
   data: { rates: CustomerRateDto[]; logos: CustomerLogoDto[] },
   ctx: SpecialRateContext,
@@ -218,17 +250,8 @@ export function resolveSpecialRates(
   const sub = norm(ctx.subCategory);
 
   const pick = (kind: RateKind, target: string): { delta: number; from: RateScope | null } => {
-    const rs = data.rates.filter((r) => r.kind === kind);
-    const t = norm(target);
-    if (t) {
-      const item = rs.find((r) => r.scope === 'ITEM' && norm(r.category) === cat && norm(r.subCategory) === sub && norm(r.target) === t);
-      if (item) return { delta: item.rate, from: 'ITEM' };
-    }
-    const subc = rs.find((r) => r.scope === 'SUBCATEGORY' && norm(r.category) === cat && norm(r.subCategory) === sub);
-    if (subc) return { delta: subc.rate, from: 'SUBCATEGORY' };
-    const c = rs.find((r) => r.scope === 'CATEGORY' && norm(r.category) === cat);
-    if (c) return { delta: c.rate, from: 'CATEGORY' };
-    return { delta: 0, from: null };
+    const rule = resolveSpecialRateRule(data.rates, kind, { category: cat, subCategory: sub, target });
+    return rule ? { delta: rule.rate, from: rule.scope } : { delta: 0, from: null };
   };
 
   const product = pick('PRODUCT', ctx.product ?? '');

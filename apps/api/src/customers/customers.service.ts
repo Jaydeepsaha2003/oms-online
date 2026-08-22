@@ -492,9 +492,14 @@ export class CustomersService {
     const customer = await this.prisma.customer.findUnique({ where: { id } });
     if (!customer) throw new NotFoundException('Customer not found');
 
+    // Active-only (spec 11/12/30): an INACTIVE product or design must never reach
+    // the sheet, its PDF or its Excel, even with the rate-list flag still ticked.
+    // Deactivating an item is the act of withdrawing it; making the user also
+    // untick a second flag means the sheet keeps quoting a withdrawn item until
+    // somebody notices.
     const [products, designs, rates] = await Promise.all([
-      this.prisma.product.findMany({ where: { showOnRateList: true }, orderBy: [{ category: 'asc' }, { subCategory: 'asc' }, { product: 'asc' }, { size: 'asc' }] }),
-      this.prisma.design.findMany({ where: { showOnRateList: true }, orderBy: [{ category: 'asc' }, { subCategory: 'asc' }, { designType: 'asc' }] }),
+      this.prisma.product.findMany({ where: { showOnRateList: true, active: true }, orderBy: [{ category: 'asc' }, { subCategory: 'asc' }, { product: 'asc' }, { size: 'asc' }] }),
+      this.prisma.design.findMany({ where: { showOnRateList: true, active: true }, orderBy: [{ category: 'asc' }, { subCategory: 'asc' }, { designType: 'asc' }] }),
       this.prisma.customerRate.findMany({ where: { customerId: id } }),
     ]);
 

@@ -7,6 +7,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Put,
   Query,
   Res,
   StreamableFile,
@@ -16,12 +17,15 @@ import type { Response } from 'express';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ExcelService } from '../excel/excel.service';
 import { CustomersService } from './customers.service';
+import { RateListConfigService } from './rate-list-config.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { CustomerQueryDto } from './dto/customer-query.dto';
 import { ImportCustomersDto } from './dto/import-customers.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
+import { CheckCombinationDto, SavePartyRateListConfigDto, SaveRateListConfigDto } from './dto/rate-list-config.dto';
 
 const R = RESOURCES.CUSTOMER;
 
@@ -32,6 +36,7 @@ export class CustomersController {
   constructor(
     private readonly customers: CustomersService,
     private readonly excel: ExcelService,
+    private readonly rateListConfig: RateListConfigService,
   ) {}
 
   @Get()
@@ -65,6 +70,59 @@ export class CustomersController {
   @Audit({ action: ACTIONS.IMPORT, resource: R, description: 'Imported customers from Excel' })
   import(@Body() dto: ImportCustomersDto) {
     return this.customers.importRows(dto.rows);
+  }
+
+  /* ── Rate List Settings (spec §5/§9/§10) ─────────────────────────────────
+     Declared ABOVE ':id' so "rate-list-config" is matched as a route rather than
+     parsed as a customer id, which would 400 on the ParseIntPipe.
+
+     Reading a configuration needs only customer:view — the rate list screen has
+     to load it to render. WRITING one changes what every future rate list
+     contains, so it takes customer:update. */
+  @Get('rate-list-config')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  rateListConfigBundle() {
+    return this.rateListConfig.bundle();
+  }
+
+  @Put('rate-list-config')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Updated the default rate list configuration' })
+  saveRateListDefault(@Body() dto: SaveRateListConfigDto, @CurrentUser('name') userName: string) {
+    return this.rateListConfig.saveDefault(dto, userName);
+  }
+
+  /** Does this set of sub-categories share one rate? (§8 — checked before any
+   *  combination can be saved, and again on save itself.) */
+  @Post('rate-list-config/check-combination')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  checkRateListCombination(@Body() dto: CheckCombinationDto) {
+    return this.rateListConfig.checkCombination(dto);
+  }
+
+  @Get(':id/rate-list-config')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  effectiveRateListConfig(@Param('id', ParseIntPipe) id: number) {
+    return this.rateListConfig.effectiveFor(id);
+  }
+
+  @Put(':id/rate-list-config')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Updated a party rate list configuration' })
+  saveRateListParty(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SavePartyRateListConfigDto,
+    @CurrentUser('name') userName: string,
+  ) {
+    return this.rateListConfig.saveParty(id, { ...dto, customerId: id }, userName);
+  }
+
+  @Delete(':id/rate-list-config')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Cleared a party rate list configuration' })
+  async clearRateListParty(@Param('id', ParseIntPipe) id: number) {
+    await this.rateListConfig.clearParty(id);
+    return { ok: true };
   }
 
   @Get(':id')

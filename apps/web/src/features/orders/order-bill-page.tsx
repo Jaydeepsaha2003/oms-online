@@ -430,7 +430,10 @@ export function OrderBillPage() {
               {order.items.filter((it) => it.status !== 'CANCELLED').map((it, idx) => (
                 <tr key={it.id} style={{ background: idx % 2 === 1 ? '#F5F7FA' : '#fff' }}>
                   <td style={{ ...td, textAlign: 'center' }}>{idx + 1}</td>
-                  <td style={td}>{it.productName || it.product || '—'}</td>
+                  <td style={td}>
+                    {it.productName || it.product || '—'}
+                    {it.priority === 'URGENT' && <span style={{ color: '#e11d48', fontWeight: 700 }}> (URGENT)</span>}
+                  </td>
                   <td style={{ ...td, textAlign: 'right' }}>{numf(it.bags)}</td>
                   <td style={{ ...td, textAlign: 'right' }}>{numf(it.pcs)}</td>
                   <td style={{ ...td, textAlign: 'right' }}>{numf(it.gram)}</td>
