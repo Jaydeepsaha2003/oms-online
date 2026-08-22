@@ -170,3 +170,18 @@ export type ProductList = Paginated<ProductDto>;
 export type DesignList = Paginated<DesignDto>;
 export type DesignNameList = Paginated<DesignNameDto>;
 export type CombinationList = Paginated<CombinationDto>;
+
+/** One recorded edit to a product — what the Recent Changes view lists (§6.1). */
+export interface ProductChangeEntry {
+  id: number;
+  productId: number | null;
+  productName: string;
+  /** CREATED / UPDATED / DELETED. */
+  kind: string;
+  /** Human field label, '' for whole-row events. */
+  field: string;
+  oldValue: string | null;
+  newValue: string | null;
+  changedByName: string | null;
+  changedAt: string;
+}

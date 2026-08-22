@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { type Paginated, type TransporterDto } from '@oms/shared';
+import { type Paginated, type TransporterCustomerDto, type TransporterDto } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { toNum, uc } from '../common/coerce';
 import {
@@ -10,7 +10,12 @@ import {
   UpdateTransporterDto,
 } from './dto/transporter.dto';
 
-const INCLUDE = { _count: { select: { customers: true } } } satisfies Prisma.TransporterInclude;
+// Active customers only. The column is labelled "Customers" and read as "who
+// ships with them" — counting closed accounts overstated every transporter (6
+// inactive parties were being included).
+const INCLUDE = {
+  _count: { select: { customers: { where: { active: true } } } },
+} satisfies Prisma.TransporterInclude;
 type Row = Prisma.TransporterGetPayload<{ include: typeof INCLUDE }>;
 
 @Injectable()
@@ -195,6 +200,24 @@ export class TransportersService {
       data: { code: this.codeFor(row.id) },
       include: INCLUDE,
     });
+  }
+
+  /** The active customers behind the count, for the drill-down popup (§4.1). */
+  async customers(id: number): Promise<TransporterCustomerDto[]> {
+    const rows = await this.prisma.customer.findMany({
+      where: { transporterId: id, active: true },
+      select: { id: true, code: true, partyName: true, agentName: true, city: true, state: true, mobile: true },
+      orderBy: { partyName: 'asc' },
+    });
+    return rows.map((c) => ({
+      id: c.id,
+      code: c.code,
+      partyName: c.partyName ?? `Customer ${c.id}`,
+      agentName: c.agentName,
+      city: c.city,
+      state: c.state,
+      mobile: c.mobile,
+    }));
   }
 
   private toDto(t: Row): TransporterDto {

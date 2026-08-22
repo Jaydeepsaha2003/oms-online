@@ -32,6 +32,15 @@ export interface UserDto {
   status: UserStatus;
   roles: { id: string; name: string; label: string }[];
   lastLoginAt?: string | null;
+  /**
+   * When this user last DID something (their most recent audit entry), as
+   * opposed to when they last signed in. A signed-in user who then walked away
+   * has a recent login and no recent activity, and the two must not be confused
+   * (spec §13.1).
+   */
+  lastActiveAt?: string | null;
+  /** Live sign-ins right now — refresh tokens neither revoked nor expired. */
+  activeSessions?: number;
   createdAt: string;
   updatedAt: string;
 }

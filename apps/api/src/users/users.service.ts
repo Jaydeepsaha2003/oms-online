@@ -45,8 +45,10 @@ export class UsersService {
       this.prisma.user.count({ where }),
     ]);
 
+    const presence = await this.presenceFor(rows.map((r) => r.id));
+
     return {
-      items: rows.map((r) => this.toDto(r)),
+      items: rows.map((r) => this.toDto(r, presence.get(r.id))),
       total,
       page: query.page,
       pageSize: query.pageSize,
@@ -227,7 +229,39 @@ export class UsersService {
     if (!count) throw new NotFoundException('User not found.');
   }
 
-  private toDto(u: UserRow): UserDto {
+  /**
+   * "Is this person actually using the system?" for a page of users, in two
+   * queries rather than two per user.
+   *
+   * Activity comes from the audit log — every action a user takes writes one,
+   * so its newest entry is the truest cheap signal of real use. Sessions come
+   * from refresh tokens that are neither revoked nor expired. Account status is
+   * deliberately NOT folded in: an Active account nobody has touched in a month
+   * is exactly the distinction this exists to show.
+   */
+  private async presenceFor(ids: string[]): Promise<Map<string, { lastActiveAt: Date | null; activeSessions: number }>> {
+    const out = new Map<string, { lastActiveAt: Date | null; activeSessions: number }>();
+    if (!ids.length) return out;
+    const now = new Date();
+    const [acts, sessions] = await Promise.all([
+      this.prisma.auditLog.groupBy({ by: ['userId'], where: { userId: { in: ids } }, _max: { createdAt: true } }),
+      this.prisma.refreshToken.groupBy({
+        by: ['userId'],
+        where: { userId: { in: ids }, revokedAt: null, expiresAt: { gt: now } },
+        _count: { _all: true },
+      }),
+    ]);
+    for (const id of ids) out.set(id, { lastActiveAt: null, activeSessions: 0 });
+    for (const a of acts) {
+      if (a.userId && out.has(a.userId)) out.get(a.userId)!.lastActiveAt = a._max.createdAt ?? null;
+    }
+    for (const s of sessions) {
+      if (out.has(s.userId)) out.get(s.userId)!.activeSessions = s._count._all;
+    }
+    return out;
+  }
+
+  private toDto(u: UserRow, presence?: { lastActiveAt: Date | null; activeSessions: number }): UserDto {
     return {
       id: u.id,
       email: u.email,
@@ -235,6 +269,8 @@ export class UsersService {
       status: u.status as UserStatus,
       roles: u.roles.map((ur) => ({ id: ur.role.id, name: ur.role.name, label: ur.role.label })),
       lastLoginAt: u.lastLoginAt?.toISOString() ?? null,
+      lastActiveAt: presence?.lastActiveAt?.toISOString() ?? null,
+      activeSessions: presence?.activeSessions ?? 0,
       createdAt: u.createdAt.toISOString(),
       updatedAt: u.updatedAt.toISOString(),
     };

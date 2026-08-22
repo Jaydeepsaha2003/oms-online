@@ -175,10 +175,71 @@ export class ProductsService {
       const data = this.toData(dto);
       const row = await this.prisma.product.update({ where: { id }, data });
       await this.logRateChange(before, row, changedByName);
+      await this.logFieldChanges(before, row, changedByName);
       return this.toDto(await this.ensureCode(row));
     } catch (err) {
       throw this.conflictOr(err);
     }
+  }
+
+  /**
+   * Record every OTHER field a user changed — name, category, sub-category, the
+   * quantities and flags (spec §6.1).
+   *
+   * Kept apart from {@link logRateChange}: that trail is load-bearing (booking
+   * conversion reprices from it) and is keyed to the rate alone. This one is
+   * plain "who edited what", one row per field, so the Products screen can list
+   * recent edits without the rate trail having to carry a shape it does not want.
+   *
+   * Failures are swallowed: an edit must not fail because its audit row did.
+   */
+  private async logFieldChanges(before: Row, after: Row, changedByName?: string | null): Promise<void> {
+    const FIELDS: { key: keyof Row; label: string }[] = [
+      { key: 'product', label: 'Product name' },
+      { key: 'category', label: 'Category' },
+      { key: 'subCategory', label: 'Sub-category' },
+      { key: 'size', label: 'Size' },
+      { key: 'pcs', label: 'Pcs' },
+      { key: 'weight', label: 'Weight' },
+      { key: 'active', label: 'Active' },
+      { key: 'showOnRateList', label: 'Show on rate list' },
+    ];
+    const rows = FIELDS.flatMap(({ key, label }) => {
+      const a = before[key] ?? null;
+      const b = after[key] ?? null;
+      if (a === b) return [];
+      return [{
+        productId: after.id,
+        productName: after.product,
+        kind: 'UPDATED',
+        field: label,
+        oldValue: a === null ? '' : String(a),
+        newValue: b === null ? '' : String(b),
+        changedByName: changedByName ?? null,
+      }];
+    });
+    if (!rows.length) return;
+    await this.prisma.productChange.createMany({ data: rows }).catch(() => null);
+  }
+
+  /** Recent product edits, newest first — what the Products screen lists (§6.1). */
+  async recentChanges(productId?: number, limit = 300) {
+    const rows = await this.prisma.productChange.findMany({
+      where: productId ? { productId } : {},
+      orderBy: { changedAt: 'desc' },
+      take: Math.min(limit, 1000),
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      productId: r.productId,
+      productName: r.productName,
+      kind: r.kind,
+      field: r.field,
+      oldValue: r.oldValue,
+      newValue: r.newValue,
+      changedByName: r.changedByName,
+      changedAt: r.changedAt.toISOString(),
+    }));
   }
 
   /** Record an old→new chart-rate change so bag-booking conversion can reprice

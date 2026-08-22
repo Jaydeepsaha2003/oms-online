@@ -16,6 +16,7 @@ import { UpdateQuotationTermsDto } from './dto/quotation-terms.dto';
 import { UpdateOrderQtyLayoutDto } from './dto/order-qty-layout.dto';
 import { UpdateTcsSettingDto } from './dto/tcs-setting.dto';
 import { UpdateDispatchBagThresholdDto } from './dto/dispatch-bag-threshold.dto';
+import { UpdateChallanFieldsDto } from './dto/challan-fields.dto';
 import { UpdateDesignTrackTypesDto } from './dto/design-track-types.dto';
 import { UpdateDispatchAlertsDto } from './dto/dispatch-alerts.dto';
 
@@ -118,6 +119,20 @@ export class SettingsController {
   @SkipAudit()
   updateTcsPercent(@Body() dto: UpdateTcsSettingDto, @CurrentUser() user: AuthenticatedUser) {
     return this.settings.updateTcsPercent(dto, user);
+  }
+
+  // Which optional fields the Challan form shows. Readable by anyone (the form
+  // needs it to render), editable only with setting:update.
+  @Get('challan-fields')
+  getChallanFields() {
+    return this.settings.getChallanFields();
+  }
+
+  @Put('challan-fields')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @SkipAudit()
+  updateChallanFields(@Body() dto: UpdateChallanFieldsDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.settings.updateChallanFields(dto, user);
   }
 
   // Default dispatch bag threshold — readable by any authenticated user (the

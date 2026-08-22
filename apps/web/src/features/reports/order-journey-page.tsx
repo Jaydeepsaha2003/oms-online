@@ -459,7 +459,10 @@ function Timeline({ events }: { events: JourneyEvent[] }) {
 
 export function OrderJourneyPage() {
   const filters = useReportFilters();
-  const { data, isFetching } = useOrderJourney(filters.query);
+  // Active by default: the question this page is usually asked is "what is still
+  // owed to this party", not "everything we ever sold them".
+  const [activeOnly, setActiveOnly] = useState(true);
+  const { data, isFetching } = useOrderJourney({ ...filters.query, activeOnly: activeOnly || undefined });
   const j: OrderJourneyReport | undefined = data;
 
   /** The one unit the whole page reads in — whatever this party actually orders
@@ -473,9 +476,79 @@ export function OrderJourneyPage() {
   const [tab, setTab] = useState<'orders' | 'timeline'>('orders');
   const hasParty = !!filters.f.customerId;
 
+  /*
+   * Snap the date range onto the party's open work, once per party.
+   *
+   * The window comes back independent of the current range (see the service), so
+   * this can widen as well as narrow — picking a party whose oldest open order
+   * predates the default financial year still lands on all of it. Keyed by
+   * party in a ref so it happens on SELECTION only: re-applying on every fetch
+   * would fight the user the moment they set a range of their own.
+   */
+  const snappedFor = useRef<number | null>(null);
+  const setF = filters.setF;
+  useEffect(() => {
+    const id = filters.f.customerId ? Number(filters.f.customerId) : null;
+    if (id == null) {
+      snappedFor.current = null;
+      return;
+    }
+    if (snappedFor.current === id) return;
+    const w = data?.activeWindow;
+    if (!w) return;
+    snappedFor.current = id;
+    setF((prev) => ({ ...prev, from: w.from, to: w.to }));
+  }, [filters.f.customerId, data?.activeWindow, setF]);
+
   return (
     <div className="space-y-4">
       <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
+
+      {hasParty && (
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1 rounded-[4px] border border-amber-300 bg-amber-50/40 p-0.5 dark:border-amber-400/40">
+            {(
+              [
+                [true, 'Active orders'],
+                [false, 'All orders'],
+              ] as const
+            ).map(([val, label]) => (
+              <button
+                key={label}
+                type="button"
+                onClick={() => setActiveOnly(val)}
+                className={cn(
+                  'cursor-pointer rounded-[3px] px-3 py-1.5 text-[12.5px] font-semibold transition-colors',
+                  activeOnly === val
+                    ? 'bg-primary text-primary-foreground shadow-sm'
+                    : 'text-amber-900/70 hover:bg-amber-100 dark:text-amber-200/70',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <span className="text-muted-foreground text-[11.5px] font-medium">
+            {activeOnly
+              ? 'Orders with quantity still to dispatch.'
+              : 'Everything in the range, including fully shipped and billed.'}
+          </span>
+          {/* The range was moved onto the open work on selection — say so, and
+              offer the way back, rather than leaving the user wondering why the
+              dates changed under them. */}
+          {data?.activeWindow && (
+            <button
+              type="button"
+              onClick={() => filters.setF((prev) => ({ ...prev, from: data.activeWindow!.from, to: data.activeWindow!.to }))}
+              className="text-primary ml-auto cursor-pointer text-[11.5px] font-semibold hover:underline"
+              title="Set the range to span every order still open for this party"
+            >
+              Fit range to {data.activeWindow.orders} open order{data.activeWindow.orders === 1 ? '' : 's'} (
+              {formatDate(data.activeWindow.from)} → {formatDate(data.activeWindow.to)})
+            </button>
+          )}
+        </div>
+      )}
 
       {!hasParty && (
         <Card className="border-dashed">

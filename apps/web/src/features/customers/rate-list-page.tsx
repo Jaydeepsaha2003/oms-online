@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowRightLeft, Check, ChevronRight, Download, FileSpreadsheet, FileText, History, IndianRupee, Loader2, Percent, Sliders, TableProperties, TrendingDown, TrendingUp } from 'lucide-react';
+import { ArrowRightLeft, Brush, Check, ChevronRight, Download, FileSpreadsheet, FileText, History, IndianRupee, Layers, Loader2, type LucideIcon, Package, Percent, TableProperties, TrendingDown, TrendingUp } from 'lucide-react';
 import { toast } from 'sonner';
 import type { CustomerRateDto, RateChangeEntry } from '@oms/shared';
 import { cn } from '@/lib/utils';
@@ -56,6 +56,21 @@ function changeLabel(c: RateChangeEntry): string {
   return `${kind}${what}${c.scope ? ` (${c.scope.toLowerCase()})` : ''}`;
 }
 
+/*
+ * Typography for the header band.
+ *
+ * Three fonts already bundled with the app, each doing the job it is good at:
+ *  - MICRO_LABEL  Montserrat — geometric caps stay crisp at 9.5px with wide
+ *                 tracking, where Inter's tighter caps go muddy.
+ *  - FIGURE       Calibri (Carlito) bold — the figure face used across the
+ *                 printed documents this screen mirrors, so a rate reads the
+ *                 same on screen as it does on the challan. `tabular-nums`
+ *                 keeps the columns aligned without a monospace face.
+ * Body text stays Inter. No new font is downloaded for any of this.
+ */
+const MICRO_LABEL = 'font-montserrat text-[9.5px] font-bold tracking-[0.12em] uppercase text-muted-foreground';
+const FIGURE = 'font-calibri font-bold tabular-nums';
+
 /** Matches the Products / Orders / Challans grids: Inter, semibold, near-black. */
 const TEXT_CELL = 'text-[13px] font-semibold text-slate-800 dark:text-slate-200';
 /** Compact, amber-bordered filter controls — same language as the other list pages. */
@@ -69,7 +84,8 @@ function RateDelta({ oldRate, newRate }: { oldRate: number | null; newRate: numb
     <span className="inline-flex items-center gap-1.5 text-[13px] tabular-nums">
       <span className="text-muted-foreground font-medium">{oldRate == null ? '—' : oldRate}</span>
       <ChevronRight className="text-muted-foreground size-3.5" />
-      <span className={cn('font-bold', up && 'text-rose-600 dark:text-rose-400', down && 'text-emerald-600 dark:text-emerald-400')}>
+      {/* Same convention as the Special Rates tab: green = customer pays more. */}
+      <span className={cn('font-bold', up && 'text-emerald-600 dark:text-emerald-400', down && 'text-rose-600 dark:text-rose-400')}>
         {up && <TrendingUp className="mr-0.5 inline size-3.5" />}
         {down && <TrendingDown className="mr-0.5 inline size-3.5" />}
         {newRate == null ? '—' : newRate}
@@ -137,7 +153,7 @@ function RateCell({ rate, base, delta, compare }: { rate: string; base: string; 
       {compare && delta && (
         <span className="flex items-center gap-1 text-[10.5px] font-semibold tabular-nums">
           <span className="text-muted-foreground">{base}</span>
-          <span className={cn(down ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>{delta}</span>
+          <span className={cn(down ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400')}>{delta}</span>
         </span>
       )}
     </span>
@@ -289,21 +305,70 @@ function CategoryChips({
 }
 
 /** "CUP · 10-PCS-FG-22G · BEAT" — what a rule applies to, most specific part last. */
-function ruleTarget(r: CustomerRateDto): string {
-  return [r.category, r.subCategory, r.target].filter(Boolean).join(' · ');
+/*
+ * Colour convention for a rate movement, used everywhere on this page.
+ *
+ * GREEN = the customer pays MORE, RED = the customer pays LESS. Read from the
+ * business's side of the counter, which is whose screen this is: a rate going up
+ * is money in, a discount is money given away. (The opposite reading — "up is
+ * bad because prices rose" — is the customer's, and would have every discount
+ * showing green on our own screen.)
+ */
+const UP_TONE = 'text-emerald-600 dark:text-emerald-400';
+const DOWN_TONE = 'text-rose-600 dark:text-rose-400';
+const UP_CHIP = 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300';
+const DOWN_CHIP = 'bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300';
+
+/** Plain words for the stored codes — nobody outside the database calls it a
+ *  "SUBCATEGORY scope". */
+const KIND_TEXT: Record<string, string> = { PRODUCT: 'Product', DESIGN: 'Design' };
+const SCOPE_TEXT: Record<string, string> = {
+  ITEM: 'This item only',
+  SUBCATEGORY: 'Whole sub-category',
+  CATEGORY: 'Whole category',
+};
+
+/** "GLASS · 10-PCS-FG-22G · AMRAPALI (APS)" split into its parts, so the thing a
+ *  rate actually names can be bolder than the path leading to it. */
+function ruleParts(r: CustomerRateDto): string[] {
+  return [r.category, r.subCategory, r.target].filter(Boolean) as string[];
 }
 
 const span = (from: number | null, to: number | null): string =>
   from == null ? '—' : from === to ? String(from) : `${from}–${to}`;
 
 /**
- * The consolidated Set Special Rate view (§19).
+ * How broad a rate is, expressed visually rather than only in words.
+ *
+ * A rate on one item and a rate on a whole category are wildly different in
+ * consequence, and a table that prints both in the same grey text makes the
+ * reader work that out from the label every time. Each level gets its own rail
+ * colour and pill, so breadth is legible at a glance.
+ */
+const SCOPE_STYLE: Record<string, { rail: string; pill: string; text: string }> = {
+  ITEM: {
+    rail: 'bg-sky-400',
+    pill: 'bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-500/15 dark:text-sky-300 dark:ring-sky-400/25',
+    text: 'This item only',
+  },
+  SUBCATEGORY: {
+    rail: 'bg-violet-400',
+    pill: 'bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-500/15 dark:text-violet-300 dark:ring-violet-400/25',
+    text: 'Whole sub-category',
+  },
+  CATEGORY: {
+    rail: 'bg-amber-400',
+    pill: 'bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-400/15 dark:text-amber-200 dark:ring-amber-400/25',
+    text: 'Whole category',
+  },
+};
+
+/**
+ * The consolidated Set Special Rate view.
  *
  * Change History answers "what changed and when". This answers the different
  * question: what is configured RIGHT NOW, what is it doing, and how far from our
- * own rate does it put this party. Each rule is measured against the party's
- * actual sheet, so a rule that looks sweeping but is overridden everywhere
- * reports that plainly instead of implying reach it does not have.
+ * own rate does it put this party.
  */
 function SpecialRatesPanel({
   customerLabel,
@@ -316,78 +381,130 @@ function SpecialRatesPanel({
   summary: ReturnType<typeof summariseSpecialRates>;
   logos: number;
 }) {
+  const [showing, setShowing] = useState<RateImpact | null>(null);
+  const onShowItems = (i: RateImpact) => setShowing(i);
   if (!impacts.length) {
     return (
       <div className="text-muted-foreground grid place-items-center rounded-[4px] border border-dashed py-20 text-[13px] font-medium">
         <Percent className="mb-2 size-8 opacity-40" />
-        No special rates configured for {customerLabel} — they pay our rate on everything.
+        No special rates for {customerLabel} — they pay the normal price on everything.
       </div>
     );
   }
 
   const chip = (label: string, value: string | number, tone: string) => (
-    <span className={cn('rounded-[4px] px-2 py-1 text-[11.5px] font-bold', tone)}>
-      {value} <span className="font-semibold opacity-70">{label}</span>
+    <span className={cn('inline-flex items-baseline gap-1 rounded-full px-3 py-1 text-[12.5px] font-bold', tone)}>
+      <span className={FIGURE}>{value}</span>
+      <span className="font-semibold opacity-75">{label}</span>
     </span>
   );
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2.5">
       <div className="flex flex-wrap items-center gap-1.5">
-        {chip('rules', summary.rules, 'bg-slate-100 text-slate-700 dark:bg-white/10 dark:text-slate-200')}
-        {chip('increase the rate', summary.up, 'bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300')}
-        {chip('reduce it', summary.down, 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300')}
-        {chip('items priced', summary.items, 'bg-blue-50 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300')}
+        {chip('special rates set', summary.rules, 'bg-slate-100 text-slate-700 dark:bg-white/10 dark:text-slate-200')}
+        {chip('charge more', summary.up, UP_CHIP)}
+        {chip('give a discount', summary.down, DOWN_CHIP)}
+        {chip('items affected', summary.items, 'bg-blue-50 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300')}
         {summary.idle > 0 &&
-          chip('price nothing', summary.idle, 'bg-amber-50 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200')}
+          chip('not being used', summary.idle, 'bg-amber-50 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200')}
         {logos > 0 && chip('logo restrictions', logos, 'bg-slate-100 text-slate-700 dark:bg-white/10 dark:text-slate-200')}
       </div>
 
-      <div className="bg-card overflow-hidden rounded-[4px] border shadow-sm">
+      {/* Phones get the card list below instead: seven columns on a 375px screen
+          is a sideways scroll through numbers, which is how you misread a rate. */}
+      <div className="bg-card hidden overflow-hidden rounded-[6px] border shadow-sm ring-1 ring-slate-900/5 sm:block dark:ring-white/5">
         <div className="overflow-x-auto">
-          <table className="w-full text-[13px] [&_td]:border-r [&_td]:border-slate-200 dark:[&_td]:border-white/10 [&_td:last-child]:border-r-0 [&_th]:border-r [&_th]:border-white/20 [&_th:last-child]:border-r-0">
+          <table className="w-full border-collapse text-[14px]">
             <thead>
-              <tr className="bg-gradient-to-b from-blue-800 to-indigo-800 text-[11.5px] text-white uppercase">
-                <th className="px-3 py-1.5 text-left font-extrabold">Applies to</th>
-                <th className="w-24 px-3 py-1.5 text-left font-extrabold">Kind</th>
-                <th className="w-28 px-3 py-1.5 text-left font-extrabold">Level</th>
-                <th className="w-24 px-3 py-1.5 text-right font-extrabold">Adjustment</th>
-                <th className="w-24 px-3 py-1.5 text-right font-extrabold">Items</th>
-                <th className="w-32 px-3 py-1.5 text-right font-extrabold">Our rate</th>
-                <th className="w-32 px-3 py-1.5 text-right font-extrabold">They pay</th>
+              {/* Sticky so the columns stay named on a long list — the single
+                  thing that most makes a data table feel finished. */}
+              <tr className="sticky top-0 z-10 bg-gradient-to-b from-indigo-700 to-indigo-800 text-[11.5px] tracking-wider text-white uppercase">
+                <th className="w-1 p-0" aria-hidden />
+                <th className="px-3 py-2.5 text-left font-bold">Product / Category</th>
+                <th className="w-40 px-3 py-2.5 text-left font-bold">Applies to</th>
+                <th className="w-28 px-3 py-2.5 text-right font-bold">Rate change</th>
+                <th className="w-44 px-3 py-2.5 text-left font-bold">Items affected</th>
+                <th className="w-28 px-3 py-2.5 text-right font-bold">Normal price</th>
+                <th className="w-32 px-3 py-2.5 text-right font-bold">They pay</th>
               </tr>
             </thead>
-            <tbody className="[&_td]:border-t [&_td]:border-slate-200 [&_td]:px-3 [&_td]:py-1.5 dark:[&_td]:border-white/10">
+            <tbody>
               {impacts.map((i) => {
                 const up = i.rule.rate > 0;
+                const st = SCOPE_STYLE[i.rule.scope] ?? SCOPE_STYLE.ITEM;
+                const parts = ruleParts(i.rule);
                 return (
-                  <tr key={i.rule.id} className="even:bg-slate-100/80 dark:even:bg-white/[0.04]">
-                    <td className={TEXT_CELL}>{ruleTarget(i.rule)}</td>
-                    <td className="text-muted-foreground text-[11.5px] font-bold">{i.rule.kind}</td>
-                    <td className="text-muted-foreground text-[11.5px] font-bold">{i.rule.scope}</td>
-                    <td
-                      className={cn(
-                        'text-right text-[13px] font-bold tabular-nums',
-                        up ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400',
-                      )}
-                    >
-                      {up ? <TrendingUp className="mr-0.5 inline size-3.5" /> : <TrendingDown className="mr-0.5 inline size-3.5" />}
-                      {up ? `+${i.rule.rate}` : i.rule.rate}
+                  <tr
+                    key={i.rule.id}
+                    className="group border-t border-slate-200 transition-colors even:bg-slate-50/70 hover:bg-indigo-50/50 dark:border-white/10 dark:even:bg-white/[0.03] dark:hover:bg-indigo-500/10"
+                  >
+                    {/* Breadth rail — the widest rate on the sheet is the one you
+                        want to notice first, and colour carries that faster than
+                        reading the label. */}
+                    <td className="p-0">
+                      <span className={cn('block h-full min-h-9 w-1', st.rail)} />
                     </td>
-                    {/* A rule pricing nothing is the interesting case, so it says why. */}
-                    <td className="text-right text-[12.5px] font-bold tabular-nums">
+
+                    <td className="px-3 py-2">
+                      <span className="flex flex-wrap items-baseline gap-x-1.5">
+                        {parts.map((p, n) => (
+                          <span key={n} className="inline-flex items-baseline gap-1.5">
+                            {n > 0 && <span className="text-muted-foreground/40 text-[12px]">›</span>}
+                            <span
+                              className={cn(
+                                n === parts.length - 1
+                                  ? 'text-[14.5px] font-bold text-slate-900 dark:text-slate-100'
+                                  : 'text-muted-foreground text-[12px] font-semibold',
+                              )}
+                            >
+                              {p}
+                            </span>
+                          </span>
+                        ))}
+                      </span>
+                      <span className="text-muted-foreground/70 mt-0.5 block text-[11px] font-semibold tracking-wide uppercase">
+                        {KIND_TEXT[i.rule.kind] ?? i.rule.kind} rate
+                      </span>
+                    </td>
+
+                    <td className="px-3 py-2">
+                      <span className={cn('inline-flex rounded-full px-2.5 py-0.5 text-[11.5px] font-bold ring-1 ring-inset', st.pill)}>
+                        {st.text}
+                      </span>
+                    </td>
+
+                    <td className={cn('px-3 py-2 text-right text-[16px]', FIGURE, up ? UP_TONE : DOWN_TONE)}>
+                      <span className="inline-flex items-center gap-0.5">
+                        {up ? <TrendingUp className="size-3.5" /> : <TrendingDown className="size-3.5" />}
+                        {up ? `+${i.rule.rate}` : i.rule.rate}
+                      </span>
+                    </td>
+
+                    {/* The count opens the list behind it — "192 items" is only
+                        useful if you can find out which 192. */}
+                    <td className="px-3 py-2 text-right">
                       {i.items > 0 ? (
-                        i.items
+                        <button
+                          type="button"
+                          onClick={() => onShowItems(i)}
+                          title={`Show the ${i.items} item${i.items === 1 ? '' : 's'} this rate applies to`}
+                          className="text-primary hover:bg-primary/10 focus-visible:ring-ring/50 inline-flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 transition-colors outline-none focus-visible:ring-2"
+                        >
+                          <span className={cn(FIGURE, 'text-[14px]')}>{i.items}</span>
+                          <ChevronRight className="size-3.5" />
+                        </button>
                       ) : (
-                        <span className="text-amber-700 dark:text-amber-300">
-                          {i.shadowed > 0 ? `0 · ${i.shadowed} overridden` : '0'}
+                        <span className="text-[12.5px] font-semibold text-amber-700 dark:text-amber-300">
+                          {i.shadowed > 0 ? `None — ${i.shadowed} use a more specific rate` : 'None'}
                         </span>
                       )}
                     </td>
-                    <td className="text-muted-foreground text-right text-[12.5px] font-bold tabular-nums">
+
+                    <td className={cn(FIGURE, 'text-muted-foreground px-3 py-2 text-right text-[14px]')}>
                       {span(i.baseFrom, i.baseTo)}
                     </td>
-                    <td className="text-right text-[13px] font-bold tabular-nums text-slate-900 dark:text-slate-100">
+                    <td className={cn(FIGURE, 'px-3 py-2 text-right text-[15.5px] text-slate-900 dark:text-slate-100')}>
                       {span(i.rateFrom, i.rateTo)}
                     </td>
                   </tr>
@@ -396,13 +513,218 @@ function SpecialRatesPanel({
             </tbody>
           </table>
         </div>
+
+        <p className="text-muted-foreground bg-muted/40 border-t px-3 py-2.5 text-[12.5px] font-medium">
+          When two rates could both apply, the more specific one wins —{' '}
+          <span className="font-bold text-sky-700 dark:text-sky-300">one item</span> beats{' '}
+          <span className="font-bold text-violet-700 dark:text-violet-300">sub-category</span>, which beats{' '}
+          <span className="font-bold text-amber-700 dark:text-amber-300">whole category</span>. Only the winner is used.
+        </p>
       </div>
 
-      <p className="text-muted-foreground text-[11.5px] font-medium">
-        Measured against {customerLabel}’s current sheet through the same cascade that prices an order — ITEM beats
-        SUBCATEGORY beats CATEGORY, and only the winner applies. A rule showing <b className="text-foreground">0 items</b> is
-        configured but priced out of every line it matches.
-      </p>
+      {/* ── phones ── */}
+      <div className="space-y-2 sm:hidden">
+        {impacts.map((i) => {
+          const up = i.rule.rate > 0;
+          const st = SCOPE_STYLE[i.rule.scope] ?? SCOPE_STYLE.ITEM;
+          const parts = ruleParts(i.rule);
+          return (
+            <div key={i.rule.id} className="bg-card flex overflow-hidden rounded-[6px] border shadow-sm">
+              <span className={cn('w-1 shrink-0', st.rail)} aria-hidden />
+              <div className="min-w-0 flex-1 p-2.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate text-[14.5px] font-bold text-slate-900 dark:text-slate-100">
+                      {parts[parts.length - 1]}
+                    </div>
+                    {parts.length > 1 && (
+                      <div className="text-muted-foreground truncate text-[12px] font-semibold">
+                        {parts.slice(0, -1).join(' › ')}
+                      </div>
+                    )}
+                  </div>
+                  <span className={cn(FIGURE, 'shrink-0 text-[18px]', up ? UP_TONE : DOWN_TONE)}>
+                    {up ? `+${i.rule.rate}` : i.rule.rate}
+                  </span>
+                </div>
+
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <span className={cn('rounded-full px-2.5 py-0.5 text-[11.5px] font-bold ring-1 ring-inset', st.pill)}>{st.text}</span>
+                  <span className="text-muted-foreground text-[11.5px] font-bold tracking-wide uppercase">
+                    {KIND_TEXT[i.rule.kind] ?? i.rule.kind}
+                  </span>
+                </div>
+
+                {/* Price movement reads left-to-right on one line — two separate
+                    columns would be two glances on a screen this narrow. */}
+                <div className="mt-2 flex items-center gap-2 text-[14px]">
+                  <span className={cn(FIGURE, 'text-muted-foreground')}>{span(i.baseFrom, i.baseTo)}</span>
+                  <ChevronRight className="text-muted-foreground/50 size-3.5" />
+                  <span className={cn(FIGURE, 'text-slate-900 dark:text-slate-100')}>{span(i.rateFrom, i.rateTo)}</span>
+                  {i.items > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => onShowItems(i)}
+                      className="text-primary ml-auto inline-flex cursor-pointer items-center gap-0.5 text-[12.5px] font-bold"
+                    >
+                      {i.items} item{i.items === 1 ? '' : 's'} <ChevronRight className="size-3" />
+                    </button>
+                  ) : (
+                    <span className="ml-auto text-[12px] font-semibold text-amber-700 dark:text-amber-300">not used</span>
+                  )}
+                </div>
+
+                {i.items === 0 && i.shadowed > 0 && (
+                  <p className="mt-1 text-[12px] font-semibold text-amber-700 dark:text-amber-300">
+                    {i.shadowed} items use a more specific rate
+                  </p>
+                )}
+              </div>
+            </div>
+          );
+        })}
+        <p className="text-muted-foreground px-1 text-[12.5px] font-medium">
+          The more specific rate wins — <span className="font-bold text-sky-700 dark:text-sky-300">item</span> beats{' '}
+          <span className="font-bold text-violet-700 dark:text-violet-300">sub-category</span> beats{' '}
+          <span className="font-bold text-amber-700 dark:text-amber-300">category</span>.
+        </p>
+      </div>
+
+      {showing && <AffectedItemsDialog impact={showing} customerLabel={customerLabel} onClose={() => setShowing(null)} />}
+    </div>
+  );
+}
+
+/**
+ * The items behind an "items affected" count, each with what it normally costs
+ * and what this customer pays.
+ *
+ * The count on its own invites the question and then refuses to answer it —
+ * particularly for a category-wide rate, where "192" is precisely the number you
+ * cannot verify by eye. Every item is listed, not a sample.
+ */
+function AffectedItemsDialog({
+  impact,
+  customerLabel,
+  onClose,
+}: {
+  impact: RateImpact;
+  customerLabel: string;
+  onClose: () => void;
+}) {
+  const up = impact.rule.rate > 0;
+  const st = SCOPE_STYLE[impact.rule.scope] ?? SCOPE_STYLE.ITEM;
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-[min(96vw,44rem)] sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex flex-wrap items-center gap-2 text-[15px]">
+            {ruleParts(impact.rule).join(' › ')}
+            <span className={cn('rounded-full px-2.5 py-0.5 text-[11.5px] font-bold ring-1 ring-inset', st.pill)}>{st.text}</span>
+          </DialogTitle>
+          <DialogDescription className="text-[13.5px]">
+            {impact.items} item{impact.items === 1 ? '' : 's'} on {customerLabel}’s sheet, priced{' '}
+            <span className={cn('font-bold', up ? UP_TONE : DOWN_TONE)}>
+              {up ? `+${impact.rule.rate}` : impact.rule.rate}
+            </span>{' '}
+            by this rate.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="max-h-[55vh] overflow-y-auto rounded-[4px] border">
+          <table className="w-full text-[14px]">
+            <thead className="bg-muted/60 sticky top-0">
+              <tr className={cn(MICRO_LABEL, 'text-left text-[11px]')}>
+                <th className="px-3 py-2.5 font-bold">Item</th>
+                <th className="hidden px-3 py-2 font-bold sm:table-cell">Sub-category</th>
+                <th className="px-3 py-2 text-right font-bold">Normal</th>
+                <th className="px-3 py-2 text-right font-bold">They pay</th>
+                <th className="px-3 py-2 text-right font-bold">Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              {impact.affected.map((a, n) => {
+                const diff = Math.round((a.rate - a.base) * 100) / 100;
+                return (
+                  <tr key={`${a.name}-${a.subCategory}-${n}`} className="border-t even:bg-slate-50/70 dark:even:bg-white/[0.03]">
+                    <td className="px-3 py-2 text-[14px] font-semibold text-slate-900 dark:text-slate-100">{a.name}</td>
+                    <td className="text-muted-foreground hidden px-3 py-2 text-[13px] font-medium sm:table-cell">{a.subCategory || '—'}</td>
+                    <td className={cn(FIGURE, 'text-muted-foreground px-3 py-2 text-right text-[14px]')}>{a.base}</td>
+                    <td className={cn(FIGURE, 'px-3 py-2 text-right text-[15px] text-slate-900 dark:text-slate-100')}>{a.rate}</td>
+                    <td className={cn(FIGURE, 'px-3 py-2 text-right text-[14px]', diff > 0 ? UP_TONE : diff < 0 ? DOWN_TONE : 'text-muted-foreground/50')}>
+                      {diff === 0 ? '—' : diff > 0 ? `+${diff}` : diff}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <DialogFooter>
+          <Button onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * One cell of the header's figure strip.
+ *
+ * ERP headers state the shape of what you are looking at before you scroll into
+ * it — how many products, how many designs, how many rules are in play. The
+ * numbers are deliberately the loudest thing in the cell; the label is a
+ * whisper above it.
+ */
+function Stat({
+  label,
+  value,
+  hint,
+  icon: Icon,
+  tone = 'slate',
+}: {
+  label: string;
+  value: number;
+  hint?: string;
+  icon: LucideIcon;
+  tone?: 'slate' | 'violet' | 'amber' | 'indigo';
+}) {
+  const TONE = {
+    slate: { tile: 'bg-slate-100 text-slate-600 dark:bg-white/10 dark:text-slate-300', num: 'text-slate-900 dark:text-slate-100' },
+    violet: { tile: 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300', num: 'text-violet-700 dark:text-violet-300' },
+    amber: { tile: 'bg-amber-100 text-amber-700 dark:bg-amber-400/20 dark:text-amber-300', num: 'text-amber-700 dark:text-amber-300' },
+    indigo: { tile: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300', num: 'text-indigo-700 dark:text-indigo-300' },
+  }[tone];
+  return (
+    <div className="bg-card flex items-center gap-2.5 px-3 py-2.5">
+      <span className={cn('grid size-8 shrink-0 place-items-center rounded-[5px]', TONE.tile)}>
+        <Icon className="size-4" />
+      </span>
+      <div className="min-w-0">
+        <div className={cn(MICRO_LABEL, 'leading-none')}>{label}</div>
+        <div className="mt-1 flex items-baseline gap-1.5">
+          <span className={cn(FIGURE, 'text-[19px] leading-none', TONE.num)}>{value.toLocaleString('en-IN')}</span>
+          {hint && <span className={cn(FIGURE, 'text-muted-foreground truncate text-[10.5px]')}>{hint}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** A read-only fact in the identity strip — label above, value below. */
+function Meta({ label, value, tone }: { label: string; value: string; tone?: 'amber' }) {
+  return (
+    <div className="min-w-0">
+      <div className={cn(MICRO_LABEL, 'leading-none')}>{label}</div>
+      <div
+        className={cn(
+          'mt-1 truncate font-montserrat text-[12px] font-semibold',
+          tone === 'amber' ? 'text-amber-700 dark:text-amber-400' : 'text-slate-800 dark:text-slate-200',
+        )}
+      >
+        {value}
+      </div>
     </div>
   );
 }
@@ -465,6 +787,11 @@ export function RateListPage() {
     [rateList, config, catFilter],
   );
   const totalTableCount = (sections?.products.length ?? 0) + (sections?.designs.length ?? 0);
+  // Counted off the BUILT sections, so the strip states what is actually on the
+  // sheet under the current configuration and filter — not what the catalogue
+  // happens to hold.
+  const productRows = useMemo(() => (sections?.products ?? []).reduce((n, t) => n + t.rows.length, 0), [sections]);
+  const designRows = useMemo(() => (sections?.designs ?? []).reduce((n, t) => n + t.rows.length, 0), [sections]);
 
   // Off by default: the sheet's job is to quote the customer's price, and our own
   // rate is internal. Turning it on is a deliberate act (§18).
@@ -512,50 +839,136 @@ export function RateListPage() {
 
   return (
     <div className="space-y-2.5 font-sans">
-      {/* Customer picker + download — one compact toolbar (no separate page header;
-          the topbar already says "Rate List"). */}
-      <div className="bg-card font-poppins flex flex-wrap items-end gap-3 rounded-[4px] border p-2.5 shadow-sm sm:p-3">
-        <div className="w-full space-y-1 sm:w-64">
-          <Label className="text-[10.5px] font-bold tracking-wide text-muted-foreground uppercase">Customer</Label>
-          <NativeSelect value={customerLabel} onChange={setCustomerLabel} options={options} placeholder="Select a customer…" className={cn(CONTROL, 'font-medium')} />
+      {/*
+        One consolidated header instead of three floating bands.
+        ERP screens put identity, key figures and actions in a single bordered
+        block with hairline dividers, so the eye lands on the party once and
+        everything below it is understood as belonging to that party. Padding is
+        deliberately tight (10–12px) and controls are a uniform 34px — density is
+        the point, not decoration.
+      */}
+      <div className="bg-card font-poppins overflow-hidden rounded-[4px] border shadow-sm">
+        {/* ── Band 1: who, and what you can do about it ── */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="bg-gradient-brand hidden size-8 shrink-0 place-items-center rounded-[4px] text-white shadow-sm sm:grid">
+              <IndianRupee className="size-4" />
+            </span>
+            <div className="min-w-0">
+              <Label className={cn(MICRO_LABEL, 'block leading-none')}>Customer</Label>
+              <NativeSelect
+                value={customerLabel}
+                onChange={setCustomerLabel}
+                options={options}
+                placeholder="Select a customer…"
+                className={cn(CONTROL, 'mt-1 h-8 w-full font-semibold sm:w-60')}
+              />
+            </div>
+          </div>
+
+          {/* Party context, read-only — the kind of at-a-glance identity strip an
+              ERP header carries so nobody has to open another screen for it. */}
+          {customerId != null && (
+            <div className="hidden items-center gap-3 self-stretch border-l pl-3 lg:flex">
+              <Meta label="Rate basis" value={effective?.partyConfigured ? 'Party configuration' : 'Default configuration'} />
+              {excludedCount > 0 && (
+                <Meta label="Excluded" value={`${excludedCount} categor${excludedCount === 1 ? 'y' : 'ies'}`} tone="amber" />
+              )}
+            </div>
+          )}
+
+          <div className="ml-auto flex items-center gap-2">
+            {listFetching && <Loader2 className="text-muted-foreground size-4 animate-spin" />}
+            {customerId != null && (
+              <Button
+                variant={compare ? 'default' : 'outline'}
+                className={cn('h-8 rounded-[4px] text-[12px] font-bold', !compare && CONTROL)}
+                onClick={() => setCompare((c) => !c)}
+                title="Show our own rate and the adjustment beside the customer's rate"
+              >
+                <ArrowRightLeft className="size-3.5" />
+                <span className="hidden sm:inline">{compare ? 'Comparing' : 'Compare our rate'}</span>
+                <span className="sm:hidden">{compare ? 'Comparing' : 'Compare'}</span>
+              </Button>
+            )}
+            <Button
+              className="bg-gradient-brand h-8 rounded-[4px] text-[12px] font-bold text-white shadow-sm hover:opacity-95"
+              disabled={customerId == null}
+              onClick={openDownload}
+              title={customerId == null ? 'Select a customer first' : 'Download this customer’s rate list'}
+            >
+              <Download className="size-3.5" /> Download
+            </Button>
+          </div>
         </div>
-        {customerId != null && configured.length > 1 && (
-          <div className="min-w-0 flex-1 space-y-1">
-            <Label className="text-muted-foreground text-[10.5px] font-bold tracking-wide uppercase">Categories</Label>
-            <CategoryChips all={configured} selected={catFilter} onToggle={toggleCat} onAll={() => setCatFilter([])} />
+
+        {/* ── Band 2: the figures, as an ERP stat strip ── */}
+        {/* gap-px over a border-coloured background draws hairlines that stay
+            correct however the grid wraps — per-cell borders leave a stray edge
+            on the second column once it becomes 2-up on a phone. */}
+        {customerId != null && (
+          <div className="bg-border grid grid-cols-2 gap-px border-t sm:grid-cols-4">
+            <Stat label="Products" value={productRows} icon={Package} />
+            <Stat label="Designs" value={designRows} icon={Brush} tone="violet" />
+            <Stat
+              label="Categories"
+              value={configured.length}
+              icon={Layers}
+              tone="amber"
+              hint={catFilter.length ? `${catFilter.length} filtered` : undefined}
+            />
+            <Stat
+              label="Special rates"
+              value={impacts.length}
+              icon={Percent}
+              tone={impacts.length ? 'indigo' : 'slate'}
+              hint={impacts.length ? `${summary.up} up · ${summary.down} down` : 'none set'}
+            />
           </div>
         )}
-        {customerId != null && (
-          <Button
-            variant={compare ? 'default' : 'outline'}
-            className={cn('ml-auto h-9 rounded-[4px] text-[12.5px] font-bold', !compare && CONTROL)}
-            onClick={() => setCompare((c) => !c)}
-            title="Show our own rate and the adjustment beside the customer's rate"
-          >
-            <ArrowRightLeft /> {compare ? 'Comparing our rate' : 'Compare our rate'}
-          </Button>
-        )}
-        <Button
-          className={cn('bg-gradient-brand h-9 rounded-[4px] text-[12.5px] font-bold text-white shadow-sm hover:opacity-95', customerId == null && 'ml-auto')}
-          disabled={customerId == null}
-          onClick={openDownload}
-          title={customerId == null ? 'Select a customer first' : 'Download this customer’s rate list'}
-        >
-          <Download /> Download Rate List
-        </Button>
-      </div>
 
-      {/* Why the sheet looks the way it does — §29's "reused automatically" is
-          only useful if the user can see that it happened. */}
-      {customerId != null && (effective?.partyConfigured || excludedCount > 0) && (
-        <p className="text-muted-foreground flex flex-wrap items-center gap-1.5 text-[11.5px] font-medium">
-          <Sliders className="size-3.5" />
-          {effective?.partyConfigured
-            ? `Using ${customerLabel}’s saved rate list configuration`
-            : 'Using the default rate list configuration'}
-          {excludedCount > 0 && ` · ${excludedCount} categor${excludedCount === 1 ? 'y is' : 'ies are'} excluded by it`}
-        </p>
-      )}
+        {/* ── Band 3: view switch + the category filter that narrows it ── */}
+        {customerId != null && (
+          <div className="bg-muted/30 flex flex-wrap items-center gap-x-3 gap-y-2 border-t px-3 py-2">
+            <div className="flex max-w-full items-center gap-1 overflow-x-auto rounded-[4px] border border-amber-300 bg-amber-50/60 p-0.5 dark:border-amber-400/40 dark:bg-amber-400/10">
+              {(
+                [
+                  { id: 'list' as const, label: 'Rate List', icon: TableProperties },
+                  { id: 'special' as const, label: 'Special Rates', icon: Percent },
+                  { id: 'history' as const, label: 'Change History', icon: History },
+                ]
+              ).map(({ id, label, icon: Icon }) => {
+                const on = tab === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setTab(id)}
+                    aria-pressed={on}
+                    className={cn(
+                      'flex cursor-pointer items-center gap-1.5 rounded-[3px] px-2.5 py-1 text-[12px] font-semibold whitespace-nowrap transition-colors duration-150',
+                      on
+                        ? 'bg-primary text-primary-foreground shadow-sm'
+                        : 'text-amber-900/70 hover:bg-amber-100 hover:text-amber-900 dark:text-amber-200/70 dark:hover:bg-amber-400/10',
+                    )}
+                  >
+                    <Icon className="size-3.5" /> {label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Only narrows the Rate List — showing it over the other two tabs
+                would imply a filter that does nothing. */}
+            {tab === 'list' && configured.length > 1 && (
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <span className={cn(MICRO_LABEL, 'hidden sm:block')}>Categories</span>
+                <CategoryChips all={configured} selected={catFilter} onToggle={toggleCat} onAll={() => setCatFilter([])} />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {customerId == null ? (
         <div className="text-muted-foreground grid place-items-center rounded-[4px] border border-dashed py-20 text-[13px] font-medium">
@@ -564,35 +977,6 @@ export function RateListPage() {
         </div>
       ) : (
         <>
-          {/* Tabs */}
-          <div className="inline-flex items-center gap-1 rounded-[4px] border border-amber-300 bg-amber-50/40 p-0.5 dark:border-amber-400/40">
-            {(
-              [
-                { id: 'list' as const, label: 'Rate List', icon: TableProperties },
-                { id: 'special' as const, label: 'Special Rates', icon: Percent },
-                { id: 'history' as const, label: 'Change History', icon: History },
-              ]
-            ).map(({ id, label, icon: Icon }) => {
-              const on = tab === id;
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setTab(id)}
-                  aria-pressed={on}
-                  className={cn(
-                    'flex cursor-pointer items-center gap-1.5 rounded-[3px] px-3 py-1.5 text-[12.5px] font-semibold whitespace-nowrap transition-colors duration-150',
-                    on
-                      ? 'bg-primary text-primary-foreground shadow-sm'
-                      : 'text-amber-900/70 hover:bg-amber-100 hover:text-amber-900 dark:text-amber-200/70 dark:hover:bg-amber-400/10',
-                  )}
-                >
-                  <Icon className="size-3.5" /> {label}
-                </button>
-              );
-            })}
-          </div>
-
           {tab === 'list' ? (
             listLoading ? (
               <div className="grid place-items-center py-20">
@@ -613,15 +997,17 @@ export function RateListPage() {
                   <img src={company?.logo || kavishLogo} alt="" className="mt-24 w-[min(60%,520px)] opacity-[0.05]" />
                 </div>
                 <div className="relative z-10 space-y-2.5">
-                  <p className="text-muted-foreground flex items-center gap-2 text-[12px] font-medium">
-                    {listFetching && <Loader2 className="size-3.5 animate-spin" />}
-                    Current effective rates for <b className="text-foreground">{customerLabel}</b> — base chart rate + this customer’s special-rate adjustments.
+                  {/* The header already names the party and the rate basis, so
+                      this says only what it doesn't: how these figures are built. */}
+                  <p className="text-muted-foreground text-[11.5px] font-medium">
+                    Base chart rate + this customer’s special-rate adjustments.
                   </p>
                   {compare && (
                     <p className="text-muted-foreground rounded-[4px] border border-dashed px-2.5 py-1.5 text-[11.5px] font-medium">
                       Under an adjusted rate: <b className="text-foreground">our rate</b> and the{' '}
-                      <span className="font-bold text-rose-600 dark:text-rose-400">adjustment</span>. A single figure means the
-                      customer pays our rate — no adjustment applies there.
+                      <span className="font-bold text-emerald-600 dark:text-emerald-400">adjustment</span> — green where the
+                      customer pays more than our rate, red where they pay less. A single figure means they pay our rate, with
+                      no adjustment.
                     </p>
                   )}
                   {sections?.products.map((t) => <PivotCard key={t.title} t={t} compare={compare} />)}

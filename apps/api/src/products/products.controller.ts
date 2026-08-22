@@ -54,6 +54,15 @@ export class ProductsController {
     return this.products.lookups();
   }
 
+  /** Recent product edits, newest first (§6.1). Declared ABOVE `:id` so
+   *  "changes" is not parsed as a product id. */
+  @Get('changes')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  recentChanges(@Query('productId') productId?: string) {
+    const id = productId ? Number(productId) : undefined;
+    return this.products.recentChanges(Number.isFinite(id) ? id : undefined);
+  }
+
   @Get('category-fields')
   @Permissions(perm(R, ACTIONS.VIEW))
   categoryFields() {

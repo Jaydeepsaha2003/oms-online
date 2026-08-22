@@ -8,8 +8,7 @@ import type {
   ProductInput,
   ProductList,
   ProductLookups,
-  ProductQuery,
-} from '@oms/shared';
+  ProductQuery, ProductChangeEntry } from '@oms/shared';
 import { downloadFile, http } from '@/lib/api';
 
 export interface ImportResult {
@@ -133,4 +132,14 @@ export function exportProducts(query: ProductQuery) {
 export async function fetchAllMatchingProducts(query: ProductQuery, total: number): Promise<ProductDto[]> {
   const res = await http.get<ProductList>('/products', { params: { ...query, page: 1, pageSize: Math.min(total, 2000) } });
   return res.items;
+}
+
+/** Recent product edits (§6.1) — loaded only when the panel is opened. */
+export function useProductChanges(enabled: boolean, productId?: number) {
+  return useQuery({
+    queryKey: ['products', 'changes', productId ?? 'all'],
+    queryFn: () =>
+      http.get<ProductChangeEntry[]>('/products/changes', { params: productId ? { productId } : {} }),
+    enabled,
+  });
 }

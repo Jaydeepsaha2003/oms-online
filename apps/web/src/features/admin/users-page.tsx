@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Loader2, MonitorSmartphone, Pencil, Search, Trash2, UserPlus, Users } from 'lucide-react';
+import { ChevronLeft, ChevronRight, MonitorSmartphone, Pencil, Search, Trash2, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import type { UserDto, UserStatus } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -32,6 +32,66 @@ const AVATAR_TONES = [
 ];
 const initials = (name: string) => name.split(/\s+/).map((p) => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
 const toneFor = (id: string) => AVATAR_TONES[[...id].reduce((a, c) => a + c.charCodeAt(0), 0) % AVATAR_TONES.length];
+
+/** "2 minutes ago" / "3 days ago" — relative reads faster than a timestamp when
+ *  the question is "recently?". The exact time stays in the tooltip. */
+function ago(iso: string): string {
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
+  const days = Math.round(hrs / 24);
+  if (days < 30) return `${days} day${days === 1 ? '' : 's'} ago`;
+  const months = Math.round(days / 30);
+  return `${months} month${months === 1 ? '' : 's'} ago`;
+}
+
+/** Anything inside this window counts as "using the system right now". */
+const ONLINE_WINDOW_MIN = 15;
+
+/**
+ * Whether this person is actually USING the system — deliberately separate from
+ * the account's Active flag.
+ *
+ * "Active" only ever meant "this account is allowed to sign in". It said nothing
+ * about whether anyone has touched it, so a dormant account and a busy one
+ * looked identical (spec §13.1). Activity comes from the audit log; a live
+ * session alone is not enough, because a signed-in tab left open overnight is
+ * not somebody working.
+ */
+function PresenceCell({ u }: { u: UserDto }) {
+  const last = u.lastActiveAt;
+  const mins = last ? (Date.now() - new Date(last).getTime()) / 60000 : Infinity;
+  const online = mins <= ONLINE_WINDOW_MIN;
+  const sessions = u.activeSessions ?? 0;
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="flex items-center gap-1.5 text-xs font-semibold whitespace-nowrap">
+        <span
+          className={cn(
+            'size-2 shrink-0 rounded-full',
+            online ? 'bg-emerald-500' : last ? 'bg-slate-300 dark:bg-white/25' : 'bg-transparent ring-1 ring-slate-300',
+          )}
+        />
+        {online ? (
+          <span className="text-emerald-700 dark:text-emerald-400">Using now</span>
+        ) : last ? (
+          <span className="text-muted-foreground" title={formatDateTime(last)}>
+            {ago(last)}
+          </span>
+        ) : (
+          <span className="text-muted-foreground/60">Never used</span>
+        )}
+      </span>
+      {sessions > 0 && (
+        <span className="text-muted-foreground/70 text-[10.5px] font-medium">
+          {sessions} open session{sessions === 1 ? '' : 's'}
+        </span>
+      )}
+    </div>
+  );
+}
 
 const dt = (s?: string | null) =>
   s ? (
@@ -109,7 +169,8 @@ export function UsersPage() {
         </div>
       ),
     },
-    { id: 'status', label: 'Status', cell: (u) => <StatusBadge status={u.status} /> },
+    { id: 'status', label: 'Account', cell: (u) => <StatusBadge status={u.status} /> },
+    { id: 'presence', label: 'Last active', cell: (u) => <PresenceCell u={u} /> },
     {
       id: 'roles',
       label: 'Roles',
@@ -156,6 +217,9 @@ export function UsersPage() {
       )}
       <p className="text-muted-foreground text-xs">
         Last login {u.lastLoginAt ? formatDateShort(u.lastLoginAt) : '—'} · Created {formatDateShort(u.createdAt)}
+        <span className="mt-1 block">
+          <PresenceCell u={u} />
+        </span>
       </p>
       <div className="flex items-center justify-end gap-1 border-t pt-2" onClick={(e) => e.stopPropagation()}>
         {can('user:view') && (
@@ -196,11 +260,7 @@ export function UsersPage() {
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
-            <Users className="size-5" />
-          </div>
           <div>
-            <h2 className="text-2xl font-semibold tracking-tight">Users</h2>
             <p className="text-muted-foreground text-sm">{data?.total ?? 0} users · manage access, roles &amp; devices</p>
           </div>
         </div>

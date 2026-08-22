@@ -196,11 +196,20 @@ export function ProductPhotosPage() {
         </div>
         {/* Uploaded-between, labelled: on a phone there is no column header to
             say which date box is which. */}
-        <div className="col-span-2 flex w-full items-center gap-1.5 sm:w-auto">
+        <div className="col-span-2 flex w-full flex-wrap items-center gap-1.5 sm:w-auto">
           <span className="text-muted-foreground shrink-0 text-[11px] font-bold tracking-wide uppercase">Uploaded</span>
+          {/*
+            A native date input has an intrinsic width — the dd-mm-yyyy segments
+            plus the picker button. `flex-1 min-w-0` let it shrink below that, so
+            the segments clipped and collided with the calendar icon, which is
+            what read as a formatting/alignment fault. Give it a width that fits
+            its own content and let the ROW wrap on a narrow screen instead of
+            crushing the fields.
+          */}
           <Input
             type="date"
-            className="h-9 min-w-0 flex-1 tabular-nums sm:w-36 sm:flex-none"
+            aria-label="Uploaded from"
+            className="h-9 w-[8.75rem] shrink-0 px-2 tabular-nums"
             value={from}
             max={to || undefined}
             onChange={(e) => {
@@ -211,7 +220,8 @@ export function ProductPhotosPage() {
           <span className="text-muted-foreground shrink-0 text-[11px]">to</span>
           <Input
             type="date"
-            className="h-9 min-w-0 flex-1 tabular-nums sm:w-36 sm:flex-none"
+            aria-label="Uploaded to"
+            className="h-9 w-[8.75rem] shrink-0 px-2 tabular-nums"
             value={to}
             min={from || undefined}
             onChange={(e) => {

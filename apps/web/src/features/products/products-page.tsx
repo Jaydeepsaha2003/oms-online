@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ChevronLeft, ChevronRight, Filter, ListX, Loader2, Pencil, Plus, PowerOff, RotateCcw, Scale, Search, Trash2, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Filter, History, ListX, Loader2, Pencil, Plus, PowerOff, RotateCcw, Scale, Search, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { CategoryFieldDto, ProductDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -14,6 +14,7 @@ import { ColumnSettings } from '@/components/common/column-settings';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { RowCheckbox } from '@/components/common/row-checkbox';
 import { ExportButton, ImportButton } from '@/components/common/excel-actions';
+import { ProductChangesDialog } from './product-changes-dialog';
 import { PageSizeSelect } from '@/components/common/page-size-select';
 import { Combo, NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
@@ -123,6 +124,7 @@ export function ProductsPage() {
   const [editing, setEditing] = useState<ProductDto | null>(null);
   const [creating, setCreating] = useState(false);
   const [showFields, setShowFields] = useState(false);
+  const [changesOpen, setChangesOpen] = useState(false);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   // Bulk row selection — kept across page turns / filter changes so the user can
   // build up a set spanning more than one page before acting on it.
@@ -486,6 +488,15 @@ export function ProductsPage() {
             />
             {can('product:export') && <ExportButton onClick={() => exportProducts(query)} />}
             {can('product:import') && <ImportButton onFile={handleImport} pending={importMut.isPending} />}
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 rounded-[4px] text-[12.5px] font-semibold"
+              onClick={() => setChangesOpen(true)}
+              title="See recent edits to products — name, category, sub-category and more"
+            >
+              <History className="size-3.5" /> Recent changes
+            </Button>
             <Button variant="outline" size="sm" className="h-9 rounded-[4px] text-[12.5px] font-semibold" onClick={() => setShowFields(true)} title="Set the price field (KGS/PCS) per category">
               <Scale /> Price fields
             </Button>
@@ -643,6 +654,7 @@ export function ProductsPage() {
       )}
 
       {showFields && <CategoryFieldsDialog canEdit={can('product:update')} onClose={() => setShowFields(false)} />}
+      <ProductChangesDialog open={changesOpen} onOpenChange={setChangesOpen} />
     </div>
   );
 }

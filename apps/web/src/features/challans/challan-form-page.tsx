@@ -51,7 +51,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { usePermissions } from '@/hooks/use-permissions';
-import { useOrderQtyLayout } from '@/features/settings/use-settings';
+import { useChallanFields, useOrderQtyLayout } from '@/features/settings/use-settings';
 import { LiveLinePhotos } from '../orders/line-photos';
 import { useOrderItemPhotos } from '../orders/use-orders';
 import {
@@ -99,11 +99,6 @@ const itemLabel = (it: ChallanDraftItem) =>
   // which is also the text shown in the Add-line field once picked — never leaks a
   // raw float like 74.0999999 (matches how the grid/rows already render qty).
   `${it.productName || '(item)'} · ${it.design || 'NA'} · ${isKgs(it.unit) ? `${qty(n(it.kgs))}kg` : `${qty(n(it.pcs))}pc`} @ ₹${n(it.price)}  #${it.dispatchId}`;
-
-// Shipping Address input is hidden for now — flip to true to bring the field back.
-// The value itself is still tracked/saved (defaults to the billing address), so
-// hiding it changes nothing about what gets stored on the challan.
-const SHOW_SHIPPING_ADDRESS = false;
 
 // `null` on gstRate/freightRate/packingRate means the rate master has NO row at
 // all for that item's category (+ transport) — genuinely unconfigured, not the
@@ -247,6 +242,10 @@ export function ChallanFormPage() {
   const [manualB, setManualB] = useState(''); // '' = auto
   const [manualC, setManualC] = useState(''); // '' = auto
   const [shippingAddress, setShippingAddress] = useState('');
+  // Settings → Challan & Tax decides whether the field is on screen. The value
+  // is tracked and saved either way, so toggling it never changes what is
+  // stored on a challan.
+  const showShippingAddress = useChallanFields().data?.showShippingAddress ?? false;
   const [remarks, setRemarks] = useState('');
   const [locked, setLocked] = useState({ freight: true, packing: true, pouch: true });
   // Phones: charges/shipping are secondary — tucked behind a "More details" toggle
@@ -1317,7 +1316,7 @@ export function ChallanFormPage() {
                         rate (applied automatically) and is shown in the totals panel below. */}
                     <div className="space-y-1"><Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Billing Rate</Label><Input value={billingRate} onChange={(e) => setBillingRate(e.target.value)} className="h-8 rounded-[4px] border-amber-500 bg-amber-50 text-right text-[13px] tabular-nums dark:border-amber-400/70 dark:bg-amber-400/10" /></div>
                   </div>
-                  {SHOW_SHIPPING_ADDRESS && (
+                  {showShippingAddress && (
                     <div className="space-y-1">
                       <Label className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">Shipping Address</Label>
                       <textarea

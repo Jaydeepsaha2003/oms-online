@@ -139,11 +139,7 @@ export function SpecialRatesPage() {
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-3">
-        <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
-          <BadgePercent className="size-5" />
-        </div>
         <div className="mr-auto">
-          <h2 className="text-2xl font-semibold tracking-tight">Special Rates</h2>
           <p className="text-muted-foreground text-sm">Per-customer rate overrides &amp; logo restrictions</p>
         </div>
         {/* Mode switch */}

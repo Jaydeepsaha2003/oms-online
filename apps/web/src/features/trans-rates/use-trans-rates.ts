@@ -53,6 +53,22 @@ export function useTransRateHistory(customerName: string, category: string, type
   });
 }
 
+/**
+ * Every recent transporter-rate change, across all parties — what the "Recent
+ * changes" button opens (§5.2).
+ *
+ * The existing {@link useTransRateHistory} is scoped to ONE rate row and needs a
+ * customer, so it can't answer "what did we change lately?". This sends no
+ * filters, which the API already treats as "everything", newest first.
+ */
+export function useRecentTransRateChanges(enabled: boolean) {
+  return useQuery({
+    queryKey: [...KEY, 'recent-changes'],
+    queryFn: () => http.get<RateHistoryEntry[]>('/transport-rates/history'),
+    enabled,
+  });
+}
+
 export function useTransRatesByCustomer(name: string) {
   return useQuery({
     queryKey: [...KEY, 'by-customer', name],

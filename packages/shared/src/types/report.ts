@@ -21,6 +21,11 @@ export interface ReportFilters {
   customerId?: number | null;
   agent?: string | null;
   region?: string | null;
+  /**
+   * Order Journey only: limit to orders still in play — anything with quantity
+   * left to dispatch. Other reports ignore it.
+   */
+  activeOnly?: boolean | null;
 }
 
 /** Options for the report filter bar. */
@@ -413,6 +418,14 @@ export interface OrderJourneyReport {
   customerName: string;
   from: string | null;
   to: string | null;
+  /** True when the result was limited to still-active orders. */
+  activeOnly: boolean;
+  /**
+   * The span of this party's ACTIVE orders, computed WITHOUT the date filter so
+   * the screen can snap its range onto them. Null when the party has none left
+   * open. `orders` is how many fall inside it.
+   */
+  activeWindow: { from: string; to: string; orders: number } | null;
   stages: JourneyStage[];
   orders: JourneyOrder[];
   events: JourneyEvent[];

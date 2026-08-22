@@ -19,7 +19,7 @@ export class FollowupItemInputDto {
 }
 
 export class CreateFollowupDto {
-  @IsOptional() @IsIn(['DELIVERY', 'PAYMENT']) kind?: 'DELIVERY' | 'PAYMENT';
+  @IsOptional() @IsIn(['DELIVERY', 'PAYMENT', 'INQUIRY']) kind?: 'DELIVERY' | 'PAYMENT' | 'INQUIRY';
   @IsOptional() @IsInt() customerId?: number | null;
   @IsString() @MaxLength(255) partyName!: string;
   @IsOptional() @IsInt() orderId?: number | null;

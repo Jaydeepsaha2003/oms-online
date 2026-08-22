@@ -9,15 +9,53 @@ import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useFollowupBoard, useFollowupSummary, useResolveFollowup, useSnoozeFollowup } from './use-crm';
 import { useNudgeCount } from './followup-nudge';
+import { usePermissions } from '@/hooks/use-permissions';
+import { EnablePushPanel, usePushEnrolment } from '@/features/notifications/enable-notifications';
 import { Chip, itemLine, UrgencyChip } from './crm-shared';
 
 /**
- * Topbar bell → notifications popover. Lists everything needing attention so the
- * user can act (snooze / done / open) without leaving the page — and so the
- * dashboard panel can be hidden while notifications stay reachable here. The bell
- * rings (shakes) whenever there are items pending.
+ * The single topbar bell.
+ *
+ * There used to be two: this one, and a separate "turn on notifications for this
+ * device" bell beside it. Two bell icons an inch apart is one entry point too
+ * many, so device enrolment now lives INSIDE this popover.
+ *
+ * Split in two components rather than branching inside one, because the CRM
+ * variant calls CRM queries — a user without `crm:view` must not fire them at
+ * all, and hooks cannot be called conditionally.
  */
 export function NotificationsBell() {
+  const { can } = usePermissions();
+  return can('crm:view') ? <CrmNotificationsBell /> : <DeviceOnlyBell />;
+}
+
+/**
+ * For users with no CRM access: the bell exists only while there is something to
+ * offer — enrolling this device. Once enrolled it disappears rather than sitting
+ * there opening an empty panel.
+ */
+function DeviceOnlyBell() {
+  const [open, setOpen] = useState(false);
+  const { needsEnrolling } = usePushEnrolment();
+  if (!needsEnrolling) return null;
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon" className="relative" aria-label="Turn on notifications for this device">
+          <Bell />
+          {/* Amber, not red: nothing is wrong — something is simply available to
+              switch on. */}
+          <span className="ring-background absolute top-1.5 right-1.5 size-2 rounded-full bg-amber-500 ring-2" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-80 max-w-[calc(100vw-1rem)] overflow-hidden p-0">
+        <EnablePushPanel onDone={() => setOpen(false)} />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function CrmNotificationsBell() {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const { data: summary } = useFollowupSummary();
@@ -54,6 +92,8 @@ export function NotificationsBell() {
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-96 max-w-[calc(100vw-1rem)] overflow-hidden p-0">
+        {/* Renders nothing once this device is enrolled. */}
+        <EnablePushPanel onDone={() => setOpen(false)} />
         <div className="flex items-center justify-between border-b px-3 py-2.5">
           <div className="flex items-center gap-2 text-sm font-semibold">
             <Bell className="size-4 text-amber-600" />

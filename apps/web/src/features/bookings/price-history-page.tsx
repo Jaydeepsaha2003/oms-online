@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, History, Search, TrendingDown, TrendingUp } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Search, TrendingDown, TrendingUp } from 'lucide-react';
 import type { RateChangeEntry, RateHistoryKind } from '@oms/shared';
 import { cn, formatDateTime } from '@/lib/utils';
 import { usePageSize } from '@/hooks/use-page-size';
@@ -118,11 +118,7 @@ export function PriceHistoryPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
-          <History className="size-5" />
-        </div>
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Price History</h2>
           <p className="text-muted-foreground text-sm">Every product, design &amp; special-rate change — the audit trail behind booking-date pricing.</p>
         </div>
       </div>

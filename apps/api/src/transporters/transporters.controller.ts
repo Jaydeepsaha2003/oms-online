@@ -69,6 +69,14 @@ export class TransportersController {
     return this.transporters.findOne(id);
   }
 
+  /** The ACTIVE customers shipping through this transporter — what the count on
+   *  the list drills into. */
+  @Get(':id/customers')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  customers(@Param('id', ParseIntPipe) id: number) {
+    return this.transporters.customers(id);
+  }
+
   @Post()
   @Permissions(perm(R, ACTIONS.CREATE))
   @Audit({ action: ACTIONS.CREATE, resource: R })

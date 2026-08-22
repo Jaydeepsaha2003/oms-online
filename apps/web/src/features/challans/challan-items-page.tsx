@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Boxes, Layers, Printer, Search, Wallet, X } from 'lucide-react';
 import type { ChallanItemHistoryRow } from '@oms/shared';
@@ -30,7 +30,23 @@ export function ChallanItemsPage() {
 
   const { data: names = [], isLoading: namesLoading } = useChallanItemNames(search);
   const { data: history, isLoading: histLoading } = useChallanItemHistory(selected);
-  const rows = history?.items ?? [];
+  const allRows = history?.items ?? [];
+
+  /*
+   * Party filter over the selected item's history (§11.1).
+   *
+   * Client-side on purpose: every line for this item is already loaded, so
+   * narrowing to one party is instant and needs no extra request. Reset whenever
+   * the item changes — a party carried over from the previous item would show an
+   * empty table and look like the item had no history.
+   */
+  const [party, setParty] = useState('');
+  useEffect(() => setParty(''), [selected]);
+  const parties = useMemo(
+    () => [...new Set(allRows.map((r) => r.customerName).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [allRows],
+  );
+  const rows = party ? allRows.filter((r) => r.customerName === party) : allRows;
 
   const totals = rows.reduce((a, r) => ({ qty: a.qty + (r.qty ?? 0), amt: a.amt + (r.amount ?? 0) }), { qty: 0, amt: 0 });
 
@@ -163,6 +179,30 @@ export function ChallanItemsPage() {
                 >
                   <X className="size-3" /> Clear
                 </button>
+                {/* Narrow to one party. Only offered when there is more than one
+                    — a filter with a single option is furniture. */}
+                {parties.length > 1 && (
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="text-muted-foreground shrink-0 text-[10.5px] font-bold tracking-wide uppercase">Party</span>
+                    <NativeSelect
+                      value={party}
+                      onChange={setParty}
+                      options={parties}
+                      placeholder={`All parties (${parties.length})`}
+                      className={cn(CONTROL, 'h-8 w-52 font-medium', party && CONTROL_ON)}
+                    />
+                    {party && (
+                      <button
+                        type="button"
+                        onClick={() => setParty('')}
+                        title="Show every party again"
+                        className="text-muted-foreground hover:text-foreground cursor-pointer"
+                      >
+                        <X className="size-3.5" />
+                      </button>
+                    )}
+                  </div>
+                )}
                 <div className="ml-auto flex items-center gap-3">
                   <span className="flex items-center gap-1 text-[12px] font-medium text-muted-foreground">
                     <Layers className="size-3.5" /> <span className="font-bold tabular-nums text-foreground">{rows.length}</span> line(s)

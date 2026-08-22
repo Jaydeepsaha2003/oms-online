@@ -120,6 +120,22 @@ export interface DispatchBagThresholdInput {
   maxBagsPerDispatch: number | null;
 }
 
+/**
+ * Which optional fields the Challan form shows.
+ *
+ * Shipping Address was hidden behind a hard-coded constant, which meant bringing
+ * it back needed a code change and a deploy. The value itself has always been
+ * tracked and saved (defaulting to the billing address), so this only controls
+ * whether the field is on screen.
+ */
+export interface ChallanFieldSettingsDto {
+  showShippingAddress: boolean;
+}
+
+export interface ChallanFieldSettingsInput {
+  showShippingAddress: boolean;
+}
+
 export interface OrderOptionInput {
   group: string;
   value: string;

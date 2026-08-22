@@ -11,6 +11,12 @@ import '@fontsource/poppins/400.css';
 import '@fontsource/poppins/500.css';
 import '@fontsource/poppins/600.css';
 import '@fontsource/poppins/700.css';
+// Carlito is metric-compatible with Calibri. It was a dependency but never
+// loaded, so `font-calibri` silently fell back to whatever the OS had — real
+// Calibri on Windows, Segoe UI or Inter elsewhere. Loading it makes the figure
+// font identical on every machine and offline.
+import '@fontsource/carlito/400.css';
+import '@fontsource/carlito/700.css';
 import App from '@/App';
 import { AppProviders } from '@/app/providers';
 import { watchForAppUpdates } from '@/lib/pwa-update';

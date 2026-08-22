@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronLeft, ChevronRight, Check, Clock, Loader2, Search, ShieldCheck, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Check, Clock, Loader2, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ApprovalRequestDto, ApprovalStatus } from '@oms/shared';
 import { APPROVAL_TYPE_LABELS, APPROVAL_TYPES } from '@oms/shared';
@@ -153,11 +153,7 @@ export function ApprovalsPage() {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
-          <ShieldCheck className="size-5" />
-        </div>
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Approvals</h2>
           <p className="text-muted-foreground text-sm">
             Actions held back for a sign-off — approve to apply them, reject to send them back.
           </p>

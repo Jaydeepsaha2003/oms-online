@@ -952,6 +952,10 @@ export class DispatchService implements OnModuleInit {
       // Idempotency guard against duplicate submissions (see DISPATCH_DEDUPE_WINDOW_MS):
       // an identical dispatch on this line recorded moments ago is a duplicate, not a
       // second real shipment — return the existing row instead of inserting a copy.
+      const effectiveDate = dto.dispatchDate ? new Date(dto.dispatchDate) : new Date();
+      const sameDay = (a: Date, b: Date) =>
+        a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
       const dup = it.dispatches.find(
         (d) =>
           (d.bags ?? 0) === bags &&
@@ -959,9 +963,58 @@ export class DispatchService implements OnModuleInit {
           (d.gram ?? 0) === gram &&
           (d.box ?? 0) === box &&
           d.dispatchStatus === dto.dispatchStatus &&
+          // Must be for the SAME day too. Without this, recording a backdated
+          // shipment moments after an identical one for today silently returned
+          // today's row and the backdated entry was never created at all.
+          sameDay(d.dispatchDate, effectiveDate) &&
           Date.now() - d.createdAt.getTime() < DISPATCH_DEDUPE_WINDOW_MS,
       );
       if (dup) return { row: dup, deduped: true };
+
+      /*
+       * Same line, same quantities, same DAY — refuse it.
+       *
+       * Past the idempotency window above, a repeat is no longer a double-tap;
+       * it is somebody dispatching a shipment that was already recorded, and
+       * silently accepting it doubles the quantity that has left the building.
+       * The message names the existing row so it can be found and corrected
+       * rather than leaving the user to guess what happened.
+       *
+       * Matched per ORDER LINE, not per order: one order can legitimately carry
+       * two different lines of the same quantity going out the same day, and
+       * blocking that would refuse real work.
+       *
+       * Compared on the DISPATCH date, not the clock — a backdated entry is
+       * checked against the day it claims, which is the day that matters.
+       */
+      const already = it.dispatches.find(
+        (d) =>
+          d.dispatchStatus !== RETURNED_DISPATCH_STATUS &&
+          (d.bags ?? 0) === bags &&
+          (d.pcs ?? 0) === pcs &&
+          (d.gram ?? 0) === gram &&
+          (d.box ?? 0) === box &&
+          sameDay(d.dispatchDate, effectiveDate),
+      );
+      if (already) {
+        const what = qtyText({ bags: already.bags, pcs: already.pcs, gram: already.gram, box: already.box }) || 'the same quantity';
+        // 409, not 400: nothing about the request is malformed — it collides with
+        // something that already exists. The matched row travels with the error so
+        // the screen can name it instead of asking the user to go and look.
+        throw new ConflictException({
+          error: 'DUPLICATE_DISPATCH',
+          message: `Already dispatched today — ${already.code ?? `#${already.id}`} recorded ${what}.`,
+          duplicateDispatch: {
+            id: already.id,
+            code: already.code ?? `#${already.id}`,
+            customerName: it.order.customerName,
+            orderCode: it.order.code ?? this.orderCodeFor(it.orderId),
+            productName: it.productName ?? it.product ?? 'this item',
+            qtyText: what,
+            dispatchedAt: already.dispatchDate.toISOString(),
+          },
+        });
+      }
 
       const rem = this.remaining(it, it.dispatches);
       this.validateQty({ bags, pcs, gram, box }, rem, dto.dispatchStatus, it.calField);

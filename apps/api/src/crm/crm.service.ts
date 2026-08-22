@@ -23,6 +23,13 @@ import { PrismaService } from '../prisma/prisma.service';
 import { toNum, toStr, uc } from '../common/coerce';
 import { AddFollowupLogDto, CreateFollowupDto, CrmSettingsDto, FollowupQueryDto } from './dto/crm.dto';
 
+/** Anything unrecognised falls back to DELIVERY — the original default, so an
+ *  older client that sends nothing keeps behaving exactly as before. */
+const normaliseKind = (v: string | null | undefined): 'DELIVERY' | 'PAYMENT' | 'INQUIRY' => {
+  const k = uc(v);
+  return k === 'PAYMENT' || k === 'INQUIRY' ? k : 'DELIVERY';
+};
+
 const SETTINGS_KEY = 'CRM_REMINDER_DEFAULTS';
 const INCLUDE = {
   logs: { orderBy: { createdAt: 'asc' } },
@@ -66,7 +73,7 @@ export class CrmService {
 
     const row = await this.prisma.followup.create({
       data: {
-        kind: uc(dto.kind) === 'PAYMENT' ? 'PAYMENT' : 'DELIVERY',
+        kind: normaliseKind(dto.kind),
         customerId: dto.customerId ?? null,
         partyName,
         orderId: dto.orderId ?? null,
@@ -123,7 +130,7 @@ export class CrmService {
     const row = await this.prisma.followup.update({
       where: { id },
       data: {
-        ...(dto.kind ? { kind: uc(dto.kind) === 'PAYMENT' ? 'PAYMENT' : 'DELIVERY' } : {}),
+        ...(dto.kind ? { kind: normaliseKind(dto.kind) } : {}),
         ...(dto.customerId !== undefined ? { customerId: dto.customerId ?? null } : {}),
         ...(dto.partyName !== undefined ? { partyName: dto.partyName.trim() } : {}),
         ...(dto.orderId !== undefined ? { orderId: dto.orderId ?? null } : {}),

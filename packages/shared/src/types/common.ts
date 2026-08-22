@@ -19,6 +19,23 @@ export interface DuplicateMatch {
   total: number;
 }
 
+/**
+ * The dispatch a duplicate attempt collided with. Shaped for the message the
+ * client shows, so the screen never has to re-fetch or parse a sentence to
+ * explain what already happened.
+ */
+export interface DuplicateDispatch {
+  id: number;
+  code: string;
+  customerName: string;
+  orderCode: string;
+  productName: string;
+  /** Human quantity, e.g. "1 bags · 70 kgs". */
+  qtyText: string;
+  /** ISO timestamp of the dispatch it matched. */
+  dispatchedAt: string;
+}
+
 /** Standard error envelope returned by the API exception filter. */
 export interface ApiError {
   success: false;
@@ -30,6 +47,8 @@ export interface ApiError {
   details?: Record<string, string[]>;
   /** Set when `error === 'DUPLICATE_CHALLAN'` (409). */
   duplicate?: DuplicateMatch;
+  /** Set when `error === 'DUPLICATE_DISPATCH'` (409). */
+  duplicateDispatch?: DuplicateDispatch;
   path?: string;
   timestamp?: string;
 }

@@ -865,6 +865,21 @@ export function OrderFormPage() {
   // Items can only be built once a customer is chosen (the special rates, bag
   // weights and category all key off the customer). Lock item entry until then.
   const noCustomer = !customer.trim();
+  /*
+   * The "pick a customer first" prompt waits until the user actually reaches for
+   * the item area. Showing it the moment the form opens greeted everyone with a
+   * warning before they had done anything wrong — it read as an error on a blank
+   * form rather than guidance at the point of need. Once tripped it stays until a
+   * customer is chosen, so it does not blink in and out while they look around.
+   */
+  const [triedItemEntry, setTriedItemEntry] = useState(false);
+  const showCustomerPrompt = noCustomer && triedItemEntry;
+  /** Attach to the item-entry area: any attempt to interact without a customer
+   *  is what makes the prompt relevant. */
+  const itemAreaGuard = {
+    onFocusCapture: () => { if (noCustomer) setTriedItemEntry(true); },
+    onPointerDownCapture: () => { if (noCustomer) setTriedItemEntry(true); },
+  };
 
   // Per-category price-calc field (KGS/PCS), configured on the Products page.
   const categoryFieldMap = useMemo(() => {
@@ -1581,9 +1596,9 @@ export function OrderFormPage() {
 
       {/* Card 2 — item entry (2 rows) + grid */}
       <Card className="border-border border-l-4 border-l-slate-400 bg-slate-50/70 py-0">
-        <CardContent className="space-y-2 px-3 py-2 sm:px-4 sm:py-3">
-          {/* Prompt to choose a customer before any item can be entered. */}
-          {noCustomer && (
+        <CardContent className="space-y-2 px-3 py-2 sm:px-4 sm:py-3" {...itemAreaGuard}>
+          {/* Prompt to choose a customer — see showCustomerPrompt. */}
+          {showCustomerPrompt && (
             <div className="animate-in fade-in flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 duration-200">
               <ArrowLeft className="size-4 shrink-0" />
               Select a customer above to start adding items.

@@ -46,6 +46,7 @@ const ChallanItemsPage = lazy(() => import('@/features/challans/challan-items-pa
 const ChallanBillPage = lazy(() => import('@/features/challans/challan-bill-page').then((m) => ({ default: m.ChallanBillPage })));
 const FollowupsPage = lazy(() => import('@/features/crm/followups-page').then((m) => ({ default: m.FollowupsPage })));
 const PaymentsFollowupsPage = lazy(() => import('@/features/crm/followups-page').then((m) => ({ default: m.PaymentsFollowupsPage })));
+const InquiriesPage = lazy(() => import('@/features/crm/followups-page').then((m) => ({ default: m.InquiriesPage })));
 const PartyListsPage = lazy(() => import('@/features/crm/party-lists-page').then((m) => ({ default: m.PartyListsPage })));
 const ManageChequesPage = lazy(() => import('@/features/account/manage-cheques-page').then((m) => ({ default: m.ManageChequesPage })));
 const BankAccountsPage = lazy(() => import('@/features/account/bank-accounts-page').then((m) => ({ default: m.BankAccountsPage })));
@@ -545,6 +546,14 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.CRM, ACTIONS.VIEW)}>
                 <PaymentsFollowupsPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/crm/inquiries"
+            element={
+              <RequirePermission permission={perm(RESOURCES.CRM, ACTIONS.VIEW)}>
+                <InquiriesPage />
               </RequirePermission>
             }
           />

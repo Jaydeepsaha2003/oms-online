@@ -1,5 +1,5 @@
 import axios, { AxiosError, type AxiosRequestConfig, type AxiosResponse } from 'axios';
-import type { AuthResult, DuplicateMatch, UploadedFileDto } from '@oms/shared';
+import type { AuthResult, DuplicateDispatch, DuplicateMatch, UploadedFileDto } from '@oms/shared';
 import { useAuthStore } from '@/stores/auth-store';
 
 // Resolve the API base URL. By default we call the same origin the page was
@@ -195,6 +195,13 @@ export function getDuplicateMatch(error: unknown): DuplicateMatch | null {
   if (!axios.isAxiosError(error) || error.response?.status !== 409) return null;
   const data = error.response?.data as { error?: string; duplicate?: DuplicateMatch } | undefined;
   return data?.error === 'DUPLICATE_CHALLAN' && data.duplicate ? data.duplicate : null;
+}
+
+/** The dispatch a duplicate attempt collided with, or null for any other error. */
+export function getDuplicateDispatch(error: unknown): DuplicateDispatch | null {
+  if (!axios.isAxiosError(error) || error.response?.status !== 409) return null;
+  const data = error.response?.data as { error?: string; duplicateDispatch?: DuplicateDispatch } | undefined;
+  return data?.error === 'DUPLICATE_DISPATCH' && data.duplicateDispatch ? data.duplicateDispatch : null;
 }
 
 /** Extract a human-readable message from an API error. */

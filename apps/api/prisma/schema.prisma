@@ -1277,6 +1277,29 @@ model BookingConversion {
 
 /// Every change to a product's chart rate (old -> new). Powers "rate as of date"
 /// for bag-booking conversion + an auditable price-change trail.
+/// Every non-rate change to a product, one row per field (name, category,
+/// sub-category, pcs, size…). Rate changes keep their own richer trail in
+/// ProductRateHistory, which booking-date repricing reads — this is the plain
+/// "what did somebody edit" log the Products screen shows.
+model ProductChange {
+  id            Int      @id @default(autoincrement())
+  productId     Int?
+  /// Label kept on the row so a DELETED product still reads meaningfully.
+  productName   String
+  /// CREATED / UPDATED / DELETED.
+  kind          String
+  /// Which field changed — '' for CREATED / DELETED, which describe a whole row.
+  field         String
+  oldValue      String?
+  newValue      String?
+  changedByName String?
+  changedAt     DateTime @default(now())
+
+  @@index([productId])
+  @@index([changedAt])
+  @@map("product_changes")
+}
+
 model ProductRateHistory {
   id            Int      @id @default(autoincrement())
   productId     Int

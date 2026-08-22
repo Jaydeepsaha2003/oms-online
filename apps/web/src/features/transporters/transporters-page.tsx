@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { ChevronLeft, ChevronRight, Loader2, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Eye, Loader2, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { TransporterDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -19,6 +19,7 @@ import {
   Dialog,
   DialogContent,
   DialogFooter,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -35,6 +36,7 @@ import {
   useCreateTransporter,
   useDeleteTransporter,
   useImportTransporters,
+  useTransporterCustomers,
   useTransporters,
   useUpdateTransporter,
 } from './use-transporters';
@@ -49,11 +51,91 @@ const CONTROL =
   'h-9 rounded-[4px] border-amber-300 dark:border-amber-400/40 text-[12.5px] focus-visible:border-amber-500 focus-visible:ring-amber-400/30';
 const CONTROL_ON = 'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
 
+/**
+ * The customer count, opened.
+ *
+ * The number alone invites the question and then refuses to answer it. Each cell
+ * owns its own dialog state (the column set is module-level, so there is nowhere
+ * shared to keep it) and the list is fetched only once the popup is opened —
+ * nothing is loaded for the rows nobody clicks.
+ */
+function CustomerCount({ t }: { t: TransporterDto }) {
+  const [open, setOpen] = useState(false);
+  const { data, isLoading } = useTransporterCustomers(open ? t.id : null);
+  const count = t.customerCount ?? 0;
+
+  if (!count) return <span className="text-muted-foreground/50 text-[13px] font-bold tabular-nums">0</span>;
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title={`Show the ${count} active customer${count === 1 ? '' : 's'} shipping with ${t.name}`}
+        className="focus-visible:ring-ring/50 inline-flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-[13px] font-bold text-emerald-700 tabular-nums transition-colors outline-none hover:bg-emerald-50 focus-visible:ring-2 dark:text-emerald-400 dark:hover:bg-emerald-500/15"
+      >
+        {count}
+        <Eye className="size-3.5" />
+      </button>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-[min(96vw,40rem)] sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="text-[15px]">{t.name}</DialogTitle>
+            <DialogDescription className="text-[12.5px]">
+              {count} active customer{count === 1 ? '' : 's'} ship through this transporter. Closed accounts are not counted.
+            </DialogDescription>
+          </DialogHeader>
+
+          {isLoading ? (
+            <div className="text-muted-foreground grid place-items-center py-10">
+              <Loader2 className="size-5 animate-spin" />
+            </div>
+          ) : (
+            <div className="max-h-[55vh] overflow-y-auto rounded-[4px] border">
+              <table className="w-full text-[13px]">
+                <thead className="bg-muted/60 sticky top-0">
+                  <tr className="text-muted-foreground text-left text-[10.5px] font-bold tracking-widest uppercase">
+                    <th className="px-3 py-2">Party</th>
+                    <th className="hidden px-3 py-2 sm:table-cell">Agent</th>
+                    <th className="px-3 py-2">City</th>
+                    <th className="hidden px-3 py-2 sm:table-cell">Mobile</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(data ?? []).map((c) => (
+                    <tr key={c.id} className="border-t even:bg-slate-50/70 dark:even:bg-white/[0.03]">
+                      <td className="px-3 py-1.5 font-semibold text-slate-900 dark:text-slate-100">{c.partyName}</td>
+                      <td className="text-muted-foreground hidden px-3 py-1.5 sm:table-cell">{c.agentName || '—'}</td>
+                      <td className="text-muted-foreground px-3 py-1.5">{[c.city, c.state].filter(Boolean).join(', ') || '—'}</td>
+                      <td className="text-muted-foreground hidden px-3 py-1.5 font-mono text-[12px] sm:table-cell">{c.mobile || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button onClick={() => setOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 const COLUMNS: DataColumn<TransporterDto>[] = [
   { id: 'name', label: 'Transport name', pin: 'left0', fixed: true, cell: (t) => <span className={cn(TEXT_CELL, 'text-indigo-700 dark:text-indigo-300')}>{t.name}</span> },
   { id: 'packing', label: 'Packing', align: 'right', cell: (t) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(t.packing)}</span> },
   { id: 'freight', label: 'Freight', align: 'right', cell: (t) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(t.freight)}</span> },
-  { id: 'customers', label: 'Customers', align: 'right', cell: (t) => <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{t.customerCount ?? 0}</span> },
+  {
+    id: 'customers',
+    label: 'Customers',
+    align: 'right',
+    // The count opens the list behind it — "13 customers" is only useful if you
+    // can find out which 13 (§4.1).
+    cell: (t) => <CustomerCount t={t} />,
+  },
   {
     id: 'updated',
     label: 'Last updated',
@@ -114,7 +196,7 @@ export function TransportersPage() {
         </div>
         <div>
           <p className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">Customers</p>
-          <p className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{t.customerCount ?? 0}</p>
+          <CustomerCount t={t} />
         </div>
       </div>
       <div className="flex items-center justify-end gap-1 border-t pt-2" onClick={(e) => e.stopPropagation()}>

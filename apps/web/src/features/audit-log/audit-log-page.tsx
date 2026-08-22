@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Download, Filter, History, Loader2, Search, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, Filter, Loader2, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ACTIONS, RESOURCES, perm, type AuditLogDto } from '@oms/shared';
 import { cn } from '@/lib/utils';
@@ -195,11 +195,7 @@ export function AuditLogPage() {
     <div className="space-y-3 sm:space-y-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
         <div className="flex items-center gap-3">
-          <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
-            <History className="size-5" />
-          </div>
           <div>
-            <h2 className="text-2xl font-semibold tracking-tight">Activity Log</h2>
             <p className="text-muted-foreground text-sm">{data?.total ?? 0} event(s) — who did what, and when</p>
           </div>
         </div>

@@ -14,6 +14,16 @@
 import { resolveSpecialRateRule, type CustomerRateDto, type CustomerRateList } from '@oms/shared';
 import { isCombinationDesign } from './customer-rate-list-pivot';
 
+/** One item a rate actually prices, with what it costs before and after. */
+export interface AffectedItem {
+  name: string;
+  subCategory: string;
+  /** PRODUCT or DESIGN — a rule can only touch one, but the row states it. */
+  kind: 'PRODUCT' | 'DESIGN';
+  base: number;
+  rate: number;
+}
+
 export interface RateImpact {
   rule: CustomerRateDto;
   /** Items on this party's sheet the rule actually prices. */
@@ -30,14 +40,21 @@ export interface RateImpact {
    * overridden" is a very different fact from one reading "0 items".
    */
   shadowed: number;
+  /**
+   * Every item this rule prices, so the count can be opened rather than merely
+   * read. Held in full — a category-wide rule covering 200 items is exactly the
+   * case where "which ones?" is worth answering, and truncating the list would
+   * answer it dishonestly.
+   */
+  affected: AffectedItem[];
 }
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
 
 /** Every rule with its measured effect, most specific and largest first. */
 export function measureSpecialRates(rates: CustomerRateDto[], list: CustomerRateList | undefined): RateImpact[] {
-  const acc = new Map<number, { items: number; shadowed: number; bases: number[]; effs: number[] }>();
-  for (const r of rates) acc.set(r.id, { items: 0, shadowed: 0, bases: [], effs: [] });
+  const acc = new Map<number, { items: number; shadowed: number; bases: number[]; effs: number[]; affected: AffectedItem[] }>();
+  for (const r of rates) acc.set(r.id, { items: 0, shadowed: 0, bases: [], effs: [], affected: [] });
 
   const attribute = (kind: 'PRODUCT' | 'DESIGN', category: string, subCategory: string, target: string, base: number, eff: number) => {
     const winner = resolveSpecialRateRule(rates, kind, { category, subCategory, target });
@@ -47,6 +64,7 @@ export function measureSpecialRates(rates: CustomerRateDto[], list: CustomerRate
       a.items += 1;
       a.bases.push(base);
       a.effs.push(eff);
+      a.affected.push({ name: target, subCategory, kind, base: r2(base), rate: r2(eff) });
     }
     // Anything less specific that also matches this line is shadowed by it.
     for (const r of rates) {
@@ -73,7 +91,17 @@ export function measureSpecialRates(rates: CustomerRateDto[], list: CustomerRate
       const span = (xs: number[]) => (xs.length ? ([r2(Math.min(...xs)), r2(Math.max(...xs))] as const) : ([null, null] as const));
       const [baseFrom, baseTo] = span(a.bases);
       const [rateFrom, rateTo] = span(a.effs);
-      return { rule, items: a.items, shadowed: a.shadowed, baseFrom, baseTo, rateFrom, rateTo };
+      return {
+        rule,
+        items: a.items,
+        shadowed: a.shadowed,
+        baseFrom,
+        baseTo,
+        rateFrom,
+        rateTo,
+        // Cheapest first: the biggest movers are what people scan for.
+        affected: [...a.affected].sort((x, y) => x.base - y.base || x.name.localeCompare(y.name)),
+      };
     })
     .sort(
       (x, y) =>

@@ -8,7 +8,15 @@
 import type { Paginated, PaginationQuery } from './common';
 import type { PromiseState } from './report';
 
-export const FOLLOWUP_KINDS = ['DELIVERY', 'PAYMENT'] as const;
+/**
+ * DELIVERY — a promise about goods. PAYMENT — a promise about money.
+ * INQUIRY — a new enquiry from a party that has not become an order yet.
+ *
+ * Inquiries deliberately reuse the follow-up machinery rather than getting their
+ * own model: an enquiry IS a thing you must chase, with a party, a promised
+ * date, a reminder loop and a timeline — all of which already exist here.
+ */
+export const FOLLOWUP_KINDS = ['DELIVERY', 'PAYMENT', 'INQUIRY'] as const;
 export type FollowupKind = (typeof FOLLOWUP_KINDS)[number];
 
 export const FOLLOWUP_STATUSES = ['OPEN', 'DONE', 'CANCELLED'] as const;

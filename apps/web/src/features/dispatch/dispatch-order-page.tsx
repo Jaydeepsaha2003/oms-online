@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Camera, CalendarClock, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Filter, Flame, Hourglass, Loader2, Lock, Package, PackageCheck, RotateCcw, TriangleAlert, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { ALL_PERMISSIONS, DISPATCH_EXPORT_COLUMNS, DISPATCH_RATE_EXPORT_COLUMN_IDS, qtyOrderForCategory, type DispatchStatus, type PendingLineDto, type QtyField } from '@oms/shared';
-import { getApiErrorMessage } from '@/lib/api';
+import { ALL_PERMISSIONS, DISPATCH_EXPORT_COLUMNS, DISPATCH_RATE_EXPORT_COLUMN_IDS, qtyOrderForCategory, type DispatchStatus, type DuplicateDispatch, type PendingLineDto, type QtyField } from '@oms/shared';
+import { getApiErrorMessage, getDuplicateDispatch } from '@/lib/api';
 import { cn, shortOrderCode } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -25,6 +25,7 @@ import { Label } from '@/components/ui/label';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
+import { DuplicateDispatchDialog } from './duplicate-dispatch-dialog';
 import { exportPendingDispatch, useCreateDispatch, useDispatchPhotoCheck, useLineLock, usePendingFilterOptions, usePendingOrders } from './use-dispatch';
 import { useDispatchDate } from './use-dispatch-date';
 
@@ -853,6 +854,7 @@ function DispatchSheet({
   onDispatched: (code: string) => void;
 }) {
   const create = useCreateDispatch();
+  const [duplicate, setDuplicate] = useState<DuplicateDispatch | null>(null);
   const confirm = useConfirm();
   // Editing lock: someone else with this same line open elsewhere (here or in
   // Modify Dispatch) blocks this sheet outright — closed immediately with who
@@ -954,7 +956,13 @@ function DispatchSheet({
             onClose();
           }
         },
-        onError: (e) => toast.error(getApiErrorMessage(e, 'Dispatch failed')),
+        onError: (e) => {
+          // A same-day duplicate gets a modal, not a toast — it is the one
+          // refusal that must be read rather than glanced at.
+          const dupe = getDuplicateDispatch(e);
+          if (dupe) return setDuplicate(dupe);
+          toast.error(getApiErrorMessage(e, 'Dispatch failed'));
+        },
       },
     );
   };
@@ -1053,6 +1061,10 @@ function DispatchSheet({
 
   return (
     <SheetContent side={isMobile ? 'bottom' : 'right'} className={cn('flex w-full flex-col', isMobile ? 'rounded-t-2xl' : 'max-w-lg')}>
+      {/* Rendered from inside the sheet so it layers ABOVE it — the refusal has
+          to interrupt the form the user is still looking at. */}
+      {duplicate && <DuplicateDispatchDialog match={duplicate} onClose={() => setDuplicate(null)} />}
+
       {/* Native grabber handle on the phone bottom sheet. */}
       {isMobile && <div className="bg-muted-foreground/25 mx-auto -mt-1 mb-1 h-1.5 w-10 shrink-0 rounded-full" aria-hidden />}
 

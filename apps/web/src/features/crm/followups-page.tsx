@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AlarmClock, Bell, Check, ChevronDown, CircleCheck, Clock, Eye, HandCoins, Handshake, Info, Loader2, Mic, Pencil, Plus, RotateCcw, Search, Trash2, TriangleAlert } from 'lucide-react';
+import { AlarmClock, Bell, Check, ChevronDown, CircleCheck, Clock, Eye, HandCoins, Handshake, Info, Loader2, MessageSquarePlus, Mic, Pencil, Plus, RotateCcw, Search, Trash2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { type FollowupDto, type FollowupKind, type FollowupPartyGroup } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -90,6 +90,7 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
   const [prefill, setPrefill] = useState<CollectPrefill | null>(null);
 
   const isPay = kind === 'PAYMENT';
+  const isInquiry = kind === 'INQUIRY';
   const openForm = (f: FollowupDto | null) => { setEditing(f); setPrefill(null); setFormOpen(true); };
   const openCollect = (p: CollectPrefill) => { setEditing(null); setPrefill(p); setFormOpen(true); };
 
@@ -105,18 +106,33 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
-          {isPay ? <HandCoins className="size-5" /> : <Bell className="size-5" />}
+          {isPay ? <HandCoins className="size-5" /> : isInquiry ? <MessageSquarePlus className="size-5" /> : <Bell className="size-5" />}
         </div>
         <div className="mr-auto min-w-0">
           <div className="flex items-center gap-1.5">
-            <h2 className="text-2xl font-semibold tracking-tight">{isPay ? 'Payment Recovery Desk' : 'Follow-ups'}</h2>
-            <HelpTip text={isPay ? 'Every party who owes money, ranked worst-first — pick one and collect in one tap.' : "Every promise to a party, tracked until it's done — the system keeps nudging."} />
+            <h2 className="text-2xl font-semibold tracking-tight">
+              {isPay ? 'Payment Recovery Desk' : isInquiry ? 'New Inquiries' : 'Follow-ups'}
+            </h2>
+            <HelpTip
+              text={
+                isPay
+                  ? 'Every party who owes money, ranked worst-first — pick one and collect in one tap.'
+                  : isInquiry
+                    ? 'Every new enquiry that has not become an order yet — chased on the same reminder loop as any other promise.'
+                    : "Every promise to a party, tracked until it's done — the system keeps nudging."
+              }
+            />
           </div>
           {isPay && <p className="text-muted-foreground text-sm">Who to call next, what they owe, and every promise made — all in one place.</p>}
+          {isInquiry && (
+            <p className="text-muted-foreground text-sm">
+              Log what a party asked for and keep it in front of you until it turns into an order — or is closed off.
+            </p>
+          )}
         </div>
         {canEdit && (
           <Button onClick={() => openForm(null)}>
-            <Plus /> {isPay ? 'New payment follow-up' : 'New follow-up'}
+            <Plus /> {isPay ? 'New payment follow-up' : isInquiry ? 'New inquiry' : 'New follow-up'}
           </Button>
         )}
       </div>
@@ -1080,4 +1096,17 @@ function FollowupForm({ kind, editing, prefill, onClose }: { kind: FollowupKind;
 export default FollowupsPage;
 export function PaymentsFollowupsPage() {
   return <FollowupsPage kind="PAYMENT" />;
+}
+
+/**
+ * New Inquiries (spec §12.2).
+ *
+ * An enquiry is a promise you owe a party — it has a party, a thing they asked
+ * about, a date you said you would come back to them, and it must keep nudging
+ * until it becomes an order or is closed. That is precisely a follow-up, so it
+ * reuses the whole machinery (reminders, timeline, checklist, party links)
+ * under its own kind rather than duplicating it as a parallel model.
+ */
+export function InquiriesPage() {
+  return <FollowupsPage kind="INQUIRY" />;
 }

@@ -438,6 +438,13 @@ export const MENU: MenuNode[] = [
         permission: perm(RESOURCES.CRM, ACTIONS.VIEW),
       },
       {
+        id: 'crm-inquiries',
+        label: 'New Inquiries',
+        to: '/crm/inquiries',
+        icon: 'MessageSquarePlus',
+        permission: perm(RESOURCES.CRM, ACTIONS.VIEW),
+      },
+      {
         id: 'crm-party-lists',
         label: 'Party Lists',
         to: '/crm/party-lists',

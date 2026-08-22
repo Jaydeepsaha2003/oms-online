@@ -5,10 +5,8 @@ import { useTheme, type ThemePref } from '@/lib/theme';
 import { menuRoutes } from '@oms/shared';
 import { useAuthStore } from '@/stores/auth-store';
 import { useLogout } from '@/hooks/use-auth';
-import { usePermissions } from '@/hooks/use-permissions';
 import { getMenuIcon } from '@/lib/icons';
 import { NotificationsBell } from '@/features/crm/notifications-bell';
-import { EnableNotificationsButton } from '@/features/notifications/enable-notifications';
 import { SystemStatus } from '@/components/common/system-status';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -42,7 +40,6 @@ export function Topbar({
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
-  const { can } = usePermissions();
 
   const match = useMemo(() => {
     const routes = menuRoutes();
@@ -92,12 +89,11 @@ export function Topbar({
         </Button>
         <ThemeToggle />
         <SystemStatus variant="compact" />
-        {/* Ungated on purpose: enrolling THIS device for notifications is not a
-            privileged action, and gating it (as /settings did) left every
-            non-super-admin with no way to switch alerts on. Renders nothing once
-            the device is enrolled. */}
-        <EnableNotificationsButton />
-        {can('crm:view') && <NotificationsBell />}
+        {/* ONE bell. It decides for itself what to show: CRM follow-ups for users
+            with `crm:view`, and — for everyone — the offer to enrol this device
+            for push, which is not a privileged action and must stay reachable
+            without CRM access. Renders nothing when it has nothing to say. */}
+        <NotificationsBell />
         {user && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

@@ -1,22 +1,5 @@
 import { useMemo, useState } from 'react';
-import {
-  AlertTriangle,
-  Banknote,
-  CalendarClock,
-  CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
-  Landmark,
-  Loader2,
-  Pencil,
-  Plus,
-  ReceiptIndianRupee,
-  RotateCcw,
-  Trash2,
-  TriangleAlert,
-  X,
-  XCircle,
-} from 'lucide-react';
+import { AlertTriangle, Banknote, CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, Landmark, Loader2, Pencil, Plus, RotateCcw, Trash2, TriangleAlert, X, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ChequeDto, ChequeStatus } from '@oms/shared';
 import { CHARGES_PAID_BY, chequeTimingVerdict, RESOURCES } from '@oms/shared';
@@ -245,11 +228,7 @@ export function ManageChequesPage() {
     <div className="space-y-4">
       {/* Header: title + the two modal launchers */}
       <div className="flex flex-wrap items-center gap-3">
-        <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
-          <ReceiptIndianRupee className="size-5" />
-        </div>
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Manage Cheques</h2>
           <p className="text-muted-foreground text-sm">
             {view === 'cheques'
               ? 'Add received cheques, deposit on/after due date, and record clear/bounce outcomes.'

@@ -442,6 +442,8 @@ export class OrdersService {
           const fieldsToDiff: Array<{ key: keyof typeof incoming; label: string }> = [
             { key: 'productName', label: 'Product Name' },
             { key: 'product', label: 'Product' },
+            { key: 'pCategory', label: 'Category' },
+            { key: 'subCategory', label: 'Sub-category' },
             { key: 'design', label: 'Design' },
             { key: 'designType', label: 'Design Type' },
             { key: 'psize', label: 'Size' },
@@ -454,6 +456,12 @@ export class OrdersService {
             { key: 'rate', label: 'Rate' },
             { key: 'calField', label: 'Calc Unit' },
             { key: 'status', label: 'Status' },
+            // Priority and Order type are editable on the Modify screen and were
+            // the only edited fields leaving no trace. Priority in particular now
+            // prints URGENT on the Sales Order, so a silent change to it alters a
+            // document the customer receives.
+            { key: 'priority', label: 'Priority' },
+            { key: 'ordType', label: 'Order Type' },
             { key: 'comment', label: 'Comment' },
           ];
 

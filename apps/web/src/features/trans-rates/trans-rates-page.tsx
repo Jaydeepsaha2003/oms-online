@@ -43,6 +43,7 @@ import {
 } from './use-trans-rates';
 import { CustomerTransRates } from './customer-trans-rates';
 import { RateHistoryDialog } from '@/components/common/rate-history-dialog';
+import { RecentChangesDialog } from './recent-changes-dialog';
 
 const num = (n: number | null) => (n == null ? '—' : n.toLocaleString('en-IN'));
 
@@ -127,6 +128,7 @@ function RatesList() {
   const [editing, setEditing] = useState<TransRateDto | null>(null);
   const [historyFor, setHistoryFor] = useState<TransRateDto | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [recentOpen, setRecentOpen] = useState(false);
 
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
@@ -226,8 +228,19 @@ function RatesList() {
           <p className="text-muted-foreground shrink-0 text-[12px] font-medium tabular-nums">
             <span className="font-bold text-foreground">{totalRows.toLocaleString('en-IN')}</span> rate{totalRows === 1 ? '' : 's'}
           </p>
+          {/* Beside Bulk rate change, per §5.2 — the two belong together: one
+              makes changes, the other remembers what was changed. */}
+          <Button
+            size="sm"
+            variant="outline"
+            className="ml-auto h-9 rounded-[4px] text-[12.5px] font-bold"
+            onClick={() => setRecentOpen(true)}
+            title="See what rates were changed recently, and by whom"
+          >
+            <History className="size-3.5" /> Recent changes
+          </Button>
           {can('transrate:create') && (
-            <Button size="sm" className="ml-auto h-9 rounded-[4px] text-[12.5px] font-bold" onClick={() => setBulkOpen(true)}>
+            <Button size="sm" className="h-9 rounded-[4px] text-[12.5px] font-bold" onClick={() => setBulkOpen(true)}>
               <ListPlus /> Bulk rate change
             </Button>
           )}
@@ -375,6 +388,7 @@ function RatesList() {
       {editing && <TransRateDialog rate={editing} onClose={() => setEditing(null)} />}
       {historyFor && <TransHistoryDialog rate={historyFor} onClose={() => setHistoryFor(null)} />}
       {bulkOpen && <TransBulkRateDialog onClose={() => setBulkOpen(false)} />}
+      <RecentChangesDialog open={recentOpen} onOpenChange={setRecentOpen} />
     </div>
   );
 }

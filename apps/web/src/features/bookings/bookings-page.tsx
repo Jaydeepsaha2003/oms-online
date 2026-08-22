@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Ban, ChevronLeft, ChevronRight, EllipsisVertical, FileSearch, Filter, Link2, PackageOpen, Plus, Printer, RotateCcw, Search, Split, TriangleAlert, Trash2 } from 'lucide-react';
+import { Ban, ChevronLeft, ChevronRight, EllipsisVertical, FileSearch, Filter, Link2, Plus, Printer, RotateCcw, Search, Split, TriangleAlert, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { BookingDto, BookingStatus } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -290,11 +290,7 @@ export function BookingsPage() {
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="flex items-center gap-3">
-          <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
-            <PackageOpen className="size-5" />
-          </div>
           <div>
-            <h2 className="text-2xl font-semibold tracking-tight">Bag Bookings</h2>
             <p className="text-muted-foreground text-sm">Reserve bags &amp; kgs now, convert to real items later — priced at the booking-date rates.</p>
           </div>
         </div>

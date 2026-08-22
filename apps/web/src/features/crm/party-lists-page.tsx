@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { CheckCircle2, Loader2, Pencil, Plus, Search, Shield, ShieldAlert, ShieldCheck, Tag, Trash2, X } from 'lucide-react';
+import { CheckCircle2, Loader2, Pencil, Plus, Search, Shield, ShieldAlert, ShieldCheck, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   OPERATORS_FOR_TYPE,
@@ -87,11 +87,7 @@ export function PartyListsPage() {
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-3">
-        <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
-          <Tag className="size-5" />
-        </div>
         <div className="mr-auto">
-          <h2 className="text-2xl font-semibold tracking-tight">Party Lists</h2>
           <p className="text-muted-foreground text-sm">Green-list your best payers, black-list the risky ones — using your own conditions.</p>
         </div>
         {canEdit && <Button onClick={openNew}><Plus /> New list</Button>}

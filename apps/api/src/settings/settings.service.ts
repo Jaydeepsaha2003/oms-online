@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { ACTIONS, DEFAULT_ORDER_QTY_LAYOUT, isRealDesign, normalizeQtyOrder, RESOURCES, type ChallanTermsDto, type CompanyProfileDto, type DesignTrackTypesDto, type DispatchAlertSettingsDto, type DispatchBagThresholdDto, type OrderFooterDto, type OrderOptionDto, type OrderQtyLayout, type OrderTermsDto, type QuotationTermsDto, type TcsSettingDto } from '@oms/shared';
+import { ACTIONS, DEFAULT_ORDER_QTY_LAYOUT, isRealDesign, normalizeQtyOrder, RESOURCES, type ChallanFieldSettingsDto, type ChallanTermsDto, type CompanyProfileDto, type DesignTrackTypesDto, type DispatchAlertSettingsDto, type DispatchBagThresholdDto, type OrderFooterDto, type OrderOptionDto, type OrderQtyLayout, type OrderTermsDto, type QuotationTermsDto, type TcsSettingDto } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { uc } from '../common/coerce';
 import { AuditService } from '../audit/audit.service';
@@ -13,6 +13,7 @@ import { UpdateChallanTermsDto } from './dto/challan-terms.dto';
 import { UpdateQuotationTermsDto } from './dto/quotation-terms.dto';
 import { UpdateTcsSettingDto } from './dto/tcs-setting.dto';
 import { UpdateDispatchBagThresholdDto } from './dto/dispatch-bag-threshold.dto';
+import { UpdateChallanFieldsDto } from './dto/challan-fields.dto';
 import { UpdateDesignTrackTypesDto } from './dto/design-track-types.dto';
 import { UpdateDispatchAlertsDto } from './dto/dispatch-alerts.dto';
 
@@ -28,6 +29,7 @@ const ORDER_QTY_LAYOUT = 'ORDER_QTY_LAYOUT';
 const TCS_PERCENT = 'TCS_PERCENT';
 const DESIGN_TRACK_TYPES = 'DESIGN_TRACK_TYPES';
 const DISPATCH_BAG_THRESHOLD = 'DISPATCH_BAG_THRESHOLD';
+const CHALLAN_SHOW_SHIPPING_ADDRESS = 'CHALLAN_SHOW_SHIPPING_ADDRESS';
 const DISPATCH_ALERTS = 'DISPATCH_ALERTS';
 // Matches the legacy Form14 rate, kept until the business saves its own %.
 const DEFAULT_TCS_PERCENT = 1;
@@ -255,6 +257,35 @@ export class SettingsService {
   /* ── Default dispatch bag threshold (global fallback) ─────────────────────
    * Used when a party has no bag threshold of its own set in Special Rates.
    * Enforced against non-admins (no dispatch:override) in DispatchService. */
+
+  /* ── Challan optional fields ─────────────────────────────────────────────── */
+
+  async getChallanFields(): Promise<ChallanFieldSettingsDto> {
+    const row = await this.prisma.appConfig.findUnique({ where: { key: CHALLAN_SHOW_SHIPPING_ADDRESS } });
+    // Absent means OFF — the field is hidden today, and an upgrade should not
+    // silently put it back on every challan form.
+    return { showShippingAddress: row?.value === 'true' };
+  }
+
+  async updateChallanFields(dto: UpdateChallanFieldsDto, actor?: AuthenticatedUser): Promise<ChallanFieldSettingsDto> {
+    const before = await this.getChallanFields();
+    await this.prisma.appConfig.upsert({
+      where: { key: CHALLAN_SHOW_SHIPPING_ADDRESS },
+      update: { value: String(dto.showShippingAddress) },
+      create: { key: CHALLAN_SHOW_SHIPPING_ADDRESS, value: String(dto.showShippingAddress) },
+    });
+    void this.audit.record({
+      userId: actor?.id ?? null,
+      userEmail: actor?.email ?? null,
+      action: ACTIONS.UPDATE,
+      resource: RESOURCES.SETTING,
+      resourceId: CHALLAN_SHOW_SHIPPING_ADDRESS,
+      description: `${dto.showShippingAddress ? 'Showed' : 'Hid'} the Shipping Address field on the Challan form`,
+      statusCode: 200,
+      metadata: { before: before.showShippingAddress, after: dto.showShippingAddress },
+    });
+    return { showShippingAddress: dto.showShippingAddress };
+  }
 
   async getDispatchBagThreshold(): Promise<DispatchBagThresholdDto> {
     const row = await this.prisma.appConfig.findUnique({ where: { key: DISPATCH_BAG_THRESHOLD } });

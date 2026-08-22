@@ -956,9 +956,10 @@ export class ReportsService {
     const orderWhere: Prisma.OrderWhereInput = {
       status: { not: 'CANCELLED' },
       ...(allowedIds ? { customerId: { in: allowedIds } } : {}),
-      ...(fx.from || fx.to
-        ? { orderDate: { ...(fx.from ? { gte: fx.from } : {}), ...(fx.to ? { lte: fx.to } : {}) } }
-        : {}),
+      // Deliberately NOT date-filtered here. The party filter is what keeps this
+      // query small; the dates are applied in memory below, because the active
+      // window has to see orders OUTSIDE the current range to be able to move
+      // the range onto them.
     };
 
     const orders = await this.prisma.order.findMany({
@@ -978,6 +979,7 @@ export class ReportsService {
             bags: true,
             pcs: true,
             gram: true,
+            box: true,
             rate: true,
             calField: true,
             dispatches: { select: { id: true, code: true, bags: true, pcs: true, gram: true, box: true, dispatchStatus: true, dispatchDate: true } },
@@ -988,7 +990,44 @@ export class ReportsService {
     });
     // The WHERE above already did this; kept as a cheap guard so a future change
     // to either side can't silently widen the scope.
-    const scoped = orders.filter((o) => fx.custOk(o.customerId) && fx.dateOk(o.orderDate));
+    const scopedAll = orders.filter((o) => fx.custOk(o.customerId) && fx.dateOk(o.orderDate));
+
+    /*
+     * "Active" = this order still has quantity to dispatch (ordered − dispatched
+     * > 0 on any line), the same test the dispatch pending pool applies. A
+     * RETURNED row carries negative quantity, so it correctly reopens an order
+     * here too.
+     *
+     * Filtered BEFORE the walk below, so the funnel, the rows and the timeline
+     * all describe the same set — a headline counting orders the list doesn't
+     * show would be worse than no headline.
+     */
+    const stillOpen = (o: (typeof orders)[number]) =>
+      o.items.some((it) => {
+        const sum = it.dispatches.reduce(
+          (a, d) => ({ bags: a.bags + n(d.bags), pcs: a.pcs + n(d.pcs), gram: a.gram + n(d.gram), box: a.box + n(d.box) }),
+          { bags: 0, pcs: 0, gram: 0, box: 0 },
+        );
+        return (
+          n(it.bags) - sum.bags > 1e-6 || n(it.pcs) - sum.pcs > 1e-6 || n(it.gram) - sum.gram > 1e-6 || n(it.box) - sum.box > 1e-6
+        );
+      });
+
+    const activeOnly = f.activeOnly === true;
+    const scoped = activeOnly ? scopedAll.filter(stillOpen) : scopedAll;
+
+    /*
+     * The span of this party's active orders, computed across EVERY date — not
+     * just the range currently on screen. That is the whole point: the screen
+     * uses it to move its range onto the open work, and a window derived from
+     * the current range could never reach an order outside it.
+     */
+    const openAll = orders.filter((o) => fx.custOk(o.customerId) && stillOpen(o));
+    const openDates = openAll.map((o) => o.orderDate.getTime()).sort((a, b) => a - b);
+    const ymd = (t: number) => new Date(t).toISOString().slice(0, 10);
+    const activeWindow = openDates.length
+      ? { from: ymd(openDates[0]), to: ymd(openDates[openDates.length - 1]), orders: openAll.length }
+      : null;
 
     // Challans billing any of these orders' dispatches.
     const dispatchIds = scoped.flatMap((o) => o.items.flatMap((it) => it.dispatches.map((d) => d.id)));
@@ -1150,16 +1189,28 @@ export class ReportsService {
       const base = oq.kgs > 0 ? oq.kgs : oq.pcs > 0 ? oq.pcs : oq.bags;
       const done = oq.kgs > 0 ? dq.kgs : oq.pcs > 0 ? dq.pcs : dq.bags;
       const progress = base > 0 ? Math.max(0, Math.min(1, done / base)) : 0;
+      /*
+       * How far the order got — decided by the SAME open test that the active
+       * filter uses, so the two can never disagree.
+       *
+       * Two traps this avoids. Billing does not outrank shipping: an order half
+       * out the door with one challan against it is still half open, and calling
+       * it BILLED hid that. And `progress` is measured on the order's primary
+       * unit only, so an order complete on kgs but still owing bags reads as
+       * 100% — `open` catches that, where progress alone would have labelled it
+       * BILLED inside a list of active work.
+       */
+      const open = stillOpen(o);
       const stage: JourneyOrder['stage'] =
         returnCount > 0
           ? 'RETURNED'
-          : codes.size > 0
-            ? 'BILLED'
-            : progress >= 0.999
-              ? 'DISPATCHED'
-              : progress > 0
-                ? 'PARTIAL'
-                : 'PENDING';
+          : open
+            ? progress <= 0
+              ? 'PENDING'
+              : 'PARTIAL'
+            : codes.size > 0
+              ? 'BILLED'
+              : 'DISPATCHED';
 
       events.push({
         date: o.orderDate.toISOString(),
@@ -1235,6 +1286,8 @@ export class ReportsService {
       customerName: scoped[0]?.customerName ?? (f.customerId ? 'Selected party' : 'All parties'),
       from: f.from ?? null,
       to: f.to ?? null,
+      activeOnly,
+      activeWindow,
       stages,
       // Bounded: the page renders every row with its own animation, and a party
       // with thousands of orders would stutter rather than impress.

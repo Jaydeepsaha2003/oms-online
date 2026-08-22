@@ -1,23 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import {
-  ArrowLeft,
-  ArrowRight,
-  BellRing,
-  Building2,
-  ClipboardList,
-  HardDrive,
-  ImageIcon,
-  Layers,
-  Loader2,
-  Plus,
-  Receipt,
-  Settings as SettingsIcon,
-  Trash2,
-  Truck,
-  Upload,
-  type LucideIcon,
-} from 'lucide-react';
+import { ArrowLeft, ArrowRight, BellRing, Building2, ClipboardList, HardDrive, ImageIcon, Layers, Loader2, Plus, Receipt, SlidersHorizontal, Trash2, Truck, Upload, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { DEFAULT_ORDER_QTY_LAYOUT, normalizeQtyOrder, QTY_FIELD_LABEL, SETTING_GROUP_META, type OrderOptionDto, type OrderQtyLayout, type QtyField, type SettingGroupMeta } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -41,6 +24,7 @@ import { DesignTrackCard } from './design-track-card';
 import { DispatchAlertsCard } from './dispatch-alerts-card';
 import { RateListSettingsCard } from './rate-list-settings-card';
 import {
+  useChallanFields,
   useChallanTerms,
   useCompany,
   useCreateOrderOption,
@@ -52,6 +36,7 @@ import {
   useSettings,
   useOrderQtyLayout,
   useTcsPercent,
+  useUpdateChallanFields,
   useUpdateChallanTerms,
   useUpdateCompany,
   useUpdateDispatchBagThreshold,
@@ -94,11 +79,7 @@ export function SettingsPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-4">
       <div className="flex items-center gap-3">
-        <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
-          <SettingsIcon className="size-5" />
-        </div>
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Settings</h2>
           <p className="text-muted-foreground text-sm">Manage the option lists used across the app.</p>
         </div>
       </div>
@@ -152,6 +133,7 @@ export function SettingsPage() {
 
       {tab === 'challan' && (
         <div className="space-y-4">
+          <ChallanFieldsCard canEdit={canEdit} />
           <ChallanTermsCard canEdit={canEdit} />
           <ChallanPrefixCard canEdit={canEdit} />
           <TcsPercentCard canEdit={canEdit} />
@@ -581,6 +563,54 @@ function QuotationTermsCard({ canEdit }: { canEdit: boolean }) {
 /** The Challan / Tax Invoice bill's "Terms & Conditions" list — same layout as the
  *  Sales Order card above, but its own list and empty by default (nothing is
  *  printed until the business adds terms here). */
+/**
+ * Which optional fields the Challan form shows.
+ *
+ * Shipping Address was hidden behind a hard-coded constant in the form, so
+ * bringing it back needed a code change and a deploy. The value has always been
+ * saved on the challan (defaulting to the billing address) — this only decides
+ * whether the field is on screen, so switching it either way is safe and loses
+ * nothing.
+ */
+function ChallanFieldsCard({ canEdit }: { canEdit: boolean }) {
+  const { data } = useChallanFields();
+  const update = useUpdateChallanFields();
+  const on = data?.showShippingAddress ?? false;
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-[15px]">
+          <SlidersHorizontal className="size-4 text-indigo-600" /> Challan form fields
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
+          <div className="min-w-0">
+            <Label className="text-[13px] font-semibold">Shipping Address</Label>
+            <p className="text-muted-foreground mt-0.5 text-[12px]">
+              Show the Shipping Address box under Charges &amp; shipping details on the Challan form. When hidden, the challan
+              still stores a shipping address — it just copies the billing address instead of being typed.
+            </p>
+          </div>
+          <Switch
+            checked={on}
+            disabled={!canEdit || update.isPending}
+            onCheckedChange={(v) =>
+              update.mutate(
+                { showShippingAddress: v },
+                {
+                  onSuccess: () => toast.success(v ? 'Shipping Address is now shown' : 'Shipping Address is now hidden'),
+                  onError: (e) => toast.error(getApiErrorMessage(e, 'Could not save')),
+                },
+              )
+            }
+          />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function ChallanTermsCard({ canEdit }: { canEdit: boolean }) {
   const { data } = useChallanTerms();
   const save = useUpdateChallanTerms();

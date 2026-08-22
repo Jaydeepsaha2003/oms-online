@@ -154,7 +154,6 @@ export function AgentsPage() {
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Agents</h2>
           <p className="text-muted-foreground text-sm">{data?.total ?? 0} records</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

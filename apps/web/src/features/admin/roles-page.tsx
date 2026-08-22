@@ -116,7 +116,6 @@ export function RolesPage() {
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Roles &amp; Permissions</h2>
           <p className="text-muted-foreground text-sm">{roles?.length ?? 0} roles · define what each role can access</p>
         </div>
         {can('role:create') && (

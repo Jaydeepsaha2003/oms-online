@@ -326,7 +326,6 @@ export function QuotationsPage() {
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Quotations</h2>
           <p className="text-muted-foreground text-sm">{data?.total ?? 0} quotations · click a row to choose an action</p>
         </div>
         {can('quotation:create') && (

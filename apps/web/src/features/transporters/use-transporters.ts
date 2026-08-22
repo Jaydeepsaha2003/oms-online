@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { TransporterDto, TransporterInput, TransporterList, TransporterQuery } from '@oms/shared';
+import type { TransporterDto, TransporterInput, TransporterList, TransporterQuery, TransporterCustomerDto } from '@oms/shared';
 import { downloadFile, http } from '@/lib/api';
 
 export interface ImportResult {
@@ -16,6 +16,16 @@ export function useTransporters(query: TransporterQuery) {
     queryKey: [...KEY, query],
     queryFn: () => http.get<TransporterList>('/transporters', { params: query }),
     placeholderData: (prev) => prev,
+  });
+}
+
+/** The active customers behind a transporter's count — fetched only when the
+ *  popup is actually opened. */
+export function useTransporterCustomers(id: number | null) {
+  return useQuery({
+    queryKey: [...KEY, 'customers', id],
+    queryFn: () => http.get<TransporterCustomerDto[]>(`/transporters/${id}/customers`),
+    enabled: id != null,
   });
 }
 
