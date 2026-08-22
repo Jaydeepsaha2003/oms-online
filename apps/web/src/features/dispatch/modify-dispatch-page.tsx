@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Camera, CalendarRange, ChevronDown, ChevronLeft, ChevronRight, Eye, Filter, Layers, Loader2, Lock, Pencil, Search, Trash2, TriangleAlert, Users, X } from 'lucide-react';
+import { Camera, CalendarRange, ChevronDown, ChevronLeft, ChevronRight, Eye, Filter, History, Layers, Loader2, Lock, MoreVertical, Pencil, Search, Trash2, TriangleAlert, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { ALL_PERMISSIONS, DISPATCH_STATUSES, MAX_PAGE_SIZE, RESOURCES, RETURNED_DISPATCH_STATUS, qtyOrderForCategory, type DispatchDto, type QtyField } from '@oms/shared';
+import { ACTIONS, ALL_PERMISSIONS, DISPATCH_STATUSES, MAX_PAGE_SIZE, RESOURCES, RETURNED_DISPATCH_STATUS, perm, qtyOrderForCategory, type DispatchDto, type QtyField } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn, shortDispatchCode, shortOrderCode } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
@@ -16,6 +16,7 @@ import { RecordHistory } from '@/components/common/record-history';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -696,6 +697,12 @@ export function ModifyDispatchPage() {
   const { page, setPage, pageSize, setPageSize } = usePageSize('dispatch-modify');
   const [editing, setEditing] = useState<DispatchDto | null>(null);
   const [viewing, setViewing] = useState<DispatchDto | null>(null);
+  // ONE history panel for the whole grid, opened by the row's overflow menu —
+  // rather than an always-mounted RecordHistory per row.
+  const [historyFor, setHistoryFor] = useState<DispatchDto | null>(null);
+  // Hide the menu entry entirely when the user can't read the audit log — the
+  // panel itself would render nothing.
+  const canViewHistory = can(perm(RESOURCES.AUDIT_LOG, ACTIONS.VIEW));
   const canViewRates = can('dispatch:viewrates');
   const columns = useMemo(() => (canViewRates ? withRates(COLUMNS) : COLUMNS), [canViewRates]);
   const cols = useColumnOrder('dispatch-modify', columns);
@@ -875,6 +882,64 @@ export function ModifyDispatchPage() {
       onSuccess: () => toast.success('Dispatch deleted'),
       onError: (e) => toast.error(getApiErrorMessage(e, 'Delete failed')),
     });
+  };
+
+  /**
+   * The row's actions. Only the photo button stays on the surface (its badge is
+   * information); View / History / Edit / Delete move behind a single overflow
+   * menu, which keeps the column narrow and stops five icons competing for
+   * attention on every row.
+   */
+  const RowActions = ({ d }: { d: DispatchDto }) => {
+    const canEditRow = can('dispatch:update') && !isReturn(d);
+    const canDeleteRow = can('dispatch:delete') && !isReturn(d);
+    const billed = !!d.challanCode;
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 cursor-pointer rounded-full text-slate-600 hover:bg-indigo-50 hover:text-indigo-700 data-[state=open]:bg-indigo-100 data-[state=open]:text-indigo-800 dark:text-slate-300 dark:hover:bg-indigo-500/15"
+            aria-label={`Actions for dispatch ${d.code ?? d.id}`}
+            title="Actions"
+          >
+            <MoreVertical className="size-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" sideOffset={6} className="w-52 font-sans">
+          <DropdownMenuItem className="cursor-pointer" onSelect={() => setViewing(d)}>
+            <Eye className="size-4 text-slate-600" /> View details
+          </DropdownMenuItem>
+          {canViewHistory && (
+            <DropdownMenuItem className="cursor-pointer" onSelect={() => setHistoryFor(d)}>
+              <History className="size-4 text-slate-600" /> Activity history
+            </DropdownMenuItem>
+          )}
+          {/* A return is a consequence of a credit note, not a dispatch somebody
+              made — editing or deleting it here would change what is available
+              to dispatch while the credit note still says otherwise. It is undone
+              by removing the credit note, which is where it came from. */}
+          {(canEditRow || canDeleteRow) && <DropdownMenuSeparator />}
+          {canEditRow && (
+            <DropdownMenuItem className="cursor-pointer" onSelect={() => setEditing(d)}>
+              <Pencil className="size-4 text-slate-600" />
+              {billed ? 'Edit status & photos' : 'Edit'}
+            </DropdownMenuItem>
+          )}
+          {canDeleteRow && (
+            <DropdownMenuItem
+              className="cursor-pointer text-destructive focus:text-destructive"
+              disabled={billed}
+              onSelect={() => handleDelete(d)}
+              title={billed ? `Billed on ${d.challanCode} — cannot be deleted` : undefined}
+            >
+              <Trash2 className="size-4" /> Delete
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
   };
 
   return (
@@ -1128,49 +1193,10 @@ export function ModifyDispatchPage() {
             ].join(' ')}
             actions={(d) => (
               <div className="flex justify-end gap-1">
-                <Button variant="ghost" size="icon" className="size-7" onClick={() => setViewing(d)} aria-label="View" title="View details">
-                  <Eye className="size-4" />
-                </Button>
+                {/* Photos stay OUT of the menu: the badge counts what is already
+                    attached, and a count hidden behind a menu tells nobody. */}
                 <DispatchPhotosButton orderItemId={d.orderItemId} isSuperAdmin={permissions.includes(ALL_PERMISSIONS)} challanCode={d.challanCode} />
-                <RecordHistory
-                  resource={RESOURCES.DISPATCH}
-                  resourceId={d.id}
-                  label={d.code ?? `#${d.id}`}
-                  // Billing never happens *on* the dispatch, so it leaves no audit
-                  // entry here — state the current position explicitly instead.
-                  summary={<DispatchSummary d={d} />}
-                />
-                {/* A return is a consequence of a credit note, not a dispatch
-                    somebody made — editing its quantities or flipping its status
-                    here would silently change what is available to dispatch
-                    while the credit note still says otherwise. It is undone by
-                    removing the credit note (or re-saving it without
-                    "Undispatched"), which is where it came from. */}
-                {can('dispatch:update') && !isReturn(d) && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-7"
-                    onClick={() => setEditing(d)}
-                    aria-label={d.challanCode ? 'Edit status & photos' : 'Edit'}
-                    title={d.challanCode ? `Billed on ${d.challanCode} — status & photos only` : 'Edit'}
-                  >
-                    <Pencil className="size-4" />
-                  </Button>
-                )}
-                {can('dispatch:delete') && !isReturn(d) && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-7 text-destructive hover:text-destructive"
-                    onClick={() => handleDelete(d)}
-                    disabled={!!d.challanCode}
-                    aria-label="Delete"
-                    title={d.challanCode ? `Billed on ${d.challanCode} — cannot be deleted` : 'Delete'}
-                  >
-                    <Trash2 className="size-4" />
-                  </Button>
-                )}
+                <RowActions d={d} />
               </div>
             )}
           />
@@ -1248,6 +1274,23 @@ export function ModifyDispatchPage() {
 
       {viewing && <ViewDispatchDialog dispatch={viewing} onClose={() => setViewing(null)} />}
       {editing && <EditDispatchDialog dispatch={editing} onClose={() => setEditing(null)} />}
+      {/* One history panel for the whole grid, driven by the row menu. Keyed so
+          switching rows remounts it rather than showing the previous row's
+          fetched timeline for a moment. */}
+      {historyFor && (
+        <RecordHistory
+          key={historyFor.id}
+          resource={RESOURCES.DISPATCH}
+          resourceId={historyFor.id}
+          label={historyFor.code ?? `#${historyFor.id}`}
+          // Billing never happens *on* the dispatch, so it leaves no audit entry
+          // here — state the current position explicitly instead.
+          summary={<DispatchSummary d={historyFor} />}
+          hideTrigger
+          open
+          onOpenChange={(o) => !o && setHistoryFor(null)}
+        />
+      )}
     </div>
   );
 }

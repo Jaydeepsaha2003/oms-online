@@ -1160,6 +1160,10 @@ function LineEditor({
     // Default: today's catalogue rate, exactly as before.
     let finalProductRate: number | null = hasProductRate ? currentProductRate : null;
     let finalDesignRate: number | null = hasDesignRate ? currentDesignRate : null;
+    // Whichever special-rate adjustment is baked into the rate finally offered —
+    // today's, or the as-of one if the historical lookup wins below.
+    let appliedProductDelta = resolved?.productDelta ?? 0;
+    let appliedDesignDelta = resolved?.designDelta ?? 0;
 
     const norm = (v: string | null | undefined) => (v ?? '').trim().toUpperCase();
     // Compared against the CURRENT form values, not the original line: picking
@@ -1204,6 +1208,8 @@ function LineEditor({
           if (asOf.rate > 0) {
             finalProductRate = hasProductRate ? round2(asOf.productRate + asOf.productDelta) : null;
             finalDesignRate = hasDesignRate ? round2(asOf.designRate + asOf.designDelta) : null;
+            appliedProductDelta = asOf.productDelta;
+            appliedDesignDelta = asOf.designDelta;
           }
         }
         const newRate = (finalProductRate ?? 0) + (finalDesignRate ?? 0);
@@ -1216,6 +1222,8 @@ function LineEditor({
             oldProductRate: num(form.productRate),
             oldDesignRate: num(form.designRate),
             hasDesignRate,
+            newProductDelta: appliedProductDelta,
+            newDesignDelta: appliedDesignDelta,
           });
           if (choice.kind === 'keep') {
             // Keep exactly what was on the line — the item identity still changed.
@@ -1481,6 +1489,11 @@ interface RateAskProps {
   oldDesignRate: number | null;
   /** False for items with no design, so the design row is hidden entirely. */
   hasDesignRate: boolean;
+  /** This customer's special-rate adjustment inside the new rate, if any. A
+   *  product part can move purely because of it — without saying so, the jump
+   *  reads as arbitrary. */
+  newProductDelta?: number;
+  newDesignDelta?: number;
 }
 
 type RateChoice =
@@ -1510,6 +1523,8 @@ function RateChoiceDialog({
   oldProductRate,
   oldDesignRate,
   hasDesignRate,
+  newProductDelta,
+  newDesignDelta,
   onDone,
 }: RateAskProps & { onDone: (choice: RateChoice) => void }) {
   const newRate = (newProductRate ?? 0) + (newDesignRate ?? 0);
@@ -1523,7 +1538,7 @@ function RateChoiceDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onDone({ kind: 'keep' })}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>This changes the line’s rate</DialogTitle>
         </DialogHeader>
@@ -1534,45 +1549,85 @@ function RateChoiceDialog({
           <span className="text-foreground font-semibold">{inr(oldRate)}</span>.
         </p>
 
-        {/* WHICH PART moved, not just the total. A line can shift by ₹25 because
-            the design rate changed while the product rate stood still — the two
-            totals alone gave no way to tell that apart, so "use the current
-            price" read as an unexplained jump. */}
-        <div className="rounded-md border text-sm">
-          <div className="text-muted-foreground grid grid-cols-3 gap-2 border-b px-3 py-1.5 text-[11px] font-bold tracking-wide uppercase">
-            <span />
-            <span className="text-right">On this line</span>
-            <span className="text-right">Rate list</span>
-          </div>
-          {(
-            [
-              ['Product', oldProductRate ?? 0, newProductRate ?? 0, true],
-              ['Design', oldDesignRate ?? 0, newDesignRate ?? 0, hasDesignRate],
-            ] as const
-          )
-            .filter(([, , , show]) => show)
-            .map(([name, was, now]) => (
-              <div
-                key={name}
-                className={cn('grid grid-cols-3 gap-2 px-3 py-1.5', was !== now && 'bg-amber-50 dark:bg-amber-400/10')}
-              >
-                <span className="text-muted-foreground">
-                  {name} ₹
-                  {was !== now && (
-                    <span className="ml-1 text-[11px] font-bold tracking-wide text-amber-700 uppercase dark:text-amber-400">changed</span>
+        {/* WHICH PART moved, and by how much — not just the total. A line can
+            shift by ₹10 because the customer's special rate applies to the
+            product while the design rate stood still; the two totals alone gave
+            no way to tell that apart, so "use the current price" read as an
+            unexplained jump. A real table (not a 3-column grid) so the right-hand
+            column can never be pushed out of the dialog. */}
+        <div className="overflow-hidden rounded-md border">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-muted-foreground bg-muted/50 border-b text-[11px] font-bold tracking-wide uppercase">
+                <th className="px-3 py-1.5 text-left font-bold">Part</th>
+                <th className="px-3 py-1.5 text-right font-bold">On this line</th>
+                <th className="px-3 py-1.5 text-right font-bold">Rate list</th>
+                <th className="px-3 py-1.5 text-right font-bold">Difference</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(
+                [
+                  ['Product', oldProductRate ?? 0, newProductRate ?? 0, true, newProductDelta ?? 0],
+                  ['Design', oldDesignRate ?? 0, newDesignRate ?? 0, hasDesignRate, newDesignDelta ?? 0],
+                ] as const
+              )
+                .filter(([, , , show]) => show)
+                .map(([name, was, now, , delta]) => {
+                  const moved = Math.abs(now - was) > 0.001;
+                  const diff = round2(now - was);
+                  return (
+                    <tr key={name} className={cn('border-b last:border-b-0', moved && 'bg-amber-50 dark:bg-amber-400/10')}>
+                      <td className="px-3 py-1.5">
+                        <span className="text-muted-foreground">{name} ₹</span>
+                        {moved && (
+                          <span className="ml-1.5 text-[11px] font-bold tracking-wide text-amber-700 uppercase dark:text-amber-400">
+                            changed
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">{inr(was)}</td>
+                      <td className={cn('px-3 py-1.5 text-right tabular-nums', moved && 'font-bold text-amber-700 dark:text-amber-400')}>
+                        {inr(now)}
+                      </td>
+                      <td
+                        className={cn(
+                          'px-3 py-1.5 text-right font-semibold tabular-nums',
+                          !moved && 'text-muted-foreground/50',
+                          moved && diff > 0 && 'text-rose-600 dark:text-rose-400',
+                          moved && diff < 0 && 'text-emerald-600 dark:text-emerald-400',
+                        )}
+                      >
+                        {moved ? `${diff > 0 ? '+' : '−'}${inr(Math.abs(diff)).slice(1)}` : '—'}
+                        {/* Name the cause where there is one: a part that moved
+                            purely because of this customer's special rate is not
+                            a catalogue price change, and saying so is the
+                            difference between "why?" and "of course". */}
+                        {moved && Math.abs(delta) > 0.001 && (
+                          <span className="text-muted-foreground ml-1 text-[10.5px] font-medium">
+                            (incl. {delta > 0 ? '+' : '−'}₹{Math.abs(delta)} special)
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              <tr className="bg-muted/30 border-t font-semibold">
+                <td className="px-3 py-1.5">Total</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{inr(oldRate)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{inr(newRate)}</td>
+                <td
+                  className={cn(
+                    'px-3 py-1.5 text-right tabular-nums',
+                    newRate > oldRate && 'text-rose-600 dark:text-rose-400',
+                    newRate < oldRate && 'text-emerald-600 dark:text-emerald-400',
                   )}
-                </span>
-                <span className="text-right tabular-nums">{inr(was)}</span>
-                <span className={cn('text-right tabular-nums', was !== now && 'font-bold text-amber-700 dark:text-amber-400')}>
-                  {inr(now)}
-                </span>
-              </div>
-            ))}
-          <div className="grid grid-cols-3 gap-2 border-t px-3 py-1.5 font-semibold">
-            <span>Total</span>
-            <span className="text-right tabular-nums">{inr(oldRate)}</span>
-            <span className="text-right tabular-nums">{inr(newRate)}</span>
-          </div>
+                >
+                  {newRate === oldRate ? '—' : `${newRate > oldRate ? '+' : '−'}${inr(Math.abs(round2(newRate - oldRate))).slice(1)}`}
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
         {custom ? (

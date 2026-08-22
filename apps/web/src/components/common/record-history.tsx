@@ -21,6 +21,9 @@ export function RecordHistory({
   label,
   summary,
   className,
+  open: openProp,
+  onOpenChange,
+  hideTrigger,
 }: {
   /** A `RESOURCES` value, e.g. RESOURCES.ORDER. */
   resource: string;
@@ -36,9 +39,25 @@ export function RecordHistory({
    */
   summary?: ReactNode;
   className?: string;
+  /**
+   * Drive the panel from the caller instead of the built-in button — for a row
+   * that keeps its actions in an overflow menu, where a permanently visible
+   * history button would be one icon too many. Leave unset and the component
+   * owns its own state exactly as before.
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** Render only the panel, no trigger. Pair with `open`/`onOpenChange`. */
+  hideTrigger?: boolean;
 }) {
   const { can } = usePermissions();
-  const [open, setOpen] = useState(false);
+  const [selfOpen, setSelfOpen] = useState(false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : selfOpen;
+  const setOpen = (v: boolean) => {
+    if (!controlled) setSelfOpen(v);
+    onOpenChange?.(v);
+  };
   const id = resourceId != null ? String(resourceId) : undefined;
   const canView = can(perm(RESOURCES.AUDIT_LOG, ACTIONS.VIEW));
 
@@ -53,17 +72,19 @@ export function RecordHistory({
 
   return (
     <>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className={cn('size-8', className)}
-        onClick={() => setOpen(true)}
-        aria-label="Activity history"
-        title="Activity history — who created/edited this"
-      >
-        <HistoryIcon className="size-4" />
-      </Button>
+      {!hideTrigger && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className={cn('size-8', className)}
+          onClick={() => setOpen(true)}
+          aria-label="Activity history"
+          title="Activity history — who created/edited this"
+        >
+          <HistoryIcon className="size-4" />
+        </Button>
+      )}
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent side="right" className="w-full sm:max-w-md">
           <SheetHeader>

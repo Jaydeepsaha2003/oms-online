@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowRight,
+  ChevronRight,
   ClipboardList,
   FileText,
   Loader2,
@@ -9,7 +10,7 @@ import {
   Undo2,
   Users,
 } from 'lucide-react';
-import type { JourneyEvent, JourneyOrder, JourneyStage, OrderJourneyReport } from '@oms/shared';
+import type { JourneyDispatch, JourneyEvent, JourneyOrder, JourneyStage, OrderJourneyReport } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { Card, CardContent } from '@/components/ui/card';
@@ -107,85 +108,136 @@ function CountUp({ to, format = num, delay = 0 }: { to: number; format?: (v: num
   return <>{format(v)}</>;
 }
 
-/** One of the four big stage cards. */
-function StageCard({ s, index, unit }: { s: JourneyStage; index: number; unit: string }) {
+/* ── one type scale, used by every card ──────────────────────────────────────
+   Arbitrary per-element sizes are what made the four cards read as four
+   different designs. These five tokens are the only sizes the stage cards use. */
+const T = {
+  label: 'text-[10.5px] font-bold uppercase tracking-widest text-muted-foreground',
+  big: 'text-[26px] font-extrabold leading-none tabular-nums',
+  bigUnit: 'text-[11px] font-semibold tracking-normal text-muted-foreground',
+  rowKey: 'text-[11.5px] font-medium text-muted-foreground',
+  rowVal: 'text-[12.5px] font-bold tabular-nums',
+  caption: 'text-[11px] font-semibold text-muted-foreground',
+} as const;
+
+/** The noun that follows a stage's headline count. */
+const DOC_NOUN: Record<StageKey, string> = {
+  ORDERS: 'orders',
+  DISPATCHED: 'dispatches',
+  CHALLAN: 'challans',
+  RETURNS: 'credit notes',
+};
+
+/**
+ * One metric row.
+ *
+ * Rendered on EVERY card whether or not the stage has that figure — an absent
+ * row shows an em dash instead of collapsing. Conditionally dropping rows is
+ * what left the four cards ragged: different row counts meant different heights
+ * and no shared baseline, so "Lines" on one card sat next to "Value" on the one
+ * beside it.
+ */
+function MetricRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <span className={T.rowKey}>{label}</span>
+      <span className={T.rowVal}>{children}</span>
+    </div>
+  );
+}
+
+const DASH = <span className="text-muted-foreground/40 font-normal">—</span>;
+
+/** One of the four stage cards. All four render the identical skeleton. */
+function StageCard({ s, index, unit, dispatchDocs }: { s: JourneyStage; index: number; unit: string; dispatchDocs: number }) {
   const st = STAGE[s.key];
   const Icon = st.icon;
   const delay = index * 160;
+
   const qty = s.key === 'CHALLAN' ? null : unit === 'kgs' ? s.kgs : unit === 'pcs' ? s.pcs : s.bags;
+
+  /*
+   * Every card carries a footer bar, so all four are the same height and the
+   * funnel reads across in one line. Each states its OWN basis rather than
+   * borrowing another stage's: Ordered is the baseline it is all measured
+   * against, Billed is a share of dispatch lines (it bills documents, not kgs),
+   * and the other two are shares of the ordered quantity.
+   */
+  const footer: { pct: number; text: string } = (() => {
+    if (s.key === 'ORDERS') return { pct: 1, text: `baseline · ${s.docs} order${s.docs === 1 ? '' : 's'}` };
+    if (s.key === 'CHALLAN') {
+      const p = dispatchDocs > 0 ? Math.min(1, s.lines / dispatchDocs) : 0;
+      return { pct: p, text: `${s.lines} of ${dispatchDocs} dispatches billed` };
+    }
+    const p = s.ofFirst ?? 0;
+    return { pct: p, text: `${Math.round(p * 100)}% of ordered ${unit}` };
+  })();
 
   return (
     <div
       className={cn(
-        'bg-card relative flex-1 overflow-hidden rounded-2xl border p-4 shadow-sm ring-1 ring-inset',
+        'bg-card animate-journey-rise relative flex flex-1 flex-col overflow-hidden rounded-2xl border p-4 shadow-sm ring-1 ring-inset',
         st.ring,
-        'animate-journey-rise',
       )}
       style={{ animationDelay: `${delay}ms` }}
     >
-      {/* One pass of light as the card lands. Purely decorative, so it is hidden
-          from assistive tech and disabled under reduced-motion. */}
+      {/* One pass of light as the card lands. Decorative only — hidden from
+          assistive tech, and disabled under prefers-reduced-motion. */}
       <span
         aria-hidden
         className="animate-journey-sheen pointer-events-none absolute inset-y-0 -left-1/3 w-1/3 bg-gradient-to-r from-transparent via-white/70 to-transparent dark:via-white/20"
         style={{ animationDelay: `${delay + 220}ms` }}
       />
-      <div className="flex items-center gap-2">
-        <span className={cn('flex size-9 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm', st.fill)}>
+
+      {/* Head — fixed two-line block, so the divider below starts level on all
+          four cards regardless of how long the label is. */}
+      <div className="flex items-center gap-2.5">
+        <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm', st.fill)}>
           <Icon className="size-4.5" />
         </span>
         <div className="min-w-0">
-          <div className="text-muted-foreground text-[11px] font-bold tracking-widest uppercase">{s.label}</div>
-          <div className={cn('text-[22px] leading-tight font-extrabold tabular-nums', st.text)}>
+          <div className={T.label}>{s.label}</div>
+          <div className={cn(T.big, st.text)}>
             <CountUp to={s.docs} delay={delay} />
-            <span className="text-muted-foreground ml-1.5 text-[11px] font-semibold tracking-normal">
-              {s.key === 'ORDERS' ? 'orders' : s.key === 'DISPATCHED' ? 'dispatches' : s.key === 'CHALLAN' ? 'challans' : 'credit notes'}
-            </span>
+            <span className={cn('ml-1.5', T.bigUnit)}>{DOC_NOUN[s.key]}</span>
           </div>
         </div>
       </div>
 
-      <div className="mt-3 space-y-1.5 text-[12px]">
-        {qty != null && (
-          <div className="flex items-baseline justify-between">
-            <span className="text-muted-foreground font-medium">Quantity</span>
-            <span className="font-bold tabular-nums">
-              <CountUp to={qty} delay={delay} /> <span className="text-muted-foreground text-[10.5px]">{unit}</span>
-            </span>
-          </div>
-        )}
-        {s.amount > 0 && (
-          <div className="flex items-baseline justify-between">
-            <span className="text-muted-foreground font-medium">Value</span>
-            <span className="font-bold tabular-nums" title={inrFull(s.amount)}>
+      {/* Body — the same three rows, in the same order, on every card. */}
+      <div className="mt-3 space-y-1.5 border-t pt-3">
+        <MetricRow label="Quantity">
+          {qty == null ? (
+            DASH
+          ) : (
+            <>
+              <CountUp to={qty} delay={delay} /> <span className="text-muted-foreground text-[10.5px] font-semibold">{unit}</span>
+            </>
+          )}
+        </MetricRow>
+        <MetricRow label="Value">
+          {s.amount > 0 ? (
+            <span title={inrFull(s.amount)}>
               <CountUp to={s.amount} format={inrCompact} delay={delay} />
             </span>
-          </div>
-        )}
-        {s.lines > 0 && (
-          <div className="flex items-baseline justify-between">
-            <span className="text-muted-foreground font-medium">Lines</span>
-            <span className="font-bold tabular-nums">
-              <CountUp to={s.lines} delay={delay} />
-            </span>
-          </div>
-        )}
+          ) : (
+            DASH
+          )}
+        </MetricRow>
+        <MetricRow label="Lines">{s.lines > 0 ? <CountUp to={s.lines} delay={delay} /> : DASH}</MetricRow>
       </div>
 
-      {/* Share of what was ordered — the number that makes the funnel readable. */}
-      {s.ofFirst != null && (
-        <div className="mt-3">
-          <div className="bg-muted h-1.5 overflow-hidden rounded-full">
-            <div
-              className={cn('h-full rounded-full animate-journey-fill', st.bar)}
-              style={{ width: `${Math.round(s.ofFirst * 100)}%`, animationDelay: `${delay + 260}ms` }}
-            />
-          </div>
-          <div className="text-muted-foreground mt-1 text-[11px] font-semibold">
-            {Math.round(s.ofFirst * 100)}% of ordered {unit}
-          </div>
+      {/* Footer — pinned to the bottom (mt-auto) so the bars line up across the
+          row even if a card's body ever grows. */}
+      <div className="mt-auto pt-3">
+        <div className={cn('h-1.5 overflow-hidden rounded-full', st.soft)} aria-hidden>
+          <div
+            className={cn('animate-journey-fill h-full rounded-full', st.bar)}
+            style={{ width: `${Math.round(footer.pct * 100)}%`, animationDelay: `${delay + 260}ms` }}
+          />
         </div>
-      )}
+        <div className={cn('mt-1.5', T.caption)}>{footer.text}</div>
+      </div>
     </div>
   );
 }
@@ -208,6 +260,7 @@ function Connector({ index }: { index: number }) {
 
 /** One order, as a track showing how far down the pipeline it got. */
 function OrderTrack({ o, unit, index }: { o: JourneyOrder; unit: string; index: number }) {
+  const [open, setOpen] = useState(false);
   const ordered = unit === 'kgs' ? o.kgs : unit === 'pcs' ? o.pcs : o.bags;
   const shipped = unit === 'kgs' ? o.dispKgs : unit === 'pcs' ? o.dispPcs : o.dispBags;
   const returned = unit === 'kgs' ? o.returnedKgs : unit === 'pcs' ? o.returnedPcs : o.returnedBags;
@@ -218,10 +271,22 @@ function OrderTrack({ o, unit, index }: { o: JourneyOrder; unit: string; index: 
 
   return (
     <div
-      className="animate-journey-rise rounded-xl border bg-card px-3 py-2.5 shadow-sm"
+      className={cn(
+        'animate-journey-rise bg-card rounded-xl border shadow-sm transition-colors',
+        open && 'ring-primary/30 ring-1',
+      )}
       style={{ animationDelay: `${delay}ms` }}
     >
+      {/* The whole summary is the toggle — a row this wide with one small caret
+          would make people hunt for the hit area. */}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="hover:bg-muted/40 w-full cursor-pointer rounded-xl px-3 py-2.5 text-left transition-colors"
+      >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <ChevronRight className={cn('text-muted-foreground size-3.5 shrink-0 transition-transform', open && 'rotate-90')} />
         <span className="text-[13px] font-bold tabular-nums text-indigo-700 dark:text-indigo-300">
           {o.orderCode ?? `ORD-${o.orderId}`}
         </span>
@@ -274,6 +339,77 @@ function OrderTrack({ o, unit, index }: { o: JourneyOrder; unit: string; index: 
           </span>
         )}
         {o.stage === 'PENDING' && <span className="text-amber-700 dark:text-amber-400">· nothing dispatched yet</span>}
+        <span className="text-muted-foreground/70 ml-auto">
+          {o.dispatchList.length ? `${open ? 'Hide' : 'Show'} ${o.dispatchList.length} dispatch${o.dispatchList.length === 1 ? '' : 'es'}` : ''}
+        </span>
+      </div>
+      </button>
+
+      {open && <DispatchDetail rows={o.dispatchList} unit={unit} />}
+    </div>
+  );
+}
+
+/**
+ * What actually moved under one order, and when each movement was billed.
+ *
+ * The summary row answers "how far did this order get"; this answers "out of
+ * what, exactly" — which dispatch, on what date, on whose challan. Returns are
+ * listed alongside rather than in a separate block, because the point is the
+ * chronology: a return only makes sense next to the dispatch it came back from.
+ */
+function DispatchDetail({ rows, unit }: { rows: JourneyDispatch[]; unit: string }) {
+  if (!rows.length) {
+    return (
+      <p className="text-muted-foreground border-t px-3 py-4 text-center text-[12px] font-medium">
+        Nothing dispatched against this order yet.
+      </p>
+    );
+  }
+  const qtyOf = (d: JourneyDispatch) => (unit === 'kgs' ? d.kgs : unit === 'pcs' ? d.pcs : d.bags) ?? 0;
+  return (
+    <div className="border-t px-3 py-2">
+      <div className="overflow-x-auto">
+        <table className="w-full text-[12px]">
+          <thead>
+            <tr className="text-muted-foreground text-[10.5px] font-bold tracking-wide uppercase">
+              <th className="py-1 pr-3 text-left font-bold">Dispatch</th>
+              <th className="py-1 pr-3 text-left font-bold">Date</th>
+              <th className="py-1 pr-3 text-right font-bold">Qty</th>
+              <th className="py-1 pr-3 text-left font-bold">Challan</th>
+              <th className="py-1 text-left font-bold">Billed on</th>
+            </tr>
+          </thead>
+          <tbody className="[&_td]:border-t [&_td]:border-slate-200 [&_td]:py-1.5 [&_td]:pr-3 dark:[&_td]:border-white/10">
+            {rows.map((d) => (
+              <tr key={d.id} className={cn(d.isReturn && 'bg-rose-50/50 dark:bg-rose-500/[0.07]')}>
+                <td className="font-bold tabular-nums">
+                  <span className={d.isReturn ? 'text-rose-700 dark:text-rose-400' : 'text-indigo-700 dark:text-indigo-300'}>
+                    {d.code ?? `#${d.id}`}
+                  </span>
+                </td>
+                <td className="text-muted-foreground font-medium tabular-nums whitespace-nowrap">{formatDate(d.date)}</td>
+                {/* A return carries negative quantities — shown signed, because
+                    the sign is the fact. */}
+                <td className={cn('text-right font-bold tabular-nums', d.isReturn && 'text-rose-700 dark:text-rose-400')}>
+                  {num(qtyOf(d))} <span className="text-muted-foreground text-[10.5px] font-semibold">{unit}</span>
+                </td>
+                <td className="font-semibold">
+                  {d.isReturn ? (
+                    <span className="text-rose-700 dark:text-rose-400">Returned on {d.creditNoteCode ?? 'a credit note'}</span>
+                  ) : d.challanCode ? (
+                    <span className="text-emerald-700 dark:text-emerald-400">{d.challanCode}</span>
+                  ) : (
+                    <span className="text-amber-700 dark:text-amber-400">Not billed yet</span>
+                  )}
+                </td>
+                <td className="text-muted-foreground font-medium tabular-nums whitespace-nowrap">
+                  {d.challanDate ? formatDate(d.challanDate) : '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -360,7 +496,7 @@ export function OrderJourneyPage() {
           <div className="flex flex-col gap-2.5 lg:flex-row lg:items-stretch">
             {j.stages.map((s, i) => (
               <div key={s.key} className="contents">
-                <StageCard s={s} index={i} unit={unit} />
+                <StageCard s={s} index={i} unit={unit} dispatchDocs={j.stages[1]?.docs ?? 0} />
                 {i < j.stages.length - 1 && <Connector index={i} />}
               </div>
             ))}

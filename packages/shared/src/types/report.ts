@@ -339,6 +339,29 @@ export interface JourneyStage {
   ofFirst: number | null;
 }
 
+/**
+ * One dispatch under an order — what physically moved, and when it was billed.
+ * This is what the order row expands to show.
+ */
+export interface JourneyDispatch {
+  id: number;
+  code: string | null;
+  date: string;
+  bags: number | null;
+  pcs: number | null;
+  kgs: number | null;
+  box: number | null;
+  /** PARTIALLY DISPATCH / FULLY DISPATCH / RETURNED. */
+  status: string;
+  /** True when this row gave quantity BACK (a credit note return). */
+  isReturn: boolean;
+  /** The challan that billed it, when one has. */
+  challanCode: string | null;
+  challanDate: string | null;
+  /** The credit note behind it, when this row is a return. */
+  creditNoteCode: string | null;
+}
+
 /** One order, followed through the whole pipeline. */
 export interface JourneyOrder {
   orderId: number;
@@ -369,6 +392,9 @@ export interface JourneyOrder {
   progress: number;
   /** Where this order currently stands. */
   stage: 'PENDING' | 'PARTIAL' | 'DISPATCHED' | 'BILLED' | 'RETURNED';
+  /** Every dispatch and return under this order, newest first — the detail the
+   *  row reveals when it is opened. */
+  dispatchList: JourneyDispatch[];
 }
 
 /** One dated event on the party's timeline. */

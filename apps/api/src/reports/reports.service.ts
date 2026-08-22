@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { RETURNED_DISPATCH_STATUS } from '@oms/shared';
 import type {
   BusinessOverview,
+  JourneyDispatch,
   JourneyEvent,
   JourneyOrder,
   JourneyStage,
@@ -22,6 +23,7 @@ import type {
   SummaryAnalysisReport,
   TrendDirection,
 } from '@oms/shared';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 const n = (v: number | null | undefined) => (Number.isFinite(v as number) ? (v as number) : 0);
@@ -914,13 +916,53 @@ export class ReportsService {
    * compare this month's orders against last month's shipments, and every
    * percentage on the page would be a lie.
    */
+  /**
+   * Customer ids the journey may include, or null for "no party restriction".
+   *
+   * Same rule {@link resolveFilter} applies, but returned as ids so it can go
+   * into the WHERE clause instead of filtering a full table scan afterwards.
+   */
+  private async journeyCustomerIds(f: ReportFilters): Promise<number[] | null> {
+    if (f.customerId != null) return [f.customerId];
+    const ag = (f.agent ?? '').trim().toUpperCase();
+    const rg = (f.region ?? '').trim().toUpperCase();
+    if (!ag && !rg) return null;
+    const custs = await this.prisma.customer.findMany({ select: { id: true, agentName: true, region: true } });
+    return custs
+      .filter((c) => {
+        if (ag && ((c.agentName ?? '').trim().toUpperCase() || 'SELF') !== ag) return false;
+        if (rg && ((c.region ?? '').trim().toUpperCase() || 'UNKNOWN') !== rg) return false;
+        return true;
+      })
+      .map((c) => c.id);
+  }
+
   async orderJourney(f: ReportFilters = {}): Promise<OrderJourneyReport> {
     const fx = await this.resolveFilter(f);
     const n = (v: number | null | undefined) => v ?? 0;
     const r2 = (v: number) => Math.round(v * 100) / 100;
 
+    /*
+     * Scope in the DATABASE, not in memory.
+     *
+     * Fetching every order with its items and dispatches and then filtering the
+     * array is not merely slow — SQLite refuses it outright ("query parameter
+     * limit exceeded... negation filters prevent the query from being split"),
+     * because the nested include explodes past the driver's variable cap. The
+     * report is always read for one party over one window, so the query should
+     * ask for exactly that.
+     */
+    const allowedIds = await this.journeyCustomerIds(f);
+    const orderWhere: Prisma.OrderWhereInput = {
+      status: { not: 'CANCELLED' },
+      ...(allowedIds ? { customerId: { in: allowedIds } } : {}),
+      ...(fx.from || fx.to
+        ? { orderDate: { ...(fx.from ? { gte: fx.from } : {}), ...(fx.to ? { lte: fx.to } : {}) } }
+        : {}),
+    };
+
     const orders = await this.prisma.order.findMany({
-      where: { status: { not: 'CANCELLED' } },
+      where: orderWhere,
       select: {
         id: true,
         code: true,
@@ -938,12 +980,14 @@ export class ReportsService {
             gram: true,
             rate: true,
             calField: true,
-            dispatches: { select: { id: true, bags: true, pcs: true, gram: true, dispatchStatus: true } },
+            dispatches: { select: { id: true, code: true, bags: true, pcs: true, gram: true, box: true, dispatchStatus: true, dispatchDate: true } },
           },
         },
       },
       orderBy: [{ orderDate: 'desc' }, { id: 'desc' }],
     });
+    // The WHERE above already did this; kept as a cheap guard so a future change
+    // to either side can't silently widen the scope.
     const scoped = orders.filter((o) => fx.custOk(o.customerId) && fx.dateOk(o.orderDate));
 
     // Challans billing any of these orders' dispatches.
@@ -960,9 +1004,12 @@ export class ReportsService {
     // Returns: credit-note lines that gave quantity back to one of these dispatches.
     const returnLinks = dispatchIds.length
       ? await this.prisma.creditNoteItem.findMany({
-          where: { dispatchId: { in: dispatchIds }, returnDispatchId: { not: null } },
+          // No `not: null` here: combined with a large `in`, a negation stops
+          // Prisma splitting the query and SQLite rejects it. Filtered below.
+          where: { dispatchId: { in: dispatchIds } },
           select: {
             dispatchId: true,
+            returnDispatchId: true,
             amount: true,
             creditNote: { select: { code: true, invDate: true } },
           },
@@ -970,7 +1017,7 @@ export class ReportsService {
       : [];
     const returnsByDispatch = new Map<number, typeof returnLinks>();
     for (const r of returnLinks) {
-      if (r.dispatchId == null) continue;
+      if (r.dispatchId == null || r.returnDispatchId == null) continue;
       returnsByDispatch.set(r.dispatchId, [...(returnsByDispatch.get(r.dispatchId) ?? []), r]);
     }
 
@@ -996,6 +1043,7 @@ export class ReportsService {
       let orderBilled = 0;
       const codes = new Set<string>();
       const orderCode = o.code ?? `ORD-${o.id}`;
+      const dispatchList: JourneyDispatch[] = [];
 
       for (const it of o.items) {
         oq.bags += n(it.bags);
@@ -1011,6 +1059,20 @@ export class ReportsService {
             rq.pcs += Math.abs(n(d.pcs));
             rq.kgs += Math.abs(n(d.gram));
             returnCount += 1;
+            dispatchList.push({
+              id: d.id,
+              code: d.code,
+              date: d.dispatchDate.toISOString(),
+              bags: d.bags,
+              pcs: d.pcs,
+              kgs: d.gram,
+              box: d.box,
+              status: d.dispatchStatus,
+              isReturn: true,
+              challanCode: null,
+              challanDate: null,
+              creditNoteCode: (returnsByDispatch.get(d.id) ?? [])[0]?.creditNote.code ?? null,
+            });
             continue;
           }
           dq.bags += n(d.bags);
@@ -1019,6 +1081,21 @@ export class ReportsService {
           dispatchCount += 1;
 
           const ch = challanByDispatch.get(d.id);
+          const billedHere = ch && (ch.challanStatus ?? 'CONFIRMED') !== 'CANCELLED' ? ch : null;
+          dispatchList.push({
+            id: d.id,
+            code: d.code,
+            date: d.dispatchDate.toISOString(),
+            bags: d.bags,
+            pcs: d.pcs,
+            kgs: d.gram,
+            box: d.box,
+            status: d.dispatchStatus,
+            isReturn: false,
+            challanCode: billedHere?.code ?? null,
+            challanDate: billedHere ? billedHere.invDate.toISOString() : null,
+            creditNoteCode: null,
+          });
           if (ch && (ch.challanStatus ?? 'CONFIRMED') !== 'CANCELLED') {
             billedLines += 1;
             codes.add(ch.code);
@@ -1115,6 +1192,7 @@ export class ReportsService {
         returns: returnCount,
         progress,
         stage,
+        dispatchList: dispatchList.sort((a, b) => b.date.localeCompare(a.date)),
       });
     }
 
