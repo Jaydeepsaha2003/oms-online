@@ -59,28 +59,32 @@ export class DesignsService {
     return this.toDto(row);
   }
 
-  /** Distinct existing categories & (category, sub-category) pairs for the
-   *  form's cascading dropdowns — pairs so a chosen category can filter which
-   *  sub-categories are offered, instead of showing every sub-category ever seen. */
+  /** Distinct categories & (category, sub-category) pairs for the form's
+   *  cascading dropdowns — pairs so a chosen category can filter which
+   *  sub-categories are offered, instead of showing every sub-category ever seen.
+   *  Drawn from the Product master as well as existing designs: a sub-category
+   *  added in Products has no design rows yet, and without this it would never
+   *  be offered here — which is exactly when you need to add its first design. */
   async lookups(): Promise<DesignLookups> {
-    const [cats, pairs] = await Promise.all([
+    const [designPairs, productPairs] = await Promise.all([
       this.prisma.design.findMany({
         where: { category: { not: '' } },
-        select: { category: true },
-        distinct: ['category'],
-        orderBy: { category: 'asc' },
-      }),
-      this.prisma.design.findMany({
-        where: { category: { not: '' }, subCategory: { not: '' } },
         select: { category: true, subCategory: true },
         distinct: ['category', 'subCategory'],
-        orderBy: [{ category: 'asc' }, { subCategory: 'asc' }],
+      }),
+      this.prisma.product.findMany({
+        where: { category: { not: '' } },
+        select: { category: true, subCategory: true },
+        distinct: ['category', 'subCategory'],
       }),
     ]);
-    return {
-      categories: cats.map((c) => c.category).filter(Boolean),
-      subCategories: pairs.map((p) => ({ category: p.category, subCategory: p.subCategory })),
-    };
+    const categories = [...new Set([...designPairs, ...productPairs].map((p) => p.category).filter(Boolean))].sort();
+    const seen = new Set<string>();
+    const subCategories = [...designPairs, ...productPairs]
+      .filter((p) => p.category && p.subCategory && !seen.has(`${p.category}|${p.subCategory}`) && seen.add(`${p.category}|${p.subCategory}`))
+      .map((p) => ({ category: p.category, subCategory: p.subCategory }))
+      .sort((a, b) => a.category.localeCompare(b.category) || a.subCategory.localeCompare(b.subCategory));
+    return { categories, subCategories };
   }
 
   async create(dto: CreateDesignDto): Promise<DesignDto> {
