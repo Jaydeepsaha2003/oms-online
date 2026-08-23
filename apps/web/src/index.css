@@ -532,3 +532,33 @@ input[placeholder^='Find' i][aria-invalid='true'],
 input[placeholder^='Filter' i][aria-invalid='true'] {
   border-color: var(--destructive);
 }
+
+/* ── Combo-boxes ───────────────────────────────────────────────────────────
+   A combo-box IS a search box: you type into it and it filters a list. It gets
+   the same thick navy edge so a field you can search never looks like a field
+   you can only type into.
+
+   Set here rather than in the component's own class string for the same reason
+   as the rule above: ~220 call sites pass their own `className`, many carrying
+   borders, and tailwind-merge would let those win. Unlayered CSS does not lose
+   that fight, so every combo-box in the app matches — including ones written
+   later. */
+input[data-slot='combobox'] {
+  border-width: 2px;
+  border-color: var(--search-border);
+}
+
+input[data-slot='combobox']:focus-visible {
+  border-color: var(--search-border);
+  box-shadow: 0 0 0 3px var(--search-ring);
+}
+
+input[data-slot='combobox'][aria-invalid='true'] {
+  border-color: var(--destructive);
+}
+
+/* A field you cannot use should not be the loudest thing on the form. */
+input[data-slot='combobox']:disabled {
+  border-width: 1px;
+  border-color: var(--border);
+}

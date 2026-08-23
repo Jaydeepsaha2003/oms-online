@@ -228,6 +228,32 @@ export interface NotificationDndDto {
 
 export type NotificationDndInput = NotificationDndDto;
 
+/**
+ * One person's quiet hours as an administrator sees them.
+ *
+ * There is exactly ONE window per user — the same record whether the person
+ * sets it themselves in Settings or an administrator sets it for them. That is
+ * deliberate: two competing windows (a "company" one and a "mine" one) would
+ * need a precedence rule, and every precedence rule is a rule somebody has to
+ * remember at 11pm when a reminder does or does not arrive.
+ *
+ * `configured` distinguishes "left at the default" from "deliberately set to
+ * these hours but switched off", which the times alone cannot show.
+ */
+export interface UserDndRow extends NotificationDndDto {
+  userId: string;
+  name: string;
+  email: string;
+  status: string;
+  /** false = this user has never saved a preference; they are on the default. */
+  configured: boolean;
+}
+
+/** Setting quiet hours for somebody else. */
+export interface AdminSetDndInput extends NotificationDndDto {
+  userId: string;
+}
+
 /** Is `at` inside the user's quiet window? Shared so the server's decision to
  *  hold a push and the screen's "you are in DND now" badge can never disagree. */
 export function isWithinDnd(dnd: NotificationDndDto | null | undefined, at: Date = new Date()): boolean {

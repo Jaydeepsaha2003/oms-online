@@ -78,6 +78,27 @@ export class RolesService {
           data: permissionIds.map((permissionId) => ({ roleId: id, permissionId })),
         }),
       );
+      /*
+       * Push the change out to everyone already signed in.
+       *
+       * A signed-in client holds its permission list from whenever its session
+       * was issued, so without this a revoked permission stayed in force until
+       * that person happened to restart the app — days or weeks for a PWA left
+       * open on the shop floor. Taking the Dashboard away from Operators and
+       * still finding them on it was exactly this.
+       *
+       * Bumping tokenVersion invalidates their ACCESS token only. Their refresh
+       * token is untouched and /auth/refresh does not check tokenVersion, so the
+       * client's next request 401s, refreshes transparently, and comes back with
+       * the new permission list. Nobody is signed out and nothing is lost —
+       * which is why this is safe to do on every permission edit.
+       */
+      ops.push(
+        this.prisma.user.updateMany({
+          where: { roles: { some: { roleId: id } } },
+          data: { tokenVersion: { increment: 1 } },
+        }),
+      );
     }
 
     await this.prisma.$transaction(ops);

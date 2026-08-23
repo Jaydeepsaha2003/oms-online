@@ -1,12 +1,15 @@
-import { Body, Controller, Get, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Put, Req } from '@nestjs/common';
 import type { Request } from 'express';
+import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import type {
   NotificationDndDto,
   PushSubscriptionRequest,
   TestNotificationResult,
+  UserDndRow,
   VapidPublicKeyResult,
 } from '@oms/shared';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
+import { Permissions } from '../common/decorators/permissions.decorator';
 import { configuration } from '../config/configuration';
 import { NotificationsGateway } from './notifications.gateway';
 import { PushService } from './push.service';
@@ -30,6 +33,27 @@ export class NotificationsController {
   @Post('dnd')
   setDnd(@Req() req: Request, @Body() body: NotificationDndDto): Promise<NotificationDndDto> {
     return this.prefs.setDnd((req.user as AuthenticatedUser).id, body);
+  }
+
+  /*
+   * Managing everybody else's quiet hours.
+   *
+   * Gated on user:update rather than setting:update — this is staff
+   * administration ("when may I disturb Anil"), not an app-wide switch, and it
+   * writes the same record that person edits in their own Settings. Anyone who
+   * may already edit a user's account may set their hours.
+   */
+
+  @Get('dnd/all')
+  @Permissions(perm(RESOURCES.USER, ACTIONS.VIEW))
+  listDnd(): Promise<UserDndRow[]> {
+    return this.prefs.listDnd();
+  }
+
+  @Put('dnd/:userId')
+  @Permissions(perm(RESOURCES.USER, ACTIONS.UPDATE))
+  setDndFor(@Param('userId') userId: string, @Body() body: NotificationDndDto): Promise<UserDndRow> {
+    return this.prefs.setDndFor(userId, body);
   }
 
   /** Any authenticated user may trigger a test broadcast — it's inert, no @Permissions needed. */

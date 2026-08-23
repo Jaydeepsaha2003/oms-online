@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Check, ChevronsUpDown, Plus } from 'lucide-react';
+import { Check, ChevronDown, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { isTouchPrimary } from '@/lib/device';
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
@@ -95,6 +95,17 @@ export function Combobox({
     [options],
   );
   const labelFor = React.useCallback((v: string) => opts.find((o) => o.value === v)?.label ?? v, [opts]);
+
+  /*
+   * Does "" mean "all of them" here, or "nothing chosen yet"?
+   *
+   * A filter is built as options={['', ...list]}: the bare "" row is a real
+   * choice that clears the filter, and while it is selected the field shows the
+   * placeholder — "All parties", "All products". That is the filter's CURRENT
+   * STATE, not a hint, so it must not be dimmed like one. A field with no ""
+   * option has a genuine placeholder and keeps the faint treatment.
+   */
+  const emptyIsChoice = React.useMemo(() => opts.some((o) => o.value === ''), [opts]);
 
   const [open, setOpen] = React.useState(false);
   const [text, setText] = React.useState(() => labelFor(value));
@@ -539,7 +550,23 @@ export function Combobox({
             aria-autocomplete="list"
             autoComplete="off"
             inputMode={inputMode}
-            className={cn(FIELD, wantsDigits && touchDevice && 'pr-16', className)}
+            // Styled from index.css off this attribute, not from a class here:
+            // ~220 call sites pass their own `className` and many carry borders,
+            // which tailwind-merge would let win over anything set in FIELD.
+            data-slot="combobox"
+            className={cn(
+              FIELD,
+              wantsDigits && touchDevice && 'pr-16',
+              // A filter sitting on "" is not an EMPTY field, it is a field
+              // reading "All parties" — the current state of the filter. The
+              // placeholder colour is deliberately faint so that a real
+              // placeholder reads as absent, which is exactly wrong here and is
+              // why "All Parties" looked greyed out. Show it as ordinary text
+              // instead, but only where "" is genuinely one of the choices; a
+              // true hint ("Type the party name…") stays faint.
+              emptyIsChoice && 'placeholder:text-foreground placeholder:font-medium',
+              className,
+            )}
           />
           {/* Escape hatch out of the keypad. Only while the keypad is actually
               up, and only where one exists — on desktop the letter keys are
@@ -580,7 +607,13 @@ export function Combobox({
               ABC
             </button>
           )}
-          <ChevronsUpDown className="pointer-events-none absolute top-1/2 right-2 size-4 -translate-y-1/2 opacity-50" />
+          <ChevronDown
+            aria-hidden
+            className={cn(
+              'text-muted-foreground pointer-events-none absolute top-1/2 right-2 size-4 -translate-y-1/2 transition-transform',
+              open && !disabled && 'rotate-180',
+            )}
+          />
         </div>
       </PopoverAnchor>
       <PopoverContent
@@ -658,7 +691,9 @@ export function Combobox({
                   // label (options={['', ...list]}) — display-only, fall back to the
                   // placeholder ("All customers", etc.) instead of an empty row; the
                   // field's own text/search state is untouched (still keys off '').
-                  <span className={cn('truncate', !o.label && 'text-muted-foreground')}>{o.label || placeholder}</span>
+                  // It is a real choice, so it is set in ordinary text like every
+                  // other row rather than dimmed as if it were absent.
+                  <span className="truncate">{o.label || placeholder}</span>
                 )}
               </div>
             ))

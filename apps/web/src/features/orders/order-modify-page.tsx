@@ -1600,7 +1600,7 @@ function RateChoiceDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onDone({ kind: 'keep' })}>
-      <DialogContent className="sm:max-w-xl">
+      <DialogContent className="w-[calc(100vw-2rem)] overflow-x-hidden sm:max-w-xl [&>*]:min-w-0">
         <DialogHeader>
           <DialogTitle>This changes the line’s rate</DialogTitle>
         </DialogHeader>
@@ -1627,14 +1627,14 @@ function RateChoiceDialog({
             no way to tell that apart, so "use the current price" read as an
             unexplained jump. A real table (not a 3-column grid) so the right-hand
             column can never be pushed out of the dialog. */}
-        <div className="overflow-hidden rounded-md border">
-          <table className="w-full text-sm">
+        <div className="overflow-x-auto rounded-md border">
+          <table className="w-full min-w-max text-sm">
             <thead>
               <tr className="text-muted-foreground bg-muted/50 border-b text-[11px] font-bold tracking-wide uppercase">
-                <th className="px-3 py-1.5 text-left font-bold">Part</th>
-                <th className="px-3 py-1.5 text-right font-bold">On this line</th>
-                <th className="px-3 py-1.5 text-right font-bold">Rate list</th>
-                <th className="px-3 py-1.5 text-right font-bold">Difference</th>
+                <th className="px-2.5 py-1.5 text-left font-bold sm:px-3">Part</th>
+                <th className="px-2.5 py-1.5 text-right font-bold sm:px-3">On this line</th>
+                <th className="px-2.5 py-1.5 text-right font-bold sm:px-3">Rate list</th>
+                <th className="px-2.5 py-1.5 text-right font-bold sm:px-3">Difference</th>
               </tr>
             </thead>
             <tbody>
@@ -1650,7 +1650,7 @@ function RateChoiceDialog({
                   const diff = round2(now - was);
                   return (
                     <tr key={name} className={cn('border-b last:border-b-0', moved && 'bg-amber-50 dark:bg-amber-400/10')}>
-                      <td className="px-3 py-1.5">
+                      <td className="px-2.5 py-1.5 sm:px-3">
                         <span className="text-muted-foreground">{name} ₹</span>
                         {moved && (
                           <span className="ml-1.5 text-[11px] font-bold tracking-wide text-amber-700 uppercase dark:text-amber-400">
@@ -1658,13 +1658,13 @@ function RateChoiceDialog({
                           </span>
                         )}
                       </td>
-                      <td className="px-3 py-1.5 text-right tabular-nums">{inr(was)}</td>
-                      <td className={cn('px-3 py-1.5 text-right tabular-nums', moved && 'font-bold text-amber-700 dark:text-amber-400')}>
+                      <td className="px-2.5 py-1.5 text-right tabular-nums sm:px-3">{inr(was)}</td>
+                      <td className={cn('px-2.5 py-1.5 text-right tabular-nums sm:px-3', moved && 'font-bold text-amber-700 dark:text-amber-400')}>
                         {inr(now)}
                       </td>
                       <td
                         className={cn(
-                          'px-3 py-1.5 text-right font-semibold tabular-nums',
+                          'px-2.5 py-1.5 text-right font-semibold tabular-nums sm:px-3',
                           !moved && 'text-muted-foreground/50',
                           moved && diff > 0 && 'text-rose-600 dark:text-rose-400',
                           moved && diff < 0 && 'text-emerald-600 dark:text-emerald-400',
@@ -1685,12 +1685,12 @@ function RateChoiceDialog({
                   );
                 })}
               <tr className="bg-muted/30 border-t font-semibold">
-                <td className="px-3 py-1.5">Line total</td>
-                <td className="px-3 py-1.5 text-right tabular-nums">{inr(oldRate)}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums">{inr(newRate)}</td>
+                <td className="px-2.5 py-1.5 sm:px-3">Line total</td>
+                <td className="px-2.5 py-1.5 text-right tabular-nums sm:px-3">{inr(oldRate)}</td>
+                <td className="px-2.5 py-1.5 text-right tabular-nums sm:px-3">{inr(newRate)}</td>
                 <td
                   className={cn(
-                    'px-3 py-1.5 text-right tabular-nums',
+                    'px-2.5 py-1.5 text-right tabular-nums sm:px-3',
                     newRate > oldRate && 'text-rose-600 dark:text-rose-400',
                     newRate < oldRate && 'text-emerald-600 dark:text-emerald-400',
                   )}
@@ -1720,7 +1720,7 @@ function RateChoiceDialog({
           </div>
         ) : null}
 
-        <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:justify-end">
+        <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
           {custom ? (
             <>
               <Button variant="outline" onClick={() => setCustom(false)}>
@@ -1739,16 +1739,23 @@ function RateChoiceDialog({
               {/* Keep is not always "the old total": on a design swap it holds
                   this line's product rate and takes the new design rate, so the
                   label states the figure it will actually apply. */}
-              <Button variant="outline" onClick={() => onDone({ kind: 'keep' })}>
-                Keep {inr(keepRate ?? oldRate)}
-                <span className="text-muted-foreground ml-1 text-[11px] font-normal">
-                  {productChanged ? '(this line)' : '(my product + new design)'}
+              <Button
+                variant="outline"
+                onClick={() => onDone({ kind: 'keep' })}
+                className="h-auto flex-col gap-0 py-1.5 leading-tight"
+              >
+                <span>Keep {inr(keepRate ?? oldRate)}</span>
+                <span className="text-muted-foreground text-[10.5px] font-normal">
+                  {productChanged ? 'this line' : 'my product + new design'}
                 </span>
               </Button>
               <Button variant="outline" onClick={() => setCustom(true)}>
                 Custom rate…
               </Button>
-              <Button onClick={() => onDone({ kind: 'new' })}>Use {inr(newRate)} (rate list)</Button>
+              <Button onClick={() => onDone({ kind: 'new' })} className="h-auto flex-col gap-0 py-1.5 leading-tight">
+                <span>Use {inr(newRate)}</span>
+                <span className="text-[10.5px] font-normal opacity-80">rate list</span>
+              </Button>
             </>
           )}
         </DialogFooter>

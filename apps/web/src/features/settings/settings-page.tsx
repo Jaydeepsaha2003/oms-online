@@ -18,6 +18,7 @@ import { useAutoSizePcs } from '@/lib/auto-size-pcs';
 import { useOrderLookups } from '@/features/orders/use-orders';
 import { CrmReminderCard } from '@/features/crm/crm-settings-card';
 import { MyDevicesCard } from './my-devices-card';
+import { TeamDndCard } from './team-dnd-card';
 import { TestNotificationCard } from './test-notification-card';
 import { DatabaseBackupCard } from './database-backup-card';
 import { DesignTrackCard } from './design-track-card';
@@ -112,6 +113,9 @@ export function SettingsPage() {
           <PreferencesCard />
           <MyDevicesCard />
           <ReminderDndCard />
+          {/* Everyone else's quiet hours — only for someone who may already look
+              at the user list. The card fetches nothing when it isn't rendered. */}
+          {can('user:view') && <TeamDndCard />}
           <TestNotificationCard />
         </div>
       )}

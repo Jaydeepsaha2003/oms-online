@@ -95,6 +95,12 @@ export class UsersService {
         data: {
           ...(dto.name !== undefined ? { name: dto.name } : {}),
           ...(dto.status !== undefined ? { status: dto.status } : {}),
+          // Changing which roles someone holds changes what they may do, so the
+          // permission list their signed-in client is holding is now wrong.
+          // Bumping tokenVersion makes their next request refresh and pick up
+          // the new list; the refresh token is untouched, so they stay signed
+          // in. Same reasoning as RolesService.update.
+          ...(dto.roleIds ? { tokenVersion: { increment: 1 } } : {}),
         },
       }),
     ];

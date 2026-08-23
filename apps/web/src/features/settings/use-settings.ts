@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ChallanFieldSettingsDto, ChallanFieldSettingsInput, ChallanTermsDto, ChallanTermsInput, CompanyProfileDto, CompanyProfileInput, DispatchAlertSettingsDto, DispatchAlertSettingsInput, DispatchBagThresholdDto, DispatchBagThresholdInput, OrderFooterDto, OrderFooterInput, OrderOptionDto, OrderOptionInput, OrderQtyLayout, OrderTermsDto, OrderTermsInput, QuotationTermsDto, QuotationTermsInput, TcsSettingDto, TcsSettingInput, NotificationDndDto, NotificationDndInput } from '@oms/shared';
+import type { ChallanFieldSettingsDto, ChallanFieldSettingsInput, ChallanTermsDto, ChallanTermsInput, CompanyProfileDto, CompanyProfileInput, DispatchAlertSettingsDto, DispatchAlertSettingsInput, DispatchBagThresholdDto, DispatchBagThresholdInput, OrderFooterDto, OrderFooterInput, OrderOptionDto, OrderOptionInput, OrderQtyLayout, OrderTermsDto, OrderTermsInput, QuotationTermsDto, QuotationTermsInput, TcsSettingDto, TcsSettingInput, NotificationDndDto, NotificationDndInput, UserDndRow, AdminSetDndInput } from '@oms/shared';
 import { http } from '@/lib/api';
 
 const KEY = ['settings'] as const;
@@ -14,6 +14,7 @@ const DISPATCH_BAG_THRESHOLD_KEY = ['dispatch-bag-threshold'] as const;
 const DISPATCH_ALERTS_KEY = ['dispatch-alerts'] as const;
 const CHALLAN_FIELDS_KEY = ['challan-fields'] as const;
 const NOTIFY_DND_KEY = ['notification-dnd'] as const;
+const NOTIFY_DND_ALL_KEY = ['notification-dnd', 'all'] as const;
 
 export function useCompany() {
   return useQuery({
@@ -147,6 +148,34 @@ export function useUpdateNotificationDnd() {
   return useMutation({
     mutationFn: (input: NotificationDndInput) => http.post<NotificationDndDto>('/notifications/dnd', input),
     onSuccess: () => qc.invalidateQueries({ queryKey: NOTIFY_DND_KEY }),
+  });
+}
+
+/** Everyone's quiet hours, for the administration screen. Needs user:view. */
+export function useAllNotificationDnd(enabled = true) {
+  return useQuery({
+    queryKey: NOTIFY_DND_ALL_KEY,
+    queryFn: () => http.get<UserDndRow[]>('/notifications/dnd/all'),
+    enabled,
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * Set quiet hours for another user. Needs user:update.
+ *
+ * Invalidates the personal key as well: an administrator editing their OWN row
+ * writes the same record their Settings card reads, and the two must not sit on
+ * screen disagreeing.
+ */
+export function useSetUserNotificationDnd() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, ...dnd }: AdminSetDndInput) => http.put<UserDndRow>(`/notifications/dnd/${userId}`, dnd),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: NOTIFY_DND_ALL_KEY });
+      void qc.invalidateQueries({ queryKey: NOTIFY_DND_KEY });
+    },
   });
 }
 

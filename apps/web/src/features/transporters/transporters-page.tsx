@@ -42,7 +42,6 @@ import {
 } from './use-transporters';
 
 /** Amount prefixed with the rupee symbol; dash when unknown. */
-const money = (n: number | null) => (n == null ? '—' : `₹${n.toLocaleString('en-IN')}`);
 
 /** Matches the Products / Customers / Orders grids: Inter, semibold, near-black. */
 const TEXT_CELL = 'text-[13px] font-semibold text-slate-800 dark:text-slate-200';
@@ -126,8 +125,6 @@ function CustomerCount({ t }: { t: TransporterDto }) {
 
 const COLUMNS: DataColumn<TransporterDto>[] = [
   { id: 'name', label: 'Transport name', pin: 'left0', fixed: true, cell: (t) => <span className={cn(TEXT_CELL, 'text-indigo-700 dark:text-indigo-300')}>{t.name}</span> },
-  { id: 'packing', label: 'Packing', align: 'right', cell: (t) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(t.packing)}</span> },
-  { id: 'freight', label: 'Freight', align: 'right', cell: (t) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(t.freight)}</span> },
   {
     id: 'customers',
     label: 'Customers',
@@ -185,15 +182,7 @@ export function TransportersPage() {
           {formatDateShort(t.updatedAt)}
         </span>
       </div>
-      <div className="grid grid-cols-3 gap-2 text-[12px]">
-        <div>
-          <p className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">Packing</p>
-          <p className="font-bold tabular-nums text-slate-800 dark:text-slate-200">{money(t.packing)}</p>
-        </div>
-        <div>
-          <p className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">Freight</p>
-          <p className="font-bold tabular-nums text-slate-800 dark:text-slate-200">{money(t.freight)}</p>
-        </div>
+      <div className="text-[12px]">
         <div>
           <p className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">Customers</p>
           <CustomerCount t={t} />
@@ -397,14 +386,23 @@ function TransporterDialog({
   const saving = create.isPending || update.isPending;
 
   const [name, setName] = useState(transporter?.name ?? '');
-  const [packing, setPacking] = useState(transporter?.packing?.toString() ?? '');
-  const [freight, setFreight] = useState(transporter?.freight?.toString() ?? '');
 
-  const numOrNull = (v: string) => (v.trim() === '' || Number.isNaN(Number(v)) ? null : Number(v));
-
+  /*
+   * Packing / Freight are deliberately NOT edited here any more.
+   *
+   * Challan pricing reads `trans_rates` (the per-customer Transporter Rates
+   * screen) and has never read these two fields; their only job was to seed a
+   * newly imported customer. Keeping an editable figure that does not price
+   * anything invited people to "fix" freight here and wonder why the challan
+   * did not change. The columns stay in the database untouched — nothing is
+   * deleted — they are simply no longer shown or edited.
+   *
+   * Omitting them from the payload leaves any stored value as it is: the API
+   * only writes a field the request actually carries.
+   */
   const submit = () => {
     if (!name.trim()) return toast.error('Transporter name is required');
-    const input = { name: name.trim(), packing: numOrNull(packing), freight: numOrNull(freight) };
+    const input = { name: name.trim() };
     const opts = {
       onSuccess: () => {
         toast.success(isEdit ? 'Transporter updated' : 'Transporter created');
@@ -452,16 +450,6 @@ function TransporterDialog({
               onChange={(e) => setName(e.target.value)}
               autoFocus
             />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label>Packing</Label>
-              <Input type="number" step="any" value={packing} onChange={(e) => setPacking(e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label>Freight</Label>
-              <Input type="number" step="any" value={freight} onChange={(e) => setFreight(e.target.value)} />
-            </div>
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>
