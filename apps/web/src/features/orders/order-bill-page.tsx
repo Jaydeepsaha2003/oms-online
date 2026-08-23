@@ -450,15 +450,23 @@ export function OrderBillPage() {
                   // The same stored date reads differently per document: an order is
                   // DUE by it, a quotation merely stops being valid.
                   [isQuotation ? 'Valid Till' : 'Due Date', fmtDate(order.completionDate)],
-                ] as const).map(([label, value]) => (
-                  <tr key={label}>
-                    {/* Label — right-aligned so the colon column always lines up */}
-                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{label}</td>
-                    {/* Dedicated colon column — gives perfect vertical alignment */}
-                    <td style={{ textAlign: 'center', padding: '0 4px', whiteSpace: 'nowrap' }}>:</td>
-                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap', paddingLeft: 6 }}>{value}</td>
-                  </tr>
-                ))}
+                ] as const).map(([label, value], i, rows) => {
+                  /* A hairline under each row, so Order ID / PO No / dates read
+                     as separate facts rather than one block of text. Light
+                     enough not to compete with the items table below, and
+                     skipped on the last row so the group does not end on a rule
+                     with nothing under it. */
+                  const rule = i < rows.length - 1 ? { borderBottom: '1px solid #d7dbe3' } : undefined;
+                  return (
+                    <tr key={label}>
+                      {/* Label — right-aligned so the colon column always lines up */}
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap', padding: '3px 0', ...rule }}>{label}</td>
+                      {/* Dedicated colon column — gives perfect vertical alignment */}
+                      <td style={{ textAlign: 'center', padding: '3px 4px', whiteSpace: 'nowrap', ...rule }}>:</td>
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap', padding: '3px 0 3px 6px', ...rule }}>{value}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

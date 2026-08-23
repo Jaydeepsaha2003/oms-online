@@ -10,7 +10,7 @@ import {
   Undo2,
   Users,
 } from 'lucide-react';
-import type { JourneyDispatch, JourneyEvent, JourneyOrder, JourneyStage, OrderJourneyReport } from '@oms/shared';
+import type { JourneyChallan, JourneyDispatch, JourneyEvent, JourneyOrder, JourneyStage, OrderJourneyReport } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { Card, CardContent } from '@/components/ui/card';
@@ -345,7 +345,7 @@ function OrderTrack({ o, unit, index }: { o: JourneyOrder; unit: string; index: 
       </div>
       </button>
 
-      {open && <DispatchDetail rows={o.dispatchList} unit={unit} />}
+      {open && <OrderDetail o={o} unit={unit} />}
     </div>
   );
 }
@@ -361,23 +361,24 @@ function OrderTrack({ o, unit, index }: { o: JourneyOrder; unit: string; index: 
 function DispatchDetail({ rows, unit }: { rows: JourneyDispatch[]; unit: string }) {
   if (!rows.length) {
     return (
-      <p className="text-muted-foreground border-t px-3 py-4 text-center text-[12px] font-medium">
+      <p className="text-muted-foreground py-3 text-center text-[12px] font-medium">
         Nothing dispatched against this order yet.
       </p>
     );
   }
   const qtyOf = (d: JourneyDispatch) => (unit === 'kgs' ? d.kgs : unit === 'pcs' ? d.pcs : d.bags) ?? 0;
   return (
-    <div className="border-t px-3 py-2">
-      <div className="overflow-x-auto">
-        <table className="w-full text-[12px]">
+    <div className="overflow-x-auto">
+      <div className="min-w-0">
+        <table className="w-full min-w-max text-[12px]">
           <thead>
-            <tr className="text-muted-foreground text-[10.5px] font-bold tracking-wide uppercase">
-              <th className="py-1 pr-3 text-left font-bold">Dispatch</th>
-              <th className="py-1 pr-3 text-left font-bold">Date</th>
-              <th className="py-1 pr-3 text-right font-bold">Qty</th>
-              <th className="py-1 pr-3 text-left font-bold">Challan</th>
-              <th className="py-1 text-left font-bold">Billed on</th>
+            <tr className="text-muted-foreground">
+              <th className={TH}>Dispatch</th>
+              <th className={TH}>Date</th>
+              <th className={TH}>Item</th>
+              <th className={THR}>Qty</th>
+              <th className={TH}>Challan</th>
+              <th className={TH}>Billed on</th>
             </tr>
           </thead>
           <tbody className="[&_td]:border-t [&_td]:border-slate-200 [&_td]:py-1.5 [&_td]:pr-3 dark:[&_td]:border-white/10">
@@ -389,6 +390,10 @@ function DispatchDetail({ rows, unit }: { rows: JourneyDispatch[]; unit: string 
                   </span>
                 </td>
                 <td className="text-muted-foreground font-medium tabular-nums whitespace-nowrap">{formatDate(d.date)}</td>
+                <td className="font-semibold">
+                  {d.productName ?? '—'}
+                  {d.design && <span className="text-muted-foreground ml-1 font-normal">· {d.design}</span>}
+                </td>
                 {/* A return carries negative quantities — shown signed, because
                     the sign is the fact. */}
                 <td className={cn('text-right font-bold tabular-nums', d.isReturn && 'text-rose-700 dark:text-rose-400')}>
@@ -406,6 +411,219 @@ function DispatchDetail({ rows, unit }: { rows: JourneyDispatch[]; unit: string 
                 <td className="text-muted-foreground font-medium tabular-nums whitespace-nowrap">
                   {d.challanDate ? formatDate(d.challanDate) : '—'}
                 </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/** Shared chrome for the three groups, so they read as one sequence. */
+function Group({
+  n,
+  title,
+  count,
+  children,
+}: {
+  n: number;
+  title: string;
+  count: number;
+  children: ReactNode;
+}) {
+  return (
+    <section className="min-w-0">
+      <header className="mb-1.5 flex items-center gap-2">
+        <span className="bg-muted text-muted-foreground flex size-5 shrink-0 items-center justify-center rounded-full text-[10.5px] font-bold tabular-nums">
+          {n}
+        </span>
+        <h4 className="text-[11px] font-bold tracking-[0.09em] text-slate-600 uppercase dark:text-slate-300">{title}</h4>
+        <span className="text-muted-foreground text-[11px] font-semibold tabular-nums">{count}</span>
+      </header>
+      {children}
+    </section>
+  );
+}
+
+const TH = 'py-1 pr-3 text-left text-[10px] font-bold tracking-wide uppercase';
+const THR = 'py-1 pr-3 text-right text-[10px] font-bold tracking-wide uppercase';
+const TD = '[&_td]:border-t [&_td]:border-slate-200 [&_td]:py-1.5 [&_td]:pr-3 dark:[&_td]:border-white/10';
+
+/** A quantity in whichever units the row actually carries — a line ordered in
+ *  pcs must not be reported in bags just because bags is the page's unit. */
+function Qty({ bags, pcs, kgs, box }: { bags?: number | null; pcs?: number | null; kgs?: number | null; box?: number | null }) {
+  const parts = [
+    [bags, 'b'],
+    [pcs, 'pcs'],
+    [kgs, 'kg'],
+    [box, 'box'],
+  ].filter(([v]) => !!v) as [number, string][];
+  if (!parts.length) return <span className="text-muted-foreground">—</span>;
+  return (
+    <span className="tabular-nums whitespace-nowrap">
+      {parts.map(([v, u], i) => (
+        <span key={u}>
+          {i > 0 && <span className="text-muted-foreground"> · </span>}
+          {num(v)}
+          <span className="text-muted-foreground ml-0.5 text-[10px] font-semibold">{u}</span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/**
+ * What an opened order row shows: the same work in the three stages it passes
+ * through — ORDERED, then DISPATCHED, then BILLED.
+ *
+ * Grouped rather than run together because each stage answers a different
+ * question and is measured in different things: an order line is a promise with
+ * a quantity still owed, a dispatch is a physical movement on a date, a challan
+ * is a money document with charges and tax. One flat table forced all three into
+ * the same columns and served none of them.
+ */
+function OrderDetail({ o, unit }: { o: JourneyOrder; unit: string }) {
+  return (
+    <div className="space-y-4 border-t bg-slate-50/60 px-3 py-3 dark:bg-white/[0.02]">
+      {/* 1 — what was asked for, and what is still owed on each line */}
+      <Group n={1} title="Ordered" count={o.orderLines.length}>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-max text-[12px]">
+            <thead>
+              <tr className="text-muted-foreground">
+                <th className={TH}>Item</th>
+                <th className={TH}>Design</th>
+                <th className={THR}>Ordered</th>
+                <th className={THR}>Dispatched</th>
+                <th className={THR}>Still owed</th>
+                <th className={THR}>Rate</th>
+                <th className={THR}>Amount</th>
+              </tr>
+            </thead>
+            <tbody className={TD}>
+              {o.orderLines.map((l) => {
+                const owed = !!(l.remBags || l.remPcs || l.remKgs || l.remBox);
+                return (
+                  <tr key={l.id}>
+                    <td className="font-semibold">{l.productName ?? '—'}</td>
+                    <td className="text-muted-foreground">{l.design ?? '—'}</td>
+                    <td className="text-right"><Qty bags={l.bags} pcs={l.pcs} kgs={l.kgs} box={l.box} /></td>
+                    <td className="text-right"><Qty bags={l.dispBags} pcs={l.dispPcs} kgs={l.dispKgs} box={l.dispBox} /></td>
+                    {/* The only figure here anyone acts on, so it is the only one coloured. */}
+                    <td className={cn('text-right font-bold', owed ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400')}>
+                      {owed ? <Qty bags={l.remBags} pcs={l.remPcs} kgs={l.remKgs} box={l.remBox} /> : 'clear'}
+                    </td>
+                    <td className="text-right tabular-nums">{l.rate != null ? inrCompact(l.rate) : '—'}</td>
+                    <td className="text-right font-semibold tabular-nums">{inrCompact(l.amount)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Group>
+
+      {/* 2 — what physically moved */}
+      <Group n={2} title="Dispatches" count={o.dispatchList.length}>
+        <DispatchDetail rows={o.dispatchList} unit={unit} />
+      </Group>
+
+      {/* 3 — what was billed, document by document */}
+      <Group n={3} title="Challans" count={o.challanList.length}>
+        {o.challanList.length === 0 ? (
+          <p className="text-muted-foreground py-3 text-center text-[12px] font-medium">Nothing billed against this order yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {o.challanList.map((c) => (
+              <ChallanCard key={c.id} c={c} />
+            ))}
+          </div>
+        )}
+      </Group>
+    </div>
+  );
+}
+
+/** One challan: every figure on the document, then the lines it billed. */
+function ChallanCard({ c }: { c: JourneyChallan }) {
+  const charges: [string, number, string?][] = [
+    ['Taxable', c.taxable],
+    [`GST${c.gstPercent ? ` ${c.gstPercent}%` : ''}`, c.gst],
+    ['Packing', c.packing],
+    ['Freight', c.freight],
+    ['Box / pouch', c.pouch],
+    [`TCS${c.tcsPercent ? ` ${c.tcsPercent}%` : ''}`, c.tcs],
+    ['Other charges', c.otherCharges],
+    [`TDS${c.tdsPercent ? ` ${c.tdsPercent}%` : ''}`, -c.tds],
+  ];
+  return (
+    <div className="bg-card overflow-hidden rounded-md border border-slate-200 dark:border-white/10">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-slate-200 bg-slate-50 px-2.5 py-1.5 dark:border-white/10 dark:bg-white/[0.03]">
+        <span className="text-[12.5px] font-bold text-emerald-700 dark:text-emerald-400">{c.code ?? `#${c.id}`}</span>
+        <span className="text-muted-foreground text-[11.5px] font-medium tabular-nums">{formatDate(c.date)}</span>
+        {c.transaction && <span className="text-muted-foreground text-[10.5px] font-bold tracking-wide uppercase">{c.transaction}</span>}
+        {c.transporter && <span className="text-muted-foreground truncate text-[11px]">via {c.transporter}</span>}
+        <span className="ml-auto text-[13px] font-bold tabular-nums" title={inrFull(c.total)}>
+          {inrCompact(c.total)}
+        </span>
+      </header>
+
+      <div className="flex flex-wrap gap-x-4 gap-y-1 px-2.5 py-2 text-[11.5px]">
+        {charges
+          // A charge that was not applied is noise on a document with six of them.
+          .filter(([, v], i) => i === 0 || Math.abs(v) > 0)
+          .map(([label, v]) => (
+            <span key={label} className="whitespace-nowrap">
+              <span className="text-muted-foreground">{label} </span>
+              <span className={cn('font-semibold tabular-nums', v < 0 && 'text-rose-600 dark:text-rose-400')}>
+                {v < 0 ? `−${inrCompact(-v)}` : inrCompact(v)}
+              </span>
+            </span>
+          ))}
+        <span className="whitespace-nowrap">
+          <span className="text-muted-foreground">B </span>
+          <span className="font-semibold tabular-nums text-blue-700 dark:text-blue-400">{inrCompact(c.bank)}</span>
+          <span className="text-muted-foreground"> · C </span>
+          <span className="font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">{inrCompact(c.cash)}</span>
+        </span>
+        {c.dueDate && (
+          <span className="whitespace-nowrap">
+            <span className="text-muted-foreground">Due </span>
+            <span className="font-semibold tabular-nums">{formatDate(c.dueDate)}</span>
+          </span>
+        )}
+      </div>
+
+      {/* Said out loud rather than hidden: on ~5% of challans the stored total
+          does not equal the sum of the parts above it. Printing the parts and a
+          total that disagree, with no note, is what makes a report untrustworthy. */}
+      {Math.abs(c.unexplained) > 1 && (
+        <p className="border-t border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-900 dark:border-amber-400/40 dark:bg-amber-400/10 dark:text-amber-100">
+          The parts above come to {inrCompact(c.total - c.unexplained)} — {inrCompact(Math.abs(c.unexplained))}{' '}
+          {c.unexplained > 0 ? 'less than' : 'more than'} the stored total of {inrCompact(c.total)}.
+        </p>
+      )}
+
+      <div className="overflow-x-auto border-t border-slate-200 dark:border-white/10">
+        <table className="w-full min-w-max text-[12px]">
+          <thead>
+            <tr className="text-muted-foreground">
+              <th className={cn(TH, 'pl-2.5')}>Billed item</th>
+              <th className={TH}>Design</th>
+              <th className={THR}>Qty</th>
+              <th className={THR}>Rate</th>
+              <th className={cn(THR, 'pr-2.5')}>Amount</th>
+            </tr>
+          </thead>
+          <tbody className={TD}>
+            {c.lines.map((l, i) => (
+              <tr key={`${l.productName}-${i}`}>
+                <td className="pl-2.5 font-semibold">{l.productName ?? '—'}</td>
+                <td className="text-muted-foreground">{l.design ?? '—'}</td>
+                <td className="text-right"><Qty bags={l.bags} pcs={l.pcs} kgs={l.kgs} box={l.box} /></td>
+                <td className="text-right tabular-nums">{l.price != null ? inrCompact(l.price) : '—'}</td>
+                <td className="pr-2.5 text-right font-semibold tabular-nums">{l.amount != null ? inrCompact(l.amount) : '—'}</td>
               </tr>
             ))}
           </tbody>
@@ -459,8 +677,9 @@ function Timeline({ events }: { events: JourneyEvent[] }) {
 
 export function OrderJourneyPage() {
   const filters = useReportFilters();
-  // Active by default: the question this page is usually asked is "what is still
-  // owed to this party", not "everything we ever sold them".
+  // Not-started by default: the question this page is usually asked first is
+  // "what has nobody begun yet", i.e. orders with zero dispatches against them.
+  // "All orders" is the other tab for everything else.
   const [activeOnly, setActiveOnly] = useState(true);
   const { data, isFetching } = useOrderJourney({ ...filters.query, activeOnly: activeOnly || undefined });
   const j: OrderJourneyReport | undefined = data;
@@ -509,7 +728,7 @@ export function OrderJourneyPage() {
           <div className="flex items-center gap-1 rounded-[4px] border border-amber-300 bg-amber-50/40 p-0.5 dark:border-amber-400/40">
             {(
               [
-                [true, 'Active orders'],
+                [true, 'Not started'],
                 [false, 'All orders'],
               ] as const
             ).map(([val, label]) => (

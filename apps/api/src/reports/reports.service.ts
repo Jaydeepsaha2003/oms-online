@@ -2,9 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { RETURNED_DISPATCH_STATUS } from '@oms/shared';
 import type {
   BusinessOverview,
+  JourneyChallan,
   JourneyDispatch,
   JourneyEvent,
   JourneyOrder,
+  JourneyOrderLine,
   JourneyStage,
   OrderJourneyReport,
   CollectionsReport,
@@ -1052,14 +1054,34 @@ export class ReportsService {
      * ask for exactly that.
      */
     const allowedIds = await this.journeyCustomerIds(f);
+    /*
+     * "Everything except CANCELLED", expressed as a positive `in` list.
+     *
+     * `status: { not: 'CANCELLED' }` is the obvious way to write it and it broke
+     * the page: SQLite has a bound-parameter ceiling, Prisma splits a large
+     * query to stay under it, and a negation filter blocks that split — so with
+     * no party chosen (the whole book, nested includes and all) the request died
+     * with "Query parameter limit exceeded ... the negation filters used prevent
+     * the query from being split". The page 500'd until you picked a party.
+     *
+     * The statuses are read from the data rather than hard-coded, so a status
+     * added later is included without anyone remembering to come back here.
+     */
+    const statuses = (await this.prisma.order.findMany({ select: { status: true }, distinct: ['status'] }))
+      .map((r) => r.status)
+      .filter((st) => (st ?? '').trim().toUpperCase() !== 'CANCELLED');
     const orderWhere: Prisma.OrderWhereInput = {
-      status: { not: 'CANCELLED' },
+      status: { in: statuses },
       ...(allowedIds ? { customerId: { in: allowedIds } } : {}),
       // Deliberately NOT date-filtered here. The party filter is what keeps this
       // query small; the dates are applied in memory below, because the active
       // window has to see orders OUTSIDE the current range to be able to move
       // the range onto them.
     };
+
+    const itemStatuses = (await this.prisma.orderItem.findMany({ select: { status: true }, distinct: ['status'] }))
+      .map((r) => r.status)
+      .filter((st) => (st ?? '').trim().toUpperCase() !== 'CANCELLED');
 
     const orders = await this.prisma.order.findMany({
       where: orderWhere,
@@ -1072,9 +1094,16 @@ export class ReportsService {
         completionDate: true,
         priority: true,
         items: {
-          where: { status: { not: 'CANCELLED' } },
+          // Positive list, not `{ not: 'CANCELLED' }` — same reason as the order
+          // status above: a negation anywhere in this query stops Prisma
+          // splitting it, and this one is nested inside the include that makes
+          // the query big in the first place.
+          where: { status: { in: itemStatuses } },
           select: {
             id: true,
+            productName: true,
+            design: true,
+            designType: true,
             bags: true,
             pcs: true,
             gram: true,
@@ -1087,19 +1116,48 @@ export class ReportsService {
       },
       orderBy: [{ orderDate: 'desc' }, { id: 'desc' }],
     });
-    // The WHERE above already did this; kept as a cheap guard so a future change
-    // to either side can't silently widen the scope.
-    const scopedAll = orders.filter((o) => fx.custOk(o.customerId) && fx.dateOk(o.orderDate));
+    /*
+     * The WHERE above already applied the party and date scope; repeated as a
+     * cheap guard so a future change to either side can't silently widen it.
+     *
+     * The `items.length` test is NOT a guard, it is a fix. Cancelling every line
+     * of an order leaves the order header itself un-cancelled, and the include
+     * above filters cancelled lines out — so such an order arrives here with an
+     * EMPTY items array, and every test written over that array answers
+     * vacuously: `every()` said "nothing has shipped" and `some()` said "nothing
+     * is outstanding" at the same time. ORD-1000 and ORD-1090 were sitting in
+     * the not-started list wearing a DISPATCHED badge because of it.
+     *
+     * An order with no live lines has no journey to report, so it is dropped
+     * here rather than patched at each of the places that would trip over it.
+     */
+    const scopedAll = orders.filter((o) => o.items.length > 0 && fx.custOk(o.customerId) && fx.dateOk(o.orderDate));
 
     /*
-     * "Active" = this order still has quantity to dispatch (ordered − dispatched
-     * > 0 on any line), the same test the dispatch pending pool applies. A
-     * RETURNED row carries negative quantity, so it correctly reopens an order
-     * here too.
+     * "Active" = NOT ONE THING HAS SHIPPED. Zero dispatch rows across the whole
+     * order — the owner's definition, and the useful one: these are the orders
+     * nobody has started, which is a different question from "what still has
+     * quantity owing".
+     *
+     * It used to mean the latter (ordered − dispatched > 0 on any line), which
+     * swept in every part-shipped order too — 125 of them against 19 genuinely
+     * untouched, so the list answered a question nobody was asking.
+     *
+     * An order with zero dispatches always lands on stage PENDING further down
+     * (nothing shipped ⇒ progress 0 ⇒ PENDING), so this filter and that badge
+     * cannot disagree.
      *
      * Filtered BEFORE the walk below, so the funnel, the rows and the timeline
      * all describe the same set — a headline counting orders the list doesn't
      * show would be worse than no headline.
+     */
+    const notStarted = (o: (typeof orders)[number]) =>
+      o.items.length > 0 && o.items.every((it) => it.dispatches.length === 0);
+
+    /*
+     * Still needed, separately: how much is outstanding, for the funnel maths
+     * and the stage badge on each row. "Nothing shipped yet" and "something
+     * still owing" are two different questions and both get asked here.
      */
     const stillOpen = (o: (typeof orders)[number]) =>
       o.items.some((it) => {
@@ -1113,27 +1171,54 @@ export class ReportsService {
       });
 
     const activeOnly = f.activeOnly === true;
-    const scoped = activeOnly ? scopedAll.filter(stillOpen) : scopedAll;
+    const scoped = activeOnly ? scopedAll.filter(notStarted) : scopedAll;
 
     /*
-     * The span of this party's active orders, computed across EVERY date — not
+     * The span of this party's NOT-YET-STARTED orders, computed across EVERY
+     * date — not
      * just the range currently on screen. That is the whole point: the screen
      * uses it to move its range onto the open work, and a window derived from
      * the current range could never reach an order outside it.
      */
-    const openAll = orders.filter((o) => fx.custOk(o.customerId) && stillOpen(o));
+    const openAll = orders.filter((o) => o.items.length > 0 && fx.custOk(o.customerId) && notStarted(o));
     const openDates = openAll.map((o) => o.orderDate.getTime()).sort((a, b) => a - b);
     const ymd = (t: number) => new Date(t).toISOString().slice(0, 10);
     const activeWindow = openDates.length
       ? { from: ymd(openDates[0]), to: ymd(openDates[openDates.length - 1]), orders: openAll.length }
       : null;
 
-    // Challans billing any of these orders' dispatches.
+    /*
+     * Challans billing any of these orders' dispatches — every figure on the
+     * document, plus its own line items.
+     *
+     * The join runs challan_item.dispatchId → dispatch → order line → order,
+     * which is the only link between the two sides. A challan reached this way
+     * may also carry lines belonging to a DIFFERENT order (one document can bill
+     * several), and those lines are kept: the point of showing the challan is to
+     * be able to check it against the paper bill, and a bill missing rows would
+     * not reconcile.
+     */
     const dispatchIds = scoped.flatMap((o) => o.items.flatMap((it) => it.dispatches.map((d) => d.id)));
     const challanItems = dispatchIds.length
       ? await this.prisma.challanItem.findMany({
           where: { dispatchId: { in: dispatchIds } },
-          select: { dispatchId: true, challan: { select: { id: true, code: true, invDate: true, total: true, challanStatus: true } } },
+          select: {
+            dispatchId: true,
+            challan: {
+              select: {
+                id: true, code: true, invDate: true, dueDate: true, transaction: true, challanStatus: true,
+                total: true, tax: true, gst: true, packing: true, freight: true, pouch: true,
+                tcs: true, tcsPercent: true, tds: true, tdsPercent: true, otherCharges: true,
+                b: true, c: true, transName: true,
+                items: {
+                  select: {
+                    productName: true, design: true, bags: true, pcs: true, kgs: true, box: true,
+                    unit: true, price: true, amount: true,
+                  },
+                },
+              },
+            },
+          },
         })
       : [];
     const challanByDispatch = new Map<number, (typeof challanItems)[number]['challan']>();
@@ -1181,13 +1266,60 @@ export class ReportsService {
       let orderBilled = 0;
       const codes = new Set<string>();
       const orderCode = o.code ?? `ORD-${o.id}`;
+      /** The design as the ORDER line records it. "NA" is stored rather than
+       *  null on lines with no design, so it is normalised away here. */
+      const designOf = (it: { design?: string | null; designType?: string | null }) => {
+        const name = (it.design ?? '').trim();
+        const type = (it.designType ?? '').trim();
+        const pick = name && name.toUpperCase() !== 'NA' ? name : type;
+        return pick && pick.toUpperCase() !== 'NA' ? pick : null;
+      };
       const dispatchList: JourneyDispatch[] = [];
+      const orderLines: JourneyOrderLine[] = [];
+      const challanList: JourneyChallan[] = [];
+      /** Challan ids already listed for THIS order — one document can bill
+       *  several of its dispatches, and it belongs in the list once. */
+      const orderChallanIds = new Set<number>();
 
       for (const it of o.items) {
         oq.bags += n(it.bags);
         oq.pcs += n(it.pcs);
         oq.kgs += n(it.gram);
         oq.amount += lineValue(it);
+
+        /*
+         * This line's own dispatched total, so the ORDERED group can show what
+         * is still owed row by row. Net of returns: a reversal row carries
+         * negative quantities, and adding them is what puts the stock back.
+         */
+        const ld = { bags: 0, pcs: 0, kgs: 0, box: 0 };
+        for (const d of it.dispatches) {
+          ld.bags += n(d.bags);
+          ld.pcs += n(d.pcs);
+          ld.kgs += n(d.gram);
+          ld.box += n(d.box);
+        }
+        const rem = (ordered: number, done: number) => Math.max(0, r2(ordered - done));
+        orderLines.push({
+          id: it.id,
+          productName: it.productName ?? null,
+          design: designOf(it),
+          bags: it.bags,
+          pcs: it.pcs,
+          kgs: it.gram,
+          box: it.box,
+          rate: it.rate,
+          amount: Math.round(lineValue(it)),
+          dispBags: r2(ld.bags),
+          dispPcs: r2(ld.pcs),
+          dispKgs: r2(ld.kgs),
+          dispBox: r2(ld.box),
+          remBags: rem(n(it.bags), ld.bags),
+          remPcs: rem(n(it.pcs), ld.pcs),
+          remKgs: rem(n(it.gram), ld.kgs),
+          remBox: rem(n(it.box), ld.box),
+          calField: it.calField ?? null,
+        });
 
         for (const d of it.dispatches) {
           if (d.dispatchStatus === RETURNED_DISPATCH_STATUS) {
@@ -1201,6 +1333,8 @@ export class ReportsService {
               id: d.id,
               code: d.code,
               date: d.dispatchDate.toISOString(),
+              productName: it.productName ?? null,
+              design: designOf(it),
               bags: d.bags,
               pcs: d.pcs,
               kgs: d.gram,
@@ -1224,6 +1358,8 @@ export class ReportsService {
             id: d.id,
             code: d.code,
             date: d.dispatchDate.toISOString(),
+            productName: it.productName ?? null,
+            design: designOf(it),
             bags: d.bags,
             pcs: d.pcs,
             kgs: d.gram,
@@ -1242,6 +1378,81 @@ export class ReportsService {
               billedChallans.add(ch.id);
               billedAmountAll += n(ch.total);
               orderBilled += n(ch.total);
+            }
+            /*
+             * TWO dedupe sets, and they are NOT interchangeable.
+             *
+             * `billedChallans` above is global: a challan's total must be added
+             * to the report's billed figure once, however many orders or
+             * dispatches it covers. `orderChallanIds` here is per order,
+             * because the same challan has to appear under EVERY order it bills.
+             *
+             * These were nested, which meant a challan covering two orders was
+             * listed under the first and silently missing from the second — a
+             * BILLED order showing an empty Challans group.
+             */
+            if (!orderChallanIds.has(ch.id)) {
+              orderChallanIds.add(ch.id);
+              {
+                challanList.push({
+                  id: ch.id,
+                  code: ch.code,
+                  date: ch.invDate.toISOString(),
+                  dueDate: ch.dueDate ? ch.dueDate.toISOString() : null,
+                  transaction: ch.transaction ?? null,
+                  status: ch.challanStatus ?? null,
+                  /*
+                   * The two GST columns are named the opposite way round to how
+                   * they read: schema.prisma spells it out — `tax` is the GST
+                   * AMOUNT in rupees and `gst` is the RATE percent. Deriving one
+                   * from the other put ₹1,661 of tax in the taxable column and
+                   * an ₹83 tax on a ₹32,871 bill.
+                   *
+                   * The taxable value is the goods themselves, which is what the
+                   * challan's own lines add up to — taken from there rather than
+                   * back-computed from the total, so it agrees with the rows
+                   * printed underneath it.
+                   */
+                  taxable: Math.round(ch.items.reduce((t, ci) => t + n(ci.amount), 0)),
+                  gstPercent: ch.gst ?? null,
+                  gst: Math.round(n(ch.tax)),
+                  packing: Math.round(n(ch.packing)),
+                  freight: Math.round(n(ch.freight)),
+                  pouch: Math.round(n(ch.pouch)),
+                  tcs: Math.round(n(ch.tcs)),
+                  tcsPercent: ch.tcsPercent ?? null,
+                  tds: Math.round(n(ch.tds)),
+                  tdsPercent: ch.tdsPercent ?? null,
+                  otherCharges: Math.round(n(ch.otherCharges)),
+                  total: Math.round(n(ch.total)),
+                  // Reported, not reconciled: see JourneyChallan.unexplained.
+                  unexplained: Math.round(
+                    n(ch.total) -
+                      (ch.items.reduce((t, ci) => t + n(ci.amount), 0) +
+                        n(ch.tax) +
+                        n(ch.packing) +
+                        n(ch.freight) +
+                        n(ch.pouch) +
+                        n(ch.tcs) +
+                        n(ch.otherCharges) -
+                        n(ch.tds)),
+                  ),
+                  bank: Math.round(n(ch.b)),
+                  cash: Math.round(n(ch.c)),
+                  transporter: ch.transName ?? null,
+                  lines: ch.items.map((ci) => ({
+                    productName: ci.productName ?? null,
+                    design: ci.design ?? null,
+                    bags: ci.bags,
+                    pcs: ci.pcs,
+                    kgs: ci.kgs,
+                    box: ci.box,
+                    unit: ci.unit ?? null,
+                    price: ci.price,
+                    amount: ci.amount,
+                  })),
+                });
+              }
               events.push({
                 date: ch.invDate.toISOString(),
                 kind: 'CHALLAN',
@@ -1300,8 +1511,15 @@ export class ReportsService {
        * BILLED inside a list of active work.
        */
       const open = stillOpen(o);
-      const stage: JourneyOrder['stage'] =
-        returnCount > 0
+      // Nothing has left the building, so nothing downstream of that can be
+      // true. Checked FIRST because the branches below infer shipment from "not
+      // open", and an order can be not-open for reasons other than having
+      // shipped — which is how a zero-dispatch order came to be badged
+      // DISPATCHED.
+      const shipped = o.items.some((it) => it.dispatches.length > 0);
+      const stage: JourneyOrder['stage'] = !shipped
+        ? 'PENDING'
+        : returnCount > 0
           ? 'RETURNED'
           : open
             ? progress <= 0
@@ -1342,7 +1560,11 @@ export class ReportsService {
         returns: returnCount,
         progress,
         stage,
-        dispatchList: dispatchList.sort((a, b) => b.date.localeCompare(a.date)),
+        // Oldest first in all three groups — the panel reads as a sequence:
+        // what was ordered, then what went out, then what was billed.
+        orderLines,
+        dispatchList: dispatchList.sort((a, b) => a.date.localeCompare(b.date)),
+        challanList: challanList.sort((a, b) => a.date.localeCompare(b.date)),
       });
     }
 
@@ -1361,7 +1583,17 @@ export class ReportsService {
       { key: 'RETURNS', label: 'Returned', docs: ret.docs, lines: ret.lines, bags: r2(ret.bags), pcs: r2(ret.pcs), kgs: r2(ret.kgs), amount: Math.round(ret.amount), ofFirst: share(pick(ret)) },
     ];
 
+    /*
+     * Newest first to decide WHICH 60 survive the cap, then oldest-first to
+     * display — a journey reads forwards.
+     *
+     * The order of those two steps is the whole point. Sorting ascending and
+     * then slicing would keep the sixty OLDEST events and silently drop
+     * everything recent, which on a busy party means the timeline stops months
+     * ago. So: rank by recency, cut, then reverse for reading.
+     */
     events.sort((a, b) => b.date.localeCompare(a.date));
+    const recentEvents = events.slice(0, 60).reverse();
 
     const unit = tot.kgs > 0 ? 'kgs' : tot.pcs > 0 ? 'pcs' : 'bags';
     const waiting = journeyOrders.filter((o) => o.stage === 'PENDING' || o.stage === 'PARTIAL').length;
@@ -1391,7 +1623,7 @@ export class ReportsService {
       // Bounded: the page renders every row with its own animation, and a party
       // with thousands of orders would stutter rather than impress.
       orders: journeyOrders.slice(0, 200),
-      events: events.slice(0, 60),
+      events: recentEvents,
       insights,
     };
   }

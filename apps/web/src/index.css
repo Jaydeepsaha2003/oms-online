@@ -562,3 +562,26 @@ input[data-slot='combobox']:disabled {
   border-width: 1px;
   border-color: var(--border);
 }
+
+/* ── Form-heavy screens: the same edge, quieter ─────────────────────────────
+   A container marked `data-soft-fields` re-points the two tokens the rules
+   above read, so every input, combo-box and focus ring inside it softens
+   together and nothing has to be restyled field by field.
+
+   Why it exists: the hard navy earns its keep on a LIST page, where a single
+   search box must be findable among the rows. On the order form almost
+   everything IS a field, and at that density the same weight stops
+   distinguishing anything — it just draws a grid of dark rectangles. Same hue,
+   same 2px, roughly two-thirds of the contrast. */
+[data-soft-fields] {
+  --search-border: oklch(0.52 0.075 264);
+  --search-ring: oklch(0.52 0.075 264 / 18%);
+}
+
+/* Dark mode runs the other way round — there the edge is a LIGHT colour against
+   a dark surface, so "softer" means bringing it down towards the background
+   rather than up. */
+.dark [data-soft-fields] {
+  --search-border: oklch(0.64 0.075 258);
+  --search-ring: oklch(0.64 0.075 258 / 22%);
+}

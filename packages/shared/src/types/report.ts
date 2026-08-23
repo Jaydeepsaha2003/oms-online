@@ -375,6 +375,9 @@ export interface JourneyDispatch {
   id: number;
   code: string | null;
   date: string;
+  /** The order line this moved — needed the moment the lines are listed too. */
+  productName: string | null;
+  design: string | null;
   bags: number | null;
   pcs: number | null;
   kgs: number | null;
@@ -388,6 +391,91 @@ export interface JourneyDispatch {
   challanDate: string | null;
   /** The credit note behind it, when this row is a return. */
   creditNoteCode: string | null;
+}
+
+/** One line of the order as it was placed, against what has shipped on it. */
+export interface JourneyOrderLine {
+  id: number;
+  productName: string | null;
+  design: string | null;
+  /** Ordered. */
+  bags: number | null;
+  pcs: number | null;
+  kgs: number | null;
+  box: number | null;
+  rate: number | null;
+  amount: number;
+  /** Dispatched against this line, net of returns. */
+  dispBags: number;
+  dispPcs: number;
+  dispKgs: number;
+  dispBox: number;
+  /** Still owed on this line, floored at zero, on every unit it was ordered in. */
+  remBags: number;
+  remPcs: number;
+  remKgs: number;
+  remBox: number;
+  /** The unit this line is actually counted in — bags / pcs / kgs / box. */
+  calField: string | null;
+}
+
+/** One line on a challan, exactly as it was billed. */
+export interface JourneyChallanLine {
+  productName: string | null;
+  design: string | null;
+  bags: number | null;
+  pcs: number | null;
+  kgs: number | null;
+  box: number | null;
+  unit: string | null;
+  price: number | null;
+  amount: number | null;
+}
+
+/**
+ * One challan raised against this order, with every figure on the document.
+ *
+ * Reported per challan rather than rolled up: packing, freight and TCS are
+ * charged per document, so a sum of them across challans is not a number
+ * anybody can check against a bill.
+ */
+export interface JourneyChallan {
+  id: number;
+  code: string | null;
+  date: string;
+  dueDate: string | null;
+  /** SALES INVOICE / DEBIT NOTE / CREDIT NOTE — what kind of document this is. */
+  transaction: string | null;
+  status: string | null;
+  /** Goods value before the charges below. */
+  taxable: number;
+  gstPercent: number | null;
+  gst: number;
+  packing: number;
+  freight: number;
+  pouch: number;
+  tcs: number;
+  tcsPercent: number | null;
+  tds: number;
+  tdsPercent: number | null;
+  otherCharges: number;
+  /** Document total, and how it was split between the bank and cash sides. */
+  total: number;
+  /**
+   * total − (taxable + gst + packing + freight + pouch + tcs + other − tds).
+   *
+   * Zero on 95% of challans. Where it is not, the stored total genuinely does
+   * not equal the sum of the document's own parts, and the screen says so
+   * instead of quietly showing figures that do not add up — the printed bill has
+   * the same gap, since it prints a computed Sub Total above a separately
+   * stored Grand Total.
+   */
+  unexplained: number;
+  bank: number;
+  cash: number;
+  transporter: string | null;
+  /** Every line as billed. */
+  lines: JourneyChallanLine[];
 }
 
 /** One order, followed through the whole pipeline. */
@@ -420,9 +508,15 @@ export interface JourneyOrder {
   progress: number;
   /** Where this order currently stands. */
   stage: 'PENDING' | 'PARTIAL' | 'DISPATCHED' | 'BILLED' | 'RETURNED';
-  /** Every dispatch and return under this order, newest first — the detail the
-   *  row reveals when it is opened. */
+  /**
+   * The three groups the opened row shows, in the order work actually happens:
+   * what was ordered, what went out, what was billed.
+   */
+  orderLines: JourneyOrderLine[];
+  /** Every dispatch and return under this order, oldest first. */
   dispatchList: JourneyDispatch[];
+  /** Every challan raised against it, oldest first. */
+  challanList: JourneyChallan[];
 }
 
 /** One dated event on the party's timeline. */

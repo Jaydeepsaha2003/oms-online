@@ -74,10 +74,26 @@ const dispatchDesign = (line: { design?: string | null; designType?: string | nu
   return name ?? 'NA';
 };
 
-// Two dispatches on the SAME order line with identical quantities + status inside
-// this window are treated as ONE — a double-tap, a client retry, or two users
-// saving the same shipment at once. Real repeat dispatches of a line are minutes
-// apart (goods have to be packed/weighed again), so this can't merge legitimate ones.
+/*
+ * Two dispatches on the SAME order line with identical quantities + status
+ * inside this window are one event — a double-tap, or two users saving the same
+ * shipment at once.
+ *
+ * It no longer SWALLOWS the second one. It used to return the existing row and
+ * report success, which was a lie the screen repeated: dispatch a line, submit
+ * the identical line again within 15s (the form keeps its values, so that is two
+ * clicks), and you were told it saved while nothing had been written. A third
+ * attempt past the window then hit the duplicate guard and was correctly
+ * refused — "allowed, then didn't save, then blocked", exactly as reported.
+ *
+ * Both paths now raise the same conflict, so the answer is the same whether the
+ * repeat comes one second later or one hour later. Nothing auto-retries a write
+ * (see the api.ts interceptor: reads only), so a second POST is always a person.
+ *
+ * The window still earns its keep for one case the duplicate guard cannot see:
+ * a RETURN being double-tapped. That guard ignores RETURNED rows on purpose —
+ * a return legitimately repeats a quantity already dispatched.
+ */
 const DISPATCH_DEDUPE_WINDOW_MS = 15_000;
 
 // The pending pool is a full scan of every order line + its dispatches, so
@@ -973,7 +989,6 @@ export class DispatchService implements OnModuleInit {
           sameDay(d.dispatchDate, effectiveDate) &&
           Date.now() - d.createdAt.getTime() < DISPATCH_DEDUPE_WINDOW_MS,
       );
-      if (dup) return { row: dup, deduped: true };
 
       /*
        * Same line, same quantities, same DAY — refuse it.
@@ -991,15 +1006,19 @@ export class DispatchService implements OnModuleInit {
        * Compared on the DISPATCH date, not the clock — a backdated entry is
        * checked against the day it claims, which is the day that matters.
        */
-      const already = it.dispatches.find(
-        (d) =>
-          d.dispatchStatus !== RETURNED_DISPATCH_STATUS &&
-          (d.bags ?? 0) === bags &&
-          (d.pcs ?? 0) === pcs &&
-          (d.gram ?? 0) === gram &&
-          (d.box ?? 0) === box &&
-          sameDay(d.dispatchDate, effectiveDate),
-      );
+      const already =
+        it.dispatches.find(
+          (d) =>
+            d.dispatchStatus !== RETURNED_DISPATCH_STATUS &&
+            (d.bags ?? 0) === bags &&
+            (d.pcs ?? 0) === pcs &&
+            (d.gram ?? 0) === gram &&
+            (d.box ?? 0) === box &&
+            sameDay(d.dispatchDate, effectiveDate),
+        ) ??
+        // …or the just-created twin of a double-tap, which the guard above skips
+        // when it is a RETURN. Same refusal either way.
+        dup;
       if (already) {
         const what = qtyText({ bags: already.bags, pcs: already.pcs, gram: already.gram, box: already.box }) || 'the same quantity';
         // 409, not 400: nothing about the request is malformed — it collides with
@@ -1055,13 +1074,11 @@ export class DispatchService implements OnModuleInit {
           userName: userName ?? null,
         },
       });
-      return { row: created, deduped: false };
+      return created;
     });
 
-    const dispatch = await this.ensureCode(row.row);
-    // Only log a real insert — a deduped double-submit returns the existing row
-    // and must not add a second "created" entry to its history.
-    if (!row.deduped && !opts?.skipAudit) {
+    const dispatch = await this.ensureCode(row);
+    if (!opts?.skipAudit) {
       this.logDispatch({
         dispatchId: dispatch.id,
         action: 'create',
@@ -1072,12 +1089,11 @@ export class DispatchService implements OnModuleInit {
         metadata: { bags, pcs, gram, box, dispatchStatus: dto.dispatchStatus, dispatchDate: dispatch.dispatchDate.toISOString() },
       });
     }
-    // Alert AFTER the transaction has committed, and only for a real insert.
-    // A deduped double-tap returns the pre-existing row (see
-    // DISPATCH_DEDUPE_WINDOW_MS) — alerting there would fire a second time for a
-    // shipment that only ever happened once. `skipNotify` is the approval replay,
-    // which raises its own, differently-worded alert instead.
-    if (!row.deduped && !opts?.skipNotify) {
+    // Alert AFTER the transaction has committed. Every row reaching here is a
+    // real insert now — a repeat is refused above rather than returned as a
+    // success. `skipNotify` is the approval replay, which raises its own,
+    // differently-worded alert instead.
+    if (!opts?.skipNotify) {
       this.notifier.dispatchCreated({
         actorId: actor?.id ?? null,
         userName: userName ?? actor?.name ?? null,

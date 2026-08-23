@@ -1167,7 +1167,7 @@ export function OrderFormPage() {
     const ok = await confirm({
       title: isEdit ? `Save changes to this ${noun}?` : `Create this ${noun}?`,
       description: `${items.length} item${items.length === 1 ? '' : 's'} · total ₹${total.toLocaleString('en-IN')} for ${customer.trim()}.`,
-      confirmText: isEdit ? 'Save changes' : `Create ${noun}`,
+      confirmText: isEdit ? 'Update changes' : `Create ${noun}`,
     });
     if (!ok) return;
     const input = buildInput(await resolveOrderDate());
@@ -1316,7 +1316,7 @@ export function OrderFormPage() {
   };
 
   const orderIsDraft = docKind === 'order' && status === 'DRAFT';
-  const primaryLabel = isEdit ? (orderIsDraft ? 'Update & save' : 'Save changes') : `Create ${docLabel}`;
+  const primaryLabel = isEdit ? (orderIsDraft ? 'Update & save' : 'Update changes') : `Create ${docLabel}`;
   // Offer "Save as Draft" on a new order, or when editing one that's still a draft.
   const showSaveDraft = docKind === 'order' && (!isEdit || orderIsDraft);
 
@@ -1413,7 +1413,21 @@ export function OrderFormPage() {
   }
 
   return (
-    <div ref={formRef} onKeyDown={handleTabNav} className="flex w-full flex-col gap-2">
+    /*
+     * `data-soft-fields` lightens the navy field edge for this screen only.
+     *
+     * The hard navy is right on a LIST page, where one search box has to be
+     * findable among the rows. This form is nothing but fields — customer, item,
+     * design, order type, priority, four quantity boxes — so the same weight on
+     * every one of them turns the whole screen into a grid of dark rectangles
+     * and stops picking anything out at all.
+     *
+     * Done by redefining the CSS variable on this container rather than
+     * restyling the fields: the border rules in index.css read
+     * `var(--search-border)`, so every input, combo-box and their focus rings
+     * follow along with no per-field overrides to keep in sync.
+     */
+    <div ref={formRef} onKeyDown={handleTabNav} data-soft-fields className="flex w-full flex-col gap-2">
       {/* Success tick overlay shown briefly after a save */}
       {saved && (
         <div className="bg-background/70 fixed inset-0 z-[100] flex items-center justify-center backdrop-blur-sm">
