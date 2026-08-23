@@ -5,19 +5,25 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 
-/** Page header shared by every report — gradient icon, title, subtitle, "as of" stamp. */
-export function ReportHeader({ title, subtitle, icon: Icon, asOf, actions }: { title: string; subtitle: string; icon: LucideIcon; asOf?: string; actions?: ReactNode }) {
+/**
+ * The strip above a report: its one-line purpose, its actions, and how fresh the
+ * figures are.
+ *
+ * It no longer repeats the report's NAME or its icon. The global header already
+ * shows both — every report's `title` here is word-for-word its menu label, so
+ * the page was printing "Summary Analysis" with a gradient icon directly beneath
+ * the "Summary Analysis" with a gradient icon in the topbar, on all eight
+ * reports. Same duplication that was cleared off 12 other pages.
+ *
+ * `title` is still taken, and still used: it labels the region for screen
+ * readers, which do not have the topbar in earshot at this point in the page.
+ * The subtitle stays visible — it says what the report is FOR, which the menu
+ * label does not.
+ */
+export function ReportHeader({ title, subtitle, icon: _icon, asOf, actions }: { title: string; subtitle: string; icon: LucideIcon; asOf?: string; actions?: ReactNode }) {
   return (
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div className="flex items-center gap-3">
-        <span className="bg-gradient-brand flex size-11 shrink-0 items-center justify-center rounded-xl text-white shadow-md">
-          <Icon className="size-5.5" />
-        </span>
-        <div>
-          <h1 className="text-xl font-bold tracking-tight">{title}</h1>
-          <p className="text-muted-foreground text-sm">{subtitle}</p>
-        </div>
-      </div>
+    <div className="flex flex-wrap items-center justify-between gap-3" aria-label={title}>
+      <p className="text-muted-foreground min-w-0 text-sm">{subtitle}</p>
       <div className="flex items-center gap-2">
         {actions}
         {asOf && <span className="text-muted-foreground hidden text-xs sm:block">as of {new Date(asOf).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</span>}
@@ -87,9 +93,26 @@ export function Kpi({ label, value, hint, icon: Icon, tone = 'blue', metric, loa
 }
 
 const BAR_COLORS = ['#3b82f6', '#8b5cf6', '#f59e0b', '#10b981', '#ef4444', '#06b6d4', '#ec4899', '#84cc16'];
-/** Bank/Cash split colors, used consistently across every report chart. */
-export const BANK_COLOR = '#3b82f6';
-export const CASH_COLOR = '#10b981';
+
+/*
+ * Bank / Cash — the one pair, for every report chart and bar in the app.
+ *
+ * Blue for bank, green for cash, matching the B / Bank and C / Cash columns on
+ * the payment desk, so the two words mean the same colour wherever they appear.
+ *
+ * A DEEP blue against a LIGHT green, not two mid tones: these two always sit
+ * flush against each other — stacked in a bar, adjacent in a split rail — with
+ * no gap to separate them, so they have to differ in lightness as well as hue.
+ * This pair separates 4.5:1 where the old #3b82f6/#10b981 managed 1.6:1, which
+ * is why a cash segment used to read as a shade of the bank one.
+ *
+ * The light green is weak on white on its own (1.9:1), so anything filled with
+ * CASH_COLOR against the card takes CASH_EDGE as its outline: the fill carries
+ * the separation, the stroke carries the edge.
+ */
+export const BANK_COLOR = '#1e40af';
+export const CASH_COLOR = '#34d399';
+export const CASH_EDGE = '#059669';
 
 /** A ranked horizontal-bar list (no chart lib) — great for top parties / regions / agents.
  *  When a slice carries `bank`/`cash` (real money with a payment mode — billed via
@@ -106,7 +129,7 @@ export function RankedBars({ data, money = true, emptyText = 'No data.' }: { dat
       {split && (
         <div className="text-muted-foreground -mt-0.5 mb-1 flex items-center gap-3 text-[11px]">
           <span className="inline-flex items-center gap-1"><span className="size-2 rounded-full" style={{ background: BANK_COLOR }} /> Bank</span>
-          <span className="inline-flex items-center gap-1"><span className="size-2 rounded-full" style={{ background: CASH_COLOR }} /> Cash</span>
+          <span className="inline-flex items-center gap-1"><span className="size-2 rounded-full" style={{ background: CASH_COLOR, boxShadow: `inset 0 0 0 1px ${CASH_EDGE}` }} /> Cash</span>
         </div>
       )}
       {data.map((d, i) => {
@@ -126,7 +149,7 @@ export function RankedBars({ data, money = true, emptyText = 'No data.' }: { dat
                 {split ? (
                   <>
                     <div className="h-full" style={{ width: `${(bank / max) * 100}%`, background: BANK_COLOR }} />
-                    <div className="h-full" style={{ width: `${(cash / max) * 100}%`, background: CASH_COLOR }} />
+                    <div className="h-full" style={{ width: `${(cash / max) * 100}%`, background: CASH_COLOR, boxShadow: `inset 0 0 0 1px ${CASH_EDGE}` }} />
                   </>
                 ) : (
                   <div className="h-full rounded-full" style={{ width: `${(d.value / max) * 100}%`, background: BAR_COLORS[i % BAR_COLORS.length] }} />

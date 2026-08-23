@@ -1231,21 +1231,25 @@ function LineEditor({
           }
         }
         /*
-         * KEEP = the rate saved on this line. USE = the rate list figure.
+         * One rule, two halves, and only ONE of them is a choice.
          *
-         * Nothing more clever than that, deliberately. Keep used to hold the
-         * line's product but take the NEW design rate whenever only the design
-         * changed — which meant "Keep ₹390" appeared on a line saved at ₹355,
-         * and worse, it often landed on the same figure as Use, so the dialog
-         * offered the same outcome twice under two different names.
+         * DESIGN rate — compulsory. Swap DL for FULL LASER+TOOL and you are
+         * buying a different design: it costs ₹50 where DL cost ₹15, so the
+         * ₹35 is not on offer, it is what the new design is worth. Presenting
+         * it as "keep ₹355 or use ₹390" invited a price that does not exist.
          *
-         * Two options, two distinct meanings: hold what this line says, or move
-         * to what the rate list says. `Custom rate…` covers everything else.
+         * PRODUCT rate — negotiable. This is the half a customer's price was
+         * agreed on, so the line's own figure is held unless the user asks for
+         * the rate list instead.
+         *
+         * So both options carry the new design rate and differ only in the
+         * product half — which is why they collapse into a single button
+         * whenever the product rate has not moved.
          */
         const lineProductRate = num(form.productRate);
         const lineDesignRate = num(form.designRate);
         const keepProductRate = lineProductRate ?? finalProductRate;
-        const keepDesignRate = lineDesignRate ?? (hasDesignRate ? finalDesignRate : null);
+        const keepDesignRate = designChanged ? finalDesignRate : (lineDesignRate ?? finalDesignRate);
         const keepRate = round2((keepProductRate ?? 0) + (keepDesignRate ?? 0));
         const listRate = (finalProductRate ?? 0) + (finalDesignRate ?? 0);
 
@@ -1260,9 +1264,15 @@ function LineEditor({
          * Product changed: the two outcomes are the whole old rate versus the
          * whole rate-list rate, so ask whenever they differ.
          */
-        const decisionToMake = productChanged
-          ? Math.abs(listRate - existingRate) > 0.001
-          : Math.abs((finalDesignRate ?? 0) - (lineDesignRate ?? 0)) > 0.001;
+        /*
+         * Speak up when the line's rate is about to move at all — either because
+         * the new design costs something different (compulsory, so this is a
+         * heads-up plus the custom-rate escape hatch) or because the product
+         * rate differs from the list (a genuine choice). Silence only when
+         * nothing moves.
+         */
+        const productRateMoved = Math.abs(listRate - keepRate) > 0.001;
+        const decisionToMake = Math.abs(keepRate - existingRate) > 0.001 || productRateMoved;
 
         if (decisionToMake) {
           const choice = await askRate({
@@ -1276,8 +1286,13 @@ function LineEditor({
             newProductDelta: appliedProductDelta,
             newDesignDelta: appliedDesignDelta,
             productChanged,
+            designChanged,
+            oldDesignType: form.designType || null,
+            newDesignType: it.designType ?? null,
             keepProductRate,
+            keepDesignRate,
             keepRate,
+            productRateMoved,
           });
           if (choice.kind === 'keep') {
             finalProductRate = keepProductRate;
@@ -1555,6 +1570,16 @@ interface RateAskProps {
   /** False when only the design was swapped — the product rate is then not in
    *  question at all and is left out of the comparison. */
   productChanged?: boolean;
+  /** True when a different design was picked — its rate is then compulsory. */
+  designChanged?: boolean;
+  oldDesignType?: string | null;
+  newDesignType?: string | null;
+  /** True when the product half differs between this line and the rate list —
+   *  the only half that is ever a choice, so this decides whether the dialog
+   *  offers one button or two. */
+  productRateMoved?: boolean;
+  /** The design rate that will be applied either way. */
+  keepDesignRate?: number | null;
   /** The product rate "Keep" will apply. */
   keepProductRate?: number | null;
   /** The whole rate "Keep" will apply. */
@@ -1591,7 +1616,12 @@ function RateChoiceDialog({
   newProductDelta,
   newDesignDelta,
   productChanged = true,
+  designChanged = false,
+  oldDesignType,
+  newDesignType,
+  productRateMoved = true,
   keepProductRate,
+  keepDesignRate,
   keepRate,
   onDone,
 }: RateAskProps & { onDone: (choice: RateChoice) => void }) {
@@ -1610,25 +1640,39 @@ function RateChoiceDialog({
         <DialogHeader>
           <DialogTitle>This changes the line’s rate</DialogTitle>
         </DialogHeader>
-        {/* Both figures, and where each comes from — that is the whole decision.
-            The date matters: the rate list is read as it stood on the ORDER's
-            date, not today's, so a months-old order re-prices at the rate that
-            was in force when it was booked. */}
+        {/* Two sentences at most, in the order the user needs them: what is
+            already decided, then what is left to decide. */}
         <p className="text-muted-foreground text-sm">
-          <span className="text-foreground font-medium">{label}</span> costs{' '}
-          <span className="text-foreground font-semibold">{inr(newRate)}</span> on the{' '}
-          {asOf ? <>rate list of <span className="text-foreground font-semibold">{formatDate(asOf)}</span> — this order&rsquo;s own date</> : <>rate list as it stands today</>}.
-          This line is saved at <span className="text-foreground font-semibold">{inr(oldRate)}</span>.
+          <span className="text-foreground font-medium">{label}</span> — this line is saved at{' '}
+          <span className="text-foreground font-semibold">{inr(oldRate)}</span>, and it now comes to{' '}
+          <span className="text-foreground font-semibold">{inr(keepRate ?? newRate)}</span>.
         </p>
 
-        {/* Same product → say so, and take it off the table. Re-pricing a product
-            the user never re-chose is not on offer here. */}
-        {!productChanged && (
+        {/* The design half is not a choice. Say so plainly and say why, naming
+            both designs — "the design rate changed" leaves the user wondering
+            whether they may refuse it. */}
+        {designChanged && Math.abs((newDesignRate ?? 0) - (oldDesignRate ?? 0)) > 0.001 && (
+          <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-900 dark:border-amber-400/40 dark:bg-amber-400/10 dark:text-amber-100">
+            You picked {newDesignType ? <span className="font-semibold">{newDesignType}</span> : 'a different design'}
+            {oldDesignType ? <> in place of <span className="font-semibold">{oldDesignType}</span></> : null}. Its rate is{' '}
+            <span className="font-semibold tabular-nums">{inr(newDesignRate ?? 0)}</span> against{' '}
+            <span className="font-semibold tabular-nums">{inr(oldDesignRate ?? 0)}</span> before, so{' '}
+            <span className="font-semibold tabular-nums">
+              {(newDesignRate ?? 0) > (oldDesignRate ?? 0) ? '+' : '−'}
+              {inr(Math.abs(round2((newDesignRate ?? 0) - (oldDesignRate ?? 0)))).slice(1)}
+            </span>{' '}
+            is <span className="font-semibold">part of the new design, not optional</span>. Use Custom rate if you have agreed
+            something else with this party.
+          </p>
+        )}
+
+        {/* The product half IS a choice — but only when it actually differs. */}
+        {productRateMoved && (
           <p className="rounded-md border border-dashed px-3 py-2 text-[12.5px]">
-            Same product at{' '}
-            <span className="font-semibold tabular-nums">{inr(keepProductRate ?? oldProductRate ?? 0)}</span> either way — only the
-            design rate differs, <span className="font-semibold tabular-nums">{inr(oldDesignRate ?? 0)}</span> on this line against{' '}
-            <span className="font-semibold tabular-nums">{inr(newDesignRate ?? 0)}</span> on the rate list.
+            Your product rate of <span className="font-semibold tabular-nums">{inr(keepProductRate ?? oldProductRate ?? 0)}</span>{' '}
+            differs from the <span className="font-semibold tabular-nums">{inr(newProductRate ?? 0)}</span> on the{' '}
+            {asOf ? <>rate list of <span className="font-semibold">{formatDate(asOf)}</span> — this order&rsquo;s own date</> : <>current rate list</>}.
+            That part is yours to decide.
           </p>
         )}
 
@@ -1638,83 +1682,91 @@ function RateChoiceDialog({
             no way to tell that apart, so "use the current price" read as an
             unexplained jump. A real table (not a 3-column grid) so the right-hand
             column can never be pushed out of the dialog. */}
-        <div className="overflow-x-auto rounded-md border">
-          <table className="w-full min-w-max text-sm">
-            <thead>
-              <tr className="text-muted-foreground bg-muted/50 border-b text-[11px] font-bold tracking-wide uppercase">
-                <th className="px-2.5 py-1.5 text-left font-bold sm:px-3">Part</th>
-                <th className="px-2.5 py-1.5 text-right font-bold sm:px-3">On this line</th>
-                <th className="px-2.5 py-1.5 text-right font-bold sm:px-3">
-                  Rate list
-                  <span className="ml-1 font-semibold normal-case opacity-70">{asOf ? formatDate(asOf) : 'today'}</span>
-                </th>
-                <th className="px-2.5 py-1.5 text-right font-bold sm:px-3">Difference</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(
-                [
-                  ['Product', oldProductRate ?? 0, newProductRate ?? 0, productChanged, newProductDelta ?? 0],
-                  ['Design', oldDesignRate ?? 0, newDesignRate ?? 0, hasDesignRate, newDesignDelta ?? 0],
-                ] as const
-              )
-                .filter(([, , , show]) => show)
-                .map(([name, was, now, , delta]) => {
-                  const moved = Math.abs(now - was) > 0.001;
-                  const diff = round2(now - was);
-                  return (
-                    <tr key={name} className={cn('border-b last:border-b-0', moved && 'bg-amber-50 dark:bg-amber-400/10')}>
-                      <td className="px-2.5 py-1.5 sm:px-3">
-                        <span className="text-muted-foreground">{name} ₹</span>
-                        {moved && (
-                          <span className="ml-1.5 text-[11px] font-bold tracking-wide text-amber-700 uppercase dark:text-amber-400">
-                            changed
+        {/*
+          * The columns ARE the two buttons.
+          *
+          * This table used to compare "on this line" against "the rate list",
+          * which are not the two things on offer: the offers are KEEP (your
+          * product + the new design) and USE (the rate list's product + the new
+          * design). The Keep total appeared nowhere in the table at all, so the
+          * figures on screen and the figures on the buttons were different sets
+          * of numbers. Now every number here is on a button and every button
+          * number is here.
+          *
+          * The design row reads the same in both option columns, which is the
+          * clearest possible way to show that half is not a choice.
+          */}
+        {productRateMoved && (
+          <div className="overflow-x-auto rounded-md border">
+            <table className="w-full min-w-max text-sm">
+              <thead>
+                <tr className="text-muted-foreground bg-muted/50 border-b text-[10.5px] font-bold tracking-wide uppercase">
+                  <th className="px-2.5 py-1.5 text-left font-bold sm:px-3">Part</th>
+                  <th className="px-2.5 py-1.5 text-right font-bold sm:px-3">Was</th>
+                  <th className="border-l px-2.5 py-1.5 text-right font-bold text-slate-600 sm:px-3 dark:text-slate-300">Keep</th>
+                  <th className="border-l bg-blue-50/70 px-2.5 py-1.5 text-right font-bold text-blue-700 sm:px-3 dark:bg-blue-500/10 dark:text-blue-300">
+                    Use
+                    <span className="ml-1 font-semibold normal-case opacity-70">{asOf ? formatDate(asOf) : 'today'}</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {(
+                  [
+                    ['Product', oldProductRate ?? 0, keepProductRate ?? 0, newProductRate ?? 0, true, newProductDelta ?? 0, 'your choice'],
+                    ['Design', oldDesignRate ?? 0, keepDesignRate ?? 0, newDesignRate ?? 0, hasDesignRate, newDesignDelta ?? 0, 'same either way'],
+                  ] as const
+                )
+                  .filter(([, , , , show]) => show)
+                  .map(([name, was, keep, use, , delta, badge]) => {
+                    const fixed = Math.abs(keep - use) < 0.001;
+                    return (
+                      <tr key={name} className="border-b last:border-b-0">
+                        <td className="px-2.5 py-1.5 sm:px-3">
+                          <span className="text-muted-foreground">{name} ₹</span>
+                          <span
+                            className={cn(
+                              'ml-1.5 text-[10px] font-bold tracking-wide uppercase',
+                              fixed ? 'text-muted-foreground/70' : 'text-amber-700 dark:text-amber-400',
+                            )}
+                          >
+                            {badge}
                           </span>
-                        )}
-                      </td>
-                      <td className="px-2.5 py-1.5 text-right tabular-nums sm:px-3">{inr(was)}</td>
-                      <td className={cn('px-2.5 py-1.5 text-right tabular-nums sm:px-3', moved && 'font-bold text-amber-700 dark:text-amber-400')}>
-                        {inr(now)}
-                      </td>
-                      <td
-                        className={cn(
-                          'px-2.5 py-1.5 text-right font-semibold tabular-nums sm:px-3',
-                          !moved && 'text-muted-foreground/50',
-                          moved && diff > 0 && 'text-rose-600 dark:text-rose-400',
-                          moved && diff < 0 && 'text-emerald-600 dark:text-emerald-400',
-                        )}
-                      >
-                        {moved ? `${diff > 0 ? '+' : '−'}${inr(Math.abs(diff)).slice(1)}` : '—'}
-                        {/* Name the cause where there is one: a part that moved
-                            purely because of this customer's special rate is not
-                            a catalogue price change, and saying so is the
-                            difference between "why?" and "of course". */}
-                        {moved && Math.abs(delta) > 0.001 && (
-                          <span className="text-muted-foreground ml-1 text-[10.5px] font-medium">
-                            (incl. {delta > 0 ? '+' : '−'}₹{Math.abs(delta)} special)
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              <tr className="bg-muted/30 border-t font-semibold">
-                <td className="px-2.5 py-1.5 sm:px-3">Line total</td>
-                <td className="px-2.5 py-1.5 text-right tabular-nums sm:px-3">{inr(oldRate)}</td>
-                <td className="px-2.5 py-1.5 text-right tabular-nums sm:px-3">{inr(newRate)}</td>
-                <td
-                  className={cn(
-                    'px-2.5 py-1.5 text-right tabular-nums sm:px-3',
-                    newRate > oldRate && 'text-rose-600 dark:text-rose-400',
-                    newRate < oldRate && 'text-emerald-600 dark:text-emerald-400',
-                  )}
-                >
-                  {newRate === oldRate ? '—' : `${newRate > oldRate ? '+' : '−'}${inr(Math.abs(round2(newRate - oldRate))).slice(1)}`}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+                        </td>
+                        <td className="text-muted-foreground px-2.5 py-1.5 text-right tabular-nums sm:px-3">{inr(was)}</td>
+                        <td className={cn('border-l px-2.5 py-1.5 text-right tabular-nums sm:px-3', !fixed && 'font-semibold')}>
+                          {inr(keep)}
+                        </td>
+                        <td
+                          className={cn(
+                            'border-l bg-blue-50/70 px-2.5 py-1.5 text-right tabular-nums sm:px-3 dark:bg-blue-500/10',
+                            !fixed && 'font-semibold text-blue-800 dark:text-blue-200',
+                          )}
+                        >
+                          {inr(use)}
+                          {/* Name the cause where there is one: a part that moved
+                              purely because of this customer's special rate is not
+                              a catalogue price change, and saying so is the
+                              difference between "why?" and "of course". */}
+                          {Math.abs(delta) > 0.001 && (
+                            <div className="text-muted-foreground text-[10px] font-medium">
+                              incl. {delta > 0 ? '+' : '−'}₹{Math.abs(delta)} special
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                <tr className="bg-muted/30 border-t-2 font-bold">
+                  <td className="px-2.5 py-2 sm:px-3">Line total</td>
+                  <td className="text-muted-foreground px-2.5 py-2 text-right tabular-nums sm:px-3">{inr(oldRate)}</td>
+                  <TotalCell value={keepRate ?? oldRate} was={oldRate} />
+                  <TotalCell value={newRate} was={oldRate} accent />
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {custom ? (
           <div className="space-y-3">
@@ -1734,7 +1786,11 @@ function RateChoiceDialog({
           </div>
         ) : null}
 
-        <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+        {/* `Custom rate…` is pushed left by `sm:mr-auto` below: it opens a
+            sub-form rather than answering the question, so grouping it with the
+            two real answers made three equal-looking buttons out of one choice
+            and one detour. */}
+        <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
           {custom ? (
             <>
               <Button variant="outline" onClick={() => setCustom(false)}>
@@ -1750,28 +1806,73 @@ function RateChoiceDialog({
             </>
           ) : (
             <>
-              {/* Each button names its figure AND where that figure comes from,
-                  so neither needs the paragraph above to be understood. */}
-              <Button
-                variant="outline"
-                onClick={() => onDone({ kind: 'keep' })}
-                className="h-auto flex-col gap-0 py-1.5 leading-tight"
-              >
-                <span>Keep {inr(keepRate ?? oldRate)}</span>
-                <span className="text-muted-foreground text-[10.5px] font-normal">saved on this line</span>
-              </Button>
-              <Button variant="outline" onClick={() => setCustom(true)}>
+              {/*
+                * One button or two, decided by whether anything is actually
+                * negotiable. When only the design moved there is a single
+                * correct figure, and offering it twice under two names — which
+                * is what "Keep ₹390 / Use ₹390" did — reads as a trick
+                * question. Custom rate is always there for a agreed price.
+                */}
+              <Button variant="ghost" className="sm:mr-auto" onClick={() => setCustom(true)}>
                 Custom rate…
               </Button>
-              <Button onClick={() => onDone({ kind: 'new' })} className="h-auto flex-col gap-0 py-1.5 leading-tight">
-                <span>Use {inr(newRate)}</span>
-                <span className="text-[10.5px] font-normal opacity-80">rate list{asOf ? `, ${formatDate(asOf)}` : ', today'}</span>
-              </Button>
+              {productRateMoved ? (
+                <>
+                  <Button
+                    variant="outline"
+                    onClick={() => onDone({ kind: 'keep' })}
+                    className="h-auto min-w-[8.5rem] flex-col gap-0 py-1.5 leading-tight"
+                  >
+                    <span>Keep {inr(keepRate ?? oldRate)}</span>
+                    <span className="text-muted-foreground text-[10.5px] font-normal">
+                      product stays {inr(keepProductRate ?? 0)}
+                    </span>
+                  </Button>
+                  <Button onClick={() => onDone({ kind: 'new' })} className="h-auto min-w-[8.5rem] flex-col gap-0 py-1.5 leading-tight">
+                    <span>Use {inr(newRate)}</span>
+                    <span className="text-[10.5px] font-normal opacity-80">product moves to {inr(newProductRate ?? 0)}</span>
+                  </Button>
+                </>
+              ) : (
+                <Button onClick={() => onDone({ kind: 'keep' })} className="h-auto flex-col gap-0 py-1.5 leading-tight">
+                  <span>Apply {inr(keepRate ?? oldRate)}</span>
+                  <span className="text-[10.5px] font-normal opacity-80">
+                    your {inr(keepProductRate ?? 0)} + design {inr(keepDesignRate ?? newDesignRate ?? 0)}
+                  </span>
+                </Button>
+              )}
             </>
           )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** A total under one of the two option columns: the figure, and — because that
+ *  is the question actually being asked — what it does to the line's rate. */
+function TotalCell({ value, was, accent }: { value: number; was: number; accent?: boolean }) {
+  const diff = round2(value - was);
+  const same = Math.abs(diff) < 0.001;
+  return (
+    <td
+      className={cn(
+        'border-l px-2.5 py-2 text-right tabular-nums sm:px-3',
+        accent && 'bg-blue-50/70 text-blue-800 dark:bg-blue-500/10 dark:text-blue-200',
+      )}
+    >
+      <div className="text-[15px]">{inr(value)}</div>
+      <div
+        className={cn(
+          'text-[10.5px] font-semibold',
+          same && 'text-muted-foreground/60',
+          !same && diff > 0 && 'text-rose-600 dark:text-rose-400',
+          !same && diff < 0 && 'text-emerald-600 dark:text-emerald-400',
+        )}
+      >
+        {same ? 'no change' : `${diff > 0 ? '+' : '−'}${inr(Math.abs(diff)).slice(1)}`}
+      </div>
+    </td>
   );
 }
 

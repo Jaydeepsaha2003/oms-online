@@ -6,35 +6,9 @@ import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { Button } from '@/components/ui/button';
-import { Kpi, RankedBars, ReportCard, ReportHeader, ReportSummary } from './report-kit';
+import { BANK_COLOR, CASH_COLOR, CASH_EDGE, Kpi, RankedBars, ReportCard, ReportHeader, ReportSummary } from './report-kit';
 import { ReportFilterBar, useReportFilters } from './report-filters';
 import { useCollectionsReport } from './use-reports';
-
-/*
- * Bank vs Cash — one colour pair, used by every chart on this page.
- *
- * Both charts used to stack two shades of the SAME hue (red on pale red, green
- * on pale green), which is the one thing you cannot read: a stacked bar has no
- * gap between its segments, so a light tint of the same colour reads as a
- * gradient rather than as a second value, and a cash-only bucket looked like a
- * washed-out bank one. Measured, the old pairs separated by just 1.98:1 and
- * 1.66:1 in luminance.
- *
- * Blue for bank, green for cash — matching the B / Bank and C / Cash columns on
- * the payment desk, so the two words mean the same colour everywhere in the app.
- * Blue against green also survives red-green colour blindness, which a
- * red/pale-red pair does not.
- *
- * Deep blue against a LIGHT green rather than two mid tones: touching segments
- * need to differ in lightness as well as hue, and this pair separates 4.5:1
- * (versus 1.98:1 before) so the boundary is obvious even in greyscale or print.
- * The trade-off is that the light green alone is weak on a white card — 1.9:1 —
- * so the cash segment carries a darker green outline. The fill gives the
- * internal contrast, the stroke gives the edge against the card.
- */
-const BANK = '#1e40af';
-const CASH = '#34d399';
-const CASH_EDGE = '#059669';
 
 /**
  * Never let a money field the server did not send reach a formatter — a browser
@@ -153,8 +127,8 @@ export function CollectionsReportPage() {
                 <Legend wrapperStyle={{ fontSize: 12 }} iconType="circle" />
                 {/* Bank sits at the bottom of the stack, so it keeps the square
                     foot and Cash carries the rounded cap. */}
-                <Bar name="Bank" dataKey="bank" stackId="age" fill={BANK} maxBarSize={64} />
-                <Bar name="Cash" dataKey="cash" stackId="age" fill={CASH} stroke={CASH_EDGE} strokeWidth={1} radius={[4, 4, 0, 0]} maxBarSize={64} />
+                <Bar name="Bank" dataKey="bank" stackId="age" fill={BANK_COLOR} maxBarSize={64} />
+                <Bar name="Cash" dataKey="cash" stackId="age" fill={CASH_COLOR} stroke={CASH_EDGE} strokeWidth={1} radius={[4, 4, 0, 0]} maxBarSize={64} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -173,12 +147,12 @@ export function CollectionsReportPage() {
               <AreaChart data={data?.collectionTrend ?? []} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
                 <defs>
                   <linearGradient id="collGradBank" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={BANK} stopOpacity={0.35} />
-                    <stop offset="100%" stopColor={BANK} stopOpacity={0} />
+                    <stop offset="0%" stopColor={BANK_COLOR} stopOpacity={0.35} />
+                    <stop offset="100%" stopColor={BANK_COLOR} stopOpacity={0} />
                   </linearGradient>
                   <linearGradient id="collGradCash" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={CASH} stopOpacity={0.35} />
-                    <stop offset="100%" stopColor={CASH} stopOpacity={0} />
+                    <stop offset="0%" stopColor={CASH_COLOR} stopOpacity={0.35} />
+                    <stop offset="100%" stopColor={CASH_COLOR} stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid vertical={false} stroke="#e2e8f0" strokeDasharray="3 3" />
@@ -186,7 +160,7 @@ export function CollectionsReportPage() {
                 <YAxis tick={{ fontSize: 12, fill: '#64748b' }} tickLine={false} axisLine={false} width={52} tickFormatter={(v: number) => inrCompact(v)} />
                 <Tooltip formatter={(v: number, name) => [inrFull(v), name]} cursor={{ stroke: '#94a3b8' }} />
                 <Legend wrapperStyle={{ fontSize: 12 }} iconType="circle" />
-                <Area name="Bank" type="monotone" dataKey="collectedBank" stackId="collected" stroke={BANK} strokeWidth={2.5} fill="url(#collGradBank)" />
+                <Area name="Bank" type="monotone" dataKey="collectedBank" stackId="collected" stroke={BANK_COLOR} strokeWidth={2.5} fill="url(#collGradBank)" />
                 <Area name="Cash" type="monotone" dataKey="collectedCash" stackId="collected" stroke={CASH_EDGE} strokeWidth={2.5} fill="url(#collGradCash)" />
               </AreaChart>
             </ResponsiveContainer>
