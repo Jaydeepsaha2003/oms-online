@@ -76,7 +76,7 @@ export const parseAmount = (s: string): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
-/** Indian FY start (Apr 1) for the Receipt Ledger default range. */
+/** Indian FY start (Apr 1) for the View Receipts default range. */
 function fyStart(): string {
   const t = new Date();
   return ymd(new Date(t.getMonth() >= 3 ? t.getFullYear() : t.getFullYear() - 1, 3, 1));
@@ -437,7 +437,7 @@ export function PaymentPage() {
 
   useSaveShortcut(submit);
 
-  // Ctrl+E → Receipt Ledger (legacy shortcut).
+  // Ctrl+E → View Receipts (legacy shortcut).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && (e.key === 'e' || e.key === 'E')) {
@@ -690,10 +690,10 @@ export function PaymentPage() {
               <button
                 type="button"
                 onClick={() => (ownerChosen ? setLedgerOpen(true) : toast.error('Please select PARTY NAME or AGENT NAME first.'))}
-                title="Receipt ledger (Ctrl+E)"
+                title="View this party's receipts (Ctrl+E)"
                 className="flex cursor-pointer items-center gap-1 rounded-[3px] px-1.5 py-1 text-[11px] font-bold tracking-wide text-amber-200 uppercase transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:outline-none"
               >
-                <ScrollText className="size-3.5" /> <span className="hidden sm:inline">Ledger</span>
+                <ScrollText className="size-3.5" /> <span className="hidden sm:inline">View receipts</span>
               </button>
               <button
                 type="button"
@@ -1177,7 +1177,7 @@ function EditPaymentDialog({ entry, onClose }: { entry: LedgerEntryDto; onClose:
   );
 }
 
-/* ── Receipt Ledger browser (legacy Button1 / Ctrl+E) ───────────────────────── */
+/* ── View Receipts browser (legacy Button1 / Ctrl+E) ────────────────────────── */
 
 function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { ownerKind: string; owner: string; customerId?: number; agentName?: string; onClose: () => void }) {
   const { can } = usePermissions();
@@ -1236,7 +1236,7 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
       <DialogContent className="flex max-h-[90dvh] w-[min(940px,96vw)] max-w-[96vw] flex-col overflow-hidden overflow-y-hidden sm:!max-w-[940px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-lg">
-            <BookOpenCheck className="text-primary size-5" /> Receipt Ledger — {ownerKind}: {owner}
+            <BookOpenCheck className="text-primary size-5" /> View Receipts — {ownerKind}: {owner}
           </DialogTitle>
           <DialogDescription>Every voucher in the chosen date range — opens on this financial year.</DialogDescription>
         </DialogHeader>

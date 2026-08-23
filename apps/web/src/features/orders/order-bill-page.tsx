@@ -441,6 +441,11 @@ export function OrderBillPage() {
               <tbody>
                 {([
                   [isQuotation ? 'Quotation ID' : 'Order ID', `#${shortOrderCode(order.code, order.id)}`],
+                  // The party's OWN reference for this order. It was captured on the
+                  // form and stored, but never printed — so the one number the
+                  // customer files the document under was missing from the document.
+                  // Conditional: an order without a PO must not print an empty row.
+                  ...(order.poNumber ? ([['PO No', order.poNumber]] as const) : []),
                   [isQuotation ? 'Quotation Date' : 'Order Date', fmtDate(order.orderDate)],
                   // The same stored date reads differently per document: an order is
                   // DUE by it, a quotation merely stops being valid.

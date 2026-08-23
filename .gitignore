@@ -66,6 +66,9 @@ certs/
 # restart.bat's "bouncing one server on purpose" marker - keeps the watchdog
 # from racing a deliberate restart. Transient, per-machine.
 .oms-restarting
+# auto-pull.ps1 lock — a leftover must not make the tree look dirty, or the
+# dirty check would block every future pull.
+.oms-autopull-running
 
 # SQLite transient files
 *.db-journal

@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Ban, ChevronLeft, ChevronRight, EllipsisVertical, Eye, FileDown, FileText, Filter, Loader2, Plus, Printer, RotateCcw, Search, Trash2, Truck } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Ban, ChevronLeft, ChevronRight, EllipsisVertical, FileDown, FileText, Filter, Loader2, Pencil, Plus, Printer, RotateCcw, Search, Trash2, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 import type { OrderDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -101,23 +101,70 @@ const COLUMNS: DataColumn<OrderDto>[] = [
   },
 ];
 
+/*
+ * The filter set lives in the URL, not in component state.
+ *
+ * Opening an order's PDF or its form unmounts this page, and plain `useState`
+ * went with it — so coming back landed on an unfiltered list and the work of
+ * narrowing it down had to be redone every time.
+ *
+ * In the query string the browser's own Back button restores them, because the
+ * filters are part of the address it returns to. They still reset when they
+ * should: the sidebar's "View Orders" link points at a bare `/orders`, so
+ * arriving from the menu gives a clean list. Nothing to expire and nothing to
+ * clear — and a filtered view is now a link that can be shared or bookmarked.
+ *
+ * `replace: true` on every write keeps Back pointing at the page you came FROM
+ * rather than walking back through each keystroke of a search.
+ */
+function useOrderFilters() {
+  const [params, setParams] = useSearchParams();
+  const get = (k: string) => params.get(k) ?? '';
+  const filters = {
+    search: get('q'),
+    agent: get('agent'),
+    product: get('product'),
+    design: get('design'),
+    page: Math.max(1, Number(params.get('page')) || 1),
+  };
+  /** One writer for the whole set: a filter change also resets the page, and
+   *  separate setters would each read the same pre-update query string and
+   *  clobber one another when two moved together. */
+  const patch = (changes: Partial<typeof filters>) => {
+    const next = new URLSearchParams(params);
+    const write = (k: string, v: string) => (v ? next.set(k, v) : next.delete(k));
+    if (changes.search !== undefined) write('q', changes.search);
+    if (changes.agent !== undefined) write('agent', changes.agent);
+    if (changes.product !== undefined) write('product', changes.product);
+    if (changes.design !== undefined) write('design', changes.design);
+    // An explicit page is honoured; any OTHER change drops back to page 1,
+    // because page 7 of a freshly narrowed result set is usually empty.
+    if (changes.page !== undefined) next.set('page', String(changes.page));
+    else next.delete('page');
+    setParams(next, { replace: true });
+  };
+  return { ...filters, patch };
+}
+
 export function OrdersPage() {
   const navigate = useNavigate();
   const { can } = usePermissions();
   const confirm = useConfirm();
-  const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch] = useState('');
-  const [agent, setAgent] = useState('');
-  const [product, setProduct] = useState('');
-  const [design, setDesign] = useState('');
-  const { page, setPage, pageSize, setPageSize } = usePageSize('orders');
+  const { search, agent, product, design, page, patch } = useOrderFilters();
+  // The box keeps its own copy so typing stays instant even while the list
+  // re-queries; the URL is the source of truth it is seeded from.
+  const [searchInput, setSearchInput] = useState(search);
+  const setPage = (n: number) => patch({ page: n });
+  const { pageSize, setPageSize: setStoredPageSize } = usePageSize('orders');
+  const setPageSize = (n: number) => {
+    setStoredPageSize(n);
+    patch({});
+  };
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const activeFilterCount = (agent ? 1 : 0) + (product ? 1 : 0) + (design ? 1 : 0);
   const resetFilters = () => {
-    setAgent('');
-    setProduct('');
-    setDesign('');
-    setPage(1);
+    setSearchInput('');
+    patch({ search: '', agent: '', product: '', design: '' });
   };
   const { data: filterOptions } = useOrderFilterOptions();
   const { data, isLoading } = useOrders({
@@ -164,8 +211,12 @@ export function OrdersPage() {
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56 font-sans">
           {can('order:view') && (
+            // Named for where it goes: this route is the order FORM, so calling
+            // it "View order" set up the wrong expectation before the page even
+            // loaded. The permission stays order:view — opening the form is
+            // still allowed; order:update is what gates saving from it.
             <DropdownMenuItem onSelect={() => navigate(`/orders/${o.id}/edit`)}>
-              <Eye /> View order
+              <Pencil /> Edit order
             </DropdownMenuItem>
           )}
           {can('order:view') && (
@@ -174,8 +225,10 @@ export function OrdersPage() {
             </DropdownMenuItem>
           )}
           {can('order:print') && (
+            // This prints the SALES ORDER. "Bill / Invoice" named it after a tax
+            // invoice, which is the challan — a different document entirely.
             <DropdownMenuItem onSelect={() => navigate(`/orders/${o.id}/bill`)}>
-              <Printer /> Bill / Invoice
+              <Printer /> Print Sales Order
             </DropdownMenuItem>
           )}
           {isDraft && can('quotation:create') && (
@@ -307,8 +360,7 @@ export function OrdersPage() {
               value={searchInput}
               onChange={(e) => {
                 setSearchInput(e.target.value);
-                setSearch(e.target.value.trim());
-                setPage(1);
+                patch({ search: e.target.value.trim() });
               }}
             />
           </div>
@@ -331,13 +383,13 @@ export function OrdersPage() {
               follows the house pattern: Item Name, Agent, Design (no Customer
               filter on this screen, so it starts from Product). */}
           <div className="hidden w-52 lg:block">
-            <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...(filterOptions?.products ?? [])]} placeholder="All products" className={cn(CONTROL, 'font-medium', product && CONTROL_ON)} />
+            <NativeSelect value={product} onChange={(v) => patch({ product: v })} options={['', ...(filterOptions?.products ?? [])]} placeholder="All products" className={cn(CONTROL, 'font-medium', product && CONTROL_ON)} />
           </div>
           <div className="hidden w-40 lg:block">
-            <NativeSelect value={agent} onChange={(v) => { setAgent(v); setPage(1); }} options={['', ...(filterOptions?.agents ?? [])]} placeholder="All agents" className={cn(CONTROL, 'font-medium', agent && CONTROL_ON)} />
+            <NativeSelect value={agent} onChange={(v) => patch({ agent: v })} options={['', ...(filterOptions?.agents ?? [])]} placeholder="All agents" className={cn(CONTROL, 'font-medium', agent && CONTROL_ON)} />
           </div>
           <div className="hidden w-40 lg:block">
-            <NativeSelect value={design} onChange={(v) => { setDesign(v); setPage(1); }} options={['', ...(filterOptions?.designs ?? [])]} placeholder="All designs" className={cn(CONTROL, 'font-medium', design && CONTROL_ON)} />
+            <NativeSelect value={design} onChange={(v) => patch({ design: v })} options={['', ...(filterOptions?.designs ?? [])]} placeholder="All designs" className={cn(CONTROL, 'font-medium', design && CONTROL_ON)} />
           </div>
           {activeFilterCount > 0 && (
             <Button
@@ -392,7 +444,7 @@ export function OrdersPage() {
               <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Product</Label>
               <NativeSelect
                 value={product}
-                onChange={(v) => { setProduct(v); setPage(1); }}
+                onChange={(v) => patch({ product: v })}
                 options={['', ...(filterOptions?.products ?? [])]}
                 placeholder="All products"
               />
@@ -401,7 +453,7 @@ export function OrdersPage() {
               <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Agent</Label>
               <NativeSelect
                 value={agent}
-                onChange={(v) => { setAgent(v); setPage(1); }}
+                onChange={(v) => patch({ agent: v })}
                 options={['', ...(filterOptions?.agents ?? [])]}
                 placeholder="All agents"
               />
@@ -410,7 +462,7 @@ export function OrdersPage() {
               <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Design</Label>
               <NativeSelect
                 value={design}
-                onChange={(v) => { setDesign(v); setPage(1); }}
+                onChange={(v) => patch({ design: v })}
                 options={['', ...(filterOptions?.designs ?? [])]}
                 placeholder="All designs"
               />
@@ -487,10 +539,10 @@ export function OrdersPage() {
           </p>
           <div className="flex items-center gap-2">
             <PageSizeSelect value={pageSize} onChange={setPageSize} />
-            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage(Math.max(1, page - 1))} disabled={page <= 1}>
               <ChevronLeft /> Prev
             </Button>
-            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page >= totalPages}>
               Next <ChevronRight />
             </Button>
           </div>

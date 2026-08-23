@@ -1232,7 +1232,7 @@ export function OrderFormPage() {
       description: isDraft
         ? `${items.length} item${items.length === 1 ? '' : 's'} · kept as Draft and hidden from Order Modify until confirmed.`
         : `${items.length} item${items.length === 1 ? '' : 's'} · total ₹${total.toLocaleString('en-IN')} for ${customer.trim()}.`,
-      confirmText: isEdit ? (isDraft ? 'Save draft' : 'Confirm & save') : isDraft ? 'Save draft' : 'Create order',
+      confirmText: isEdit ? (isDraft ? 'Save draft' : 'Update & save') : isDraft ? 'Save draft' : 'Create order',
     });
     if (!ok) return;
     const input = { ...buildInput(await resolveOrderDate()), status: statusValue };
@@ -1316,7 +1316,7 @@ export function OrderFormPage() {
   };
 
   const orderIsDraft = docKind === 'order' && status === 'DRAFT';
-  const primaryLabel = isEdit ? (orderIsDraft ? 'Confirm & Save' : 'Save changes') : `Create ${docLabel}`;
+  const primaryLabel = isEdit ? (orderIsDraft ? 'Update & save' : 'Save changes') : `Create ${docLabel}`;
   // Offer "Save as Draft" on a new order, or when editing one that's still a draft.
   const showSaveDraft = docKind === 'order' && (!isEdit || orderIsDraft);
 
