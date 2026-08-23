@@ -20,6 +20,8 @@ export function useFollowupBoard(query: FollowupQuery = {}) {
     queryKey: [...KEY, 'board', query],
     queryFn: () => http.get<FollowupPartyGroup[]>('/crm/followups/board', { params: query }),
     placeholderData: (prev) => prev,
+    // Feeds the bell's badge, so the same rule applies.
+    refetchOnMount: 'always',
   });
 }
 
@@ -36,6 +38,8 @@ export function useFollowupSummary(kind?: string) {
     queryKey: [...KEY, 'summary', kind ?? null],
     queryFn: () => http.get<FollowupSummary>('/crm/followups/summary', { params: kind ? { kind } : undefined }),
     refetchInterval: 60_000,
+    // Same reasoning as `due` below — a live count, never from disk.
+    refetchOnMount: 'always',
   });
 }
 
@@ -46,6 +50,20 @@ export function useFollowupDue(kind?: string, enabled = true) {
     queryFn: () => http.get<FollowupDto[]>('/crm/followups/due', { params: kind ? { kind } : undefined }),
     refetchInterval: 60_000,
     refetchOnWindowFocus: true,
+    /*
+     * `always` does two jobs, and both matter here.
+     *
+     * It refetches on mount, AND it opts this query out of the persisted cache
+     * (see `shouldDehydrateQuery` in lib/query.ts). A "needs attention right
+     * now" count is the worst possible thing to restore from localStorage after
+     * a restart: it asserts a fact about NOW using a number from THEN. That is
+     * what produced a sidebar badge of 1 and a bell of 2 over a page correctly
+     * reading zero — three counters, one of them live.
+     *
+     * The cost is that the badge is briefly absent on a cold open instead of
+     * instantly wrong, which is the right trade for a number people act on.
+     */
+    refetchOnMount: 'always',
     enabled,
   });
 }

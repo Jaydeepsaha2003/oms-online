@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { BellOff, Check, Loader2, Users } from 'lucide-react';
 import { toast } from 'sonner';
-import { isWithinDnd, type UserDndRow } from '@oms/shared';
+import { isWithinDnd, type NotificationDndDto, type UserDndRow } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,27 +10,62 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { RowCheckbox } from '@/components/common/row-checkbox';
-import { useAllNotificationDnd, useSetUserNotificationDnd } from './use-settings';
+import {
+  useAllNotificationDnd,
+  useClearUserNotificationDnd,
+  useDefaultNotificationDnd,
+  useSetUserNotificationDnd,
+  useUpdateDefaultNotificationDnd,
+} from './use-settings';
 
 const CAPTION = 'text-[10.5px] font-bold tracking-[0.09em] text-slate-500 uppercase dark:text-slate-400';
 
 /**
- * Quiet hours for the whole team — one window per person, set by an administrator.
+ * Quiet hours for the whole team: one company default, plus per-person overrides.
  *
- * This writes the SAME record each person edits in their own Settings card.
- * There is deliberately no separate "company window" layered on top of a
- * "personal window": two windows need a precedence rule, and a precedence rule
- * is something somebody has to remember at 11pm when a reminder does or does
- * not arrive. One window, last save wins, nothing to remember.
+ * There ARE two layers now, and one sentence covers the whole rule: YOUR OWN
+ * SETTING WINS, otherwise the company default applies. (An earlier version of
+ * this card refused a second layer on the grounds that precedence is a thing
+ * people have to remember — but making every person opt in individually meant
+ * quiet hours were off for almost everybody, which is worse. A default that
+ * covers everyone and a stated override rule is the better trade.)
  *
- * Two ways to work, because both are real:
- *   - per user — change one person's row, which saves on its own;
+ * An override is a stored ROW, not just a differing value. That is what lets
+ * "off for me" be a real answer: someone who deliberately opts out of a
+ * company-wide quiet window stays opted out when that window later changes.
+ * "Use default" deletes the row and puts them back on the default.
+ *
+ * Three ways to work, because all three are real:
+ *   - everyone — set the default once, at the top; most sites never go further;
+ *   - per user — change one person's row, which saves on its own and overrides;
  *   - many at once — tick several people and apply one window to all of them,
  *     which is how a shift ("nobody on the floor after 21:00") actually gets set.
  */
 export function TeamDndCard() {
   const { data, isLoading } = useAllNotificationDnd();
   const save = useSetUserNotificationDnd();
+  const { data: def } = useDefaultNotificationDnd();
+  const saveDefault = useUpdateDefaultNotificationDnd();
+  const clearFor = useClearUserNotificationDnd();
+  const [defStart, setDefStart] = useState('');
+  const [defEnd, setDefEnd] = useState('');
+  useEffect(() => {
+    if (def) {
+      setDefStart(def.start);
+      setDefEnd(def.end);
+    }
+  }, [def]);
+  /** One writer, so a change to any one field carries the other two along
+   *  rather than posting a half-formed window. */
+  const saveDefaultWith = (patch: Partial<NotificationDndDto>) =>
+    saveDefault.mutate(
+      { enabled: def?.enabled ?? false, start: defStart || '21:00', end: defEnd || '08:00', ...patch },
+      {
+        onSuccess: (v) =>
+          toast.success(v.enabled ? `Default quiet hours ${v.start}–${v.end} for everyone` : 'Default quiet hours off'),
+        onError: (e) => toast.error(getApiErrorMessage(e, 'Could not save the default')),
+      },
+    );
 
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [bulkStart, setBulkStart] = useState('21:00');
@@ -98,12 +133,64 @@ export function TeamDndCard() {
           )}
         </CardTitle>
         <p className="text-muted-foreground text-[12px]">
-          Set when each person may be disturbed by follow-up reminders. This is the same setting they see in their own
-          Settings — whoever saves last wins. A reminder landing inside someone's window waits for it to end; nothing is lost.
+          Set the default once and it applies to everyone. Anyone can be given their own hours instead, or put back on the
+          default. A reminder landing inside someone's window waits for it to end — nothing is lost.
         </p>
       </CardHeader>
 
       <CardContent className="space-y-3">
+        {/*
+          * The company default comes FIRST, because it is what most rows below
+          * are actually following — setting it once is the whole job, and the
+          * per-person rows exist for the exceptions.
+          */}
+        <div className="rounded-md border border-sky-200 bg-sky-50/70 p-3 dark:border-sky-500/30 dark:bg-sky-500/10">
+          <div className="flex flex-wrap items-center gap-2">
+            <Users className="size-4 shrink-0 text-sky-700 dark:text-sky-300" />
+            <span className="text-[13px] font-bold text-sky-900 dark:text-sky-100">Default for everyone</span>
+            <span className="text-[11.5px] text-sky-800/80 dark:text-sky-200/80">
+              applies to all {rows.length || ''} {rows.length === 1 ? 'person' : 'people'} who have not set their own
+            </span>
+            <Switch
+              className="ml-auto"
+              checked={def?.enabled ?? false}
+              disabled={saveDefault.isPending}
+              onCheckedChange={(v) => saveDefaultWith({ enabled: v })}
+            />
+          </div>
+          <div className="mt-2.5 grid gap-3 sm:grid-cols-[7rem_7rem_auto] sm:items-end">
+            <div className="space-y-1">
+              <Label htmlFor="def-from" className={CAPTION}>From</Label>
+              <Input
+                id="def-from"
+                type="time"
+                value={defStart}
+                disabled={!def?.enabled}
+                onChange={(e) => setDefStart(e.target.value)}
+                onBlur={(e) => e.target.value !== def?.start && saveDefaultWith({ start: e.target.value })}
+                className="h-9 w-full tabular-nums"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="def-to" className={CAPTION}>Until</Label>
+              <Input
+                id="def-to"
+                type="time"
+                value={defEnd}
+                disabled={!def?.enabled}
+                onChange={(e) => setDefEnd(e.target.value)}
+                onBlur={(e) => e.target.value !== def?.end && saveDefaultWith({ end: e.target.value })}
+                className="h-9 w-full tabular-nums"
+              />
+            </div>
+            <p className="text-[11.5px] text-sky-800/80 sm:pb-1.5 dark:text-sky-200/80">
+              {def?.enabled
+                ? `Everyone on the default is quiet ${def.start} to ${def.end}${def.start > def.end ? ' (overnight)' : ''}.`
+                : 'Off — nobody is muted unless they set their own hours.'}
+            </p>
+          </div>
+        </div>
+
         {isLoading ? (
           <div className="text-muted-foreground flex items-center gap-2 py-4 text-sm">
             <Loader2 className="size-4 animate-spin" /> Loading people…
@@ -154,9 +241,34 @@ export function TeamDndCard() {
                             )}
                             {busy === r.userId && <Loader2 className="text-muted-foreground size-3 animate-spin" />}
                           </div>
-                          <div className="text-muted-foreground text-[11px]">
-                            {r.email}
-                            {!r.configured && ' · not set, on the default'}
+                          <div className="text-muted-foreground flex flex-wrap items-center gap-1.5 text-[11px]">
+                            <span className="truncate">{r.email}</span>
+                            {r.source === 'default' ? (
+                              <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-700 dark:bg-sky-500/20 dark:text-sky-300">
+                                following default
+                              </span>
+                            ) : (
+                              <>
+                                <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300">
+                                  own hours
+                                </span>
+                                {/* The way back. Without it an override is a
+                                    one-way door and the default stops meaning
+                                    anything for that person for ever. */}
+                                <button
+                                  type="button"
+                                  className="cursor-pointer underline underline-offset-2 hover:text-foreground"
+                                  onClick={() =>
+                                    clearFor.mutate(r.userId, {
+                                      onSuccess: () => toast.success(`${r.name} is back on the default`),
+                                      onError: (e) => toast.error(getApiErrorMessage(e, 'Could not reset')),
+                                    })
+                                  }
+                                >
+                                  use default
+                                </button>
+                              </>
+                            )}
                           </div>
                         </td>
                         <td className="py-1.5 pr-2 text-center">

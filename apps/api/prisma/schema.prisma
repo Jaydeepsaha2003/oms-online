@@ -38,10 +38,10 @@ model User {
   refreshTokens     RefreshToken[]
   pushSubscriptions PushSubscription[]
   auditLogs         AuditLog[]
+  preferences       UserPreference[]
 
   @@index([status])
   @@map("users")
-  preferences   UserPreference[]
 }
 
 model Role {
@@ -1001,29 +1001,29 @@ model CreditNote {
 }
 
 model CreditNoteItem {
-  id           Int      @id @default(autoincrement())
-  creditNoteId Int
+  id               Int      @id @default(autoincrement())
+  creditNoteId     Int
   // Source dispatch line the return refers to (0/null for manual rows).
-  dispatchId   Int?
+  dispatchId       Int?
   // Original sale invoice this line credits against (legacy ChallanTblR.[Ref InvNo]).
-  refInvNo     String?
-  productName  String?
-  design       String?
-  bags         Float?
-  pcs          Float?
-  kgs          Float?
-  box          Float?
-  unit         String?
-  price        Float?
-  amount       Float?
-  pCategory    String?
-  comment      String?
+  refInvNo         String?
+  productName      String?
+  design           String?
+  bags             Float?
+  pcs              Float?
+  kgs              Float?
+  box              Float?
+  unit             String?
+  price            Float?
+  amount           Float?
+  pCategory        String?
+  comment          String?
   // The reversing Dispatch row this line created when the note was saved as
   // "Undispatched" (null otherwise). Held here rather than on Dispatch so
   // deleting the note can find and remove exactly its own reversals.
   returnDispatchId Int?
-  userName     String?
-  createdAt    DateTime @default(now())
+  userName         String?
+  createdAt        DateTime @default(now())
 
   creditNote CreditNote @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
 
@@ -2156,4 +2156,31 @@ model AgentSettlementDeduction {
 
   @@index([settlementId])
   @@map("agent_settlement_deductions")
+}
+
+/// Every notification actually sent, per recipient — the record that makes
+/// "don't send this again" possible.
+///
+/// Nothing recorded what had been sent before this table existed, so no send
+/// path could consult it: a second attempt at the same notification (a service
+/// restart replaying an action, a duplicated event, two processes briefly
+/// overlapping during a deploy) looked identical to a first attempt and went
+/// out again. A push notification outlives the session that made it and sits on
+/// a lock screen, so a repeat is not a cosmetic problem.
+///
+/// `dedupeKey` identifies the EVENT, not the message — "dispatch 4298 created",
+/// not its wording — so a reworded alert still counts as the same event.
+model NotificationLog {
+  id        Int      @id @default(autoincrement())
+  /// Stable identity of the event, e.g. `dispatch:onCreate:4298`.
+  dedupeKey String
+  userId    String
+  title     String
+  body      String
+  sentAt    DateTime @default(now())
+
+  /// The lookup every send does: "did this person already get this event?"
+  @@index([dedupeKey, userId, sentAt])
+  @@index([sentAt])
+  @@map("notification_log")
 }

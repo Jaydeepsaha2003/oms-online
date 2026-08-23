@@ -3,6 +3,7 @@ import { ACTIONS, perm, RESOURCES, type AppNotification, type DispatchAlertEvent
 import { formatDate } from '../common/date.util';
 import { NotificationAudienceService } from '../notifications/notification-audience.service';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
+import { NotificationLedger } from '../notifications/notification-ledger.service';
 import { PushService } from '../notifications/push.service';
 import { SettingsService } from '../settings/settings.service';
 import { qtyText } from './qty-text.util';
@@ -44,6 +45,7 @@ export class DispatchNotifier {
     private readonly audience: NotificationAudienceService,
     private readonly gateway: NotificationsGateway,
     private readonly push: PushService,
+    private readonly ledger: NotificationLedger,
   ) {}
 
   /** A dispatch was recorded from the Dispatch form. */
@@ -69,7 +71,7 @@ export class DispatchNotifier {
         this.by(f.userName),
       ]),
       data: { kind: 'dispatch', dispatchId: f.dispatchId, dispatchCode: f.dispatchCode },
-    });
+    }, `dispatch:onCreate:${f.dispatchId}`);
   }
 
   /** "Create & Dispatch" shipped a whole order — ONE alert, not one per line. */
@@ -84,7 +86,7 @@ export class DispatchNotifier {
         this.by(f.userName),
       ]),
       data: { kind: 'dispatch', orderId: f.orderId },
-    });
+    }, `dispatch:onBulk:${f.orderId}`);
   }
 
   /** A back-dated dispatch became real because an approver signed it off. The
@@ -113,7 +115,7 @@ export class DispatchNotifier {
         `requested by ${f.requestedByName ?? 'someone'}, approved by ${f.approverName}`,
       ]),
       data: { kind: 'dispatch', dispatchId: f.dispatchId, dispatchCode: f.dispatchCode },
-    });
+    }, `dispatch:onBackdateApproved:${f.dispatchId}`);
   }
 
   /** An existing dispatch changed. `changes` is the same before → after text the
@@ -125,7 +127,7 @@ export class DispatchNotifier {
       title: `Dispatch edited — ${f.customerName}`,
       body: this.line([f.dispatchCode, f.changes, this.by(f.userName)]),
       data: { kind: 'dispatch', dispatchId: f.dispatchId, dispatchCode: f.dispatchCode },
-    });
+    }, `dispatch:onEdit:${f.dispatchId}:${f.changes}`);
   }
 
   /** A dispatch was deleted. Carries the quantities it held, since the row is gone. */
@@ -141,7 +143,7 @@ export class DispatchNotifier {
       title: `Dispatch deleted — ${f.customerName}`,
       body: this.line([f.dispatchCode, qtyText(f), f.productName, this.by(f.userName)]),
       data: { kind: 'dispatch' },
-    });
+    }, `dispatch:onDelete:${f.dispatchCode}`);
   }
 
   /* ── internals ──────────────────────────────────────────────────────────── */
@@ -177,7 +179,18 @@ export class DispatchNotifier {
    * the promise is not awaited by anyone, so an escaping rejection would surface
    * as an unhandled rejection rather than a caller-visible error.
    */
-  private fire(event: DispatchAlertEvent, actorId: string | null | undefined, notification: AppNotification): void {
+  /**
+   * @param dedupeKey identifies the EVENT, e.g. `dispatch:onCreate:4298`. A
+   *   recipient who already had it inside the ledger's cooldown is skipped, so
+   *   the same dispatch cannot be announced twice however the second attempt
+   *   arises.
+   */
+  private fire(
+    event: DispatchAlertEvent,
+    actorId: string | null | undefined,
+    notification: AppNotification,
+    dedupeKey?: string,
+  ): void {
     void (async () => {
       try {
         const flags = await this.settings.getDispatchAlerts();
@@ -203,8 +216,12 @@ export class DispatchNotifier {
         // "tell everyone" — a push notification outlives the session that made it.
         if (!recipients.length) return;
 
-        this.gateway.notifyUsers(recipients, notification);
-        await this.push.sendToUsers(recipients, notification);
+        const untold = dedupeKey ? await this.ledger.filterUntold(dedupeKey, recipients) : recipients;
+        if (!untold.length) return;
+
+        this.gateway.notifyUsers(untold, notification);
+        await this.push.sendToUsers(untold, notification);
+        if (dedupeKey) await this.ledger.record(dedupeKey, untold, notification.title, notification.body);
       } catch (err) {
         this.logger.warn(`Dispatch alert (${event}) failed: ${(err as Error).message}`);
       }

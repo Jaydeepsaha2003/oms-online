@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Param, Post, Put, Req } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import type {
+  EffectiveDndDto,
   NotificationDndDto,
   PushSubscriptionRequest,
   TestNotificationResult,
@@ -25,14 +26,38 @@ export class NotificationsController {
 
   /* ── Reminder Do-Not-Disturb (per user, not per installation) ───────────── */
 
+  /*
+   * The company-wide window, which everyone follows unless they have their own.
+   *
+   * Reading it is ungated: any signed-in user is entitled to know what quiet
+   * hours apply to them. Changing it needs setting:update — it moves everybody.
+   */
+  @Get('dnd/default')
+  getDefaultDnd(): Promise<NotificationDndDto> {
+    return this.prefs.getDefaultDnd();
+  }
+
+  @Put('dnd/default')
+  @Permissions(perm(RESOURCES.SETTING, ACTIONS.UPDATE))
+  setDefaultDnd(@Body() body: NotificationDndDto): Promise<NotificationDndDto> {
+    return this.prefs.setDefaultDnd(body);
+  }
+
+  /** This user's own window — the company default until they override it. */
   @Get('dnd')
-  getDnd(@Req() req: Request): Promise<NotificationDndDto> {
+  getDnd(@Req() req: Request): Promise<EffectiveDndDto> {
     return this.prefs.getDnd((req.user as AuthenticatedUser).id);
   }
 
   @Post('dnd')
   setDnd(@Req() req: Request, @Body() body: NotificationDndDto): Promise<NotificationDndDto> {
     return this.prefs.setDnd((req.user as AuthenticatedUser).id, body);
+  }
+
+  /** Stop overriding — follow the company default again. */
+  @Delete('dnd')
+  clearDnd(@Req() req: Request): Promise<EffectiveDndDto> {
+    return this.prefs.clearDnd((req.user as AuthenticatedUser).id);
   }
 
   /*
@@ -50,10 +75,23 @@ export class NotificationsController {
     return this.prefs.listDnd();
   }
 
+  /*
+   * Declared AFTER `dnd/default` on purpose — Nest matches routes in declaration
+   * order, so a `:userId` route above it would swallow `/dnd/default` and try to
+   * save a user called "default". The service also refuses that id outright, so
+   * reordering these methods cannot silently corrupt the company setting.
+   */
   @Put('dnd/:userId')
   @Permissions(perm(RESOURCES.USER, ACTIONS.UPDATE))
   setDndFor(@Param('userId') userId: string, @Body() body: NotificationDndDto): Promise<UserDndRow> {
     return this.prefs.setDndFor(userId, body);
+  }
+
+  /** Put one person back on the company default. */
+  @Delete('dnd/:userId')
+  @Permissions(perm(RESOURCES.USER, ACTIONS.UPDATE))
+  clearDndFor(@Param('userId') userId: string): Promise<UserDndRow> {
+    return this.prefs.clearDndFor(userId);
   }
 
   /** Any authenticated user may trigger a test broadcast — it's inert, no @Permissions needed. */

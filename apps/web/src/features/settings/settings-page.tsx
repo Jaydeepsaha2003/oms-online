@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, BellOff, BellRing, Building2, Check, ClipboardList, HardDrive, ImageIcon, Layers, Loader2, Plus, Receipt, SlidersHorizontal, Trash2, Truck, Upload, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BellOff, BellRing, Building2, Check, ClipboardList, HardDrive, ImageIcon, Layers, Loader2, Plus, Receipt, RotateCcw, SlidersHorizontal, Trash2, Truck, Upload, Users, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { DEFAULT_ORDER_QTY_LAYOUT, isWithinDnd, normalizeQtyOrder, QTY_FIELD_LABEL, SETTING_GROUP_META, type OrderOptionDto, type OrderQtyLayout, type QtyField, type SettingGroupMeta } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -26,6 +26,7 @@ import { DispatchAlertsCard } from './dispatch-alerts-card';
 import { RateListSettingsCard } from './rate-list-settings-card';
 import {
   useChallanFields,
+  useClearNotificationDnd,
   useNotificationDnd,
   useChallanTerms,
   useCompany,
@@ -593,6 +594,10 @@ function QuotationTermsCard({ canEdit }: { canEdit: boolean }) {
 function ReminderDndCard() {
   const { data } = useNotificationDnd();
   const update = useUpdateNotificationDnd();
+  const clearDnd = useClearNotificationDnd();
+  /** True while this user has no setting of their own — the company default is
+   *  what is actually in force, and editing anything here overrides it. */
+  const inherited = data?.source === 'default';
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
 
@@ -630,9 +635,60 @@ function ReminderDndCard() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
+        {/* Where the window in force came from, said plainly — the whole point of
+            a default is that most people never touch this card, so it has to be
+            obvious that it is already doing something. */}
+        <div
+          className={cn(
+            'flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-[12px]',
+            inherited
+              ? 'border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-100'
+              : 'border-indigo-200 bg-indigo-50 text-indigo-900 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-100',
+          )}
+        >
+          {inherited ? (
+            <>
+              <Users className="size-3.5 shrink-0" />
+              <span>
+                You are following the <strong>company default</strong>
+                {data?.companyDefault.enabled ? (
+                  <>
+                    {' '}— quiet <strong className="tabular-nums">{data.companyDefault.start}</strong> to{' '}
+                    <strong className="tabular-nums">{data.companyDefault.end}</strong>
+                  </>
+                ) : (
+                  ' — which is currently off'
+                )}
+                . Change anything below and it becomes yours alone.
+              </span>
+            </>
+          ) : (
+            <>
+              <BellOff className="size-3.5 shrink-0" />
+              <span>
+                These are <strong>your own</strong> hours, not the company default.
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                className="ml-auto h-7 cursor-pointer text-[11.5px]"
+                disabled={clearDnd.isPending}
+                onClick={() =>
+                  clearDnd.mutate(undefined, {
+                    onSuccess: () => toast.success('Back on the company default'),
+                    onError: (e) => toast.error(getApiErrorMessage(e, 'Could not reset')),
+                  })
+                }
+              >
+                {clearDnd.isPending ? <Loader2 className="animate-spin" /> : <RotateCcw />} Use the default
+              </Button>
+            </>
+          )}
+        </div>
+
         <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
           <div className="min-w-0">
-            <Label className="text-[13px] font-semibold">Do not disturb me</Label>
+            <Label className="text-[13px] font-semibold">DND Timings</Label>
             <p className="text-muted-foreground mt-0.5 text-[12px]">
               Follow-up reminders will not be pushed to you during these hours. Nothing is lost - a reminder that falls in the
               window arrives once it ends, and stays visible in CRM and on the bell meanwhile. This setting is yours alone.

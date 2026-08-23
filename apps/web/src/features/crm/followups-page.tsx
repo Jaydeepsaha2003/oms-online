@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AlarmClock, Bell, Building2, CalendarDays, Check, ChevronDown, CircleCheck, Clock, Eye, Factory, Flag, HandCoins, Handshake, Info, ListChecks, Loader2, MessageSquare, MessageSquarePlus, Mic, Package, PackageCheck, Pencil, Plus, RotateCcw, Search, SlidersHorizontal, Sparkles, Trash2, TriangleAlert, Truck, Wallet, type LucideIcon } from 'lucide-react';
+import { AlarmClock, Bell, Building2, EllipsisVertical, CalendarDays, Check, ChevronDown, CircleCheck, Clock, Eye, Factory, Flag, HandCoins, Handshake, Info, ListChecks, Loader2, MessageSquare, MessageSquarePlus, Mic, Package, PackageCheck, Pencil, Plus, RotateCcw, Search, SlidersHorizontal, Sparkles, Trash2, TriangleAlert, Truck, Wallet, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { type FollowupDto, type FollowupKind, type FollowupPartyGroup } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   useAddChecklist,
@@ -102,68 +103,105 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
     return m;
   }, [balances]);
 
+  /*
+   * `status` still drives the query — the tab is a view on top of it, not a
+   * second source of truth. History IS status=DONE; keeping them in step here
+   * means the list and the tab can never disagree.
+   */
+  type TabId = 'collect' | 'followups' | 'history';
+  const tabs = [
+    ...(isPay ? ([{ id: 'collect' as const, label: 'Collect', icon: HandCoins, count: null }] as const) : []),
+    { id: 'followups' as const, label: 'Follow-ups', icon: Bell, count: summary?.openTotal ?? 0 },
+    { id: 'history' as const, label: 'History', icon: CircleCheck, count: null },
+  ];
+  const [tab, setTabRaw] = useState<TabId>(isPay ? 'collect' : 'followups');
+  const setTab = (id: TabId) => {
+    setTabRaw(id);
+    // History is the DONE list; the other two are open work.
+    setStatus(id === 'history' ? 'DONE' : 'OPEN');
+  };
+
   return (
     <div className="space-y-4">
+      {/*
+        * No title or icon here: the global header already shows this page's name.
+        * What is kept is the one line saying what the page is FOR, and the action
+        * — neither of which the topbar carries. Same cleanup as the other twelve
+        * pages and the eight reports.
+        */}
       <div className="flex flex-wrap items-center gap-3">
-        <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
-          {isPay ? <HandCoins className="size-5" /> : isInquiry ? <MessageSquarePlus className="size-5" /> : <Bell className="size-5" />}
-        </div>
-        <div className="mr-auto min-w-0">
-          <div className="flex items-center gap-1.5">
-            <h2 className="text-2xl font-semibold tracking-tight">
-              {isPay ? 'Payment Recovery Desk' : isInquiry ? 'New Inquiries' : 'Follow-ups'}
-            </h2>
-            <HelpTip
-              text={
-                isPay
-                  ? 'Every party who owes money, ranked worst-first — pick one and collect in one tap.'
-                  : isInquiry
-                    ? 'Every new enquiry that has not become an order yet — chased on the same reminder loop as any other promise.'
-                    : "Every promise to a party, tracked until it's done — the system keeps nudging."
-              }
-            />
-          </div>
-          {isPay && <p className="text-muted-foreground text-sm">Who to call next, what they owe, and every promise made — all in one place.</p>}
-          {isInquiry && (
-            <p className="text-muted-foreground text-sm">
-              Log what a party asked for and keep it in front of you until it turns into an order — or is closed off.
-            </p>
-          )}
-        </div>
+        <p className="text-muted-foreground mr-auto min-w-0 text-sm">
+          {isPay
+            ? 'Who to call next, what they owe, and every promise made — all in one place.'
+            : isInquiry
+              ? 'Every new enquiry that has not become an order yet, chased on the same reminder loop as any other promise.'
+              : "Every promise to a party, tracked until it's done — the system keeps nudging."}
+        </p>
         {canEdit && (
-          <Button onClick={() => openForm(null)}>
+          <Button size="sm" className="h-9 shrink-0 font-semibold" onClick={() => openForm(null)}>
             <Plus /> {isPay ? 'New payment follow-up' : isInquiry ? 'New inquiry' : 'New follow-up'}
           </Button>
         )}
       </div>
 
-      {/* Money-at-a-glance strip (payment recovery) */}
       {isPay && <RecoveryMoneyStrip balances={balances} />}
 
-      {/* Owing-parties worklist — pick a party and collect (payment recovery) */}
-      {isPay && <OwingPartiesWorklist onCollect={openCollect} onOpenParty={(p) => setSearch(p)} />}
-
-      {/* Open ⇄ Completed. Completed is a review view — it answers "what did we
-          actually close, and what was said when we closed it". */}
-      <div className="bg-muted inline-flex rounded-lg p-1">
-        {([['OPEN', 'Open'], ['DONE', 'Completed']] as const).map(([v, label]) => (
-          <button
-            key={v}
-            type="button"
-            onClick={() => setStatus(v)}
-            className={cn(
-              'inline-flex cursor-pointer items-center gap-1.5 rounded-md px-3.5 py-1.5 text-sm font-semibold transition-colors',
-              status === v ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-            )}
-          >
-            {v === 'OPEN' ? <Bell className="size-3.5" /> : <CircleCheck className="size-3.5" />}
-            {label}
-          </button>
-        ))}
+      {/*
+        * Three tabs, because this page answers three different questions and
+        * stacking them made the last one a scroll away: the money strip, then a
+        * long worklist, and the follow-ups themselves right at the bottom — the
+        * thing you came to work on was the thing you had to hunt for.
+        *
+        *   Collect     — who owes money, worst first (payment desk only)
+        *   Follow-ups  — the open promises, which is the actual work
+        *   History     — what was closed, and what was said when it closed
+        *
+        * The counts sit in the tabs so you can see where the work is without
+        * opening each one. `Follow-ups` is the default on every kind except the
+        * payment desk, where deciding WHO to call comes first.
+        */}
+      <div
+        role="tablist"
+        aria-label="Section"
+        className="bg-muted/70 inline-flex flex-wrap gap-1 rounded-lg p-1"
+      >
+        {tabs.map(({ id, label, icon: Icon, count }) => {
+          const on = tab === id;
+          return (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={on}
+              onClick={() => setTab(id)}
+              className={cn(
+                // h-9 keeps the target comfortable on a phone; the old pills were 28px.
+                'inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-md px-3.5 text-sm font-semibold transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:outline-none',
+                on ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              <Icon className="size-4 shrink-0" />
+              {label}
+              {count != null && count > 0 && (
+                <span
+                  className={cn(
+                    'ml-0.5 rounded-full px-1.5 py-0.5 text-[10.5px] leading-none font-bold tabular-nums',
+                    on ? 'bg-indigo-600 text-white' : 'bg-muted-foreground/15 text-muted-foreground',
+                  )}
+                >
+                  {count}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
+      {/* Collect — the owing-parties worklist, payment desk only. */}
+      {tab === 'collect' && <OwingPartiesWorklist onCollect={openCollect} onOpenParty={(p) => { setSearch(p); setTab('followups'); }} />}
+
       {/* Follow-up KPI strip — open work only; nothing here applies to closed items. */}
-      {!showingDone && (
+      {tab !== 'collect' && !showingDone && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Kpi label="Overdue" value={summary?.overdue ?? 0} tone="rose" icon={<TriangleAlert className="size-4" />} active={bucket === 'overdue'} onClick={() => setBucket(bucket === 'overdue' ? '' : 'overdue')} />
           <Kpi label="Due today" value={summary?.dueToday ?? 0} tone="amber" icon={<Clock className="size-4" />} active={bucket === 'today'} onClick={() => setBucket(bucket === 'today' ? '' : 'today')} />
@@ -172,7 +210,11 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
         </div>
       )}
 
-      {/* Filters */}
+      {/* Filters and the board belong to Follow-ups / History. On Collect the
+          worklist above IS the content — leaving these below it would rebuild
+          the same long scroll the tabs were added to remove. */}
+      {tab !== 'collect' && (
+      <>
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative w-full sm:w-72">
           <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
@@ -215,6 +257,8 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
             <PartyCard key={g.partyName} group={g} canEdit={canEdit} onEdit={openForm} balance={balByParty.get(g.partyName.trim().toUpperCase())} done={showingDone} />
           ))}
         </div>
+      )}
+      </>
       )}
 
       {formOpen && <FollowupForm kind={kind} editing={editing} prefill={prefill} onClose={() => setFormOpen(false)} />}
@@ -389,27 +433,91 @@ function FollowupRow({ f, canEdit, onEdit, done }: { f: FollowupDto; canEdit: bo
             <Button
               size="sm"
               variant="outline"
-              className="h-7 text-xs"
+              className="h-8 cursor-pointer text-xs"
               disabled={reopen.isPending}
               onClick={() => reopen.mutate(f.id, { onSuccess: () => toast.success('Reopened'), onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) })}
             >
-              <RotateCcw className="size-3" /> Reopen
+              <RotateCcw className="size-3.5" /> Reopen
             </Button>
           ) : (
             <>
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setLogOpen(true)}><Pencil className="size-3" /> Update</Button>
-              <Button size="sm" variant="outline" className="h-7 text-xs text-amber-700" onClick={() => snooze.mutate(f.id, { onSuccess: () => toast.success('Snoozed — will nudge again later'), onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) })} disabled={snooze.isPending}>
-                <AlarmClock className="size-3" /> Snooze
+              {/*
+                * Two buttons and a menu, not six.
+                *
+                * Six equal-weight buttons in a row — Update, Snooze, Seen,
+                * Resolved, Edit, delete — each with its own icon and its own
+                * colour, is what made this card unreadable: nothing looked more
+                * important than anything else, so every card demanded to be
+                * read in full. Now the two things you actually do are buttons
+                * and the rest is one menu, the same shape already chosen for
+                * the Dispatch actions column.
+                *
+                * `Resolved` is primary because closing the promise is the point
+                * of the card. Delete lives in the menu behind a separator — it
+                * is the one irreversible action here and should not sit a
+                * mis-tap away from Snooze.
+                */}
+              <Button
+                size="sm"
+                className="h-8 cursor-pointer text-xs font-semibold"
+                onClick={() => setDoneOpen(true)}
+              >
+                <Check className="size-3.5" /> Resolved
               </Button>
-              {/* Seen acknowledges the nudge; Resolved is what actually closes it. */}
-              <Button size="sm" variant="outline" className="h-7 text-xs text-sky-700" onClick={() => seen.mutate(f.id, { onSuccess: () => toast.success('Marked seen — quiet until it’s due again'), onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) })} disabled={seen.isPending}>
-                <Eye className="size-3" /> Seen
+              <Button size="sm" variant="outline" className="h-8 cursor-pointer text-xs" onClick={() => setLogOpen(true)}>
+                <MessageSquarePlus className="size-3.5" /> Update
               </Button>
-              <Button size="sm" variant="outline" className="h-7 text-xs text-emerald-700" onClick={() => setDoneOpen(true)}><Check className="size-3" /> Resolved</Button>
-              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onEdit(f)}><Pencil className="size-3" /> Edit</Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="size-8 cursor-pointer"
+                    aria-label={`More actions for ${f.title}`}
+                    title="More actions"
+                  >
+                    <EllipsisVertical className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-52 font-sans">
+                  <DropdownMenuItem
+                    disabled={snooze.isPending}
+                    onSelect={() =>
+                      snooze.mutate(f.id, {
+                        onSuccess: () => toast.success('Snoozed — will nudge again later'),
+                        onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')),
+                      })
+                    }
+                  >
+                    <AlarmClock className="text-amber-600" /> Snooze the reminder
+                  </DropdownMenuItem>
+                  {/* Seen acknowledges the nudge; Resolved is what actually closes it. */}
+                  <DropdownMenuItem
+                    disabled={seen.isPending}
+                    onSelect={() =>
+                      seen.mutate(f.id, {
+                        onSuccess: () => toast.success('Marked seen — quiet until it’s due again'),
+                        onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')),
+                      })
+                    }
+                  >
+                    <Eye className="text-sky-600" /> Mark as seen
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => onEdit(f)}>
+                    <Pencil /> Edit details
+                  </DropdownMenuItem>
+                  {can('crm:delete') && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem variant="destructive" onSelect={doDelete}>
+                        <Trash2 /> Delete permanently
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </>
           )}
-          {can('crm:delete') && <Button size="sm" variant="ghost" className="text-destructive h-7 text-xs" onClick={doDelete}><Trash2 className="size-3" /></Button>}
         </div>
       )}
 

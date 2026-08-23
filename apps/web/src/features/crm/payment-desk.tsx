@@ -486,8 +486,22 @@ export function PartyBalancePanel({ customerId, party, onPickAmount, onPickInvoi
           </span>
         )}
         {data.invoices.length > 0 && (
-          <button type="button" onClick={() => setShowInvoices((v) => !v)} className="text-muted-foreground hover:text-foreground ml-auto inline-flex cursor-pointer items-center gap-1 text-xs font-medium">
-            <Receipt className="size-3.5" /> {showInvoices ? 'Hide' : `${data.invoices.length} open invoice${data.invoices.length === 1 ? '' : 's'}`}
+          /* This is the way into the invoice list — the thing most collection
+             calls actually need — so it is sized to be found. It was the
+             quietest text on the row despite being the only action on it. */
+          <button
+            type="button"
+            onClick={() => setShowInvoices((v) => !v)}
+            className="ml-auto inline-flex cursor-pointer items-center gap-1.5 text-[13.5px] font-bold text-indigo-700 underline-offset-2 hover:underline dark:text-indigo-300"
+          >
+            <Receipt className="size-4" />
+            {showInvoices ? (
+              'Hide invoices'
+            ) : (
+              <>
+                <span className="tabular-nums">{data.invoices.length}</span> open invoice{data.invoices.length === 1 ? '' : 's'}
+              </>
+            )}
           </button>
         )}
       </div>

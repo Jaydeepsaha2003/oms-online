@@ -5,7 +5,7 @@ import { filterMenu, MENU, type MenuNode } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { getMenuIcon } from '@/lib/icons';
 import { usePermissions } from '@/hooks/use-permissions';
-import { useNudgeCount } from '@/features/crm/followup-nudge';
+import { useNudgeCountsByKind } from '@/features/crm/followup-nudge';
 import { usePendingApprovalCount } from '@/features/approvals/use-approvals';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
@@ -80,17 +80,30 @@ export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
   const location = useLocation();
   const brandLogo = company?.logo || kavishLogo;
   const brandName = company?.name || 'Kavish';
-  const nudges = useNudgeCount(can('crm:view'));
+  const nudgesByKind = useNudgeCountsByKind(can('crm:view'));
   const canViewApprovals = can('approval:view');
   const { data: approvalCount } = usePendingApprovalCount(canViewApprovals);
   const pendingApprovals = approvalCount?.pending ?? 0;
   const items = useMemo(() => {
     const filtered = filterMenu(permissions, MENU);
-    if (nudges > 0) {
-      // Attach the live "needs attention" count to the CRM → Follow-ups item.
+    /*
+     * One badge per CRM page, each counting only what that page lists.
+     *
+     * The three pages are three views of one table — Follow-ups is DELIVERY,
+     * Payments is PAYMENT, New Inquiries is INQUIRY — so a single total on
+     * Follow-ups counted rows it does not show. An open payment reminder badged
+     * Follow-ups with a "1" and then showed an empty list underneath it.
+     */
+    const byKind: [string, number][] = [
+      ['crm-followups', nudgesByKind.DELIVERY ?? 0],
+      ['crm-payments', nudgesByKind.PAYMENT ?? 0],
+      ['crm-inquiries', nudgesByKind.INQUIRY ?? 0],
+    ];
+    for (const [id, count] of byKind) {
+      if (count <= 0) continue;
       for (const g of filtered) {
-        const leaf = g.children?.find((c) => c.id === 'crm-followups');
-        if (leaf) leaf.badge = String(nudges);
+        const leaf = g.children?.find((c) => c.id === id);
+        if (leaf) leaf.badge = String(count);
       }
     }
     if (pendingApprovals > 0) {
@@ -100,7 +113,7 @@ export function Sidebar({ collapsed = false, onNavigate }: SidebarProps) {
       }
     }
     return filtered;
-  }, [permissions, nudges, pendingApprovals]);
+  }, [permissions, nudgesByKind, pendingApprovals]);
 
   // The one entry that owns this URL — passed down so exactly one link lights up.
   const activePath = useMemo(

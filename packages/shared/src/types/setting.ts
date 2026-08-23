@@ -229,6 +229,28 @@ export interface NotificationDndDto {
 export type NotificationDndInput = NotificationDndDto;
 
 /**
+ * Where a person's quiet hours came from.
+ *
+ * Two layers, and the rule between them is one sentence: YOUR OWN SETTING WINS,
+ * otherwise the company default applies. Nothing else to remember.
+ *
+ * `default`  — no personal setting; this person follows the company window, and
+ *              changing that window changes theirs.
+ * `personal` — they (or an administrator) set their own, which includes
+ *              deliberately switching it OFF. That is why an override exists as
+ *              a row rather than as a non-default value: "off for me" and "no
+ *              preference" are different answers and must not collapse.
+ */
+export type DndSource = 'default' | 'personal';
+
+/** The window actually in force for one person, and where it came from. */
+export interface EffectiveDndDto extends NotificationDndDto {
+  source: DndSource;
+  /** The company window, so a screen can show what "default" currently means. */
+  companyDefault: NotificationDndDto;
+}
+
+/**
  * One person's quiet hours as an administrator sees them.
  *
  * There is exactly ONE window per user — the same record whether the person
@@ -247,6 +269,8 @@ export interface UserDndRow extends NotificationDndDto {
   status: string;
   /** false = this user has never saved a preference; they are on the default. */
   configured: boolean;
+  /** Which layer the times above came from — see {@link DndSource}. */
+  source: DndSource;
 }
 
 /** Setting quiet hours for somebody else. */

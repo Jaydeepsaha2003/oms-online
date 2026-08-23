@@ -3,6 +3,7 @@ import { ACTIONS, perm, RESOURCES, type AppNotification } from '@oms/shared';
 import { SettingsService } from '../settings/settings.service';
 import { NotificationAudienceService } from './notification-audience.service';
 import { NotificationsGateway } from './notifications.gateway';
+import { NotificationLedger } from './notification-ledger.service';
 import { PushService } from './push.service';
 
 /** Who performed the action. `actorId` is excluded — nobody is told about their
@@ -45,6 +46,7 @@ export class ActivityNotifier {
     private readonly audience: NotificationAudienceService,
     private readonly gateway: NotificationsGateway,
     private readonly push: PushService,
+    private readonly ledger: NotificationLedger,
   ) {}
 
   /** A new order was placed — dispatch and design track both need to know. */
@@ -57,6 +59,7 @@ export class ActivityNotifier {
         data: { kind: 'order', orderId: f.orderId, orderCode: f.orderCode ?? null },
       },
       f.actorId,
+      `order:created:${f.orderId}`,
     );
   }
 
@@ -72,6 +75,7 @@ export class ActivityNotifier {
         data: { kind: 'order', orderId: f.orderId, orderCode: f.orderCode ?? null },
       },
       f.actorId,
+      `order:updated:${f.orderId}:${f.summary ?? f.itemCount}`,
     );
   }
 
@@ -97,6 +101,9 @@ export class ActivityNotifier {
         data: { kind: 'design-track', orderItemId: f.orderItemId },
       },
       f.actorId,
+      // The figure is part of the identity: entering 40 then 45 is two events,
+      // the same 45 replayed is one.
+      `design-track:${f.orderItemId}:${f.kalwat ?? ''}`,
     );
   }
 
@@ -143,7 +150,13 @@ export class ActivityNotifier {
    * awaits this promise, so an escaping rejection would surface as an unhandled
    * rejection rather than a caller-visible error.
    */
-  private fire(notification: AppNotification, actorId?: string | null): void {
+  /**
+   * @param dedupeKey identifies the EVENT — "design track 41 updated", not the
+   *   wording of the message. Anyone who has already had this event inside the
+   *   ledger's cooldown is dropped from the recipients, so a replayed action
+   *   cannot notify the same person twice.
+   */
+  private fire(notification: AppNotification, actorId?: string | null, dedupeKey?: string): void {
     void (async () => {
       try {
         const flags = await this.settings.getDispatchAlerts();
@@ -157,8 +170,14 @@ export class ActivityNotifier {
         // made it and sits on a lock screen.
         if (!recipients.length) return;
 
-        this.gateway.notifyUsers(recipients, notification);
-        await this.push.sendToUsers(recipients, notification);
+        // Anyone already told about THIS event is dropped here.
+        const untold = dedupeKey ? await this.ledger.filterUntold(dedupeKey, recipients) : recipients;
+        if (!untold.length) return;
+
+        this.gateway.notifyUsers(untold, notification);
+        await this.push.sendToUsers(untold, notification);
+        // Recorded after the send, so a failure is not remembered as a success.
+        if (dedupeKey) await this.ledger.record(dedupeKey, untold, notification.title, notification.body);
       } catch (err) {
         this.logger.warn(`Activity alert failed: ${(err as Error).message}`);
       }

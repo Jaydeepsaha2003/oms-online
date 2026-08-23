@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ChallanFieldSettingsDto, ChallanFieldSettingsInput, ChallanTermsDto, ChallanTermsInput, CompanyProfileDto, CompanyProfileInput, DispatchAlertSettingsDto, DispatchAlertSettingsInput, DispatchBagThresholdDto, DispatchBagThresholdInput, OrderFooterDto, OrderFooterInput, OrderOptionDto, OrderOptionInput, OrderQtyLayout, OrderTermsDto, OrderTermsInput, QuotationTermsDto, QuotationTermsInput, TcsSettingDto, TcsSettingInput, NotificationDndDto, NotificationDndInput, UserDndRow, AdminSetDndInput } from '@oms/shared';
+import type { ChallanFieldSettingsDto, ChallanFieldSettingsInput, ChallanTermsDto, ChallanTermsInput, CompanyProfileDto, CompanyProfileInput, DispatchAlertSettingsDto, DispatchAlertSettingsInput, DispatchBagThresholdDto, DispatchBagThresholdInput, OrderFooterDto, OrderFooterInput, OrderOptionDto, OrderOptionInput, OrderQtyLayout, OrderTermsDto, OrderTermsInput, QuotationTermsDto, QuotationTermsInput, TcsSettingDto, TcsSettingInput, NotificationDndDto, NotificationDndInput, UserDndRow, AdminSetDndInput, EffectiveDndDto } from '@oms/shared';
 import { http } from '@/lib/api';
 
 const KEY = ['settings'] as const;
@@ -15,6 +15,7 @@ const DISPATCH_ALERTS_KEY = ['dispatch-alerts'] as const;
 const CHALLAN_FIELDS_KEY = ['challan-fields'] as const;
 const NOTIFY_DND_KEY = ['notification-dnd'] as const;
 const NOTIFY_DND_ALL_KEY = ['notification-dnd', 'all'] as const;
+const NOTIFY_DND_DEFAULT_KEY = ['notification-dnd', 'default'] as const;
 
 export function useCompany() {
   return useQuery({
@@ -134,11 +135,62 @@ export function useUpdateTcsPercent() {
   });
 }
 
-/** This user's reminder quiet hours. Per user, not per installation. */
+/**
+ * The company-wide quiet window — the one everybody follows unless they have
+ * their own. Readable by anyone (you are entitled to know what applies to you);
+ * saving needs setting:update.
+ */
+export function useDefaultNotificationDnd() {
+  return useQuery({
+    queryKey: NOTIFY_DND_DEFAULT_KEY,
+    queryFn: () => http.get<NotificationDndDto>('/notifications/dnd/default'),
+    staleTime: 60_000,
+  });
+}
+
+export function useUpdateDefaultNotificationDnd() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: NotificationDndInput) => http.put<NotificationDndDto>('/notifications/dnd/default', input),
+    // Moving the default moves everyone who has not overridden it, so the
+    // personal card and the whole roster have to be re-read, not just this key.
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: NOTIFY_DND_DEFAULT_KEY });
+      void qc.invalidateQueries({ queryKey: NOTIFY_DND_KEY });
+      void qc.invalidateQueries({ queryKey: NOTIFY_DND_ALL_KEY });
+    },
+  });
+}
+
+/** Stop overriding and follow the company default again. */
+export function useClearNotificationDnd() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => http.delete<EffectiveDndDto>('/notifications/dnd'),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: NOTIFY_DND_KEY });
+      void qc.invalidateQueries({ queryKey: NOTIFY_DND_ALL_KEY });
+    },
+  });
+}
+
+/** Put one person back on the company default, from the roster. */
+export function useClearUserNotificationDnd() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) => http.delete<UserDndRow>(`/notifications/dnd/${userId}`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: NOTIFY_DND_ALL_KEY });
+      void qc.invalidateQueries({ queryKey: NOTIFY_DND_KEY });
+    },
+  });
+}
+
+/** This user's effective quiet hours, and which layer they came from. */
 export function useNotificationDnd() {
   return useQuery({
     queryKey: NOTIFY_DND_KEY,
-    queryFn: () => http.get<NotificationDndDto>('/notifications/dnd'),
+    queryFn: () => http.get<EffectiveDndDto>('/notifications/dnd'),
     staleTime: 60_000,
   });
 }

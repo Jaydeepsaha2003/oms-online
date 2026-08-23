@@ -249,3 +249,26 @@ export function useNudgeCount(enabled = true): number {
   const { data } = useFollowupDue(undefined, enabled);
   return useMemo(() => data?.length ?? 0, [data]);
 }
+
+/**
+ * The same count, split by kind — one badge per CRM page.
+ *
+ * CRM has three pages over one table: Follow-ups shows DELIVERY, Payments shows
+ * PAYMENT, New Inquiries shows INQUIRY. A single total badged onto Follow-ups
+ * therefore counted rows that page does not show, so an open PAYMENT reminder
+ * put a "1" on Follow-ups and then nothing on it — a badge pointing at an empty
+ * list. Each page now carries its own.
+ *
+ * Bucketed from the request already being made, not three new ones.
+ */
+export function useNudgeCountsByKind(enabled = true): Record<string, number> {
+  const { data } = useFollowupDue(undefined, enabled);
+  return useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const f of data ?? []) {
+      const k = (f.kind ?? 'DELIVERY').toUpperCase();
+      out[k] = (out[k] ?? 0) + 1;
+    }
+    return out;
+  }, [data]);
+}

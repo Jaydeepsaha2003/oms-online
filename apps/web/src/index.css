@@ -563,25 +563,73 @@ input[data-slot='combobox']:disabled {
   border-color: var(--border);
 }
 
-/* ── Form-heavy screens: the same edge, quieter ─────────────────────────────
-   A container marked `data-soft-fields` re-points the two tokens the rules
-   above read, so every input, combo-box and focus ring inside it softens
-   together and nothing has to be restyled field by field.
+/* ── Form-heavy screens: one light edge on every field ─────────────────────
+   A container marked `data-soft-fields` re-points the tokens the rules above
+   read, so every field inside it changes together and nothing is restyled one
+   at a time.
 
    Why it exists: the hard navy earns its keep on a LIST page, where a single
-   search box must be findable among the rows. On the order form almost
-   everything IS a field, and at that density the same weight stops
-   distinguishing anything — it just draws a grid of dark rectangles. Same hue,
-   same 2px, roughly two-thirds of the contrast. */
+   search box has to be findable among the rows. A form is almost nothing BUT
+   fields, and at that density the same weight distinguishes nothing — it draws
+   a grid of dark rectangles.
+
+   And here every field gets the SAME edge, searchable or not. The two-tier
+   version (2px navy on the combo-boxes, 1px slate on the rest) made the form
+   look assembled from two different kits: twelve boxes in a row, four of them
+   shouting. One thin, light edge on all of them reads as one form. Where a
+   field can be searched is told by its chevron and its placeholder, which is
+   what the user actually looks at — it does not need to be shouted in the
+   border as well. */
 [data-soft-fields] {
-  --search-border: oklch(0.52 0.075 264);
-  --search-ring: oklch(0.52 0.075 264 / 18%);
+  /* One tone for everything. Light enough to sit quietly behind the content,
+     dark enough to draw the box — the app-wide hairline (1.3:1 on white) is
+     right for a field alone in a card and invisible in a grid of twelve. */
+  --search-border: oklch(0.74 0.035 258);
+  --search-ring: oklch(0.60 0.06 258 / 20%);
+  --field-border: oklch(0.74 0.035 258);
 }
 
-/* Dark mode runs the other way round — there the edge is a LIGHT colour against
-   a dark surface, so "softer" means bringing it down towards the background
-   rather than up. */
+/* THIN: back to a hairline, including the combo-boxes, which the app-wide rule
+   above puts at 2px. Colour carries the definition now, not weight. */
+[data-soft-fields] input[data-slot='combobox'],
+[data-soft-fields] input[placeholder^='Search' i],
+[data-soft-fields] input[placeholder^='Find' i],
+[data-soft-fields] input[placeholder^='Filter' i] {
+  border-width: 1px;
+}
+
+/* Every field that takes input, plus the read-only ones — a form reads as one
+   thing or it reads as a mess, and a greyed background is what says "you cannot
+   type here", not a fainter border. Checkboxes, switches, radios and file
+   inputs draw their own shape and are left alone. */
+[data-soft-fields] input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not(:disabled),
+[data-soft-fields] textarea:not(:disabled),
+[data-soft-fields] select:not(:disabled) {
+  border-color: var(--field-border);
+}
+
+/* Focus is where the emphasis goes instead: the ring, not a permanently heavy
+   edge. This is the one place on the form that should draw the eye.
+   The `:not()` chain is repeated so this outranks the rule above — that one
+   carries five of them, and without matching it the resting border-color won
+   even while focused (the ring applied, the darker edge did not). */
+[data-soft-fields] input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not(:disabled):focus-visible,
+[data-soft-fields] textarea:not(:disabled):not([readonly]):focus-visible,
+[data-soft-fields] select:not(:disabled):not([multiple]):focus-visible {
+  border-color: oklch(0.52 0.09 264);
+  box-shadow: 0 0 0 3px var(--search-ring);
+}
+
+/* Dark mode runs the other way: the edge has to be LIGHTER than the surface, so
+   "quieter" means closer to the background rather than further from it. */
 .dark [data-soft-fields] {
-  --search-border: oklch(0.64 0.075 258);
-  --search-ring: oklch(0.64 0.075 258 / 22%);
+  --search-border: oklch(0.46 0.03 258);
+  --search-ring: oklch(0.70 0.06 258 / 24%);
+  --field-border: oklch(0.46 0.03 258);
+}
+
+.dark [data-soft-fields] input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not(:disabled):focus-visible,
+.dark [data-soft-fields] textarea:not(:disabled):not([readonly]):focus-visible,
+.dark [data-soft-fields] select:not(:disabled):not([multiple]):focus-visible {
+  border-color: oklch(0.72 0.08 258);
 }
