@@ -270,6 +270,17 @@ export interface PartyOpenInvoice {
   balance: number;
   /** Days past the due date (0 when not yet overdue / no due date). */
   overdueDays: number;
+  /**
+   * How the invoice was billed: B on the bank side, C in cash. Carried per
+   * invoice because most are split across both — a collector needs to know
+   * which part they are chasing before they pick up the phone.
+   *
+   * These are the BILLED figures, not the outstanding split: receipts are not
+   * recorded as bank-or-cash against a specific invoice, so splitting the
+   * balance would mean inventing an attribution.
+   */
+  bank: number;
+  cash: number;
 }
 
 /** A party's live payment balance at a glance — the money a collector needs

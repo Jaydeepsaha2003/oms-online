@@ -205,3 +205,45 @@ export type DispatchAlertSettingsInput = DispatchAlertSettingsDto;
 /** The per-event keys of {@link DispatchAlertSettingsDto} — everything except the
  *  master switch. Used to index the flags when deciding whether to send. */
 export type DispatchAlertEvent = 'onCreate' | 'onBulk' | 'onBackdateApproved' | 'onEdit' | 'onDelete';
+
+/* ── Per-user notification preferences ──────────────────────────────────────── */
+
+/**
+ * Reminder Do-Not-Disturb: a daily window in which this user is not pushed.
+ *
+ * Per USER, not per installation — the app-wide CRM work-hours decide when a
+ * reminder becomes due at all; this decides whether THIS person is disturbed by
+ * it. A follow-up that falls due inside the window is not lost, it simply waits.
+ *
+ * Times are local "HH:MM". A window whose end is BEFORE its start is read as
+ * crossing midnight (22:00 → 07:00), which is the common case.
+ */
+export interface NotificationDndDto {
+  enabled: boolean;
+  /** "HH:MM" local, inclusive. */
+  start: string;
+  /** "HH:MM" local, exclusive. */
+  end: string;
+}
+
+export type NotificationDndInput = NotificationDndDto;
+
+/** Is `at` inside the user's quiet window? Shared so the server's decision to
+ *  hold a push and the screen's "you are in DND now" badge can never disagree. */
+export function isWithinDnd(dnd: NotificationDndDto | null | undefined, at: Date = new Date()): boolean {
+  if (!dnd?.enabled) return false;
+  const mins = (hhmm: string): number | null => {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm.trim());
+    if (!m) return null;
+    const h = Number(m[1]);
+    const min = Number(m[2]);
+    if (h > 23 || min > 59) return null;
+    return h * 60 + min;
+  };
+  const s = mins(dnd.start);
+  const e = mins(dnd.end);
+  if (s == null || e == null || s === e) return false;
+  const now = at.getHours() * 60 + at.getMinutes();
+  // A window that ends before it starts wraps past midnight.
+  return s < e ? now >= s && now < e : now >= s || now < e;
+}

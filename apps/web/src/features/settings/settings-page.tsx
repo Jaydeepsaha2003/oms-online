@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, BellRing, Building2, ClipboardList, HardDrive, ImageIcon, Layers, Loader2, Plus, Receipt, SlidersHorizontal, Trash2, Truck, Upload, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BellOff, BellRing, Building2, Check, ClipboardList, HardDrive, ImageIcon, Layers, Loader2, Plus, Receipt, SlidersHorizontal, Trash2, Truck, Upload, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
-import { DEFAULT_ORDER_QTY_LAYOUT, normalizeQtyOrder, QTY_FIELD_LABEL, SETTING_GROUP_META, type OrderOptionDto, type OrderQtyLayout, type QtyField, type SettingGroupMeta } from '@oms/shared';
+import { DEFAULT_ORDER_QTY_LAYOUT, isWithinDnd, normalizeQtyOrder, QTY_FIELD_LABEL, SETTING_GROUP_META, type OrderOptionDto, type OrderQtyLayout, type QtyField, type SettingGroupMeta } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -25,6 +25,7 @@ import { DispatchAlertsCard } from './dispatch-alerts-card';
 import { RateListSettingsCard } from './rate-list-settings-card';
 import {
   useChallanFields,
+  useNotificationDnd,
   useChallanTerms,
   useCompany,
   useCreateOrderOption,
@@ -37,6 +38,7 @@ import {
   useOrderQtyLayout,
   useTcsPercent,
   useUpdateChallanFields,
+  useUpdateNotificationDnd,
   useUpdateChallanTerms,
   useUpdateCompany,
   useUpdateDispatchBagThreshold,
@@ -109,6 +111,7 @@ export function SettingsPage() {
           <CompanyCard canEdit={canEdit} />
           <PreferencesCard />
           <MyDevicesCard />
+          <ReminderDndCard />
           <TestNotificationCard />
         </div>
       )}
@@ -572,6 +575,113 @@ function QuotationTermsCard({ canEdit }: { canEdit: boolean }) {
  * whether the field is on screen, so switching it either way is safe and loses
  * nothing.
  */
+/**
+ * Reminder quiet hours, for THIS user (spec: PWA reminder DND).
+ *
+ * Deliberately per-user and not part of the app-wide CRM reminder settings:
+ * those decide when a follow-up becomes DUE, which is a business rule and the
+ * same for everybody. This decides whether this particular person is disturbed
+ * by it. The owner and a floor operator keep different hours.
+ *
+ * A reminder that falls inside the window is delayed, not cancelled - it is
+ * still in the CRM and on the bell, and pushes once the window closes.
+ */
+function ReminderDndCard() {
+  const { data } = useNotificationDnd();
+  const update = useUpdateNotificationDnd();
+  const [start, setStart] = useState('');
+  const [end, setEnd] = useState('');
+
+  useEffect(() => {
+    if (data) {
+      setStart(data.start);
+      setEnd(data.end);
+    }
+  }, [data]);
+
+  const enabled = data?.enabled ?? false;
+  const dirty = !!data && (start !== data.start || end !== data.end);
+  // Shared with the server so the badge and the actual decision cannot disagree.
+  const quietNow = isWithinDnd(data);
+
+  const save = (next: { enabled?: boolean; start?: string; end?: string }) =>
+    update.mutate(
+      { enabled: next.enabled ?? enabled, start: next.start ?? start, end: next.end ?? end },
+      {
+        onSuccess: (v) => toast.success(v.enabled ? `Quiet hours on, ${v.start} to ${v.end}` : 'Quiet hours off'),
+        onError: (e) => toast.error(getApiErrorMessage(e, 'Could not save')),
+      },
+    );
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex flex-wrap items-center gap-2 text-[15px]">
+          <BellOff className="size-4 text-indigo-600" /> Reminder quiet hours
+          {quietNow && (
+            <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10.5px] font-bold text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300">
+              Quiet right now
+            </span>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
+          <div className="min-w-0">
+            <Label className="text-[13px] font-semibold">Do not disturb me</Label>
+            <p className="text-muted-foreground mt-0.5 text-[12px]">
+              Follow-up reminders will not be pushed to you during these hours. Nothing is lost - a reminder that falls in the
+              window arrives once it ends, and stays visible in CRM and on the bell meanwhile. This setting is yours alone.
+            </p>
+          </div>
+          <Switch checked={enabled} disabled={update.isPending} onCheckedChange={(v) => save({ enabled: v })} />
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1">
+            <Label htmlFor="dnd-from" className="text-muted-foreground text-[11px] font-bold tracking-wide uppercase">
+              From
+            </Label>
+            <Input
+              id="dnd-from"
+              type="time"
+              value={start}
+              disabled={!enabled}
+              onChange={(e) => setStart(e.target.value)}
+              className="h-9 w-full tabular-nums"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="dnd-to" className="text-muted-foreground text-[11px] font-bold tracking-wide uppercase">
+              Until
+            </Label>
+            <Input
+              id="dnd-to"
+              type="time"
+              value={end}
+              disabled={!enabled}
+              onChange={(e) => setEnd(e.target.value)}
+              className="h-9 w-full tabular-nums"
+            />
+          </div>
+        </div>
+
+        <p className="text-muted-foreground text-[11.5px]">
+          {start && end && start > end
+            ? `Crosses midnight - quiet from ${start} tonight until ${end} tomorrow.`
+            : 'Set the end earlier than the start to cover overnight, e.g. 21:00 to 08:00.'}
+        </p>
+
+        {dirty && (
+          <Button size="sm" disabled={update.isPending} onClick={() => save({})}>
+            {update.isPending ? <Loader2 className="animate-spin" /> : <Check />} Save quiet hours
+          </Button>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function ChallanFieldsCard({ canEdit }: { canEdit: boolean }) {
   const { data } = useChallanFields();
   const update = useUpdateChallanFields();

@@ -6,7 +6,7 @@ development → your testing. Statuses follow §19.4 of the spec.
 **Status key:** ⬜ Open · 🔵 In Progress · ✅ Developer Completed · 🟢 Verified by owner ·
 🟡 Partly done · ❓ Needs owner answer · 🔁 Reopened
 
-**Last updated:** 22 Aug 2026
+**Last updated:** 23 Aug 2026
 
 ---
 
@@ -14,7 +14,7 @@ development → your testing. Statuses follow §19.4 of the spec.
 
 | Status | Count | Tickets |
 |---|---|---|
-| ✅ Developer Completed | 31 | K-14.1 … K-14.14, K-16, K-17.1, K-17.2, K-10.1, K-2.1, K-13.1, K-4.1, K-7.1, K-11.1, K-3.1, K-12.2, K-5.2, K-6.1, K-6.2, K-9.1, K-4.2, K-5.1 |
+| ✅ Developer Completed | 35 | K-14.1 … K-14.14, K-16, K-17.1, K-17.2, K-10.1, K-2.1, K-13.1, K-4.1, K-7.1, K-11.1, K-3.1, K-12.2, K-5.2, K-6.1, K-6.2, K-9.1, K-4.2, K-5.1, PD-1, PD-2, PD-3, PD-4 |
 | 🔵 In Progress | 0 | — |
 | ⬜ Open | 0 | — |
 | 🟡 Partly done | 2 | K-8, K-15 |
@@ -100,6 +100,15 @@ development → your testing. Statuses follow §19.4 of the spec.
 |---|---|---|---|
 | K-12.1 | Follow-up reminders not appearing | ❓ | Need a reproducible example. |
 | K-12.2 | New Inquiry panel | ✅ Completed | Built as **option (a)**: `INQUIRY` is a third follow-up kind, so an enquiry reuses the whole existing machinery — reminders, timeline, checklist, party links — instead of a parallel model. New **CRM → New Inquiries** page and menu entry at `/crm/inquiries`. An unrecognised kind still falls back to DELIVERY, so older clients are unaffected. Verified: all three kinds create and filter independently. |
+
+### Payment follow-up desk — direct request, 23 Aug 2026
+
+| Ticket | Item | Status | Notes |
+|---|---|---|---|
+| PD-1 | Show exact **B – Bank / C – Cash** split per invoice | ✅ Completed | The open-invoice list now carries the billed split, not just the balance: **B / Bank** in blue, **C / Cash** in green, a dash where that side is empty, and the full rupee figure on hover. Data check: the split is populated on all 1,967 challans, and 1,123 of them are genuinely billed across both sides — so this column was hiding real information. |
+| PD-2 | Select multiple invoices | ✅ Completed | Tick-box on every invoice row. A footer appears only once something is ticked (so single-invoice use is unchanged) showing how many are selected, the B and C totals, the combined balance, and **Use selected**, which fills the follow-up with all the picked invoice numbers and their total. |
+| PD-3 | Saving a follow-up fired a reminder immediately | ✅ Completed | Real defect. `nextRemindAt` was left empty on create, and the scheduler treats "no next reminder time" as *already due* — so the moment you saved, it nudged you about the thing you had just typed. Now the first reminder is set an hour ahead and clamped into working hours. Verified: on create `nextRemindAt` lands ~60 min out and the follow-up does **not** appear in the due list straight away. |
+| PD-4 | Quiet-hours (DND) for reminders, per user | ✅ Completed | **Settings → General → Reminder quiet hours**: a switch plus From / Until times, with a "Quiet right now" badge. Deliberately per-user, not per-installation — the owner and a floor operator keep different hours. Windows crossing midnight (21:00 → 08:00) are handled. A reminder landing inside your window is **delayed, not cancelled**: it stays in CRM and on the bell and pushes once the window ends. If *everyone* is quiet nothing is marked as sent, so nothing is lost. Verified: default off, saving mutes only that user (3 recipients → 2 awake), invalid times rejected, and a corrupt preference falls back to "not quiet" rather than silencing someone forever. |
 
 ## §13 Administration — Users
 

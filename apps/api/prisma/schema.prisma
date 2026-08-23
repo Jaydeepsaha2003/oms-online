@@ -41,6 +41,7 @@ model User {
 
   @@index([status])
   @@map("users")
+  preferences   UserPreference[]
 }
 
 model Role {
@@ -104,6 +105,28 @@ model RolePermission {
 }
 
 // Hashed refresh tokens enable rotation + server-side revocation (logout / "log out everywhere").
+/// Per-user settings that belong to the person, not the installation — kept as
+/// key/value so a new preference needs no migration.
+///
+/// First use: reminder Do-Not-Disturb hours. A shop owner and a floor operator
+/// want different quiet windows, so this cannot live in the app-wide CRM
+/// settings the way work-hours do.
+model UserPreference {
+  id        Int      @id @default(autoincrement())
+  userId    String
+  /// e.g. 'NOTIFY_DND'.
+  key       String
+  /// JSON payload for that key.
+  value     String
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+  @@index([userId])
+  @@map("user_preferences")
+}
+
 model RefreshToken {
   id        String    @id @default(cuid())
   userId    String

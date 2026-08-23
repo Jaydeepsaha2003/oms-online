@@ -66,10 +66,19 @@ export class CrmService {
 
   /* ── Create / update ────────────────────────────────────────────────────── */
 
+  /** How long a newly-saved follow-up stays quiet before it can first nudge. */
+  private static readonly FIRST_REMINDER_DELAY_MS = 60 * 60_000;
+
   async create(dto: CreateFollowupDto, userName?: string): Promise<FollowupDto> {
     const partyName = (dto.partyName ?? '').trim();
     if (!partyName) throw new BadRequestException('Party name is required.');
     if (!dto.title?.trim()) throw new BadRequestException('A short title is required.');
+
+    const settings = await this.getSettings();
+    const firstRemindAt = this.clampToWorkHours(
+      new Date(Date.now() + CrmService.FIRST_REMINDER_DELAY_MS),
+      settings,
+    );
 
     const row = await this.prisma.followup.create({
       data: {
@@ -93,6 +102,19 @@ export class CrmService {
         promisedAmount: dto.promisedAmount ?? null,
         reminderIntervalMins: dto.reminderIntervalMins ?? null,
         maxRemindersPerDay: dto.maxRemindersPerDay ?? null,
+        /*
+         * Hold the first reminder for an hour.
+         *
+         * `nextRemindAt` null means "nothing is holding this back", so a
+         * follow-up promised for today was an ACTIVE NUDGE the instant it was
+         * saved — the person who just typed it got pinged about it before the
+         * dialog had closed. An hour is long enough to be past the act of
+         * entering it, short enough that a same-day promise still nudges.
+         *
+         * Clamped to working hours like every other reminder, so one saved at
+         * 6pm waits for tomorrow morning rather than buzzing at 7pm.
+         */
+        nextRemindAt: firstRemindAt,
         createdByName: userName ?? null,
         ...(dto.checklist?.length
           ? {
@@ -565,7 +587,7 @@ export class CrmService {
     const r0 = (x: number) => Math.round(x);
     const num = (v: unknown) => toNum(v) ?? 0;
     const [challans, custRows, receipts, discounts, advances, payFollowups] = await Promise.all([
-      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { code: true, total: true, invDate: true, dueDate: true, customerId: true, customerName: true, transaction: true } }),
+      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { code: true, total: true, b: true, c: true, invDate: true, dueDate: true, customerId: true, customerName: true, transaction: true } }),
       this.prisma.customer.findMany({ select: { id: true, agentName: true } }),
       this.prisma.acctPaymentReceipt.findMany({ select: { custId: true, invNo: true, recAmt: true, recDate: true } }),
       // Sales Discounts settle an invoice just as truly as cash does (Account →
@@ -615,7 +637,7 @@ export class CrmService {
         if (days > 0) { p.overdue += bal; p.oldestDays = Math.max(p.oldestDays, days); overdueDays = days; }
         else if (days >= -15) p.dueSoon += bal;
       }
-      p.invoices.push({ code: c.code, invDate: c.invDate.toISOString(), dueDate: c.dueDate ? c.dueDate.toISOString() : null, total: r0(num(c.total)), received: r0(received), balance: r0(bal), overdueDays });
+      p.invoices.push({ code: c.code, invDate: c.invDate.toISOString(), dueDate: c.dueDate ? c.dueDate.toISOString() : null, total: r0(num(c.total)), received: r0(received), balance: r0(bal), overdueDays, bank: r0(num(c.b)), cash: r0(num(c.c)) });
     }
 
     // CRM overlay (party PAYMENT follow-ups → promise state).

@@ -5,6 +5,7 @@ import { formatDate } from '../common/date.util';
 import { NotificationAudienceService } from '../notifications/notification-audience.service';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
 import { PushService } from '../notifications/push.service';
+import { UserPrefsService } from '../notifications/user-prefs.service';
 import { CrmService } from './crm.service';
 
 @Injectable()
@@ -16,6 +17,7 @@ export class FollowupPushScheduler {
     private readonly gateway: NotificationsGateway,
     private readonly pushService: PushService,
     private readonly audience: NotificationAudienceService,
+    private readonly prefs: UserPrefsService,
   ) {}
 
   @Interval(60_000)
@@ -37,11 +39,28 @@ export class FollowupPushScheduler {
       const recipients = await this.audience.userIdsWith(perm(RESOURCES.CRM, ACTIONS.VIEW));
       if (!recipients.length) return;
 
+      /*
+       * Drop anyone inside their own quiet hours.
+       *
+       * When EVERYONE is quiet we return before marking anything pushed, so the
+       * follow-up is still waiting and goes out once the first window closes —
+       * delayed, not cancelled, which is what DND should mean.
+       *
+       * When only SOME are quiet the push goes to the rest and `markPushed`
+       * fires, which is per follow-up rather than per user — so a sleeper does
+       * miss that particular ping. They still see the follow-up in the CRM and
+       * on the bell, and it pushes again after the next snooze/interval. Making
+       * that exact is a per-user push ledger, which is not worth the table until
+       * someone actually reports missing one.
+       */
+      const awake = await this.prefs.notInDnd(recipients);
+      if (!awake.length) return;
+
       for (const f of due) {
         try {
           const notification = this.buildNotification(f);
-          this.gateway.notifyUsers(recipients, notification);
-          await this.pushService.sendToUsers(recipients, notification);
+          this.gateway.notifyUsers(awake, notification);
+          await this.pushService.sendToUsers(awake, notification);
           await this.crm.markPushed(f.id);
         } catch (err) {
           this.logger.warn(`Failed to push followup ${f.id}: ${(err as Error).message}`);

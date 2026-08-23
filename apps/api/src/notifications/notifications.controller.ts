@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Post, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import type {
+  NotificationDndDto,
   PushSubscriptionRequest,
   TestNotificationResult,
   VapidPublicKeyResult,
@@ -9,13 +10,27 @@ import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { configuration } from '../config/configuration';
 import { NotificationsGateway } from './notifications.gateway';
 import { PushService } from './push.service';
+import { UserPrefsService } from './user-prefs.service';
 
 @Controller('notifications')
 export class NotificationsController {
   constructor(
     private readonly gateway: NotificationsGateway,
     private readonly pushService: PushService,
+    private readonly prefs: UserPrefsService,
   ) {}
+
+  /* ── Reminder Do-Not-Disturb (per user, not per installation) ───────────── */
+
+  @Get('dnd')
+  getDnd(@Req() req: Request): Promise<NotificationDndDto> {
+    return this.prefs.getDnd((req.user as AuthenticatedUser).id);
+  }
+
+  @Post('dnd')
+  setDnd(@Req() req: Request, @Body() body: NotificationDndDto): Promise<NotificationDndDto> {
+    return this.prefs.setDnd((req.user as AuthenticatedUser).id, body);
+  }
 
   /** Any authenticated user may trigger a test broadcast — it's inert, no @Permissions needed. */
   @Post('test')

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ChallanFieldSettingsDto, ChallanFieldSettingsInput, ChallanTermsDto, ChallanTermsInput, CompanyProfileDto, CompanyProfileInput, DispatchAlertSettingsDto, DispatchAlertSettingsInput, DispatchBagThresholdDto, DispatchBagThresholdInput, OrderFooterDto, OrderFooterInput, OrderOptionDto, OrderOptionInput, OrderQtyLayout, OrderTermsDto, OrderTermsInput, QuotationTermsDto, QuotationTermsInput, TcsSettingDto, TcsSettingInput } from '@oms/shared';
+import type { ChallanFieldSettingsDto, ChallanFieldSettingsInput, ChallanTermsDto, ChallanTermsInput, CompanyProfileDto, CompanyProfileInput, DispatchAlertSettingsDto, DispatchAlertSettingsInput, DispatchBagThresholdDto, DispatchBagThresholdInput, OrderFooterDto, OrderFooterInput, OrderOptionDto, OrderOptionInput, OrderQtyLayout, OrderTermsDto, OrderTermsInput, QuotationTermsDto, QuotationTermsInput, TcsSettingDto, TcsSettingInput, NotificationDndDto, NotificationDndInput } from '@oms/shared';
 import { http } from '@/lib/api';
 
 const KEY = ['settings'] as const;
@@ -13,6 +13,7 @@ const TCS_PERCENT_KEY = ['tcs-percent'] as const;
 const DISPATCH_BAG_THRESHOLD_KEY = ['dispatch-bag-threshold'] as const;
 const DISPATCH_ALERTS_KEY = ['dispatch-alerts'] as const;
 const CHALLAN_FIELDS_KEY = ['challan-fields'] as const;
+const NOTIFY_DND_KEY = ['notification-dnd'] as const;
 
 export function useCompany() {
   return useQuery({
@@ -132,8 +133,23 @@ export function useUpdateTcsPercent() {
   });
 }
 
-/** Global fallback for the dispatch bag threshold — used when a party has no
- *  threshold of its own set in Special Rates. */
+/** This user's reminder quiet hours. Per user, not per installation. */
+export function useNotificationDnd() {
+  return useQuery({
+    queryKey: NOTIFY_DND_KEY,
+    queryFn: () => http.get<NotificationDndDto>('/notifications/dnd'),
+    staleTime: 60_000,
+  });
+}
+
+export function useUpdateNotificationDnd() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: NotificationDndInput) => http.post<NotificationDndDto>('/notifications/dnd', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: NOTIFY_DND_KEY }),
+  });
+}
+
 /** Which optional fields the Challan form shows. */
 export function useChallanFields() {
   return useQuery({
@@ -151,6 +167,8 @@ export function useUpdateChallanFields() {
   });
 }
 
+/** Global fallback for the dispatch bag threshold — used when a party has no
+ *  threshold of its own set in Special Rates. */
 export function useDispatchBagThreshold() {
   return useQuery({
     queryKey: DISPATCH_BAG_THRESHOLD_KEY,

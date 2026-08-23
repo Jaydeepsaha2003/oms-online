@@ -15,6 +15,7 @@ import {
   TrendingDown,
   Users,
   Wallet,
+  X,
 } from 'lucide-react';
 import type { PartyBalanceSummary, PromiseState } from '@oms/shared';
 import { cn } from '@/lib/utils';
@@ -22,6 +23,7 @@ import { formatDate } from '@/lib/date-format';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { RowCheckbox } from '@/components/common/row-checkbox';
 import { Chip, initials } from './crm-shared';
 import { usePartyBalance, usePartyBalances } from './use-crm';
 
@@ -379,6 +381,36 @@ export function PartyBalancePanel({ customerId, party, onPickAmount, onPickInvoi
   const { data, isLoading } = usePartyBalance(customerId, party, enabled);
   const [showInvoices, setShowInvoices] = useState(false);
 
+  /*
+   * Multi-select over the open invoices.
+   *
+   * "use" on a single row is kept — most collections are about one invoice and
+   * that path should not get slower. Ticking rows is the addition: a party who
+   * promises to clear three invoices at once now produces one promise for their
+   * combined balance instead of three separate follow-ups.
+   *
+   * Keyed by invoice code (stable) rather than index, so the set survives the
+   * list reordering underneath it.
+   */
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const toggleInvoice = (code: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+
+  const pickedTotals = useMemo(() => {
+    const rows = (data?.invoices ?? []).filter((inv) => selected.has(inv.code));
+    return {
+      codes: rows.map((r) => r.code),
+      balance: rows.reduce((n, r) => n + r.balance, 0),
+      bank: rows.reduce((n, r) => n + r.bank, 0),
+      cash: rows.reduce((n, r) => n + r.cash, 0),
+    };
+  }, [data, selected]);
+
   if (!enabled) return null;
   if (isLoading) {
     return <div className="text-muted-foreground flex items-center gap-2 rounded-xl border bg-slate-50/60 p-3 text-sm dark:bg-white/[0.03]"><Loader2 className="size-4 animate-spin" /> Fetching balance…</div>;
@@ -420,34 +452,121 @@ export function PartyBalancePanel({ customerId, party, onPickAmount, onPickInvoi
       </div>
 
       {showInvoices && (
-        <div className="bg-card/70 max-h-52 overflow-y-auto border-t border-indigo-200 px-2.5 py-2 dark:border-indigo-500/20">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-muted-foreground text-left uppercase tracking-wide">
-                <th className="py-1 pr-2 font-semibold">Invoice</th>
-                <th className="py-1 pr-2 font-semibold">Due</th>
-                <th className="py-1 pr-2 text-right font-semibold">Balance</th>
-                <th className="py-1 text-right font-semibold"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.invoices.map((inv, i) => (
-                <tr key={inv.code} className={cn('border-t border-slate-100 dark:border-white/5', i % 2 === 1 && 'bg-muted/30')}>
-                  <td className="py-1 pr-2 font-mono">{inv.code}</td>
-                  <td className="py-1 pr-2">
-                    {inv.dueDate ? formatDate(inv.dueDate) : '—'}
-                    {inv.overdueDays > 0 && <Chip tone={ageTone(inv.overdueDays)} className="ml-1">{inv.overdueDays}d</Chip>}
-                  </td>
-                  <td className="py-1 pr-2 text-right font-semibold tabular-nums" title={inrFull(inv.balance)}>{inrCompact(inv.balance)}</td>
-                  <td className="py-1 text-right">
-                    {onPickInvoice && (
-                      <button type="button" onClick={() => onPickInvoice(inv.code, inv.balance)} className="text-indigo-600 dark:text-indigo-400 cursor-pointer hover:underline">use</button>
-                    )}
-                  </td>
+        <div className="border-t border-indigo-200 dark:border-indigo-500/20">
+          <div className="bg-card/70 max-h-52 overflow-y-auto px-2.5 py-2">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-muted-foreground text-left tracking-wide uppercase">
+                  {onPickInvoice && <th className="w-6 py-1" />}
+                  <th className="py-1 pr-2 font-semibold">Invoice</th>
+                  <th className="py-1 pr-2 font-semibold">Due</th>
+                  {/* How it was billed. Most invoices here are split across both,
+                      and a collector needs to know which part they are chasing. */}
+                  <th className="py-1 pr-2 text-right font-semibold" title="Billed on the bank side">B / Bank</th>
+                  <th className="py-1 pr-2 text-right font-semibold" title="Billed in cash">C / Cash</th>
+                  <th className="py-1 pr-2 text-right font-semibold">Balance</th>
+                  <th className="py-1 text-right font-semibold" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {data.invoices.map((inv, i) => {
+                  const picked = selected.has(inv.code);
+                  return (
+                    <tr
+                      key={inv.code}
+                      className={cn(
+                        'border-t border-slate-100 dark:border-white/5',
+                        i % 2 === 1 && 'bg-muted/30',
+                        picked && 'bg-indigo-50 dark:bg-indigo-500/15',
+                      )}
+                    >
+                      {onPickInvoice && (
+                        <td className="py-1">
+                          <RowCheckbox
+                            checked={picked}
+                            onChange={() => toggleInvoice(inv.code)}
+                            label={`Select invoice ${inv.code}`}
+                          />
+                        </td>
+                      )}
+                      <td className="py-1 pr-2 font-mono">{inv.code}</td>
+                      <td className="py-1 pr-2">
+                        {inv.dueDate ? formatDate(inv.dueDate) : '\u2014'}
+                        {inv.overdueDays > 0 && <Chip tone={ageTone(inv.overdueDays)} className="ml-1">{inv.overdueDays}d</Chip>}
+                      </td>
+                      <td
+                        className={cn(
+                          'py-1 pr-2 text-right tabular-nums',
+                          inv.bank > 0 ? 'font-semibold text-blue-700 dark:text-blue-400' : 'text-muted-foreground/40',
+                        )}
+                        title={inv.bank > 0 ? inrFull(inv.bank) : 'Nothing billed on the bank side'}
+                      >
+                        {inv.bank > 0 ? inrCompact(inv.bank) : '\u2014'}
+                      </td>
+                      <td
+                        className={cn(
+                          'py-1 pr-2 text-right tabular-nums',
+                          inv.cash > 0 ? 'font-semibold text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground/40',
+                        )}
+                        title={inv.cash > 0 ? inrFull(inv.cash) : 'Nothing billed in cash'}
+                      >
+                        {inv.cash > 0 ? inrCompact(inv.cash) : '\u2014'}
+                      </td>
+                      <td className="py-1 pr-2 text-right font-semibold tabular-nums" title={inrFull(inv.balance)}>
+                        {inrCompact(inv.balance)}
+                      </td>
+                      <td className="py-1 text-right">
+                        {onPickInvoice && (
+                          <button
+                            type="button"
+                            onClick={() => onPickInvoice(inv.code, inv.balance)}
+                            className="cursor-pointer text-indigo-600 hover:underline dark:text-indigo-400"
+                          >
+                            use
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Only appears once something is ticked, so the panel is unchanged for
+              anyone who just wants one invoice. */}
+          {onPickInvoice && selected.size > 0 && (
+            <div className="flex flex-wrap items-center gap-2 border-t border-indigo-200 bg-indigo-50/60 px-2.5 py-2 text-xs dark:border-indigo-500/20 dark:bg-indigo-500/10">
+              <span className="font-semibold">
+                {selected.size} invoice{selected.size === 1 ? '' : 's'} selected
+              </span>
+              <span className="text-muted-foreground">
+                B {inrCompact(pickedTotals.bank)} / C {inrCompact(pickedTotals.cash)}
+              </span>
+              <span className="ml-auto font-bold tabular-nums" title={inrFull(pickedTotals.balance)}>
+                {inrCompact(pickedTotals.balance)}
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                className="h-7 text-[11.5px]"
+                onClick={() => {
+                  onPickInvoice(pickedTotals.codes.join(', '), pickedTotals.balance);
+                  setSelected(new Set());
+                }}
+              >
+                Use selected
+              </Button>
+              <button
+                type="button"
+                onClick={() => setSelected(new Set())}
+                className="text-muted-foreground hover:text-foreground cursor-pointer"
+                title="Clear selection"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
