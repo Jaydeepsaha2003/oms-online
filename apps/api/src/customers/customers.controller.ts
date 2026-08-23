@@ -24,6 +24,7 @@ import { RateListConfigService } from './rate-list-config.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { CustomerQueryDto } from './dto/customer-query.dto';
 import { ImportCustomersDto } from './dto/import-customers.dto';
+import { SetCustomerActiveDto } from './dto/set-customer-active.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { CheckCombinationDto, SavePartyRateListConfigDto, SaveRateListConfigDto } from './dto/rate-list-config.dto';
 
@@ -94,10 +95,34 @@ export class CustomersController {
 
   /** Does this set of sub-categories share one rate? (§8 — checked before any
    *  combination can be saved, and again on save itself.) */
+  /** Item/design names in one category, for the override target picker. Above
+   *  ':id' for the same declaration-order reason as its siblings. */
+  @Get('rate-list-config/items')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  rateListCategoryItems(@Query('category') category: string) {
+    return this.rateListConfig.categoryItems(category ?? '');
+  }
+
   @Post('rate-list-config/check-combination')
   @Permissions(perm(R, ACTIONS.VIEW))
   checkRateListCombination(@Body() dto: CheckCombinationDto) {
     return this.rateListConfig.checkCombination(dto);
+  }
+
+  /*
+   * The chart rate list, with no party attached — for quoting a new enquiry.
+   *
+   * Declared ABOVE the ':id' routes for the same reason as 'rate-list-config':
+   * Nest matches in declaration order, so a ':id' route above this one would
+   * capture "rate-list" as an id and 400 on the ParseIntPipe.
+   *
+   * Gated on customer:view like the party sheet — it is the same catalogue and
+   * the same prices, minus one party's adjustments.
+   */
+  @Get('rate-list/default')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  defaultRateList(@Query('name') name?: string) {
+    return this.customers.defaultRateList(name);
   }
 
   @Get(':id/rate-list-config')
@@ -155,6 +180,16 @@ export class CustomersController {
   @Audit({ action: ACTIONS.UPDATE, resource: R })
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateCustomerDto) {
     return this.customers.update(id, dto);
+  }
+
+  /* Declared BEFORE `@Patch(':id')` would matter if that route were a prefix of
+   * this one — it is not, but keeping the narrow route adjacent to its sibling
+   * makes the pair easy to read. */
+  @Patch(':id/active')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Changed a customer Active flag' })
+  setActive(@Param('id', ParseIntPipe) id: number, @Body() dto: SetCustomerActiveDto) {
+    return this.customers.setActive(id, dto.active);
   }
 
   @Delete(':id')

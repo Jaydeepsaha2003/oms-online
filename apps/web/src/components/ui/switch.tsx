@@ -7,18 +7,26 @@ export function Switch({
   disabled,
   id,
   className,
+  title,
+  'aria-label': ariaLabel,
 }: {
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
   disabled?: boolean;
   id?: string;
   className?: string;
+  /** Hover text explaining what the control does. An icon-only control needs
+   *  a sentence, not a label repeating the icon. */
+  title?: string;
+  'aria-label'?: string;
 }) {
   return (
     <button
       type="button"
       role="switch"
       id={id}
+      title={title}
+      aria-label={ariaLabel}
       aria-checked={checked}
       disabled={disabled}
       onClick={() => onCheckedChange(!checked)}

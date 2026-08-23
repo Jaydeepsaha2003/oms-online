@@ -50,6 +50,19 @@ export function fetchCustomerRateList(id: number): Promise<CustomerRateList> {
   return http.get<CustomerRateList>(`/customers/${id}/rate-list`);
 }
 
+/**
+ * The chart rate list with no party attached — base rates, no adjustments.
+ *
+ * `label` is only what gets printed at the top of the sheet; it creates nothing.
+ * Not a useQuery: this is fetched at the moment someone downloads, and caching
+ * it under a free-text name would just fill the cache with one entry per name
+ * anyone ever typed.
+ */
+export function fetchDefaultRateList(label?: string): Promise<CustomerRateList> {
+  const name = (label ?? '').trim();
+  return http.get<CustomerRateList>('/customers/rate-list/default', name ? { params: { name } } : undefined);
+}
+
 /** The customer's current effective rate list, for the on-screen preview. */
 export function useCustomerRateList(id: number | undefined) {
   return useQuery({
@@ -80,6 +93,22 @@ export function useUpdateCustomer(id: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: CustomerInput) => http.patch<CustomerDto>(`/customers/${id}`, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+/**
+ * Flip a customer's Active flag, and nothing else.
+ *
+ * Its own endpoint rather than a partial PATCH through `useUpdateCustomer`:
+ * the customer update applies the DTO as a FULL overwrite, so sending
+ * `{ active }` alone would blank the party's agent, city, transport and rates.
+ */
+export function useSetCustomerActive() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, active }: { id: number; active: boolean }) =>
+      http.patch<CustomerDto>(`/customers/${id}/active`, { active }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }

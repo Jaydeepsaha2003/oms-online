@@ -313,6 +313,18 @@ export function Combobox({
     return () => window.removeEventListener('scroll', onScroll, { capture: true });
   }, [open]);
 
+  // The nav rail expanded over the page — see the dispatcher in app-shell for
+  // why this closes rather than re-layers. Not conditional on `open`: cheap
+  // listener, and registering it unconditionally keeps one less dependency.
+  React.useEffect(() => {
+    const onPeek = () => {
+      setOpen(false);
+      inputRef.current?.blur();
+    };
+    window.addEventListener('oms:nav-peek', onPeek);
+    return () => window.removeEventListener('oms:nav-peek', onPeek);
+  }, []);
+
   // ── Digits-first keyboard (opt-in via `digitsFirst`) ──────────────────────
   // Stay on the keypad only while BOTH hold:
   //   1. everything typed so far is part of a leading number, and

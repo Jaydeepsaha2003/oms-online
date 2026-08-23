@@ -28,6 +28,8 @@ export class AgentQueryDto {
 }
 
 export class SpecialRateMasterQueryDto extends PaginationDto {
+  /** Omitted means ACTIVE — see SpecialRatesService.masterList. */
+  @IsOptional() @IsIn(['ACTIVE', 'INACTIVE', 'ALL']) active?: 'ACTIVE' | 'INACTIVE' | 'ALL';
   @IsOptional() @IsString() customer?: string;
   @IsOptional() @IsString() agent?: string;
   @IsOptional() @IsString() type?: string;

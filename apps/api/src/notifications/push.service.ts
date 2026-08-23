@@ -33,11 +33,16 @@ export class PushService {
    * signed in" scope as the WebSocket broadcast). A dead subscription (404/410
    * from the push service) is deleted automatically — self-healing.
    * Returns how many sends were attempted.
+   *
+   * Only ever the caller's OWN devices. It used to omit the user filter, which
+   * `sendToAll` read as "every stored subscription" — an unpermissioned endpoint
+   * that pushed to every phone in the company. See NotificationsGateway.testToUser.
    */
-  async broadcastPush(payload: TestNotificationPayload): Promise<number> {
-    return this.sendToAll(
-      JSON.stringify({ title: 'OMS test notification', body: `Triggered by ${payload.triggeredBy}` }),
-    );
+  async sendTestToUser(userId: string, payload: TestNotificationPayload): Promise<number> {
+    return this.sendToUsers(userId ? [userId] : [], {
+      title: 'OMS test notification',
+      body: `Triggered by ${payload.triggeredBy}`,
+    });
   }
 
   /**
@@ -56,11 +61,21 @@ export class PushService {
     return this.sendToAll(JSON.stringify(notification), userIds);
   }
 
-  private async sendToAll(body: string, userIds?: string[]): Promise<number> {
+  /**
+   * Fan out one payload to the given users' devices.
+   *
+   * `userIds` is REQUIRED. It used to be optional, and passing nothing meant
+   * "every subscription in the database" — a default that reads as harmless at
+   * the call site and is the widest possible blast radius. There is no caller
+   * that legitimately wants every device, so the option is gone rather than
+   * documented.
+   */
+  private async sendToAll(body: string, userIds: string[]): Promise<number> {
+    if (!userIds.length) return 0;
     this.ensureVapidConfigured();
-    const subscriptions = await this.prisma.pushSubscription.findMany(
-      userIds ? { where: { userId: { in: userIds } } } : undefined,
-    );
+    const subscriptions = await this.prisma.pushSubscription.findMany({
+      where: { userId: { in: userIds } },
+    });
 
     await Promise.all(
       subscriptions.map(async (sub) => {

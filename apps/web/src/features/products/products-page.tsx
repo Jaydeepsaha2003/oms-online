@@ -90,10 +90,36 @@ function ProductActiveToggle({ product }: { product: ProductDto }) {
           )
         }
         aria-label={`Active — ${product.product}`}
+        title={TIP.active}
       />
     </span>
   );
 }
+
+/*
+ * Hover text for every action on this page.
+ *
+ * Kept in one object rather than typed at each call site: the same actions
+ * appear in the desktop table, in the mobile card and (for some) in the
+ * toolbar, and three copies of a sentence drift apart the moment one is
+ * reworded. Each reads as a short sentence saying what will happen — not a
+ * label repeating the icon, which is what an icon-only button needs least.
+ */
+const TIP = {
+  rateList: 'Show this product on the customer Rate List. Nothing to do with Active — an active product can be kept off the printed sheet.',
+  active: 'Active products can be picked on orders. Switching this off hides it from new orders without touching anything already sold.',
+  edit: 'Change this product — name, category, size, pcs, weight or rate.',
+  del: 'Delete this product permanently. Its rate history and past orders are kept.',
+  columns: 'Choose which columns are shown, and drag to reorder them.',
+  export: 'Download the products matching your current search and filters as an Excel file.',
+  importBtn: 'Upload an Excel file to add or update products in bulk.',
+  changes: 'See recent edits to products — name, category, sub-category and more.',
+  priceFields: 'Set which quantity a category is priced by (KGS or PCS).',
+  create: 'Add a product to the catalogue.',
+  filters: 'Filter by category and sub-category.',
+  selectAll: 'Select every product matching your current search and filters, across all pages — not just the page on screen.',
+  deactivate: 'Switch the selected products off. They stop appearing in order pickers; nothing already ordered or invoiced changes.',
+} as const;
 
 /** Inline "show on rate list" checkbox for a product row. */
 function ProductRateListCheckbox({ product }: { product: ProductDto }) {
@@ -109,6 +135,7 @@ function ProductRateListCheckbox({ product }: { product: ProductDto }) {
         )
       }
       label={`Show ${product.product} on rate list`}
+      title={TIP.rateList}
     />
   );
 }
@@ -341,13 +368,13 @@ export function ProductsPage() {
         </div>
       </div>
       <div className="flex items-center justify-between border-t pt-2" onClick={(e) => e.stopPropagation()}>
-        <label className="text-muted-foreground flex cursor-pointer items-center gap-2 text-[11.5px] font-medium">
+        <label className="text-muted-foreground flex cursor-pointer items-center gap-2 text-[11.5px] font-medium" title={TIP.rateList}>
           <ProductRateListCheckbox product={p} />
           Rate list
         </label>
         <div className="flex items-center gap-1">
           {can('product:update') && (
-            <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(p)} aria-label="Edit">
+            <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(p)} aria-label="Edit" title={TIP.edit}>
               <Pencil className="size-4" />
             </Button>
           )}
@@ -358,6 +385,7 @@ export function ProductsPage() {
               className="size-8 text-destructive hover:text-destructive"
               onClick={() => handleDelete(p)}
               aria-label="Delete"
+              title={TIP.del}
             >
               <Trash2 className="size-4" />
             </Button>
@@ -390,6 +418,7 @@ export function ProductsPage() {
             className={cn('relative size-9 shrink-0 rounded-[4px] border-amber-300 lg:hidden', activeFilterCount > 0 && CONTROL_ON)}
             onClick={() => setMobileFiltersOpen(true)}
             aria-label="Filters"
+            title={TIP.filters}
           >
             <Filter className="size-4" />
             {activeFilterCount > 0 && (
@@ -434,6 +463,7 @@ export function ProductsPage() {
               type="button"
               onClick={() => void selectAllMatching()}
               disabled={selectingAll}
+              title={TIP.selectAll}
               className="text-primary shrink-0 cursor-pointer text-[12px] font-semibold whitespace-nowrap hover:underline disabled:cursor-not-allowed disabled:opacity-50"
             >
               {selectingAll ? 'Selecting…' : `Select all ${data.total.toLocaleString('en-IN')} matching`}
@@ -462,6 +492,7 @@ export function ProductsPage() {
                   className="h-7 rounded-[4px] text-[12px] font-bold"
                   onClick={() => void handleBulkDeactivate()}
                   disabled={bulkSetFlags.isPending}
+                  title={TIP.deactivate}
                 >
                   <PowerOff className="size-3.5" /> Deactivate selected
                 </Button>
@@ -486,22 +517,22 @@ export function ProductsPage() {
               onToggle={cols.toggle}
               onReset={cols.reset}
             />
-            {can('product:export') && <ExportButton onClick={() => exportProducts(query)} />}
-            {can('product:import') && <ImportButton onFile={handleImport} pending={importMut.isPending} />}
+            {can('product:export') && <ExportButton onClick={() => exportProducts(query)} title={TIP.export} />}
+            {can('product:import') && <ImportButton onFile={handleImport} pending={importMut.isPending} title={TIP.importBtn} />}
             <Button
               variant="outline"
               size="sm"
               className="h-9 rounded-[4px] text-[12.5px] font-semibold"
               onClick={() => setChangesOpen(true)}
-              title="See recent edits to products — name, category, sub-category and more"
+              title={TIP.changes}
             >
               <History className="size-3.5" /> Recent changes
             </Button>
-            <Button variant="outline" size="sm" className="h-9 rounded-[4px] text-[12.5px] font-semibold" onClick={() => setShowFields(true)} title="Set the price field (KGS/PCS) per category">
+            <Button variant="outline" size="sm" className="h-9 rounded-[4px] text-[12.5px] font-semibold" onClick={() => setShowFields(true)} title={TIP.priceFields}>
               <Scale /> Price fields
             </Button>
             {can('product:create') && (
-              <Button size="sm" className="h-9 rounded-[4px] text-[12.5px] font-bold" onClick={() => setCreating(true)}>
+              <Button size="sm" className="h-9 rounded-[4px] text-[12.5px] font-bold" onClick={() => setCreating(true)} title={TIP.create}>
                 <Plus /> New product
               </Button>
             )}
@@ -598,7 +629,7 @@ export function ProductsPage() {
             <div className="flex items-center justify-end gap-2">
               <ProductRateListCheckbox product={p} />
               {can('product:update') && (
-                <Button variant="ghost" size="icon" className="size-7" onClick={() => setEditing(p)} aria-label="Edit">
+                <Button variant="ghost" size="icon" className="size-7" onClick={() => setEditing(p)} aria-label="Edit" title={TIP.edit}>
                   <Pencil className="size-4" />
                 </Button>
               )}
@@ -609,6 +640,7 @@ export function ProductsPage() {
                   className="size-7 text-destructive hover:text-destructive"
                   onClick={() => handleDelete(p)}
                   aria-label="Delete"
+                  title={TIP.del}
                 >
                   <Trash2 className="size-4" />
                 </Button>
@@ -713,7 +745,14 @@ function CategoryFieldsDialog({ canEdit, onClose }: { canEdit: boolean; onClose:
                 <NativeSelect value={r.field} onChange={(v) => setRow(i, { field: v === 'PCS' ? 'PCS' : 'KGS' })} options={['KGS', 'PCS']} disabled={!canEdit} />
               </div>
               {canEdit && (
-                <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => removeRow(i)} aria-label="Remove">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8 text-destructive hover:text-destructive"
+                  onClick={() => removeRow(i)}
+                  aria-label="Remove"
+                  title="Remove this category rule — it falls back to the default price field."
+                >
                   <Trash2 className="size-4" />
                 </Button>
               )}
@@ -849,15 +888,16 @@ function ProductDialog({ product, onClose }: { product: ProductDto | null; onClo
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-6 rounded-lg border bg-muted/40 px-3 py-2.5">
-            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
-              <Switch checked={form.active} onCheckedChange={(v) => setForm((f) => ({ ...f, active: v }))} />
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium" title={TIP.active}>
+              <Switch checked={form.active} onCheckedChange={(v) => setForm((f) => ({ ...f, active: v }))} title={TIP.active} />
               Active <span className="text-muted-foreground font-normal">(shown in order pickers)</span>
             </label>
-            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium normal-case">
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium normal-case" title={TIP.rateList}>
               <RowCheckbox
                 checked={form.showOnRateList}
                 onChange={(v) => setForm((f) => ({ ...f, showOnRateList: v }))}
                 label="Show on rate list"
+                title={TIP.rateList}
               />
               Show on rate list
             </label>

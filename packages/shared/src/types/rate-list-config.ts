@@ -39,6 +39,53 @@ export interface RateListCombination {
   members: string[];
 }
 
+/** What an Available-column override applies to. */
+export const AVAILABLE_OVERRIDE_SCOPES = ['SUBCATEGORY', 'ITEM', 'DESIGN'] as const;
+export type AvailableOverrideScope = (typeof AVAILABLE_OVERRIDE_SCOPES)[number];
+
+/**
+ * "Inside GLASS, show SIZE for this one thing."
+ *
+ * The Available column used to be decided per CATEGORY and nothing finer, so a
+ * category where one sub-category is sold by size and the rest by pieces had no
+ * correct setting — whichever you chose was wrong for part of the sheet.
+ *
+ * Three scopes, resolved most-specific-first, the same cascade the special-rate
+ * engine already uses so there is one precedence rule to learn:
+ *
+ *   ITEM / DESIGN  (a named product or design type)
+ *        ▲ beats
+ *   SUBCATEGORY
+ *        ▲ beats
+ *   the category's own `availableDisplay`
+ *        ▲ beats
+ *   the config's global `availableDisplay`
+ *
+ * ITEM and DESIGN are separate scopes rather than one "target": a product and a
+ * design type can share a name, and the product rate list and the design rate
+ * list are different tables. Being explicit stops a rule written for a design
+ * silently re-laying-out a product.
+ *
+ * `subCategory` narrows an ITEM/DESIGN rule to one sub-category; blank means the
+ * rule applies wherever that item appears. It is required for SUBCATEGORY scope
+ * — that is what the rule is about.
+ *
+ * Lines whose resolved display differs from the rest of their category are
+ * pivoted into their OWN table (see customer-rate-list-pivot): one grid cannot
+ * have two column axes, and forcing them together would put a size under a
+ * "12pcs" heading.
+ */
+export interface RateListAvailableOverride {
+  /** Stable id within its category, so editing one row never disturbs another. */
+  id: string;
+  scope: AvailableOverrideScope;
+  /** Sub-category, upper-cased. Required for SUBCATEGORY; optional narrowing for ITEM/DESIGN. */
+  subCategory: string;
+  /** Product name or design type, upper-cased. Required for ITEM/DESIGN; '' for SUBCATEGORY. */
+  target: string;
+  display: AvailableDisplay;
+}
+
 /** How one category behaves on the rate list. */
 export interface RateListCategoryConfig {
   /** Category as it appears in the product/design master, upper-cased. */
@@ -53,6 +100,9 @@ export interface RateListCategoryConfig {
   subCategories: string[];
   /** Pieces or Size in the Available column (§6). Null inherits the default. */
   availableDisplay: AvailableDisplay | null;
+  /** Finer-grained exceptions inside this category. Empty is the normal case:
+   *  the whole category follows `availableDisplay`. */
+  availableOverrides: RateListAvailableOverride[];
   /** Saved price combinations for this category (§7). */
   combinations: RateListCombination[];
 }
@@ -96,6 +146,24 @@ export interface EffectiveRateListConfig extends RateListConfig {
   from: RateListConfigProvenance;
 }
 
+/**
+ * The item names inside one category, for picking the target of an
+ * Available-column override.
+ *
+ * Fetched per category on demand rather than shipped in
+ * {@link RateListConfigBundle}: the bundle loads on every visit to the settings
+ * screen, and the catalogue runs to thousands of products across all categories
+ * — almost none of which the person editing GLASS will ever look at.
+ */
+export interface RateListCategoryItems {
+  category: string;
+  /** Distinct product names, with the sub-category each appears under. */
+  products: { subCategory: string; item: string }[];
+  /** Distinct design types, same shape. Combinations ("WL+TOOL") are excluded —
+   *  they never reach the sheet, so a rule about one could never apply. */
+  designs: { subCategory: string; item: string }[];
+}
+
 /** Everything the settings screen needs in one call. */
 export interface RateListConfigBundle {
   default: RateListConfig;
@@ -122,11 +190,21 @@ export interface RateListCombinationInput {
   members: string[];
 }
 
+/** Every field optional on the way IN — the service sanitises. */
+export interface RateListAvailableOverrideInput {
+  id?: string;
+  scope?: AvailableOverrideScope | string;
+  subCategory?: string;
+  target?: string;
+  display?: AvailableDisplay | string;
+}
+
 export interface RateListCategoryConfigInput {
   category: string;
   included?: boolean;
   subCategories?: string[];
   availableDisplay?: AvailableDisplay | null;
+  availableOverrides?: RateListAvailableOverrideInput[];
   combinations?: RateListCombinationInput[];
 }
 
@@ -201,6 +279,42 @@ export function isOnRateList(config: RateListConfig, category: string, subCatego
 export function availableDisplayFor(config: RateListConfig, category: string): AvailableDisplay {
   const cat = config.categories.find((c) => norm(c.category) === norm(category));
   return cat?.availableDisplay ?? config.availableDisplay;
+}
+
+/**
+ * The Available display for ONE line, honouring the overrides above.
+ *
+ * `availableDisplayFor` remains the category-level answer and is what a
+ * category with no overrides resolves to; this is the per-line refinement. The
+ * two agree whenever no override matches, so callers that only care about the
+ * category are unaffected.
+ *
+ * Ordering is explicit rather than relying on array order: a config written by
+ * an older client, or hand-edited, must resolve the same way.
+ */
+export function availableDisplayForLine(
+  config: RateListConfig | null,
+  line: { category: string; subCategory: string; item: string; kind: 'PRODUCT' | 'DESIGN' },
+): AvailableDisplay {
+  if (!config) return 'PCS';
+  const cat = config.categories.find((c) => norm(c.category) === norm(line.category));
+  const categoryLevel = cat?.availableDisplay ?? config.availableDisplay;
+  if (!cat?.availableOverrides?.length) return categoryLevel;
+
+  const sub = norm(line.subCategory);
+  const item = norm(line.item);
+  const itemScope = line.kind === 'DESIGN' ? 'DESIGN' : 'ITEM';
+
+  // Most specific first: the named item in one sub-category, then the named item
+  // anywhere, then the sub-category.
+  const rules = cat.availableOverrides;
+  const exact = rules.find((r) => r.scope === itemScope && norm(r.target) === item && norm(r.subCategory) === sub && !!sub);
+  if (exact) return exact.display;
+  const anySub = rules.find((r) => r.scope === itemScope && norm(r.target) === item && !norm(r.subCategory));
+  if (anySub) return anySub.display;
+  const bySub = rules.find((r) => r.scope === 'SUBCATEGORY' && norm(r.subCategory) === sub);
+  if (bySub) return bySub.display;
+  return categoryLevel;
 }
 
 /** The saved combination a sub-category belongs to, or null. */

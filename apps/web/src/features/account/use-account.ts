@@ -235,7 +235,7 @@ export function useChequeOptions(customerId: number | undefined, enabled = true)
 }
 
 /** Receipt Ledger browser (voucher history for a party / agent). */
-export function usePaymentLedger(q: { customerId?: number; agentName?: string; dateFrom?: string; dateTo?: string; page: number; pageSize: number }, enabled = true) {
+export function usePaymentLedger(q: { customerId?: number; agentName?: string; dateFrom?: string; dateTo?: string; mode?: string; page: number; pageSize: number }, enabled = true) {
   return useQuery({
     queryKey: [...PAYMENT_KEY, 'ledger', q],
     queryFn: () => http.get<LedgerList>('/payments/ledger', { params: q }),

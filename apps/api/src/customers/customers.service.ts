@@ -119,6 +119,22 @@ export class CustomersService {
     return this.toDto(row);
   }
 
+  /**
+   * Flip only the Active flag.
+   *
+   * Deliberately NOT routed through `update()`. Despite `UpdateCustomerDto`
+   * being a PartialType, `toData()` rebuilds the ENTIRE record with `?? null`
+   * fallbacks — so a PATCH carrying just `{ active }` would blank the party's
+   * agent, city, transport, rates and credit period, and set partyName to ''.
+   * The full edit form relies on that overwrite behaviour to clear fields, so
+   * the fix is a narrow endpoint rather than changing what update() means.
+   */
+  async setActive(id: number, active: boolean): Promise<CustomerDto> {
+    await this.ensureExists(id);
+    const row = await this.prisma.customer.update({ where: { id }, data: { active } });
+    return this.toDto(row);
+  }
+
   async remove(id: number): Promise<void> {
     await this.ensureExists(id);
     await this.prisma.customer.delete({ where: { id } });
@@ -491,16 +507,49 @@ export class CustomersService {
   async rateList(id: number): Promise<CustomerRateList> {
     const customer = await this.prisma.customer.findUnique({ where: { id } });
     if (!customer) throw new NotFoundException('Customer not found');
+    const rates = await this.prisma.customerRate.findMany({ where: { customerId: id } });
+    return this.buildRateList(customer.id, customer.partyName ?? `#${customer.id}`, rates);
+  }
+
+  /**
+   * The chart rate list — every rated item at its base rate, no party attached.
+   *
+   * For quoting a party that does not exist yet. Until now the sheet could only
+   * be produced for a saved customer, so the only way to hand a new enquiry a
+   * price list was to create a customer record for someone who might never
+   * order, or to send a list built for a different party and hope nobody noticed
+   * that party's discounts baked into it.
+   *
+   * `label` is what gets printed at the top. Optional: with nothing supplied the
+   * sheet is headed "STANDARD RATE LIST", which is what it is. Anything supplied
+   * is printed verbatim and stored nowhere — naming the sheet is not creating a
+   * customer.
+   *
+   * `customerId: 0` marks it as party-less. Every rate here carries `delta: 0`
+   * and `from: null` by construction (the snapshot is empty), so nothing on the
+   * sheet can be marked as an adjustment.
+   */
+  async defaultRateList(label?: string | null): Promise<CustomerRateList> {
+    const name = (label ?? '').trim();
+    return this.buildRateList(0, name || 'STANDARD RATE LIST', []);
+  }
+
+  /** Shared by both: the catalogue, priced through whatever special rates apply
+   *  (none, for the default sheet). */
+  private async buildRateList(
+    customerId: number,
+    customerName: string,
+    rates: { id: number; customerId: number; kind: string; scope: string; category: string; subCategory: string; target: string; rate: number; createdAt: Date; updatedAt: Date }[],
+  ): Promise<CustomerRateList> {
 
     // Active-only (spec 11/12/30): an INACTIVE product or design must never reach
     // the sheet, its PDF or its Excel, even with the rate-list flag still ticked.
     // Deactivating an item is the act of withdrawing it; making the user also
     // untick a second flag means the sheet keeps quoting a withdrawn item until
     // somebody notices.
-    const [products, designs, rates] = await Promise.all([
+    const [products, designs] = await Promise.all([
       this.prisma.product.findMany({ where: { showOnRateList: true, active: true }, orderBy: [{ category: 'asc' }, { subCategory: 'asc' }, { product: 'asc' }, { size: 'asc' }] }),
       this.prisma.design.findMany({ where: { showOnRateList: true, active: true }, orderBy: [{ category: 'asc' }, { subCategory: 'asc' }, { designType: 'asc' }] }),
-      this.prisma.customerRate.findMany({ where: { customerId: id } }),
     ]);
 
     // "MIX-<CATEGORY>" sub-categories (e.g. "MIX-CUP" → "MIX CUP SET") hold a
@@ -562,8 +611,8 @@ export class CustomersService {
     });
 
     return {
-      customerId: customer.id,
-      customerName: customer.partyName ?? `#${customer.id}`,
+      customerId,
+      customerName,
       generatedAt: new Date().toISOString(),
       products: productLines,
       designs: designLines,

@@ -3,6 +3,7 @@ import type {
   CombinationCheckResult,
   EffectiveRateListConfig,
   PartyRateListConfigInput,
+  RateListCategoryItems,
   RateListConfigBundle,
   RateListConfigInput,
 } from '@oms/shared';
@@ -28,6 +29,22 @@ export function useEffectiveRateListConfig(customerId?: number) {
     queryKey: [...KEY, 'effective', customerId],
     queryFn: () => http.get<EffectiveRateListConfig>(`/customers/${customerId}/rate-list-config`),
     enabled: customerId != null,
+  });
+}
+
+/**
+ * Item/design names in one category, for the Available-override target picker.
+ *
+ * Enabled only once a category is actually being edited, so opening the settings
+ * screen fetches nothing. Cached per category — the catalogue does not move
+ * while somebody is configuring a sheet.
+ */
+export function useRateListCategoryItems(category: string | null) {
+  return useQuery({
+    queryKey: [...KEY, 'items', category],
+    queryFn: () => http.get<RateListCategoryItems>('/customers/rate-list-config/items', { params: { category } }),
+    enabled: !!category,
+    staleTime: 60_000,
   });
 }
 

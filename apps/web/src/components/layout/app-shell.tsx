@@ -99,6 +99,27 @@ export function AppShell() {
   const isPinned = pinned && canPin;
   const expanded = isPinned || hovered;
 
+  /*
+   * Tell floating page content that the nav panel is about to cover it.
+   *
+   * The hover panel and every Radix layer (popover, dropdown, dialog) all sit on
+   * z-50, so which one paints on top comes down to DOM order — and a popover
+   * portaled to <body> is always last, so it drew straight over the expanded
+   * sidebar. Raising the panel's z-index would fix that overlap and break a
+   * worse one, putting the nav above modal dialogs.
+   *
+   * So instead of re-layering, the abandoned dropdown closes. The pointer has
+   * left the field and travelled to the navigation; a list still hanging there,
+   * detached from the field it belongs to, is the glitch — the same reasoning
+   * that already closes these lists when the page scrolls under them.
+   *
+   * Only fires for hover-peek. A pinned sidebar reserves its own width and never
+   * covers anything, so nothing needs to move out of its way.
+   */
+  useEffect(() => {
+    if (hovered && !isPinned) window.dispatchEvent(new CustomEvent('oms:nav-peek'));
+  }, [hovered, isPinned]);
+
   // Self-healing hover: mouseleave can be missed (fast exits, popovers opening,
   // alt-tab, scroll under the pointer), leaving the panel stuck open. While
   // expanded-by-hover, watch global pointer moves and collapse the moment the

@@ -94,13 +94,20 @@ export class NotificationsController {
     return this.prefs.clearDndFor(userId);
   }
 
-  /** Any authenticated user may trigger a test broadcast — it's inert, no @Permissions needed. */
+  /**
+   * Ring a test notification on the CALLER'S OWN devices.
+   *
+   * Ungated, but no longer because it is "inert" — it was never inert. It used
+   * to broadcast to every socket and every stored push subscription in the
+   * company, so any signed-in user could alert everybody else. It needs no
+   * permission now for the opposite reason: it cannot reach anyone but you.
+   */
   @Post('test')
   async sendTest(@Req() req: Request): Promise<TestNotificationResult> {
     const user = req.user as AuthenticatedUser;
     const payload = { triggeredBy: user.name, at: new Date().toISOString() };
-    const devicesNotified = this.gateway.broadcastTest(payload);
-    const pushDevicesNotified = await this.pushService.broadcastPush(payload);
+    const devicesNotified = this.gateway.testToUser(user.id, payload);
+    const pushDevicesNotified = await this.pushService.sendTestToUser(user.id, payload);
     return { devicesNotified, pushDevicesNotified };
   }
 

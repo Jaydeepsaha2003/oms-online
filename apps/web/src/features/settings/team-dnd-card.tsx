@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { BellOff, Check, Loader2, Users } from 'lucide-react';
 import { toast } from 'sonner';
-import { isWithinDnd, type NotificationDndDto, type UserDndRow } from '@oms/shared';
+import { isWithinDnd, type UserDndRow } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -15,7 +15,6 @@ import {
   useClearUserNotificationDnd,
   useDefaultNotificationDnd,
   useSetUserNotificationDnd,
-  useUpdateDefaultNotificationDnd,
 } from './use-settings';
 
 const CAPTION = 'text-[10.5px] font-bold tracking-[0.09em] text-slate-500 uppercase dark:text-slate-400';
@@ -45,27 +44,7 @@ export function TeamDndCard() {
   const { data, isLoading } = useAllNotificationDnd();
   const save = useSetUserNotificationDnd();
   const { data: def } = useDefaultNotificationDnd();
-  const saveDefault = useUpdateDefaultNotificationDnd();
   const clearFor = useClearUserNotificationDnd();
-  const [defStart, setDefStart] = useState('');
-  const [defEnd, setDefEnd] = useState('');
-  useEffect(() => {
-    if (def) {
-      setDefStart(def.start);
-      setDefEnd(def.end);
-    }
-  }, [def]);
-  /** One writer, so a change to any one field carries the other two along
-   *  rather than posting a half-formed window. */
-  const saveDefaultWith = (patch: Partial<NotificationDndDto>) =>
-    saveDefault.mutate(
-      { enabled: def?.enabled ?? false, start: defStart || '21:00', end: defEnd || '08:00', ...patch },
-      {
-        onSuccess: (v) =>
-          toast.success(v.enabled ? `Default quiet hours ${v.start}–${v.end} for everyone` : 'Default quiet hours off'),
-        onError: (e) => toast.error(getApiErrorMessage(e, 'Could not save the default')),
-      },
-    );
 
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [bulkStart, setBulkStart] = useState('21:00');
@@ -133,64 +112,20 @@ export function TeamDndCard() {
           )}
         </CardTitle>
         <p className="text-muted-foreground text-[12px]">
-          Set the default once and it applies to everyone. Anyone can be given their own hours instead, or put back on the
-          default. A reminder landing inside someone's window waits for it to end — nothing is lost.
+          Exceptions to the company hours set above. Anyone can be switched off, given their own times, or put back on the
+          company window. A reminder landing inside someone's window waits for it to end — nothing is lost.
         </p>
       </CardHeader>
 
       <CardContent className="space-y-3">
         {/*
-          * The company default comes FIRST, because it is what most rows below
-          * are actually following — setting it once is the whole job, and the
-          * per-person rows exist for the exceptions.
+          * No company-default block here any more — it is the card directly
+          * above this one. Two places to set the same window meant two switches
+          * that had to be read together to know what was in force.
+          *
+          * This card is the exceptions: switch one person off, or give them
+          * different times, or put them back on the company hours.
           */}
-        <div className="rounded-md border border-sky-200 bg-sky-50/70 p-3 dark:border-sky-500/30 dark:bg-sky-500/10">
-          <div className="flex flex-wrap items-center gap-2">
-            <Users className="size-4 shrink-0 text-sky-700 dark:text-sky-300" />
-            <span className="text-[13px] font-bold text-sky-900 dark:text-sky-100">Default for everyone</span>
-            <span className="text-[11.5px] text-sky-800/80 dark:text-sky-200/80">
-              applies to all {rows.length || ''} {rows.length === 1 ? 'person' : 'people'} who have not set their own
-            </span>
-            <Switch
-              className="ml-auto"
-              checked={def?.enabled ?? false}
-              disabled={saveDefault.isPending}
-              onCheckedChange={(v) => saveDefaultWith({ enabled: v })}
-            />
-          </div>
-          <div className="mt-2.5 grid gap-3 sm:grid-cols-[7rem_7rem_auto] sm:items-end">
-            <div className="space-y-1">
-              <Label htmlFor="def-from" className={CAPTION}>From</Label>
-              <Input
-                id="def-from"
-                type="time"
-                value={defStart}
-                disabled={!def?.enabled}
-                onChange={(e) => setDefStart(e.target.value)}
-                onBlur={(e) => e.target.value !== def?.start && saveDefaultWith({ start: e.target.value })}
-                className="h-9 w-full tabular-nums"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="def-to" className={CAPTION}>Until</Label>
-              <Input
-                id="def-to"
-                type="time"
-                value={defEnd}
-                disabled={!def?.enabled}
-                onChange={(e) => setDefEnd(e.target.value)}
-                onBlur={(e) => e.target.value !== def?.end && saveDefaultWith({ end: e.target.value })}
-                className="h-9 w-full tabular-nums"
-              />
-            </div>
-            <p className="text-[11.5px] text-sky-800/80 sm:pb-1.5 dark:text-sky-200/80">
-              {def?.enabled
-                ? `Everyone on the default is quiet ${def.start} to ${def.end}${def.start > def.end ? ' (overnight)' : ''}.`
-                : 'Off — nobody is muted unless they set their own hours.'}
-            </p>
-          </div>
-        </div>
-
         {isLoading ? (
           <div className="text-muted-foreground flex items-center gap-2 py-4 text-sm">
             <Loader2 className="size-4 animate-spin" /> Loading people…
@@ -244,8 +179,12 @@ export function TeamDndCard() {
                           <div className="text-muted-foreground flex flex-wrap items-center gap-1.5 text-[11px]">
                             <span className="truncate">{r.email}</span>
                             {r.source === 'default' ? (
+                              /* Says what "default" currently MEANS, not just
+                                 that it applies — the card that sets it is a
+                                 scroll away on a long settings page. */
                               <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-700 dark:bg-sky-500/20 dark:text-sky-300">
-                                following default
+                                company hours
+                                {def ? (def.enabled ? ` · ${def.start}–${def.end}` : ' · off') : ''}
                               </span>
                             ) : (
                               <>

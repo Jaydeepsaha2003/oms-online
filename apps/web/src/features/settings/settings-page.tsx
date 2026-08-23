@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { DEFAULT_ORDER_QTY_LAYOUT, isWithinDnd, normalizeQtyOrder, QTY_FIELD_LABEL, SETTING_GROUP_META, type OrderOptionDto, type OrderQtyLayout, type QtyField, type SettingGroupMeta } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { useNavigate } from 'react-router-dom';
 import { usePermissions } from '@/hooks/use-permissions';
 import { RESOURCES } from '@oms/shared';
 import { RecordHistory } from '@/components/common/record-history';
@@ -23,10 +24,10 @@ import { TestNotificationCard } from './test-notification-card';
 import { DatabaseBackupCard } from './database-backup-card';
 import { DesignTrackCard } from './design-track-card';
 import { DispatchAlertsCard } from './dispatch-alerts-card';
-import { RateListSettingsCard } from './rate-list-settings-card';
 import {
   useChallanFields,
   useClearNotificationDnd,
+  useDefaultNotificationDnd,
   useNotificationDnd,
   useChallanTerms,
   useCompany,
@@ -40,6 +41,7 @@ import {
   useOrderQtyLayout,
   useTcsPercent,
   useUpdateChallanFields,
+  useUpdateDefaultNotificationDnd,
   useUpdateNotificationDnd,
   useUpdateChallanTerms,
   useUpdateCompany,
@@ -56,11 +58,11 @@ type TabKey = 'general' | 'orders' | 'challan' | 'dispatch' | 'ratelist' | 'crm'
 export function SettingsPage() {
   const { data: all, isLoading } = useSettings();
   const { can } = usePermissions();
+  const navigate = useNavigate();
   const canEdit = can('setting:update');
   const canBackup = can('backup:export');
   // Rate list configuration lives on the customer, so it follows customer rights
   // rather than the generic settings right.
-  const canEditRateList = can('customer:update');
 
   const tabs: { id: TabKey; label: string; icon: LucideIcon }[] = [
     { id: 'general', label: 'General', icon: Building2 },
@@ -113,9 +115,15 @@ export function SettingsPage() {
           <CompanyCard canEdit={canEdit} />
           <PreferencesCard />
           <MyDevicesCard />
-          <ReminderDndCard />
-          {/* Everyone else's quiet hours — only for someone who may already look
-              at the user list. The card fetches nothing when it isn't rendered. */}
+          {/*
+            * The company window if you can set it; your own if you cannot.
+            *
+            * Someone who holds neither setting:update nor user:view would
+            * otherwise have no way to silence their own phone at all — the
+            * company card and the roster are both closed to them.
+            */}
+          {canEdit ? <CompanyDndCard /> : <MyDndCard />}
+          {/* Per-person exceptions. Fetches nothing when it isn't rendered. */}
           {can('user:view') && <TeamDndCard />}
           <TestNotificationCard />
         </div>
@@ -156,10 +164,33 @@ export function SettingsPage() {
         </div>
       )}
 
+      {/*
+        * Rate List Settings now lives on Customers → Rate List → Rate List
+        * Settings, beside the sheet it configures.
+        *
+        * The tab stays as a signpost rather than being deleted: it has been the
+        * place to look for months, and a setting that silently vanishes reads as
+        * a regression. Rendering the card in both places was the alternative and
+        * is worse — two mount points for one editor, either of which can be
+        * saved while the other is open and stale.
+        */}
       {tab === 'ratelist' && (
-        <div className="space-y-4">
-          <RateListSettingsCard canEdit={canEditRateList} />
-        </div>
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex flex-wrap items-center gap-2 text-[15px]">
+              <Layers className="size-4 text-indigo-600" /> Rate List
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-muted-foreground text-[13px]">
+              These settings have moved next to the sheet they configure, so you can change the layout and see the result
+              without switching screens.
+            </p>
+            <Button variant="outline" className="cursor-pointer" onClick={() => navigate('/customers/rate-list')}>
+              <Layers /> Open Rate List Settings
+            </Button>
+          </CardContent>
+        </Card>
       )}
 
       {tab === 'crm' && (
@@ -568,36 +599,21 @@ function QuotationTermsCard({ canEdit }: { canEdit: boolean }) {
   );
 }
 
-/** The Challan / Tax Invoice bill's "Terms & Conditions" list — same layout as the
- *  Sales Order card above, but its own list and empty by default (nothing is
- *  printed until the business adds terms here). */
 /**
- * Which optional fields the Challan form shows.
+ * The COMPANY quiet hours — one window, applying to everybody.
  *
- * Shipping Address was hidden behind a hard-coded constant in the form, so
- * bringing it back needed a code change and a deploy. The value has always been
- * saved on the challan (defaulting to the billing address) — this only decides
- * whether the field is on screen, so switching it either way is safe and loses
- * nothing.
+ * This is the setting that matters: turn it on once and every user is covered,
+ * including anyone added later, with nothing to configure per person. Exceptions
+ * are handled underneath in Team quiet hours — switch one person off, or give
+ * them different times.
+ *
+ * It replaced a card that only ever set the current user's own hours, which
+ * meant quiet hours were off for almost everyone unless each person went and
+ * found this screen themselves.
  */
-/**
- * Reminder quiet hours, for THIS user (spec: PWA reminder DND).
- *
- * Deliberately per-user and not part of the app-wide CRM reminder settings:
- * those decide when a follow-up becomes DUE, which is a business rule and the
- * same for everybody. This decides whether this particular person is disturbed
- * by it. The owner and a floor operator keep different hours.
- *
- * A reminder that falls inside the window is delayed, not cancelled - it is
- * still in the CRM and on the bell, and pushes once the window closes.
- */
-function ReminderDndCard() {
-  const { data } = useNotificationDnd();
-  const update = useUpdateNotificationDnd();
-  const clearDnd = useClearNotificationDnd();
-  /** True while this user has no setting of their own — the company default is
-   *  what is actually in force, and editing anything here overrides it. */
-  const inherited = data?.source === 'default';
+function CompanyDndCard() {
+  const { data } = useDefaultNotificationDnd();
+  const update = useUpdateDefaultNotificationDnd();
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
 
@@ -610,14 +626,16 @@ function ReminderDndCard() {
 
   const enabled = data?.enabled ?? false;
   const dirty = !!data && (start !== data.start || end !== data.end);
-  // Shared with the server so the badge and the actual decision cannot disagree.
+  // Shared with the server, so this badge and the actual decision to hold a push
+  // can never disagree.
   const quietNow = isWithinDnd(data);
 
   const save = (next: { enabled?: boolean; start?: string; end?: string }) =>
     update.mutate(
       { enabled: next.enabled ?? enabled, start: next.start ?? start, end: next.end ?? end },
       {
-        onSuccess: (v) => toast.success(v.enabled ? `Quiet hours on, ${v.start} to ${v.end}` : 'Quiet hours off'),
+        onSuccess: (v) =>
+          toast.success(v.enabled ? `Quiet hours ${v.start}–${v.end} for everyone` : 'Company quiet hours off'),
         onError: (e) => toast.error(getApiErrorMessage(e, 'Could not save')),
       },
     );
@@ -627,6 +645,9 @@ function ReminderDndCard() {
       <CardHeader className="pb-3">
         <CardTitle className="flex flex-wrap items-center gap-2 text-[15px]">
           <BellOff className="size-4 text-indigo-600" /> Reminder quiet hours
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10.5px] font-bold text-slate-700 dark:bg-white/10 dark:text-slate-300">
+            everyone
+          </span>
           {quietNow && (
             <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10.5px] font-bold text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300">
               Quiet right now
@@ -635,63 +656,13 @@ function ReminderDndCard() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* Where the window in force came from, said plainly — the whole point of
-            a default is that most people never touch this card, so it has to be
-            obvious that it is already doing something. */}
-        <div
-          className={cn(
-            'flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-[12px]',
-            inherited
-              ? 'border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-100'
-              : 'border-indigo-200 bg-indigo-50 text-indigo-900 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-100',
-          )}
-        >
-          {inherited ? (
-            <>
-              <Users className="size-3.5 shrink-0" />
-              <span>
-                You are following the <strong>company default</strong>
-                {data?.companyDefault.enabled ? (
-                  <>
-                    {' '}— quiet <strong className="tabular-nums">{data.companyDefault.start}</strong> to{' '}
-                    <strong className="tabular-nums">{data.companyDefault.end}</strong>
-                  </>
-                ) : (
-                  ' — which is currently off'
-                )}
-                . Change anything below and it becomes yours alone.
-              </span>
-            </>
-          ) : (
-            <>
-              <BellOff className="size-3.5 shrink-0" />
-              <span>
-                These are <strong>your own</strong> hours, not the company default.
-              </span>
-              <Button
-                size="sm"
-                variant="outline"
-                className="ml-auto h-7 cursor-pointer text-[11.5px]"
-                disabled={clearDnd.isPending}
-                onClick={() =>
-                  clearDnd.mutate(undefined, {
-                    onSuccess: () => toast.success('Back on the company default'),
-                    onError: (e) => toast.error(getApiErrorMessage(e, 'Could not reset')),
-                  })
-                }
-              >
-                {clearDnd.isPending ? <Loader2 className="animate-spin" /> : <RotateCcw />} Use the default
-              </Button>
-            </>
-          )}
-        </div>
-
         <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
           <div className="min-w-0">
             <Label className="text-[13px] font-semibold">DND Timings</Label>
             <p className="text-muted-foreground mt-0.5 text-[12px]">
-              Follow-up reminders will not be pushed to you during these hours. Nothing is lost - a reminder that falls in the
-              window arrives once it ends, and stays visible in CRM and on the bell meanwhile. This setting is yours alone.
+              Follow-up reminders are not pushed to <strong>anyone</strong> during these hours. Nothing is lost — a reminder
+              that falls in the window arrives once it ends, and stays visible in CRM and on the bell meanwhile. To switch it
+              off for one person, or give them different times, use <strong>Team quiet hours</strong> below.
             </p>
           </div>
           <Switch checked={enabled} disabled={update.isPending} onCheckedChange={(v) => save({ enabled: v })} />
@@ -728,13 +699,146 @@ function ReminderDndCard() {
 
         <p className="text-muted-foreground text-[11.5px]">
           {start && end && start > end
-            ? `Crosses midnight - quiet from ${start} tonight until ${end} tomorrow.`
+            ? `Crosses midnight — everyone is quiet from ${start} tonight until ${end} tomorrow.`
             : 'Set the end earlier than the start to cover overnight, e.g. 21:00 to 08:00.'}
         </p>
 
         {dirty && (
-          <Button size="sm" disabled={update.isPending} onClick={() => save({})}>
-            {update.isPending ? <Loader2 className="animate-spin" /> : <Check />} Save quiet hours
+          <Button size="sm" className="cursor-pointer" disabled={update.isPending} onClick={() => save({})}>
+            {update.isPending ? <Loader2 className="animate-spin" /> : <Check />} Save for everyone
+          </Button>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * My own quiet hours — shown ONLY to someone who cannot manage the company
+ * setting or the team roster.
+ *
+ * Without this an operator would have no way at all to silence their own phone:
+ * the company card needs setting:update and the roster needs user:view, and
+ * they hold neither. It writes the same personal override an administrator would
+ * write for them.
+ */
+function MyDndCard() {
+  const { data } = useNotificationDnd();
+  const update = useUpdateNotificationDnd();
+  const clearDnd = useClearNotificationDnd();
+  const inherited = data?.source === 'default';
+  const [start, setStart] = useState('');
+  const [end, setEnd] = useState('');
+
+  useEffect(() => {
+    if (data) {
+      setStart(data.start);
+      setEnd(data.end);
+    }
+  }, [data]);
+
+  const enabled = data?.enabled ?? false;
+  const dirty = !!data && (start !== data.start || end !== data.end);
+
+  const save = (next: { enabled?: boolean; start?: string; end?: string }) =>
+    update.mutate(
+      { enabled: next.enabled ?? enabled, start: next.start ?? start, end: next.end ?? end },
+      {
+        onSuccess: (v) => toast.success(v.enabled ? `Quiet ${v.start}–${v.end}` : 'Quiet hours off'),
+        onError: (e) => toast.error(getApiErrorMessage(e, 'Could not save')),
+      },
+    );
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex flex-wrap items-center gap-2 text-[15px]">
+          <BellOff className="size-4 text-indigo-600" /> My reminder quiet hours
+          {isWithinDnd(data) && (
+            <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10.5px] font-bold text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300">
+              Quiet right now
+            </span>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div
+          className={cn(
+            'flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-[12px]',
+            inherited
+              ? 'border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-100'
+              : 'border-indigo-200 bg-indigo-50 text-indigo-900 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-100',
+          )}
+        >
+          {inherited ? (
+            <>
+              <Users className="size-3.5 shrink-0" />
+              <span>
+                You are following the <strong>company hours</strong>
+                {data?.companyDefault.enabled ? (
+                  <>
+                    {' '}— quiet <strong className="tabular-nums">{data.companyDefault.start}</strong> to{' '}
+                    <strong className="tabular-nums">{data.companyDefault.end}</strong>
+                  </>
+                ) : (
+                  ' — currently off'
+                )}
+                . Change anything below and it becomes yours alone.
+              </span>
+            </>
+          ) : (
+            <>
+              <BellOff className="size-3.5 shrink-0" />
+              <span>
+                These are <strong>your own</strong> hours, not the company ones.
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                className="ml-auto h-7 cursor-pointer text-[11.5px]"
+                disabled={clearDnd.isPending}
+                onClick={() =>
+                  clearDnd.mutate(undefined, {
+                    onSuccess: () => toast.success('Back on the company hours'),
+                    onError: (e) => toast.error(getApiErrorMessage(e, 'Could not reset')),
+                  })
+                }
+              >
+                {clearDnd.isPending ? <Loader2 className="animate-spin" /> : <RotateCcw />} Use company hours
+              </Button>
+            </>
+          )}
+        </div>
+
+        <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
+          <div className="min-w-0">
+            <Label className="text-[13px] font-semibold">DND Timings</Label>
+            <p className="text-muted-foreground mt-0.5 text-[12px]">
+              Follow-up reminders will not be pushed to you during these hours. Nothing is lost — a reminder that falls in
+              the window arrives once it ends, and stays visible in CRM and on the bell meanwhile.
+            </p>
+          </div>
+          <Switch checked={enabled} disabled={update.isPending} onCheckedChange={(v) => save({ enabled: v })} />
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1">
+            <Label htmlFor="my-dnd-from" className="text-muted-foreground text-[11px] font-bold tracking-wide uppercase">
+              From
+            </Label>
+            <Input id="my-dnd-from" type="time" value={start} disabled={!enabled} onChange={(e) => setStart(e.target.value)} className="h-9 w-full tabular-nums" />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="my-dnd-to" className="text-muted-foreground text-[11px] font-bold tracking-wide uppercase">
+              Until
+            </Label>
+            <Input id="my-dnd-to" type="time" value={end} disabled={!enabled} onChange={(e) => setEnd(e.target.value)} className="h-9 w-full tabular-nums" />
+          </div>
+        </div>
+
+        {dirty && (
+          <Button size="sm" className="cursor-pointer" disabled={update.isPending} onClick={() => save({})}>
+            {update.isPending ? <Loader2 className="animate-spin" /> : <Check />} Save my hours
           </Button>
         )}
       </CardContent>

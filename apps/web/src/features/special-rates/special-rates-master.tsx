@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Ban, ChevronLeft, ChevronRight, Filter, RotateCcw, Search, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
-import type { SpecialRateMasterRow } from '@oms/shared';
+import type { SpecialRateMasterRow, SpecialRatePartyState } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -58,6 +58,19 @@ export function SpecialRatesMaster() {
   const delRate = useDeleteCustomerRate();
   const delLogo = useDeleteCustomerLogo();
 
+  /*
+   * Which parties the list covers. ACTIVE by default.
+   *
+   * The master list accumulates every override ever set, and a party that
+   * stopped trading keeps its rules forever — so the unfiltered view was mostly
+   * history, and a live party's rules had to be hunted out of it. The server
+   * defaults to the same thing, so the default holds even on a stale client.
+   *
+   * Kept out of `anyFilter`/`clearAll` on purpose: it is the list's normal
+   * state, not a filter someone applied, and Clear should not silently pull the
+   * dormant parties back in.
+   */
+  const [partyState, setPartyState] = useState<SpecialRatePartyState>('ACTIVE');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [customer, setCustomer] = useState('');
@@ -87,7 +100,7 @@ export function SpecialRatesMaster() {
     [lookups, category],
   );
 
-  const query = { page, pageSize, search: search || undefined, customer: customer || undefined, agent: agent || undefined, type: type || undefined, scope: scope || undefined, category: category || undefined, subCategory: subCategory || undefined };
+  const query = { page, pageSize, active: partyState, search: search || undefined, customer: customer || undefined, agent: agent || undefined, type: type || undefined, scope: scope || undefined, category: category || undefined, subCategory: subCategory || undefined };
   const { data, isLoading } = useAllSpecialRates(query);
   const rows = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
@@ -138,7 +151,25 @@ export function SpecialRatesMaster() {
   };
 
   const columns: DataColumn<SpecialRateMasterRow>[] = [
-    { id: 'customer', label: 'Customer', pin: 'left0', fixed: true, cell: (r) => <span className="font-medium">{r.customerName}</span> },
+    {
+      id: 'customer',
+      label: 'Customer',
+      pin: 'left0',
+      fixed: true,
+      // Badged rather than greyed: a rule on a dormant party is not invalid, and
+      // dimming it would read as "disabled". Under the Active view the badge
+      // never appears, so it costs that view nothing.
+      cell: (r) => (
+        <span className="flex items-center gap-1.5">
+          <span className="font-medium">{r.customerName}</span>
+          {!r.customerActive && (
+            <span className="inline-flex shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-400/20 dark:text-amber-200 dark:ring-amber-400/30">
+              INACTIVE
+            </span>
+          )}
+        </span>
+      ),
+    },
     { id: 'agent', label: 'Agent', cell: (r) => r.agentName || '—' },
     {
       id: 'type',
@@ -169,7 +200,14 @@ export function SpecialRatesMaster() {
     <div className="space-y-2.5">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="leading-tight font-medium">{r.customerName}</p>
+          <p className="flex items-center gap-1.5 leading-tight font-medium">
+            {r.customerName}
+            {!r.customerActive && (
+              <span className="inline-flex shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-400/20 dark:text-amber-200 dark:ring-amber-400/30">
+                INACTIVE
+              </span>
+            )}
+          </p>
           <p className="text-muted-foreground text-xs">{r.agentName || '—'}</p>
         </div>
         <span className={cn('inline-flex shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset', TYPE_BADGE[r.type] ?? 'bg-muted')}>
@@ -224,6 +262,52 @@ export function SpecialRatesMaster() {
             <Search className="text-muted-foreground pointer-events-none absolute top-[30px] left-3 size-4" />
             <Input className="pl-9" placeholder="Customer, category, item…" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
           </div>
+          {/*
+            * Party state as a segmented control rather than another dropdown:
+            * it has three fixed choices, it is the one control that changes what
+            * the list fundamentally is, and it needs to be readable at a glance
+            * so nobody wonders why a party's rules are missing. Visible on
+            * phones too — it does not go behind the Filter icon with the rest.
+            */}
+          <div className="space-y-1">
+            <Label className="text-xs">Parties</Label>
+            <div
+              role="group"
+              aria-label="Filter by party state"
+              className="inline-flex h-9 overflow-hidden rounded-md border"
+            >
+              {(
+                [
+                  ['ACTIVE', 'Active'],
+                  ['INACTIVE', 'Inactive'],
+                  ['ALL', 'All'],
+                ] as const
+              ).map(([v, label], i) => {
+                const on = partyState === v;
+                return (
+                  <button
+                    key={v}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => setFilter(() => setPartyState(v))}
+                    className={cn(
+                      'cursor-pointer px-3 text-xs font-semibold transition-colors',
+                      i > 0 && 'border-l',
+                      on
+                        ? v === 'ACTIVE'
+                          ? 'bg-emerald-600 text-white'
+                          : v === 'INACTIVE'
+                            ? 'bg-amber-600 text-white'
+                            : 'bg-slate-700 text-white'
+                        : 'text-muted-foreground hover:bg-muted',
+                    )}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           <Button
             variant="outline"
             size="icon"
@@ -268,7 +352,11 @@ export function SpecialRatesMaster() {
             </Button>
           )}
         </div>
-        <p className="text-muted-foreground text-xs">{data?.total ?? 0} matching record(s) across all customers.</p>
+        <p className="text-muted-foreground text-xs">
+          {(data?.total ?? 0).toLocaleString('en-IN')} matching record(s) across{' '}
+          {partyState === 'ACTIVE' ? 'active parties' : partyState === 'INACTIVE' ? 'inactive parties' : 'all parties'}.
+          {partyState === 'ACTIVE' && ' Rules on parties you have set inactive are hidden — switch to Inactive or All to see them.'}
+        </p>
       </div>
 
       {/* Phones only: the 6 dropdown filters live behind the Filter icon above. */}
@@ -322,7 +410,7 @@ export function SpecialRatesMaster() {
         </SheetContent>
       </Sheet>
 
-      <DataTable columns={columns} rows={rows} rowKey={(r) => r.rowKey} isLoading={isLoading} dense mobileCard={rowMobileCard} emptyText="No special rates match these filters." actions={canDelete ? (r) => (
+      <DataTable columns={columns} rows={rows} rowKey={(r) => r.rowKey} isLoading={isLoading} dense mobileCard={rowMobileCard} emptyText={partyState === 'ACTIVE' ? 'No special rates on active parties match these filters. Try All if you are looking for an older party.' : 'No special rates match these filters.'} actions={canDelete ? (r) => (
         <div className="flex justify-end">
           <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => onDelete(r)} aria-label="Remove" title="Remove">
             <Trash2 className="size-4" />

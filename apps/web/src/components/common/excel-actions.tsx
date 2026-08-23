@@ -14,9 +14,14 @@ export function ExportButton({
   onClick,
   label = 'Export to Excel',
   disabled,
+  title,
 }: {
   onClick: () => void;
   label?: string;
+  /** A sentence for the hover tooltip, when the short `label` is not enough.
+   *  Falls back to `label`, so existing callers are unchanged. */
+  title?: string;
+
   disabled?: boolean;
 }) {
   return (
@@ -37,7 +42,7 @@ export function ExportButton({
           <Download className="size-4" />
         </Button>
       </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
+      <TooltipContent>{title ?? label}</TooltipContent>
     </Tooltip>
   );
 }
@@ -208,8 +213,13 @@ export function ImportButton({
   pending,
   accept = '.xlsx,.xls,.csv',
   label = 'Import from Excel',
+  title,
 }: {
   onFile: (file: File) => void;
+  /** A sentence for the hover tooltip, when the short `label` is not enough.
+   *  Falls back to `label`, so existing callers are unchanged. */
+  title?: string;
+
   pending?: boolean;
   accept?: string;
   label?: string;
@@ -245,7 +255,7 @@ export function ImportButton({
             {pending ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
           </Button>
         </TooltipTrigger>
-        <TooltipContent>{label}</TooltipContent>
+        <TooltipContent>{title ?? label}</TooltipContent>
       </Tooltip>
     </>
   );

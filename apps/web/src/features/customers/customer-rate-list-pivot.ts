@@ -17,6 +17,7 @@
  */
 import {
   availableDisplayFor,
+  availableDisplayForLine,
   combinationFor,
   isOnRateList,
   type AvailableDisplay,
@@ -114,8 +115,16 @@ function columnLabel(values: (number | null)[], display: AvailableDisplay): stri
  * (§6) — pieces by default, sizes when asked. Nothing about the RATES changes
  * with that choice; only which axis they are laid out along.
  */
-function pivot(title: string, category: string, lines: Line[], config: RateListConfig | null): PivotTable {
-  const display = config ? availableDisplayFor(config, category) : 'PCS';
+function pivot(
+  title: string,
+  category: string,
+  lines: Line[],
+  config: RateListConfig | null,
+  /** Which axis THIS table lays out along. Passed in rather than derived from the
+   *  category, because one category can now produce several tables — see
+   *  `splitByDisplay` in buildSections. */
+  display: AvailableDisplay,
+): PivotTable {
   const keyOf = (l: Line) => (display === 'SIZE' ? l.size : l.pcs);
   const order = display === 'SIZE' ? orderSizes : orderPcs;
   const label = display === 'SIZE' ? sizeLabel : pcsLabel;
@@ -295,8 +304,8 @@ function pivotDesigns(
   category: string,
   lines: { name: string; pcs: number | null; subCategory: string; rate: number; base: number; delta: number; special?: boolean }[],
   config: RateListConfig | null,
+  display: AvailableDisplay,
 ): DesignPivotTable {
-  const display = config ? availableDisplayFor(config, category) : 'PCS';
   const byItem = new Map<string, { pcs: number | null; subCategory: string; rate: number; base: number; delta: number }[]>();
   const specials = new Map<string, boolean>();
   for (const l of lines) {
@@ -390,25 +399,63 @@ export function buildSections(
     return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   };
 
+  /**
+   * Split one category's rows by the Available display each row resolves to.
+   *
+   * A pivot table has ONE column axis, so rows measured in sizes cannot share a
+   * grid with rows measured in pieces — a size would print under a "12pcs"
+   * heading. When an override singles out a sub-category or an item, those rows
+   * come out as their own table.
+   *
+   * The common case is one group and nothing changes: same single table, same
+   * title. Only when a category genuinely mixes the two does the title gain the
+   * unit, so the two tables can be told apart.
+   */
+  const splitByDisplay = <T>(
+    cat: string,
+    rows: T[],
+    displayOf: (r: T) => AvailableDisplay,
+  ): { display: AvailableDisplay; rows: T[]; suffix: string }[] => {
+    const groups = new Map<AvailableDisplay, T[]>();
+    for (const r of rows) {
+      const d = displayOf(r);
+      (groups.get(d) ?? groups.set(d, []).get(d)!).push(r);
+    }
+    // Category default first, so the exception reads as the exception.
+    const fallback = config ? availableDisplayFor(config, cat) : 'PCS';
+    const order = [...groups.keys()].sort((a, b) => (a === fallback ? -1 : b === fallback ? 1 : a.localeCompare(b)));
+    const mixed = groups.size > 1;
+    return order.map((d) => ({
+      display: d,
+      rows: groups.get(d)!,
+      suffix: mixed ? (d === 'SIZE' ? ' (BY SIZE)' : ' (BY PCS)') : '',
+    }));
+  };
+
   const products = byCat(
     list.products.filter((p) => onSheet(p.category, p.subCategory)),
     (p: CustomerRateListProduct) => p.category,
   )
-    .map(([cat, rows]) =>
-      pivot(
-        `${cat} — RATE LIST`,
-        cat,
-        rows.map((p) => ({
-          name: p.product,
-          pcs: p.pcs,
-          size: p.size,
-          subCategory: p.subCategory,
-          rate: p.rate,
-          base: p.baseRate,
-          delta: p.delta,
-          special: p.delta !== 0,
-        })),
-        config,
+    .flatMap(([cat, rows]) =>
+      splitByDisplay(cat, rows, (p) =>
+        availableDisplayForLine(config, { category: p.category, subCategory: p.subCategory, item: p.product, kind: 'PRODUCT' }),
+      ).map((g) =>
+        pivot(
+          `${cat} — RATE LIST${g.suffix}`,
+          cat,
+          g.rows.map((p) => ({
+            name: p.product,
+            pcs: p.pcs,
+            size: p.size,
+            subCategory: p.subCategory,
+            rate: p.rate,
+            base: p.baseRate,
+            delta: p.delta,
+            special: p.delta !== 0,
+          })),
+          config,
+          g.display,
+        ),
       ),
     )
     .filter((t) => t.rows.length > 0);
@@ -420,20 +467,25 @@ export function buildSections(
     ? list.designs.filter((d) => !isCombinationDesign(d.designType) && onSheet(d.category, d.subCategory))
     : [];
   const designs = byCat(uniqueDesigns, (d: CustomerRateListDesign) => d.category)
-    .map(([cat, rows]) =>
-      pivotDesigns(
-        `RATE OF DESIGNS ON ${cat} (per kg)`,
-        cat,
-        rows.map((d) => ({
-          name: d.designType,
-          pcs: pcsFromSub(d.subCategory),
-          subCategory: d.subCategory,
-          rate: d.rate,
-          base: d.baseRate,
-          delta: d.delta,
-          special: d.delta !== 0,
-        })),
-        config,
+    .flatMap(([cat, rows]) =>
+      splitByDisplay(cat, rows, (d) =>
+        availableDisplayForLine(config, { category: d.category, subCategory: d.subCategory, item: d.designType, kind: 'DESIGN' }),
+      ).map((g) =>
+        pivotDesigns(
+          `RATE OF DESIGNS ON ${cat} (per kg)${g.suffix}`,
+          cat,
+          g.rows.map((d) => ({
+            name: d.designType,
+            pcs: pcsFromSub(d.subCategory),
+            subCategory: d.subCategory,
+            rate: d.rate,
+            base: d.baseRate,
+            delta: d.delta,
+            special: d.delta !== 0,
+          })),
+          config,
+          g.display,
+        ),
       ),
     )
     // A category whose designs were all combinations would otherwise print an

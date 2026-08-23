@@ -15,6 +15,8 @@ export class LedgerQueryDto extends PaginationDto {
   @IsOptional() @IsString() agentName?: string;
   @IsOptional() @IsString() dateFrom?: string;
   @IsOptional() @IsString() dateTo?: string;
+  /** 'B' bank side only, 'C' cash side only. Anything else (or absent) = both. */
+  @IsOptional() @IsIn(['B', 'C', 'BOTH']) mode?: string;
 }
 
 export class SavePaymentDto {

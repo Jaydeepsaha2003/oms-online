@@ -14,7 +14,7 @@ import {
 import { toast } from 'sonner';
 import { GlobalWorkerOptions, getDocument, type PDFDocumentProxy } from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import type { LedgerBalanceRow, LedgerReceiptLine, PartyLedgerFooter, PartyLedgerQuery, PartyLedgerRow, PartyListStanding } from '@oms/shared';
+import type { LedgerBalanceRow, LedgerReceiptLine, PartyLedgerFooter, PartyLedgerKpis, PartyLedgerQuery, PartyLedgerRow, PartyListStanding } from '@oms/shared';
 import { api, downloadFile, getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
@@ -522,7 +522,13 @@ export function PartyLedgerPage() {
 
       {/* ── Ageing rail ─────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-        <InvDueFromKpi text={kpis?.invDueFrom} />
+        <InvDueFromKpi
+          text={kpis?.invDueFrom}
+          detail={kpis?.invDueFromDetail}
+          // Widen the FROM date back to the invoice; the TO end is left alone so
+          // nothing currently on screen disappears.
+          onShowInvoice={(iso) => patch({ from: iso.slice(0, 10), preset: '' })}
+        />
         <Kpi
           label="Total Outstanding"
           value={closingNet != null ? `${inr(Math.abs(closingNet))}${closingNet !== 0 ? ` ${closingNet < 0 ? 'Cr' : 'Dr'}` : ''}` : '—'}
@@ -1052,16 +1058,49 @@ function Kpi({
  *  figure, the invoice code (and party, on a multi-party ledger) sits below as
  *  a small mono line — cramming both onto one row (the old layout) truncated
  *  the invoice code on anything but the widest screens. */
-function InvDueFromKpi({ text }: { text?: string }) {
+/**
+ * The oldest invoice still owed anything — which is very often NOT in the table
+ * underneath it.
+ *
+ * That is deliberate: the KPI looks past the date filter so an old unpaid bill
+ * cannot hide behind it. But a headline naming a document nobody can find reads
+ * as a bug, and was reported as one ("that invoice doesn't exist"). So when the
+ * invoice sits outside the window, the card says so and offers to go and get it.
+ */
+function InvDueFromKpi({
+  text,
+  detail,
+  onShowInvoice,
+}: {
+  text?: string;
+  detail?: PartyLedgerKpis['invDueFromDetail'];
+  onShowInvoice?: (fromISO: string) => void;
+}) {
   const value = text ?? '—';
   const m = /^(.+?)\s+\((.+)\)$/.exec(value);
   const date = m ? m[1] : value;
   const ref = m ? m[2] : null;
+  const outside = !!detail && !detail.inRange;
   return (
-    <div className="bg-card rounded-[4px] border border-amber-200 px-2.5 py-1.5 shadow-sm dark:border-amber-400/20">
+    <div
+      className={cn(
+        'bg-card rounded-[4px] border px-2.5 py-1.5 shadow-sm',
+        outside ? 'border-amber-400 dark:border-amber-400/50' : 'border-amber-200 dark:border-amber-400/20',
+      )}
+    >
       <div className="text-[9.5px] font-bold tracking-widest text-amber-900/70 uppercase dark:text-amber-200/60">Inv Due From</div>
       <div className="truncate text-[15px] font-bold tabular-nums text-slate-800 dark:text-slate-200">{date}</div>
       {ref && <div className="text-muted-foreground truncate text-[10.5px] font-mono font-medium">{ref}</div>}
+      {outside && detail && (
+        <button
+          type="button"
+          onClick={() => onShowInvoice?.(detail.invDate)}
+          title={`Raised ${formatDate(detail.invDate)}, before the dates shown. Click to widen the range back to it.`}
+          className="mt-0.5 cursor-pointer text-left text-[10px] leading-tight font-semibold text-amber-700 underline-offset-2 hover:underline dark:text-amber-300"
+        >
+          Raised {formatDate(detail.invDate)} — before these dates. Show it
+        </button>
+      )}
     </div>
   );
 }

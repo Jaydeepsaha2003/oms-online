@@ -250,6 +250,20 @@ export class PaymentsService {
       to.setHours(23, 59, 59, 999);
       and.push({ transDate: { lte: to } });
     }
+    /*
+     * Bank / Cash filter, applied to the AMOUNT columns rather than to
+     * `transMode`.
+     *
+     * That is deliberate. `transMode` records how the money arrived (BANK,
+     * CHEQUE, CASH), but the table shows BANK CR and CASH CR — so filtering on
+     * the mode would hide a voucher whose money genuinely sits in the column the
+     * user asked for. A cheque lands on the bank side, and a split voucher has
+     * real amounts on BOTH sides and correctly appears under either filter.
+     */
+    const mode = (q.mode ?? '').trim().toUpperCase();
+    if (mode === 'B') and.push({ bankCredit: { gt: 0 } });
+    else if (mode === 'C') and.push({ cashCredit: { gt: 0 } });
+
     const search = q.search?.trim();
     if (search) and.push({ OR: [{ voucherNo: { contains: search } }, { customerName: { contains: search } }, { particulars: { contains: search } }] });
     const where: Prisma.AcctLedgerWhereInput = and.length ? { AND: and } : {};

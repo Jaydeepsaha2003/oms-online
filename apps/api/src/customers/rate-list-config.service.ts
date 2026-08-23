@@ -8,6 +8,9 @@ import {
   type EffectiveRateListConfig,
   type PartyRateListConfig,
   type PartyRateListConfigInput,
+  type RateListAvailableOverride,
+  type RateListCategoryItems,
+  type RateListAvailableOverrideInput,
   type RateListCategoryConfig,
   type RateListCategoryConfigInput,
   type RateListConfig,
@@ -212,6 +215,56 @@ export class RateListConfigService {
     return [...byItem.entries()].map(([item, rates]) => ({ item, rates }));
   }
 
+  /**
+   * Product and design names inside one category, for the override target picker.
+   *
+   * Only rate-list items: a rule about something that never reaches the sheet
+   * could not change its layout, so offering it would be offering a no-op. Both
+   * lists include INACTIVE items deliberately — an override is configuration that
+   * should survive an item being deactivated and reactivated, and the sheet
+   * filters inactive items out on its own.
+   */
+  async categoryItems(category: string): Promise<RateListCategoryItems> {
+    const cat = norm(category);
+    const [products, designs] = await Promise.all([
+      this.prisma.product.findMany({
+        where: { category: cat, showOnRateList: true },
+        select: { subCategory: true, product: true },
+        orderBy: [{ subCategory: 'asc' }, { product: 'asc' }],
+      }),
+      this.prisma.design.findMany({
+        where: { category: cat, showOnRateList: true },
+        select: { subCategory: true, designType: true },
+        orderBy: [{ subCategory: 'asc' }, { designType: 'asc' }],
+      }),
+    ]);
+
+    const dedupe = (rows: { subCategory: string; item: string }[]) => {
+      const seen = new Set<string>();
+      const out: { subCategory: string; item: string }[] = [];
+      for (const r of rows) {
+        const item = norm(r.item);
+        const sub = norm(r.subCategory);
+        if (!item) continue;
+        const k = `${sub}|${item}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push({ subCategory: sub, item });
+      }
+      return out;
+    };
+
+    return {
+      category: cat,
+      products: dedupe(products.map((p) => ({ subCategory: p.subCategory, item: p.product }))),
+      // "WL+FULL LASER+TOOL" and friends are dropped by the sheet itself; see
+      // isCombinationDesign in customer-rate-list-pivot.
+      designs: dedupe(designs.map((d) => ({ subCategory: d.subCategory, item: d.designType }))).filter(
+        (d) => !/[+&]/.test(d.item),
+      ),
+    };
+  }
+
   /* ── parsing / sanitising ───────────────────────────────────────────────── */
 
   private parseDefault(payload: string): RateListConfig {
@@ -262,6 +315,7 @@ export class RateListConfigService {
         included: c?.included !== false,
         subCategories: [...new Set((c?.subCategories ?? []).map(norm).filter(Boolean))],
         availableDisplay: c?.availableDisplay === 'PCS' || c?.availableDisplay === 'SIZE' ? c.availableDisplay : null,
+        availableOverrides: this.sanitiseOverrides(c?.availableOverrides),
         combinations: (c?.combinations ?? [])
           .map((cb, i) => ({
             id: String(cb?.id ?? `c${i + 1}`),
@@ -272,6 +326,43 @@ export class RateListConfigService {
       });
     }
     return out.sort((a, b) => a.category.localeCompare(b.category));
+  }
+
+  /**
+   * Available-column exceptions inside one category.
+   *
+   * Dropped rather than rejected when a row cannot mean anything — a SUBCATEGORY
+   * rule with no sub-category, an ITEM rule with no item. A settings screen with
+   * a half-filled new row is a normal intermediate state, and failing the whole
+   * save over it would lose the rest of the edit; a rule that identifies nothing
+   * also cannot change any line's layout, so discarding it is lossless.
+   *
+   * De-duplicated on (scope, subCategory, target): the last one written wins,
+   * which is what a user re-picking a display on the same row expects.
+   */
+  private sanitiseOverrides(
+    list: RateListAvailableOverrideInput[] | RateListAvailableOverride[] | null | undefined,
+  ): RateListAvailableOverride[] {
+    const out = new Map<string, RateListAvailableOverride>();
+    for (const [i, r] of (list ?? []).entries()) {
+      const scope = r?.scope === 'SUBCATEGORY' || r?.scope === 'ITEM' || r?.scope === 'DESIGN' ? r.scope : null;
+      if (!scope) continue;
+      const subCategory = norm(r?.subCategory);
+      const target = norm(r?.target);
+      if (scope === 'SUBCATEGORY' ? !subCategory : !target) continue;
+      const display = r?.display === 'SIZE' ? 'SIZE' : 'PCS';
+      const row: RateListAvailableOverride = {
+        id: String(r?.id ?? `o${i + 1}`),
+        scope,
+        // A SUBCATEGORY rule is *about* its sub-category, so it carries no target;
+        // keeping a stray one would make the dedupe key wrong.
+        subCategory,
+        target: scope === 'SUBCATEGORY' ? '' : target,
+        display,
+      };
+      out.set(`${row.scope}|${row.subCategory}|${row.target}`, row);
+    }
+    return [...out.values()];
   }
 
   /**

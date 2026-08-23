@@ -89,6 +89,24 @@ export interface PartyLedgerKpis {
    */
   invDueFrom: string;
   /**
+   * The same invoice as structured facts, so the screen can explain itself.
+   *
+   * `invDueFrom` deliberately looks past the date filter — an unpaid bill from
+   * before the window must not hide behind it. The cost is that the KPI can name
+   * a document that is nowhere in the table below, which reads as though the
+   * invoice does not exist. `inRange` is what lets the UI say "raised before this
+   * date range" instead of leaving the user hunting for it.
+   */
+  invDueFromDetail: {
+    code: string;
+    /** The date the KPI is measured from — due date, or invoice date if none. */
+    dueDate: string;
+    invDate: string;
+    party: string;
+    /** Is its voucher actually inside the range currently on screen? */
+    inRange: boolean;
+  } | null;
+  /**
    * The party's standing on the CRM Party Lists (Green-listed = trusted payer,
    * Black-listed = payment risk). For a multi-party ledger this is a tally
    * ("3 Green · 2 Black"). Falls back to "Unlisted" when no list matches.

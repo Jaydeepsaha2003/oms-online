@@ -65,10 +65,27 @@ export class NotificationsGateway implements OnGatewayConnection {
     }
   }
 
-  /** Broadcasts to every connected (already-authenticated) socket. Returns how many were reached. */
-  broadcastTest(payload: TestNotificationPayload): number {
-    this.server.emit('test-notification', payload);
-    return this.server.sockets.sockets.size;
+  /**
+   * Sends the test chime to ONE user's own live connections.
+   *
+   * This used to be `server.emit(...)` — every authenticated socket in the
+   * company, from an endpoint with no permission on it at all. So any signed-in
+   * user, including a dispatch-only operator, could ring a native notification
+   * and a chime on every other person's phone; and because it was the one path
+   * that ignored the audience service entirely, it was also the one path by
+   * which someone could be alerted about a screen they cannot open.
+   *
+   * A test answers "does MY device work", so the caller's own room is the
+   * correct audience and no permission is needed — it can only reach yourself.
+   */
+  testToUser(userId: string, payload: TestNotificationPayload): number {
+    this.server.to(NotificationsGateway.userRoom(userId)).emit('test-notification', payload);
+
+    let reached = 0;
+    for (const socket of this.server.sockets.sockets.values()) {
+      if (socket.data.userId === userId) reached += 1;
+    }
+    return reached;
   }
 
   /**

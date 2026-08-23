@@ -1192,7 +1192,10 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
   const [dateFrom, setDateFrom] = useState(fyStart());
   const [dateTo, setDateTo] = useState(TODAY());
   const del = useDeletePayment();
-  const { data, isLoading } = usePaymentLedger({ customerId, agentName, dateFrom, dateTo, page, pageSize: 25 });
+  /** 'BOTH' | 'B' | 'C' — which money side to show. Sent to the server so the
+   *  row count and the rows agree; see the control below. */
+  const [mode, setMode] = useState<'BOTH' | 'B' | 'C'>('BOTH');
+  const { data, isLoading } = usePaymentLedger({ customerId, agentName, dateFrom, dateTo, mode, page, pageSize: 25 });
   const rows = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
   // Opened from a party or an agent, whose name is already the dialog's title —
@@ -1275,6 +1278,49 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
           >
             <RotateCcw className="size-3.5" /> This FY
           </Button>
+
+          {/*
+            * Bank / Cash, matching the Party Ledger's own segmented control so
+            * the two screens read the same way.
+            *
+            * Filtered SERVER-side, not on the rows already fetched: this list is
+            * paginated 25 at a time, and filtering a single page would show "3
+            * of 240" while hiding the rest — the count and the rows have to come
+            * from the same question.
+            */}
+          <div className="space-y-1">
+            <span className="text-muted-foreground block text-[11px] font-bold tracking-wide uppercase">Side</span>
+            <div
+              role="group"
+              aria-label="Filter by bank or cash"
+              className="inline-flex h-8 overflow-hidden rounded-[4px] border border-amber-300 dark:border-amber-400/40"
+            >
+              {([['BOTH', 'Both'], ['B', 'Bank'], ['C', 'Cash']] as const).map(([v, label], i) => {
+                const on = mode === v;
+                return (
+                  <button
+                    key={v}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => { setMode(v); setPage(1); }}
+                    className={cn(
+                      'cursor-pointer px-2.5 text-[12px] font-semibold transition-colors',
+                      i > 0 && 'border-l border-amber-300 dark:border-amber-400/40',
+                      on
+                        ? v === 'B'
+                          ? 'bg-blue-600 text-white'
+                          : v === 'C'
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-slate-700 text-white'
+                        : 'text-muted-foreground hover:bg-amber-50 dark:hover:bg-amber-400/10',
+                    )}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
         <div className="min-h-0 flex-1 overflow-auto rounded-[4px] border">
           <table className="w-full border-collapse text-[12.5px]">

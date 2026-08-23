@@ -8,7 +8,14 @@ import { hasActivePushSubscription, subscribeToPush } from '@/lib/push-subscript
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 
-/** Lets any signed-in user broadcast a test sound to every device currently signed into OMS. */
+/**
+ * Rings a test notification on YOUR OWN devices.
+ *
+ * It used to say "every device currently signed into OMS", and did exactly that
+ * — which meant checking your own phone woke everyone else's. The point of the
+ * card is confirming this device is set up correctly, so it is now scoped to the
+ * signed-in user's devices and the copy says so.
+ */
 export function TestNotificationCard() {
   const [enabled, setEnabled] = useState(false);
   const [unsupportedReason, setUnsupportedReason] = useState<string | null>(null);
@@ -42,7 +49,7 @@ export function TestNotificationCard() {
     mutationFn: () => http.post<TestNotificationResult>('/notifications/test'),
     onSuccess: (result) =>
       toast.success(
-        `Sent to ${result.devicesNotified} open device(s), attempted push on ${result.pushDevicesNotified} device(s)`,
+        `Sent to ${result.devicesNotified} of your open device(s), attempted push on ${result.pushDevicesNotified}`,
       ),
     onError: (e) => toast.error(getApiErrorMessage(e, 'Could not send test notification')),
   });
@@ -54,8 +61,8 @@ export function TestNotificationCard() {
           <BellRing className="size-4 text-primary" /> Test notifications
         </CardTitle>
         <p className="text-muted-foreground text-xs">
-          Send a test alert to every device currently signed into OMS — including devices where
-          the app is closed, once notifications are enabled there.
+          Send a test alert to your own devices — including ones where the app is closed, once
+          notifications are enabled there. Nobody else is alerted.
         </p>
       </CardHeader>
       <CardContent className="flex flex-wrap items-center gap-2">

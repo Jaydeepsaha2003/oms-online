@@ -190,7 +190,7 @@ export class PartyLedgerService {
     const [ccDr, ccCr] = split(closingCashNet);
 
     // ── 5) KPIs ───────────────────────────────────────────────────────────────
-    const kpis = await this.computeKpis(rows, pending, custIds, scope, q.customerId ?? null, mode);
+    const kpis = await this.computeKpis(rows, pending, custIds, scope, q.customerId ?? null, mode, from, toExclusive);
 
     // Derived BEFORE the voucher-type filter, so picking one type doesn't collapse
     // the dropdown to that single option and strand the user on it.
@@ -568,6 +568,10 @@ export class PartyLedgerService {
     scope: 'CUSTOMER' | 'AGENT' | 'ALL',
     customerId: number | null,
     mode: string,
+    /** The window currently on screen — used only to say whether the invoice the
+     *  "Inv due from" KPI names is visible in the table below it. */
+    from: Date,
+    toExclusive: Date,
   ): Promise<PartyLedgerKpis> {
     // Ageing buckets use the remaining balance for the selected Bank/Cash mode,
     // not the invoice's original value (which overstates partially-paid bills).
@@ -602,10 +606,24 @@ export class PartyLedgerService {
       }
     }
 
-    const invDueFrom = this.oldestUnpaid(pending, custIds, scope);
+    const oldest = this.oldestUnpaid(pending, custIds, scope);
+    /*
+     * Is the invoice the KPI names actually on screen?
+     *
+     * It often is not, and that is deliberate — the KPI looks past the date
+     * filter so an old unpaid bill cannot hide behind it. But a headline naming
+     * a document that is nowhere in the table reads as an error, which is
+     * exactly how it was reported. Telling the UI lets it say so.
+     */
+    if (oldest.detail) {
+      const raised = new Date(oldest.detail.invDate);
+      oldest.detail.inRange = raised >= from && raised < toExclusive;
+    }
+    const invDueFrom = oldest.text;
     const dna = await this.listStanding(scope, customerId, custIds);
     return {
       invDueFrom,
+      invDueFromDetail: oldest.detail,
       paymentDNA: dna.label,
       paymentDNAKind: dna.kind,
       overDue: { amount: r0(over.amount), count: over.count },
@@ -624,20 +642,34 @@ export class PartyLedgerService {
    * "Oldest" means earliest due date (falling back to the invoice date when a bill
    * carries no due date), which is what "due from" asks.
    */
-  private oldestUnpaid(pending: Map<string, PendingInvoice>, custIds: number[] | null, scope: 'CUSTOMER' | 'AGENT' | 'ALL'): string {
+  private oldestUnpaid(
+    pending: Map<string, PendingInvoice>,
+    custIds: number[] | null,
+    scope: 'CUSTOMER' | 'AGENT' | 'ALL',
+  ): { text: string; detail: PartyLedgerKpis['invDueFromDetail'] } {
     const inScope = custIds ? new Set(custIds) : null;
-    let best: { code: string; at: Date; party: string } | null = null;
+    let best: { code: string; at: Date; party: string; invDate: Date } | null = null;
     for (const [code, inv] of pending) {
       if (inScope && (inv.customerId == null || !inScope.has(inv.customerId))) continue;
       // Still owed on either leg (EPS absorbs rounding crumbs).
       if (inv.bankBal <= EPS && inv.cashBal <= EPS) continue;
       const at = inv.dueDate ?? inv.invDate;
-      if (!best || at < best.at) best = { code, at, party: inv.customerName };
+      if (!best || at < best.at) best = { code, at, party: inv.customerName, invDate: inv.invDate };
     }
-    if (!best) return 'No Due Invoice';
+    if (!best) return { text: 'No Due Invoice', detail: null };
     // A multi-party ledger needs to say WHOSE invoice it is.
     const who = scope === 'CUSTOMER' ? '' : ` · ${best.party}`;
-    return `${formatDate(best.at)} (${best.code}${who})`;
+    return {
+      text: `${formatDate(best.at)} (${best.code}${who})`,
+      detail: {
+        code: best.code,
+        dueDate: best.at.toISOString(),
+        invDate: best.invDate.toISOString(),
+        party: best.party,
+        // Filled in by the caller, which is the only place that knows the range.
+        inRange: true,
+      },
+    };
   }
 
   /**

@@ -138,9 +138,18 @@ export interface SpecialRateMasterRow {
   target: string;
   /** Rate delta; null for a logo restriction. */
   rate: number | null;
+  /** Whether the owning party is still active. Carried on the row so the list
+   *  can mark a rule that belongs to a dormant party rather than just hiding
+   *  it — a rate on an inactive party is not wrong, only dormant. */
+  customerActive: boolean;
 }
 
+/** Which parties the master list should cover. */
+export type SpecialRatePartyState = 'ACTIVE' | 'INACTIVE' | 'ALL';
+
 export type SpecialRateMasterQuery = PaginationQuery & {
+  /** Defaults to ACTIVE server-side — the working list is the live parties. */
+  active?: SpecialRatePartyState;
   customer?: string;
   agent?: string;
   type?: string;

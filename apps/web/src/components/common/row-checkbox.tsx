@@ -14,12 +14,16 @@ export function RowCheckbox({
   disabled,
   loading,
   label,
+  title,
 }: {
   checked: boolean;
   onChange: (checked: boolean) => void;
   disabled?: boolean;
   loading?: boolean;
   label: string;
+  /** Hover text explaining what the control does. An icon-only control needs
+   *  a sentence, not a label repeating the icon. */
+  title?: string;
 }) {
   return (
     <button
@@ -27,6 +31,7 @@ export function RowCheckbox({
       role="checkbox"
       aria-checked={checked}
       aria-label={label}
+      title={title ?? label}
       disabled={disabled}
       onClick={(e) => {
         e.stopPropagation();

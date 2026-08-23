@@ -4,6 +4,8 @@ import { toast } from 'sonner';
 import {
   AVAILABLE_DISPLAYS,
   type AvailableDisplay,
+  type AvailableOverrideScope,
+  type RateListAvailableOverride,
   type RateListCategoryConfig,
   type RateListCombination,
   type RateListConfigInput,
@@ -20,6 +22,7 @@ import { useCustomers } from '@/features/customers/use-customers';
 import {
   useCheckCombination,
   useClearPartyRateListConfig,
+  useRateListCategoryItems,
   useRateListConfigBundle,
   useSavePartyRateListConfig,
   useSaveRateListDefault,
@@ -31,6 +34,7 @@ const blankCategory = (category: string): RateListCategoryConfig => ({
   included: true,
   subCategories: [],
   availableDisplay: null,
+  availableOverrides: [],
   combinations: [],
 });
 
@@ -388,6 +392,7 @@ function CategoryRow({
   const included = value?.included !== false;
   const picked = value?.subCategories ?? [];
   const combos = value?.combinations ?? [];
+  const overrides = value?.availableOverrides ?? [];
 
   const toggleSub = (s: string) => {
     const next = picked.includes(s) ? picked.filter((x) => x !== s) : [...picked, s];
@@ -410,6 +415,7 @@ function CategoryRow({
                   included ? null : 'excluded',
                   picked.length ? `${picked.length} of ${subs.length} sub-categories` : 'all sub-categories',
                   value.availableDisplay ? (value.availableDisplay === 'PCS' ? 'Pieces' : 'Size') : null,
+                  overrides.length ? `${overrides.length} available exception${overrides.length === 1 ? '' : 's'}` : null,
                   combos.length ? `${combos.length} combination${combos.length === 1 ? '' : 's'}` : null,
                 ]
                   .filter(Boolean)
@@ -448,7 +454,19 @@ function CategoryRow({
               options={[{ value: '', label: 'Default' }, { value: 'PCS', label: 'Pieces' }, { value: 'SIZE', label: 'Size' }]}
               className="h-8 w-40 text-[12px]"
             />
+            <p className="text-muted-foreground text-[11px]">
+              Applies to everything in {category}. Add exceptions below for a sub-category, an item or a design.
+            </p>
           </div>
+
+          <AvailableOverrideEditor
+            category={category}
+            subs={picked.length ? picked : subs}
+            categoryDisplay={value?.availableDisplay ?? null}
+            overrides={overrides}
+            canEdit={canEdit}
+            onChange={(next) => onChange({ availableOverrides: next })}
+          />
 
           <div className="space-y-1.5">
             <Label className="text-muted-foreground text-[10.5px] font-bold tracking-wide uppercase">
@@ -486,6 +504,221 @@ function CategoryRow({
           />
         </div>
       )}
+    </div>
+  );
+}
+
+/* ── Available-column exceptions inside one category ───────────────────────── */
+
+const SCOPE_LABEL: Record<AvailableOverrideScope, string> = {
+  SUBCATEGORY: 'Sub-category',
+  ITEM: 'Item',
+  DESIGN: 'Design',
+};
+
+/**
+ * "Everything in GLASS by pieces — except this one item, which goes by size."
+ *
+ * The Available column used to be a single choice per category, which has no
+ * right answer for a category that mixes the two: whichever you picked was wrong
+ * for part of the sheet. These rules resolve most-specific-first (item, then
+ * sub-category, then the category, then the global default), the same cascade as
+ * special rates.
+ *
+ * The note at the bottom is the important part of the UI: rows that resolve to a
+ * different unit are pivoted into their OWN table on the sheet, because one grid
+ * cannot carry two column axes. Somebody adding a rule here needs to know it
+ * splits the table, not just relabels a column.
+ */
+function AvailableOverrideEditor({
+  category,
+  subs,
+  categoryDisplay,
+  overrides,
+  canEdit,
+  onChange,
+}: {
+  category: string;
+  subs: string[];
+  categoryDisplay: AvailableDisplay | null;
+  overrides: RateListAvailableOverride[];
+  canEdit: boolean;
+  onChange: (next: RateListAvailableOverride[]) => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [scope, setScope] = useState<AvailableOverrideScope>('SUBCATEGORY');
+  const [sub, setSub] = useState('');
+  const [target, setTarget] = useState('');
+  const [display, setDisplay] = useState<AvailableDisplay>('SIZE');
+
+  // Only fetched once the form is open — the picker is the only thing that needs
+  // item names, and the settings screen must not pull the catalogue to render.
+  const { data: items, isLoading } = useRateListCategoryItems(adding && scope !== 'SUBCATEGORY' ? category : null);
+  const pool = scope === 'DESIGN' ? (items?.designs ?? []) : (items?.products ?? []);
+  /** Narrowed by the chosen sub-category, so picking one does not offer items
+   *  that do not appear in it. */
+  const targetOptions = useMemo(
+    () => [...new Set(pool.filter((r) => !sub || r.subCategory === sub).map((r) => r.item))].sort(),
+    [pool, sub],
+  );
+
+  const reset = () => {
+    setAdding(false);
+    setScope('SUBCATEGORY');
+    setSub('');
+    setTarget('');
+    setDisplay('SIZE');
+  };
+
+  const add = () => {
+    if (scope === 'SUBCATEGORY' ? !sub : !target) return;
+    const row: RateListAvailableOverride = {
+      id: `o${Date.now().toString(36)}`,
+      scope,
+      subCategory: sub,
+      target: scope === 'SUBCATEGORY' ? '' : target,
+      display,
+    };
+    // Replace rather than append when the same thing is already ruled on —
+    // otherwise the list grows two rows that disagree and only one can win.
+    const key = (r: RateListAvailableOverride) => `${r.scope}|${r.subCategory}|${r.target}`;
+    onChange([...overrides.filter((r) => key(r) !== key(row)), row]);
+    reset();
+  };
+
+  const describe = (r: RateListAvailableOverride) =>
+    r.scope === 'SUBCATEGORY' ? r.subCategory : r.subCategory ? `${r.target} · in ${r.subCategory}` : r.target;
+
+  return (
+    <div className="space-y-2 rounded-lg border border-dashed p-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <Label className="text-muted-foreground text-[10.5px] font-bold tracking-wide uppercase">
+          Exceptions — show a different Available column for one thing
+        </Label>
+        {canEdit && !adding && (
+          <Button variant="outline" size="sm" className="ml-auto h-7 px-2 text-[11.5px]" onClick={() => setAdding(true)}>
+            <Plus className="size-3.5" /> Add exception
+          </Button>
+        )}
+      </div>
+
+      {!!overrides.length && (
+        <div className="space-y-1">
+          {overrides.map((r) => (
+            <div key={r.id} className="bg-muted/40 flex flex-wrap items-center gap-2 rounded-md px-2 py-1.5 text-[11.5px]">
+              <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold text-slate-700 dark:bg-white/10 dark:text-slate-300">
+                {SCOPE_LABEL[r.scope]}
+              </span>
+              <span className="min-w-0 truncate font-semibold">{describe(r)}</span>
+              <span
+                className={cn(
+                  'ml-auto rounded-full px-2 py-0.5 text-[10px] font-bold',
+                  r.display === 'SIZE'
+                    ? 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300'
+                    : 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300',
+                )}
+              >
+                {r.display === 'SIZE' ? 'Size' : 'Pieces'}
+              </span>
+              {canEdit && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-destructive hover:text-destructive size-6"
+                  onClick={() => onChange(overrides.filter((x) => x.id !== r.id))}
+                  aria-label={`Remove exception for ${describe(r)}`}
+                >
+                  <Trash2 className="size-3.5" />
+                </Button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {adding && (
+        <div className="space-y-2 rounded-md border p-2">
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="space-y-1">
+              <Label className="text-muted-foreground text-[10px] font-bold tracking-wide uppercase">Applies to</Label>
+              <NativeSelect
+                value={scope}
+                onChange={(v) => {
+                  setScope(v as AvailableOverrideScope);
+                  setTarget('');
+                }}
+                options={[
+                  { value: 'SUBCATEGORY', label: 'A sub-category' },
+                  { value: 'ITEM', label: 'One item' },
+                  { value: 'DESIGN', label: 'One design' },
+                ]}
+                className="h-8 w-40 text-[12px]"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-muted-foreground text-[10px] font-bold tracking-wide uppercase">
+                Sub-category{scope === 'SUBCATEGORY' ? '' : ' — optional'}
+              </Label>
+              <NativeSelect
+                value={sub}
+                onChange={(v) => {
+                  setSub(v);
+                  setTarget('');
+                }}
+                options={[{ value: '', label: scope === 'SUBCATEGORY' ? 'Pick one…' : 'Any' }, ...subs.map((x) => ({ value: x, label: x }))]}
+                className="h-8 w-44 text-[12px]"
+              />
+            </div>
+            {scope !== 'SUBCATEGORY' && (
+              <div className="space-y-1">
+                <Label className="text-muted-foreground text-[10px] font-bold tracking-wide uppercase">
+                  {scope === 'DESIGN' ? 'Design' : 'Item'}
+                </Label>
+                <NativeSelect
+                  value={target}
+                  onChange={setTarget}
+                  options={[
+                    { value: '', label: isLoading ? 'Loading…' : targetOptions.length ? 'Pick one…' : 'Nothing on the sheet' },
+                    ...targetOptions.map((x) => ({ value: x, label: x })),
+                  ]}
+                  className="h-8 w-56 text-[12px]"
+                />
+              </div>
+            )}
+            <div className="space-y-1">
+              <Label className="text-muted-foreground text-[10px] font-bold tracking-wide uppercase">Show</Label>
+              <NativeSelect
+                value={display}
+                onChange={(v) => setDisplay(v as AvailableDisplay)}
+                options={AVAILABLE_DISPLAYS.map((d) => ({ value: d, label: d === 'PCS' ? 'Pieces' : 'Size' }))}
+                className="h-8 w-32 text-[12px]"
+              />
+            </div>
+            <Button size="sm" className="h-8 text-[11.5px]" disabled={scope === 'SUBCATEGORY' ? !sub : !target} onClick={add}>
+              <Check className="size-3.5" /> Add
+            </Button>
+            <Button variant="ghost" size="sm" className="h-8 text-[11.5px]" onClick={reset}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <p className="text-muted-foreground text-[11px]">
+        {overrides.length ? (
+          <>
+            <TriangleAlert className="mr-1 inline size-3 text-amber-600" />
+            On the sheet, {category} will print as <b>separate tables</b> — one per Available unit. A table can only have one
+            kind of column heading, so the exceptions above cannot sit in the same grid as the rest.
+          </>
+        ) : (
+          <>
+            Everything in {category} currently follows{' '}
+            <b>{categoryDisplay ? (categoryDisplay === 'PCS' ? 'Pieces' : 'Size') : 'the default'}</b>. Adding an exception
+            splits {category} into one table per unit on the sheet.
+          </>
+        )}
+      </p>
     </div>
   );
 }

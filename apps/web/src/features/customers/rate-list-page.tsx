@@ -1,16 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowRightLeft, Brush, Check, ChevronRight, Download, FileSpreadsheet, FileText, History, IndianRupee, Layers, Loader2, type LucideIcon, Package, Percent, TableProperties, TrendingDown, TrendingUp } from 'lucide-react';
+import { ArrowRightLeft, Brush, Check, ChevronRight, Download, FileDown, FileSpreadsheet, FileText, History, IndianRupee, Layers, Loader2, type LucideIcon, Package, Percent, Settings2, TableProperties, TrendingDown, TrendingUp } from 'lucide-react';
 import { toast } from 'sonner';
 import type { CustomerRateDto, RateChangeEntry } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { formatDateTime } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NativeSelect } from '@/components/common/combo';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import kavishLogo from '@/assets/kavish-logo.png';
-import { fetchCustomerRateList, useCustomerRateHistory, useCustomerRateList, useCustomers } from './use-customers';
-import { useEffectiveRateListConfig } from './use-rate-list-config';
+import { fetchCustomerRateList, fetchDefaultRateList, useCustomerRateHistory, useCustomerRateList, useCustomers } from './use-customers';
+import { useEffectiveRateListConfig, useRateListConfigBundle } from './use-rate-list-config';
+import { RateListSettingsCard } from '@/features/settings/rate-list-settings-card';
+import { usePermissions } from '@/hooks/use-permissions';
 import { useCustomerSpecialRates } from '@/features/special-rates/use-special-rates';
 import { useCompany } from '@/features/settings/use-settings';
 import { measureSpecialRates, summariseSpecialRates, type RateImpact } from './special-rate-impact';
@@ -254,19 +257,26 @@ function DesignPivotCard({ t, compare }: { t: DesignPivotTable; compare: boolean
  * means EVERY category rather than none — a filter that starts empty and shows
  * nothing looks broken, and a category added to the configuration later should
  * appear without anyone re-touching the filter.
+ *
+ * `showAllActive` overrides that for callers where empty means empty. The
+ * download picker holds a real list of categories and needs the chips to show
+ * it, so it lights All from `selected.length === all.length` instead — see the
+ * note at its call site.
  */
 function CategoryChips({
   all,
   selected,
   onToggle,
   onAll,
+  showAllActive,
 }: {
   all: string[];
   selected: string[];
   onToggle: (c: string) => void;
   onAll: () => void;
+  showAllActive?: boolean;
 }) {
-  const none = selected.length === 0;
+  const none = showAllActive ?? selected.length === 0;
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <button
@@ -676,6 +686,12 @@ function AffectedItemsDialog({
  * it — how many products, how many designs, how many rules are in play. The
  * numbers are deliberately the loudest thing in the cell; the label is a
  * whisper above it.
+ *
+ * Sized up from 19px/10px: this strip sits above a dense rate table, and at the
+ * old size the figures read as part of the table's chrome rather than as the
+ * summary of it — you had to hunt for how many special rates were in play. The
+ * label went up too, because a 10px all-caps whisper stops being legible on a
+ * laptop panel once the number beside it grows.
  */
 function Stat({
   label,
@@ -697,15 +713,15 @@ function Stat({
     indigo: { tile: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300', num: 'text-indigo-700 dark:text-indigo-300' },
   }[tone];
   return (
-    <div className="bg-card flex items-center gap-2.5 px-3 py-2.5">
-      <span className={cn('grid size-8 shrink-0 place-items-center rounded-[5px]', TONE.tile)}>
-        <Icon className="size-4" />
+    <div className="bg-card flex items-center gap-3 px-3.5 py-3">
+      <span className={cn('grid size-10 shrink-0 place-items-center rounded-[5px]', TONE.tile)}>
+        <Icon className="size-5" />
       </span>
       <div className="min-w-0">
-        <div className={cn(MICRO_LABEL, 'leading-none')}>{label}</div>
-        <div className="mt-1 flex items-baseline gap-1.5">
-          <span className={cn(FIGURE, 'text-[19px] leading-none', TONE.num)}>{value.toLocaleString('en-IN')}</span>
-          {hint && <span className={cn(FIGURE, 'text-muted-foreground truncate text-[10.5px]')}>{hint}</span>}
+        <div className={cn(MICRO_LABEL, 'text-[11.5px] leading-none')}>{label}</div>
+        <div className="mt-1.5 flex items-baseline gap-2">
+          <span className={cn(FIGURE, 'text-[25px] leading-none', TONE.num)}>{value.toLocaleString('en-IN')}</span>
+          {hint && <span className={cn(FIGURE, 'text-muted-foreground truncate text-[12px]')}>{hint}</span>}
         </div>
       </div>
     </div>
@@ -729,9 +745,10 @@ function Meta({ label, value, tone }: { label: string; value: string; tone?: 'am
   );
 }
 
-type Tab = 'list' | 'special' | 'history';
+type Tab = 'list' | 'special' | 'history' | 'settings';
 
 export function RateListPage() {
+  const { can } = usePermissions();
   const { data: customerData } = useCustomers({ page: 1, pageSize: 1000 });
   const customers = customerData?.items ?? [];
 
@@ -758,6 +775,13 @@ export function RateListPage() {
   // the sheet is unchanged for parties nobody has set up.
   const { data: effective } = useEffectiveRateListConfig(customerId);
   const config = effective ?? null;
+  /** The default configuration, for the party-less chart sheet — there is no
+   *  party whose overrides could apply to it. */
+  const { data: configBundle } = useRateListConfigBundle();
+  /* Same permission the Settings screen used for this card — moving where it
+     lives must not change who may edit it. */
+  const canEditRateList = can('customer:update');
+  const defaultConfig = configBundle?.default ?? null;
 
   /** Categories the configuration actually puts on THIS party's sheet. Both the
    *  filter and the download picker offer these and only these: a selection
@@ -810,25 +834,63 @@ export function RateListPage() {
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [dlCats, setDlCats] = useState<string[]>([]);
   const [busy, setBusy] = useState<'pdf' | 'excel' | null>(null);
+  /*
+   * Downloading the chart sheet instead of a party's.
+   *
+   * Same dialog rather than a second one: the format buttons, the category
+   * picker and the whole export path are identical — only the source of the
+   * rates and the name at the top differ. `defaultName` is optional and is
+   * printed, not saved; naming a quote is not creating a customer.
+   */
+  const [defaultMode, setDefaultMode] = useState(false);
+  const [defaultName, setDefaultName] = useState('');
 
   /** Opening the picker starts from whatever is on screen — the user's current
    *  filter if they set one, otherwise the party's configuration (§26: the saved
    *  setup is the starting point, not a cage). */
   const openDownload = () => {
+    setDefaultMode(false);
     setDlCats(catFilter.length ? catFilter : configured);
     setDownloadOpen(true);
   };
 
+  /** The chart sheet: no party, so no party filter and no party categories —
+   *  every category the DEFAULT configuration allows. */
+  const openDefaultDownload = () => {
+    setDefaultMode(true);
+    setDefaultName('');
+    setDlCats([]);
+    setDownloadOpen(true);
+  };
+
+  /** An empty selection is a real state now, so it has to block the download
+   *  rather than silently mean "everything". */
+  const nothingPicked = !defaultMode && configured.length > 1 && dlCats.length === 0;
+
   const doDownload = async (format: 'pdf' | 'excel') => {
-    if (customerId == null) return;
+    if (!defaultMode && customerId == null) return;
     try {
       setBusy(format);
-      const list = rateList ?? (await fetchCustomerRateList(customerId));
+      // The chart sheet is always fetched fresh — there is no on-screen preview
+      // of it to reuse, and it carries no party rates to go stale against.
+      const list = defaultMode
+        ? await fetchDefaultRateList(defaultName)
+        : (rateList ?? (await fetchCustomerRateList(customerId!)));
       // Same config, same selection, same pivot as the preview — the download
       // cannot show something the screen didn't.
-      const opts = { config, categories: dlCats.length ? dlCats : null };
+      // `null` means "no category filter" to the pivot builder, so it may only
+      // stand for a FULL selection. Passing it for an empty one turned "I
+      // unticked everything" into "give me everything" — the buttons are
+      // disabled in that state now, and this keeps the two in step.
+      const opts = {
+        // Default sheet: the DEFAULT configuration, and no category narrowing —
+        // `configured` is derived from the selected party's sheet and means
+        // nothing here.
+        config: defaultMode ? defaultConfig : config,
+        categories: defaultMode || dlCats.length === configured.length ? null : dlCats,
+      };
       if (format === 'pdf') await exportRateListPdf(list, opts, company?.logo ?? null);
-      else exportRateListExcel(list, opts);
+      else await exportRateListExcel(list, opts);
       setDownloadOpen(false);
     } catch {
       toast.error('Failed to build the rate list.');
@@ -891,6 +953,18 @@ export function RateListPage() {
                 <span className="sm:hidden">{compare ? 'Comparing' : 'Compare'}</span>
               </Button>
             )}
+            {/* Always available, party or not — this is the sheet you hand a new
+                enquiry, so requiring a customer first would defeat it. */}
+            <Button
+              variant="outline"
+              className={cn('h-8 rounded-[4px] text-[12px] font-bold', CONTROL)}
+              onClick={openDefaultDownload}
+              title="Download the standard chart rate list — base rates, no party discounts. You can print any name on it."
+            >
+              <FileDown className="size-3.5" />
+              <span className="hidden sm:inline">Default rate list</span>
+              <span className="sm:hidden">Default</span>
+            </Button>
             <Button
               className="bg-gradient-brand h-8 rounded-[4px] text-[12px] font-bold text-white shadow-sm hover:opacity-95"
               disabled={customerId == null}
@@ -936,6 +1010,11 @@ export function RateListPage() {
                   { id: 'list' as const, label: 'Rate List', icon: TableProperties },
                   { id: 'special' as const, label: 'Special Rates', icon: Percent },
                   { id: 'history' as const, label: 'Change History', icon: History },
+                  // Moved here from Settings → Rate List. It configures THIS
+                  // screen and nothing else, and the person laying out a sheet
+                  // needs to see the sheet while they do it — two menus away
+                  // meant configure, navigate, check, navigate back.
+                  ...(canEditRateList ? [{ id: 'settings' as const, label: 'Rate List Settings', icon: Settings2 }] : []),
                 ]
               ).map(({ id, label, icon: Icon }) => {
                 const on = tab === id;
@@ -970,7 +1049,11 @@ export function RateListPage() {
         )}
       </div>
 
-      {customerId == null ? (
+      {/* The configuration is not about one party — the DEFAULT lives there — so
+          this tab renders with nothing selected. Everything else needs a party. */}
+      {tab === 'settings' ? (
+        <RateListSettingsCard canEdit={canEditRateList} />
+      ) : customerId == null ? (
         <div className="text-muted-foreground grid place-items-center rounded-[4px] border border-dashed py-20 text-[13px] font-medium">
           <IndianRupee className="mb-2 size-8 opacity-40" />
           Select a customer to view their rate list.
@@ -1044,45 +1127,104 @@ export function RateListPage() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Download className="size-5 text-primary" /> Download rate list
+              {defaultMode ? <FileDown className="size-5 text-primary" /> : <Download className="size-5 text-primary" />}
+              {defaultMode ? 'Download default rate list' : 'Download rate list'}
             </DialogTitle>
             <DialogDescription>
-              Current effective rate list for <b>{customerLabel}</b> (base rates + this customer’s adjustments). Choose what to
-              include, then a format.
+              {defaultMode ? (
+                <>
+                  The standard chart rates — <b>no party discounts applied</b>. For quoting someone who isn’t a customer yet.
+                </>
+              ) : (
+                <>
+                  Current effective rate list for <b>{customerLabel}</b> (base rates + this customer’s adjustments). Choose what
+                  to include, then a format.
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
+
+          {defaultMode && (
+            <div className="space-y-1.5">
+              <Label htmlFor="dl-name" className="text-muted-foreground text-[10.5px] font-bold tracking-wide uppercase">
+                Print this name on the sheet — optional
+              </Label>
+              <Input
+                id="dl-name"
+                value={defaultName}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDefaultName(e.target.value)}
+                placeholder="Leave blank for “STANDARD RATE LIST”"
+                autoComplete="off"
+                className="h-9"
+              />
+              <p className="text-muted-foreground text-[11px]">
+                Printed at the top of the sheet only. It does not create a customer or save anything.
+              </p>
+            </div>
+          )}
 
           {/* §4: the download is not forced to be everything. Starts from the
               party's configuration (or the on-screen filter) and can be narrowed
               — never widened past what the configuration allows. */}
-          {configured.length > 1 && (
+          {!defaultMode && configured.length > 1 && (
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-[10.5px] font-bold tracking-wide uppercase">Include</Label>
+              {/*
+                * `selected` is handed straight through — deliberately.
+                *
+                * It used to be `dlCats.length === configured.length ? [] : dlCats`,
+                * borrowing the page filter's "empty means everything" convention to
+                * light up the All chip. That lit All by leaving all six category
+                * chips looking UNTICKED while the state actually held all six. So
+                * the first click read as the opposite of what it did: clicking
+                * GLASS removed GLASS from a full selection, five chips lit up, and
+                * it looked as though clicking one category had auto-selected the
+                * other five.
+                *
+                * Here the chips just say what will be downloaded. All six start
+                * ticked because all six are included, and clicking GLASS unticks
+                * GLASS. `showAllActive` keeps the All chip meaningful without
+                * lying about the individual ones.
+                */}
               <CategoryChips
                 all={configured}
-                selected={dlCats.length === configured.length ? [] : dlCats}
-                onToggle={(c) =>
-                  setDlCats((prev) => {
-                    const base = prev.length ? prev : configured;
-                    const next = base.includes(c) ? base.filter((x) => x !== c) : [...base, c];
-                    return next;
-                  })
-                }
-                onAll={() => setDlCats(configured)}
+                selected={dlCats}
+                showAllActive={dlCats.length === configured.length}
+                onToggle={(c) => setDlCats((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]))}
+                onAll={() => setDlCats(dlCats.length === configured.length ? [] : configured)}
               />
-              <p className="text-muted-foreground text-[11px]">
-                {dlCats.length === 0 || dlCats.length === configured.length
-                  ? `All ${configured.length} categories`
-                  : `${dlCats.length} of ${configured.length} categories`}
+              <p
+                className={cn(
+                  'text-[11px]',
+                  dlCats.length === 0 ? 'font-semibold text-amber-700 dark:text-amber-300' : 'text-muted-foreground',
+                )}
+              >
+                {dlCats.length === 0
+                  ? 'Pick at least one category to download.'
+                  : dlCats.length === configured.length
+                    ? `All ${configured.length} categories`
+                    : `${dlCats.length} of ${configured.length} categories`}
               </p>
             </div>
           )}
 
           <DialogFooter className="gap-2 sm:justify-between">
-            <Button variant="outline" className="h-12 flex-1" disabled={!!busy} onClick={() => doDownload('pdf')}>
+            <Button
+              variant="outline"
+              className="h-12 flex-1"
+              disabled={!!busy || nothingPicked}
+              title={nothingPicked ? 'Pick at least one category' : undefined}
+              onClick={() => doDownload('pdf')}
+            >
               {busy === 'pdf' ? <Loader2 className="animate-spin" /> : <FileText className="text-rose-600" />} PDF
             </Button>
-            <Button variant="outline" className="h-12 flex-1" disabled={!!busy} onClick={() => doDownload('excel')}>
+            <Button
+              variant="outline"
+              className="h-12 flex-1"
+              disabled={!!busy || nothingPicked}
+              title={nothingPicked ? 'Pick at least one category' : undefined}
+              onClick={() => doDownload('excel')}
+            >
               {busy === 'excel' ? <Loader2 className="animate-spin" /> : <FileSpreadsheet className="text-emerald-600" />} Excel
             </Button>
           </DialogFooter>

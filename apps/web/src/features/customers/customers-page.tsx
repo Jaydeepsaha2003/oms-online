@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Loader2, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, EllipsisVertical, Loader2, Pencil, Plus, Power, PowerOff, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { CustomerDto, CustomerStatus } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -15,12 +15,14 @@ import { PageSizeSelect } from '@/components/common/page-size-select';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { ExportButton, ImportButton } from '@/components/common/excel-actions';
 import { Button } from '@/components/ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import {
   exportCustomers,
   useCustomers,
   useDeleteCustomer,
   useImportCustomers,
+  useSetCustomerActive,
 } from './use-customers';
 
 const num = (n: number | null) => (n == null ? '—' : n.toLocaleString('en-IN'));
@@ -77,6 +79,86 @@ const COLUMNS: DataColumn<CustomerDto>[] = [
   { id: 'payBy', label: 'Pay by', cell: (c) => <span className={TEXT_CELL}>{txt(c.payBy)}</span> },
   { id: 'partySource', label: 'Party source', cell: (c) => <span className={TEXT_CELL}>{txt(c.partySource)}</span> },
 ];
+
+/**
+ * The row's actions, behind one 3-dot menu.
+ *
+ * Two loose icons became three actions the moment Active/Inactive could be
+ * flipped from here, and three icons in a table column is the point at which
+ * they stop being recognisable and start being a row of small targets. One
+ * trigger, a named list, and Delete behind a separator — the same shape used on
+ * Dispatch and the CRM cards.
+ */
+function CustomerActions({
+  c,
+  onEdit,
+  onDelete,
+}: {
+  c: CustomerDto;
+  onEdit: (c: CustomerDto) => void;
+  onDelete: (c: CustomerDto) => void;
+}) {
+  const { can } = usePermissions();
+  const setActive = useSetCustomerActive();
+  const canUpdate = can('customer:update');
+  const canDelete = can('customer:delete');
+  if (!canUpdate && !canDelete) return null;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8 cursor-pointer"
+          aria-label={`Actions for ${c.partyName}`}
+          title="Edit, activate or delete this customer"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <EllipsisVertical className="size-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56 font-sans">
+        {canUpdate && (
+          <>
+            <DropdownMenuItem onSelect={() => onEdit(c)}>
+              <Pencil /> Edit customer
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={setActive.isPending}
+              onSelect={() =>
+                setActive.mutate(
+                  { id: c.id, active: !c.active },
+                  {
+                    onSuccess: () => toast.success(c.active ? `${c.partyName} set inactive` : `${c.partyName} set active`),
+                    onError: (e: unknown) => toast.error(getApiErrorMessage(e, 'Could not change')),
+                  },
+                )
+              }
+            >
+              {c.active ? (
+                <>
+                  <PowerOff className="text-amber-600" /> Set inactive
+                </>
+              ) : (
+                <>
+                  <Power className="text-emerald-600" /> Set active
+                </>
+              )}
+            </DropdownMenuItem>
+          </>
+        )}
+        {canDelete && (
+          <>
+            {canUpdate && <DropdownMenuSeparator />}
+            <DropdownMenuItem variant="destructive" onSelect={() => onDelete(c)}>
+              <Trash2 /> Delete permanently
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 export function CustomersPage() {
   const navigate = useNavigate();
@@ -139,28 +221,7 @@ export function CustomersPage() {
         </div>
       </div>
       <div className="flex items-center justify-end gap-1 border-t pt-2" onClick={(e) => e.stopPropagation()}>
-        {can('customer:update') && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8"
-            onClick={() => navigate(`/customers/${c.id}/edit`)}
-            aria-label="Edit"
-          >
-            <Pencil className="size-4" />
-          </Button>
-        )}
-        {can('customer:delete') && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8 text-destructive hover:text-destructive"
-            onClick={() => handleDelete(c)}
-            aria-label="Delete"
-          >
-            <Trash2 className="size-4" />
-          </Button>
-        )}
+        <CustomerActions c={c} onEdit={(x) => navigate(`/customers/${x.id}/edit`)} onDelete={handleDelete} />
       </div>
     </div>
   );
@@ -299,29 +360,8 @@ export function CustomersPage() {
             '[&_tbody_tr:hover:hover_td]:bg-amber-100/70 dark:[&_tbody_tr:hover:hover_td]:bg-amber-400/10',
           ].join(' ')}
           actions={(c) => (
-            <div className="flex justify-end gap-1">
-              {can('customer:update') && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-7"
-                  onClick={() => navigate(`/customers/${c.id}/edit`)}
-                  aria-label="Edit"
-                >
-                  <Pencil className="size-4" />
-                </Button>
-              )}
-              {can('customer:delete') && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-7 text-destructive hover:text-destructive"
-                  onClick={() => handleDelete(c)}
-                  aria-label="Delete"
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              )}
+            <div className="flex items-center justify-end">
+              <CustomerActions c={c} onEdit={(x) => navigate(`/customers/${x.id}/edit`)} onDelete={handleDelete} />
             </div>
           )}
         />
