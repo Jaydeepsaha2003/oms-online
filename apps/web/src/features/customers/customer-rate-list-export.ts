@@ -40,6 +40,17 @@ const INK: RGB = [15, 23, 42]; // slate-900 — body text
 const MUTED: RGB = [100, 116, 139]; // slate-500
 const FAINT: RGB = [148, 163, 184]; // slate-400
 const HAIRLINE: RGB = [226, 232, 240]; // slate-200 — row rules
+/**
+ * Fill for a rate column this item is not sold in — slate-200.
+ *
+ * A lone faint dash in an otherwise empty cell read as a gap in the data rather
+ * than a statement, so a 2-pcs-only item looked like three quarters of its row
+ * had been missed. Filling the cell says the same thing the way a printed sheet
+ * says it: this combination does not exist. Darker than BLUE_ZEBRA so it is
+ * still legible on an alternate row, and the dash stays on top so the meaning
+ * survives a black-and-white print where the tint may not.
+ */
+const UNAVAILABLE: RGB = [226, 232, 240];
 const WHITE: RGB = [255, 255, 255];
 
 const BLUE: RGB = [29, 78, 216]; // blue-700 — table headers, primary accent
@@ -131,6 +142,8 @@ const XL = {
   ink: 'FF0F172A',
   muted: 'FF64748B',
   hairline: 'FFE2E8F0',
+  /** A rate column this item is not sold in — see the PDF's UNAVAILABLE. */
+  unavailable: 'FFE2E8F0',
   white: 'FFFFFFFF',
 } as const;
 
@@ -353,12 +366,19 @@ export async function exportRateListExcel(list: CustomerRateList, opts: BuildSec
         // A merged "140/150" is text, so it cannot join a SUM. Tinting it amber
         // makes the gap in a column total visible instead of silent.
         else if (v) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.amberSoft } };
+        // Not sold in this column. Greyed to match the PDF, and left genuinely
+        // EMPTY rather than dashed — a dash would be text in a numeric column,
+        // which breaks Excel's own sorting and filtering on it. The fill carries
+        // the meaning; the cell stays a number column.
+        else c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.unavailable } };
       });
 
       for (let ci = 1; ci <= lastCol; ci += 1) {
         const c = row.getCell(ci);
         c.border = boxed;
-        // Zebra only where nothing more specific already claimed the fill.
+        // Zebra only where nothing more specific already claimed the fill — the
+        // amber "merged rate" and grey "not sold" tints both mean something, and
+        // banding over either would erase it.
         if (zebra && !c.fill) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.blueZebra } };
       }
       row.height = 17;
@@ -375,8 +395,10 @@ export async function exportRateListExcel(list: CustomerRateList, opts: BuildSec
     // columns still carried two sentences explaining marks that were not there.
     const anySpecial = sec.rows.some((r) => r.special);
     const anyMerged = sec.rows.some((r) => r.cells.some((v) => typeof v === 'string' && v !== ''));
+    const anyBlank = sec.rows.some((r) => r.cells.some((v) => v === '' || v == null));
     const notes = [
       anySpecial ? '*  this line includes your special-rate adjustment.' : '',
+      anyBlank ? 'Grey cell = this item is not sold in that column.' : '',
       anyMerged ? 'Amber cell = two rates merged into one column, so it is held as text and will not join a SUM.' : '',
     ].filter(Boolean);
     if (notes.length) {
@@ -480,7 +502,9 @@ export async function buildRateListPdfDoc(list: CustomerRateList, opts: BuildSec
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   const usable = pageW - margin * 2;
-  const footerTop = pageH - 34;
+  /* The footer needs its accent rule (+6) and one line of text (+19) below this,
+   * so ~26pt is the real requirement. 34 left 8pt of dead paper on every page. */
+  const footerTop = pageH - 28;
   let y = 0;
   let headerH = 0;
 
@@ -514,7 +538,13 @@ export async function buildRateListPdfDoc(list: CustomerRateList, opts: BuildSec
   const DATA_SIZE = hasCalibri ? 11 : 10.5;
   const META_SIZE = hasCalibri ? 9 : 8.5;
   const HEAD_SIZE = hasCalibri ? 11 : 8;
-  const rowH = hasCalibri ? 19 : 18;
+  /*
+   * Row height. Tightened from 19/18 to fit more of the sheet on each page —
+   * this multiplies across every row, so it is where the page count actually
+   * comes from. 16 still clears the 11pt data figures with roughly 2.5pt of
+   * leading either side; going below ~15 starts to touch the descenders.
+   */
+  const rowH = hasCalibri ? 16 : 15;
 
   /** Draw one line of text shrunk (then ellipsised) to fit `maxW` — rows never wrap. */
   const fitText = (txt: string, x: number, yy: number, maxW: number, size: number, opts?: { align?: 'right'; minSize?: number }) => {
@@ -704,7 +734,9 @@ export async function buildRateListPdfDoc(list: CustomerRateList, opts: BuildSec
     doc.text(list.customerName, pageW - margin, 50, { align: 'right' });
     accentRule(margin, 58, usable, 2);
     headerH = 60;
-    y = headerH + 24;
+    // 16 rather than 24 — a continuation page already announces itself with the
+    // running header, so the extra air above the first table was pure cost.
+    y = headerH + 16;
     drawWatermark();
   };
 
@@ -760,7 +792,11 @@ export async function buildRateListPdfDoc(list: CustomerRateList, opts: BuildSec
     const availSize = showAvail ? columnSize(t.rows.map((r) => r.available).filter(Boolean), availW - 12, DATA_SIZE) : DATA_SIZE;
     const firstRateCol = showAvail ? 3 : 2;
 
-    ensure(rowH * 4 + 40);
+    // Don't start a section unless the heading, the column header and a few
+    // rows fit — an orphaned heading at the foot of a page is worse than a
+    // slightly shorter page. Three rows rather than four, and 26pt rather than
+    // 40, so less paper is abandoned to satisfy the rule.
+    ensure(rowH * 3 + 26);
 
     // Section heading: orange→amber accent bar + blue title, count on the right.
     // The pivot's title carries a "— RATE LIST" suffix for the Excel/on-screen
@@ -771,7 +807,7 @@ export async function buildRateListPdfDoc(list: CustomerRateList, opts: BuildSec
     doc.text(t.title.replace(/\s*—\s*RATE LIST\s*$/i, ''), margin + 11, y);
     doc.setFont(UI_FONT, 'normal').setFontSize(9).setTextColor(...FAINT);
     doc.text(`${t.rows.length} item${t.rows.length === 1 ? '' : 's'}`, margin + usable, y, { align: 'right' });
-    y += 11;
+    y += 10;
 
     // Header row: one solid blue bar across the full table, white caps. Keeping
     // it a single block (rather than the old two-tone navy/peach split) is what
@@ -801,7 +837,7 @@ export async function buildRateListPdfDoc(list: CustomerRateList, opts: BuildSec
         hx += w;
         doc.line(hx, y + 2, hx, y + rowH);
       }
-      y += rowH + 5;
+      y += rowH + 3;
     };
     headerRow();
 
@@ -841,7 +877,12 @@ export async function buildRateListPdfDoc(list: CustomerRateList, opts: BuildSec
           doc.setFont(TABLE_FONT, 'bold').setTextColor(...INK);
           fitText(cell, x + w - 6, ty, w - 12, DATA_SIZE, { align: 'right', minSize: 7.5 });
         } else {
-          doc.setFont(TABLE_FONT, 'bold').setFontSize(META_SIZE).setTextColor(...FAINT);
+          // Fill first, dash on top — the rect would otherwise paint over it.
+          // Inset by the same 2pt the zebra uses so it lands inside the row's
+          // rules instead of straddling them.
+          doc.setFillColor(...UNAVAILABLE);
+          doc.rect(x, y - 2, w, rowH, 'F');
+          doc.setFont(TABLE_FONT, 'bold').setFontSize(META_SIZE).setTextColor(...MUTED);
           doc.text('–', x + w - 6, ty, { align: 'right' });
         }
         x += w;
@@ -853,11 +894,13 @@ export async function buildRateListPdfDoc(list: CustomerRateList, opts: BuildSec
       y += rowH;
     });
 
-    // Close the section with a soft blue keyline, then breathe.
+    // Close the section with a soft blue keyline, then breathe. 16 rather than
+    // 28: the keyline plus the next section's accent bar already separate the
+    // two blocks, so most of that gap was doing nothing but costing paper.
     doc.setDrawColor(...BLUE_SOFT);
     doc.setLineWidth(1);
     doc.line(margin, y - 1.5, margin + usable, y - 1.5);
-    y += 28;
+    y += 16;
   };
 
   /**
@@ -891,7 +934,11 @@ export async function buildRateListPdfDoc(list: CustomerRateList, opts: BuildSec
     const availSize = showAvail ? columnSize(availValues, availW - 12, DATA_SIZE) : DATA_SIZE;
     const rateColIdx = showAvail ? 3 : 2;
 
-    ensure(rowH * 4 + 40);
+    // Don't start a section unless the heading, the column header and a few
+    // rows fit — an orphaned heading at the foot of a page is worse than a
+    // slightly shorter page. Three rows rather than four, and 26pt rather than
+    // 40, so less paper is abandoned to satisfy the rule.
+    ensure(rowH * 3 + 26);
 
     accentRule(margin, y - 10.5, 3.5, 14);
     doc.setFont(UI_FONT, 'bold').setFontSize(12.5).setTextColor(...BLUE_DEEP);
@@ -899,7 +946,7 @@ export async function buildRateListPdfDoc(list: CustomerRateList, opts: BuildSec
     doc.setFont(UI_FONT, 'normal').setFontSize(9).setTextColor(...FAINT);
     const note = `${t.rows.length} design${t.rows.length === 1 ? '' : 's'}`;
     doc.text(note, margin + usable, y, { align: 'right' });
-    y += 11;
+    y += 10;
 
     doc.setFont(TABLE_FONT, 'bold');
     const headSize = rowFitSize(headers.map((h, i) => ({ text: h, maxW: widths[i] - 12 })), HEAD_SIZE);
@@ -926,7 +973,7 @@ export async function buildRateListPdfDoc(list: CustomerRateList, opts: BuildSec
         hx += w;
         doc.line(hx, y + 2, hx, y + rowH);
       }
-      y += rowH + 5;
+      y += rowH + 3;
     };
     headerRow();
 
@@ -965,7 +1012,7 @@ export async function buildRateListPdfDoc(list: CustomerRateList, opts: BuildSec
     doc.setDrawColor(...BLUE_SOFT);
     doc.setLineWidth(1);
     doc.line(margin, y - 1.5, margin + usable, y - 1.5);
-    y += 28;
+    y += 16;
   };
 
   products.forEach(drawPivot);

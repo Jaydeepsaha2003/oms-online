@@ -1169,6 +1169,26 @@ function LineEditor({
     /** The date the offered rate-list figure belongs to — null means today's. */
     let listDate: string | null = null;
 
+    /*
+     * Today's price for the newly-picked item, kept separately from the
+     * order-date one.
+     *
+     * Both are needed at once when the PRODUCT was swapped: the order-date rate
+     * is what that order is entitled to, and today's is the newer rate to offer
+     * if the chart has moved since. Previously only one survived — the as-of
+     * lookup overwrote today's figure — so there was nothing left to offer.
+     */
+    const todayProductRate: number | null = hasProductRate ? currentProductRate : null;
+    const todayDesignRate: number | null = hasDesignRate ? currentDesignRate : null;
+    const todayProductDelta = resolved?.productDelta ?? 0;
+    const todayDesignDelta = resolved?.designDelta ?? 0;
+    /** The same item priced on the ORDER's date. Null when the historical lookup
+     *  could not resolve it — see the `asOf.rate > 0` guard below. */
+    let asOfProductRate: number | null = null;
+    let asOfDesignRate: number | null = null;
+    let asOfProductDelta = 0;
+    let asOfDesignDelta = 0;
+
     const norm = (v: string | null | undefined) => (v ?? '').trim().toUpperCase();
     // Compared against the CURRENT form values, not the original line: picking
     // A → B → C should ask on each real change, not just when it differs from A.
@@ -1186,12 +1206,29 @@ function LineEditor({
     // The rate already sitting on this line — what "keep the old rate" means.
     const existingRate = (num(form.productRate) ?? 0) + (num(form.designRate) ?? 0);
 
-    // The identity change lands FIRST, before anything is asked. It is not in
-    // question — the user picked this item — and tying it to the rate answer is
-    // what made a dismissed dialog lose the new name as well. It also stops the
-    // combobox reverting its text to the old name (its blur handler does that
-    // when the value hasn't changed yet) while the dialog is still on screen,
-    // which read as "it ignored my pick".
+    /*
+     * What the line said before this pick, so a cancel can put it back.
+     *
+     * Captured from `form` rather than from `line`: picking A → B → C and then
+     * cancelling should land on B, the state the user was actually looking at,
+     * not all the way back to the line's original item.
+     */
+    const identityBefore = {
+      itemName: form.itemName,
+      pCategory: form.pCategory,
+      subCategory: form.subCategory,
+      product: form.product,
+      designType: form.designType,
+      designName: form.designName,
+      psize: form.psize,
+    };
+
+    // The identity change still lands FIRST, before anything is asked — the
+    // dialog compares the two items and needs the form to already show the new
+    // one, and it stops the combobox blurring its text back to the old name
+    // (its blur handler does that while the value is unchanged), which read as
+    // "it ignored my pick". The difference is that it is now provisional: a
+    // cancel below puts `identityBefore` back.
     set({
       itemName: label,
       pCategory: it.category,
@@ -1201,6 +1238,9 @@ function LineEditor({
       designName: realName,
       psize: it.size != null ? String(it.size) : '',
     });
+
+    /** Set when the user backs out, so the identity set above is rolled back. */
+    let cancelled = false;
 
     // Nothing to protect if the line had no rate yet — just fill it in.
     if (itemChanged && existingRate > 0) {
@@ -1220,8 +1260,12 @@ function LineEditor({
           // (it returns zeros for anything it can't match) — otherwise today's
           // catalogue rate above stays the offer.
           if (asOf.rate > 0) {
-            finalProductRate = hasProductRate ? round2(asOf.productRate + asOf.productDelta) : null;
-            finalDesignRate = hasDesignRate ? round2(asOf.designRate + asOf.designDelta) : null;
+            asOfProductRate = hasProductRate ? round2(asOf.productRate + asOf.productDelta) : null;
+            asOfDesignRate = hasDesignRate ? round2(asOf.designRate + asOf.designDelta) : null;
+            asOfProductDelta = asOf.productDelta;
+            asOfDesignDelta = asOf.designDelta;
+            finalProductRate = asOfProductRate;
+            finalDesignRate = asOfDesignRate;
             appliedProductDelta = asOf.productDelta;
             appliedDesignDelta = asOf.designDelta;
             // Only now may the dialog put a date on the rate-list figure. When
@@ -1248,10 +1292,51 @@ function LineEditor({
          */
         const lineProductRate = num(form.productRate);
         const lineDesignRate = num(form.designRate);
-        const keepProductRate = lineProductRate ?? finalProductRate;
-        const keepDesignRate = designChanged ? finalDesignRate : (lineDesignRate ?? finalDesignRate);
+
+        /*
+         * Re-specifying the item makes both columns DATES, not a negotiation.
+         *
+         * KEEP used to hold the figure already saved on the line, on the reading
+         * that the product half was "the price agreed with this party". It is
+         * not: a party's agreed price is already IN the rate list, as their
+         * special-rate delta — so the order-date figure of ₹320 is chart plus
+         * this party's own adjustment on that date. The ₹340 sitting on the line
+         * is simply stale, and offering it as "your rate" dressed up a stale
+         * number as a decision.
+         *
+         * So once the item is swapped, KEEP is what this item cost on the
+         * ORDER's own date — the rate that order is entitled to, mandatory in
+         * the same sense the design rate is. USE becomes "the chart has moved
+         * since; bill the newer rate", and only appears when a newer one exists.
+         *
+         * Gated on the historical lookup having resolved, not on which half
+         * changed: this whole block only runs when the item changed at all, and
+         * a swap of the design alone still re-prices the line — it is the same
+         * item record being re-specified either way. Where the lookup fails
+         * there is no order-date rate to stand on, so the old "your figure
+         * versus the rate list's" reading is kept as the fallback.
+         */
+        const dated = asOfProductRate != null;
+
+        const keepProductRate = dated ? asOfProductRate : (lineProductRate ?? finalProductRate);
+        const keepDesignRate = dated
+          ? (asOfDesignRate ?? todayDesignRate)
+          : designChanged
+            ? finalDesignRate
+            : (lineDesignRate ?? finalDesignRate);
+        /** The figures behind the USE column. Today's chart when the columns are
+         *  dates; the (as-of) rate list otherwise. */
+        const offerProductRate = dated ? todayProductRate : finalProductRate;
+        const offerDesignRate = dated ? todayDesignRate : finalDesignRate;
+        const offerProductDelta = dated ? todayProductDelta : appliedProductDelta;
+        const offerDesignDelta = dated ? todayDesignDelta : appliedDesignDelta;
+        /** Which date each column's figures belong to. Null on KEEP means "your
+         *  own negotiated rate"; null on USE means "today". */
+        const keepAsOf = dated ? order.orderDate : null;
+        const offerAsOf = dated ? null : listDate;
+
         const keepRate = round2((keepProductRate ?? 0) + (keepDesignRate ?? 0));
-        const listRate = (finalProductRate ?? 0) + (finalDesignRate ?? 0);
+        const listRate = (offerProductRate ?? 0) + (offerDesignRate ?? 0);
 
         /*
          * Is there actually a decision to make?
@@ -1277,14 +1362,15 @@ function LineEditor({
         if (decisionToMake) {
           const choice = await askRate({
             label,
-            asOf: listDate,
-            newProductRate: finalProductRate,
-            newDesignRate: finalDesignRate,
+            asOf: offerAsOf,
+            keepAsOf,
+            newProductRate: offerProductRate,
+            newDesignRate: offerDesignRate,
             oldProductRate: lineProductRate,
             oldDesignRate: num(form.designRate),
             hasDesignRate,
-            newProductDelta: appliedProductDelta,
-            newDesignDelta: appliedDesignDelta,
+            newProductDelta: offerProductDelta,
+            newDesignDelta: offerDesignDelta,
             productChanged,
             designChanged,
             oldDesignType: form.designType || null,
@@ -1294,7 +1380,17 @@ function LineEditor({
             keepRate,
             productRateMoved,
           });
-          if (choice.kind === 'keep') {
+          if (choice.kind === 'cancel') {
+            cancelled = true;
+          } else if (choice.kind === 'new') {
+            // Set explicitly rather than left to fall through. It used to rely on
+            // finalProductRate ALREADY holding the offered figure, which stopped
+            // being true the moment USE could mean today's chart instead of the
+            // as-of one — the old code would have silently applied the order-date
+            // rate under a button labelled with today's.
+            finalProductRate = offerProductRate;
+            finalDesignRate = offerDesignRate;
+          } else if (choice.kind === 'keep') {
             finalProductRate = keepProductRate;
             finalDesignRate = keepDesignRate;
           } else if (choice.kind === 'custom') {
@@ -1313,6 +1409,13 @@ function LineEditor({
       } finally {
         setCheckingRate(false);
       }
+    }
+
+    // Backed out: undo the provisional identity and leave every rate alone. The
+    // line is exactly as it was before the pick.
+    if (cancelled) {
+      set(identityBefore);
+      return;
     }
 
     // Only the rate is left to apply — the identity went in before the question.
@@ -1555,7 +1658,11 @@ interface RateAskProps {
   /** The item just picked, as shown in the Item name field. */
   label: string;
   /** The order's date — the basis the new rate was priced on. */
+  /** Date the USE column's figures belong to; null means today's chart. */
   asOf: string | null;
+  /** Date the KEEP column's figures belong to. Null means "the rate agreed on
+   *  this line", which is what KEEP means when only the design was swapped. */
+  keepAsOf?: string | null;
   newProductRate: number | null;
   newDesignRate: number | null;
   oldProductRate: number | null;
@@ -1589,7 +1696,9 @@ interface RateAskProps {
 type RateChoice =
   | { kind: 'new' }
   | { kind: 'keep' }
-  | { kind: 'custom'; productRate: number | null; designRate: number | null };
+  | { kind: 'custom'; productRate: number | null; designRate: number | null }
+  /** Backed out — the item pick is undone too, not just the rate. */
+  | { kind: 'cancel' };
 
 const inr = (v: number) => `₹${v.toLocaleString('en-IN')}`;
 
@@ -1602,12 +1711,19 @@ const inr = (v: number) => `₹${v.toLocaleString('en-IN')}`;
  * appearing on the line is the exact complaint this whole dialog exists to
  * answer — so it asks for what it needs instead of guessing.
  *
- * Dismissing without answering (Escape, clicking away, the X) means KEEP: the
- * line is left as it was priced, which is the choice that changes nothing.
+ * Dismissing without answering (Escape, clicking away, the X, Cancel) CANCELS
+ * the whole pick — the item goes back to what it was, not just the rate.
+ *
+ * It used to mean "keep the old rate", which left the new item applied at the
+ * old price. That is a real combination and one of the three buttons produces
+ * it, so a dismissal silently choosing it was indistinguishable from having
+ * chosen it — and there was then no way to back out of an item swap at all.
+ * Escape now means what it means everywhere else: nothing happened.
  */
 function RateChoiceDialog({
   label,
   asOf,
+  keepAsOf = null,
   newProductRate,
   newDesignRate,
   oldProductRate,
@@ -1635,7 +1751,7 @@ function RateChoiceDialog({
   const customValid = customTotal > 0;
 
   return (
-    <Dialog open onOpenChange={(o) => !o && onDone({ kind: 'keep' })}>
+    <Dialog open onOpenChange={(o) => !o && onDone({ kind: 'cancel' })}>
       <DialogContent className="w-[calc(100vw-2rem)] overflow-x-hidden sm:max-w-xl [&>*]:min-w-0">
         <DialogHeader>
           <DialogTitle>This changes the line’s rate</DialogTitle>
@@ -1667,7 +1783,18 @@ function RateChoiceDialog({
         )}
 
         {/* The product half IS a choice — but only when it actually differs. */}
-        {productRateMoved && (
+        {/* Two different questions, so two different explanations. With dated
+            columns the product rate was never a choice on this line — the
+            question is which DATE's chart to bill it on. */}
+        {productRateMoved && keepAsOf && (
+          <p className="rounded-md border border-dashed px-3 py-2 text-[12.5px]">
+            On <span className="font-semibold">{formatDate(keepAsOf)}</span> — this order&rsquo;s own date — this product was{' '}
+            <span className="font-semibold tabular-nums">{inr(keepProductRate ?? 0)}</span>, which is what the order is entitled
+            to. It is <span className="font-semibold tabular-nums">{inr(newProductRate ?? 0)}</span> on today&rsquo;s rate list.
+            Take the newer rate only if that is what was agreed.
+          </p>
+        )}
+        {productRateMoved && !keepAsOf && (
           <p className="rounded-md border border-dashed px-3 py-2 text-[12.5px]">
             Your product rate of <span className="font-semibold tabular-nums">{inr(keepProductRate ?? oldProductRate ?? 0)}</span>{' '}
             differs from the <span className="font-semibold tabular-nums">{inr(newProductRate ?? 0)}</span> on the{' '}
@@ -1703,7 +1830,12 @@ function RateChoiceDialog({
                 <tr className="text-muted-foreground bg-muted/50 border-b text-[10.5px] font-bold tracking-wide uppercase">
                   <th className="px-2.5 py-1.5 text-left font-bold sm:px-3">Part</th>
                   <th className="px-2.5 py-1.5 text-right font-bold sm:px-3">Was</th>
-                  <th className="border-l px-2.5 py-1.5 text-right font-bold text-slate-600 sm:px-3 dark:text-slate-300">Keep</th>
+                  <th className="border-l px-2.5 py-1.5 text-right font-bold text-slate-600 sm:px-3 dark:text-slate-300">
+                    Keep
+                    {/* Dated columns have to be labelled, or "Keep 320 / Use 310"
+                        is two numbers with no stated reason to prefer either. */}
+                    {keepAsOf && <span className="ml-1 font-semibold normal-case opacity-70">{formatDate(keepAsOf)}</span>}
+                  </th>
                   <th className="border-l bg-blue-50/70 px-2.5 py-1.5 text-right font-bold text-blue-700 sm:px-3 dark:bg-blue-500/10 dark:text-blue-300">
                     Use
                     <span className="ml-1 font-semibold normal-case opacity-70">{asOf ? formatDate(asOf) : 'today'}</span>
@@ -1713,8 +1845,24 @@ function RateChoiceDialog({
               <tbody>
                 {(
                   [
-                    ['Product', oldProductRate ?? 0, keepProductRate ?? 0, newProductRate ?? 0, true, newProductDelta ?? 0, 'your choice'],
-                    ['Design', oldDesignRate ?? 0, keepDesignRate ?? 0, newDesignRate ?? 0, hasDesignRate, newDesignDelta ?? 0, 'same either way'],
+                    [
+                      'Product',
+                      oldProductRate ?? 0,
+                      keepProductRate ?? 0,
+                      newProductRate ?? 0,
+                      true,
+                      newProductDelta ?? 0,
+                      keepAsOf ? 'rate on the day' : 'your choice',
+                    ],
+                    [
+                      'Design',
+                      oldDesignRate ?? 0,
+                      keepDesignRate ?? 0,
+                      newDesignRate ?? 0,
+                      hasDesignRate,
+                      newDesignDelta ?? 0,
+                      Math.abs((keepDesignRate ?? 0) - (newDesignRate ?? 0)) < 0.001 ? 'same either way' : 'moved too',
+                    ],
                   ] as const
                 )
                   .filter(([, , , , show]) => show)
@@ -1813,6 +1961,9 @@ function RateChoiceDialog({
                 * is what "Keep ₹390 / Use ₹390" did — reads as a trick
                 * question. Custom rate is always there for a agreed price.
                 */}
+              <Button variant="ghost" onClick={() => onDone({ kind: 'cancel' })}>
+                Cancel
+              </Button>
               <Button variant="ghost" className="sm:mr-auto" onClick={() => setCustom(true)}>
                 Custom rate…
               </Button>
@@ -1825,12 +1976,14 @@ function RateChoiceDialog({
                   >
                     <span>Keep {inr(keepRate ?? oldRate)}</span>
                     <span className="text-muted-foreground text-[10.5px] font-normal">
-                      product stays {inr(keepProductRate ?? 0)}
+                      {keepAsOf ? `rate on ${formatDate(keepAsOf)}` : `product stays ${inr(keepProductRate ?? 0)}`}
                     </span>
                   </Button>
                   <Button onClick={() => onDone({ kind: 'new' })} className="h-auto min-w-[8.5rem] flex-col gap-0 py-1.5 leading-tight">
-                    <span>Use {inr(newRate)}</span>
-                    <span className="text-[10.5px] font-normal opacity-80">product moves to {inr(newProductRate ?? 0)}</span>
+                      <span>Use {inr(newRate)}</span>
+                    <span className="text-[10.5px] font-normal opacity-80">
+                      {keepAsOf ? `today’s rate ${inr(newProductRate ?? 0)}` : `product moves to ${inr(newProductRate ?? 0)}`}
+                    </span>
                   </Button>
                 </>
               ) : (

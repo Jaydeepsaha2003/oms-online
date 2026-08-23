@@ -147,8 +147,13 @@ function VersionCard({ v, defaultOpen }: { v: Version; defaultOpen: boolean }) {
  * customer's rate are the same figure there, and printing it twice would read as
  * though something had been applied.
  */
+/**
+ * `null` when this item is not sold in that column, so the CELL can be tinted
+ * rather than only its contents — a fill has to be on the `<td>`, and a
+ * component returning a dash cannot reach its own cell's background.
+ */
 function RateCell({ rate, base, delta, compare }: { rate: string; base: string; delta: string; compare: boolean }) {
-  if (!rate) return <span className="text-muted-foreground/40">—</span>;
+  if (!rate) return null;
   const down = delta.startsWith('-');
   return (
     <span className="inline-flex flex-col items-end leading-tight">
@@ -187,8 +192,19 @@ function PivotCard({ t, compare }: { t: PivotTable; compare: boolean }) {
                 <td className={TEXT_CELL}>{r.item}</td>
                 <td className="text-[13px] font-bold tabular-nums text-slate-900 dark:text-slate-100">{r.available || <span className="text-muted-foreground/40">—</span>}</td>
                 {r.cells.map((cell, i) => (
-                  <td key={i} className="text-right align-top">
-                    <RateCell rate={cell} base={r.baseCells[i]} delta={r.deltaCells[i]} compare={compare} />
+                  <td
+                    key={i}
+                    className={cn(
+                      'text-right align-top',
+                      // Not sold in this column. Filled rather than dashed, to
+                      // match the PDF and the workbook: a lone faint dash read as
+                      // missing data, so a 2-pcs-only item looked like most of its
+                      // row had been skipped. `!` because the zebra stripe on the
+                      // row would otherwise win on even rows.
+                      !cell && 'bg-slate-200/70 !text-muted-foreground/50 dark:bg-white/[0.07]',
+                    )}
+                  >
+                    {cell ? <RateCell rate={cell} base={r.baseCells[i]} delta={r.deltaCells[i]} compare={compare} /> : '–'}
                   </td>
                 ))}
               </tr>
