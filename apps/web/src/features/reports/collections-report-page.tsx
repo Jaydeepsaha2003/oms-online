@@ -10,6 +10,32 @@ import { Kpi, RankedBars, ReportCard, ReportHeader, ReportSummary } from './repo
 import { ReportFilterBar, useReportFilters } from './report-filters';
 import { useCollectionsReport } from './use-reports';
 
+/*
+ * Bank vs Cash — one colour pair, used by every chart on this page.
+ *
+ * Both charts used to stack two shades of the SAME hue (red on pale red, green
+ * on pale green), which is the one thing you cannot read: a stacked bar has no
+ * gap between its segments, so a light tint of the same colour reads as a
+ * gradient rather than as a second value, and a cash-only bucket looked like a
+ * washed-out bank one. Measured, the old pairs separated by just 1.98:1 and
+ * 1.66:1 in luminance.
+ *
+ * Blue for bank, green for cash — matching the B / Bank and C / Cash columns on
+ * the payment desk, so the two words mean the same colour everywhere in the app.
+ * Blue against green also survives red-green colour blindness, which a
+ * red/pale-red pair does not.
+ *
+ * Deep blue against a LIGHT green rather than two mid tones: touching segments
+ * need to differ in lightness as well as hue, and this pair separates 4.5:1
+ * (versus 1.98:1 before) so the boundary is obvious even in greyscale or print.
+ * The trade-off is that the light green alone is weak on a white card — 1.9:1 —
+ * so the cash segment carries a darker green outline. The fill gives the
+ * internal contrast, the stroke gives the edge against the card.
+ */
+const BANK = '#1e40af';
+const CASH = '#34d399';
+const CASH_EDGE = '#059669';
+
 /**
  * Never let a money field the server did not send reach a formatter — a browser
  * running ahead of the API would otherwise print "₹NaN" across the screen.
@@ -116,10 +142,19 @@ export function CollectionsReportPage() {
                 <CartesianGrid vertical={false} stroke="#e2e8f0" strokeDasharray="3 3" />
                 <XAxis dataKey="label" tick={{ fontSize: 12, fill: '#64748b' }} tickLine={false} axisLine={{ stroke: '#e2e8f0' }} />
                 <YAxis tick={{ fontSize: 12, fill: '#64748b' }} tickLine={false} axisLine={false} width={52} tickFormatter={(v: number) => inrCompact(v)} />
-                <Tooltip formatter={(v: number, dataKey) => [inrFull(v), dataKey === 'bank' ? 'Bank' : 'Cash']} labelFormatter={(label, p) => `${label} · ${p?.[0]?.payload?.parties ?? 0} parties`} cursor={{ fill: 'rgba(148,163,184,0.12)' }} />
+                <Tooltip
+                  formatter={(v: number, dataKey) => [inrFull(v), dataKey === 'bank' ? 'Bank' : 'Cash']}
+                  labelFormatter={(label, pl) => {
+                    const row = pl?.[0]?.payload as { parties?: number; value?: number } | undefined;
+                    return `${label} · ${inrFull(money(row?.value))} · ${row?.parties ?? 0} part${row?.parties === 1 ? 'y' : 'ies'}`;
+                  }}
+                  cursor={{ fill: 'rgba(148,163,184,0.12)' }}
+                />
                 <Legend wrapperStyle={{ fontSize: 12 }} iconType="circle" />
-                <Bar name="Bank" dataKey="bank" stackId="age" fill="#ef4444" maxBarSize={64} />
-                <Bar name="Cash" dataKey="cash" stackId="age" fill="#fca5a5" radius={[4, 4, 0, 0]} maxBarSize={64} />
+                {/* Bank sits at the bottom of the stack, so it keeps the square
+                    foot and Cash carries the rounded cap. */}
+                <Bar name="Bank" dataKey="bank" stackId="age" fill={BANK} maxBarSize={64} />
+                <Bar name="Cash" dataKey="cash" stackId="age" fill={CASH} stroke={CASH_EDGE} strokeWidth={1} radius={[4, 4, 0, 0]} maxBarSize={64} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -138,12 +173,12 @@ export function CollectionsReportPage() {
               <AreaChart data={data?.collectionTrend ?? []} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
                 <defs>
                   <linearGradient id="collGradBank" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#10b981" stopOpacity={0.35} />
-                    <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
+                    <stop offset="0%" stopColor={BANK} stopOpacity={0.35} />
+                    <stop offset="100%" stopColor={BANK} stopOpacity={0} />
                   </linearGradient>
                   <linearGradient id="collGradCash" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#6ee7b7" stopOpacity={0.35} />
-                    <stop offset="100%" stopColor="#6ee7b7" stopOpacity={0} />
+                    <stop offset="0%" stopColor={CASH} stopOpacity={0.35} />
+                    <stop offset="100%" stopColor={CASH} stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid vertical={false} stroke="#e2e8f0" strokeDasharray="3 3" />
@@ -151,8 +186,8 @@ export function CollectionsReportPage() {
                 <YAxis tick={{ fontSize: 12, fill: '#64748b' }} tickLine={false} axisLine={false} width={52} tickFormatter={(v: number) => inrCompact(v)} />
                 <Tooltip formatter={(v: number, name) => [inrFull(v), name]} cursor={{ stroke: '#94a3b8' }} />
                 <Legend wrapperStyle={{ fontSize: 12 }} iconType="circle" />
-                <Area name="Bank" type="monotone" dataKey="collectedBank" stackId="collected" stroke="#10b981" strokeWidth={2.5} fill="url(#collGradBank)" />
-                <Area name="Cash" type="monotone" dataKey="collectedCash" stackId="collected" stroke="#6ee7b7" strokeWidth={2.5} fill="url(#collGradCash)" />
+                <Area name="Bank" type="monotone" dataKey="collectedBank" stackId="collected" stroke={BANK} strokeWidth={2.5} fill="url(#collGradBank)" />
+                <Area name="Cash" type="monotone" dataKey="collectedCash" stackId="collected" stroke={CASH_EDGE} strokeWidth={2.5} fill="url(#collGradCash)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>

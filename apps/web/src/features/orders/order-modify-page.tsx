@@ -1166,6 +1166,8 @@ function LineEditor({
     // today's, or the as-of one if the historical lookup wins below.
     let appliedProductDelta = resolved?.productDelta ?? 0;
     let appliedDesignDelta = resolved?.designDelta ?? 0;
+    /** The date the offered rate-list figure belongs to — null means today's. */
+    let listDate: string | null = null;
 
     const norm = (v: string | null | undefined) => (v ?? '').trim().toUpperCase();
     // Compared against the CURRENT form values, not the original line: picking
@@ -1222,25 +1224,28 @@ function LineEditor({
             finalDesignRate = hasDesignRate ? round2(asOf.designRate + asOf.designDelta) : null;
             appliedProductDelta = asOf.productDelta;
             appliedDesignDelta = asOf.designDelta;
+            // Only now may the dialog put a date on the rate-list figure. When
+            // the historical lookup finds nothing it falls back to TODAY's
+            // catalogue, and labelling that with the order date would be a lie.
+            listDate = order.orderDate;
           }
         }
         /*
-         * What KEEP means, and why it is not simply "the old rate".
+         * KEEP = the rate saved on this line. USE = the rate list figure.
          *
-         * Same product, different design: the product rate stays exactly as
-         * negotiated on this line, and the new design rate applies — because the
-         * design is the thing that actually changed. So Keep = this line's
-         * product + the new design. Only when the PRODUCT changed too does Keep
-         * fall back to holding both halves.
+         * Nothing more clever than that, deliberately. Keep used to hold the
+         * line's product but take the NEW design rate whenever only the design
+         * changed — which meant "Keep ₹390" appeared on a line saved at ₹355,
+         * and worse, it often landed on the same figure as Use, so the dialog
+         * offered the same outcome twice under two different names.
          *
-         * USE stays simple throughout: the whole rate list figure.
+         * Two options, two distinct meanings: hold what this line says, or move
+         * to what the rate list says. `Custom rate…` covers everything else.
          */
         const lineProductRate = num(form.productRate);
         const lineDesignRate = num(form.designRate);
-        // Product changed → Keep holds BOTH halves as saved. Only the design
-        // changed → Keep holds the product and takes the new design rate.
-        const keepProductRate = productChanged ? lineProductRate : (lineProductRate ?? finalProductRate);
-        const keepDesignRate = productChanged ? lineDesignRate : finalDesignRate;
+        const keepProductRate = lineProductRate ?? finalProductRate;
+        const keepDesignRate = lineDesignRate ?? (hasDesignRate ? finalDesignRate : null);
         const keepRate = round2((keepProductRate ?? 0) + (keepDesignRate ?? 0));
         const listRate = (finalProductRate ?? 0) + (finalDesignRate ?? 0);
 
@@ -1262,7 +1267,7 @@ function LineEditor({
         if (decisionToMake) {
           const choice = await askRate({
             label,
-            asOf: order.orderDate ?? null,
+            asOf: listDate,
             newProductRate: finalProductRate,
             newDesignRate: finalDesignRate,
             oldProductRate: lineProductRate,
@@ -1282,9 +1287,10 @@ function LineEditor({
             finalDesignRate = choice.designRate;
           }
         } else {
-          // Silent path: apply the keep-shaped rate rather than the list rate, so
-          // an unchanged product is never quietly re-priced.
+          // Silent path: the two outcomes were the same figure, so hold the
+          // line's own rate rather than quietly re-pricing anything.
           finalProductRate = keepProductRate;
+          finalDesignRate = keepDesignRate;
         }
       } catch {
         // A failed rate check shouldn't block picking the item — fall back to
@@ -1604,20 +1610,25 @@ function RateChoiceDialog({
         <DialogHeader>
           <DialogTitle>This changes the line’s rate</DialogTitle>
         </DialogHeader>
+        {/* Both figures, and where each comes from — that is the whole decision.
+            The date matters: the rate list is read as it stood on the ORDER's
+            date, not today's, so a months-old order re-prices at the rate that
+            was in force when it was booked. */}
         <p className="text-muted-foreground text-sm">
-          <span className="text-foreground font-medium">{label}</span> is priced{' '}
-          <span className="text-foreground font-semibold">{inr(newRate)}</span> on the rate list
-          {asOf ? ` as of ${formatDate(asOf)}` : ''}. This line was saved at{' '}
-          <span className="text-foreground font-semibold">{inr(oldRate)}</span>.
+          <span className="text-foreground font-medium">{label}</span> costs{' '}
+          <span className="text-foreground font-semibold">{inr(newRate)}</span> on the{' '}
+          {asOf ? <>rate list of <span className="text-foreground font-semibold">{formatDate(asOf)}</span> — this order&rsquo;s own date</> : <>rate list as it stands today</>}.
+          This line is saved at <span className="text-foreground font-semibold">{inr(oldRate)}</span>.
         </p>
 
         {/* Same product → say so, and take it off the table. Re-pricing a product
             the user never re-chose is not on offer here. */}
         {!productChanged && (
           <p className="rounded-md border border-dashed px-3 py-2 text-[12.5px]">
-            Same product — its rate of{' '}
-            <span className="font-semibold tabular-nums">{inr(keepProductRate ?? oldProductRate ?? 0)}</span> stays as it is. Only
-            the design rate changed.
+            Same product at{' '}
+            <span className="font-semibold tabular-nums">{inr(keepProductRate ?? oldProductRate ?? 0)}</span> either way — only the
+            design rate differs, <span className="font-semibold tabular-nums">{inr(oldDesignRate ?? 0)}</span> on this line against{' '}
+            <span className="font-semibold tabular-nums">{inr(newDesignRate ?? 0)}</span> on the rate list.
           </p>
         )}
 
@@ -1633,7 +1644,10 @@ function RateChoiceDialog({
               <tr className="text-muted-foreground bg-muted/50 border-b text-[11px] font-bold tracking-wide uppercase">
                 <th className="px-2.5 py-1.5 text-left font-bold sm:px-3">Part</th>
                 <th className="px-2.5 py-1.5 text-right font-bold sm:px-3">On this line</th>
-                <th className="px-2.5 py-1.5 text-right font-bold sm:px-3">Rate list</th>
+                <th className="px-2.5 py-1.5 text-right font-bold sm:px-3">
+                  Rate list
+                  <span className="ml-1 font-semibold normal-case opacity-70">{asOf ? formatDate(asOf) : 'today'}</span>
+                </th>
                 <th className="px-2.5 py-1.5 text-right font-bold sm:px-3">Difference</th>
               </tr>
             </thead>
@@ -1736,25 +1750,22 @@ function RateChoiceDialog({
             </>
           ) : (
             <>
-              {/* Keep is not always "the old total": on a design swap it holds
-                  this line's product rate and takes the new design rate, so the
-                  label states the figure it will actually apply. */}
+              {/* Each button names its figure AND where that figure comes from,
+                  so neither needs the paragraph above to be understood. */}
               <Button
                 variant="outline"
                 onClick={() => onDone({ kind: 'keep' })}
                 className="h-auto flex-col gap-0 py-1.5 leading-tight"
               >
                 <span>Keep {inr(keepRate ?? oldRate)}</span>
-                <span className="text-muted-foreground text-[10.5px] font-normal">
-                  {productChanged ? 'this line' : 'my product + new design'}
-                </span>
+                <span className="text-muted-foreground text-[10.5px] font-normal">saved on this line</span>
               </Button>
               <Button variant="outline" onClick={() => setCustom(true)}>
                 Custom rate…
               </Button>
               <Button onClick={() => onDone({ kind: 'new' })} className="h-auto flex-col gap-0 py-1.5 leading-tight">
                 <span>Use {inr(newRate)}</span>
-                <span className="text-[10.5px] font-normal opacity-80">rate list</span>
+                <span className="text-[10.5px] font-normal opacity-80">rate list{asOf ? `, ${formatDate(asOf)}` : ', today'}</span>
               </Button>
             </>
           )}
