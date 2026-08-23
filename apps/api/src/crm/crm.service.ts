@@ -565,7 +565,7 @@ export class CrmService {
       const crm = await this.crmOverlayFor(customerId ?? null, p);
       return {
         customerId: customerId ?? null, partyName: p, agent: cust?.agentName ?? null,
-        outstanding: 0, overdue: 0, dueSoon: 0, oldestDays: 0, invoiceCount: 0, lastReceiptAt: null, advanceHeld: 0,
+        outstanding: 0, gross: 0, overdue: 0, dueSoon: 0, oldestDays: 0, invoiceCount: 0, lastReceiptAt: null, advanceHeld: 0,
         ...crm, invoices: [],
       };
     }
@@ -615,8 +615,20 @@ export class CrmService {
     for (const c of challans) {
       if (!SALES.has((c.transaction ?? '').trim().toUpperCase())) continue;
       const received = recvByInv.get(c.code) ?? 0;
-      // Settled = money received + anything written off as a Sales Discount.
-      const bal = Math.max(0, num(c.total) - received - (discByInv.get(c.code) ?? 0));
+      /*
+       * Billed = b + c (the bank and cash sides), NOT `total`.
+       *
+       * This used to read `total`, which put the Payment Desk out of step with
+       * both the Party Ledger and the Collections report — the Ledger debits an
+       * invoice by b + c, and Collections sums the same two columns. On 11 of
+       * 1,964 challans the stored `total` does not equal b + c (nothing to do
+       * with TCS/TDS/other charges, which are zero on those rows), so those
+       * invoices reported a different balance depending on which screen you
+       * opened. MANGAL & MANGAL's SSS/560 is one: total ₹56,715, b + c ₹55,379.
+       *
+       * Settled = money received + anything written off as a Sales Discount.
+       */
+      const bal = Math.max(0, num(c.b) + num(c.c) - received - (discByInv.get(c.code) ?? 0));
       if (bal <= 0) continue;
       const key = c.customerName || '—';
       let p = map.get(key);
@@ -624,7 +636,7 @@ export class CrmService {
         p = {
           customerId: c.customerId ?? null, partyName: key,
           agent: (c.customerId != null ? custMap.get(c.customerId)?.agentName : null) ?? null,
-          outstanding: 0, overdue: 0, dueSoon: 0, oldestDays: 0, invoiceCount: 0, lastReceiptAt: null, advanceHeld: 0,
+          outstanding: 0, gross: 0, overdue: 0, dueSoon: 0, oldestDays: 0, invoiceCount: 0, lastReceiptAt: null, advanceHeld: 0,
           openFollowups: 0, nextPromiseAt: null, nextPromiseAmount: null, promiseState: 'none', hasFollowup: false, invoices: [],
         };
         map.set(key, p);
@@ -648,15 +660,48 @@ export class CrmService {
         const lr = lastRecByCust.get(p.customerId);
         p.lastReceiptAt = lr ? lr.toISOString() : null;
       }
-      p.outstanding = r0(p.outstanding);
-      p.overdue = r0(p.overdue);
-      p.dueSoon = r0(p.dueSoon);
+      /*
+       * Spend this party's advance against their own invoices, OLDEST FIRST,
+       * and rebuild every figure from what survives.
+       *
+       * Netting only the headline and leaving "overdue" gross would put the two
+       * numbers on one row in contradiction — ₹52,806 owed beside ₹5.57L
+       * overdue. Oldest-first is how a payment is actually applied, and it is
+       * the order that keeps them consistent. The advance is this party's own
+       * money and is never applied to anybody else.
+       */
+      p.gross = r0(p.outstanding);
+      let credit = p.advanceHeld;
+      let net = 0, netOverdue = 0, netDueSoon = 0, oldest = 0;
+      const ordered = [...p.invoices].sort((a, b) => b.overdueDays - a.overdueDays);
+      for (const inv of ordered) {
+        const applied = Math.min(credit, inv.balance);
+        credit -= applied;
+        const left = inv.balance - applied;
+        if (left <= 0) continue;
+        net += left;
+        if (inv.overdueDays > 0) {
+          netOverdue += left;
+          oldest = Math.max(oldest, inv.overdueDays);
+        } else if (inv.dueDate) {
+          const days = Math.floor((today.getTime() - this.startOfDay(new Date(inv.dueDate)).getTime()) / DAY);
+          if (days >= -15) netDueSoon += left;
+        }
+      }
+      p.outstanding = r0(net);
+      p.overdue = r0(netOverdue);
+      p.dueSoon = r0(netDueSoon);
+      p.oldestDays = oldest;
       p.invoices.sort((a, b) => b.overdueDays - a.overdueDays || (a.dueDate ?? a.invDate).localeCompare(b.dueDate ?? b.invDate));
       const c = crm.get(p.customerId != null ? `c:${p.customerId}` : `n:${p.partyName.trim().toUpperCase()}`) ?? (p.customerId != null ? crm.get(`n:${p.partyName.trim().toUpperCase()}`) : undefined);
       const o = this.crmToOverlay(c);
       p.openFollowups = o.openFollowups; p.nextPromiseAt = o.nextPromiseAt; p.nextPromiseAmount = o.nextPromiseAmount; p.promiseState = o.promiseState; p.hasFollowup = o.hasFollowup;
     }
-    return [...map.values()].sort((a, b) => b.overdue - a.overdue || b.outstanding - a.outstanding);
+    // Ordered by what is genuinely at stake: a party sitting on an advance that
+    // covers their bills is not the one to ring first.
+    // Ordered by what is genuinely at stake: a party sitting on an advance that
+    // covers their bills is not the one to ring first.
+    return [...map.values()].filter((p) => p.gross > 0).sort((a, b) => b.overdue - a.overdue || b.outstanding - a.outstanding);
   }
 
   /* ── CRM overlay helpers (shared by balances + single-party lookup) ──────── */

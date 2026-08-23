@@ -477,39 +477,130 @@ export class ReportsService {
     const aging = AGING.map((a) => ({ key: a.key, label: a.label, value: 0, bank: 0, cash: 0, parties: 0 }));
     const agingParties: Set<string>[] = AGING.map(() => new Set());
 
-    interface P { custId: number | null; party: string; agent: string | null; outstanding: number; overdue: number; overdueBank: number; overdueCash: number; oldestDays: number }
+    interface Inv { days: number | null; bal: number; bankBal: number; cashBal: number }
+    interface P {
+      custId: number | null; party: string; agent: string | null;
+      /** GROSS unpaid invoice total — kept for the hover breakdown only. */
+      gross: number;
+      /** Advance money of their own sitting with us. */
+      advance: number;
+      /** What they actually owe, after their advance. */
+      outstanding: number;
+      overdue: number; overdueBank: number; overdueCash: number; oldestDays: number;
+      invs: Inv[];
+    }
+    /*
+     * Advance money, per party.
+     *
+     * The page used to total advances for its own tile and never apply them to
+     * what anyone owed — so a party sitting on a large advance was shown at the
+     * full invoice figure and topped the "call now" list, while their Party
+     * Ledger (which credits an advance like any other payment) showed the far
+     * smaller real balance. Two screens, two answers, and the ledger was right.
+     *
+     * Netting happens PER PARTY: one party's advance must never cancel another
+     * party's debt, so a single grand total cannot be subtracted at the end.
+     */
+    const advByCust = new Map<number, number>();
+    for (const a of advances) {
+      if (a.custId == null || !fx.custOk(a.custId)) continue;
+      advByCust.set(a.custId, (advByCust.get(a.custId) ?? 0) + n(a.bankAmt) + n(a.cashAmt));
+    }
     const parties = new Map<string, P>();
+    let grossOutstanding = 0;
+    for (const c of sales) {
+      const split = recvByInv.get(c.code) ?? { bank: 0, cash: 0 };
+      /*
+       * Floor the invoice as a WHOLE, then apportion — not each side on its own.
+       *
+       * Flooring bank and cash separately over-states the balance whenever a
+       * payment on one side covers more than that side was billed: the surplus
+       * was thrown away by `Math.max(0, …)` instead of settling the other side.
+       * Across the book that inflated outstanding by about ₹78,000, so the
+       * Payment Desk (which floors the combined figure) and this report gave
+       * two different answers for the same party. The Party Ledger nets the
+       * buckets too, so the combined figure is the one to agree with.
+       *
+       * The bank/cash split is still needed for the ageing chart, so any
+       * spill-over is taken off the other side rather than dropped — which
+       * keeps bankBal + cashBal exactly equal to bal.
+       */
+      const bal = Math.max(0, n(c.b) + n(c.c) - split.bank - split.cash);
+      if (bal <= 0) continue;
+      let bankBal = Math.max(0, n(c.b) - split.bank);
+      let cashBal = Math.max(0, n(c.c) - split.cash);
+      const spill = bankBal + cashBal - bal;
+      if (spill > 0) {
+        const fromBank = Math.min(bankBal, spill);
+        bankBal -= fromBank;
+        cashBal -= spill - fromBank;
+      }
+      grossOutstanding += bal;
+      const key = c.customerName || '—';
+      let p = parties.get(key);
+      if (!p) {
+        p = {
+          custId: c.customerId ?? null, party: key,
+          agent: (c.customerId != null ? custMap.get(c.customerId)?.agentName : null) ?? null,
+          gross: 0, advance: 0, outstanding: 0, overdue: 0, overdueBank: 0, overdueCash: 0, oldestDays: 0, invs: [],
+        };
+        parties.set(key, p);
+      }
+      p.gross += bal;
+      const days = c.dueDate ? Math.floor((today.getTime() - this.startOfDay(c.dueDate).getTime()) / DAY) : null;
+      p.invs.push({ days, bal, bankBal, cashBal });
+    }
+
+    /*
+     * Second pass: spend each party's advance against their own invoices,
+     * OLDEST FIRST, then build every total from what survives.
+     *
+     * Oldest-first is how a payment is actually applied, and it is the only
+     * order that keeps the figures consistent with each other: netting the
+     * headline but leaving "overdue" and the ageing chart gross would have
+     * reproduced exactly the contradiction this was meant to remove — a party
+     * showing ₹52,806 owed and ₹5.57L overdue on the same row.
+     */
     let totalOutstanding = 0;
     let overdue = 0;
     let dueSoon = 0;
-    for (const c of sales) {
-      const split = recvByInv.get(c.code) ?? { bank: 0, cash: 0 };
-      const bankBal = Math.max(0, n(c.b) - split.bank);
-      const cashBal = Math.max(0, n(c.c) - split.cash);
-      const bal = bankBal + cashBal;
-      if (bal <= 0) continue;
-      totalOutstanding += bal;
-      const key = c.customerName || '—';
-      let p = parties.get(key);
-      if (!p) { p = { custId: c.customerId ?? null, party: key, agent: (c.customerId != null ? custMap.get(c.customerId)?.agentName : null) ?? null, outstanding: 0, overdue: 0, overdueBank: 0, overdueCash: 0, oldestDays: 0 }; parties.set(key, p); }
-      p.outstanding += bal;
-      if (c.dueDate) {
-        const days = Math.floor((today.getTime() - this.startOfDay(c.dueDate).getTime()) / DAY);
-        if (days > 0) {
-          overdue += bal;
-          p.overdue += bal;
-          p.overdueBank += bankBal;
-          p.overdueCash += cashBal;
-          p.oldestDays = Math.max(p.oldestDays, days);
-          const bi = AGING.findIndex((a) => days >= a.lo && days <= a.hi);
-          if (bi >= 0) { aging[bi].value += bal; aging[bi].bank += bankBal; aging[bi].cash += cashBal; agingParties[bi].add(key); }
-        } else if (days >= -15) {
-          dueSoon += bal;
+    for (const p of parties.values()) {
+      p.advance = p.custId != null ? (advByCust.get(p.custId) ?? 0) : 0;
+      let credit = p.advance;
+      // Most overdue first; invoices with no due date settle last.
+      const ordered = [...p.invs].sort((a, b) => (b.days ?? -Infinity) - (a.days ?? -Infinity));
+      for (const inv of ordered) {
+        const applied = Math.min(credit, inv.bal);
+        credit -= applied;
+        const left = inv.bal - applied;
+        if (left <= 0) continue;
+        // Keep the bank/cash split in proportion to what is left, so the two
+        // sides always add back up to the balance.
+        const ratio = left / inv.bal;
+        const bankLeft = inv.bankBal * ratio;
+        const cashLeft = inv.cashBal * ratio;
+        totalOutstanding += left;
+        p.outstanding += left;
+        if (inv.days == null) continue;
+        if (inv.days > 0) {
+          overdue += left;
+          p.overdue += left;
+          p.overdueBank += bankLeft;
+          p.overdueCash += cashLeft;
+          p.oldestDays = Math.max(p.oldestDays, inv.days);
+          const bi = AGING.findIndex((a) => inv.days! >= a.lo && inv.days! <= a.hi);
+          if (bi >= 0) { aging[bi].value += left; aging[bi].bank += bankLeft; aging[bi].cash += cashLeft; agingParties[bi].add(p.party); }
+        } else if (inv.days >= -15) {
+          dueSoon += left;
         }
       }
+      p.gross = r0(p.gross);
+      p.advance = r0(p.advance);
+      p.outstanding = r0(p.outstanding);
+      p.overdue = r0(p.overdue);
     }
     aging.forEach((a, i) => { a.value = r0(a.value); a.bank = r0(a.bank); a.cash = r0(a.cash); a.parties = agingParties[i].size; });
-    const advanceHeld = r0(advances.filter((a) => fx.custOk(a.custId)).reduce((s, a) => s + n(a.bankAmt) + n(a.cashAmt), 0));
+    const advanceHeld = r0([...advByCust.values()].reduce((s, v) => s + v, 0));
 
     // ── CRM recovery signals (from PAYMENT follow-ups) ──
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -545,6 +636,11 @@ export class ReportsService {
     };
 
     const flagOf = (p: P): { flag: string; rank: number } => {
+      // A party whose advance already covers their open bills owes nothing.
+      // Ringing them to ask for money we are holding is the wrong call — the
+      // work is to allocate the advance against the invoices, so say that
+      // instead of putting them at the top of the chase list.
+      if (p.gross > 0 && p.outstanding <= 0) return { flag: 'ADJUST ADVANCE', rank: 6 };
       if (p.overdue > 0 && p.oldestDays >= 60) return { flag: 'CALL NOW · 60+ days', rank: 1 };
       if (p.overdue > 0 && p.oldestDays >= 30) return { flag: 'CALL NOW · 30–59 days', rank: 2 };
       if (p.overdue > 0) return { flag: 'CALL · overdue', rank: 3 };
@@ -558,12 +654,15 @@ export class ReportsService {
         const { stage, promiseState } = stageOf(c);
         // A broken promise or a due callback is the most urgent — it outranks age.
         const crmBoost = stage === 'Promise broken' ? -0.5 : stage === 'Callback due' ? -0.25 : 0;
+        // Ranked on the NET figure: exposure is what is still owed after the
+        // party's own advance, not what the invoices happen to add up to.
         const score = p.outstanding * (1 + p.oldestDays / 30);
         const lr = p.custId != null ? lastRecByCust.get(p.custId) : undefined;
         const daysSince = c?.lastContact ? Math.floor((today.getTime() - this.startOfDay(c.lastContact).getTime()) / DAY) : null;
         return {
           customerId: p.custId, party: p.party, agent: p.agent,
-          outstanding: r0(p.outstanding), overdue: r0(p.overdue), oldestDays: p.oldestDays,
+          outstanding: p.outstanding, gross: p.gross, advance: p.advance,
+          overdue: p.overdue, oldestDays: p.oldestDays,
           lastReceipt: lr ? lr.toISOString() : null, flag, rank: rank + crmBoost,
           stage, lastContactAt: c?.lastContact ? c.lastContact.toISOString() : null, daysSinceContact: daysSince,
           nextPromiseAt: c?.nextPromise ? c.nextPromise.toISOString() : null, nextPromiseAmount: c?.nextAmount ?? null, promiseState, openFollowups: c?.open ?? 0,
@@ -637,7 +736,7 @@ export class ReportsService {
     const owingKeys = owing.map((p) => p.custId != null ? `c:${p.custId}` : nameKey(p.party));
 
     return {
-      totalOutstanding: r0(totalOutstanding), overdue: r0(overdue), dueSoon: r0(dueSoon), advanceHeld,
+      totalOutstanding: r0(totalOutstanding), grossOutstanding: r0(grossOutstanding), overdue: r0(overdue), dueSoon: r0(dueSoon), advanceHeld,
       owingParties: owing.length,
       olderOwingParties: owingKeys.filter((key) => !activeKeys.has(key)).length,
       collectionRate, dsoDays, collectedModes, topOverdueParties, aging, collectionTrend,

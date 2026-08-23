@@ -35,6 +35,16 @@ export interface CollectPrefill {
   itemText: string;
 }
 
+/**
+ * Never let a money field the server did not send reach a formatter — a browser
+ * running ahead of the API would otherwise print "₹NaN".
+ *
+ * `outstanding` is already the NET balance: the party's own advance has been
+ * applied to their oldest invoices first, server-side. `gross` is carried
+ * alongside purely so the hover text can show the breakdown.
+ */
+const money = (v: number | undefined) => (Number.isFinite(v) ? (v as number) : 0);
+
 const promiseChip = (s: PromiseState) => {
   switch (s) {
     case 'broken': return <Chip tone="rose"><AlertTriangle className="size-3" /> Promise broken</Chip>;
@@ -118,15 +128,15 @@ function MoneyKpi({ label, value, title, hint, icon, tone, index }: { label: str
  *  (overdue vs. total outstanding) so the state of the whole book reads at a glance. */
 export function RecoveryMoneyStrip({ balances }: { balances: PartyBalanceSummary[] }) {
   const totals = useMemo(() => {
-    let outstanding = 0, overdue = 0, dueSoon = 0, promised = 0, promisedBroken = 0, dueToday = 0, contacted = 0;
+    let outstanding = 0, gross = 0, overdue = 0, dueSoon = 0, promised = 0, promisedBroken = 0, dueToday = 0, contacted = 0;
     for (const p of balances) {
-      outstanding += p.outstanding; overdue += p.overdue; dueSoon += p.dueSoon;
+      outstanding += money(p.outstanding); gross += money(p.gross); overdue += money(p.overdue); dueSoon += money(p.dueSoon);
       if (p.promiseState === 'broken') promisedBroken += p.nextPromiseAmount ?? 0;
       else if (p.nextPromiseAmount) promised += p.nextPromiseAmount;
       if (p.promiseState === 'due today') dueToday += 1;
       if (p.hasFollowup) contacted += 1;
     }
-    return { outstanding, overdue, dueSoon, promised, promisedBroken, dueToday, parties: balances.length, contacted };
+    return { outstanding, gross, overdue, dueSoon, promised, promisedBroken, dueToday, parties: balances.length, contacted };
   }, [balances]);
   const notContacted = totals.parties - totals.contacted;
   // Real ratio, not a fabricated trend — how much of the book is already overdue.
@@ -138,7 +148,17 @@ export function RecoveryMoneyStrip({ balances }: { balances: PartyBalanceSummary
   return (
     <div className="space-y-2.5">
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
-        <MoneyKpi index={0} label="Total outstanding" value={inrCompact(totals.outstanding)} title={inrFull(totals.outstanding)} hint={`${totals.parties} owing part${totals.parties === 1 ? 'y' : 'ies'}`} icon={<Wallet className="size-5" />} tone="slate" />
+        {/* Net, so this agrees with the Party Ledger and the Collections report.
+            The gross invoice total is on hover, not on the card. */}
+        <MoneyKpi
+          index={0}
+          label="Total outstanding"
+          value={inrCompact(totals.outstanding)}
+          title={totals.gross > totals.outstanding ? `${inrFull(totals.outstanding)} owed — ${inrFull(totals.gross)} invoiced, less party advances` : inrFull(totals.outstanding)}
+          hint={`${totals.parties} owing part${totals.parties === 1 ? 'y' : 'ies'}`}
+          icon={<Wallet className="size-5" />}
+          tone="slate"
+        />
         <MoneyKpi index={1} label="Overdue" value={inrCompact(totals.overdue)} title={inrFull(totals.overdue)} hint={totals.outstanding > 0 ? `${overduePct}% of book` : undefined} icon={<TrendingDown className="size-5" />} tone="rose" />
         <MoneyKpi index={2} label="Due soon (15d)" value={inrCompact(totals.dueSoon)} title={inrFull(totals.dueSoon)} hint="not yet overdue" icon={<Clock3 className="size-5" />} tone="sky" />
         <MoneyKpi index={3} label="Promised to pay" value={inrCompact(totals.promised)} title={inrFull(totals.promised)} hint={totals.dueToday > 0 ? `${totals.dueToday} due today` : 'expected in'} icon={<HandCoins className="size-5" />} tone="violet" />
@@ -213,8 +233,12 @@ export function OwingPartiesWorklist({ onCollect, onOpenParty }: { onCollect: (p
     return [...filtered].sort((a, b) => rank[priorityOf(a)] - rank[priorityOf(b)] || b.overdue - a.overdue);
   }, [raw, priority]);
 
-  const collectFrom = (p: PartyBalanceSummary) =>
-    onCollect({ party: p.partyName, customerId: p.customerId, amount: p.overdue > 0 ? p.overdue : p.outstanding, itemText: `${inrFull(p.overdue > 0 ? p.overdue : p.outstanding)} balance · ${p.invoiceCount} invoice${p.invoiceCount === 1 ? '' : 's'}` });
+  const collectFrom = (p: PartyBalanceSummary) => {
+    // Prefill with what they actually owe. Asking for the gross invoice figure
+    // when their own advance is already sitting with us is the wrong ask.
+    const ask = p.overdue > 0 ? p.overdue : money(p.outstanding);
+    onCollect({ party: p.partyName, customerId: p.customerId, amount: ask, itemText: `${inrFull(ask)} balance · ${p.invoiceCount} invoice${p.invoiceCount === 1 ? '' : 's'}` });
+  };
 
   return (
     <section className="bg-card overflow-hidden rounded-xl border shadow-sm">
@@ -293,7 +317,12 @@ export function OwingPartiesWorklist({ onCollect, onOpenParty }: { onCollect: (p
                           </span>
                         </button>
                       </td>
-                      <td className="py-2.5 pr-3 text-right font-semibold tabular-nums" title={inrFull(p.outstanding)}>{inrCompact(p.outstanding)}</td>
+                      <td
+                        className="py-2.5 pr-3 text-right font-semibold tabular-nums"
+                        title={p.advanceHeld > 0 ? `${inrFull(money(p.outstanding))} owed — ${inrFull(money(p.gross))} invoiced, less ${inrFull(money(p.advanceHeld))} advance` : inrFull(money(p.outstanding))}
+                      >
+                        {inrCompact(money(p.outstanding))}
+                      </td>
                       <td className="py-2.5 pr-3 text-right tabular-nums">
                         {p.overdue > 0 ? (
                           <span className="inline-flex items-center gap-1">
@@ -340,7 +369,9 @@ export function OwingPartiesWorklist({ onCollect, onOpenParty }: { onCollect: (p
                       <div className="text-muted-foreground truncate text-xs">{p.agent || 'No agent'} · {p.invoiceCount} inv</div>
                     </button>
                     <div className="text-right">
-                      <div className="font-semibold tabular-nums" title={inrFull(p.outstanding)}>{inrCompact(p.outstanding)}</div>
+                      <div className="font-semibold tabular-nums" title={p.advanceHeld > 0 ? `${inrFull(money(p.outstanding))} owed — ${inrFull(money(p.gross))} invoiced, less ${inrFull(money(p.advanceHeld))} advance` : inrFull(money(p.outstanding))}>
+                        {inrCompact(money(p.outstanding))}
+                      </div>
                       {p.overdue > 0 ? (
                         <div className="text-rose-600 dark:text-rose-400 text-xs tabular-nums" title={agingHint(p.oldestDays)}>{inrCompact(p.overdue)} · {p.oldestDays}d</div>
                       ) : p.dueSoon > 0 ? (
@@ -415,7 +446,7 @@ export function PartyBalancePanel({ customerId, party, onPickAmount, onPickInvoi
   if (isLoading) {
     return <div className="text-muted-foreground flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm dark:border-white/10 dark:bg-white/[0.03]"><Loader2 className="size-4 animate-spin" /> Fetching balance…</div>;
   }
-  if (!data || data.outstanding <= 0) {
+  if (!data || money(data.outstanding) <= 0) {
     return (
       <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50/70 p-3 text-sm text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
         <Banknote className="size-4" /> No outstanding balance for <strong>{data?.partyName || party}</strong> — account is clear.
@@ -423,11 +454,17 @@ export function PartyBalancePanel({ customerId, party, onPickAmount, onPickInvoi
     );
   }
 
-  const fullLabel = `${inrFull(data.outstanding)} full balance`;
+  const fullLabel = `${inrFull(money(data.outstanding))} full balance`;
   return (
     <div className="bg-card overflow-hidden rounded-md border border-slate-300 dark:border-white/15">
       <div className="grid grid-cols-2 gap-px bg-slate-200 sm:grid-cols-4 dark:bg-white/10">
-        <Stat icon={Wallet} label="Outstanding" value={inrCompact(data.outstanding)} title={inrFull(data.outstanding)} strong />
+        <Stat
+          icon={Wallet}
+          label="Outstanding"
+          value={inrCompact(money(data.outstanding))}
+          title={data.advanceHeld > 0 ? `${inrFull(money(data.outstanding))} owed — ${inrFull(money(data.gross))} invoiced, less ${inrFull(money(data.advanceHeld))} advance` : inrFull(money(data.outstanding))}
+          strong
+        />
         <Stat icon={TrendingDown} label="Overdue" value={data.overdue > 0 ? inrCompact(data.overdue) : '—'} title={inrFull(data.overdue)} tone={data.overdue > 0 ? 'rose' : undefined} />
         <Stat icon={Clock3} label="Oldest" value={data.oldestDays > 0 ? `${data.oldestDays}d` : '—'} title={data.oldestDays > 0 ? agingHint(data.oldestDays) : undefined} />
         <Stat icon={CalendarClock} label="Last receipt" value={data.lastReceiptAt ? formatDate(data.lastReceiptAt) : 'never'} />
@@ -440,10 +477,14 @@ export function PartyBalancePanel({ customerId, party, onPickAmount, onPickInvoi
             Overdue {inrCompact(data.overdue)}
           </button>
         )}
-        <button type="button" onClick={() => onPickAmount(data.outstanding, fullLabel)} className="bg-card cursor-pointer rounded-md border border-slate-400 px-2.5 py-1 text-xs font-semibold tabular-nums text-slate-700 transition-colors hover:bg-slate-100 dark:border-white/25 dark:text-slate-200 dark:hover:bg-white/10">
-          Full {inrCompact(data.outstanding)}
+        <button type="button" onClick={() => onPickAmount(money(data.outstanding), fullLabel)} className="bg-card cursor-pointer rounded-md border border-slate-400 px-2.5 py-1 text-xs font-semibold tabular-nums text-slate-700 transition-colors hover:bg-slate-100 dark:border-white/25 dark:text-slate-200 dark:hover:bg-white/10">
+          Full {inrCompact(money(data.outstanding))}
         </button>
-        {data.advanceHeld > 0 && <span className="text-emerald-700 dark:text-emerald-400 text-xs">· {inrCompact(data.advanceHeld)} advance held</span>}
+        {data.advanceHeld > 0 && (
+          <span className="text-emerald-700 dark:text-emerald-400 text-xs" title={`Invoices total ${inrFull(data.outstanding)}; ${inrFull(data.advanceHeld)} of their own money is already with us.`}>
+            · {inrCompact(data.advanceHeld)} advance already applied
+          </span>
+        )}
         {data.invoices.length > 0 && (
           <button type="button" onClick={() => setShowInvoices((v) => !v)} className="text-muted-foreground hover:text-foreground ml-auto inline-flex cursor-pointer items-center gap-1 text-xs font-medium">
             <Receipt className="size-3.5" /> {showInvoices ? 'Hide' : `${data.invoices.length} open invoice${data.invoices.length === 1 ? '' : 's'}`}

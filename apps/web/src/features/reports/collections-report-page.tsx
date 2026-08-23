@@ -10,10 +10,18 @@ import { Kpi, RankedBars, ReportCard, ReportHeader, ReportSummary } from './repo
 import { ReportFilterBar, useReportFilters } from './report-filters';
 import { useCollectionsReport } from './use-reports';
 
+/**
+ * Never let a money field the server did not send reach a formatter — a browser
+ * running ahead of the API would otherwise print "₹NaN" across the screen.
+ */
+const money = (v: number | undefined) => (Number.isFinite(v) ? (v as number) : 0);
+
 const flagTone = (flag: string) => {
   if (flag.includes('60+')) return 'bg-red-50 text-red-700 ring-red-600/20';
   if (flag.includes('30')) return 'bg-orange-50 text-orange-700 ring-orange-600/20';
   if (flag.startsWith('CALL')) return 'bg-amber-50 text-amber-700 ring-amber-600/20';
+  // Not a chase — their own money is already with us and needs allocating.
+  if (flag === 'ADJUST ADVANCE') return 'bg-indigo-50 text-indigo-700 ring-indigo-600/20';
   if (flag === 'WATCH') return 'bg-slate-100 text-slate-600 ring-slate-500/20';
   return 'bg-emerald-50 text-emerald-700 ring-emerald-600/20';
 };
@@ -43,20 +51,31 @@ export function CollectionsReportPage() {
       <ReportSummary
         loading={isLoading}
         points={data ? [
-          { text: <>Total outstanding is <strong>{inrCompact(data.totalOutstanding)}</strong>, of which <strong>{inrCompact(data.overdue)}</strong>{data.totalOutstanding > 0 && <> ({Math.round((data.overdue / data.totalOutstanding) * 100)}%)</>} is overdue.</>, tone: data.overdue > 0 ? 'bad' : 'good' },
+          { text: <>Parties owe <strong>{inrCompact(money(data.totalOutstanding))}</strong>, of which <strong>{inrCompact(money(data.overdue))}</strong>{data.totalOutstanding > 0 && <> ({Math.round((money(data.overdue) / data.totalOutstanding) * 100)}%)</>} is past its due date.</>, tone: data.overdue > 0 ? 'bad' : 'good' },
           { text: <><strong>{inrCompact(data.dueSoon)}</strong> falls due in the next 15 days — get ahead of it.</>, tone: 'warn' },
-          { text: <><strong>{(data.recovery ?? []).filter((r) => r.rank <= 3).length}</strong> parties need a call now; <strong>{data.recovery?.[0]?.party ?? '—'}</strong> tops the list at <strong>{inrCompact(data.recovery?.[0]?.outstanding ?? 0)}</strong>.</>, tone: 'bad' },
+          { text: <><strong>{(data.recovery ?? []).filter((r) => r.rank <= 3).length}</strong> parties need a call now; <strong>{data.recovery?.[0]?.party ?? '—'}</strong> tops the list at <strong>{inrCompact(money(data.recovery?.[0]?.outstanding))}</strong>.</>, tone: 'bad' },
           ...((rk?.promisedValue ?? 0) > 0 ? [{ text: <><strong>{inrCompact(rk!.promisedValue)}</strong> is promised-to-pay across {rk!.promisedParties} parties — expected in.</>, tone: 'good' as const }] : []),
           ...((rk?.promisesOverdue ?? 0) > 0 ? [{ text: <><strong>{rk!.promisesOverdue}</strong> parties broke their promise ({inrCompact(rk!.brokenPromiseValue)}) — chase these first.</>, tone: 'bad' as const }] : []),
           { text: <><strong>{rk?.neverContacted ?? 0}</strong> of <strong>{data.owingParties}</strong> owing parties have no follow-up. This includes <strong>{data.olderOwingParties}</strong> parties not billed in the selected period.</>, tone: (rk?.neverContacted ?? 0) > 0 ? 'warn' : 'good' },
           { text: <>Collection efficiency is <strong>{data.collectionRate != null ? Math.round(data.collectionRate * 100) : '—'}%</strong> in the selected period (DSO {data.dsoDays ?? '—'} days).</>, tone: 'info' },
           { text: <>Collections in the selected period are <strong>{Math.round((((data.collectedModes ?? []).find((m) => m.name === 'Cash')?.value ?? 0) / ((data.collectedModes ?? []).reduce((s, m) => s + m.value, 0) || 1)) * 100)}%</strong> cash vs bank.</>, tone: 'info' },
-          ...(data.advanceHeld > 0 ? [{ text: <><strong>{inrCompact(data.advanceHeld)}</strong> is held as advances — net these before chasing.</>, tone: 'info' as const }] : []),
+          ...(data.advanceHeld > 0 ? [{ text: <><strong>{inrCompact(money(data.advanceHeld))}</strong> of party money is held as advances — already applied to the balances above. Allocate it against the open bills to clear them off the books.</>, tone: 'info' as const }] : []),
         ] : []}
       />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Kpi label="Total outstanding" value={data ? inrCompact(data.totalOutstanding) : '—'} title={data ? inrFull(data.totalOutstanding) : undefined} hint="net receivable" loading={isLoading} tone="rose" />
+        {/* Every money tile on this page is a NET balance — what the parties
+            actually owe once their own advances are applied. The gross invoice
+            total lives on hover, not on the face of the card: it is background
+            for a query, not the number anyone acts on. */}
+        <Kpi
+          label="Total outstanding"
+          value={data ? inrCompact(money(data.totalOutstanding)) : '—'}
+          title={data && data.advanceHeld > 0 ? `${inrFull(money(data.totalOutstanding))} owed — ${inrFull(money(data.grossOutstanding))} invoiced, less ${inrFull(money(data.advanceHeld))} of their own advances` : data ? inrFull(money(data.totalOutstanding)) : undefined}
+          hint="net receivable"
+          loading={isLoading}
+          tone="rose"
+        />
         <Kpi label="Overdue" value={data ? inrCompact(data.overdue) : '—'} title={data ? inrFull(data.overdue) : undefined} hint="past due date" loading={isLoading} tone="amber" />
         <Kpi label="Due soon" value={data ? inrCompact(data.dueSoon) : '—'} title={data ? inrFull(data.dueSoon) : undefined} hint="next 15 days" loading={isLoading} tone="blue" />
         <Kpi label="Advance held" value={data ? inrCompact(data.advanceHeld) : '—'} title={data ? inrFull(data.advanceHeld) : undefined} hint="money in hand" loading={isLoading} tone="emerald" />
@@ -173,7 +192,12 @@ export function CollectionsReportPage() {
                         {r.stage}
                       </span>
                     </td>
-                    <td className="py-2 pr-3 text-right font-semibold tabular-nums" title={inrFull(r.outstanding)}>{inrCompact(r.outstanding)}</td>
+                    <td
+                      className="py-2 pr-3 text-right font-semibold tabular-nums"
+                      title={(r.advance ?? 0) > 0 ? `${inrFull(money(r.outstanding))} owed — ${inrFull(money(r.gross))} invoiced, less ${inrFull(money(r.advance))} advance` : inrFull(money(r.outstanding))}
+                    >
+                      {inrCompact(money(r.outstanding))}
+                    </td>
                     <td className="py-2 pr-3 text-right tabular-nums text-red-600" title={inrFull(r.overdue)}>{r.overdue > 0 ? inrCompact(r.overdue) : '—'}</td>
                     <td className="py-2 pr-3 text-right tabular-nums">{r.oldestDays > 0 ? `${r.oldestDays}d` : '—'}</td>
                     <td className={cn('py-2 pr-3 whitespace-nowrap', promiseTone(r.promiseState))}>

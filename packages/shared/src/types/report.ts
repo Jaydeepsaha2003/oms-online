@@ -132,7 +132,17 @@ export interface RecoveryParty {
   customerId: number | null;
   party: string;
   agent: string | null;
+  /**
+   * What this party actually owes, after their own advance is applied — the
+   * figure the Party Ledger shows as the closing balance. Every money field on
+   * this row is net; `gross` is here only for the hover breakdown.
+   */
   outstanding: number;
+  /** Unpaid invoice total before their advance. Display only. */
+  gross: number;
+  /** Their own advance money sitting with us. */
+  advance: number;
+  /** Portion of `outstanding` past its due date — net, same as the rest. */
   overdue: number;
   oldestDays: number;
   lastReceipt: string | null;
@@ -156,8 +166,21 @@ export interface RecoveryParty {
 
 /** §8.2 — Collections & Recovery (Recovery Command Center). */
 export interface CollectionsReport {
+  /**
+   * Receivable after every party's own advance is applied — agrees with the
+   * Party Ledger's closing balance.
+   *
+   * Applied PER PARTY and OLDEST INVOICE FIRST, not as one subtraction at the
+   * end: one party's advance must never cancel another party's debt, and the
+   * oldest-first order is what keeps `overdue`, `dueSoon` and the ageing
+   * buckets below consistent with this total.
+   */
   totalOutstanding: number;
+  /** Unpaid invoice total before advances. Display only, for the breakdown. */
+  grossOutstanding: number;
+  /** Portion of `totalOutstanding` past its due date — net, same as the rest. */
   overdue: number;
+  /** Portion falling due in the next 15 days — net. */
   dueSoon: number;
   advanceHeld: number;
   /** Parties with an unpaid invoice balance (point-in-time). */

@@ -290,8 +290,14 @@ export interface PartyBalanceSummary {
   customerId: number | null;
   partyName: string;
   agent: string | null;
-  /** Net receivable = billed − received, floored at 0, across open invoices. */
+  /**
+   * What the party actually owes, after their own advance is applied — the
+   * Party Ledger's closing balance. Every money field here is net; `gross` is
+   * carried only so a screen can show the breakdown on hover.
+   */
   outstanding: number;
+  /** Unpaid invoice total before their advance. Display only. */
+  gross: number;
   /** Portion of outstanding that is past its due date. */
   overdue: number;
   /** Portion due within the next 15 days. */

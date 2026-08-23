@@ -19,7 +19,7 @@ click to check it. Statuses follow §19.4 of the spec.
 
 | Status | Count | Tickets |
 |---|---|---|
-| ✅ Developer Completed | 40 | K-2.1, K-2.2, K-3.1, K-4.1, K-4.2, K-4.3, K-5.1, K-5.2, K-6.1, K-6.2, K-7.1, K-8, K-9.1, K-10.1, K-11.1, K-12.2, K-13.1, K-14.1 … K-14.14, K-16, K-17.1, K-17.2, PD-1 … PD-6 |
+| ✅ Developer Completed | 46 | K-2.1, K-2.2, K-3.1, K-4.1, K-4.2, K-4.3, K-5.1, K-5.2, K-6.1, K-6.2, K-7.1, K-8, K-9.1, K-10.1, K-11.1, K-12.2, K-13.1, K-14.1 … K-14.14, K-16, K-17.1, K-17.2, PD-1 … PD-6, CR-1 … CR-6 |
 | 🔵 In Progress | 0 | — |
 | ⬜ Open | 1 | K-19 |
 | 🟡 Partly done | 1 | K-15 |
@@ -474,6 +474,134 @@ something: rose = overdue or urgent, blue = bank, green = cash. The balance pane
 — squared corners, hairline rules, tabular figures, and a selection bar that reads as a
 totals row.
 **Where to check** — CRM → Payment Recovery Desk → New payment follow-up.
+
+---
+
+## Reports — Collections & Recovery
+
+### CR-1 · Balances disagreed with the Party Ledger ✅
+**What you reported** — MANGAL & MANGAL shows about ₹52,000 in the Ledger, but
+Collections & Recovery showed something completely different.
+
+**You were right, and the numbers reconcile exactly:**
+
+| | |
+|---|---|
+| Party Ledger closing balance | **₹52,806** |
+| Collections "Total outstanding" | **₹5,56,681** |
+| The gap | **₹5,03,875** |
+| Advance held for this party | **₹5,03,875** |
+| ₹5,56,681 − ₹5,03,875 | **₹52,806** — the Ledger, to the rupee |
+
+**The cause** — Collections was adding up unpaid **invoice** balances and never applying
+the party's own advance. The Ledger credits an advance like any other payment, so it
+showed ₹52,806. Both were arithmetically right; they were answering different questions.
+And the tile was labelled **"net receivable"** while showing a gross figure, which is
+what made it read as broken rather than merely different. The page's own summary even
+said *"net these before chasing"* — and then did not.
+
+**The fix** — Collections now nets each party's advance against their own invoices.
+- **Total outstanding** shows the net figure (₹52,806 for MANGAL), with the gross and the
+  advance on hover, and the caption reads *"after ₹5.04L advance"* instead of the false
+  *"net receivable"*.
+- **Each worklist row** shows what that party actually owes, with *"₹5.57L less ₹5.04L
+  adv"* underneath so it can never look like it contradicts the invoice list.
+- **Ranking uses the net figure**, so a party is no longer at the top of the call list
+  for money already sitting with you.
+- **New flag: ADJUST ADVANCE** — a party whose advance covers their open bills is not a
+  chase, it is an allocation job, and the list now says so.
+- **The gross figure is kept** everywhere it was, because invoice-level work needs it: an
+  invoice is open until an advance is actually allocated against it.
+
+**Netted per party, never as one grand total.** One party's spare advance must not cancel
+another party's debt. Across the whole book a blanket subtraction would have reported
+**₹1,60,05,572**; correct per-party netting gives **₹1,73,37,515** — a **₹13.3 lakh**
+difference, caused by two parties (VIJAY VALLABH METALS, ANIL METAL) holding more advance
+than they owe.
+
+**Verified by running both real services side by side** against a copy of your database —
+8 checks, all passing: the two screens now agree to the rupee for MANGAL & MANGAL; the
+party row nets too; gross is still available; net never exceeds gross; no negative
+balances; and the two fully-covered parties are off the chase list.
+
+### CR-2 · Payment Desk on the net balance too ✅
+**Your call** — "make the payment desk also show net balance." Done, and chasing the
+whole chain turned up two more defects underneath it.
+
+**The Payment Desk now shows the net figure** in Total outstanding, in every worklist row
+(with *"₹5.57L less ₹5.04L adv"* underneath), and in the party panel inside the follow-up
+dialog. **Collect** pre-fills the promise with what they actually owe rather than the
+gross invoice figure — asking for money already sitting with you is the wrong ask. The
+advance note now reads *"₹5.04L advance already applied"* instead of merely *"held"*.
+Per-invoice balances stay gross, because an invoice is open until the advance is
+allocated against it.
+
+### CR-3 · Two screens billed invoices off different columns ✅
+Found while checking CR-2. The Payment Desk computed what was owed from
+`challan.total`; Collections and the Party Ledger use **`b + c`** (the bank and cash
+sides). On **11 of 1,964 challans** the stored `total` does not equal `b + c` — and not
+because of TCS, TDS or other charges, which are zero on those rows. So those invoices
+reported a different balance depending on which screen you opened.
+**Live example** — MANGAL & MANGAL's `SSS/560`: total **₹56,715**, b + c **₹55,379**, a
+**₹1,336** gap. That was the last rupee of difference between the Desk and the Ledger.
+**Fixed** by billing on `b + c` everywhere, matching the Ledger.
+**Worth your attention** — those 11 challans have a split that does not add up to their
+own total, ₹28,034 net across the book. That is a data question, not a code one; tell me
+if you want them listed.
+
+### CR-4 · Overdue was over-stated by flooring each side separately ✅
+Also found while reconciling. Collections floored the bank and cash sides
+**independently** — `max(0, b − bankPaid) + max(0, c − cashPaid)`. When a payment on one
+side covered more than that side was billed, the surplus was thrown away by the `max`
+instead of settling the other side, so the invoice looked more unpaid than it was.
+**Across the book that inflated outstanding by about ₹78,000.** The Ledger nets the two
+buckets, so the invoice is now floored as a whole and the surplus is carried across; the
+bank/cash split the ageing chart needs still adds up exactly to the balance.
+
+### CR-5 · ₹NaN on the tiles ✅
+**What you saw** — Total outstanding showed **₹NaN** and the top party showed **₹0**.
+**Cause** — my own change, plus a stale server. The browser had the new bundle, which
+reads `netOutstanding`, while the API was still running the old build and did not send
+that field; `undefined` reaching a money formatter renders `NaN`.
+**Fixed twice over** — the API now sends it (it needs the restart below), and both pages
+read every money field defensively: a missing `netOutstanding` falls back to the gross
+figure, which is honest, instead of `NaN`, which is not. A browser ahead of the server
+can no longer produce it.
+
+### CR-6 · Every figure is a net balance, and the sentence says less ✅
+**Your call** — "don't need to mention something like this, also always show the net
+balances."
+
+**The summary line** now reads *"Parties owe ₹1.73Cr, of which ₹72.3L (42%) is past its
+due date."* The invoiced-less-held arithmetic is gone from the sentence; it lives on the
+tile's hover, where it belongs.
+
+**The gross figure is off the face of every card and row.** Total outstanding, each
+worklist row, the Payment Desk tiles and the party panel show one number — what is owed.
+Hover still gives the breakdown (*"₹52,806 owed — ₹5,56,681 invoiced, less ₹5,03,875
+advance"*), so nothing is lost, but nobody has to read arithmetic to find the figure they
+act on.
+
+**Overdue, Due soon and the ageing chart are netted too** — this was the part that would
+have kept the contradiction alive. Netting the headline while leaving overdue gross put
+two numbers on one row that could not both be true: ₹52,806 owed beside ₹5.57L overdue.
+Each party's advance is now spent against **their own invoices, oldest first** — which is
+how a payment is actually applied — and every total is rebuilt from what survives.
+**Live example** — MANGAL & MANGAL now reads ₹52,806 owed and ₹52,806 overdue, matching
+the Ledger. Across the book, overdue fell from ₹80.5L to **₹72.3L**: the ₹8.2L difference
+was advances that had already covered those bills.
+
+**Verified — 15 checks against a copy of your database, all passing.**
+Ledger, Collections and Payment Desk all read **₹52,806** for MANGAL & MANGAL, and
+**₹1,72,59,532** for the whole book — overdue agrees at **₹72,33,084** on both screens.
+Overdue never exceeds outstanding; overdue + due soon never exceeds it either; the four
+ageing buckets add up to overdue exactly and each bucket's bank + cash adds up to its own
+value; **₹12,58,337** of the ₹25,90,280 held has actually been applied (the rest belongs
+to parties who owe less than they have deposited); no row is negative; and the two parties
+fully covered by their own advance show **zero** overdue.
+
+**Where to check** — Reports → Collections & Recovery, and CRM → Payment Recovery Desk.
+Both should now match the Party Ledger for any party you pick.
 
 ---
 
