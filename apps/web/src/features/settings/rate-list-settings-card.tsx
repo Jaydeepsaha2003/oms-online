@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Layers, Loader2, Plus, RotateCcw, Trash2, TriangleAlert, X } from 'lucide-react';
+import { Check, ChevronRight, Layers, Loader2, Plus, RotateCcw, Trash2, TriangleAlert, X } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   AVAILABLE_DISPLAYS,
@@ -307,7 +307,8 @@ function ConfigEditor({
             ]}
           />
           <p className="text-muted-foreground text-[11px]">
-            A category can still choose its own below (§6).
+            Applies to everything. Open a category below to override it — for the whole category, one sub-category,
+            one item, or one design.
           </p>
         </div>
         <div className="space-y-1">
@@ -332,7 +333,7 @@ function ConfigEditor({
             {cats.length === 0
               ? party
                 ? 'no changes for this party — same as Default'
-                : 'nothing configured — every category is included with all its sub-categories'
+                : 'nothing configured — open one to set its Available column, sub-categories or per-item exceptions'
               : `${cats.length} configured; anything not listed is included in full`}
           </span>
         </div>
@@ -402,25 +403,41 @@ function CategoryRow({
   return (
     <div className={cn('rounded-lg border', !included && 'bg-muted/30 opacity-70')}>
       <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+        {/*
+          * This row is the only way in to the Available column, the sub-category
+          * picker and the per-item exceptions — and it used to be a bare text
+          * button: no chevron, no cursor, no hover. Nothing said it opened, so
+          * every one of those settings was invisible unless you happened to
+          * click the category name. The chevron and the explicit "Set up" are
+          * the fix; the row is a real disclosure control now.
+          */}
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
-          className="min-w-0 flex-1 text-left text-[13px] font-bold"
+          aria-expanded={open}
+          title={`${open ? 'Hide' : 'Show'} ${category} — Available column, sub-categories, per-item exceptions`}
+          className="hover:bg-muted/60 -mx-1.5 flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-left transition-colors"
         >
-          {category}
-          <span className="text-muted-foreground ml-2 text-[11px] font-medium">
-            {!value
-              ? (inheritLabel ?? 'all sub-categories')
-              : [
-                  included ? null : 'excluded',
-                  picked.length ? `${picked.length} of ${subs.length} sub-categories` : 'all sub-categories',
-                  value.availableDisplay ? (value.availableDisplay === 'PCS' ? 'Pieces' : 'Size') : null,
-                  overrides.length ? `${overrides.length} available exception${overrides.length === 1 ? '' : 's'}` : null,
-                  combos.length ? `${combos.length} combination${combos.length === 1 ? '' : 's'}` : null,
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
+          <ChevronRight className={cn('text-muted-foreground size-4 shrink-0 transition-transform', open && 'rotate-90')} />
+          <span className="min-w-0 flex-1">
+            <span className="text-[13px] font-bold">{category}</span>
+            <span className="text-muted-foreground ml-2 text-[11px] font-medium">
+              {!value
+                ? (inheritLabel ?? 'all sub-categories')
+                : [
+                    included ? null : 'excluded',
+                    picked.length ? `${picked.length} of ${subs.length} sub-categories` : 'all sub-categories',
+                    value.availableDisplay ? (value.availableDisplay === 'PCS' ? 'Pieces' : 'Size') : null,
+                    overrides.length ? `${overrides.length} available exception${overrides.length === 1 ? '' : 's'}` : null,
+                    combos.length ? `${combos.length} combination${combos.length === 1 ? '' : 's'}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+            </span>
           </span>
+          {!open && (
+            <span className="text-primary shrink-0 text-[10.5px] font-bold tracking-wide uppercase">Set up</span>
+          )}
         </button>
         {canEdit && (
           <>
@@ -441,6 +458,14 @@ function CategoryRow({
           </>
         )}
       </div>
+
+      {/* An excluded category has nothing to configure, so the panel is empty —
+          say that rather than appearing to ignore the click. */}
+      {open && !included && (
+        <p className="text-muted-foreground border-t px-3 py-2 text-[11.5px]">
+          {category} is excluded from the rate list, so there is nothing to lay out. Include it to set its Available column.
+        </p>
+      )}
 
       {open && included && (
         <div className="space-y-3 border-t px-3 py-2.5">
@@ -553,7 +578,17 @@ function AvailableOverrideEditor({
 
   // Only fetched once the form is open — the picker is the only thing that needs
   // item names, and the settings screen must not pull the catalogue to render.
-  const { data: items, isLoading } = useRateListCategoryItems(adding && scope !== 'SUBCATEGORY' ? category : null);
+  /*
+   * `isFetching`/`isError` rather than `isLoading`.
+   *
+   * `isLoading` stayed true after a failed request, so a picker that could not
+   * load sat on "Loading…" for ever — and the fallback for an empty list,
+   * "Nothing on the sheet", would have been just as wrong: it states a fact
+   * about the catalogue when the truth is that we never got an answer. The two
+   * cases have to read differently or the user cannot tell "this category has no
+   * items" from "something is broken".
+   */
+  const { data: items, isFetching, isError } = useRateListCategoryItems(adding && scope !== 'SUBCATEGORY' ? category : null);
   const pool = scope === 'DESIGN' ? (items?.designs ?? []) : (items?.products ?? []);
   /** Narrowed by the chosen sub-category, so picking one does not offer items
    *  that do not appear in it. */
@@ -674,13 +709,21 @@ function AvailableOverrideEditor({
                 <Label className="text-muted-foreground text-[10px] font-bold tracking-wide uppercase">
                   {scope === 'DESIGN' ? 'Design' : 'Item'}
                 </Label>
+                {/*
+                  * The empty option's label is FIXED.
+                  *
+                  * It used to carry the state — "Loading…" / "Could not load" /
+                  * "Nothing on the sheet" — but the combobox seeds its visible
+                  * text from the matching option once and does not re-derive it
+                  * when the options change. So the box sat on "Loading…" after
+                  * the request had already failed. State belongs in the disabled
+                  * flag and the line below, both of which do re-render.
+                  */}
                 <NativeSelect
                   value={target}
                   onChange={setTarget}
-                  options={[
-                    { value: '', label: isLoading ? 'Loading…' : targetOptions.length ? 'Pick one…' : 'Nothing on the sheet' },
-                    ...targetOptions.map((x) => ({ value: x, label: x })),
-                  ]}
+                  disabled={isError || (isFetching && !items)}
+                  options={[{ value: '', label: 'Pick one…' }, ...targetOptions.map((x) => ({ value: x, label: x }))]}
                   className="h-8 w-56 text-[12px]"
                 />
               </div>
@@ -701,6 +744,21 @@ function AvailableOverrideEditor({
               Cancel
             </Button>
           </div>
+          {scope !== 'SUBCATEGORY' && isError && (
+            <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+              Could not load the {scope === 'DESIGN' ? 'designs' : 'items'} in {category}. Pick a sub-category rule instead, or
+              reload the page and try again.
+            </p>
+          )}
+          {scope !== 'SUBCATEGORY' && !isError && isFetching && !items && (
+            <p className="text-muted-foreground text-[11px]">Loading the {scope === 'DESIGN' ? 'designs' : 'items'} in {category}…</p>
+          )}
+          {scope !== 'SUBCATEGORY' && !isError && !isFetching && items && targetOptions.length === 0 && (
+            <p className="text-muted-foreground text-[11px]">
+              Nothing on the rate list in {category}
+              {sub ? ` under ${sub}` : ''} to make a rule about.
+            </p>
+          )}
         </div>
       )}
 
