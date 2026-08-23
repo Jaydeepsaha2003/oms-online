@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AlarmClock, Bell, Check, ChevronDown, CircleCheck, Clock, Eye, HandCoins, Handshake, Info, Loader2, MessageSquarePlus, Mic, Pencil, Plus, RotateCcw, Search, Trash2, TriangleAlert } from 'lucide-react';
+import { AlarmClock, Bell, Building2, CalendarDays, Check, ChevronDown, CircleCheck, Clock, Eye, Factory, Flag, HandCoins, Handshake, Info, ListChecks, Loader2, MessageSquare, MessageSquarePlus, Mic, Package, PackageCheck, Pencil, Plus, RotateCcw, Search, SlidersHorizontal, Sparkles, Trash2, TriangleAlert, Truck, Wallet, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { type FollowupDto, type FollowupKind, type FollowupPartyGroup } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -598,14 +598,20 @@ function LogDialog({ f, onClose }: { f: FollowupDto; onClose: () => void }) {
 }
 
 /* ── New / edit follow-up dialog ─────────────────────────────────────────────
- * Designed to be usable at a glance: big touch targets, one question per block,
- * emoji-guided choices and tap-chips instead of typing wherever possible. */
+ * Laid out as a data-entry form in a management system, not a consumer app:
+ * each question is a titled section with a captioned header and a rule under
+ * it, labels are small uppercase captions, money and dates are tabular.
+ *
+ * Icons are lucide line icons rather than emoji — emoji render differently on
+ * every OS, carry a colour we do not control, and sit oddly next to the rest of
+ * the app. The big tap targets stay: this is used on a phone on the shop floor.
+ */
 
-const STAGE_CHIPS: { v: string; emoji: string; label: string }[] = [
-  { v: 'POLISHING', emoji: '✨', label: 'Polishing' },
-  { v: 'SUPPLIER', emoji: '🏭', label: 'Supplier' },
-  { v: 'DISPATCH', emoji: '🚚', label: 'Dispatch' },
-  { v: 'READY', emoji: '✅', label: 'Ready' },
+const STAGE_CHIPS: { v: string; icon: LucideIcon; label: string }[] = [
+  { v: 'POLISHING', icon: Sparkles, label: 'Polishing' },
+  { v: 'SUPPLIER', icon: Factory, label: 'Supplier' },
+  { v: 'DISPATCH', icon: Truck, label: 'Dispatch' },
+  { v: 'READY', icon: PackageCheck, label: 'Ready' },
 ];
 
 const dayShift = (days: number) => {
@@ -633,23 +639,47 @@ function HelpTip({ text }: { text: string }) {
   );
 }
 
-/** One question-block of the form: a big icon + heading, then the control. */
-function Block({ emoji, title, hint, children }: { emoji: string; title: string; hint?: string; children: React.ReactNode }) {
+/** Small uppercase caption above a field — the app's standard form label. */
+const CAPTION = 'text-[10.5px] font-bold tracking-[0.09em] text-slate-500 uppercase dark:text-slate-400';
+
+/** One section of the form: a captioned header bar, a rule, then the controls. */
+function Section({
+  icon: Icon,
+  title,
+  hint,
+  children,
+}: {
+  icon: LucideIcon;
+  title: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="rounded-xl border bg-slate-50/60 p-3.5 sm:p-4">
-      <div className="mb-2.5 flex items-center gap-2.5">
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-white text-lg shadow-sm ring-1 ring-slate-200">{emoji}</span>
-        <div className="flex items-center gap-1.5">
-          <div className="text-[15px] font-semibold leading-tight">{title}</div>
-          {hint && <HelpTip text={hint} />}
-        </div>
+    <section className="bg-card overflow-hidden rounded-md border border-slate-200 dark:border-white/10">
+      <header className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 dark:border-white/10 dark:bg-white/[0.03]">
+        <Icon className="size-3.5 shrink-0 text-slate-500 dark:text-slate-400" />
+        <span className={CAPTION}>{title}</span>
+        {hint && <HelpTip text={hint} />}
+      </header>
+      <div className="p-3">{children}</div>
+    </section>
+  );
+}
+
+/** Caption + control, the unit every field in this form is built from. */
+function Field({ label, note, children }: { label: string; note?: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1.5">
+      <div className={CAPTION}>
+        {label}
+        {note && <span className="ml-1 font-semibold tracking-normal normal-case opacity-70">{note}</span>}
       </div>
       {children}
     </div>
   );
 }
 
-const BIG_FIELD = 'h-12 text-base';
+const BIG_FIELD = 'h-11 text-[15px]';
 
 /** Formats the still-open quantity of an order line, e.g. "5 bags, 40 kg".
  *  `toLocaleString` is the app's usual quantity format: thousands grouped, at
@@ -850,6 +880,8 @@ function FollowupForm({ kind, editing, prefill, onClose }: { kind: FollowupKind;
   }, [lookups, orderId]);
 
   const isPay = kind === 'PAYMENT';
+  const isInquiry = kind === 'INQUIRY';
+
   const submit = () => {
     if (!party.trim()) return toast.error('Choose or type the party first.');
     const numOrNull = (v: string) => {
@@ -925,14 +957,16 @@ function FollowupForm({ kind, editing, prefill, onClose }: { kind: FollowupKind;
           type="button"
           onClick={() => setPromisedAt(promisedAt === c.v ? '' : c.v)}
           className={cn(
-            'h-11 rounded-lg border px-3.5 text-[15px] font-semibold transition-colors',
-            promisedAt === c.v ? 'border-blue-600 bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-700 hover:border-blue-300 hover:bg-blue-50',
+            'h-11 cursor-pointer rounded-md border px-3.5 text-sm font-semibold transition-colors',
+            promisedAt === c.v
+              ? 'border-slate-800 bg-slate-800 text-white dark:border-slate-200 dark:bg-slate-200 dark:text-slate-900'
+              : 'bg-card border-slate-300 text-slate-700 hover:border-slate-400 hover:bg-slate-50 dark:border-white/15 dark:text-slate-200 dark:hover:bg-white/5',
           )}
         >
           {c.label}
         </button>
       ))}
-      <Input type="date" className="h-11 w-full flex-1 basis-36 text-[15px]" value={promisedAt} onChange={(e) => setPromisedAt(e.target.value)} />
+      <Input type="date" className="h-11 w-full flex-1 basis-36 text-sm tabular-nums" value={promisedAt} onChange={(e) => setPromisedAt(e.target.value)} />
     </div>
   );
 
@@ -941,42 +975,79 @@ function FollowupForm({ kind, editing, prefill, onClose }: { kind: FollowupKind;
       value={description}
       onChange={(e) => setDescription(e.target.value)}
       rows={Math.min(8, Math.max(2, description.split('\n').length + 1))}
-      placeholder="Type the note here — one line or many."
-      className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 w-full rounded-md border px-3 py-2 text-base outline-none placeholder:text-placeholder focus-visible:ring-[3px]"
+      placeholder="What was discussed, agreed or promised."
+      className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 w-full rounded-md border px-3 py-2 text-[15px] outline-none placeholder:text-placeholder focus-visible:ring-[3px]"
     />
   );
 
+  /* A segmented control rather than two loose buttons: priority is one value with
+   * two states, and a joined pair says that better than two independent chips. */
   const urgencyButtons = (
-    <div className="grid grid-cols-2 gap-2">
-      <button type="button" onClick={() => setPriority('NORMAL')} className={cn('h-12 rounded-lg border text-[15px] font-semibold transition-colors', priority === 'NORMAL' ? 'border-emerald-600 bg-emerald-600 text-white shadow-sm' : 'bg-white text-slate-700 hover:bg-emerald-50')}>🙂 Normal</button>
-      <button type="button" onClick={() => setPriority('URGENT')} className={cn('h-12 rounded-lg border text-[15px] font-semibold transition-colors', priority === 'URGENT' ? 'border-rose-600 bg-rose-600 text-white shadow-sm' : 'bg-white text-slate-700 hover:bg-rose-50')}>🔥 Urgent</button>
+    <div className="inline-flex w-full overflow-hidden rounded-md border border-slate-300 dark:border-white/15">
+      <button
+        type="button"
+        onClick={() => setPriority('NORMAL')}
+        className={cn(
+          'h-11 flex-1 cursor-pointer text-sm font-semibold transition-colors',
+          priority === 'NORMAL'
+            ? 'bg-slate-700 text-white dark:bg-slate-600'
+            : 'bg-card text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-white/5',
+        )}
+      >
+        Normal
+      </button>
+      <button
+        type="button"
+        onClick={() => setPriority('URGENT')}
+        className={cn(
+          'inline-flex h-11 flex-1 cursor-pointer items-center justify-center gap-1.5 border-l border-slate-300 text-sm font-semibold transition-colors dark:border-white/15',
+          priority === 'URGENT'
+            ? 'bg-rose-600 text-white'
+            : 'bg-card text-rose-700 hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-500/10',
+        )}
+      >
+        <TriangleAlert className="size-4" /> Urgent
+      </button>
     </div>
   );
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[92vh] w-[calc(100vw-2rem)] sm:max-w-3xl">
-        <DialogHeader>
-          <div className="flex items-center gap-1.5">
-            <DialogTitle className="text-xl">{editing ? 'Edit follow-up' : isPay ? 'New payment follow-up' : 'New follow-up'}</DialogTitle>
-            <HelpTip text="Fill what you know — only the party is a must. The system will remember and remind." />
+      <DialogContent className="max-h-[92vh] w-[calc(100vw-2rem)] gap-0 p-0 sm:max-w-3xl">
+        <DialogHeader className="border-b border-slate-200 py-3 pr-12 pl-4 dark:border-white/10">
+          <div className="flex items-center gap-2.5">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-600 dark:bg-white/10 dark:text-slate-300">
+              {isPay ? <HandCoins className="size-4" /> : isInquiry ? <MessageSquarePlus className="size-4" /> : <Handshake className="size-4" />}
+            </span>
+            <div className="min-w-0">
+              <DialogTitle className="truncate text-base leading-tight font-semibold">
+                {editing ? 'Edit follow-up' : isPay ? 'New payment follow-up' : isInquiry ? 'New inquiry' : 'New follow-up'}
+              </DialogTitle>
+              <p className="text-muted-foreground mt-0.5 text-[11.5px]">
+                Only the party is required. Everything else can be filled in later.
+              </p>
+            </div>
           </div>
           <DialogDescription className="sr-only">Fill what you know — only the party is a must. The system will remember and remind.</DialogDescription>
         </DialogHeader>
 
-        <div className="-mx-1 max-h-[64vh] space-y-3 overflow-y-auto px-1 pb-1">
+        <div className="max-h-[64vh] space-y-2.5 overflow-y-auto bg-slate-50/70 p-3 dark:bg-white/[0.02]">
           {/* 1 · WHO */}
-          <Block emoji="👤" title="Which party?" hint="Search a customer, or just type any name.">
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-              <Combobox value={party} onChange={onPickParty} onType={setPartyQuery} options={parties.map((p) => p.partyName)} creatable placeholder="Type the party name…" className={BIG_FIELD} />
-              <Combobox value={orderCode} onChange={onPickOrder} onType={setOrderQuery} options={orderOptions} placeholder={party ? '🔗 Their open orders — tap to pick' : '🔗 Link an open order # (optional)'} className={BIG_FIELD} />
+          <Section icon={Building2} title="Party" hint="Search a customer, or just type any name. Linking one of their open orders is optional.">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Party name">
+                <Combobox value={party} onChange={onPickParty} onType={setPartyQuery} options={parties.map((p) => p.partyName)} creatable placeholder="Type the party name…" className={BIG_FIELD} />
+              </Field>
+              <Field label="Linked order" note="(optional)">
+                <Combobox value={orderCode} onChange={onPickOrder} onType={setOrderQuery} options={orderOptions} placeholder={party ? 'Their open orders — tap to pick' : 'Order number'} className={BIG_FIELD} />
+              </Field>
             </div>
-          </Block>
+          </Section>
 
           {isPay ? (
             /* ── Payment layout: money → date → what-for → notes → urgency ── */
             <>
-              <Block emoji="💰" title="How much & by when?" hint="Pick from the balance below, then set the promised amount and date.">
+              <Section icon={Wallet} title="Payment commitment" hint="Pick from the balance below, then set the promised amount and date.">
                 <div className="space-y-4">
                   {(party.trim() || customerId != null) && (
                     <PartyBalancePanel
@@ -987,104 +1058,112 @@ function FollowupForm({ kind, editing, prefill, onClose }: { kind: FollowupKind;
                     />
                   )}
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <div>
-                      <div className="text-muted-foreground mb-1.5 text-xs font-semibold tracking-wide uppercase">Promised amount ₹</div>
+                    <Field label="Promised amount">
                       <div className="relative">
-                        <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-base text-slate-500">₹</span>
+                        <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[15px] text-slate-500">₹</span>
                         <Input type="number" min="0" inputMode="numeric" placeholder="0" className={cn(BIG_FIELD, 'pl-8 font-semibold tabular-nums')} value={promisedAmount} onChange={(e) => setPromisedAmount(e.target.value)} />
                       </div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground mb-1.5 text-xs font-semibold tracking-wide uppercase">Promised by</div>
-                      {dateChipRow}
-                    </div>
+                    </Field>
+                    <Field label="Promised by">{dateChipRow}</Field>
                   </div>
-                  <div>
-                    <div className="text-muted-foreground mb-1.5 text-xs font-semibold tracking-wide uppercase">What's this payment for? <span className="normal-case">(optional)</span></div>
+                  <Field label="Against" note="(optional)">
                     <Input className={BIG_FIELD} value={itemText} onChange={(e) => setItemText(e.target.value)} placeholder="e.g. balance for challan 210" />
-                  </div>
+                  </Field>
                 </div>
-              </Block>
+              </Section>
 
-              <Block emoji="💬" title="Notes" hint="What was discussed — one line or many.">
-                {notesField}
-              </Block>
-
-              <Block emoji="⚡" title="How urgent?">
-                {urgencyButtons}
-              </Block>
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-[1fr_auto]">
+                <Section icon={MessageSquare} title="Remarks" hint="What was discussed — one line or many.">
+                  {notesField}
+                </Section>
+                <Section icon={Flag} title="Priority">
+                  <div className="sm:w-56">{urgencyButtons}</div>
+                </Section>
+              </div>
             </>
           ) : (
             /* ── Delivery layout: items → notes → checklist → when → stage + urgency ── */
             <>
-              <Block emoji="📦" title="Items & quantities" hint="Add each item on this follow-up with how much to deliver.">
+              <Section icon={Package} title="Items & quantities" hint="Add each item on this follow-up with how much to deliver.">
                 <ItemLinesEditor rows={lineItems} onChange={setLineItems} openItems={itemPool} catalog={catalogOptions} />
-              </Block>
+              </Section>
 
-              <Block emoji="💬" title="Notes" hint="Any details or discussion — one line or many.">
+              <Section icon={MessageSquare} title="Remarks" hint="Any details or discussion — one line or many.">
                 {notesField}
-              </Block>
+              </Section>
 
-              <Block emoji="✅" title="Checklist" hint={editing ? 'Add new tasks — existing ones stay editable on the board.' : 'Optional — break the promise into sub-tasks.'}>
+              <Section icon={ListChecks} title="Checklist" hint={editing ? 'Add new tasks — existing ones stay editable on the board.' : 'Optional — break the promise into sub-tasks.'}>
                 <ChecklistInput items={checklist} onChange={setChecklist} />
-              </Block>
+              </Section>
 
-              <Block emoji="📅" title="Promised by when?" hint="Tap a day, or pick a date.">
+              <Section icon={CalendarDays} title="Promised date" hint="Tap a day, or pick a date.">
                 {dateChipRow}
-              </Block>
+              </Section>
 
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <Block emoji="🏭" title="Where is it now?" hint="Optional — tap one.">
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                <Section icon={Factory} title="Current stage" hint="Optional — where the work has reached.">
                   <div className="flex flex-wrap gap-2">
-                    {STAGE_CHIPS.map((s) => (
-                      <button
-                        key={s.v}
-                        type="button"
-                        onClick={() => setStage(stage === s.v ? '' : s.v)}
-                        className={cn(
-                          'inline-flex h-11 items-center gap-1.5 rounded-lg border px-3 text-[15px] font-medium transition-colors',
-                          stage === s.v ? 'border-indigo-600 bg-indigo-600 text-white shadow-sm' : 'bg-white text-slate-700 hover:border-indigo-300 hover:bg-indigo-50',
-                        )}
-                      >
-                        <span>{s.emoji}</span> {s.label}
-                      </button>
-                    ))}
+                    {STAGE_CHIPS.map((s) => {
+                      const Icon = s.icon;
+                      const on = stage === s.v;
+                      return (
+                        <button
+                          key={s.v}
+                          type="button"
+                          onClick={() => setStage(on ? '' : s.v)}
+                          className={cn(
+                            'inline-flex h-10 cursor-pointer items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors',
+                            on
+                              ? 'border-slate-800 bg-slate-800 text-white dark:border-slate-200 dark:bg-slate-200 dark:text-slate-900'
+                              : 'bg-card border-slate-300 text-slate-700 hover:border-slate-400 hover:bg-slate-50 dark:border-white/15 dark:text-slate-200 dark:hover:bg-white/5',
+                          )}
+                        >
+                          <Icon className="size-3.5" /> {s.label}
+                        </button>
+                      );
+                    })}
                   </div>
-                </Block>
-                <Block emoji="⚡" title="How urgent?">
+                </Section>
+                <Section icon={Flag} title="Priority">
                   {urgencyButtons}
-                </Block>
+                </Section>
               </div>
             </>
           )}
 
           {/* 5 · optional title + reminder overrides, tucked away */}
-          <button type="button" onClick={() => setShowAdvanced((v) => !v)} className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 px-1 text-sm font-medium">
-            <ChevronDown className={cn('size-4 transition-transform', showAdvanced && 'rotate-180')} /> More options (title, reminder frequency)
-          </button>
-          {showAdvanced && (
-            <div className="space-y-3 rounded-xl border bg-slate-50/60 p-4">
-              <div className="space-y-1">
-                <Label className="text-xs">Title (auto-written if left empty)</Label>
-                <Input className="h-11" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Deliver 10 MALBORO by Wed" />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label className="text-xs">Remind every (mins)</Label>
-                  <Input className="h-11" type="number" min="1" value={interval} onChange={(e) => setIntervalMins(e.target.value)} placeholder="use default" />
+          <section className="bg-card overflow-hidden rounded-md border border-slate-200 dark:border-white/10">
+            <button
+              type="button"
+              onClick={() => setShowAdvanced((v) => !v)}
+              className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-white/[0.04]"
+            >
+              <SlidersHorizontal className="size-3.5 shrink-0 text-slate-500 dark:text-slate-400" />
+              <span className={CAPTION}>Advanced</span>
+              <span className="text-muted-foreground text-[11.5px]">Title, reminder frequency</span>
+              <ChevronDown className={cn('text-muted-foreground ml-auto size-4 transition-transform', showAdvanced && 'rotate-180')} />
+            </button>
+            {showAdvanced && (
+              <div className="space-y-3 border-t border-slate-200 p-3 dark:border-white/10">
+                <Field label="Title" note="(auto-written if left empty)">
+                  <Input className={BIG_FIELD} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Deliver 10 MALBORO by Wed" />
+                </Field>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Remind every" note="(minutes)">
+                    <Input className={cn(BIG_FIELD, 'tabular-nums')} type="number" min="1" value={interval} onChange={(e) => setIntervalMins(e.target.value)} placeholder="use default" />
+                  </Field>
+                  <Field label="Max reminders / day">
+                    <Input className={cn(BIG_FIELD, 'tabular-nums')} type="number" min="0" value={maxPerDay} onChange={(e) => setMaxPerDay(e.target.value)} placeholder="0 = unlimited" />
+                  </Field>
                 </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Max reminders / day</Label>
-                  <Input className="h-11" type="number" min="0" value={maxPerDay} onChange={(e) => setMaxPerDay(e.target.value)} placeholder="0 = unlimited" />
-                </div>
               </div>
-            </div>
-          )}
+            )}
+          </section>
         </div>
 
-        <DialogFooter className="gap-2 sm:gap-2">
-          <Button variant="outline" className="h-12 px-6 text-base" onClick={onClose}>Cancel</Button>
-          <Button className="h-12 flex-1 text-base font-semibold sm:flex-none sm:px-10" onClick={submit} disabled={saving}>
+        <DialogFooter className="gap-2 border-t border-slate-200 px-4 py-3 sm:gap-2 dark:border-white/10">
+          <Button variant="outline" className="h-11 px-6" onClick={onClose}>Cancel</Button>
+          <Button className="h-11 flex-1 font-semibold sm:flex-none sm:px-10" onClick={submit} disabled={saving}>
             {saving ? <Loader2 className="animate-spin" /> : <Check />} {editing ? 'Save changes' : 'Save follow-up'}
           </Button>
         </DialogFooter>

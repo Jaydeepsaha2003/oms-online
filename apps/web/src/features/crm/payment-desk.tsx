@@ -413,11 +413,11 @@ export function PartyBalancePanel({ customerId, party, onPickAmount, onPickInvoi
 
   if (!enabled) return null;
   if (isLoading) {
-    return <div className="text-muted-foreground flex items-center gap-2 rounded-xl border bg-slate-50/60 p-3 text-sm dark:bg-white/[0.03]"><Loader2 className="size-4 animate-spin" /> Fetching balance…</div>;
+    return <div className="text-muted-foreground flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm dark:border-white/10 dark:bg-white/[0.03]"><Loader2 className="size-4 animate-spin" /> Fetching balance…</div>;
   }
   if (!data || data.outstanding <= 0) {
     return (
-      <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 text-sm text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
+      <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50/70 p-3 text-sm text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
         <Banknote className="size-4" /> No outstanding balance for <strong>{data?.partyName || party}</strong> — account is clear.
       </div>
     );
@@ -425,22 +425,22 @@ export function PartyBalancePanel({ customerId, party, onPickAmount, onPickInvoi
 
   const fullLabel = `${inrFull(data.outstanding)} full balance`;
   return (
-    <div className="overflow-hidden rounded-xl border border-indigo-200 bg-indigo-50/50 dark:border-indigo-500/30 dark:bg-indigo-500/[0.06]">
-      <div className="grid grid-cols-2 gap-px bg-indigo-200/60 sm:grid-cols-4 dark:bg-indigo-500/20">
+    <div className="bg-card overflow-hidden rounded-md border border-slate-300 dark:border-white/15">
+      <div className="grid grid-cols-2 gap-px bg-slate-200 sm:grid-cols-4 dark:bg-white/10">
         <Stat icon={Wallet} label="Outstanding" value={inrCompact(data.outstanding)} title={inrFull(data.outstanding)} strong />
         <Stat icon={TrendingDown} label="Overdue" value={data.overdue > 0 ? inrCompact(data.overdue) : '—'} title={inrFull(data.overdue)} tone={data.overdue > 0 ? 'rose' : undefined} />
         <Stat icon={Clock3} label="Oldest" value={data.oldestDays > 0 ? `${data.oldestDays}d` : '—'} title={data.oldestDays > 0 ? agingHint(data.oldestDays) : undefined} />
         <Stat icon={CalendarClock} label="Last receipt" value={data.lastReceiptAt ? formatDate(data.lastReceiptAt) : 'never'} />
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 p-2.5">
-        <span className="text-muted-foreground text-xs font-medium">Promise:</span>
+      <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 px-2.5 py-2 dark:border-white/10">
+        <span className="text-[10.5px] font-bold tracking-[0.09em] text-slate-500 uppercase dark:text-slate-400">Promise</span>
         {data.overdue > 0 && (
-          <button type="button" onClick={() => onPickAmount(data.overdue, `${inrFull(data.overdue)} overdue`)} className="bg-card cursor-pointer rounded-lg border border-rose-300 px-2.5 py-1 text-xs font-semibold text-rose-700 transition-colors hover:bg-rose-50 dark:border-rose-500/40 dark:text-rose-300 dark:hover:bg-rose-500/10">
+          <button type="button" onClick={() => onPickAmount(data.overdue, `${inrFull(data.overdue)} overdue`)} className="bg-card cursor-pointer rounded-md border border-rose-300 px-2.5 py-1 text-xs font-semibold tabular-nums text-rose-700 transition-colors hover:bg-rose-50 dark:border-rose-500/40 dark:text-rose-300 dark:hover:bg-rose-500/10">
             Overdue {inrCompact(data.overdue)}
           </button>
         )}
-        <button type="button" onClick={() => onPickAmount(data.outstanding, fullLabel)} className="bg-card cursor-pointer rounded-lg border border-indigo-300 px-2.5 py-1 text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-50 dark:border-indigo-500/40 dark:text-indigo-300 dark:hover:bg-indigo-500/10">
+        <button type="button" onClick={() => onPickAmount(data.outstanding, fullLabel)} className="bg-card cursor-pointer rounded-md border border-slate-400 px-2.5 py-1 text-xs font-semibold tabular-nums text-slate-700 transition-colors hover:bg-slate-100 dark:border-white/25 dark:text-slate-200 dark:hover:bg-white/10">
           Full {inrCompact(data.outstanding)}
         </button>
         {data.advanceHeld > 0 && <span className="text-emerald-700 dark:text-emerald-400 text-xs">· {inrCompact(data.advanceHeld)} advance held</span>}
@@ -452,11 +452,11 @@ export function PartyBalancePanel({ customerId, party, onPickAmount, onPickInvoi
       </div>
 
       {showInvoices && (
-        <div className="border-t border-indigo-200 dark:border-indigo-500/20">
-          <div className="bg-card/70 max-h-52 overflow-y-auto px-2.5 py-2">
+        <div className="border-t border-slate-200 dark:border-white/10">
+          <div className="max-h-52 overflow-y-auto px-2.5 py-1.5">
             <table className="w-full text-xs">
               <thead>
-                <tr className="text-muted-foreground text-left tracking-wide uppercase">
+                <tr className="border-b border-slate-200 text-left text-[10px] font-bold tracking-[0.08em] text-slate-500 uppercase dark:border-white/10 dark:text-slate-400">
                   {onPickInvoice && <th className="w-6 py-1" />}
                   <th className="py-1 pr-2 font-semibold">Invoice</th>
                   <th className="py-1 pr-2 font-semibold">Due</th>
@@ -477,7 +477,7 @@ export function PartyBalancePanel({ customerId, party, onPickAmount, onPickInvoi
                       className={cn(
                         'border-t border-slate-100 dark:border-white/5',
                         i % 2 === 1 && 'bg-muted/30',
-                        picked && 'bg-indigo-50 dark:bg-indigo-500/15',
+                        picked && 'bg-slate-100 dark:bg-white/10',
                       )}
                     >
                       {onPickInvoice && (
@@ -536,12 +536,12 @@ export function PartyBalancePanel({ customerId, party, onPickAmount, onPickInvoi
           {/* Only appears once something is ticked, so the panel is unchanged for
               anyone who just wants one invoice. */}
           {onPickInvoice && selected.size > 0 && (
-            <div className="flex flex-wrap items-center gap-2 border-t border-indigo-200 bg-indigo-50/60 px-2.5 py-2 text-xs dark:border-indigo-500/20 dark:bg-indigo-500/10">
-              <span className="font-semibold">
-                {selected.size} invoice{selected.size === 1 ? '' : 's'} selected
+            <div className="flex flex-wrap items-center gap-2 border-t-2 border-slate-300 bg-slate-100 px-2.5 py-2 text-xs dark:border-white/20 dark:bg-white/[0.07]">
+              <span className="text-[10.5px] font-bold tracking-[0.09em] text-slate-600 uppercase dark:text-slate-300">
+                {selected.size} selected
               </span>
-              <span className="text-muted-foreground">
-                B {inrCompact(pickedTotals.bank)} / C {inrCompact(pickedTotals.cash)}
+              <span className="text-muted-foreground tabular-nums">
+                B {inrCompact(pickedTotals.bank)} · C {inrCompact(pickedTotals.cash)}
               </span>
               <span className="ml-auto font-bold tabular-nums" title={inrFull(pickedTotals.balance)}>
                 {inrCompact(pickedTotals.balance)}
@@ -575,10 +575,20 @@ export function PartyBalancePanel({ customerId, party, onPickAmount, onPickInvoi
 
 function Stat({ icon: Icon, label, value, title, tone, strong }: { icon: React.ComponentType<{ className?: string }>; label: string; value: string; title?: string; tone?: string; strong?: boolean }) {
   return (
-    <div className="bg-indigo-50/40 px-3 py-2 dark:bg-white/[0.02]">
-      <div className={cn('tabular-nums', strong ? 'text-base font-bold' : 'text-sm font-semibold', tone === 'rose' && 'text-rose-600 dark:text-rose-400')} title={title}>{value}</div>
-      <div className="text-muted-foreground mt-0.5 flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide">
-        <Icon className="size-3" />{label}
+    <div className="bg-card px-3 py-2">
+      <div className="flex items-center gap-1 text-[10px] font-bold tracking-[0.08em] text-slate-500 uppercase dark:text-slate-400">
+        <Icon className="size-3" />
+        {label}
+      </div>
+      <div
+        className={cn(
+          'mt-1 tabular-nums',
+          strong ? 'text-[17px] font-bold' : 'text-[15px] font-semibold',
+          tone === 'rose' && 'text-rose-600 dark:text-rose-400',
+        )}
+        title={title}
+      >
+        {value}
       </div>
     </div>
   );
