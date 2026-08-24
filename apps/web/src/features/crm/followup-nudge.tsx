@@ -2,13 +2,48 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlarmClock, ArrowRight, BellRing, Check, Eye, Loader2, X } from 'lucide-react';
 import { toast } from 'sonner';
-import type { FollowupDto } from '@oms/shared';
+import { DEFAULT_CRM_SETTINGS, type FollowupDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { buzz, playChime } from '@/lib/chime';
 import { formatDate } from '@/lib/date-format';
 import { Button } from '@/components/ui/button';
 import { useCrmSettings, useFollowupDue, useResolveFollowup, useSeenFollowup, useSnoozeFollowup } from './use-crm';
 import { Chip, itemLine, UrgencyChip } from './crm-shared';
+
+/**
+ * When each follow-up last raised a banner, per browser.
+ *
+ * This used to live only in a ref, so "already nudged" meant "already nudged
+ * since this page loaded" — reload the app and every open follow-up was fresh
+ * again, chime and all. Written to localStorage so a reload cannot un-know it.
+ */
+const NUDGE_LOG_KEY = 'oms.crm.nudged-at';
+
+/** Entries are dropped after a day. Pruning by "no longer due" instead would
+ *  lose the cooldown for a follow-up that simply left the window for a while —
+ *  overnight, say — and it would chime the moment the work hours reopened. */
+const NUDGE_LOG_TTL_MS = 24 * 60 * 60_000;
+
+type NudgeLog = Record<string, number>;
+
+function readNudgeLog(): NudgeLog {
+  try {
+    const raw = localStorage.getItem(NUDGE_LOG_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === 'object' ? (parsed as NudgeLog) : {};
+  } catch {
+    return {}; // unreadable or private mode — the in-session ref still holds
+  }
+}
+
+function writeNudgeLog(log: NudgeLog, now: number): void {
+  const kept = Object.fromEntries(Object.entries(log).filter(([, at]) => now - at < NUDGE_LOG_TTL_MS));
+  try {
+    localStorage.setItem(NUDGE_LOG_KEY, JSON.stringify(kept));
+  } catch {
+    /* quota / private mode — nothing to do but carry on */
+  }
+}
 
 /**
  * The reminder manager.
@@ -43,9 +78,29 @@ export function FollowupNudge() {
 
   // When new nudges appear: chime, vibrate, show banners, and fire desktop notifications.
   useEffect(() => {
-    const fresh = due.filter((f) => !seen.current.has(f.id));
-    
+    const now = Date.now();
+    const log = readNudgeLog();
+    // How long before the same follow-up may nudge again — the gap the CRM
+    // settings already offer ("Remind every N mins", default 120), which until
+    // now only the Snooze button read. A follow-up may override it for itself.
+    const gapMs = (f: FollowupDto) =>
+      (f.reminderIntervalMins ?? settings?.intervalMins ?? DEFAULT_CRM_SETTINGS.intervalMins) * 60_000;
+    const fresh = due.filter((f) => !seen.current.has(f.id) && now - (log[f.id] ?? 0) >= gapMs(f));
+
+    let secondChime: ReturnType<typeof setTimeout> | undefined;
+
     if (fresh.length > 0) {
+      // Record FIRST. This bookkeeping used to sit at the end of the block,
+      // below a `return () => clearTimeout(timer)` inside the sound branch —
+      // which is a return from the effect. With sound on (the default) neither
+      // this nor the desktop notifications below ever ran, so `seen` stayed
+      // empty and the chime re-fired on every 60s refetch of `due`.
+      for (const f of fresh) {
+        seen.current.add(f.id);
+        log[f.id] = now;
+      }
+      writeNudgeLog(log, now);
+
       // Add new followups to active banners list
       setActiveBanners((prev) => {
         const existingIds = new Set(prev.map((b) => b.id));
@@ -59,11 +114,10 @@ export function FollowupNudge() {
         playChime();
         buzz();
         // Play a second chime after a short pause so it's impossible to miss
-        const timer = setTimeout(() => {
+        secondChime = setTimeout(() => {
           playChime();
           buzz();
         }, 2500);
-        return () => clearTimeout(timer);
       }
 
       if (settings?.desktopNotifications && 'Notification' in window && Notification.permission === 'granted') {
@@ -78,11 +132,10 @@ export function FollowupNudge() {
           }
         }
       }
-
-      fresh.forEach((f) => seen.current.add(f.id));
     }
 
-    // Clean up tracking and banner list for resolved or rescheduled items
+    // Clean up tracking and banner list for resolved or rescheduled items.
+    // The nudge LOG is deliberately left alone here — see NUDGE_LOG_TTL_MS.
     const active = new Set(due.map((f) => f.id));
     for (const id of [...seen.current]) {
       if (!active.has(id)) {
@@ -90,7 +143,9 @@ export function FollowupNudge() {
         setActiveBanners((prev) => prev.filter((b) => b.id !== id));
       }
     }
-  }, [due, settings?.sound, settings?.desktopNotifications]);
+
+    return () => clearTimeout(secondChime);
+  }, [due, settings?.sound, settings?.desktopNotifications, settings?.intervalMins]);
 
   return (
     <>

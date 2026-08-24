@@ -85,7 +85,9 @@ export class DispatchNotifier {
         `${f.itemCount} ${f.itemCount === 1 ? 'item' : 'items'}`,
         this.by(f.userName),
       ]),
-      data: { kind: 'dispatch', orderId: f.orderId },
+      // orderCode, not just the id: the tap deep-links into Modify Dispatch's
+      // search box, which matches codes rather than row ids.
+      data: { kind: 'dispatch', orderId: f.orderId, orderCode: f.orderCode },
     }, `dispatch:onBulk:${f.orderId}`);
   }
 
@@ -142,7 +144,7 @@ export class DispatchNotifier {
     this.fire('onDelete', f.actorId, {
       title: `Dispatch deleted — ${f.customerName}`,
       body: this.line([f.dispatchCode, qtyText(f), f.productName, this.by(f.userName)]),
-      data: { kind: 'dispatch' },
+      data: { kind: 'dispatch', dispatchCode: f.dispatchCode },
     }, `dispatch:onDelete:${f.dispatchCode}`);
   }
 

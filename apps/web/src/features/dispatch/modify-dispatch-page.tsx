@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Camera, CalendarRange, ChevronDown, ChevronLeft, ChevronRight, Eye, Filter, History, Layers, Loader2, Lock, MoreVertical, Pencil, Search, Trash2, TriangleAlert, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ACTIONS, ALL_PERMISSIONS, DISPATCH_STATUSES, MAX_PAGE_SIZE, RESOURCES, RETURNED_DISPATCH_STATUS, perm, qtyOrderForCategory, type DispatchDto, type QtyField } from '@oms/shared';
@@ -663,8 +664,12 @@ function ModifyDispatchCard({
 export function ModifyDispatchPage() {
   const { can, permissions } = usePermissions();
   const confirm = useConfirm();
-  const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch] = useState('');
+  // A dispatch notification deep-links here as /dispatch?search=DSP-01234, so
+  // the grid opens showing the row the alert was about instead of everything.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deepLinked = searchParams.get('search') ?? '';
+  const [searchInput, setSearchInput] = useState(deepLinked);
+  const [search, setSearch] = useState(deepLinked);
   const [statusFilter, setStatusFilter] = useState('');
   const [customerFilter, setCustomerFilter] = useState('');
   const [agentFilter, setAgentFilter] = useState('');
@@ -722,6 +727,17 @@ export function ModifyDispatchPage() {
   // one lists every variant in the grid, where the Item column still shows the
   // full name with its design. Type in the search box to isolate one variant.
   const itemOptions = options?.productBases ?? [];
+
+  // Arriving (or re-arriving) on a deep link: apply it, then drop the param so
+  // the search stays the user's to clear and a later reload isn't stuck on it.
+  useEffect(() => {
+    const q = searchParams.get('search');
+    if (!q) return;
+    setSearchInput(q);
+    setSearch(q);
+    setPage(1);
+    setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams, setPage]);
 
   useEffect(() => {
     const t = setTimeout(() => {

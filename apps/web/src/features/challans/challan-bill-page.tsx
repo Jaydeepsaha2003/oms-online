@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { flushSync } from 'react-dom';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Download, ExternalLink, Eye, Loader2, Printer, X } from 'lucide-react';
+import { ArrowLeft, Download, ExternalLink, Eye, Loader2, Printer, Share2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
@@ -10,7 +10,7 @@ import { useFitToWidth } from '@/hooks/use-fit-to-width';
 import { useConfirm } from '@/components/common/confirm';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { buildBillFilename, captureScale, decodeImage, isIOS, savePdfBlob, showPreviewPlaceholder, takePendingPreviewTab } from '@/lib/pdf';
+import { buildBillFilename, captureScale, decodeImage, isIOS, savePdfBlob, sharePdfFile, showPreviewPlaceholder, takePendingPreviewTab } from '@/lib/pdf';
 import { formatDate } from '@/lib/date-format';
 import kavishLogo from '@/assets/kavish-logo-order.png';
 import { useChallanTerms, useCompany } from '@/features/settings/use-settings';
@@ -84,6 +84,19 @@ const PRINT_CSS = `
   .no-print { display: none !important; }
 }`;
 
+/** Read by Chrome/Edge's built-in PDF viewer out of the URL fragment: no
+ *  toolbar (filename, page box, zoom, download, print, kebab), no thumbnail
+ *  rail, and the page fitted to the frame's width. Without them the preview wore
+ *  the browser's own furniture and read as "a PDF opened in Chrome" sitting
+ *  inside a dialog, rather than as part of this app.
+ *
+ *  Deliberately NOT folded into `previewUrl`: "Open in tab" hands over the bare
+ *  blob, where the browser's controls are exactly what you want.
+ *
+ *  Firefox's pdf.js ignores these and keeps its own toolbar — the document still
+ *  renders, it just keeps that chrome there. */
+const PDF_VIEWER_PARAMS = '#toolbar=0&navpanes=0&scrollbar=0&view=FitH';
+
 // A4 design width the challan is laid out at — matches the PDF capture width
 // (PDF_RENDER_W) so the on-screen preview mirrors the printed page exactly.
 const CHALLAN_DESIGN_W = 960;
@@ -133,6 +146,9 @@ export function ChallanBillPage() {
   const [readyPdf, setReadyPdf] = useState<{ blob: Blob; filename: string } | null>(null);
   // The blob URL currently shown in the on-page preview overlay (desktop route).
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  // The same bytes the overlay is showing. An object URL cannot be turned back
+  // into a File, and the share sheet needs one — so the blob is kept alongside.
+  const [previewFile, setPreviewFile] = useState<{ blob: Blob; filename: string } | null>(null);
   // Where to go when that overlay is closed, when the preview was launched from
   // a list row rather than from this page's own button.
   const [returnAfterPreview, setReturnAfterPreview] = useState<string | null>(null);
@@ -329,7 +345,8 @@ export function ChallanBillPage() {
         tab?.close();
         return 'none';
       }
-      const url = URL.createObjectURL(pdf.output('blob'));
+      const blob = pdf.output('blob');
+      const url = URL.createObjectURL(blob);
 
       if (isIOS()) {
         if (tab && !tab.closed) tab.location.href = url;
@@ -343,6 +360,7 @@ export function ChallanBillPage() {
         if (prev) URL.revokeObjectURL(prev);
         return url;
       });
+      setPreviewFile({ blob, filename: buildBillFilename('Challan', challan.code, `challan-${challanId}`) });
       return 'inline';
     } catch {
       tab?.close();
@@ -359,6 +377,7 @@ export function ChallanBillPage() {
       if (prev) URL.revokeObjectURL(prev);
       return null;
     });
+    setPreviewFile(null);
     if (returnAfterPreview) {
       const to = returnAfterPreview;
       setReturnAfterPreview(null);
@@ -366,13 +385,15 @@ export function ChallanBillPage() {
     }
   };
 
-  // Print the captured image — guarantees no app/menu text and an exact match.
-  const print = async () => {
+  /** Print the captured image — guarantees no app/menu text and an exact match.
+   *  `asked` mirrors {@link download}: the preview overlay has already settled
+   *  the Kgs question, so printing what is on screen must not re-open it. */
+  const print = async (asked = false) => {
     // iOS Safari's window.print() is unreliable for the hidden-image trick below
     // (it prints a blank / whole page). Route to the PDF instead — the user then
     // taps Print from the iOS share sheet / Safari's PDF viewer. `download` opens
     // the tab synchronously inside this tap, so iOS doesn't block it.
-    await askKgsForPcs();
+    if (!asked) await askKgsForPcs();
     if (isIOS()) {
       await download(true);
       return;
@@ -392,6 +413,28 @@ export function ChallanBillPage() {
     } finally {
       setBusy(false);
     }
+  };
+
+  /**
+   * Share the previewed receipt.
+   *
+   * On a phone this is the OS share sheet, with the PDF already attached —
+   * WhatsApp, Mail, AirDrop and the rest are all targets in it, which is why the
+   * button is not named after any one of them.
+   *
+   * Where the browser cannot share files (most desktops) the fallback does the
+   * two halves separately rather than pretending: the PDF is saved and WhatsApp
+   * opens with the message written, leaving only the attach to do. No link
+   * scheme can carry the file itself — `wa.me` takes text and nothing else.
+   */
+  const shareReceipt = async () => {
+    if (!previewFile) return;
+    const text = `Sales Receipt ${challan?.code ?? ''} — ${challan?.customerName ?? ''}`.replace(/\s+—\s*$/, '').trim();
+    // No await before this: the share sheet needs the tap's transient activation.
+    if (await sharePdfFile(previewFile.blob, previewFile.filename, text)) return;
+    await savePdfBlob(previewFile.blob, previewFile.filename);
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener');
+    toast.info('No share sheet in this browser — the PDF is saved and WhatsApp is open; attach it there.');
   };
 
   const isKgs = (unit: string | null) => ['KGS', 'KG', 'KGS.'].includes((unit ?? '').trim().toUpperCase());
@@ -486,7 +529,10 @@ export function ChallanBillPage() {
         </Button>
         <h2 className="text-xl font-bold tracking-tight">Sales Challan</h2>
         <div className="ml-auto flex gap-2">
-          <Button variant="outline" onClick={print} disabled={busy}>
+          {/* Wrapped, not passed bare: print() now takes an `asked` flag and a
+              bare handler would hand it the click event — truthy, so the Kgs
+              question would be skipped on the one path that must ask it. */}
+          <Button variant="outline" onClick={() => void print()} disabled={busy}>
             <Printer /> Print
           </Button>
           <Button variant="outline" onClick={() => void previewPdf()} disabled={busy}>
@@ -782,14 +828,31 @@ export function ChallanBillPage() {
               </DialogTitle>
             </DialogHeader>
 
-            <iframe
-              src={previewUrl}
-              title={`Challan ${challan?.code ?? ''} preview`}
-              className="min-h-0 w-full flex-1 rounded-[4px] border bg-slate-100"
-            />
+            {/* The document sits on an app surface rather than the browser's
+                grey viewer shell — see PDF_VIEWER_PARAMS for the rest of it. */}
+            <div className="min-h-0 w-full flex-1 overflow-hidden rounded-[6px] border bg-slate-200/60 shadow-inner dark:bg-slate-800/60">
+              <iframe
+                src={`${previewUrl}${PDF_VIEWER_PARAMS}`}
+                title={`Challan ${challan?.code ?? ''} preview`}
+                className="size-full border-0"
+              />
+            </div>
 
             <DialogFooter className="gap-2 sm:justify-end">
               <Button variant="outline" onClick={closePreview}>Close</Button>
+              {/* Hiding the viewer's toolbar takes its print button with it, so
+                  the app supplies one. `true` — the Kgs question is already answered. */}
+              <Button variant="outline" onClick={() => void print(true)} disabled={busy} title="Print this challan">
+                <Printer /> Print
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => void shareReceipt()}
+                disabled={!previewFile}
+                title="Share this receipt — WhatsApp, Mail and the rest are targets in the share sheet"
+              >
+                <Share2 /> Share
+              </Button>
               <Button
                 variant="outline"
                 onClick={() => window.open(previewUrl, '_blank')}

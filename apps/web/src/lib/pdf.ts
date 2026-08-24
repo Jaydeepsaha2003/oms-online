@@ -43,6 +43,23 @@ async function tryShareFile(file: File, title: string): Promise<boolean> {
   }
 }
 
+/**
+ * Hand a finished PDF to the OS share sheet, where WhatsApp, Mail and the rest
+ * are targets. Returns false where the platform cannot share files, so the
+ * caller can fall back.
+ *
+ * This is as close to "send this PDF on WhatsApp" as a browser gets: there is no
+ * way to attach a file to WhatsApp from a link. `wa.me` / `whatsapp://` URLs
+ * carry TEXT only — no API accepts an attachment — so anything that claims to
+ * would in fact be sending a message with the file left behind.
+ *
+ * Must be called synchronously inside the click, before any await: the share
+ * sheet needs the tap's transient activation.
+ */
+export function sharePdfFile(blob: Blob, filename: string, title?: string): Promise<boolean> {
+  return tryShareFile(new File([blob], filename, { type: 'application/pdf' }), title || filename);
+}
+
 /** Call this SYNCHRONOUSLY inside a click handler (before any await) to reserve a
  *  tab iOS will trust for a PDF that's generated a moment later. Returns null off
  *  iOS (not needed there) or if the popup was blocked.

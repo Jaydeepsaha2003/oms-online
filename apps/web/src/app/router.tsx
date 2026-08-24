@@ -8,6 +8,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { FullScreenLoader } from '@/components/common/full-screen-loader';
 import { useAuthStore } from '@/stores/auth-store';
 import { queryClient } from '@/lib/query';
+import { useNotificationNavigation } from '@/lib/notification-target';
 
 // Every screen loads on demand instead of all being bundled into one giant
 // upfront chunk — first paint only pulls in the page you're actually on
@@ -114,6 +115,9 @@ function prefetchAllPages() {
 
 /** Explicit route table. We add a route per screen as it's built. */
 export function AppRoutes() {
+  // A tapped push notification lands here — see lib/notification-target.ts for
+  // why the service worker cannot just open the right URL itself on iOS.
+  useNotificationNavigation();
   // Warm the page chunks only after the session bootstrap has finished, so the
   // prefetch never competes with the login-critical /auth call (or the first
   // screen's data) for a slow link's bandwidth.

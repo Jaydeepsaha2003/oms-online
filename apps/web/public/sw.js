@@ -16,7 +16,10 @@
 // short of clearing site data. It now answers from cache when the network is
 // slow but lets that fetch finish in the background, so the next open is
 // current. See the navigation handler below.
-const CACHE = 'oms-v14';
+// v15: notificationclick now leaves its target in this cache for the page to
+// pick up on boot (see the handler at the bottom), so the key has to survive
+// into the version the page reads it from.
+const CACHE = 'oms-v15';
 
 /** How long a navigation waits for the live shell before falling back to cache.
  *  Generous compared with the old 2.5s: a phone resuming on cellular or the
@@ -179,25 +182,54 @@ self.addEventListener('push', (event) => {
   );
 });
 
+/** Where a tapped notification should land.
+ *
+ *  followupId is checked first: CRM reminders also carry a `kind`, but theirs is
+ *  'PAYMENT' / 'DELIVERY', never 'dispatch'.
+ *
+ *  '/dispatch' is Modify Dispatch. Dispatch alerts carry the code of the row
+ *  they are about, so the page can open showing that row rather than the whole
+ *  list — `?search=` drives its search box, which matches the dispatch code and
+ *  the order code among other fields. */
+function notificationTarget(d) {
+  if (d.followupId) return `/${d.kind === 'PAYMENT' ? 'crm/payments' : 'crm'}?followup=${d.followupId}`;
+  if (d.kind !== 'dispatch') return '/';
+  const code = d.dispatchCode || d.orderCode;
+  return code ? `/dispatch?search=${encodeURIComponent(code)}` : '/dispatch';
+}
+
+/** Where the target waits for a client that does not exist yet. Read (and
+ *  cleared) by lib/notification-target.ts on boot. */
+const PENDING_TARGET_URL = '/__pending-notification';
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const d = event.notification.data ?? {};
-  // followupId is checked first: CRM reminders also carry a `kind`, but theirs is
-  // 'PAYMENT' / 'DELIVERY', never 'dispatch'.
-  const url = d.followupId
-    ? `/${d.kind === 'PAYMENT' ? 'crm/payments' : 'crm'}?followup=${d.followupId}`
-    : d.kind === 'dispatch'
-      ? '/dispatch'
-      : '/';
+  const url = notificationTarget(event.notification.data ?? {});
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
-      for (const client of clients) {
-        if ('focus' in client && 'navigate' in client) {
-          client.focus();
-          return client.navigate(new URL(url, self.location.origin).href);
-        }
-      }
-      if (self.clients.openWindow) return self.clients.openWindow(url);
-    }),
+    // iOS launches an installed PWA at the manifest's start_url and ignores the
+    // URL handed to openWindow() / client.navigate(), which is why a dispatch
+    // alert landed on the dashboard however right this URL was. So the URL is
+    // left here first and the app routes ITSELF there once it boots. Costs
+    // nothing on Android/desktop, where the postMessage below wins the race and
+    // the stash is simply cleared unused.
+    caches
+      .open(CACHE)
+      .then((c) =>
+        c.put(
+          PENDING_TARGET_URL,
+          new Response(JSON.stringify({ url, at: Date.now() }), { headers: { 'content-type': 'application/json' } }),
+        ),
+      )
+      .catch(() => {})
+      .then(() => self.clients.matchAll({ type: 'window', includeUncontrolled: true }))
+      .then((clients) => {
+        // An already-running client routes itself from this message. That is the
+        // mechanism, not client.navigate() — navigate() is the half iOS ignores,
+        // and it would cost a full reload everywhere else.
+        for (const client of clients) client.postMessage({ type: 'NOTIFICATION_NAVIGATE', url });
+        const focusable = clients.find((c) => 'focus' in c);
+        if (focusable) return focusable.focus();
+        if (self.clients.openWindow) return self.clients.openWindow(url);
+      }),
   );
 });
