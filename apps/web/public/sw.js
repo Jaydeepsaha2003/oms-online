@@ -19,7 +19,7 @@
 // v15: notificationclick now leaves its target in this cache for the page to
 // pick up on boot (see the handler at the bottom), so the key has to survive
 // into the version the page reads it from.
-const CACHE = 'oms-v15';
+const CACHE = 'oms-v17';
 
 /** How long a navigation waits for the live shell before falling back to cache.
  *  Generous compared with the old 2.5s: a phone resuming on cellular or the
@@ -175,8 +175,8 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     self.registration.showNotification(data.title, {
       body: data.body,
-      icon: '/icons/icon-192-v2.png',
-      badge: '/icons/icon-192-v2.png',
+      icon: '/icons/icon-192-v4.png',
+      badge: '/icons/icon-192-v4.png',
       data: data.data ?? {},
     }),
   );

@@ -139,7 +139,20 @@ async function bootstrap(): Promise<void> {
     app
       .getHttpAdapter()
       .getInstance()
-      .get(/^\/(?!api\/).*/, (_req: unknown, res: { sendFile: (p: string) => void }) => res.sendFile(webIndex));
+      // SPA fallback — but ONLY for real app routes, never for paths that look
+      // like a file. Sending index.html for a missing asset answers 200 with
+      // HTML, which is worse than a 404 in every case: a browser asking for
+      // /icons/icon-192-v4.png (an app installed before the icon rename) would
+      // get HTML it then tries to decode as a PNG, and the service worker's
+      // network-first branch would happily cache that HTML under the icon's
+      // URL. A 404 instead lets the client fall back and re-read the manifest.
+      // Same rule the service worker already uses for navigations, so the two
+      // agree on what counts as a file. Anything with an extension falls
+      // through to Nest's 404.
+      .get(/^\/(?!api\/).*/, (req: { path: string }, res: { sendFile: (p: string) => void }, next: () => void) => {
+        if (/\.[a-z0-9]+$/i.test(req.path)) return next();
+        res.sendFile(webIndex);
+      });
     Logger.log(`Web app served from ${webDist}`, 'Bootstrap');
   }
 
