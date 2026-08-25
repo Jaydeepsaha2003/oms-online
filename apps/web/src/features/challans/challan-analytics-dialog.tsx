@@ -82,6 +82,50 @@ function TallyTable({
   rows: (string | number)[][];
   foot?: (string | number)[];
 }) {
+  const isMobile = useIsMobile();
+
+  /*
+   * Phone: one card per row instead of a six-column table.
+   *
+   * The table only ever fitted by scrolling sideways, and a sideways scroll
+   * inside a vertically-scrolling sheet is close to undiscoverable — Freight and
+   * Packing sat off the right edge with nothing to suggest they were there. The
+   * figures are the point of this block, so they get stacked into label/value
+   * pairs that fit the width outright. Two per line keeps a category to a couple
+   * of lines rather than six.
+   *
+   * `head` is reused as the labels, so the columns and the cards can never drift
+   * apart: index i of a row is always described by head[i].
+   */
+  if (isMobile) {
+    const Card = ({ cells, total }: { cells: (string | number)[]; total?: boolean }) => (
+      <div className={cn('overflow-hidden rounded-[4px] border', total && 'border-primary/40 bg-muted/30')}>
+        <div className="bg-muted/60 px-2.5 py-1.5 text-[11px] font-bold tracking-wide text-slate-800 uppercase dark:text-slate-200">
+          {cells[0]}
+        </div>
+        <dl className="bg-border grid grid-cols-2 gap-px">
+          {cells.slice(1).map((c, i) => (
+            <div key={i} className="bg-card px-2.5 py-1.5">
+              <dt className="text-muted-foreground text-[9.5px] font-bold tracking-[0.1em] uppercase">{head[i + 1]}</dt>
+              <dd className={cn('text-[13px] tabular-nums', total ? 'font-bold' : 'font-semibold')}>{c}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    );
+    return (
+      <div>
+        <SectionTitle icon={Icon}>{title}</SectionTitle>
+        <div className="space-y-2">
+          {rows.map((r, ri) => (
+            <Card key={String(r[0]) + ri} cells={r} />
+          ))}
+          {foot && <Card cells={foot} total />}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       <SectionTitle icon={Icon}>{title}</SectionTitle>
