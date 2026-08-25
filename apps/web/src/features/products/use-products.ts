@@ -1,5 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
+  BulkRateChangeInput,
+  BulkRateChangeResult,
+  BulkRatePreview,
   BulkCatalogFlagsInput,
   BulkCatalogFlagsResult,
   CatalogFlagsInput,
@@ -93,6 +96,39 @@ export function useBulkSetProductFlags() {
   return useMutation({
     mutationFn: (input: BulkCatalogFlagsInput) => http.patch<BulkCatalogFlagsResult>('/products/bulk-flags', input),
     onSuccess: () => invalidateProducts(qc),
+  });
+}
+
+/**
+ * Preview a bulk chart-rate adjustment. Read-only despite being a POST — it
+ * carries a body, it does not write.
+ *
+ * `enabled` rather than a manual trigger: the preview IS the safety net for a
+ * write that touches hundreds of rows at once, so it should already be on screen
+ * by the time the user reaches for Apply, not something they must remember to
+ * ask for.
+ */
+export function useBulkRatePreview(input: BulkRateChangeInput | null) {
+  return useQuery({
+    queryKey: [...KEY, 'bulk-rate-preview', input],
+    queryFn: () => http.post<BulkRatePreview>('/products/bulk-rate/preview', input),
+    enabled: !!input,
+    // The catalogue can move under a long-open dialog; never serve a stale
+    // preview for a write this wide.
+    staleTime: 0,
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function useBulkRateChange() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BulkRateChangeInput) => http.post<BulkRateChangeResult>('/products/bulk-rate', input),
+    onSuccess: () => {
+      invalidateProducts(qc);
+      // The rate trail feeds the Recent-changes list and the rate-history views.
+      qc.invalidateQueries({ queryKey: [...KEY, 'changes'] });
+    },
   });
 }
 

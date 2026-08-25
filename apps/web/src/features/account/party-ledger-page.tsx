@@ -484,8 +484,11 @@ export function PartyLedgerPage() {
           </Button>
 
           <div className="ml-auto flex items-center gap-2">
+            {/* Was `lg:block`. How many rows the statement has is not a desktop
+                luxury — on a phone, where you cannot see the end of the list, it
+                is the only way to know how much there is. */}
             {data && (
-              <p className="text-muted-foreground hidden text-[12px] font-medium lg:block">
+              <p className="text-muted-foreground text-[12px] font-medium">
                 <span className="text-foreground font-bold tabular-nums">{rows.length}</span> row{rows.length === 1 ? '' : 's'}
                 {isFetching && <Loader2 className="ml-1 inline size-3 animate-spin align-[-2px]" />}
               </p>
@@ -548,10 +551,25 @@ export function PartyLedgerPage() {
           <span className="truncate text-[12px] font-extrabold tracking-wide text-amber-300 uppercase">
             {scopeLabel || 'Ledger Account'}
           </span>
-          {/* Phones give the account name the full bar — the Date control above
-              already states the period. */}
-          <span className="hidden shrink-0 text-[11px] font-bold tracking-wide text-white tabular-nums sm:inline">
-            {prettyDate(from)} — {prettyDate(to)} · {mode === 'BOTH' ? 'Bank & Cash' : mode === 'B' ? 'Bank' : 'Cash'}
+          {/*
+            * Shown on phones too.
+            *
+            * It used to be `sm:inline` on the reasoning that the Date control
+            * above already states the period. It does not, once the page is
+            * scrolled — and this is a STATEMENT: which dates it covers and
+            * whether it is bank, cash or both is part of the figures, not
+            * decoration. A ledger that does not say what it covers is the one
+            * thing a ledger must not be.
+            *
+            * `text-right` + wrapping rather than `truncate`, so a narrow screen
+            * folds it onto a second line instead of cutting the mode off the end.
+            */}
+          <span className="shrink-0 text-right text-[10.5px] leading-tight font-bold tracking-wide text-white tabular-nums sm:text-[11px]">
+            {prettyDate(from)} — {prettyDate(to)}
+            <span className="hidden sm:inline"> · </span>
+            <span className="block sm:inline">
+              {mode === 'BOTH' ? 'Bank & Cash' : mode === 'B' ? 'Bank' : 'Cash'}
+            </span>
           </span>
         </div>
 
@@ -803,20 +821,47 @@ export function PartyLedgerPage() {
                       </div>
                     )}
                     <div className="mt-2 flex items-end justify-between gap-2 border-t pt-2">
-                      <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11.5px]">
+                      {/*
+                        * EVERY leg, including the empty ones.
+                        *
+                        * These used to render only when non-zero, so a bank-only
+                        * row simply had no cash figures on it — and a reader
+                        * could not tell "cash was nil" from "the card is not
+                        * showing me cash". The desktop grid always draws all four
+                        * money columns; a card that quietly drops half of them is
+                        * not the same statement.
+                        *
+                        * A dash for nil, matching the grid's own empty cell, so
+                        * the two read alike.
+                        */}
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11.5px]">
                         {legs.flatMap((l) => [
-                          r[l.dr] ? (
-                            <span key={`${l.group}-dr`} className="tabular-nums font-bold text-slate-800 dark:text-slate-200">
-                              {grouped ? `${l.group} Dr ` : 'Dr '}
-                              {inr(r[l.dr])}
+                          <span key={`${l.group}-dr`} className="flex items-baseline justify-between gap-1.5">
+                            <span className="text-muted-foreground text-[10px] font-bold tracking-wide uppercase">
+                              {grouped ? `${l.group} Dr` : 'Dr'}
                             </span>
-                          ) : null,
-                          r[l.cr] ? (
-                            <span key={`${l.group}-cr`} className="tabular-nums font-bold text-emerald-700 dark:text-emerald-400">
-                              {grouped ? `${l.group} Cr ` : 'Cr '}
-                              {inr(r[l.cr])}
+                            <span
+                              className={cn(
+                                'tabular-nums font-bold',
+                                r[l.dr] ? 'text-slate-800 dark:text-slate-200' : 'text-muted-foreground/50',
+                              )}
+                            >
+                              {moneyOrDash(r[l.dr])}
                             </span>
-                          ) : null,
+                          </span>,
+                          <span key={`${l.group}-cr`} className="flex items-baseline justify-between gap-1.5">
+                            <span className="text-muted-foreground text-[10px] font-bold tracking-wide uppercase">
+                              {grouped ? `${l.group} Cr` : 'Cr'}
+                            </span>
+                            <span
+                              className={cn(
+                                'tabular-nums font-bold',
+                                r[l.cr] ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground/50',
+                              )}
+                            >
+                              {moneyOrDash(r[l.cr])}
+                            </span>
+                          </span>,
                         ])}
                       </div>
                       {showBalance && running && <Balance net={running[i]} className="shrink-0 text-[13px]" />}

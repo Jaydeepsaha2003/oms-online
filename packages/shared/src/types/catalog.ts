@@ -139,6 +139,70 @@ export interface ProductLookups {
   categoryFields: CategoryFieldDto[];
 }
 
+/* ── Bulk chart-rate adjustment (Products → Bulk rate change) ──────────────── */
+
+/** How the adjustment is expressed. */
+export const RATE_ADJUST_MODES = ['AMOUNT', 'PERCENT'] as const;
+export type RateAdjustMode = (typeof RATE_ADJUST_MODES)[number];
+
+/**
+ * "Put every GLASS rate up by ₹5" / "take 2.5% off 10-PCS-FG".
+ *
+ * `value` is SIGNED — negative lowers. A separate direction flag would let the
+ * two disagree ("decrease by -5" is an increase), so the sign is the only place
+ * direction lives; the UI's +/- buttons write the sign.
+ */
+export interface BulkRateChangeInput {
+  category: string;
+  /** Blank/omitted means the whole category. */
+  subCategory?: string | null;
+  mode: RateAdjustMode;
+  value: number;
+  /** Round each new rate to whole rupees. Off keeps 2 decimals. */
+  roundToRupee?: boolean;
+  /** Leave inactive products alone. Defaults to true — a withdrawn product's
+   *  rate is history, and moving it silently rewrites that history. */
+  activeOnly?: boolean;
+}
+
+/** One product the adjustment would touch. */
+export interface BulkRatePreviewRow {
+  id: number;
+  product: string;
+  subCategory: string;
+  size: number | null;
+  oldRate: number;
+  newRate: number;
+}
+
+/**
+ * What the change would do, before it does it.
+ *
+ * The counts matter as much as the rows: a bulk write over a category nobody
+ * can see the end of needs to say what it will NOT touch, or the silence reads
+ * as "nothing was skipped".
+ */
+export interface BulkRatePreview {
+  /** Products matching the scope, whatever their rate. */
+  matched: number;
+  /** Of those, how many will actually be written. */
+  willChange: number;
+  /** Skipped: no chart rate set — adding to "no rate" would invent a price. */
+  skippedNoRate: number;
+  /** Skipped: the result would be negative. */
+  skippedNegative: number;
+  /** Skipped: rounding left the rate exactly as it was. */
+  skippedUnchanged: number;
+  /** Sample of the affected rows, capped — the counts above are the full truth. */
+  rows: BulkRatePreviewRow[];
+  /** True when `rows` was cut short. */
+  truncated: boolean;
+}
+
+export interface BulkRateChangeResult {
+  updated: number;
+}
+
 /** Existing distinct values to populate the design form's category dropdowns.
  *  `subCategories` is every distinct (category, sub-category) pair — see
  *  {@link ProductLookups} for why this isn't a flat list. */
