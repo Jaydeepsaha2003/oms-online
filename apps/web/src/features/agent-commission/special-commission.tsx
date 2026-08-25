@@ -279,6 +279,7 @@ function RateTester({
 
   const agentId = agents.find((a) => a.name === agentName)?.id;
   const customerId = (lookups?.customers ?? []).find((c) => c.name === party)?.id;
+  const parties = useMemo(() => partiesOfAgent(lookups?.customers, agentName), [lookups, agentName]);
   const { data: result, isFetching } = useTestCommissionRate({
     agentId,
     customerId: customerId ?? null,
@@ -321,10 +322,11 @@ function RateTester({
       </div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
         <Field label="Agent">
-          <NativeSelect value={agentName} onChange={setAgentName} options={['', ...agents.map((a) => a.name)]} placeholder="Pick agent" />
+          {/* Switching agent invalidates the party — it belongs to the old one. */}
+          <NativeSelect value={agentName} onChange={(v) => { setAgentName(v); setParty(''); }} options={['', ...agents.map((a) => a.name)]} placeholder="Pick agent" />
         </Field>
         <Field label="Party">
-          <NativeSelect value={party} onChange={setParty} options={['', ...(lookups?.customers ?? []).map((c) => c.name)]} placeholder="Any party" />
+          <NativeSelect value={party} onChange={setParty} options={['', ...parties]} placeholder="Any party" />
         </Field>
         <Field label="Category">
           <NativeSelect value={pCategory} onChange={setPCategory} options={['', ...cats]} placeholder="Any" />
@@ -374,6 +376,22 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+/** The parties this agent actually sells to.
+ *
+ *  A special rate is scoped to one agent, so aiming it at somebody else's party
+ *  produces a rule that can never match a line. The picker offered all 137
+ *  customers regardless of the agent — JOHN has 9 — so the wrong pick was the
+ *  easy one. No agent chosen yet → nothing to narrow by, so offer everyone. */
+function partiesOfAgent(
+  customers: { name: string; agentName: string | null }[] | undefined,
+  agentName: string,
+): string[] {
+  const list = customers ?? [];
+  const a = agentName.trim().toUpperCase();
+  if (!a) return list.map((c) => c.name);
+  return list.filter((c) => (c.agentName ?? '').trim().toUpperCase() === a).map((c) => c.name);
+}
+
 /** Add a rule. The scope decides which fields appear at all — an empty box that
  *  does nothing is how a rule gets saved aimed at the wrong thing. */
 function AddSpecialDialog({
@@ -401,6 +419,7 @@ function AddSpecialDialog({
   const needs = NEEDS[scope];
   const agentId = agents.find((a) => a.name === agentName)?.id;
   const customerId = (lookups?.customers ?? []).find((c) => c.name === party)?.id;
+  const parties = useMemo(() => partiesOfAgent(lookups?.customers, agentName), [lookups, agentName]);
 
   const cats = useMemo(() => [...new Set((lookups?.products ?? []).map((p) => p.category))].filter(Boolean).sort(), [lookups]);
   const subs = useMemo(
@@ -483,7 +502,8 @@ function AddSpecialDialog({
         <div className="space-y-2.5">
           <div className="grid grid-cols-2 gap-2.5">
             <Field label="Agent">
-              <NativeSelect value={agentName} onChange={setAgentName} options={['', ...agents.map((a) => a.name)]} placeholder="Pick agent" />
+              {/* Switching agent invalidates the party — it belongs to the old one. */}
+              <NativeSelect value={agentName} onChange={(v) => { setAgentName(v); setParty(''); }} options={['', ...agents.map((a) => a.name)]} placeholder="Pick agent" />
             </Field>
             <Field label="Applies to">
               <NativeSelect
@@ -495,7 +515,10 @@ function AddSpecialDialog({
           </div>
 
           <Field label={needs.party === 'required' ? 'Party' : 'Party (optional — leave blank for all)'}>
-            <NativeSelect value={party} onChange={setParty} options={['', ...(lookups?.customers ?? []).map((c) => c.name)]} placeholder="All parties" />
+            <NativeSelect value={party} onChange={setParty} options={['', ...parties]} placeholder="All parties" />
+            {agentName && parties.length === 0 && (
+              <p className="mt-1 text-[11.5px] font-medium text-amber-700">No party is assigned to {agentName} yet — set the agent on the customer first.</p>
+            )}
           </Field>
 
           {needs.category && (
