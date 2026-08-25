@@ -242,6 +242,53 @@ export function decodeImage(dataURL: string): Promise<void> {
   });
 }
 
+/**
+ * Wait until everything inside `root` can actually be painted — fonts resolved,
+ * every image loaded AND decoded — then let two frames pass so layout settles.
+ *
+ * This is what stops a bill capturing half-drawn. The capture clones the invoice
+ * into an off-screen holder, and a clone's <img> elements are BRAND NEW nodes:
+ * they start unloaded even when the on-screen original is long since painted. An
+ * <img> that has not decoded contributes no height, so a header sized around the
+ * logo collapses, everything below shifts up, and the rasterised page comes out
+ * short — the "first time it prints half, second time it is fine" report, second
+ * time being the run where the browser cache made the clone's images instant.
+ *
+ * `decode()` rather than the `load` event: load fires when the bytes are in,
+ * decode resolves when the bitmap is ready to paint, which is the guarantee
+ * layout actually depends on. A failed image resolves rather than rejecting —
+ * one broken logo must not block the whole document.
+ */
+export async function waitForPaintable(root: HTMLElement, timeoutMs = 4000): Promise<void> {
+  const images = [...root.querySelectorAll('img')];
+
+  const ready = (img: HTMLImageElement) =>
+    new Promise<void>((resolve) => {
+      const decodeThen = () => (img.decode ? img.decode().then(() => resolve(), () => resolve()) : resolve());
+      // `complete` is true for a broken image too, hence naturalWidth.
+      if (img.complete && img.naturalWidth > 0) return decodeThen();
+      if (img.complete) return resolve();
+      img.addEventListener('load', decodeThen, { once: true });
+      img.addEventListener('error', () => resolve(), { once: true });
+    });
+
+  /*
+   * Bounded, because neither decode() nor requestAnimationFrame is guaranteed
+   * to settle.
+   *
+   * A backgrounded or hidden page stops rasterising: Chrome parks image decodes
+   * and stops firing animation frames entirely. Waiting unconditionally would
+   * turn "the PDF came out short" into "the PDF never appears", which is the
+   * worse failure — so every wait races a timer. Timing out lands exactly on the
+   * old behaviour (capture whatever is laid out now), never worse than it.
+   */
+  const withTimeout = (work: Promise<unknown>, ms: number) =>
+    Promise.race([work.then(() => undefined), new Promise<void>((r) => setTimeout(r, ms))]);
+
+  await withTimeout(Promise.all([document.fonts?.ready ?? Promise.resolve(), ...images.map(ready)]), timeoutMs);
+  await withTimeout(new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))), 250);
+}
+
 export function buildBillFilename(prefix: string, code: string | null | undefined, fallback: string): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   const d = new Date();

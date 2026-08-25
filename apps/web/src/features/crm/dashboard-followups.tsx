@@ -1,14 +1,13 @@
 import { useNavigate } from 'react-router-dom';
-import { AlarmClock, ArrowRight, BellRing, Check, CircleCheck, PanelRightClose } from 'lucide-react';
+import { ArrowRight, BellRing, CircleCheck, PanelRightClose } from 'lucide-react';
 import { toast } from 'sonner';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useFollowupBoard, useFollowupSummary, useResolveFollowup, useSnoozeFollowup } from './use-crm';
-import { Chip, itemLine, UrgencyChip } from './crm-shared';
+import { Chip, FollowupPartyList } from './crm-shared';
 
 /** Prominent dashboard panel: everything promised that needs attention now.
  *  `docked` renders it as a full-height right-rail sidebar (flush edges,
@@ -57,33 +56,14 @@ export function DashboardFollowups({ docked = false, onHide }: { docked?: boolea
             <CircleCheck className="text-emerald-500 size-5" /> All commitments are on track — nothing overdue right now.
           </div>
         ) : (
-          <div className="divide-y">
-            {items.map((f) => (
-              <div key={f.id} className="flex flex-wrap items-center gap-2 py-2">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {f.priority === 'URGENT' && <Chip tone="rose">URGENT</Chip>}
-                    <span className="font-medium">{f.partyName}</span>
-                    <UrgencyChip f={f} />
-                    {f.stage && <Chip tone="slate">{f.stage}</Chip>}
-                  </div>
-                  <div className="text-muted-foreground truncate text-xs">
-                    {f.title}{itemLine(f) ? ` · ${itemLine(f)}` : ''}{f.promisedAt ? ` · promised ${formatDate(f.promisedAt)}` : ''}
-                  </div>
-                </div>
-                {(can('crm:update')) && (
-                  <div className="flex gap-1.5">
-                    <Button size="sm" variant="outline" className="h-7 text-xs text-amber-700" disabled={snooze.isPending} onClick={() => snooze.mutate(f.id, { onSuccess: () => toast.success('Snoozed'), onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) })}>
-                      <AlarmClock className="size-3" /> Snooze
-                    </Button>
-                    <Button size="sm" variant="outline" className="h-7 text-xs text-emerald-700" disabled={resolve.isPending} onClick={() => resolve.mutate({ id: f.id }, { onSuccess: () => toast.success('Done'), onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) })}>
-                      <Check className="size-3" /> Done
-                    </Button>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
+          <FollowupPartyList
+            items={items}
+            canUpdate={can('crm:update')}
+            snoozing={snooze.isPending}
+            resolving={resolve.isPending}
+            onSnooze={(id) => snooze.mutate(id, { onSuccess: () => toast.success('Snoozed'), onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) })}
+            onResolve={(id) => resolve.mutate({ id }, { onSuccess: () => toast.success('Done'), onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) })}
+          />
         )}
       </CardContent>
     </Card>

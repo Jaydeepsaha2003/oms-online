@@ -16,7 +16,7 @@
 // short of clearing site data. It now answers from cache when the network is
 // slow but lets that fetch finish in the background, so the next open is
 // current. See the navigation handler below.
-const CACHE = 'oms-v14';
+const CACHE = 'oms-v15';
 
 /** How long a navigation waits for the live shell before falling back to cache.
  *  Generous compared with the old 2.5s: a phone resuming on cellular or the
@@ -172,8 +172,8 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     self.registration.showNotification(data.title, {
       body: data.body,
-      icon: '/icons/icon-192.png',
-      badge: '/icons/icon-192.png',
+      icon: '/icons/icon-192-v2.png',
+      badge: '/icons/icon-192-v2.png',
       data: data.data ?? {},
     }),
   );

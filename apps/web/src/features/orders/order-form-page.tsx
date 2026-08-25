@@ -1414,20 +1414,12 @@ export function OrderFormPage() {
 
   return (
     /*
-     * `data-soft-fields` lightens the navy field edge for this screen only.
-     *
-     * The hard navy is right on a LIST page, where one search box has to be
-     * findable among the rows. This form is nothing but fields — customer, item,
-     * design, order type, priority, four quantity boxes — so the same weight on
-     * every one of them turns the whole screen into a grid of dark rectangles
-     * and stops picking anything out at all.
-     *
-     * Done by redefining the CSS variable on this container rather than
-     * restyling the fields: the border rules in index.css read
-     * `var(--search-border)`, so every input, combo-box and their focus rings
-     * follow along with no per-field overrides to keep in sync.
+     * The light field edge this form used to opt into via `data-soft-fields` is
+     * now the app-wide default — see "One edge on every field" in index.css. The
+     * wrapper is gone rather than left as a no-op, so there is one place that
+     * decides what a field looks like.
      */
-    <div ref={formRef} onKeyDown={handleTabNav} data-soft-fields className="flex w-full flex-col gap-2">
+    <div ref={formRef} onKeyDown={handleTabNav} className="flex w-full flex-col gap-2">
       {/* Success tick overlay shown briefly after a save */}
       {saved && (
         <div className="bg-background/70 fixed inset-0 z-[100] flex items-center justify-center backdrop-blur-sm">

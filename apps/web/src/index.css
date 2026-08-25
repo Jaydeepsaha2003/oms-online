@@ -54,11 +54,22 @@
   --brand-amber: oklch(0.80 0.16 82);
   --brand-orange: oklch(0.70 0.19 48);
 
-  /* Search boxes wear a hard navy edge instead of the hairline every other field
-     gets — the search box is the first thing reached for on a list screen, and it
-     should be findable without hunting for it. */
-  --search-border: oklch(0.33 0.095 264);
-  --search-ring: oklch(0.33 0.095 264 / 20%);
+  /* One field edge for the whole app.
+     ---------------------------------------------------------------------
+     Search boxes used to wear a hard 2px navy edge while everything else got a
+     hairline, on the reasoning that a search box is the first thing reached for
+     on a list screen. It made the app look assembled from two different kits:
+     twelve boxes on a form, four of them shouting, and no two screens agreeing.
+
+     So the light edge the order form was using is now simply what a field looks
+     like — one tone, one width, everywhere. Light enough to sit behind the
+     content, dark enough to draw the box. Where a field can be SEARCHED is told
+     by its chevron and its placeholder, which is what people actually look at;
+     it does not need to be shouted in the border as well. Emphasis lives on
+     focus instead — see the focus rule far below. */
+  --search-border: oklch(0.74 0.035 258);
+  --search-ring: oklch(0.60 0.06 258 / 20%);
+  --field-border: oklch(0.74 0.035 258);
 
   /* Placeholder text.
      ---------------------------------------------------------------------
@@ -110,10 +121,11 @@
   --brand-amber: oklch(0.80 0.16 82);
   --brand-orange: oklch(0.70 0.19 48);
 
-  /* On the navy background a dark navy border is invisible, so the emphasis has
-     to run the other way — a bright, cool edge against the dark surface. */
-  --search-border: oklch(0.78 0.10 258);
-  --search-ring: oklch(0.78 0.10 258 / 28%);
+  /* Dark mode runs the other way: the edge has to be LIGHTER than the surface,
+     so "quieter" means closer to the background rather than further from it. */
+  --search-border: oklch(0.46 0.03 258);
+  --search-ring: oklch(0.70 0.06 258 / 24%);
+  --field-border: oklch(0.46 0.03 258);
 
   /* Below --muted-foreground (0.72) here too, so the ordering
      foreground > muted > placeholder holds in both themes. */
@@ -513,7 +525,9 @@
 input[placeholder^='Search' i],
 input[placeholder^='Find' i],
 input[placeholder^='Filter' i] {
-  border-width: 2px;
+  /* 1px, matching every other field — colour carries the definition now, not
+     weight. See the token comment at the top for why this stopped being 2px. */
+  border-width: 1px;
   border-color: var(--search-border);
 }
 
@@ -534,9 +548,9 @@ input[placeholder^='Filter' i][aria-invalid='true'] {
 }
 
 /* ── Combo-boxes ───────────────────────────────────────────────────────────
-   A combo-box IS a search box: you type into it and it filters a list. It gets
-   the same thick navy edge so a field you can search never looks like a field
-   you can only type into.
+   A combo-box IS a search box: you type into it and it filters a list, so it
+   carries exactly the same edge — which is now the same edge every field
+   carries.
 
    Set here rather than in the component's own class string for the same reason
    as the rule above: ~220 call sites pass their own `className`, many carrying
@@ -544,7 +558,7 @@ input[placeholder^='Filter' i][aria-invalid='true'] {
    that fight, so every combo-box in the app matches — including ones written
    later. */
 input[data-slot='combobox'] {
-  border-width: 2px;
+  border-width: 1px;
   border-color: var(--search-border);
 }
 
@@ -563,73 +577,59 @@ input[data-slot='combobox']:disabled {
   border-color: var(--border);
 }
 
-/* ── Form-heavy screens: one light edge on every field ─────────────────────
-   A container marked `data-soft-fields` re-points the tokens the rules above
-   read, so every field inside it changes together and nothing is restyled one
-   at a time.
+/* ── One edge on every field, app-wide ─────────────────────────────────────
+   These used to be scoped to a `[data-soft-fields]` container, applied only to
+   the New Order form. Two problems with keeping it that way:
 
-   Why it exists: the hard navy earns its keep on a LIST page, where a single
-   search box has to be findable among the rows. A form is almost nothing BUT
-   fields, and at that density the same weight distinguishes nothing — it draws
-   a grid of dark rectangles.
+   1. It made the rest of the app inconsistent with the screen people spend the
+      most time on — the same control looked like two different controls
+      depending on where you met it.
+   2. A container attribute cannot reach a Radix dialog or sheet, whose content
+      is portaled to <body> and so sits OUTSIDE the wrapper. Half the app's
+      forms live in dialogs, and those would have kept the old hard navy no
+      matter what the wrapper said.
 
-   And here every field gets the SAME edge, searchable or not. The two-tier
-   version (2px navy on the combo-boxes, 1px slate on the rest) made the form
-   look assembled from two different kits: twelve boxes in a row, four of them
-   shouting. One thin, light edge on all of them reads as one form. Where a
-   field can be searched is told by its chevron and its placeholder, which is
-   what the user actually looks at — it does not need to be shouted in the
-   border as well. */
-[data-soft-fields] {
-  /* One tone for everything. Light enough to sit quietly behind the content,
-     dark enough to draw the box — the app-wide hairline (1.3:1 on white) is
-     right for a field alone in a card and invisible in a grid of twelve. */
-  --search-border: oklch(0.74 0.035 258);
-  --search-ring: oklch(0.60 0.06 258 / 20%);
-  --field-border: oklch(0.74 0.035 258);
-}
-
-/* THIN: back to a hairline, including the combo-boxes, which the app-wide rule
-   above puts at 2px. Colour carries the definition now, not weight. */
-[data-soft-fields] input[data-slot='combobox'],
-[data-soft-fields] input[placeholder^='Search' i],
-[data-soft-fields] input[placeholder^='Find' i],
-[data-soft-fields] input[placeholder^='Filter' i] {
-  border-width: 1px;
-}
+   Unscoped and unlayered, so it covers every field on every screen — inside
+   dialogs, inside sheets, and in components written later — and still wins over
+   the ~220 call sites that pass their own border classes, because Tailwind's
+   utilities sit in @layer and these do not. */
 
 /* Every field that takes input, plus the read-only ones — a form reads as one
    thing or it reads as a mess, and a greyed background is what says "you cannot
    type here", not a fainter border. Checkboxes, switches, radios and file
    inputs draw their own shape and are left alone. */
-[data-soft-fields] input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not(:disabled),
-[data-soft-fields] textarea:not(:disabled),
-[data-soft-fields] select:not(:disabled) {
+input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not(:disabled),
+textarea:not(:disabled),
+select:not(:disabled) {
   border-color: var(--field-border);
 }
 
-/* Focus is where the emphasis goes instead: the ring, not a permanently heavy
-   edge. This is the one place on the form that should draw the eye.
-   The `:not()` chain is repeated so this outranks the rule above — that one
-   carries five of them, and without matching it the resting border-color won
+/* A red border has to outrank the resting edge.
+   The `:not()` chain above scores (0,5,1), which beat the old
+   `input[placeholder^='Search'][aria-invalid='true']` at (0,3,1) — so inside the
+   order form an invalid search box or combo-box showed the calm border and no
+   red at all. Repeating the chain here matches that score, and being later in
+   source order it wins. */
+input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not(:disabled)[aria-invalid='true'],
+textarea:not(:disabled)[aria-invalid='true'],
+select:not(:disabled)[aria-invalid='true'] {
+  border-color: var(--destructive);
+}
+
+/* Focus is where the emphasis goes instead: the ring and a darker edge, not a
+   permanently heavy border. This is the one place on a form that should draw the
+   eye. The `:not()` chain is repeated so this outranks the resting rule — that
+   one carries five of them, and without matching it the resting border-color won
    even while focused (the ring applied, the darker edge did not). */
-[data-soft-fields] input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not(:disabled):focus-visible,
-[data-soft-fields] textarea:not(:disabled):not([readonly]):focus-visible,
-[data-soft-fields] select:not(:disabled):not([multiple]):focus-visible {
+input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not(:disabled):focus-visible,
+textarea:not(:disabled):not([readonly]):focus-visible,
+select:not(:disabled):not([multiple]):focus-visible {
   border-color: oklch(0.52 0.09 264);
   box-shadow: 0 0 0 3px var(--search-ring);
 }
 
-/* Dark mode runs the other way: the edge has to be LIGHTER than the surface, so
-   "quieter" means closer to the background rather than further from it. */
-.dark [data-soft-fields] {
-  --search-border: oklch(0.46 0.03 258);
-  --search-ring: oklch(0.70 0.06 258 / 24%);
-  --field-border: oklch(0.46 0.03 258);
-}
-
-.dark [data-soft-fields] input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not(:disabled):focus-visible,
-.dark [data-soft-fields] textarea:not(:disabled):not([readonly]):focus-visible,
-.dark [data-soft-fields] select:not(:disabled):not([multiple]):focus-visible {
+.dark input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not(:disabled):focus-visible,
+.dark textarea:not(:disabled):not([readonly]):focus-visible,
+.dark select:not(:disabled):not([multiple]):focus-visible {
   border-color: oklch(0.72 0.08 258);
 }

@@ -13,7 +13,7 @@ function showNativeNotification(payload: TestNotificationPayload): void {
   try {
     new Notification('OMS test notification', {
       body: `Triggered by ${payload.triggeredBy}`,
-      icon: '/icons/icon-192.png',
+      icon: '/icons/icon-192-v2.png',
     });
   } catch {
     /* ignore — some platforms restrict constructing Notification directly */
@@ -65,7 +65,7 @@ export function connectNotificationsSocket(): void {
   socket.on('notification', (n: AppNotification) => {
     if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
       try {
-        new Notification(n.title, { body: n.body, icon: '/icons/icon-192.png' });
+        new Notification(n.title, { body: n.body, icon: '/icons/icon-192-v2.png' });
       } catch {
         /* ignore — some platforms restrict constructing Notification directly */
       }

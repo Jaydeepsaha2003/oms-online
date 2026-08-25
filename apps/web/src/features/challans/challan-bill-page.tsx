@@ -10,7 +10,7 @@ import { useFitToWidth } from '@/hooks/use-fit-to-width';
 import { useConfirm } from '@/components/common/confirm';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { buildBillFilename, captureScale, decodeImage, isIOS, savePdfBlob, showPreviewPlaceholder, takePendingPreviewTab } from '@/lib/pdf';
+import { buildBillFilename, captureScale, decodeImage, isIOS, savePdfBlob, showPreviewPlaceholder, takePendingPreviewTab, waitForPaintable } from '@/lib/pdf';
 import { formatDate } from '@/lib/date-format';
 import kavishLogo from '@/assets/kavish-logo-order.png';
 import { useChallanTerms, useCompany } from '@/features/settings/use-settings';
@@ -118,9 +118,9 @@ export function ChallanBillPage() {
     if (smartBack) navigate((pending?.total ?? 0) > 0 ? '/challans/pending' : '/challans');
     else navigate(-1);
   };
-  const { data: termsData } = useChallanTerms();
+  const { data: termsData, isPending: termsPending } = useChallanTerms();
   const terms = termsData?.terms ?? [];
-  const { data: company } = useCompany();
+  const { data: company, isPending: companyPending } = useCompany();
   const logoSrc = company?.logo || kavishLogo;
   const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
@@ -168,20 +168,30 @@ export function ChallanBillPage() {
   const wantsAutoPrint = !!autoState?.autoPrint;
   const wantsAutoPreview = !!autoState?.autoPreview;
   const challanReady = !!challan;
+  /*
+   * The company profile carries the logo, and it is a SEPARATE query from the
+   * challan. Firing the capture on the challan alone meant a cold open
+   * rasterised the bundled fallback mark — or nothing — and then swapped in the
+   * real logo afterwards, changing the page after the PDF had been built. On the
+   * second open the profile is already cached (staleTime 60s), which is why it
+   * looked right the second time.
+   *
+   * `isPending` and not `isSuccess`: a settings request that FAILS must still
+   * release the gate, or the bill would never print at all.
+   *
+   * TERMS matter more than the logo here, and are the actual reported bug: the
+   * terms block is rendered behind `terms.length > 0`, so until that query lands
+   * it is not in the DOM AT ALL. Capturing then produced a challan with its whole
+   * bottom section missing — "it printed half" — and the second open looked fine
+   * only because React Query had the terms cached by then.
+   */
+  const printableReady = !companyPending && !termsPending;
   useEffect(() => {
-    if ((!wantsAutoPrint && !wantsAutoPreview) || !challanReady || autoActionFired.current) return;
+    if ((!wantsAutoPrint && !wantsAutoPreview) || !challanReady || !printableReady || autoActionFired.current) return;
     autoActionFired.current = true;
     void (async () => {
       const node = document.getElementById('challan-invoice');
-      const images = node ? [...node.querySelectorAll('img')] : [];
-      await Promise.all([
-        document.fonts?.ready ?? Promise.resolve(),
-        ...images.map((img) => (img.complete ? Promise.resolve() : new Promise<void>((res) => {
-          img.addEventListener('load', () => res(), { once: true });
-          img.addEventListener('error', () => res(), { once: true });
-        }))),
-      ]);
-      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      if (node) await waitForPaintable(node);
       if (wantsAutoPrint) {
         await print();
         navigate(location.pathname, { replace: true, state: { backTo: autoState?.backTo } });
@@ -205,7 +215,7 @@ export function ChallanBillPage() {
     // invalidates the challan query, so a refetch lands mid-capture and would
     // otherwise cancel the action a moment before it fired. The ref keeps it to once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wantsAutoPrint, wantsAutoPreview, challanReady]);
+  }, [wantsAutoPrint, wantsAutoPreview, challanReady, printableReady]);
 
   // Capture the challan at 960 px — wide enough to avoid over-wrapping but
   // narrow enough that fonts appear noticeably larger when scaled to A4.
@@ -220,6 +230,9 @@ export function ChallanBillPage() {
     holder.style.cssText = `position:fixed;left:-10000px;top:0;width:${PDF_RENDER_W}px;background:#ffffff`;
     holder.appendChild(clone);
     document.body.appendChild(holder);
+    // BEFORE any measurement below: an undecoded image has no height, so
+    // measuring first yields offsets for a layout that never gets printed.
+    await waitForPaintable(clone);
     const canvas = await html2canvas(clone, { scale: captureScale(), backgroundColor: '#ffffff' });
     holder.remove();
     const dataURL = canvas.toDataURL('image/jpeg', 0.95);
@@ -593,7 +606,21 @@ export function ChallanBillPage() {
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'center', alignSelf: 'center' }}>
-            <img src={logoSrc} alt={company?.name || 'Company logo'} style={{ width: 125, height: 'auto' }} />
+            {/*
+              * Fixed box, not `height: 'auto'`.
+              *
+              * With auto height this row's height depended on the logo having
+              * decoded — undecoded meant a collapsed header and every row below
+              * shifted up, which is exactly what the PDF captured on a cold open.
+              * 125x84 is the bundled mark's own ratio; `contain` letterboxes a
+              * company-uploaded logo of any other shape rather than distorting it,
+              * and the reserved space is identical either way.
+              */}
+            <img
+              src={logoSrc}
+              alt={company?.name || 'Company logo'}
+              style={{ width: 125, height: 84, objectFit: 'contain' }}
+            />
           </div>
 
           {/* 6-column grid: label · colon · value (×2) — all colons perfectly aligned.

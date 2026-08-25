@@ -1,17 +1,16 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlarmClock, ArrowRight, Bell, Check, CircleCheck } from 'lucide-react';
+import { ArrowRight, Bell, CircleCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { formatDate } from '@/lib/date-format';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useFollowupBoard, useFollowupSummary, useResolveFollowup, useSnoozeFollowup } from './use-crm';
 import { useNudgeCount } from './followup-nudge';
 import { usePermissions } from '@/hooks/use-permissions';
 import { EnablePushPanel, usePushEnrolment } from '@/features/notifications/enable-notifications';
-import { Chip, itemLine, UrgencyChip } from './crm-shared';
+import { Chip, FollowupPartyList } from './crm-shared';
 
 /**
  * The single topbar bell.
@@ -56,6 +55,9 @@ function DeviceOnlyBell() {
 }
 
 function CrmNotificationsBell() {
+  // Its own call: `can` in NotificationsBell above is a different scope, and the
+  // Snooze/Done buttons need crm:update just as the dashboard rail does.
+  const { can } = usePermissions();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const { data: summary } = useFollowupSummary();
@@ -110,52 +112,16 @@ function CrmNotificationsBell() {
             <CircleCheck className="size-5 text-emerald-500" /> All caught up — nothing pending.
           </div>
         ) : (
-          <div className="max-h-[min(60vh,26rem)] divide-y overflow-y-auto">
-            {items.map((f) => (
-              <div key={f.id} className="px-3 py-2.5">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {f.priority === 'URGENT' && <Chip tone="rose">URGENT</Chip>}
-                  <span className="font-medium">{f.partyName}</span>
-                  <UrgencyChip f={f} />
-                  {f.stage && <Chip tone="slate">{f.stage}</Chip>}
-                </div>
-                <div className="text-muted-foreground mt-0.5 truncate text-xs">
-                  {f.title}
-                  {itemLine(f) ? ` · ${itemLine(f)}` : ''}
-                  {f.promisedAt ? ` · promised ${formatDate(f.promisedAt)}` : ''}
-                </div>
-                <div className="mt-1.5 flex gap-1.5">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 text-xs text-amber-700"
-                    disabled={snooze.isPending}
-                    onClick={() =>
-                      snooze.mutate(f.id, {
-                        onSuccess: () => toast.success('Snoozed'),
-                        onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')),
-                      })
-                    }
-                  >
-                    <AlarmClock className="size-3" /> Snooze
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 text-xs text-emerald-700"
-                    disabled={resolve.isPending}
-                    onClick={() =>
-                      resolve.mutate({ id: f.id }, {
-                        onSuccess: () => toast.success('Done'),
-                        onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')),
-                      })
-                    }
-                  >
-                    <Check className="size-3" /> Done
-                  </Button>
-                </div>
-              </div>
-            ))}
+          <div className="max-h-[min(60vh,26rem)] overflow-y-auto">
+            <FollowupPartyList
+              items={items}
+              padded
+              canUpdate={can('crm:update')}
+              snoozing={snooze.isPending}
+              resolving={resolve.isPending}
+              onSnooze={(id) => snooze.mutate(id, { onSuccess: () => toast.success('Snoozed'), onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) })}
+              onResolve={(id) => resolve.mutate({ id }, { onSuccess: () => toast.success('Done'), onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) })}
+            />
           </div>
         )}
       </PopoverContent>

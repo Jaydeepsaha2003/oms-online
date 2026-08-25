@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
 import { Button } from '@/components/ui/button';
-import { buildBillFilename, captureScale, decodeImage, isIOS, savePdfBlob } from '@/lib/pdf';
+import { buildBillFilename, captureScale, decodeImage, isIOS, savePdfBlob, waitForPaintable } from '@/lib/pdf';
 import { shortOrderCode } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import kavishLogo from '@/assets/kavish-logo-order.png';
@@ -64,20 +64,20 @@ export function OrderBillPage() {
   const isLoading = isQuotation ? quotationQ.isLoading : orderQ.isLoading;
   // Editable from Settings → "Sales Order Terms & Conditions"; falls back to the
   // built-in default text until that loads (or if it's never been customised).
-  const { data: orderTermsData } = useOrderTerms();
+  const { data: orderTermsData, isPending: orderTermsPending } = useOrderTerms();
   // Quotations print their own list (Settings → "Quotation Terms & Conditions");
   // the server hands back the Sales Order terms until one is saved, so the two
   // documents only diverge once the business actually customises the quotation's.
-  const { data: quotationTermsData } = useQuotationTerms();
+  const { data: quotationTermsData, isPending: quotationTermsPending } = useQuotationTerms();
   const termsData = isQuotation ? quotationTermsData : orderTermsData;
   const terms = termsData?.terms.length ? termsData.terms : FALLBACK_TERMS;
   const docTitle = isQuotation ? 'QUOTATION' : 'SALES ORDER';
   // Editable from Settings → "Sales Order footer text"; {DOC_TYPE} is swapped for docTitle.
-  const { data: footerData } = useOrderFooter();
+  const { data: footerData, isPending: footerPending } = useOrderFooter();
   const footerLines = (footerData?.lines.length ? footerData.lines : FALLBACK_FOOTER).map((l) => l.replaceAll('{DOC_TYPE}', docTitle));
   // Uploaded via Settings → "Company branding"; falls back to the built-in Kavish
   // logo until one's been uploaded.
-  const { data: company } = useCompany();
+  const { data: company, isPending: companyPending } = useCompany();
   const logoSrc = company?.logo || kavishLogo;
   const pageTitle = isQuotation ? 'Quotation' : 'Sales Order';
   const fileSuffix = isQuotation ? 'quotation' : 'sales-order';
@@ -115,6 +115,11 @@ export function OrderBillPage() {
     holder.style.cssText = `position:fixed;left:-10000px;top:0;width:${PDF_RENDER_W}px;background:#ffffff`;
     holder.appendChild(clone);
     document.body.appendChild(holder);
+    // BEFORE the measurements below. `rowBreaksPx` are page-cut offsets read off
+    // the clone; taken while the logo is still undecoded they describe a shorter
+    // layout than the one that gets rasterised, so the page splits land in the
+    // wrong places and the first page prints short.
+    await waitForPaintable(clone);
     // Safe places to later cut this into pages: the bottom edge of every block
     // that must not be split — item rows, and every terms/footer line below the
     // table. Measured on the clone (same 960px-wide layout the canvas below is
@@ -271,26 +276,30 @@ export function OrderBillPage() {
   const wantsPrint = !!autoState?.autoPrint;
   const wantsPdf = !!autoState?.autoPdf;
   const ready = !!order;
+  /*
+   * Everything the PRINTED document draws on, not just the order.
+   *
+   * The logo, the terms and the footer are three more queries. Unlike the
+   * challan these have built-in fallbacks, so a cold capture is never missing a
+   * whole block — but it prints the FALLBACK wording instead of the customised
+   * text, and since the fallback is a different length the page breaks land
+   * elsewhere too. `isPending` throughout, so a settings call that fails still
+   * releases the gate rather than leaving the bill unprintable.
+   */
+  const printableReady =
+    !companyPending && !footerPending && !(isQuotation ? quotationTermsPending : orderTermsPending);
   useEffect(() => {
-    if ((!wantsPrint && !wantsPdf) || !ready || autoFired.current) return;
+    if ((!wantsPrint && !wantsPdf) || !ready || !printableReady || autoFired.current) return;
     autoFired.current = true;
     void (async () => {
       const node = document.getElementById('sales-order');
-      const images = node ? [...node.querySelectorAll('img')] : [];
-      await Promise.all([
-        document.fonts?.ready ?? Promise.resolve(),
-        ...images.map((img) => (img.complete ? Promise.resolve() : new Promise<void>((res) => {
-          img.addEventListener('load', () => res(), { once: true });
-          img.addEventListener('error', () => res(), { once: true });
-        }))),
-      ]);
-      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      if (node) await waitForPaintable(node);
       if (wantsPrint) await print();
       else await download();
       navigate(location.pathname, { replace: true, state: null });
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wantsPrint, wantsPdf, ready]);
+  }, [wantsPrint, wantsPdf, ready, printableReady]);
 
   const totals = useMemo(() => {
     // Cancelled lines are excluded from the order totals.
@@ -433,7 +442,14 @@ export function OrderBillPage() {
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'center' }}>
-            <img src={logoSrc} alt={company?.name || 'Company logo'} style={{ width: 130, height: 'auto' }} />
+            {/* Fixed box, not `height: 'auto'` — see the same note on the challan bill.
+                An undecoded logo has no height, which collapsed this header and
+                shifted the whole document up in the captured PDF. */}
+            <img
+              src={logoSrc}
+              alt={company?.name || 'Company logo'}
+              style={{ width: 130, height: 87, objectFit: 'contain' }}
+            />
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
