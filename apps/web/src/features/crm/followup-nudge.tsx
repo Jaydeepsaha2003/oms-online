@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { AlarmClock, ArrowRight, BellRing, Check, Eye, Loader2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { DEFAULT_CRM_SETTINGS, type FollowupDto } from '@oms/shared';
-import { getApiErrorMessage } from '@/lib/api';
+import { getApiErrorMessage, http } from '@/lib/api';
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import { buzz, playChime } from '@/lib/chime';
 import { formatDate } from '@/lib/date-format';
@@ -97,7 +97,23 @@ export function FollowupNudge() {
     // now only the Snooze button read. A follow-up may override it for itself.
     const gapMs = (f: FollowupDto) =>
       (f.reminderIntervalMins ?? settings?.intervalMins ?? DEFAULT_CRM_SETTINGS.intervalMins) * 60_000;
-    const fresh = due.filter((f) => !seen.current.has(f.id) && now - (log[f.id] ?? 0) >= gapMs(f));
+    /*
+     * "When was this last nudged?" is whichever is LATER: this browser's own
+     * log, or the server's `lastRemindedAt`.
+     *
+     * The local log alone could only ever answer for one browser on one origin.
+     * Clear site data, open the app on a second machine, or let the dev server's
+     * LAN IP move (it is reached by IP, and DHCP does move it) and the gap was
+     * forgotten — every open follow-up nudged again on the next load, chime and
+     * all. That is what made a restart look like the trigger: a restart is just
+     * a reload, and an overdue follow-up stays an active nudge for ever.
+     *
+     * The local log is still consulted because it is instant — it covers the
+     * window between showing a banner and the POST below landing.
+     */
+    const lastNudgedAt = (f: FollowupDto) =>
+      Math.max(log[f.id] ?? 0, f.lastRemindedAt ? new Date(f.lastRemindedAt).getTime() : 0);
+    const fresh = due.filter((f) => !seen.current.has(f.id) && now - lastNudgedAt(f) >= gapMs(f));
 
     let secondChime: ReturnType<typeof setTimeout> | undefined;
 
@@ -112,6 +128,15 @@ export function FollowupNudge() {
         log[f.id] = now;
       }
       writeNudgeLog(log, now);
+
+      // Tell the server it went out, so the gap outlives this browser. Fire and
+      // forget: if it fails the local log still holds for this session, which is
+      // exactly the behaviour we had before.
+      for (const f of fresh) {
+        http.post(`/crm/followups/${f.id}/nudged`, {}).catch(() => {
+          /* best-effort — the local log is the fallback */
+        });
+      }
 
       // Add new followups to active banners list
       setActiveBanners((prev) => {

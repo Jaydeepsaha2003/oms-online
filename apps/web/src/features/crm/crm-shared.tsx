@@ -49,7 +49,14 @@ export function promisedLabel(f: FollowupDto): string {
 
 /** A short "who/what" line for a follow-up. */
 export function itemLine(f: FollowupDto): string {
-  return f.orderCode ? `${f.orderCode}${f.itemText ? ` · ${f.itemText}` : ''}` : f.itemText || '';
+  const line = f.orderCode ? `${f.orderCode}${f.itemText ? ` · ${f.itemText}` : ''}` : f.itemText || '';
+  // Suppressed when the title already says it. PAYMENT follow-ups are created
+  // with an auto-generated title of "Collect <itemText>", so every caller that
+  // renders `title · itemLine` printed the same amount and invoice number twice
+  // in one sentence — e.g. "Collect ₹39,650 for SSS/26-27/16 · ₹39,650 for
+  // SSS/26-27/16" on the reminder banner. Doing it here fixes the banner and the
+  // board list together, instead of patching each render site.
+  return line && f.title.includes(line) ? '' : line;
 }
 
 export function initials(name: string): string {
