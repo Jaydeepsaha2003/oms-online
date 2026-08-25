@@ -4,6 +4,7 @@ import { AlarmClock, ArrowRight, BellRing, Check, Eye, Loader2, X } from 'lucide
 import { toast } from 'sonner';
 import { DEFAULT_CRM_SETTINGS, type FollowupDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 import { buzz, playChime } from '@/lib/chime';
 import { formatDate } from '@/lib/date-format';
 import { Button } from '@/components/ui/button';
@@ -46,15 +47,26 @@ function writeNudgeLog(log: NudgeLog, now: number): void {
 }
 
 /**
- * The reminder manager.
- * Plays the loud chime, triggers desktop browser notifications, and displays
- * beautiful Instagram-style in-app notification banners at the top of the viewport
- * for mobile & desktop Chrome browsers.
+ * The reminder manager. Mounted once in the app shell.
  *
- * Mounted once in the app shell.
+ * Chimes, vibrates, fires an OS notification, and — on DESKTOP ONLY — slides a
+ * banner in at the top of the viewport.
+ *
+ * No banner on phones. At phone width the card spans the full screen, and two or
+ * three of them stack over whatever you were reading: on the dashboard they
+ * covered the KPI tiles outright. A phone already has two better places for
+ * this — the OS notification, and the bell / dashboard rail, which list the same
+ * follow-ups with the same actions and stay there until dealt with. The banner
+ * was a third copy, and the only one that took the screen away from you.
+ *
+ * Everything else still runs on mobile. Suppressing the sound or the OS
+ * notification would be a different request; this drops the overlay only, so a
+ * phone still tells you a reminder came due — it just does not sit on top of the
+ * app to do it.
  */
 export function FollowupNudge() {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const { data: due = [] } = useFollowupDue();
   const { data: settings } = useCrmSettings();
   const snooze = useSnoozeFollowup();
@@ -146,6 +158,10 @@ export function FollowupNudge() {
 
     return () => clearTimeout(secondChime);
   }, [due, settings?.sound, settings?.desktopNotifications, settings?.intervalMins]);
+
+  // Phones get the chime, the buzz and the OS notification — but nothing drawn
+  // over the app. See the note on this component for why.
+  if (isMobile) return null;
 
   return (
     <>

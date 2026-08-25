@@ -63,6 +63,23 @@ export function fetchDefaultRateList(label?: string): Promise<CustomerRateList> 
   return http.get<CustomerRateList>('/customers/rate-list/default', name ? { params: { name } } : undefined);
 }
 
+/**
+ * The chart rate list, cached — so the download dialog can offer a category
+ * picker for it and then export from the same payload.
+ *
+ * Fetched WITHOUT a name on purpose. The name is only printed at the top, so
+ * keying the cache on it would refetch 650 lines on every keystroke in the name
+ * box; the caller substitutes it locally instead (see DEFAULT_RATE_LIST_TITLE).
+ */
+export function useDefaultRateList(enabled: boolean) {
+  return useQuery({
+    queryKey: [...KEY, 'rate-list', 'default'],
+    queryFn: () => fetchDefaultRateList(),
+    enabled,
+    staleTime: 30_000,
+  });
+}
+
 /** The customer's current effective rate list, for the on-screen preview. */
 export function useCustomerRateList(id: number | undefined) {
   return useQuery({

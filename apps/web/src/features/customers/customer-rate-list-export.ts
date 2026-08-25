@@ -1048,6 +1048,23 @@ export async function buildRateListPdfDoc(list: CustomerRateList, opts: BuildSec
   return doc;
 }
 
+/**
+ * The same PDF the Download button writes, handed back as a blob instead of
+ * saved.
+ *
+ * Shares {@link buildRateListPdfDoc} with the download path deliberately: a
+ * preview built by a second code path is a preview of a document that does not
+ * exist. What is on screen here is byte-for-byte what Download produces.
+ */
+export async function buildRateListPdfBlob(
+  list: CustomerRateList,
+  opts: BuildSectionsOptions = {},
+  logo?: string | null,
+): Promise<{ blob: Blob; filename: string }> {
+  const doc = await buildRateListPdfDoc(list, opts, logo);
+  return { blob: doc.output('blob'), filename: `RateList-${sanitize(list.customerName)}-${dateStamp()}.pdf` };
+}
+
 export async function exportRateListPdf(
   list: CustomerRateList,
   opts: BuildSectionsOptions = {},

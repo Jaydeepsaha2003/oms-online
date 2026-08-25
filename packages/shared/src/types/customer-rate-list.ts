@@ -38,6 +38,16 @@ export interface CustomerRateListDesign {
   from: string | null;
 }
 
+/**
+ * Heading for the party-less chart sheet when the user names nothing.
+ *
+ * Shared because both sides need it: the API falls back to it, and the web
+ * substitutes the typed name onto an already-fetched list rather than
+ * re-fetching 650 lines just to change one string. Two copies of the same
+ * literal is how the printed sheet and the API drift apart.
+ */
+export const DEFAULT_RATE_LIST_TITLE = 'STANDARD RATE LIST';
+
 /** A customer's full current effective rate list (products + designs). */
 export interface CustomerRateList {
   customerId: number;

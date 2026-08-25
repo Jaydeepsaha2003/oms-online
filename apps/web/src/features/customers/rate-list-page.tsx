@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ArrowRightLeft, Brush, Check, ChevronRight, Download, FileDown, FileSpreadsheet, FileText, History, IndianRupee, Layers, Loader2, type LucideIcon, Package, Percent, Settings2, TableProperties, TrendingDown, TrendingUp } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowRightLeft, Brush, Check, ChevronRight, Download, ExternalLink, Eye, FileDown, FileSpreadsheet, FileText, History, IndianRupee, Layers, Loader2, type LucideIcon, Package, Percent, Settings2, TableProperties, TrendingDown, TrendingUp } from 'lucide-react';
 import { toast } from 'sonner';
+import { DEFAULT_RATE_LIST_TITLE, type CustomerRateList } from '@oms/shared';
 import type { CustomerRateDto, RateChangeEntry } from '@oms/shared';
+import { isIOS, showPreviewPlaceholder } from '@/lib/pdf';
 import { cn } from '@/lib/utils';
 import { formatDateTime } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -10,14 +12,14 @@ import { Label } from '@/components/ui/label';
 import { NativeSelect } from '@/components/common/combo';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import kavishLogo from '@/assets/kavish-logo.png';
-import { fetchCustomerRateList, fetchDefaultRateList, useCustomerRateHistory, useCustomerRateList, useCustomers } from './use-customers';
+import { fetchCustomerRateList, useCustomerRateHistory, useCustomerRateList, useCustomers, useDefaultRateList } from './use-customers';
 import { useEffectiveRateListConfig, useRateListConfigBundle } from './use-rate-list-config';
 import { RateListSettingsCard } from '@/features/settings/rate-list-settings-card';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useCustomerSpecialRates } from '@/features/special-rates/use-special-rates';
 import { useCompany } from '@/features/settings/use-settings';
 import { measureSpecialRates, summariseSpecialRates, type RateImpact } from './special-rate-impact';
-import { exportRateListExcel, exportRateListPdf } from './customer-rate-list-export';
+import { buildRateListPdfBlob, exportRateListExcel, exportRateListPdf } from './customer-rate-list-export';
 import { buildSections, rateListCategories, type DesignPivotTable, type PivotTable } from './customer-rate-list-pivot';
 
 /** Rapid successive rate saves (same editing session) collapse into one version. */
@@ -71,6 +73,11 @@ function changeLabel(c: RateChangeEntry): string {
  *                 keeps the columns aligned without a monospace face.
  * Body text stays Inter. No new font is downloaded for any of this.
  */
+/* Strip the browser viewer's own chrome so the sheet sits on an app surface
+   rather than in a grey PDF shell. Firefox's pdf.js ignores these and keeps its
+   toolbar — the document still renders, it just keeps that chrome. */
+const PDF_VIEWER_PARAMS = '#toolbar=0&navpanes=0&scrollbar=0&view=FitH';
+
 const MICRO_LABEL = 'font-montserrat text-[9.5px] font-bold tracking-[0.12em] uppercase text-muted-foreground';
 const FIGURE = 'font-calibri font-bold tabular-nums';
 
@@ -849,7 +856,13 @@ export function RateListPage() {
 
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [dlCats, setDlCats] = useState<string[]>([]);
-  const [busy, setBusy] = useState<'pdf' | 'excel' | null>(null);
+  const [busy, setBusy] = useState<'pdf' | 'excel' | 'preview' | null>(null);
+  /** Object URL of the built PDF while the preview overlay is open. Kept in a ref
+   *  too, so unmounting can revoke it without the effect depending on the state. */
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const previewUrlRef = useRef<string | null>(null);
+  previewUrlRef.current = previewUrl;
+  useEffect(() => () => { if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current); }, []);
   /*
    * Downloading the chart sheet instead of a party's.
    *
@@ -860,6 +873,32 @@ export function RateListPage() {
    */
   const [defaultMode, setDefaultMode] = useState(false);
   const [defaultName, setDefaultName] = useState('');
+
+  /*
+   * The chart sheet itself, loaded once the download dialog is open on it.
+   *
+   * Needed BEFORE the export, because the category picker has to offer the
+   * categories this sheet actually carries. Deriving them from the catalogue
+   * lookups instead would offer categories the default configuration excludes,
+   * or ones with nothing on the rate list — a tick that produces an empty
+   * section. The same payload is then exported, so opening the picker is not a
+   * wasted round trip.
+   */
+  const { data: defaultList, isFetching: defaultListLoading } = useDefaultRateList(downloadOpen && defaultMode);
+
+  /** Categories the DEFAULT configuration puts on the chart sheet — the
+   *  party-less counterpart of `configured`. */
+  const defaultConfigured = useMemo(() => {
+    if (!defaultList) return [] as string[];
+    const sec = buildSections(defaultList, { config: defaultConfig });
+    return [...new Set([...sec.products.map((t) => t.category), ...sec.designs.map((t) => t.category)])].sort((a, b) =>
+      a.localeCompare(b),
+    );
+  }, [defaultList, defaultConfig]);
+
+  /** Whichever scope the dialog is currently working in. Everything below reads
+   *  this rather than branching on `defaultMode` in five places. */
+  const dlScope = defaultMode ? defaultConfigured : configured;
 
   /** Opening the picker starts from whatever is on screen — the user's current
    *  filter if they set one, otherwise the party's configuration (§26: the saved
@@ -875,36 +914,120 @@ export function RateListPage() {
   const openDefaultDownload = () => {
     setDefaultMode(true);
     setDefaultName('');
+    // Left empty here and seeded by the effect below — the categories are not
+    // known until the sheet arrives, and guessing them now would tick a list
+    // that turns out to be wrong.
     setDlCats([]);
     setDownloadOpen(true);
   };
 
+  /* Tick everything the moment the chart sheet's categories are known. Same
+     starting point as the party dialog: the download is a narrowing of the whole
+     sheet, never an opt-in to it. */
+  useEffect(() => {
+    if (!downloadOpen || !defaultMode || !defaultConfigured.length) return;
+    setDlCats((prev) => (prev.length ? prev : defaultConfigured));
+  }, [downloadOpen, defaultMode, defaultConfigured]);
+
   /** An empty selection is a real state now, so it has to block the download
    *  rather than silently mean "everything". */
-  const nothingPicked = !defaultMode && configured.length > 1 && dlCats.length === 0;
+  /** An empty selection is a real state, so it has to block the export rather
+   *  than silently mean "everything" — in either mode. */
+  const nothingPicked = dlScope.length > 1 && dlCats.length === 0;
+  /** The chart sheet has not arrived yet — nothing to preview or save from. */
+  const exportBlocked = defaultMode && !defaultList;
+
+  /**
+   * The scope every export shares.
+   *
+   * Extracted so Preview and Download cannot disagree about what is on the
+   * sheet — a preview built from a different `opts` is a preview of a document
+   * nobody will receive.
+   */
+  /**
+   * The chart sheet with the typed name on it.
+   *
+   * The payload was fetched WITHOUT a name (see useDefaultRateList) so the cache
+   * is not keyed on a free-text box; the heading is substituted here instead of
+   * re-fetching 650 lines to change one string. `DEFAULT_RATE_LIST_TITLE` is the
+   * same constant the server falls back to, so a blank name prints identically
+   * whichever side supplied it.
+   */
+  const namedDefaultList = (): CustomerRateList => {
+    const base = defaultList!;
+    const name = defaultName.trim();
+    return { ...base, customerName: name || DEFAULT_RATE_LIST_TITLE };
+  };
+
+  const downloadOpts = () => ({
+    config: defaultMode ? defaultConfig : config,
+    // `null` means "no narrowing", so it may only stand for a FULL selection —
+    // and it is now decided against whichever scope the dialog is in. It used to
+    // be hard-coded to null for the chart sheet, which is why that sheet ignored
+    // the picker entirely.
+    categories: dlCats.length === dlScope.length ? null : dlCats,
+  });
+
+  /**
+   * Build the PDF and show it, rather than saving it.
+   *
+   * iOS gets a tab instead of the in-app overlay: Safari will not render a blob:
+   * PDF in an iframe, so the overlay would be an empty grey box. The tab is
+   * reserved inside this tap — a popup opened after the async build is blocked.
+   */
+  const doPreview = async () => {
+    if (!defaultMode && customerId == null) return;
+    // The chart sheet is the source for the export as well as the picker, so
+    // there is nothing to build until it has landed.
+    if (defaultMode && !defaultList) return;
+    const iosTab = isIOS() ? window.open('', '_blank') : null;
+    if (iosTab) showPreviewPlaceholder(iosTab);
+    try {
+      setBusy('preview');
+      const list = defaultMode ? namedDefaultList() : (rateList ?? (await fetchCustomerRateList(customerId!)));
+      const { blob } = await buildRateListPdfBlob(list, downloadOpts(), company?.logo ?? null);
+      const url = URL.createObjectURL(blob);
+      if (iosTab) {
+        if (!iosTab.closed) iosTab.location.href = url;
+        else window.location.href = url;
+        // Long enough for Safari to have loaded it; revoking sooner blanks the tab.
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      } else {
+        setPreviewUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return url;
+        });
+      }
+      setDownloadOpen(false);
+    } catch {
+      iosTab?.close();
+      toast.error('Could not build the preview.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const closePreview = () =>
+    setPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
 
   const doDownload = async (format: 'pdf' | 'excel') => {
     if (!defaultMode && customerId == null) return;
+    if (defaultMode && !defaultList) return;
     try {
       setBusy(format);
       // The chart sheet is always fetched fresh — there is no on-screen preview
       // of it to reuse, and it carries no party rates to go stale against.
-      const list = defaultMode
-        ? await fetchDefaultRateList(defaultName)
-        : (rateList ?? (await fetchCustomerRateList(customerId!)));
+      const list = defaultMode ? namedDefaultList() : (rateList ?? (await fetchCustomerRateList(customerId!)));
       // Same config, same selection, same pivot as the preview — the download
       // cannot show something the screen didn't.
       // `null` means "no category filter" to the pivot builder, so it may only
       // stand for a FULL selection. Passing it for an empty one turned "I
       // unticked everything" into "give me everything" — the buttons are
       // disabled in that state now, and this keeps the two in step.
-      const opts = {
-        // Default sheet: the DEFAULT configuration, and no category narrowing —
-        // `configured` is derived from the selected party's sheet and means
-        // nothing here.
-        config: defaultMode ? defaultConfig : config,
-        categories: defaultMode || dlCats.length === configured.length ? null : dlCats,
-      };
+      const opts = downloadOpts();
       if (format === 'pdf') await exportRateListPdf(list, opts, company?.logo ?? null);
       else await exportRateListExcel(list, opts);
       setDownloadOpen(false);
@@ -1017,9 +1140,16 @@ export function RateListPage() {
           </div>
         )}
 
-        {/* ── Band 3: view switch + the category filter that narrows it ── */}
-        {customerId != null && (
-          <div className="bg-muted/30 flex flex-wrap items-center gap-x-3 gap-y-2 border-t px-3 py-2">
+        {/*
+          * ── Band 3: view switch + the category filter that narrows it ──
+          *
+          * NOT gated on a selected customer any more. The strip carries the Rate
+          * List Settings tab, and the configuration is not about one party — the
+          * DEFAULT lives there. Hiding the strip until a customer was picked made
+          * the settings unreachable without first choosing a party they have
+          * nothing to do with.
+          */}
+        <div className="bg-muted/30 flex flex-wrap items-center gap-x-3 gap-y-2 border-t px-3 py-2">
             <div className="flex max-w-full items-center gap-1 overflow-x-auto rounded-[4px] border border-amber-300 bg-amber-50/60 p-0.5 dark:border-amber-400/40 dark:bg-amber-400/10">
               {(
                 [
@@ -1055,14 +1185,14 @@ export function RateListPage() {
 
             {/* Only narrows the Rate List — showing it over the other two tabs
                 would imply a filter that does nothing. */}
-            {tab === 'list' && configured.length > 1 && (
+            {/* Still party-scoped: it narrows the sheet on screen. */}
+            {tab === 'list' && customerId != null && configured.length > 1 && (
               <div className="flex min-w-0 flex-1 items-center gap-2">
                 <span className={cn(MICRO_LABEL, 'hidden sm:block')}>Categories</span>
                 <CategoryChips all={configured} selected={catFilter} onToggle={toggleCat} onAll={() => setCatFilter([])} />
               </div>
             )}
-          </div>
-        )}
+        </div>
       </div>
 
       {/* The configuration is not about one party — the DEFAULT lives there — so
@@ -1182,7 +1312,15 @@ export function RateListPage() {
           {/* §4: the download is not forced to be everything. Starts from the
               party's configuration (or the on-screen filter) and can be narrowed
               — never widened past what the configuration allows. */}
-          {!defaultMode && configured.length > 1 && (
+          {/* Shown for the chart sheet too. It used to be party-only, so the
+              default download silently sent every category — the one sheet you
+              are most likely to want trimmed before handing it to an enquiry. */}
+          {defaultMode && defaultListLoading && !defaultConfigured.length && (
+            <p className="text-muted-foreground flex items-center gap-2 rounded-md border border-dashed px-3 py-2 text-[12.5px]">
+              <Loader2 className="size-3.5 animate-spin" /> Loading the categories on this sheet…
+            </p>
+          )}
+          {dlScope.length > 1 && (
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-[10.5px] font-bold tracking-wide uppercase">Include</Label>
               {/*
@@ -1203,11 +1341,11 @@ export function RateListPage() {
                 * lying about the individual ones.
                 */}
               <CategoryChips
-                all={configured}
+                all={dlScope}
                 selected={dlCats}
-                showAllActive={dlCats.length === configured.length}
+                showAllActive={dlCats.length === dlScope.length}
                 onToggle={(c) => setDlCats((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]))}
-                onAll={() => setDlCats(dlCats.length === configured.length ? [] : configured)}
+                onAll={() => setDlCats(dlCats.length === dlScope.length ? [] : dlScope)}
               />
               <p
                 className={cn(
@@ -1217,18 +1355,29 @@ export function RateListPage() {
               >
                 {dlCats.length === 0
                   ? 'Pick at least one category to download.'
-                  : dlCats.length === configured.length
-                    ? `All ${configured.length} categories`
-                    : `${dlCats.length} of ${configured.length} categories`}
+                  : dlCats.length === dlScope.length
+                    ? `All ${dlScope.length} categories`
+                    : `${dlCats.length} of ${dlScope.length} categories`}
               </p>
             </div>
           )}
 
           <DialogFooter className="gap-2 sm:justify-between">
+            {/* Preview first: it is the non-committal option, and reading left to
+                right the row now goes look → save → save-as-sheet. */}
             <Button
               variant="outline"
               className="h-12 flex-1"
-              disabled={!!busy || nothingPicked}
+              disabled={!!busy || nothingPicked || exportBlocked}
+              title={nothingPicked ? 'Pick at least one category' : 'See the sheet before saving it'}
+              onClick={doPreview}
+            >
+              {busy === 'preview' ? <Loader2 className="animate-spin" /> : <Eye className="text-violet-600" />} Preview
+            </Button>
+            <Button
+              variant="outline"
+              className="h-12 flex-1"
+              disabled={!!busy || nothingPicked || exportBlocked}
               title={nothingPicked ? 'Pick at least one category' : undefined}
               onClick={() => doDownload('pdf')}
             >
@@ -1237,7 +1386,7 @@ export function RateListPage() {
             <Button
               variant="outline"
               className="h-12 flex-1"
-              disabled={!!busy || nothingPicked}
+              disabled={!!busy || nothingPicked || exportBlocked}
               title={nothingPicked ? 'Pick at least one category' : undefined}
               onClick={() => doDownload('excel')}
             >
@@ -1246,6 +1395,45 @@ export function RateListPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* The preview shows the REAL generated document — the same bytes Download
+          writes, via the same builder — not a re-render of the on-screen table,
+          which lays out differently and would mislead about what prints. */}
+      {previewUrl && (
+        <Dialog open onOpenChange={(open) => !open && closePreview()}>
+          <DialogContent className="flex h-[92dvh] w-[min(1100px,96vw)] max-w-[96vw] flex-col gap-3 overflow-hidden p-4 sm:!max-w-[1100px]">
+            <DialogHeader className="space-y-0">
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <Eye className="size-4.5 text-violet-600" /> Preview — {defaultMode ? defaultName || 'Standard rate list' : customerLabel}
+              </DialogTitle>
+            </DialogHeader>
+
+            <div className="min-h-0 w-full flex-1 overflow-hidden rounded-[6px] border bg-slate-200/60 shadow-inner dark:bg-slate-800/60">
+              <iframe src={`${previewUrl}${PDF_VIEWER_PARAMS}`} title="Rate list preview" className="size-full border-0" />
+            </div>
+
+            <DialogFooter className="gap-2 sm:justify-end">
+              <Button variant="outline" onClick={closePreview}>
+                Close
+              </Button>
+              {/* Hiding the viewer's toolbar takes its own open/print controls
+                  with it, so the app supplies the ones that matter. */}
+              <Button variant="outline" onClick={() => window.open(previewUrl, '_blank')} title="Open this PDF in a browser tab">
+                <ExternalLink /> Open in tab
+              </Button>
+              <Button
+                onClick={() => {
+                  closePreview();
+                  void doDownload('pdf');
+                }}
+                disabled={!!busy}
+              >
+                {busy === 'pdf' ? <Loader2 className="animate-spin" /> : <Download />} Download PDF
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

@@ -11,6 +11,7 @@ import {
   type RateChangeEntry,
   type RateHistoryKind,
   resolveSpecialRates,
+  DEFAULT_RATE_LIST_TITLE,
   PARTY_SOURCES,
   PAY_BYS,
 } from '@oms/shared';
@@ -531,7 +532,7 @@ export class CustomersService {
    */
   async defaultRateList(label?: string | null): Promise<CustomerRateList> {
     const name = (label ?? '').trim();
-    return this.buildRateList(0, name || 'STANDARD RATE LIST', []);
+    return this.buildRateList(0, name || DEFAULT_RATE_LIST_TITLE, []);
   }
 
   /** Shared by both: the catalogue, priced through whatever special rates apply

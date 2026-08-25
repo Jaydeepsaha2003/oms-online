@@ -14,6 +14,7 @@ import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useConfirm } from '@/components/common/confirm';
 import { NativeSelect } from '@/components/common/combo';
+import { InfoTip } from '@/components/common/info-tip';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -295,8 +296,9 @@ function ConfigEditor({
       {/* ── the two whole-sheet choices ────────────────────────────────────── */}
       <div className="grid gap-2.5 sm:grid-cols-2">
         <div className="space-y-1">
-          <Label className="text-muted-foreground text-[11px] font-bold tracking-wide uppercase">
+          <Label className="text-muted-foreground flex items-center gap-1 text-[11px] font-bold tracking-wide uppercase">
             Available column shows
+            <InfoTip text="The third column on the rate list. Pieces shows how many pcs each item comes in; Size shows its size. Applies to every category unless a category below overrides it." />
           </Label>
           <NativeSelect
             value={display ?? ''}
@@ -307,8 +309,7 @@ function ConfigEditor({
             ]}
           />
           <p className="text-muted-foreground text-[11px]">
-            Applies to everything. Open a category below to override it — for the whole category, one sub-category,
-            one item, or one design.
+            Applies to everything.
           </p>
         </div>
         <div className="space-y-1">
@@ -332,9 +333,9 @@ function ConfigEditor({
           <span className="text-muted-foreground text-[11px]">
             {cats.length === 0
               ? party
-                ? 'no changes for this party — same as Default'
-                : 'nothing configured — open one to set its Available column, sub-categories or per-item exceptions'
-              : `${cats.length} configured; anything not listed is included in full`}
+                ? 'same as Default'
+                : 'open one to set it up'
+              : `${cats.length} set up`}
           </span>
         </div>
 
@@ -470,8 +471,9 @@ function CategoryRow({
       {open && included && (
         <div className="space-y-3 border-t px-3 py-2.5">
           <div className="space-y-1">
-            <Label className="text-muted-foreground text-[10.5px] font-bold tracking-wide uppercase">
-              Available column for {category}
+            <Label className="text-muted-foreground flex items-center gap-1 text-[10.5px] font-bold tracking-wide uppercase">
+              Available column
+              <InfoTip text={`Applies to everything in ${category}. Leave it on Default to follow the setting at the top. Add an exception below if one sub-category, item or design needs the other unit.`} />
             </Label>
             <NativeSelect
               value={value?.availableDisplay ?? ''}
@@ -479,9 +481,7 @@ function CategoryRow({
               options={[{ value: '', label: 'Default' }, { value: 'PCS', label: 'Pieces' }, { value: 'SIZE', label: 'Size' }]}
               className="h-8 w-40 text-[12px]"
             />
-            <p className="text-muted-foreground text-[11px]">
-              Applies to everything in {category}. Add exceptions below for a sub-category, an item or a design.
-            </p>
+
           </div>
 
           <AvailableOverrideEditor
@@ -494,8 +494,9 @@ function CategoryRow({
           />
 
           <div className="space-y-1.5">
-            <Label className="text-muted-foreground text-[10.5px] font-bold tracking-wide uppercase">
-              Sub-categories — none picked means all {subs.length}
+            <Label className="text-muted-foreground flex items-center gap-1 text-[10.5px] font-bold tracking-wide uppercase">
+              Sub-categories
+              <InfoTip text={`Which sub-categories appear on the sheet. Pick none to include all ${subs.length} — that way a new sub-category shows up on its own instead of going missing until someone ticks it.`} />
             </Label>
             <div className="flex flex-wrap gap-1.5">
               {subs.map((s) => {
@@ -627,8 +628,11 @@ function AvailableOverrideEditor({
   return (
     <div className="space-y-2 rounded-lg border border-dashed p-2.5">
       <div className="flex flex-wrap items-center gap-2">
-        <Label className="text-muted-foreground text-[10.5px] font-bold tracking-wide uppercase">
-          Exceptions — show a different Available column for one thing
+        <Label className="text-muted-foreground flex items-center gap-1 text-[10.5px] font-bold tracking-wide uppercase">
+          Exceptions
+          <InfoTip
+            text={`One sub-category, item or design in ${category} that should use the other unit. On the sheet, ${category} then prints as separate tables — one per unit — because a table can only have one kind of column heading.`}
+          />
         </Label>
         {canEdit && !adding && (
           <Button variant="outline" size="sm" className="ml-auto h-7 px-2 text-[11.5px]" onClick={() => setAdding(true)}>
@@ -762,21 +766,14 @@ function AvailableOverrideEditor({
         </div>
       )}
 
-      <p className="text-muted-foreground text-[11px]">
-        {overrides.length ? (
-          <>
-            <TriangleAlert className="mr-1 inline size-3 text-amber-600" />
-            On the sheet, {category} will print as <b>separate tables</b> — one per Available unit. A table can only have one
-            kind of column heading, so the exceptions above cannot sit in the same grid as the rest.
-          </>
-        ) : (
-          <>
-            Everything in {category} currently follows{' '}
-            <b>{categoryDisplay ? (categoryDisplay === 'PCS' ? 'Pieces' : 'Size') : 'the default'}</b>. Adding an exception
-            splits {category} into one table per unit on the sheet.
-          </>
-        )}
-      </p>
+      {/* Only said when it applies. Before, the same box carried a paragraph
+          whether or not there was an exception to explain. */}
+      {!!overrides.length && (
+        <p className="text-[11px] font-medium text-amber-700 dark:text-amber-300">
+          <TriangleAlert className="mr-1 inline size-3" />
+          {category} will print as separate tables — one per unit.
+        </p>
+      )}
     </div>
   );
 }
@@ -838,8 +835,9 @@ function CombinationEditor({
 
   return (
     <div className="space-y-2">
-      <Label className="text-muted-foreground text-[10.5px] font-bold tracking-wide uppercase">
-        Price combinations — show several sub-categories under one column
+      <Label className="text-muted-foreground flex items-center gap-1 text-[10.5px] font-bold tracking-wide uppercase">
+        Price combinations
+        <InfoTip text="Show several sub-categories under one shared column, when they all charge the same rate. Refused if their rates differ — one heading over two prices hides one of them." />
       </Label>
 
       {!!combinations.length && (
