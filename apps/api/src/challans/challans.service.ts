@@ -3,6 +3,7 @@ import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import { Prisma } from '@prisma/client';
 import {
   type ChallanAnalytics,
+  type TradingNoteRow,
   type TradingAccount,
   type ChallanDraft,
   type ChallanDraftItem,
@@ -436,14 +437,21 @@ export class ChallansService {
   async analytics(q: ChallanQueryDto): Promise<ChallanAnalytics> {
     const where = this.listWhere(q);
 
-    const [agg, byStatusRows, byCategoryRows, topPartyRows, overdueAgg, catRows] = await Promise.all([
+    const [agg, byStatusRows, byCategoryRows, topPartyRows, overdueAgg, catRows, bagRows] = await Promise.all([
       this.prisma.challan.aggregate({
         where,
         _count: { _all: true },
         _sum: { total: true, b: true, c: true, tax: true, tds: true, tcs: true, freight: true, packing: true },
       }),
       this.prisma.challan.groupBy({ by: ['challanStatus'], where, _count: { _all: true }, _sum: { total: true } }),
-      this.prisma.challan.groupBy({ by: ['category'], where, _count: { _all: true }, _sum: { total: true, b: true, c: true } }),
+      // Charges are on the CHALLAN, so they group with it; bags are on the LINES
+      // and are summed separately below.
+      this.prisma.challan.groupBy({
+        by: ['category'],
+        where,
+        _count: { _all: true },
+        _sum: { total: true, b: true, c: true, freight: true, packing: true },
+      }),
       this.prisma.challan.groupBy({
         by: ['customerName'],
         where,
@@ -459,10 +467,35 @@ export class ChallansService {
       }),
       // All distinct categories in the master (unfiltered) so the dropdown is stable.
       this.prisma.challan.findMany({ distinct: ['category'], select: { category: true }, where: { category: { not: null } } }),
+      /*
+       * Bags, per category.
+       *
+       * `bags` lives on the challan LINES while `category` lives on the header,
+       * so there is no single groupBy for it — the lines are fetched with their
+       * parent's category and folded in memory. Cheap: one column from each line
+       * over the same filtered set the rest of this roll-up already scans.
+       */
+      this.prisma.challanItem.findMany({
+        where: { challan: where },
+        select: { bags: true, challan: { select: { category: true } } },
+      }),
     ]);
 
     const count = agg._count._all;
     const totalSales = agg._sum.total ?? 0;
+
+    const bagsByCategory = new Map<string, number>();
+    let totalBags = 0;
+    for (const row of bagRows) {
+      const n = row.bags ?? 0;
+      if (!n) continue;
+      const key = (row.challan?.category ?? '—') || '—';
+      bagsByCategory.set(key, (bagsByCategory.get(key) ?? 0) + n);
+      totalBags += n;
+    }
+    // Bags are recorded to two decimals on some lines; a fractional bag total
+    // reads as a data error rather than a quantity, so round the reported figure.
+    totalBags = Math.round(totalBags);
     const statusOf = (s: string) => byStatusRows.find((r) => (r.challanStatus ?? '').toUpperCase() === s);
     const confirmed = statusOf('CONFIRMED');
     const cancelled = statusOf('CANCELLED');
@@ -478,6 +511,7 @@ export class ChallansService {
         totalTcs: agg._sum.tcs ?? 0,
         totalFreight: agg._sum.freight ?? 0,
         totalPacking: agg._sum.packing ?? 0,
+        totalBags,
         avgValue: count > 0 ? Math.round(totalSales / count) : 0,
       },
       byStatus: {
@@ -485,13 +519,19 @@ export class ChallansService {
         cancelled: { count: cancelled?._count._all ?? 0, total: cancelled?._sum.total ?? 0 },
       },
       byCategory: byCategoryRows
-        .map((r) => ({
-          category: r.category ?? '—',
-          count: r._count._all,
-          total: r._sum.total ?? 0,
-          b: r._sum.b ?? 0,
-          c: r._sum.c ?? 0,
-        }))
+        .map((r) => {
+          const category = r.category ?? '—';
+          return {
+            category,
+            count: r._count._all,
+            total: r._sum.total ?? 0,
+            b: r._sum.b ?? 0,
+            c: r._sum.c ?? 0,
+            freight: r._sum.freight ?? 0,
+            packing: r._sum.packing ?? 0,
+            bags: Math.round(bagsByCategory.get(category) ?? 0),
+          };
+        })
         .sort((a, b) => b.total - a.total),
       topParties: topPartyRows.map((r) => ({ customerName: r.customerName, count: r._count._all, total: r._sum.total ?? 0 })),
       overdue: { count: overdueAgg._count._all, total: overdueAgg._sum.total ?? 0 },
@@ -521,6 +561,19 @@ export class ChallansService {
     const where = this.listWhere(q);
     const goodsOf = (rows: { items: { amount: number | null }[] }[]) =>
       rows.reduce((sum, r) => sum + r.items.reduce((s, i) => s + (i.amount ?? 0), 0), 0);
+
+    /** One listed note: its identity plus the goods value that feeds the row it
+     *  sits under, so the list adds up to the figure above it. */
+    const toNoteRows = (
+      rows: { id: number; code: string; customerName: string; invDate: Date; items: { amount: number | null }[] }[],
+    ): TradingNoteRow[] =>
+      rows.map((r) => ({
+        id: r.id,
+        code: r.code,
+        customerName: r.customerName,
+        amount: r2(r.items.reduce((sum, i) => sum + (i.amount ?? 0), 0)),
+        date: r.invDate.toISOString(),
+      }));
 
     // Credit notes share the challan filters except status (see doc comment).
     const cnWhere: Prisma.CreditNoteWhereInput = {};
@@ -555,10 +608,16 @@ export class ChallansService {
       total: true,
       items: { select: { amount: true } },
     } as const;
-    const [salesRows, dnRows, cnRows, challanAgg, cnAgg, cancelledAgg] = await Promise.all([
+    /* Debit notes are listed, not just counted, so they carry their identity too
+     * — and `id`, because the row links straight to the document. */
+    const noteSelect = { id: true, code: true, customerName: true, invDate: true, items: { select: { amount: true } } } as const;
+    const NOTE_CAP = 200;
+    const [salesRows, dnRows, cnRows, dnDocs, cnDocs, challanAgg, cnAgg, cancelledAgg] = await Promise.all([
       this.prisma.challan.findMany({ where: salesWhere, select: docSelect }),
       this.prisma.challan.findMany({ where: dnWhere, select: docSelect }),
       this.prisma.creditNote.findMany({ where: cnWhere, select: { items: { select: { amount: true } } } }),
+      this.prisma.challan.findMany({ where: dnWhere, select: noteSelect, orderBy: { invDate: 'desc' }, take: NOTE_CAP + 1 }),
+      this.prisma.creditNote.findMany({ where: cnWhere, select: noteSelect, orderBy: { invDate: 'desc' }, take: NOTE_CAP + 1 }),
       this.prisma.challan.aggregate({ where, _sum: { freight: true, packing: true, pouch: true, tax: true, tcs: true, tds: true, total: true } }),
       this.prisma.creditNote.aggregate({ where: cnWhere, _sum: { freight: true, packing: true, pouch: true, tax: true, total: true } }),
       // Always measured, whatever the status filter is — the UI states plainly
@@ -598,6 +657,10 @@ export class ChallansService {
       grossSales: { amount: grossSales, count: salesRows.length },
       debitNotes: { amount: debitNotes, count: dnRows.length },
       salesReturns: { amount: salesReturns, count: cnRows.length },
+      debitNoteList: toNoteRows(dnDocs.slice(0, NOTE_CAP)),
+      creditNoteList: toNoteRows(cnDocs.slice(0, NOTE_CAP)),
+      debitNotesTruncated: dnDocs.length > NOTE_CAP,
+      creditNotesTruncated: cnDocs.length > NOTE_CAP,
       netSales,
       freight,
       packing,

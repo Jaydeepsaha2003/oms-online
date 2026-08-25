@@ -154,6 +154,8 @@ export interface ChallanAnalytics {
     totalTcs: number;
     totalFreight: number;
     totalPacking: number;
+    /** Σ bags across every line in scope — what the freight was actually paid on. */
+    totalBags: number;
     avgValue: number;
   };
   /** Split by challan status. */
@@ -161,8 +163,24 @@ export interface ChallanAnalytics {
     confirmed: { count: number; total: number };
     cancelled: { count: number; total: number };
   };
-  /** One row per customer category (largest first). */
-  byCategory: { category: string; count: number; total: number; b: number; c: number }[];
+  /**
+   * One row per customer category (largest first).
+   *
+   * Carries the charges and the bag count as well as the value: a freight total
+   * on its own says what was spent but not what it was spent on, and the
+   * question people actually ask of it is "which category is eating the
+   * freight, and how many bags went out".
+   */
+  byCategory: {
+    category: string;
+    count: number;
+    total: number;
+    b: number;
+    c: number;
+    freight: number;
+    packing: number;
+    bags: number;
+  }[];
   /** Highest-billing parties (largest first, capped). */
   topParties: { customerName: string; count: number; total: number }[];
   /** Confirmed challans past their due date (money still to receive). */
@@ -188,6 +206,17 @@ export interface ChallanAnalytics {
  * Charges and GST are NET of credit notes (a return can carry its own freight and
  * tax), which is what makes `totalInvoiced` reconcile to the documents.
  */
+/** One debit/credit note behind a Trading Account row. */
+export interface TradingNoteRow {
+  id: number;
+  code: string;
+  customerName: string;
+  /** Goods value of the note (Σ line amounts) — the figure that feeds the row. */
+  amount: number;
+  /** ISO date of the document. */
+  date: string;
+}
+
 export interface TradingAccount {
   /**
    * Where the statement opens: Σ challan totals for the filter — the same figure
@@ -248,6 +277,22 @@ export interface TradingAccount {
   /** Cancelled challans inside the range, so the UI can flag what's included or
    *  left out under the current status filter. */
   cancelled: { amount: number; count: number };
+  /**
+   * The actual documents behind the Debit Notes and Sales Returns rows.
+   *
+   * A count and a sum tell you something moved but not what — and "3 note(s)"
+   * is exactly the figure nobody can verify without leaving the screen. Capped,
+   * because these rows are for checking a handful of notes, not for browsing a
+   * year of them; `debitNotesTruncated` says when the list was cut.
+   *
+   * Debit notes are Challan records, so `id` opens the real document. Credit
+   * notes live in their own table with no viewer in the app yet, so their `id`
+   * is there for later and the UI does not offer a link it cannot honour.
+   */
+  debitNoteList: TradingNoteRow[];
+  creditNoteList: TradingNoteRow[];
+  debitNotesTruncated: boolean;
+  creditNotesTruncated: boolean;
 }
 
 export interface UpdateChallanStatusInput {

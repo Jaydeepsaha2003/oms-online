@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, BarChart3, Building2, Layers, Scale, TrendingUp } from 'lucide-react';
-import type { ChallanQuery } from '@oms/shared';
+import { AlertTriangle, BarChart3, Building2, ChevronRight, Layers, Scale, TrendingUp, Truck } from 'lucide-react';
+import type { ChallanQuery, TradingNoteRow } from '@oms/shared';
 import { cn } from '@/lib/utils';
+import { useNavigate } from 'react-router-dom';
 import { NativeSelect } from '@/components/common/combo';
+import { InfoTip } from '@/components/common/info-tip';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -27,21 +29,194 @@ interface Props {
   base: { search?: string; dateFrom?: string; dateTo?: string; status?: string };
 }
 
-function StatCard({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: 'default' | 'good' | 'warn' | 'bad' }) {
+/**
+ * One figure in the header strip.
+ *
+ * Replaces a shadowed card per KPI. Twelve of those, each with its own border,
+ * padding and drop shadow, spent more of the dialog on decoration than on
+ * numbers — and on a phone they stacked two-up into a wall of boxes. This is the
+ * ERP treatment instead: a hairline grid, the figure loud, the label a whisper,
+ * and the exact rupee value on hover for the shortened ones.
+ */
+function Fig({
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  tone?: 'good' | 'warn' | 'bad';
+}) {
   return (
-    <div
-      className={cn(
-        'rounded-lg border p-3 shadow-sm',
-        tone === 'good' && 'border-emerald-200 bg-emerald-50/60',
-        tone === 'warn' && 'border-amber-200 bg-amber-50/60',
-        tone === 'bad' && 'border-rose-200 bg-rose-50/60',
-        (!tone || tone === 'default') && 'bg-card',
-      )}
-    >
-      <p className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">{label}</p>
-      <p className="mt-0.5 text-lg font-semibold tabular-nums">{value}</p>
-      {sub && <p className="text-muted-foreground mt-0.5 text-xs tabular-nums">{sub}</p>}
+    <div className="bg-card px-2.5 py-1.5" title={hint}>
+      <p className="text-muted-foreground text-[9.5px] font-bold tracking-[0.1em] uppercase">{label}</p>
+      <p
+        className={cn(
+          'text-[15px] leading-tight font-bold tabular-nums',
+          tone === 'good' && 'text-emerald-700 dark:text-emerald-400',
+          tone === 'warn' && 'text-amber-700 dark:text-amber-400',
+          tone === 'bad' && 'text-rose-600 dark:text-rose-400',
+        )}
+      >
+        {value}
+      </p>
     </div>
+  );
+}
+
+/** A plain figures table in the Tally idiom: hairline grid, right-aligned
+ *  numbers, one bold total row. Used for the per-category charge breakdown. */
+function TallyTable({
+  title,
+  icon: Icon,
+  head,
+  rows,
+  foot,
+}: {
+  title: string;
+  icon: typeof Layers;
+  head: string[];
+  rows: (string | number)[][];
+  foot?: (string | number)[];
+}) {
+  return (
+    <div>
+      <SectionTitle icon={Icon}>{title}</SectionTitle>
+      <div className="overflow-x-auto rounded-[4px] border">
+        <table className="w-full border-collapse text-[12.5px]">
+          <thead>
+            <tr className="bg-muted/60 text-muted-foreground text-[10px] font-bold tracking-wide uppercase">
+              {head.map((h, i) => (
+                <th key={h} className={cn('px-2.5 py-1.5', i === 0 ? 'text-left' : 'text-right')}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, ri) => (
+              <tr key={String(r[0]) + ri} className="border-t even:bg-slate-50/70 dark:even:bg-white/[0.03]">
+                {r.map((c, i) => (
+                  <td
+                    key={i}
+                    className={cn(
+                      'px-2.5 py-1',
+                      i === 0 ? 'font-semibold text-slate-800 dark:text-slate-200' : 'text-right tabular-nums',
+                    )}
+                  >
+                    {c}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+          {foot && (
+            <tfoot>
+              <tr className="bg-muted/40 border-t-2 font-bold">
+                {foot.map((c, i) => (
+                  <td key={i} className={cn('px-2.5 py-1.5', i === 0 ? 'text-left' : 'text-right tabular-nums')}>
+                    {c}
+                  </td>
+                ))}
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A statement row that opens to show the documents behind it.
+ *
+ * "3 note(s)" is precisely the figure nobody can check without leaving the
+ * screen — which party, which note, how much. The row now expands in place to
+ * name them, and each debit note opens its own document.
+ *
+ * Credit notes list but do not link: they live in their own table and the app has
+ * no viewer for them yet, and a row that looks clickable and does nothing is
+ * worse than one that plainly does not.
+ */
+function NoteRows({
+  label,
+  info,
+  value,
+  notes,
+  truncated,
+  negative,
+  onOpen,
+}: {
+  label: string;
+  info?: string;
+  value: string;
+  notes: TradingNoteRow[];
+  truncated: boolean;
+  negative?: boolean;
+  onOpen?: (n: TradingNoteRow) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const canExpand = notes.length > 0;
+  return (
+    <>
+      <tr className="border-b last:border-b-0">
+        <td className="py-1 pr-3 pl-6 text-sm">
+          <button
+            type="button"
+            disabled={!canExpand}
+            onClick={() => setOpen((o) => !o)}
+            className={cn(
+              'inline-flex items-center gap-1 text-left',
+              canExpand && 'cursor-pointer hover:underline',
+            )}
+            aria-expanded={open}
+          >
+            {canExpand && <ChevronRight className={cn('size-3.5 shrink-0 transition-transform', open && 'rotate-90')} />}
+            {label}
+            <span className="text-muted-foreground ml-1 text-xs font-normal">
+              {notes.length ? `${count(notes.length)} note(s)` : 'none'}
+            </span>
+          </button>
+          {info && <InfoTip className="ml-1 align-[-2px]" text={info} />}
+        </td>
+        <td className={cn('py-1 pr-3 text-right text-sm tabular-nums', negative && 'text-rose-600 dark:text-rose-400')}>
+          {negative ? `(${value})` : value}
+        </td>
+      </tr>
+      {open &&
+        notes.map((n) => (
+          <tr key={n.id} className="bg-muted/25 border-b last:border-b-0">
+            <td className="py-0.5 pr-3 pl-12 text-[12px]">
+              {onOpen ? (
+                <button
+                  type="button"
+                  onClick={() => onOpen(n)}
+                  className="text-primary cursor-pointer font-semibold hover:underline"
+                  title="Open this note"
+                >
+                  {n.code}
+                </button>
+              ) : (
+                <span className="font-semibold">{n.code}</span>
+              )}
+              <span className="text-muted-foreground ml-2">{n.customerName}</span>
+              <span className="text-muted-foreground/70 ml-2 tabular-nums">{n.date.slice(0, 10)}</span>
+            </td>
+            <td className={cn('py-0.5 pr-3 text-right text-[12px] tabular-nums', negative && 'text-rose-600 dark:text-rose-400')}>
+              {money(n.amount)}
+            </td>
+          </tr>
+        ))}
+      {open && truncated && (
+        <tr className="bg-muted/25 border-b last:border-b-0">
+          <td colSpan={2} className="text-muted-foreground py-0.5 pl-12 text-[11px]">
+            Showing the first {count(notes.length)} — the figure above covers them all.
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
@@ -90,6 +265,7 @@ function TradeRow({
 }
 
 export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
+  const navigate = useNavigate();
   // The modal keeps its own filter state, (re)seeded from the list's current
   // filters each time it opens.
   const [category, setCategory] = useState('');
@@ -185,34 +361,67 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
         ) : (
           <div className="space-y-5">
             {/* Headline KPIs */}
-            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
+            {/* Hairlines over a border-coloured background rather than gaps
+                between cards: a Tally screen is a grid, and 12 shadowed cards
+                with 10px gutters spent most of the dialog on air. */}
+            <div className="bg-border grid grid-cols-3 gap-px overflow-hidden rounded-[4px] border sm:grid-cols-4 lg:grid-cols-6">
               {/* Says its basis outright: this is the invoice value of the
                   challans (tax and charges in, returns not netted), which is a
                   different measure from the Trading Account's goods-value Gross
                   Sales. Two cards reading plain "Sales" is what made them look
                   like they disagreed. */}
-              <StatCard label="Total Sales" value={moneyShort(t.totalSales)} sub={`${money(t.totalSales)} · incl. GST & charges`} />
-              <StatCard label="Challans" value={count(t.count)} sub={`avg ${money(t.avgValue)}`} />
-              <StatCard label="Total B (billed)" value={moneyShort(t.totalB)} sub={money(t.totalB)} />
-              <StatCard label="Total C (cash)" value={moneyShort(t.totalC)} sub={money(t.totalC)} />
-              <StatCard label="Total GST" value={moneyShort(t.totalGst)} sub={money(t.totalGst)} />
-              <StatCard label="Total TDS" value={money(t.totalTds)} tone={t.totalTds ? 'warn' : 'default'} />
-              <StatCard label="Total TCS" value={money(t.totalTcs)} tone={t.totalTcs ? 'warn' : 'default'} />
-              <StatCard
-                label="Overdue (confirmed)"
+              <Fig label="Sales" value={moneyShort(t.totalSales)} hint={money(t.totalSales)} />
+              <Fig label="Challans" value={count(t.count)} hint={`avg ${money(t.avgValue)}`} />
+              <Fig label="Bags" value={count(t.totalBags)} hint="across all lines" />
+              <Fig label="Billed (B)" value={moneyShort(t.totalB)} hint={money(t.totalB)} />
+              <Fig label="Cash (C)" value={moneyShort(t.totalC)} hint={money(t.totalC)} />
+              <Fig label="GST" value={moneyShort(t.totalGst)} hint={money(t.totalGst)} />
+              <Fig label="Freight" value={money(t.totalFreight)} />
+              <Fig label="Packing" value={money(t.totalPacking)} />
+              <Fig label="Confirmed" value={count(data.byStatus.confirmed.count)} hint={money(data.byStatus.confirmed.total)} tone="good" />
+              <Fig
+                label="Cancelled"
+                value={count(data.byStatus.cancelled.count)}
+                hint={money(data.byStatus.cancelled.total)}
+                tone={data.byStatus.cancelled.count ? 'bad' : undefined}
+              />
+              {t.totalTds > 0 && <Fig label="TDS" value={money(t.totalTds)} tone="warn" />}
+              {t.totalTcs > 0 && <Fig label="TCS" value={money(t.totalTcs)} tone="warn" />}
+              <Fig
+                label="Overdue"
                 value={moneyShort(data.overdue.total)}
-                sub={`${count(data.overdue.count)} challan(s)`}
+                hint={`${count(data.overdue.count)} challan(s)`}
                 tone={data.overdue.total ? 'bad' : 'good'}
               />
             </div>
 
-            {/* Status split + charges */}
-            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-              <StatCard label="Confirmed" value={count(data.byStatus.confirmed.count)} sub={money(data.byStatus.confirmed.total)} tone="good" />
-              <StatCard label="Cancelled" value={count(data.byStatus.cancelled.count)} sub={money(data.byStatus.cancelled.total)} tone={data.byStatus.cancelled.count ? 'bad' : 'default'} />
-              <StatCard label="Freight" value={money(t.totalFreight)} />
-              <StatCard label="Packing" value={money(t.totalPacking)} />
-            </div>
+            {/* Freight & packing, per category — a freight total says what was
+                spent, not what it was spent on, and "which category is eating the
+                freight, and on how many bags" is the question actually asked of
+                it. */}
+            {data.byCategory.some((c) => c.freight || c.packing || c.bags) && (
+              <TallyTable
+                title="Freight & Packing by Category"
+                icon={Truck}
+                head={['Category', 'Challans', 'Bags', 'Freight', 'Packing', 'Freight/Bag']}
+                rows={data.byCategory.map((c) => [
+                  c.category,
+                  count(c.count),
+                  count(c.bags),
+                  money(c.freight),
+                  money(c.packing),
+                  c.bags > 0 ? money(Math.round(c.freight / c.bags)) : '—',
+                ])}
+                foot={[
+                  'Total',
+                  count(t.count),
+                  count(t.totalBags),
+                  money(t.totalFreight),
+                  money(t.totalPacking),
+                  t.totalBags > 0 ? money(Math.round(t.totalFreight / t.totalBags)) : '—',
+                ]}
+              />
+            )}
 
             {/* Trading account — the statement view: what was sold, what came
                 back, and what was actually invoiced over the selected range. */}
@@ -247,9 +456,25 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
                     )}
                     <TradeRow label="Goods value invoiced" value={money(tr.goodsInvoiced)} kind="subtotal" />
                     {tr.debitNotes.amount !== 0 && (
-                      <TradeRow label="of which: Debit Notes" value={money(tr.debitNotes.amount)} note={`${count(tr.debitNotes.count)} note(s) — memo, already above`} />
+                      <NoteRows
+                        label="of which: Debit Notes"
+                        info="Already inside the goods value above — listed here so it can be checked, not added again."
+                        value={money(tr.debitNotes.amount)}
+                        notes={tr.debitNoteList}
+                        truncated={tr.debitNotesTruncated}
+                        onOpen={(n) => {
+                          onOpenChange(false);
+                          navigate(`/challans/${n.id}/bill`);
+                        }}
+                      />
                     )}
-                    <TradeRow label="Less: Sales Returns" value={money(tr.salesReturns.amount)} note={tr.salesReturns.count ? `${count(tr.salesReturns.count)} credit note(s)` : 'none'} negative />
+                    <NoteRows
+                      label="Less: Sales Returns"
+                      value={money(tr.salesReturns.amount)}
+                      notes={tr.creditNoteList}
+                      truncated={tr.creditNotesTruncated}
+                      negative
+                    />
                     <TradeRow label="Net Sales" value={money(tr.netSales)} kind="subtotal" />
                     <TradeRow label="Add: Freight, Packing & Box" value={money(tr.freight + tr.packing + tr.pouch)} note="net of returns" />
                     <TradeRow label="Net Revenue (before GST)" value={money(tr.netRevenue)} kind="subtotal" />
@@ -260,31 +485,23 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
                   </tbody>
                 </table>
               </div>
-              <div className="text-muted-foreground mt-2 space-y-1 text-xs">
+              <div className="text-muted-foreground mt-1.5 space-y-1 text-[11.5px]">
                 <p>
-                  Sales figures are goods value (the sum of each document's line amounts); charges and tax are listed
-                  separately, so every row adds down the column. Return rate:{' '}
-                  <span className="text-foreground font-semibold tabular-nums">{tr.returnRatePercent}%</span> of gross sales.
+                  Return rate <span className="text-foreground font-semibold tabular-nums">{tr.returnRatePercent}%</span> of gross
+                  sales.
+                  {tr.cancelled.count > 0 &&
+                    (status.toUpperCase() === 'CONFIRMED'
+                      ? ` Excludes ${count(tr.cancelled.count)} cancelled worth ${money(tr.cancelled.amount)}.`
+                      : ` Includes ${count(tr.cancelled.count)} cancelled worth ${money(tr.cancelled.amount)}.`)}
                 </p>
-                <p>
-                  The opening row is the <span className="text-foreground font-medium">Total Sales</span> card above; the rows
-                  under it strip out GST and charges to reach the goods value the trade is measured on, then returns come off.
-                </p>
-                {/* The status filter drives these figures, so say what is inside them. */}
-                {tr.cancelled.count > 0 && (
-                  <p>
-                    {status.toUpperCase() === 'CONFIRMED'
-                      ? `Excludes ${count(tr.cancelled.count)} cancelled challan(s) worth ${money(tr.cancelled.amount)}.`
-                      : `Includes ${count(tr.cancelled.count)} cancelled challan(s) worth ${money(tr.cancelled.amount)} — set Status to Confirmed to leave them out.`}
-                  </p>
-                )}
-                {tr.salesReturns.count > 0 && <p>Credit notes take the date, category and search filters; they have no cancelled state to match Status against.</p>}
+                {/* Kept as a visible warning, not folded into a tooltip: it says
+                    the documents do not add up, which is the one thing here that
+                    needs acting on rather than understanding. */}
                 {tr.documentsOutOfLine > 0 && (
                   <p className="text-amber-700 dark:text-amber-400">
                     <AlertTriangle className="mr-1 inline size-3.5 align-[-2px]" />
-                    {count(tr.documentsOutOfLine)} challan(s) carry a stored total that differs from their own goods + charges + tax, a net{' '}
-                    {money(tr.documentTotal - tr.totalInvoiced)} against the {money(tr.documentTotal)} of document totals. The statement above is built
-                    from the components.
+                    {count(tr.documentsOutOfLine)} challan(s) carry a stored total differing from their own goods + charges + tax
+                    — a net {money(tr.documentTotal - tr.totalInvoiced)} against {money(tr.documentTotal)} of document totals.
                   </p>
                 )}
               </div>
