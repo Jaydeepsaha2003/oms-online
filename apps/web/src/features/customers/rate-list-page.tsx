@@ -203,15 +203,19 @@ function PivotCard({ t, compare }: { t: PivotTable; compare: boolean }) {
                     key={i}
                     className={cn(
                       'text-right align-top',
-                      // Not sold in this column. Filled rather than dashed, to
-                      // match the PDF and the workbook: a lone faint dash read as
-                      // missing data, so a 2-pcs-only item looked like most of its
-                      // row had been skipped. `!` because the zebra stripe on the
-                      // row would otherwise win on even rows.
-                      !cell && 'bg-slate-200/70 !text-muted-foreground/50 dark:bg-white/[0.07]',
+                      // Not sold in this column. A very light fill labelled NA,
+                      // matching the PDF and the workbook: a lone faint dash read
+                      // as missing data, so a 2-pcs-only item looked like most of
+                      // its row had been skipped. `!` because the zebra stripe on
+                      // the row would otherwise win on even rows.
+                      !cell && 'bg-slate-100 !text-center !text-muted-foreground/60 dark:bg-white/[0.05]',
                     )}
                   >
-                    {cell ? <RateCell rate={cell} base={r.baseCells[i]} delta={r.deltaCells[i]} compare={compare} /> : '–'}
+                    {cell ? (
+                      <RateCell rate={cell} base={r.baseCells[i]} delta={r.deltaCells[i]} compare={compare} />
+                    ) : (
+                      <span className="text-[11px] font-semibold">NA</span>
+                    )}
                   </td>
                 ))}
               </tr>

@@ -22,6 +22,24 @@ function getAllLocalIPs(): string[] {
     'localhost',
     '127.0.0.1',
     '192.168.0.236',
+    /*
+     * The shop's PUBLIC (WAN) address, reached from outside through the router's
+     * port forward — https://103.168.215.158:6173, which is the URL people
+     * actually have saved.
+     *
+     * It has to be PINNED because it can never be auto-detected: the loop below
+     * enumerates this PC's own interfaces, and a WAN address lives on the router,
+     * not on the PC. So it was absent from every cert ever generated, and Chrome
+     * rejected the certificate on that host.
+     *
+     * That is what stopped Android from getting notifications at all. Chrome
+     * refuses to register a service worker on an origin with a certificate
+     * error — clicking through the warning is not enough — and with no service
+     * worker there is no pushManager, so no device could ever subscribe. (iPhones
+     * had subscribed earlier from the LAN/hotspot addresses, which ARE in the
+     * cert, which is why push kept working there and only Android looked broken.)
+     */
+    '103.168.215.158',
     // This PC's own name (e.g. GURUDEV1121), resolved on the LAN by NetBIOS/mDNS.
     // Every Wi-Fi reconnect can hand out a DIFFERENT DHCP address, which silently
     // breaks the https://<ip>:6173 URL saved on people's phones - the server is

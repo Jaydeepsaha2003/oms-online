@@ -41,16 +41,18 @@ const MUTED: RGB = [100, 116, 139]; // slate-500
 const FAINT: RGB = [148, 163, 184]; // slate-400
 const HAIRLINE: RGB = [226, 232, 240]; // slate-200 — row rules
 /**
- * Fill for a rate column this item is not sold in — slate-200.
+ * Fill for a rate column this item is not sold in — a very light slate.
  *
  * A lone faint dash in an otherwise empty cell read as a gap in the data rather
  * than a statement, so a 2-pcs-only item looked like three quarters of its row
  * had been missed. Filling the cell says the same thing the way a printed sheet
- * says it: this combination does not exist. Darker than BLUE_ZEBRA so it is
- * still legible on an alternate row, and the dash stays on top so the meaning
- * survives a black-and-white print where the tint may not.
+ * says it: this combination does not exist. Kept deliberately pale — it has to
+ * read as "nothing here", and a tint heavy enough to notice competes with the
+ * rates, which are the only thing on the page anyone is reading. "NA" sits on
+ * top of it, so the meaning survives a black-and-white print where the tint may
+ * not, and a photocopy where it disappears entirely.
  */
-const UNAVAILABLE: RGB = [226, 232, 240];
+const UNAVAILABLE: RGB = [244, 246, 249];
 const WHITE: RGB = [255, 255, 255];
 
 const BLUE: RGB = [29, 78, 216]; // blue-700 — table headers, primary accent
@@ -143,7 +145,7 @@ const XL = {
   muted: 'FF64748B',
   hairline: 'FFE2E8F0',
   /** A rate column this item is not sold in — see the PDF's UNAVAILABLE. */
-  unavailable: 'FFE2E8F0',
+  unavailable: 'FFF4F6F9',
   white: 'FFFFFFFF',
 } as const;
 
@@ -366,11 +368,22 @@ export async function exportRateListExcel(list: CustomerRateList, opts: BuildSec
         // A merged "140/150" is text, so it cannot join a SUM. Tinting it amber
         // makes the gap in a column total visible instead of silent.
         else if (v) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.amberSoft } };
-        // Not sold in this column. Greyed to match the PDF, and left genuinely
-        // EMPTY rather than dashed — a dash would be text in a numeric column,
-        // which breaks Excel's own sorting and filtering on it. The fill carries
-        // the meaning; the cell stays a number column.
-        else c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.unavailable } };
+        /*
+         * Not sold in this column: pale grey, labelled "NA", to match the PDF.
+         *
+         * This DOES put text in an otherwise numeric column, which was the
+         * reason it used to be left blank. The trade was made the other way
+         * round on purpose: a blank cell is indistinguishable from a rate nobody
+         * has filled in yet, and the sheet's job is to be read, not summed.
+         * SUM/AVERAGE ignore text so the totals are unaffected; sorting such a
+         * column groups the NAs at one end, which is the only real cost.
+         */
+        else {
+          c.value = 'NA';
+          c.alignment = { horizontal: 'center', vertical: 'middle' };
+          c.font = { name: 'Calibri', size: 9.5, color: { argb: XL.muted } };
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.unavailable } };
+        }
       });
 
       for (let ci = 1; ci <= lastCol; ci += 1) {
@@ -398,7 +411,7 @@ export async function exportRateListExcel(list: CustomerRateList, opts: BuildSec
     const anyBlank = sec.rows.some((r) => r.cells.some((v) => v === '' || v == null));
     const notes = [
       anySpecial ? '*  this line includes your special-rate adjustment.' : '',
-      anyBlank ? 'Grey cell = this item is not sold in that column.' : '',
+      anyBlank ? 'NA = this item is not sold in that column.' : '',
       anyMerged ? 'Amber cell = two rates merged into one column, so it is held as text and will not join a SUM.' : '',
     ].filter(Boolean);
     if (notes.length) {
@@ -877,13 +890,17 @@ export async function buildRateListPdfDoc(list: CustomerRateList, opts: BuildSec
           doc.setFont(TABLE_FONT, 'bold').setTextColor(...INK);
           fitText(cell, x + w - 6, ty, w - 12, DATA_SIZE, { align: 'right', minSize: 7.5 });
         } else {
-          // Fill first, dash on top — the rect would otherwise paint over it.
+          // Fill first, label on top — the rect would otherwise paint over it.
           // Inset by the same 2pt the zebra uses so it lands inside the row's
           // rules instead of straddling them.
           doc.setFillColor(...UNAVAILABLE);
           doc.rect(x, y - 2, w, rowH, 'F');
-          doc.setFont(TABLE_FONT, 'bold').setFontSize(META_SIZE).setTextColor(...MUTED);
-          doc.text('–', x + w - 6, ty, { align: 'right' });
+          // "NA" rather than a dash: a dash in a column of numbers reads as a
+          // missing figure, where NA states that the item is not sold in that
+          // pack at all. Centred, because it is a word and not a rate — a
+          // right-aligned NA lines up under the rupee figures and reads as one.
+          doc.setFont(TABLE_FONT, 'bold').setFontSize(META_SIZE).setTextColor(...FAINT);
+          doc.text('NA', x + w / 2, ty, { align: 'center' });
         }
         x += w;
       });

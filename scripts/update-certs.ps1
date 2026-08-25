@@ -22,7 +22,11 @@ if (-not (Test-Path $mkcertExe)) {
 # reserved IP means the home URL https://192.168.0.236:6173 is ALWAYS valid, even
 # after a detour onto another network. Add more fixed IPs here if the PC ever
 # gets a second reserved address.
-$reservedLanIps = @("192.168.0.236")
+# 103.168.215.158 is the shop's PUBLIC (WAN) address, used from outside via the
+# router port-forward. It can never be auto-detected — it sits on the router,
+# not on this PC — so it must be pinned, or Chrome rejects the certificate on
+# that host and Android can never register a service worker (no push at all).
+$reservedLanIps = @("192.168.0.236", "103.168.215.158")
 # ALSO pre-pin the entire iPhone Personal Hotspot client range (172.20.10.2-14 -
 # iOS always assigns from this fixed pool). With these baked into the cert, the
 # ALREADY-RUNNING server stays TLS-valid the moment the PC hops onto the hotspot:
@@ -119,6 +123,17 @@ Copy-Item -Path $keyPem -Destination (Join-Path $projectCertsDir "dev.pem") -For
 $rootCaPem = Join-Path $mkcertDir "rootCA.pem"
 if (Test-Path $rootCaPem) {
     Copy-Item -Path $rootCaPem -Destination (Join-Path $projectCertsDir "rootCA.pem") -Force
+    # Also publish it where DEVICES can fetch it. The app's own "notifications
+    # need the certificate" message tells people to open /oms-rootCA.crt, and that
+    # URL used to 404 — so the one instruction that would have fixed their phone
+    # led nowhere. Refreshed on every cert update so the published copy can never
+    # drift from the CA actually signing the server (which is what happened to
+    # scripts/oms-dev-root-ca.pem — it is a DIFFERENT machine's CA and trusting it
+    # achieves nothing).
+    $publicDir = Join-Path $PSScriptRoot "..\apps\web\public"
+    if (Test-Path $publicDir) {
+        Copy-Item -Path $rootCaPem -Destination (Join-Path $publicDir "oms-rootCA.crt") -Force
+    }
 }
 
 Write-Host "Certificate files copied to project certs/ folder successfully."
