@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, BarChart3, Building2, ChevronRight, Layers, Scale, TrendingUp, Truck } from 'lucide-react';
 import type { ChallanQuery, TradingNoteRow } from '@oms/shared';
 import { cn } from '@/lib/utils';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useNavigate } from 'react-router-dom';
 import { NativeSelect } from '@/components/common/combo';
 import { InfoTip } from '@/components/common/info-tip';
@@ -303,6 +304,7 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
     [base.search, dateFrom, dateTo, status, category],
   );
 
+  const isMobile = useIsMobile();
   const { data, isLoading, isFetching } = useChallanAnalytics(query, open);
   const t = data?.totals;
   const tr = data?.trading;
@@ -320,8 +322,38 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92dvh] w-[min(1000px,96vw)] max-w-[96vw] overflow-y-auto sm:!max-w-[1000px]">
-        <DialogHeader>
+      {/*
+        Phone: a true full-screen sheet. The dialog used to keep its desktop
+        shape (centred card, 96vw, internal scroll) on a phone, which clipped the
+        KPI grid off the right edge — the numbers were there, just unreachable.
+        The overrides go through `style` rather than classes on purpose:
+        DialogContent computes `top`/`maxHeight` inline from the visual viewport
+        and spreads the caller's `style` LAST, so this is the only thing that
+        wins. `maxWidth` has to be set here too, or the base `max-w-lg` clamps
+        the 100vw width straight back down.
+
+        It also stops being its own scroll container (`overflow-hidden`, flex
+        column) so the built-in close X — positioned `absolute` against
+        DialogContent — stays pinned to the top-right instead of scrolling away
+        with the content. The scrolling moves to the body wrapper below.
+
+        Desktop is untouched: `display: contents` on that wrapper means it
+        collapses out of the layout entirely, leaving the original grid intact.
+      */}
+      <DialogContent
+        className={cn(
+          isMobile
+            ? 'flex flex-col gap-0 overflow-hidden rounded-none border-0 p-0'
+            : 'max-h-[92dvh] w-[min(1000px,96vw)] max-w-[96vw] overflow-y-auto sm:!max-w-[1000px]',
+        )}
+        style={
+          isMobile
+            ? { top: 0, left: 0, transform: 'none', width: '100vw', maxWidth: '100vw', height: '100dvh', maxHeight: '100dvh' }
+            : undefined
+        }
+      >
+        {/* pr-12 keeps the title clear of the close X sitting at top-4 right-4. */}
+        <DialogHeader className={cn(isMobile && 'bg-background shrink-0 border-b px-4 pt-4 pr-12 pb-3')}>
           <DialogTitle className="flex items-center gap-2">
             <span className="bg-gradient-brand flex size-8 items-center justify-center rounded-lg text-white shadow-sm ring-1 ring-white/20">
               <BarChart3 className="size-4" />
@@ -332,25 +364,29 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
           <DialogDescription>Sales, billing and receivables at a glance. Filter by category, date range and status.</DialogDescription>
         </DialogHeader>
 
-        {/* Filters */}
-        <div className="bg-muted/40 flex flex-wrap items-end gap-2 rounded-md border p-2.5">
-          <div className="w-40 space-y-1">
+        {/* Everything below the header scrolls as one block on a phone.
+            `contents` on desktop keeps the old grid layout byte-for-byte. */}
+        <div className={cn(isMobile ? 'flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-3' : 'contents')}>
+        {/* Filters — two per row on a phone, where the fixed w-36/w-40 widths
+            used to overflow the sheet instead of wrapping cleanly. */}
+        <div className="bg-muted/40 grid grid-cols-2 items-end gap-2 rounded-md border p-2.5 sm:flex sm:flex-wrap">
+          <div className="space-y-1 sm:w-40">
             <Label className="text-xs">Category</Label>
             <NativeSelect value={category} onChange={setCategory} options={['', ...(data?.categories ?? [])]} placeholder="All categories" />
           </div>
           <div className="space-y-1">
             <Label className="text-xs">From</Label>
-            <Input type="date" className="w-36" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPreset(''); }} />
+            <Input type="date" className="w-full sm:w-36" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPreset(''); }} />
           </div>
           <div className="space-y-1">
             <Label className="text-xs">To</Label>
-            <Input type="date" className="w-36" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPreset(''); }} />
+            <Input type="date" className="w-full sm:w-36" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPreset(''); }} />
           </div>
-          <div className="w-36 space-y-1">
+          <div className="space-y-1 sm:w-36">
             <Label className="text-xs">Quick range</Label>
             <NativeSelect value={preset} onChange={applyPreset} options={['', ...PRESETS]} placeholder="Range…" />
           </div>
-          <div className="w-40 space-y-1">
+          <div className="space-y-1 sm:w-40">
             <Label className="text-xs">Status</Label>
             <NativeSelect value={status} onChange={setStatus} options={['', 'CONFIRMED', 'CANCELLED']} placeholder="All statuses" />
           </div>
@@ -364,7 +400,7 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
             {/* Hairlines over a border-coloured background rather than gaps
                 between cards: a Tally screen is a grid, and 12 shadowed cards
                 with 10px gutters spent most of the dialog on air. */}
-            <div className="bg-border grid grid-cols-3 gap-px overflow-hidden rounded-[4px] border sm:grid-cols-4 lg:grid-cols-6">
+            <div className="bg-border grid grid-cols-2 gap-px overflow-hidden rounded-[4px] border sm:grid-cols-4 lg:grid-cols-6">
               {/* Says its basis outright: this is the invoice value of the
                   challans (tax and charges in, returns not netted), which is a
                   different measure from the Trading Account's goods-value Gross
@@ -577,6 +613,7 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
             </p>
           </div>
         )}
+        </div>
       </DialogContent>
     </Dialog>
   );
