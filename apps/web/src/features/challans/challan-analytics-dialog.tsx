@@ -332,6 +332,14 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
         wins. `maxWidth` has to be set here too, or the base `max-w-lg` clamps
         the 100vw width straight back down.
 
+        `translate: none` is load-bearing and NOT interchangeable with
+        `transform: none`. Tailwind v4 compiles `translate-x-[-50%]` to the
+        standalone `translate` property (`translate: var(--tw-translate-x)
+        var(--tw-translate-y)`), not to `transform` — so cancelling `transform`
+        alone leaves the -50% centring shift in place. With `left: 0` still
+        applied that dragged the sheet half its own width off the left edge, and
+        the first column of the KPI grid rendered off-screen.
+
         It also stops being its own scroll container (`overflow-hidden`, flex
         column) so the built-in close X — positioned `absolute` against
         DialogContent — stays pinned to the top-right instead of scrolling away
@@ -348,7 +356,7 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
         )}
         style={
           isMobile
-            ? { top: 0, left: 0, transform: 'none', width: '100vw', maxWidth: '100vw', height: '100dvh', maxHeight: '100dvh' }
+            ? { top: 0, left: 0, translate: 'none', transform: 'none', width: '100vw', maxWidth: '100vw', height: '100dvh', maxHeight: '100dvh' }
             : undefined
         }
       >
