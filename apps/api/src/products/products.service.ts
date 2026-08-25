@@ -1,7 +1,9 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   resolveLineDesignParts,
+  type BulkRateChangeResult,
+  type BulkRatePreview,
   type CategoryFieldDto,
   type Paginated,
   type PhotoGroupBy,
@@ -15,7 +17,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { toNum, uc } from '../common/coerce';
 import { readCategoryFields, writeCategoryFields } from '../common/category-fields';
 import { loadKnownDesignTypes } from '../common/design-types';
-import { CreateProductDto, ImportProductsDto, ProductQueryDto, SetProductFlagsDto, UpdateProductDto } from './dto/product.dto';
+import { BulkRateChangeDto, CreateProductDto, ImportProductsDto, ProductQueryDto, SetProductFlagsDto, UpdateProductDto } from './dto/product.dto';
 import { ProductPhotoQueryDto } from './dto/product-photo.dto';
 
 type Row = Prisma.ProductGetPayload<object>;
@@ -286,6 +288,131 @@ export class ProductsService {
       },
     });
     return { updated: count };
+  }
+
+  /* ── Bulk chart-rate adjustment ──────────────────────────────────────────
+   *
+   * "Every GLASS rate up ₹5", "2.5% off 10-PCS-FG". Preview and apply share one
+   * planner so what you are shown is what gets written — a second
+   * implementation for the preview is how the two drift apart.
+   */
+
+  /**
+   * Work out the new rate for every product in scope, and why some get none.
+   *
+   * Three reasons a product in scope is left alone, all reported rather than
+   * silently dropped:
+   *
+   *  - NO RATE. A product with no chart rate is not "₹0": adding ₹5 to it would
+   *    invent a price out of nothing, and a percentage of nothing is nothing.
+   *  - NEGATIVE. A reduction bigger than the rate would write a negative price.
+   *    Clamping to zero would be worse than skipping — it silently sets a real,
+   *    wrong number that then prints on a rate list.
+   *  - UNCHANGED. Rounding can swallow a small adjustment (+0.4 rounded to the
+   *    rupee). Writing it anyway would stamp a rate-history row recording a
+   *    change that did not happen, and that trail reprices old bookings.
+   */
+  private async planRateChange(dto: BulkRateChangeDto) {
+    const category = (dto.category ?? '').trim();
+    if (!category) throw new BadRequestException('Pick a category.');
+    const subCategory = (dto.subCategory ?? '').trim();
+    const activeOnly = dto.activeOnly !== false;
+
+    const products = await this.prisma.product.findMany({
+      where: {
+        category,
+        ...(subCategory ? { subCategory } : {}),
+        ...(activeOnly ? { active: true } : {}),
+      },
+      orderBy: [{ subCategory: 'asc' }, { product: 'asc' }, { size: 'asc' }],
+    });
+
+    let skippedNoRate = 0;
+    let skippedNegative = 0;
+    let skippedUnchanged = 0;
+    const changes: { row: (typeof products)[number]; oldRate: number; newRate: number }[] = [];
+
+    for (const row of products) {
+      if (row.rate == null) {
+        skippedNoRate += 1;
+        continue;
+      }
+      const raw = dto.mode === 'PERCENT' ? row.rate * (1 + dto.value / 100) : row.rate + dto.value;
+      // Round BEFORE the negative check, so a result that rounds to 0 is treated
+      // as the zero it will be stored as rather than as a small positive.
+      const newRate = dto.roundToRupee ? Math.round(raw) : Math.round(raw * 100) / 100;
+      if (newRate < 0) {
+        skippedNegative += 1;
+        continue;
+      }
+      if (newRate === row.rate) {
+        skippedUnchanged += 1;
+        continue;
+      }
+      changes.push({ row, oldRate: row.rate, newRate });
+    }
+
+    return { matched: products.length, changes, skippedNoRate, skippedNegative, skippedUnchanged };
+  }
+
+  /** What {@link bulkRateChange} would do, without doing it. */
+  async previewRateChange(dto: BulkRateChangeDto): Promise<BulkRatePreview> {
+    const plan = await this.planRateChange(dto);
+    const CAP = 200;
+    return {
+      matched: plan.matched,
+      willChange: plan.changes.length,
+      skippedNoRate: plan.skippedNoRate,
+      skippedNegative: plan.skippedNegative,
+      skippedUnchanged: plan.skippedUnchanged,
+      rows: plan.changes.slice(0, CAP).map((c) => ({
+        id: c.row.id,
+        product: c.row.product,
+        subCategory: c.row.subCategory,
+        size: c.row.size,
+        oldRate: c.oldRate,
+        newRate: c.newRate,
+      })),
+      truncated: plan.changes.length > CAP,
+    };
+  }
+
+  /**
+   * Apply the adjustment.
+   *
+   * Re-planned from the CURRENT rates rather than from whatever the preview
+   * showed: the instruction is "move these by ₹5", not "set them to these exact
+   * numbers". If somebody edited a rate between the preview and the apply, the
+   * relative move is still right, where replaying the preview's figures would
+   * quietly undo their edit.
+   *
+   * One transaction, and each product's rate-history row written beside its
+   * update — that trail is load-bearing (booking conversion and the order-date
+   * repricing both read it), so a rate that moved without a history row would
+   * silently reprice past orders. All-or-nothing means a failure halfway cannot
+   * leave the two out of step.
+   */
+  async bulkRateChange(dto: BulkRateChangeDto, changedByName?: string | null): Promise<BulkRateChangeResult> {
+    const plan = await this.planRateChange(dto);
+    if (!plan.changes.length) return { updated: 0 };
+
+    const ops = plan.changes.flatMap((c) => [
+      this.prisma.product.update({ where: { id: c.row.id }, data: { rate: c.newRate } }),
+      this.prisma.productRateHistory.create({
+        data: {
+          productId: c.row.id,
+          productName: c.row.product,
+          category: c.row.category,
+          subCategory: c.row.subCategory,
+          size: c.row.size,
+          oldRate: c.oldRate,
+          newRate: c.newRate,
+          changedByName: changedByName ?? null,
+        },
+      }),
+    ]);
+    await this.prisma.$transaction(ops);
+    return { updated: plan.changes.length };
   }
 
   async remove(id: number): Promise<void> {

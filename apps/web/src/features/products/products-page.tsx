@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ChevronLeft, ChevronRight, Filter, History, ListX, Loader2, Pencil, Plus, PowerOff, RotateCcw, Scale, Search, Trash2, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Filter, History, IndianRupee, ListX, Loader2, Pencil, Plus, PowerOff, RotateCcw, Scale, Search, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { CategoryFieldDto, ProductDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -37,6 +37,7 @@ import {
   useSetProductFlags,
   useUpdateProduct,
 } from './use-products';
+import { BulkRateDialog } from './bulk-rate-dialog';
 
 const num = (n: number | null) => (n == null ? '—' : n.toLocaleString('en-IN'));
 /** Amount prefixed with the rupee symbol; dash when unknown. */
@@ -116,6 +117,7 @@ const TIP = {
   changes: 'See recent edits to products — name, category, sub-category and more.',
   priceFields: 'Set which quantity a category is priced by (KGS or PCS).',
   create: 'Add a product to the catalogue.',
+  bulkRate: 'Raise or lower every chart rate in a category — or one sub-category — at once, by ₹ or by %. Shows exactly what will change before anything is written.',
   filters: 'Filter by category and sub-category.',
   selectAll: 'Select every product matching your current search and filters, across all pages — not just the page on screen.',
   deactivate: 'Switch the selected products off. They stop appearing in order pickers; nothing already ordered or invoiced changes.',
@@ -151,6 +153,7 @@ export function ProductsPage() {
   const [editing, setEditing] = useState<ProductDto | null>(null);
   const [creating, setCreating] = useState(false);
   const [showFields, setShowFields] = useState(false);
+  const [bulkRateOpen, setBulkRateOpen] = useState(false);
   const [changesOpen, setChangesOpen] = useState(false);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   // Bulk row selection — kept across page turns / filter changes so the user can
@@ -531,6 +534,17 @@ export function ProductsPage() {
             <Button variant="outline" size="sm" className="h-9 rounded-[4px] text-[12.5px] font-semibold" onClick={() => setShowFields(true)} title={TIP.priceFields}>
               <Scale /> Price fields
             </Button>
+            {can('product:update') && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 rounded-[4px] text-[12.5px] font-semibold"
+                onClick={() => setBulkRateOpen(true)}
+                title={TIP.bulkRate}
+              >
+                <IndianRupee className="size-3.5" /> Bulk rate change
+              </Button>
+            )}
             {can('product:create') && (
               <Button size="sm" className="h-9 rounded-[4px] text-[12.5px] font-bold" onClick={() => setCreating(true)} title={TIP.create}>
                 <Plus /> New product
@@ -686,6 +700,7 @@ export function ProductsPage() {
       )}
 
       {showFields && <CategoryFieldsDialog canEdit={can('product:update')} onClose={() => setShowFields(false)} />}
+      {bulkRateOpen && <BulkRateDialog onClose={() => setBulkRateOpen(false)} />}
       <ProductChangesDialog open={changesOpen} onOpenChange={setChangesOpen} />
     </div>
   );

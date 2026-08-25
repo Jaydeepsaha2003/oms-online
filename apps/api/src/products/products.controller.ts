@@ -18,9 +18,11 @@ import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
 import { AnyPermission, Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { ExcelService } from '../excel/excel.service';
 import { ProductsService } from './products.service';
 import {
+  BulkRateChangeDto,
   BulkSetProductFlagsDto,
   CreateProductDto,
   ImportProductsDto,
@@ -123,6 +125,26 @@ export class ProductsController {
   bulkSetFlags(@Body() dto: BulkSetProductFlagsDto) {
     const { ids, ...flags } = dto;
     return this.products.bulkSetFlags(ids, flags);
+  }
+
+  /**
+   * Bulk chart-rate adjustment, by category or one sub-category.
+   *
+   * Preview is a POST because it carries a body, not because it writes — it
+   * changes nothing. Both declared before the `:id` routes so "bulk-rate" is not
+   * parsed as a (non-numeric) product id.
+   */
+  @Post('bulk-rate/preview')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  previewRateChange(@Body() dto: BulkRateChangeDto) {
+    return this.products.previewRateChange(dto);
+  }
+
+  @Post('bulk-rate')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Bulk-adjusted product chart rates' })
+  bulkRateChange(@Body() dto: BulkRateChangeDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.products.bulkRateChange(dto, user?.name ?? null);
   }
 
   @Get(':id')
