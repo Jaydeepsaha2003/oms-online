@@ -23,6 +23,11 @@ function moneyShort(v: number | null | undefined): string {
 }
 const count = (v: number | null | undefined) => (v ?? 0).toLocaleString('en-IN');
 
+/** Filter-field label: the same quiet, tracked-out caption the KPI figures use,
+ *  so the control strip reads as part of the same screen rather than a form
+ *  bolted on top of it. */
+const FILTER_LABEL = 'text-muted-foreground text-[10px] font-bold tracking-[0.08em] uppercase';
+
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -405,7 +410,7 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
         }
       >
         {/* pr-12 keeps the title clear of the close X sitting at top-4 right-4. */}
-        <DialogHeader className={cn(isMobile && 'bg-background shrink-0 border-b px-4 pt-4 pr-12 pb-3')}>
+        <DialogHeader className={cn(isMobile && 'bg-background shrink-0 border-b px-4 pt-4 pr-12 pb-3 text-left')}>
           <DialogTitle className="flex items-center gap-2">
             <span className="bg-gradient-brand flex size-8 items-center justify-center rounded-lg text-white shadow-sm ring-1 ring-white/20">
               <BarChart3 className="size-4" />
@@ -421,25 +426,33 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
         <div className={cn(isMobile ? 'flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-3' : 'contents')}>
         {/* Filters — two per row on a phone, where the fixed w-36/w-40 widths
             used to overflow the sheet instead of wrapping cleanly. */}
-        <div className="bg-muted/40 grid grid-cols-2 items-end gap-2 rounded-md border p-2.5 sm:flex sm:flex-wrap">
-          <div className="space-y-1 sm:w-40">
-            <Label className="text-xs">Category</Label>
+        {/*
+          Two columns on a phone, and Category spans both — which is what puts
+          From and To beside each other. Left to flow, the five fields landed as
+          Category|From / To|Quick range / Status, so the two halves of ONE date
+          range sat in different rows with a row boundary between them, reading
+          as unrelated fields. Spanning the first control re-pairs them at no
+          cost in height.
+        */}
+        <div className="bg-muted/30 grid grid-cols-2 items-end gap-x-2.5 gap-y-3 rounded-xl border p-3 sm:flex sm:flex-wrap sm:gap-2 sm:rounded-md sm:p-2.5">
+          <div className="col-span-2 space-y-1.5 sm:col-span-1 sm:w-40">
+            <Label className={FILTER_LABEL}>Category</Label>
             <NativeSelect value={category} onChange={setCategory} options={['', ...(data?.categories ?? [])]} placeholder="All categories" />
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs">From</Label>
+          <div className="space-y-1.5">
+            <Label className={FILTER_LABEL}>From</Label>
             <Input type="date" className="w-full sm:w-36" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPreset(''); }} />
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs">To</Label>
+          <div className="space-y-1.5">
+            <Label className={FILTER_LABEL}>To</Label>
             <Input type="date" className="w-full sm:w-36" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPreset(''); }} />
           </div>
-          <div className="space-y-1 sm:w-36">
-            <Label className="text-xs">Quick range</Label>
+          <div className="space-y-1.5 sm:w-36">
+            <Label className={FILTER_LABEL}>Quick range</Label>
             <NativeSelect value={preset} onChange={applyPreset} options={['', ...PRESETS]} placeholder="Range…" />
           </div>
-          <div className="space-y-1 sm:w-40">
-            <Label className="text-xs">Status</Label>
+          <div className="space-y-1.5 sm:w-40">
+            <Label className={FILTER_LABEL}>Status</Label>
             <NativeSelect value={status} onChange={setStatus} options={['', 'CONFIRMED', 'CANCELLED']} placeholder="All statuses" />
           </div>
         </div>
