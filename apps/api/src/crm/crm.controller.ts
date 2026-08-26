@@ -134,6 +134,15 @@ export class CrmController {
     return this.crm.seen(id, userName);
   }
 
+  // VIEW, not UPDATE: this only records that the reminder was shown. Requiring
+  // UPDATE would leave a read-only user unable to record it, and therefore
+  // nagged by the same follow-up on every single load.
+  @Post(':id/nudged')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  nudged(@Param('id', ParseIntPipe) id: number) {
+    return this.crm.markNudged(id);
+  }
+
   @Post(':id/resolve')
   @Permissions(perm(R, ACTIONS.UPDATE))
   @Audit({ action: ACTIONS.UPDATE, resource: R })

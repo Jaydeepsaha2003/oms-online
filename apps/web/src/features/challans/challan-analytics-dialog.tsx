@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, BarChart3, Building2, ChevronRight, Layers, Scale, TrendingUp, Truck } from 'lucide-react';
 import type { ChallanQuery, TradingNoteRow } from '@oms/shared';
 import { cn } from '@/lib/utils';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useNavigate } from 'react-router-dom';
 import { NativeSelect } from '@/components/common/combo';
 import { InfoTip } from '@/components/common/info-tip';
@@ -21,6 +22,11 @@ function moneyShort(v: number | null | undefined): string {
   return `₹ ${n.toLocaleString('en-IN')}`;
 }
 const count = (v: number | null | undefined) => (v ?? 0).toLocaleString('en-IN');
+
+/** Filter-field label: the same quiet, tracked-out caption the KPI figures use,
+ *  so the control strip reads as part of the same screen rather than a form
+ *  bolted on top of it. */
+const FILTER_LABEL = 'text-muted-foreground text-[10px] font-bold tracking-[0.08em] uppercase';
 
 interface Props {
   open: boolean;
@@ -81,6 +87,50 @@ function TallyTable({
   rows: (string | number)[][];
   foot?: (string | number)[];
 }) {
+  const isMobile = useIsMobile();
+
+  /*
+   * Phone: one card per row instead of a six-column table.
+   *
+   * The table only ever fitted by scrolling sideways, and a sideways scroll
+   * inside a vertically-scrolling sheet is close to undiscoverable — Freight and
+   * Packing sat off the right edge with nothing to suggest they were there. The
+   * figures are the point of this block, so they get stacked into label/value
+   * pairs that fit the width outright. Two per line keeps a category to a couple
+   * of lines rather than six.
+   *
+   * `head` is reused as the labels, so the columns and the cards can never drift
+   * apart: index i of a row is always described by head[i].
+   */
+  if (isMobile) {
+    const Card = ({ cells, total }: { cells: (string | number)[]; total?: boolean }) => (
+      <div className={cn('overflow-hidden rounded-[4px] border', total && 'border-primary/40 bg-muted/30')}>
+        <div className="bg-muted/60 px-2.5 py-1.5 text-[11px] font-bold tracking-wide text-slate-800 uppercase dark:text-slate-200">
+          {cells[0]}
+        </div>
+        <dl className="bg-border grid grid-cols-2 gap-px">
+          {cells.slice(1).map((c, i) => (
+            <div key={i} className="bg-card px-2.5 py-1.5">
+              <dt className="text-muted-foreground text-[9.5px] font-bold tracking-[0.1em] uppercase">{head[i + 1]}</dt>
+              <dd className={cn('text-[13px] tabular-nums', total ? 'font-bold' : 'font-semibold')}>{c}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    );
+    return (
+      <div>
+        <SectionTitle icon={Icon}>{title}</SectionTitle>
+        <div className="space-y-2">
+          {rows.map((r, ri) => (
+            <Card key={String(r[0]) + ri} cells={r} />
+          ))}
+          {foot && <Card cells={foot} total />}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       <SectionTitle icon={Icon}>{title}</SectionTitle>
@@ -303,6 +353,7 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
     [base.search, dateFrom, dateTo, status, category],
   );
 
+  const isMobile = useIsMobile();
   const { data, isLoading, isFetching } = useChallanAnalytics(query, open);
   const t = data?.totals;
   const tr = data?.trading;
@@ -320,8 +371,46 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92dvh] w-[min(1000px,96vw)] max-w-[96vw] overflow-y-auto sm:!max-w-[1000px]">
-        <DialogHeader>
+      {/*
+        Phone: a true full-screen sheet. The dialog used to keep its desktop
+        shape (centred card, 96vw, internal scroll) on a phone, which clipped the
+        KPI grid off the right edge — the numbers were there, just unreachable.
+        The overrides go through `style` rather than classes on purpose:
+        DialogContent computes `top`/`maxHeight` inline from the visual viewport
+        and spreads the caller's `style` LAST, so this is the only thing that
+        wins. `maxWidth` has to be set here too, or the base `max-w-lg` clamps
+        the 100vw width straight back down.
+
+        `translate: none` is load-bearing and NOT interchangeable with
+        `transform: none`. Tailwind v4 compiles `translate-x-[-50%]` to the
+        standalone `translate` property (`translate: var(--tw-translate-x)
+        var(--tw-translate-y)`), not to `transform` — so cancelling `transform`
+        alone leaves the -50% centring shift in place. With `left: 0` still
+        applied that dragged the sheet half its own width off the left edge, and
+        the first column of the KPI grid rendered off-screen.
+
+        It also stops being its own scroll container (`overflow-hidden`, flex
+        column) so the built-in close X — positioned `absolute` against
+        DialogContent — stays pinned to the top-right instead of scrolling away
+        with the content. The scrolling moves to the body wrapper below.
+
+        Desktop is untouched: `display: contents` on that wrapper means it
+        collapses out of the layout entirely, leaving the original grid intact.
+      */}
+      <DialogContent
+        className={cn(
+          isMobile
+            ? 'flex flex-col gap-0 overflow-hidden rounded-none border-0 p-0'
+            : 'max-h-[92dvh] w-[min(1000px,96vw)] max-w-[96vw] overflow-y-auto sm:!max-w-[1000px]',
+        )}
+        style={
+          isMobile
+            ? { top: 0, left: 0, translate: 'none', transform: 'none', width: '100vw', maxWidth: '100vw', height: '100dvh', maxHeight: '100dvh' }
+            : undefined
+        }
+      >
+        {/* pr-12 keeps the title clear of the close X sitting at top-4 right-4. */}
+        <DialogHeader className={cn(isMobile && 'bg-background shrink-0 border-b px-4 pt-4 pr-12 pb-3 text-left')}>
           <DialogTitle className="flex items-center gap-2">
             <span className="bg-gradient-brand flex size-8 items-center justify-center rounded-lg text-white shadow-sm ring-1 ring-white/20">
               <BarChart3 className="size-4" />
@@ -332,26 +421,38 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
           <DialogDescription>Sales, billing and receivables at a glance. Filter by category, date range and status.</DialogDescription>
         </DialogHeader>
 
-        {/* Filters */}
-        <div className="bg-muted/40 flex flex-wrap items-end gap-2 rounded-md border p-2.5">
-          <div className="w-40 space-y-1">
-            <Label className="text-xs">Category</Label>
+        {/* Everything below the header scrolls as one block on a phone.
+            `contents` on desktop keeps the old grid layout byte-for-byte. */}
+        <div className={cn(isMobile ? 'flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-3' : 'contents')}>
+        {/* Filters — two per row on a phone, where the fixed w-36/w-40 widths
+            used to overflow the sheet instead of wrapping cleanly. */}
+        {/*
+          Two columns on a phone, and Category spans both — which is what puts
+          From and To beside each other. Left to flow, the five fields landed as
+          Category|From / To|Quick range / Status, so the two halves of ONE date
+          range sat in different rows with a row boundary between them, reading
+          as unrelated fields. Spanning the first control re-pairs them at no
+          cost in height.
+        */}
+        <div className="bg-muted/30 grid grid-cols-2 items-end gap-x-2.5 gap-y-3 rounded-xl border p-3 sm:flex sm:flex-wrap sm:gap-2 sm:rounded-md sm:p-2.5">
+          <div className="col-span-2 space-y-1.5 sm:col-span-1 sm:w-40">
+            <Label className={FILTER_LABEL}>Category</Label>
             <NativeSelect value={category} onChange={setCategory} options={['', ...(data?.categories ?? [])]} placeholder="All categories" />
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs">From</Label>
-            <Input type="date" className="w-36" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPreset(''); }} />
+          <div className="space-y-1.5">
+            <Label className={FILTER_LABEL}>From</Label>
+            <Input type="date" className="w-full sm:w-36" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPreset(''); }} />
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs">To</Label>
-            <Input type="date" className="w-36" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPreset(''); }} />
+          <div className="space-y-1.5">
+            <Label className={FILTER_LABEL}>To</Label>
+            <Input type="date" className="w-full sm:w-36" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPreset(''); }} />
           </div>
-          <div className="w-36 space-y-1">
-            <Label className="text-xs">Quick range</Label>
+          <div className="space-y-1.5 sm:w-36">
+            <Label className={FILTER_LABEL}>Quick range</Label>
             <NativeSelect value={preset} onChange={applyPreset} options={['', ...PRESETS]} placeholder="Range…" />
           </div>
-          <div className="w-40 space-y-1">
-            <Label className="text-xs">Status</Label>
+          <div className="space-y-1.5 sm:w-40">
+            <Label className={FILTER_LABEL}>Status</Label>
             <NativeSelect value={status} onChange={setStatus} options={['', 'CONFIRMED', 'CANCELLED']} placeholder="All statuses" />
           </div>
         </div>
@@ -364,7 +465,7 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
             {/* Hairlines over a border-coloured background rather than gaps
                 between cards: a Tally screen is a grid, and 12 shadowed cards
                 with 10px gutters spent most of the dialog on air. */}
-            <div className="bg-border grid grid-cols-3 gap-px overflow-hidden rounded-[4px] border sm:grid-cols-4 lg:grid-cols-6">
+            <div className="bg-border grid grid-cols-2 gap-px overflow-hidden rounded-[4px] border sm:grid-cols-4 lg:grid-cols-6">
               {/* Says its basis outright: this is the invoice value of the
                   challans (tax and charges in, returns not netted), which is a
                   different measure from the Trading Account's goods-value Gross
@@ -577,6 +678,7 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
             </p>
           </div>
         )}
+        </div>
       </DialogContent>
     </Dialog>
   );

@@ -261,6 +261,31 @@ export class CrmService {
     return this.findOne(id);
   }
 
+  /**
+   * Record that a reminder was actually DELIVERED for this follow-up.
+   *
+   * The in-app banner used to throttle itself purely from localStorage, so
+   * "already nudged" was a fact known to one browser on one origin and nowhere
+   * else. Clear site data, open it on a second machine, or let the dev server's
+   * LAN IP move (it is reached by IP, and DHCP does move it) and the gap was
+   * forgotten — every open follow-up nudged again on the next load, chime and
+   * all. That is what made a restart look like the trigger. Persisting the
+   * moment here makes the gap a property of the FOLLOW-UP, so it survives a
+   * reload, a restart and a different device.
+   *
+   * VIEW-level on purpose: anyone who can be shown the nudge must be able to
+   * record it, or a read-only user would be nagged forever.
+   *
+   * One column for everyone, matching `pushSentAt` and `nextRemindAt` — see the
+   * note in FollowupPushScheduler for why a per-recipient table is not worth it
+   * yet. `remindersToday` is deliberately NOT bumped here: it currently counts
+   * snoozes only, and changing what it counts would silently start capping any
+   * follow-up carrying its own maxRemindersPerDay.
+   */
+  async markNudged(id: number): Promise<void> {
+    await this.prisma.followup.update({ where: { id }, data: { lastRemindedAt: new Date() } });
+  }
+
   /** Mark a follow-up done. `note` is the optional closing comment the user types
    *  when completing it (how it was settled, what was collected, …) — it's kept on
    *  the timeline so the Completed view can show WHY it closed, not just that it did. */
