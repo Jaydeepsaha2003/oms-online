@@ -664,12 +664,13 @@ function ModifyDispatchCard({
 export function ModifyDispatchPage() {
   const { can, permissions } = usePermissions();
   const confirm = useConfirm();
-  // A dispatch notification deep-links here as /dispatch?search=DSP-01234, so
-  // the grid opens showing the row the alert was about instead of everything.
+  // A dispatch notification still deep-links here as /dispatch?search=DSP-01234
+  // (the notifier sends orderCode for exactly that). The free-text box this fed
+  // has been removed, so the term is applied once to open the grid on the row the
+  // alert was about, then the param is dropped — see the effect below. There is
+  // no standing text filter on this page any more.
   const [searchParams, setSearchParams] = useSearchParams();
-  const deepLinked = searchParams.get('search') ?? '';
-  const [searchInput, setSearchInput] = useState(deepLinked);
-  const [search, setSearch] = useState(deepLinked);
+  const [search, setSearch] = useState(searchParams.get('search') ?? '');
   const [statusFilter, setStatusFilter] = useState('');
   const [customerFilter, setCustomerFilter] = useState('');
   const [agentFilter, setAgentFilter] = useState('');
@@ -733,19 +734,10 @@ export function ModifyDispatchPage() {
   useEffect(() => {
     const q = searchParams.get('search');
     if (!q) return;
-    setSearchInput(q);
     setSearch(q);
     setPage(1);
     setSearchParams({}, { replace: true });
   }, [searchParams, setSearchParams, setPage]);
-
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setSearch(searchInput.trim());
-      setPage(1);
-    }, 300);
-    return () => clearTimeout(t);
-  }, [searchInput]);
 
   const query = {
     // Grouped mode needs every matching row to subtotal correctly, not just one
@@ -852,8 +844,13 @@ export function ModifyDispatchPage() {
     </div>
   );
 
-  const hasFilters = !!(statusFilter || customerFilter || agentFilter || productFilter || designFilter || dateActive);
+  // `search` counts here even though nothing on the page can type it any more:
+  // a notification deep-link can still set it, and without this the grid would
+  // sit silently filtered with no control offering to undo it. Folding it into
+  // the existing Reset-all keeps that escape hatch without reintroducing a box.
+  const hasFilters = !!(search || statusFilter || customerFilter || agentFilter || productFilter || designFilter || dateActive);
   const resetFilters = () => {
+    setSearch('');
     setStatusFilter('');
     setCustomerFilter('');
     setAgentFilter('');
@@ -972,16 +969,6 @@ export function ModifyDispatchPage() {
       {/* ── Toolbar: search + filters, then column settings — one card. */}
       <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
         <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
-          <div className="relative w-full sm:w-56">
-            <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
-            <Input
-              placeholder="Search #, customer, item, design name or remark…"
-              className={cn(CONTROL, 'pl-8 font-medium', searchInput && CONTROL_ON)}
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-            />
-          </div>
-
           {/* Phones: just the two filters people actually reach for first —
               Customer and Item — each on their own full-width line. Everything
               else (Agent / Design / Status) lives behind the Filter icon; Date
