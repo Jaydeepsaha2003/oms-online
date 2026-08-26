@@ -8,6 +8,8 @@ export * from './roles';
 export * from './menu';
 
 export * from './types/common';
+export * from './types/doc-template';
+export * from './types/agent-rate-list';
 export * from './types/auth';
 export * from './types/user';
 export * from './types/audit';

@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, BellOff, BellRing, Building2, Check, ClipboardList, HardDrive, ImageIcon, Layers, Loader2, Plus, Receipt, RotateCcw, SlidersHorizontal, Trash2, Truck, Upload, Users, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { DEFAULT_ORDER_QTY_LAYOUT, isWithinDnd, normalizeQtyOrder, QTY_FIELD_LABEL, SETTING_GROUP_META, type OrderOptionDto, type OrderQtyLayout, type QtyField, type SettingGroupMeta } from '@oms/shared';
+import { DOC_TAGS } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useNavigate } from 'react-router-dom';
@@ -452,6 +453,38 @@ function ChallanPrefixCard({ canEdit }: { canEdit: boolean }) {
 
 /** The Sales Order / Quotation bill's "Terms & Conditions" list — each line is
  *  shown with a small square bullet, above the Authorised Signatory. */
+/**
+ * The tags a terms line may carry, listed where the terms are typed.
+ *
+ * Without this the feature is invisible: nobody types {{pay_terms}} into a free
+ * text box unless something tells them it exists. Click to copy, because typing
+ * the braces by hand is the easiest thing here to get subtly wrong.
+ */
+function DocTagHint() {
+  return (
+    <div className="text-muted-foreground rounded-[4px] border border-dashed px-2.5 py-1.5 text-[11.5px]">
+      <span className="font-semibold">Tags</span> — filled in per document when it prints. Click to copy.
+      <div className="mt-1 flex flex-wrap gap-1.5">
+        {DOC_TAGS.map(({ tag, label }) => (
+          <button
+            key={tag}
+            type="button"
+            title={label}
+            onClick={() => {
+              void navigator.clipboard?.writeText(tag);
+              toast.success(`${tag} copied`);
+            }}
+            className="bg-muted hover:bg-accent cursor-pointer rounded-full px-2 py-0.5 font-mono text-[10.5px] font-semibold transition-colors"
+          >
+            {tag}
+          </button>
+        ))}
+      </div>
+      <p className="mt-1">A line whose tag has no value for that party is left off, rather than printed with a gap.</p>
+    </div>
+  );
+}
+
 function OrderTermsCard({ canEdit }: { canEdit: boolean }) {
   const { data } = useOrderTerms();
   const save = useUpdateOrderTerms();
@@ -481,6 +514,7 @@ function OrderTermsCard({ canEdit }: { canEdit: boolean }) {
         <p className="text-muted-foreground text-xs">Shown on the printed Sales Order bill, above the Authorised Signatory line.</p>
       </CardHeader>
       <CardContent className="space-y-3">
+        <DocTagHint />
         <div className="space-y-2">
           {terms.length === 0 && <span className="text-muted-foreground text-sm">No terms yet.</span>}
           {terms.map((t, i) => (
@@ -489,7 +523,7 @@ function OrderTermsCard({ canEdit }: { canEdit: boolean }) {
               <Input
                 value={t}
                 onChange={(e) => setTerm(i, e.target.value)}
-                placeholder="e.g. Payment Should Be Made Within 30 Days"
+                placeholder="e.g. Payment Should Be Made Within {{pay_terms}} Days"
                 disabled={!canEdit}
                 maxLength={300}
               />
@@ -558,6 +592,7 @@ function QuotationTermsCard({ canEdit }: { canEdit: boolean }) {
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
+        <DocTagHint />
         <div className="space-y-2">
           {terms.length === 0 && <span className="text-muted-foreground text-sm">No terms yet.</span>}
           {terms.map((t, i) => (
@@ -913,6 +948,7 @@ function ChallanTermsCard({ canEdit }: { canEdit: boolean }) {
         <p className="text-muted-foreground text-xs">Shown on the printed Challan / Tax Invoice, above the Authorised Signatory line. Empty until you add some here.</p>
       </CardHeader>
       <CardContent className="space-y-3">
+        <DocTagHint />
         <div className="space-y-2">
           {terms.length === 0 && <span className="text-muted-foreground text-sm">No terms yet — nothing is printed on the Challan.</span>}
           {terms.map((t, i) => (

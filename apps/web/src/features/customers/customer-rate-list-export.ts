@@ -23,8 +23,8 @@ import { CALIBRI_FONT, registerCalibriFont } from '@/lib/pdf-fonts';
 import kavishLogo from '@/assets/kavish-logo.png';
 import { buildSections, type BuildSectionsOptions, type DesignPivotTable, type PivotTable } from './customer-rate-list-pivot';
 
-const sanitize = (s: string) => s.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, '_').slice(0, 40);
-const stampFull = (iso: string) =>
+export const sanitize = (s: string) => s.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, '_').slice(0, 40);
+export const stampFull = (iso: string) =>
   new Date(iso).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 /* ─────────────────────────── palette ───────────────────────────
@@ -34,12 +34,12 @@ const stampFull = (iso: string) =>
  * neutral ink/slate for body text and hairlines — no heavy fills, so the page
  * stays white and the very-light logo watermark can breathe through it. */
 
-type RGB = [number, number, number];
+export type RGB = [number, number, number];
 
-const INK: RGB = [15, 23, 42]; // slate-900 — body text
-const MUTED: RGB = [100, 116, 139]; // slate-500
-const FAINT: RGB = [148, 163, 184]; // slate-400
-const HAIRLINE: RGB = [226, 232, 240]; // slate-200 — row rules
+export const INK: RGB = [15, 23, 42]; // slate-900 — body text
+export const MUTED: RGB = [100, 116, 139]; // slate-500
+export const FAINT: RGB = [148, 163, 184]; // slate-400
+export const HAIRLINE: RGB = [226, 232, 240]; // slate-200 — row rules
 /**
  * Fill for a rate column this item is not sold in — a very light slate.
  *
@@ -52,16 +52,16 @@ const HAIRLINE: RGB = [226, 232, 240]; // slate-200 — row rules
  * top of it, so the meaning survives a black-and-white print where the tint may
  * not, and a photocopy where it disappears entirely.
  */
-const UNAVAILABLE: RGB = [244, 246, 249];
-const WHITE: RGB = [255, 255, 255];
+export const UNAVAILABLE: RGB = [244, 246, 249];
+export const WHITE: RGB = [255, 255, 255];
 
-const BLUE: RGB = [29, 78, 216]; // blue-700 — table headers, primary accent
-const BLUE_DEEP: RGB = [30, 58, 138]; // blue-900 — headings / wordmark
-const BLUE_ZEBRA: RGB = [243, 247, 255]; // barely-there blue banding for alt rows
-const BLUE_SOFT: RGB = [219, 234, 254]; // blue-100 — chip fills / keylines
+export const BLUE: RGB = [29, 78, 216]; // blue-700 — table headers, primary accent
+export const BLUE_DEEP: RGB = [30, 58, 138]; // blue-900 — headings / wordmark
+export const BLUE_ZEBRA: RGB = [243, 247, 255]; // barely-there blue banding for alt rows
+export const BLUE_SOFT: RGB = [219, 234, 254]; // blue-100 — chip fills / keylines
 
-const ORANGE: RGB = [234, 88, 12]; // orange-600 — gradient start, section accents
-const AMBER: RGB = [245, 158, 11]; // amber-500 — gradient end, section accents
+export const ORANGE: RGB = [234, 88, 12]; // orange-600 — gradient start, section accents
+export const AMBER: RGB = [245, 158, 11]; // amber-500 — gradient end, section accents
 
 /** Linear blend between two RGBs (used for the orange→amber accent rules). */
 const mix = (a: RGB, b: RGB, t: number): RGB => [
@@ -133,7 +133,7 @@ function loadWatermark(doc: jsPDF, logoUrl?: string | null): Promise<{ data: str
  */
 
 /** ARGB forms of the document palette above — exceljs wants alpha-first hex. */
-const XL = {
+export const XL = {
   blue: 'FF1D4ED8',
   blueDeep: 'FF1E3A8A',
   blueZebra: 'FFF3F7FF',

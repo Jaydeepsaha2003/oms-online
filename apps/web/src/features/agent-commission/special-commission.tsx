@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { FlaskConical, Loader2, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { FlaskConical, Loader2, Plus, Search, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   basisUnit,
@@ -16,22 +16,22 @@ import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/common/confirm';
 import { NativeSelect } from '@/components/common/combo';
+import { DataTable, type DataColumn } from '@/components/common/data-table';
+import { ACCENTS, AddButton, deleteAction, LevelButtons, Panel, PanelField } from '@/components/common/rate-panel';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAgents } from '@/features/agents/use-agents';
 import { useOrderLookups } from '@/features/orders/use-orders';
 import {
   useCreateSpecialCommission,
+  useCreateSpecialCommissionBulk,
   useDeleteSpecialCommission,
   useSpecialCommissions,
   useTestCommissionRate,
 } from './use-agent-commission';
 
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-const TH = 'bg-gradient-to-b from-blue-800 to-indigo-800 px-2 py-1.5 text-[11px] font-extrabold tracking-wide text-white uppercase whitespace-nowrap';
-const TD = 'px-2 py-1.5 text-[12.5px]';
 
 /** Which fields a scope actually uses — drives both the form and its validation. */
 const NEEDS: Record<SpecialCommissionScope, { category: boolean; subCategory: boolean; product: boolean; design: boolean; party: 'required' | 'optional' }> = {
@@ -55,20 +55,189 @@ const NEEDS: Record<SpecialCommissionScope, { category: boolean; subCategory: bo
  * per unit, so adding two would be meaningless), exactly one wins, and if none
  * matches the base rate applies.
  */
+/** The five aims a rule can take, widest first — same idiom as the customer
+ *  Special Rates level picker. */
+const LEVELS: { value: SpecialCommissionScope; label: string; title: string }[] = SPECIAL_COMMISSION_SCOPES.map((v) => ({
+  value: v,
+  label: SPECIAL_COMMISSION_SCOPE_LABEL[v],
+  title:
+    v === 'CUSTOMER'
+      ? 'One party, whatever they buy'
+      : v === 'CATEGORY'
+        ? 'A product category'
+        : v === 'SUBCATEGORY'
+          ? 'One sub-category inside a category'
+          : v === 'PRODUCT'
+            ? 'One product'
+            : 'One design type',
+}));
+
+const PRECEDENCE_INFO =
+  'A special rate REPLACES the base rate on the lines it matches — it is never added to it. When several rules match, the one naming the party wins; among equals the narrower aim wins (design → product → sub-category → category → party). A rate only applies where the category is charged in the same unit, so a per-kg rate never prices a per-piece category. If nothing matches, the base rate applies.';
+
 export function SpecialCommissionPanel() {
   const { can } = usePermissions();
   const confirm = useConfirm();
   const canEdit = can('agentcommission:update');
+  const accent = ACCENTS.COMMISSION;
 
   const { data: agents } = useAgents({ page: 1, pageSize: 500 });
   const { data: lookups } = useOrderLookups();
   const [filterAgent, setFilterAgent] = useState('');
   const filterAgentId = useMemo(() => (agents?.items ?? []).find((a) => a.name === filterAgent)?.id, [agents, filterAgent]);
   const { data: rules, isLoading } = useSpecialCommissions(filterAgentId);
-  const [adding, setAdding] = useState(false);
   const del = useDeleteSpecialCommission();
+  const create = useCreateSpecialCommission();
+  const createBulk = useCreateSpecialCommissionBulk();
 
   const rows = rules ?? [];
+  const agentList = agents?.items ?? [];
+
+  /* ── the add form, inline rather than in a modal ────────────────────────
+   * The dialog was a second surface for a rule the list is already showing:
+   * you could not see what was already set while deciding what to add, and on a
+   * phone it filled the screen. Inline is what the customer Special Rates screen
+   * does, and it is the pattern this was asked to match. */
+  /*
+   * Simple by default; Advanced only when the job needs it.
+   *
+   * Simple aims the rule at all of the agent's parties (or at one, for a Party
+   * rule) — which is what almost every rule is. Advanced exists for the case
+   * Simple genuinely cannot express: the same rate for SOME parties but not
+   * others, which otherwise meant adding the rule once per party by hand.
+   *
+   * Not two screens and not a mode switch that changes what the fields mean —
+   * the form is identical either way, Advanced just swaps the single party box
+   * for a checklist.
+   */
+  const [advanced, setAdvanced] = useState(false);
+  const [partyIds, setPartyIds] = useState<Set<number>>(new Set());
+  const [partySearch, setPartySearch] = useState('');
+
+  const [scope, setScope] = useState<SpecialCommissionScope>('CUSTOMER');
+  const [agentName, setAgentName] = useState('');
+  const [party, setParty] = useState('');
+  const [pCategory, setPCategory] = useState('');
+  const [subCategory, setSubCategory] = useState('');
+  const [product, setProduct] = useState('');
+  const [designType, setDesignType] = useState('');
+  const [basis, setBasis] = useState<CommissionBasis>('KGS');
+  const [rate, setRate] = useState('');
+  const [effectiveFrom, setEffectiveFrom] = useState(ymd(new Date()));
+  const [note, setNote] = useState('');
+
+  const needs = NEEDS[scope];
+  const agentId = agentList.find((a) => a.name === agentName)?.id;
+  const customerId = (lookups?.customers ?? []).find((c) => c.name === party)?.id;
+  const parties = useMemo(() => partiesOfAgent(lookups?.customers, agentName), [lookups, agentName]);
+  /** The agent's parties as {id,name}, for the Advanced checklist. Same source
+   *  and same agent filter as `parties`, so the two lists cannot disagree. */
+  const partyRows = useMemo(() => {
+    const names = new Set(parties);
+    return (lookups?.customers ?? []).filter((c) => names.has(c.name)).map((c) => ({ id: c.id, name: c.name }));
+  }, [lookups, parties]);
+  const shownParties = useMemo(
+    () => partyRows.filter((c) => !partySearch.trim() || c.name.toLowerCase().includes(partySearch.trim().toLowerCase())),
+    [partyRows, partySearch],
+  );
+  const allPartiesChecked = partyRows.length > 0 && partyIds.size === partyRows.length;
+
+  const cats = useMemo(() => [...new Set((lookups?.products ?? []).map((p) => p.category))].filter(Boolean).sort(), [lookups]);
+  const subs = useMemo(
+    () => [...new Set((lookups?.products ?? []).filter((p) => !pCategory || p.category === pCategory).map((p) => p.subCategory))].filter(Boolean).sort(),
+    [lookups, pCategory],
+  );
+  const prods = useMemo(
+    () => [...new Set((lookups?.products ?? []).filter((p) => !pCategory || p.category === pCategory).map((p) => p.product))].filter(Boolean).sort(),
+    [lookups, pCategory],
+  );
+  const designs = useMemo(
+    () => [...new Set((lookups?.designs ?? []).filter((d) => !pCategory || d.category === pCategory).map((d) => d.designType))].filter(Boolean).sort(),
+    [lookups, pCategory],
+  );
+
+  // The category's own KGS/PCS setting, so the unit is not a guess: commission
+  // follows the unit the product master already prices that category in.
+  const categoryBasis = useMemo(() => {
+    const f = (lookups?.categoryFields ?? []).find((c) => c.category.toUpperCase() === pCategory.toUpperCase());
+    return f ? ((f.field === 'PCS' ? 'PCS' : 'KGS') as CommissionBasis) : null;
+  }, [lookups, pCategory]);
+  const effectiveBasis = categoryBasis ?? basis;
+
+  const blocker = useMemo((): string | null => {
+    if (!agentId) return 'Choose an agent.';
+    if (advanced) {
+      // A Party-level rule aimed at nobody is the one case Advanced cannot leave
+      // blank: with no party there is nothing for the rule to be about.
+      if (needs.party === 'required' && partyIds.size === 0) return 'Tick at least one party.';
+    } else if (needs.party === 'required' && !customerId) {
+      return 'A party rule needs a party.';
+    }
+    if (needs.category && !pCategory) return 'Choose the product category.';
+    if (needs.subCategory && !subCategory) return 'Choose the sub-category.';
+    if (needs.product && !product) return 'Choose the product.';
+    if (needs.design && !designType) return 'Choose the design.';
+    const n = Number(rate);
+    if (rate.trim() === '' || !Number.isFinite(n)) return 'Enter the rate.';
+    if (n < 0) return 'The rate cannot be negative.';
+    if (!effectiveFrom) return 'Set the date this rate takes effect.';
+    return null;
+  }, [agentId, customerId, needs, pCategory, subCategory, product, designType, rate, effectiveFrom, advanced, partyIds]);
+
+  const submit = () => {
+    if (blocker) return toast.error(blocker);
+    const common = {
+      agentId: agentId!,
+      scope,
+      pCategory: needs.category ? pCategory : null,
+      subCategory: needs.subCategory || needs.product || needs.design ? subCategory || null : null,
+      product: needs.product ? product : null,
+      designType: needs.design ? designType : null,
+      basis: effectiveBasis,
+      ratePerUnit: Number(rate),
+      effectiveFrom,
+      note: note.trim() || null,
+    };
+
+    // Only the figures reset on success. The agent and the aim stay put, because
+    // the next rule is nearly always the same agent at a neighbouring aim.
+    const done = () => {
+      setRate('');
+      setNote('');
+    };
+    const onError = (e: unknown) => toast.error(getApiErrorMessage(e, 'Could not save the rule'));
+
+    if (advanced) {
+      createBulk.mutate(
+        { ...common, customerIds: [...partyIds] },
+        {
+          onSuccess: (r) => {
+            const n = r.repriced?.challans ?? 0;
+            toast.success(
+              `${r.created} rule${r.created === 1 ? '' : 's'} saved` +
+                (r.skipped ? `, ${r.skipped} already set` : '') +
+                (n ? ` — ${n} invoice${n === 1 ? '' : 's'} re-priced` : ''),
+            );
+            done();
+          },
+          onError,
+        },
+      );
+      return;
+    }
+
+    create.mutate(
+      { ...common, customerId: customerId ?? null },
+      {
+        onSuccess: (saved) => {
+          const n = saved.repriced?.challans ?? 0;
+          toast.success(n ? `Saved — ${n} invoice${n === 1 ? '' : 's'} priced on it` : 'Saved — no invoices match it yet');
+          done();
+        },
+        onError,
+      },
+    );
+  };
 
   const remove = async (r: AgentSpecialCommissionDto) => {
     const ok = await confirm({
@@ -79,154 +248,321 @@ export function SpecialCommissionPanel() {
     });
     if (!ok) return;
     del.mutate(r.id, {
-      onSuccess: (r) => {
-        const n = r?.repriced?.challans ?? 0;
-        toast.success(n ? `Special rate removed — ${n} invoice${n === 1 ? '' : 's'} re-priced` : 'Special rate removed');
+      onSuccess: (res) => {
+        const n = res?.repriced?.challans ?? 0;
+        toast.success(n ? `Removed — ${n} invoice${n === 1 ? '' : 's'} re-priced` : 'Special rate removed');
       },
       onError: (e) => toast.error(getApiErrorMessage(e, 'Could not remove the rule')),
     });
   };
 
+  const columns: DataColumn<AgentSpecialCommissionDto>[] = [
+    { id: 'agent', label: 'Agent', cell: (r) => <span className="font-semibold">{r.agentName}</span> },
+    {
+      id: 'aim',
+      label: 'Applies to',
+      cell: (r) => (
+        <span className="flex flex-wrap items-center gap-1.5">
+          <ScopeChip scope={r.scope} />
+          <span className="font-medium">{describe(r)}</span>
+        </span>
+      ),
+    },
+    { id: 'party', label: 'Party', cell: (r) => r.customerName ?? <span className="text-muted-foreground">All parties</span> },
+    {
+      id: 'rate',
+      label: 'Rate',
+      align: 'right',
+      cell: (r) => (
+        <span className="font-bold tabular-nums">
+          ₹{r.ratePerUnit}
+          <span className="text-muted-foreground text-[10px]">/{basisUnit(r.basis)}</span>
+        </span>
+      ),
+    },
+    {
+      id: 'from',
+      label: 'From',
+      cell: (r) => (
+        <span className="whitespace-nowrap tabular-nums">
+          {formatDate(r.effectiveFrom)}
+          {/* Kept only for history: replaced by a later rule at the same aim, or
+              not started yet. Shown rather than hidden, because an invoice from
+              that period was still priced on it. Same word as the All-rates
+              register's chip, so one thing has one name. */}
+          {!r.current && <span className="text-muted-foreground ml-1 text-[10px] font-bold uppercase">replaced</span>}
+        </span>
+      ),
+    },
+    { id: 'note', label: 'Note', cell: (r) => <span className="text-muted-foreground">{r.note ?? ''}</span> },
+  ];
+
   return (
     <div className="space-y-3">
-      {/* How this behaves, stated once. The precedence is the part people get
-          wrong, and getting it wrong means paying an agent the wrong amount. */}
-      <div className="flex items-start gap-2 rounded-[4px] border border-indigo-200 bg-indigo-50/60 px-3 py-2 text-[12.5px] text-indigo-900 dark:border-indigo-400/30 dark:bg-indigo-500/10 dark:text-indigo-200">
-        <Sparkles className="mt-0.5 size-4 shrink-0" />
-        <p>
-          A special rate <b>replaces</b> the base rate for the lines it matches — it is not added to it. When several rules
-          match, the one naming the <b>party</b> wins; among equals the narrower aim wins (design → product → sub-category →
-          category → party). A rate only applies where the category is charged in the same unit, so a per-kg rate never
-          prices a per-piece category. If nothing matches, the base rate applies.
-        </p>
-      </div>
-
-      <RateTester agents={agents?.items ?? []} lookups={lookups} />
-
-      <div className="flex flex-wrap items-end gap-2">
-        <div className="w-full min-w-0 space-y-1 sm:w-64">
-          <Label className="text-muted-foreground text-[11px] font-bold tracking-wide uppercase">Agent</Label>
-          <NativeSelect
-            value={filterAgent}
-            onChange={setFilterAgent}
-            options={['', ...(agents?.items ?? []).map((a) => a.name)]}
-            placeholder="All agents"
-          />
-        </div>
+      <Panel
+        title="Special Commission"
+        icon={<Sparkles className="size-4" />}
+        accent={accent}
+        info={PRECEDENCE_INFO}
+        badge={`${rows.length} set`}
+      >
         {canEdit && (
-          <Button className="bg-gradient-brand ml-auto h-9 text-white shadow-sm hover:opacity-95" onClick={() => setAdding(true)}>
-            <Plus /> Add special rate
-          </Button>
-        )}
-      </div>
-
-      {/* ── Desktop table ─────────────────────────────────────────────────── */}
-      <div className="bg-card hidden overflow-auto rounded-[4px] border shadow-sm sm:block">
-        <table className="w-full border-collapse">
-          <thead className="sticky top-0 z-10">
-            <tr>
-              <th className={TH}>Agent</th>
-              <th className={TH}>Applies to</th>
-              <th className={TH}>Party</th>
-              <th className={cn(TH, 'text-right')}>Rate</th>
-              <th className={TH}>From</th>
-              <th className={TH}>Note</th>
-              <th className={TH} />
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading ? (
-              <tr>
-                <td colSpan={7} className="py-10 text-center">
-                  <Loader2 className="text-muted-foreground mx-auto size-5 animate-spin" />
-                </td>
-              </tr>
-            ) : !rows.length ? (
-              <tr>
-                <td colSpan={7} className="text-muted-foreground py-12 text-center text-[13px]">
-                  No special rates yet — every line prices at the agent&rsquo;s base rate.
-                </td>
-              </tr>
-            ) : (
-              rows.map((r) => (
-                <tr key={r.id} className={cn('border-b', !r.current && 'text-muted-foreground bg-slate-50/70 dark:bg-white/[0.03]')}>
-                  <td className={cn(TD, 'font-semibold')}>{r.agentName}</td>
-                  <td className={TD}>
-                    <ScopeChip scope={r.scope} />
-                    <span className="ml-1.5 font-semibold">{describe(r)}</span>
-                  </td>
-                  <td className={TD}>{r.customerName ?? <span className="text-muted-foreground">All parties</span>}</td>
-                  <td className={cn(TD, 'text-right font-bold tabular-nums')}>
-                    ₹{r.ratePerUnit}
-                    <span className="text-muted-foreground text-[10px]">/{basisUnit(r.basis)}</span>
-                  </td>
-                  <td className={cn(TD, 'whitespace-nowrap tabular-nums')}>
-                    {formatDate(r.effectiveFrom)}
-                    {/* A rule kept only for history: superseded by a later one at
-                        the same aim, or not yet in force. Shown rather than
-                        hidden, because an invoice from that period still priced
-                        on it. */}
-                    {!r.current && <span className="ml-1 text-[10px] font-bold uppercase">superseded</span>}
-                  </td>
-                  <td className={cn(TD, 'text-muted-foreground max-w-[16rem] truncate')} title={r.note ?? undefined}>
-                    {r.note ?? ''}
-                  </td>
-                  <td className={TD}>
-                    {canEdit && (
-                      <Button variant="ghost" size="icon" className="size-7" onClick={() => remove(r)} disabled={del.isPending} aria-label="Remove">
-                        <Trash2 className="size-3.5 text-rose-600" />
-                      </Button>
+          <div className="space-y-3 rounded-lg border bg-slate-50/70 p-3 dark:bg-white/[0.03]">
+            <div className="flex flex-wrap items-center gap-2">
+              <LevelButtons
+                levels={LEVELS}
+                value={scope}
+                accent={accent}
+                onChange={(v) => {
+                setScope(v);
+                // Clear what the new aim does not use, so a stale box cannot be
+                // saved into a rule aimed somewhere else.
+                const n = NEEDS[v];
+                if (!n.category) setPCategory('');
+                if (!n.subCategory && !n.product && !n.design) setSubCategory('');
+                if (!n.product) setProduct('');
+                  if (!n.design) setDesignType('');
+                }}
+              />
+              {/* Simple / Advanced, beside the levels rather than above them: it
+                  changes only HOW the parties are chosen, not what the rule is
+                  aimed at, so it belongs on the same line as the aim. */}
+              <div role="group" aria-label="Party selection mode" className="ml-auto inline-flex h-9 overflow-hidden rounded-md border">
+                {([[false, 'Simple'], [true, 'Advanced']] as const).map(([v, label], i) => (
+                  <button
+                    key={label}
+                    type="button"
+                    aria-pressed={advanced === v}
+                    onClick={() => setAdvanced(v)}
+                    title={
+                      v
+                        ? 'Choose several parties, and write the same rule for each'
+                        : 'One rule — for all of this agent’s parties, or one named party'
+                    }
+                    className={cn(
+                      'cursor-pointer px-3 text-[12.5px] font-semibold transition-colors',
+                      i > 0 && 'border-l',
+                      advanced === v ? 'bg-slate-700 text-white' : 'text-muted-foreground hover:bg-muted',
                     )}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-      {/* ── Phones ────────────────────────────────────────────────────────── */}
-      <div className="space-y-2.5 sm:hidden">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <PanelField label="Agent">
+                <NativeSelect
+                  value={agentName}
+                  onChange={(v) => {
+                    setAgentName(v);
+                    setParty('');
+                  }}
+                  options={agentList.map((a) => a.name)}
+                  placeholder="Pick agent…"
+                />
+              </PanelField>
+
+              {/* Simple: one box. Only CUSTOMER rules REQUIRE a party; the others
+                  may name one to narrow the rule, or leave it as "all parties". */}
+              {!advanced && (
+                <PanelField label={needs.party === 'required' ? 'Party' : 'Party — optional'}>
+                  <NativeSelect
+                    value={party}
+                    onChange={setParty}
+                    options={['', ...parties]}
+                    placeholder={agentName ? 'All parties' : 'Pick an agent first'}
+                    disabled={!agentName}
+                  />
+                </PanelField>
+              )}
+
+              {needs.category && (
+                <PanelField label="Category">
+                  <NativeSelect
+                    value={pCategory}
+                    onChange={(v) => {
+                      setPCategory(v);
+                      setSubCategory('');
+                      setProduct('');
+                      setDesignType('');
+                    }}
+                    options={cats}
+                    placeholder="Category…"
+                  />
+                </PanelField>
+              )}
+
+              {needs.subCategory && (
+                <PanelField label="Sub-category">
+                  <NativeSelect value={subCategory} onChange={setSubCategory} options={subs} placeholder="Sub-category…" disabled={!pCategory} />
+                </PanelField>
+              )}
+
+              {needs.product && (
+                <PanelField label="Product">
+                  <NativeSelect value={product} onChange={setProduct} options={prods} placeholder="Product…" disabled={!pCategory} />
+                </PanelField>
+              )}
+
+              {needs.design && (
+                <PanelField label="Design">
+                  <NativeSelect value={designType} onChange={setDesignType} options={designs} placeholder="Design…" disabled={!pCategory} />
+                </PanelField>
+              )}
+
+              <PanelField label={`Rate per ${basisUnit(effectiveBasis)}`}>
+                <Input
+                  type="number"
+                  step="any"
+                  min="0"
+                  value={rate}
+                  onChange={(e) => setRate(e.target.value)}
+                  placeholder="e.g. 2.50"
+                  className="text-right tabular-nums"
+                />
+              </PanelField>
+
+              <PanelField label="Charged per">
+                {/* Locked to the category's own basis when the category is known:
+                    commission has to be charged in the unit the category is
+                    priced in, and letting the two disagree produced a rule that
+                    silently never matched anything. */}
+                <NativeSelect
+                  value={effectiveBasis}
+                  onChange={(v) => setBasis(v as CommissionBasis)}
+                  options={[...COMMISSION_BASES]}
+                  disabled={!!categoryBasis}
+                />
+              </PanelField>
+
+              <PanelField label="Effective from">
+                <Input type="date" value={effectiveFrom} onChange={(e) => setEffectiveFrom(e.target.value)} className="tabular-nums" />
+              </PanelField>
+
+              <PanelField label="Note — why this was agreed" className="sm:col-span-2 lg:col-span-3">
+                <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. volume deal agreed Aug 2026" />
+              </PanelField>
+            </div>
+
+            {/*
+              * Advanced: the agent's parties as a checklist.
+              *
+              * Ticking none is a real choice, not an empty form — it means the
+              * one all-parties rule, which is exactly what Simple writes. Said
+              * out loud under the list, because an empty checklist otherwise
+              * reads as "nothing will happen".
+              */}
+            {advanced && (
+              <div className="rounded-lg border bg-white dark:bg-white/[0.02]">
+                <div className="flex flex-wrap items-center gap-2 border-b bg-slate-50/70 px-3 py-2 dark:bg-white/[0.03]">
+                  <label className="flex cursor-pointer items-center gap-2 text-[12.5px] font-medium">
+                    <input
+                      type="checkbox"
+                      className="size-4 accent-emerald-600"
+                      disabled={!partyRows.length}
+                      checked={allPartiesChecked}
+                      onChange={() => setPartyIds(allPartiesChecked ? new Set() : new Set(partyRows.map((c) => c.id)))}
+                    />
+                    All parties
+                  </label>
+                  <span className="text-muted-foreground text-[11.5px] tabular-nums">
+                    {partyIds.size} of {partyRows.length} ticked
+                  </span>
+                  <div className="relative ml-auto w-full sm:w-52">
+                    <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2" />
+                    <Input
+                      value={partySearch}
+                      onChange={(e) => setPartySearch(e.target.value)}
+                      placeholder="Find a party…"
+                      className="h-8 pl-7 text-[12.5px]"
+                    />
+                  </div>
+                </div>
+
+                {!agentName ? (
+                  <p className="text-muted-foreground px-3 py-4 text-[12.5px]">Pick an agent to list their parties.</p>
+                ) : !partyRows.length ? (
+                  <p className="text-muted-foreground px-3 py-4 text-[12.5px]">This agent has no parties on file.</p>
+                ) : (
+                  <div className="grid max-h-52 grid-cols-1 gap-x-4 overflow-y-auto p-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {shownParties.map((c) => (
+                      <label key={c.id} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-[12.5px] hover:bg-muted/60">
+                        <input
+                          type="checkbox"
+                          className="size-4 shrink-0 accent-emerald-600"
+                          checked={partyIds.has(c.id)}
+                          onChange={() => {
+                            const next = new Set(partyIds);
+                            if (next.has(c.id)) next.delete(c.id);
+                            else next.add(c.id);
+                            setPartyIds(next);
+                          }}
+                        />
+                        <span className="truncate">{c.name}</span>
+                      </label>
+                    ))}
+                    {!shownParties.length && (
+                      <p className="text-muted-foreground col-span-full px-1.5 py-2 text-[12.5px]">No party matches “{partySearch}”.</p>
+                    )}
+                  </div>
+                )}
+
+                <p className="text-muted-foreground border-t px-3 py-1.5 text-[11.5px]">
+                  {partyIds.size === 0
+                    ? 'Nothing ticked — one rule will be written for ALL of this agent’s parties.'
+                    : `One rule per ticked party — ${partyIds.size} in total. Parties that already carry this exact rule are skipped.`}
+                </p>
+              </div>
+            )}
+
+            {/* The blocker reads as the next thing to do, in place, instead of
+                waiting for a toast after a failed save. */}
+            {blocker && <p className="text-[12.5px] font-medium text-amber-700 dark:text-amber-400">{blocker}</p>}
+
+            <AddButton
+              accent={accent}
+              onClick={submit}
+              disabled={create.isPending || createBulk.isPending || !!blocker}
+              title="Save this special rate"
+            >
+              {create.isPending || createBulk.isPending ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Plus className="size-4" />
+              )}
+              {advanced && partyIds.size > 0
+                ? `Add for ${partyIds.size} part${partyIds.size === 1 ? 'y' : 'ies'}`
+                : 'Add special rate'}
+            </AddButton>
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="w-full min-w-0 space-y-1 sm:w-64">
+            <Label className="text-muted-foreground text-xs font-medium">Show rules for</Label>
+            <NativeSelect value={filterAgent} onChange={setFilterAgent} options={['', ...agentList.map((a) => a.name)]} placeholder="All agents" />
+          </div>
+        </div>
+
         {isLoading ? (
-          <div className="text-muted-foreground flex h-24 items-center justify-center rounded-2xl border">
+          <div className="text-muted-foreground flex h-24 items-center justify-center">
             <Loader2 className="size-5 animate-spin" />
           </div>
-        ) : !rows.length ? (
-          <div className="text-muted-foreground rounded-2xl border px-4 py-10 text-center text-sm">
-            No special rates yet — every line prices at the agent&rsquo;s base rate.
-          </div>
         ) : (
-          rows.map((r) => (
-            <div key={r.id} className={cn('bg-card rounded-2xl border p-3 shadow-sm', !r.current && 'opacity-60')}>
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="text-[14px] leading-tight font-extrabold break-words">{r.agentName}</p>
-                  <p className="mt-0.5 text-[12px] font-semibold break-words">{describe(r)}</p>
-                </div>
-                <span className="shrink-0 text-[15px] font-extrabold tabular-nums">
-                  ₹{r.ratePerUnit}
-                  <span className="text-muted-foreground text-[10px]">/{basisUnit(r.basis)}</span>
-                </span>
-              </div>
-              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                <ScopeChip scope={r.scope} />
-                <span className="text-muted-foreground text-[11px] font-medium">
-                  {r.customerName ?? 'All parties'} · from {formatDate(r.effectiveFrom)}
-                </span>
-                {!r.current && <span className="text-muted-foreground text-[10px] font-bold uppercase">superseded</span>}
-              </div>
-              {r.note && <p className="text-muted-foreground mt-1.5 border-l-2 border-amber-300 pl-2 text-[11.5px]">{r.note}</p>}
-              {canEdit && (
-                <Button variant="outline" size="sm" className="mt-2 h-8 w-full text-[12px]" onClick={() => remove(r)} disabled={del.isPending}>
-                  <Trash2 className="size-3.5" /> Remove
-                </Button>
-              )}
-            </div>
-          ))
+          <DataTable
+            columns={columns}
+            rows={rows}
+            rowKey={(r) => r.id}
+            dense
+            emptyText="No special rates yet — every line prices at the agent's base rate."
+            actions={canEdit ? deleteAction(remove) : undefined}
+          />
         )}
-      </div>
+      </Panel>
 
-      {adding && <AddSpecialDialog agents={agents?.items ?? []} lookups={lookups} onClose={() => setAdding(false)} />}
+      <RateTester agents={agentList} lookups={lookups} />
     </div>
   );
 }
@@ -390,217 +726,4 @@ function partiesOfAgent(
   const a = agentName.trim().toUpperCase();
   if (!a) return list.map((c) => c.name);
   return list.filter((c) => (c.agentName ?? '').trim().toUpperCase() === a).map((c) => c.name);
-}
-
-/** Add a rule. The scope decides which fields appear at all — an empty box that
- *  does nothing is how a rule gets saved aimed at the wrong thing. */
-function AddSpecialDialog({
-  agents,
-  lookups,
-  onClose,
-}: {
-  agents: { id: number; name: string }[];
-  lookups: ReturnType<typeof useOrderLookups>['data'];
-  onClose: () => void;
-}) {
-  const create = useCreateSpecialCommission();
-  const [agentName, setAgentName] = useState('');
-  const [scope, setScope] = useState<SpecialCommissionScope>('CUSTOMER');
-  const [party, setParty] = useState('');
-  const [pCategory, setPCategory] = useState('');
-  const [subCategory, setSubCategory] = useState('');
-  const [product, setProduct] = useState('');
-  const [designType, setDesignType] = useState('');
-  const [basis, setBasis] = useState<CommissionBasis>('KGS');
-  const [rate, setRate] = useState('');
-  const [effectiveFrom, setEffectiveFrom] = useState(ymd(new Date()));
-  const [note, setNote] = useState('');
-
-  const needs = NEEDS[scope];
-  const agentId = agents.find((a) => a.name === agentName)?.id;
-  const customerId = (lookups?.customers ?? []).find((c) => c.name === party)?.id;
-  const parties = useMemo(() => partiesOfAgent(lookups?.customers, agentName), [lookups, agentName]);
-
-  const cats = useMemo(() => [...new Set((lookups?.products ?? []).map((p) => p.category))].filter(Boolean).sort(), [lookups]);
-  const subs = useMemo(
-    () => [...new Set((lookups?.products ?? []).filter((p) => !pCategory || p.category === pCategory).map((p) => p.subCategory))].filter(Boolean).sort(),
-    [lookups, pCategory],
-  );
-  const prods = useMemo(
-    () => [...new Set((lookups?.products ?? []).filter((p) => !pCategory || p.category === pCategory).map((p) => p.product))].filter(Boolean).sort(),
-    [lookups, pCategory],
-  );
-  const designs = useMemo(
-    () => [...new Set((lookups?.designs ?? []).filter((d) => !pCategory || d.category === pCategory).map((d) => d.designType))].filter(Boolean).sort(),
-    [lookups, pCategory],
-  );
-
-  // The category's own KGS/PCS setting, so the basis is not a guess: commission
-  // follows the unit the product master already prices that category in.
-  const categoryBasis = useMemo(() => {
-    const f = (lookups?.categoryFields ?? []).find((c) => c.category.toUpperCase() === pCategory.toUpperCase());
-    return f ? ((f.field === 'PCS' ? 'PCS' : 'KGS') as CommissionBasis) : null;
-  }, [lookups, pCategory]);
-  const effectiveBasis = categoryBasis ?? basis;
-
-  /** Everything that must be true before this can be saved, as a sentence. */
-  const blocker = useMemo((): string | null => {
-    if (!agentId) return 'Choose an agent.';
-    if (needs.party === 'required' && !customerId) return 'A party rule needs a party.';
-    if (needs.category && !pCategory) return 'Choose the product category.';
-    if (needs.subCategory && !subCategory) return 'Choose the sub-category.';
-    if (needs.product && !product) return 'Choose the product.';
-    if (needs.design && !designType) return 'Choose the design.';
-    const n = Number(rate);
-    if (rate.trim() === '' || !Number.isFinite(n)) return 'Enter the rate.';
-    if (n < 0) return 'The rate cannot be negative.';
-    if (!effectiveFrom) return 'Set the date this rate takes effect.';
-    return null;
-  }, [agentId, customerId, needs, pCategory, subCategory, product, designType, rate, effectiveFrom]);
-
-  const save = () => {
-    if (blocker) return toast.error(blocker);
-    create.mutate(
-      {
-        agentId: agentId!,
-        scope,
-        customerId: customerId ?? null,
-        pCategory: needs.category ? pCategory : null,
-        subCategory: needs.subCategory || needs.product || needs.design ? subCategory || null : null,
-        product: needs.product ? product : null,
-        designType: needs.design ? designType : null,
-        basis: effectiveBasis,
-        ratePerUnit: Number(rate),
-        effectiveFrom,
-        note: note.trim() || null,
-      },
-      {
-        onSuccess: (saved) => {
-          const n = saved.repriced?.challans ?? 0;
-          toast.success(
-            n
-              ? `Special rate saved — ${n} invoice${n === 1 ? '' : 's'} priced on it`
-              : 'Special rate saved — no invoices match it yet',
-          );
-          onClose();
-        },
-        onError: (e) => toast.error(getApiErrorMessage(e, 'Could not save the rule')),
-      },
-    );
-  };
-
-  return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Add a special commission rate</DialogTitle>
-          <DialogDescription>
-            This replaces the base rate on the lines it matches. Existing invoices keep their figures until you re-price.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-2.5">
-          <div className="grid grid-cols-2 gap-2.5">
-            <Field label="Agent">
-              {/* Switching agent invalidates the party — it belongs to the old one. */}
-              <NativeSelect value={agentName} onChange={(v) => { setAgentName(v); setParty(''); }} options={['', ...agents.map((a) => a.name)]} placeholder="Pick agent" />
-            </Field>
-            <Field label="Applies to">
-              <NativeSelect
-                value={scope}
-                onChange={(v) => setScope(v as SpecialCommissionScope)}
-                options={SPECIAL_COMMISSION_SCOPES.map((s) => ({ value: s, label: SPECIAL_COMMISSION_SCOPE_LABEL[s] }))}
-              />
-            </Field>
-          </div>
-
-          <Field label={needs.party === 'required' ? 'Party' : 'Party (optional — leave blank for all)'}>
-            <NativeSelect value={party} onChange={setParty} options={['', ...parties]} placeholder="All parties" />
-            {agentName && parties.length === 0 && (
-              <p className="mt-1 text-[11.5px] font-medium text-amber-700">No party is assigned to {agentName} yet — set the agent on the customer first.</p>
-            )}
-          </Field>
-
-          {needs.category && (
-            <div className="grid grid-cols-2 gap-2.5">
-              <Field label="Category">
-                <NativeSelect value={pCategory} onChange={setPCategory} options={['', ...cats]} placeholder="Pick category" />
-              </Field>
-              {/* Optional on PRODUCT/DESIGN: it narrows the rule when given, and
-                  those scopes are already specific enough without it. */}
-              {(needs.subCategory || needs.product || needs.design) && (
-                <Field label={needs.subCategory ? 'Sub-category' : 'Sub-category (optional)'}>
-                  <NativeSelect value={subCategory} onChange={setSubCategory} options={['', ...subs]} placeholder="Any" />
-                </Field>
-              )}
-            </div>
-          )}
-
-          {needs.product && (
-            <Field label="Product">
-              <NativeSelect value={product} onChange={setProduct} options={['', ...prods]} placeholder="Pick product" />
-            </Field>
-          )}
-          {needs.design && (
-            <Field label="Design">
-              <NativeSelect value={designType} onChange={setDesignType} options={['', ...designs]} placeholder="Pick design" />
-            </Field>
-          )}
-
-          <div className="grid grid-cols-2 gap-2.5">
-            <Field label={`Rate per ${basisUnit(effectiveBasis)}`}>
-              <Input type="number" step="any" min={0} value={rate} onChange={(e) => setRate(e.target.value)} className="text-right tabular-nums" />
-            </Field>
-            <Field label="Effective from">
-              <Input type="date" value={effectiveFrom} onChange={(e) => setEffectiveFrom(e.target.value)} className="tabular-nums" />
-            </Field>
-          </div>
-
-          {/* The basis is the category's, not a choice — it decides the QUANTITY
-              the money is calculated on, and a special only ever decides the
-              rate. Offered manually only where the category has no setting. */}
-          {categoryBasis ? (
-            <p className="text-muted-foreground text-[11.5px]">
-              {pCategory} is charged per <span className="text-foreground font-semibold">{basisUnit(categoryBasis)}</span> — set on
-              the Products page, so this rate follows it.
-            </p>
-          ) : (
-            <>
-              <Field label="Charged per">
-                <NativeSelect value={basis} onChange={(v) => setBasis(v as CommissionBasis)} options={[...COMMISSION_BASES]} />
-              </Field>
-              {/* A party rule names no category, so it would otherwise reach
-                  per-kg and per-piece categories alike — and ₹30 meant per kg
-                  paid per piece is sixty times the intended amount on cups.
-                  The rule only prices categories charged in ITS unit; say so
-                  here rather than letting someone discover it in a settlement. */}
-              <p className="text-muted-foreground text-[11.5px]">
-                This rate is per <span className="text-foreground font-semibold">{basisUnit(basis)}</span>, so it applies only to
-                categories charged per {basisUnit(basis)}. Add a second rule for the others.
-              </p>
-            </>
-          )}
-
-          <Field label="Note (why this rate was agreed)">
-            <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. volume deal agreed Aug 2026" />
-          </Field>
-
-          {blocker && (
-            <p className="rounded-[4px] border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11.5px] font-medium text-amber-900 dark:border-amber-400/40 dark:bg-amber-500/10 dark:text-amber-300">
-              {blocker}
-            </p>
-          )}
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={create.isPending}>
-            Cancel
-          </Button>
-          <Button onClick={save} disabled={create.isPending || !!blocker}>
-            {create.isPending ? <Loader2 className="animate-spin" /> : <Plus />} Save rate
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRightLeft, Brush, Check, ChevronRight, Download, ExternalLink, Eye, FileDown, FileSpreadsheet, FileText, History, IndianRupee, Layers, Loader2, type LucideIcon, Package, Percent, Settings2, TableProperties, TrendingDown, TrendingUp } from 'lucide-react';
+import { ArrowRightLeft, BadgePercent, Brush, Check, ChevronRight, Download, ExternalLink, Eye, FileDown, FileSpreadsheet, FileText, History, IndianRupee, Layers, Loader2, type LucideIcon, Package, Percent, Settings2, TableProperties, TrendingDown, TrendingUp } from 'lucide-react';
 import { toast } from 'sonner';
-import { DEFAULT_RATE_LIST_TITLE, type CustomerRateList } from '@oms/shared';
+import { DEFAULT_RATE_LIST_TITLE, type AgentRateList, type CustomerRateList } from '@oms/shared';
 import type { CustomerRateDto, RateChangeEntry } from '@oms/shared';
 import { isIOS, showPreviewPlaceholder } from '@/lib/pdf';
 import { cn } from '@/lib/utils';
@@ -12,7 +12,7 @@ import { Label } from '@/components/ui/label';
 import { NativeSelect } from '@/components/common/combo';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import kavishLogo from '@/assets/kavish-logo.png';
-import { fetchCustomerRateList, useCustomerRateHistory, useCustomerRateList, useCustomers, useDefaultRateList } from './use-customers';
+import { fetchCustomerRateList, useAgentRateList, useCustomerRateHistory, useCustomerRateList, useCustomers, useDefaultRateList } from './use-customers';
 import { useEffectiveRateListConfig, useRateListConfigBundle } from './use-rate-list-config';
 import { RateListSettingsCard } from '@/features/settings/rate-list-settings-card';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -20,6 +20,8 @@ import { useCustomerSpecialRates } from '@/features/special-rates/use-special-ra
 import { useCompany } from '@/features/settings/use-settings';
 import { measureSpecialRates, summariseSpecialRates, type RateImpact } from './special-rate-impact';
 import { buildRateListPdfBlob, exportRateListExcel, exportRateListPdf } from './customer-rate-list-export';
+import { buildAgentRateListPdfBlob, exportAgentRateListExcel, exportAgentRateListPdf } from './agent-rate-list-export';
+import { useAgents } from '@/features/agents/use-agents';
 import { buildSections, rateListCategories, type DesignPivotTable, type PivotTable } from './customer-rate-list-pivot';
 
 /** Rapid successive rate saves (same editing session) collapse into one version. */
@@ -772,6 +774,24 @@ function Meta({ label, value, tone }: { label: string; value: string; tone?: 'am
   );
 }
 
+/** One figure in the agent dialog's three-up band. Counts, never sums: a
+ *  commission per kg cannot be added down a column. */
+function AgentStat({ label, value, tone }: { label: string; value: number; tone?: 'orange' | 'muted' }) {
+  return (
+    <div className="bg-card px-2 py-1.5">
+      <p
+        className={cn(
+          'text-[15px] font-bold tabular-nums',
+          tone === 'orange' ? 'text-orange-600 dark:text-orange-400' : tone === 'muted' ? 'text-muted-foreground' : '',
+        )}
+      >
+        {value}
+      </p>
+      <p className="text-muted-foreground text-[9.5px] font-bold tracking-wide uppercase">{label}</p>
+    </div>
+  );
+}
+
 type Tab = 'list' | 'special' | 'history' | 'settings';
 
 export function RateListPage() {
@@ -879,6 +899,21 @@ export function RateListPage() {
   const [defaultName, setDefaultName] = useState('');
 
   /*
+   * Downloading the AGENT sheet — price beside commission — in the same dialog.
+   *
+   * A third mode rather than a third dialog, for the same reason the chart sheet
+   * shares this one: the category picker, the format buttons and Preview are
+   * identical. What differs is the source of the rows and one extra question —
+   * which agent, and (optionally) at which party.
+   */
+  const [agentMode, setAgentMode] = useState(false);
+  const [agentLabel, setAgentLabel] = useState('');
+  /** The party the agent sheet is priced for, '' meaning "all parties". Kept
+   *  separate from the page's own `customerLabel`: this dialog is reachable with
+   *  no customer selected, and choosing one here must not move the page. */
+  const [agentParty, setAgentParty] = useState('');
+
+  /*
    * The chart sheet itself, loaded once the download dialog is open on it.
    *
    * Needed BEFORE the export, because the category picker has to offer the
@@ -900,15 +935,40 @@ export function RateListPage() {
     );
   }, [defaultList, defaultConfig]);
 
+  // Only asked for while the dialog is on the agent sheet.
+  const { data: agentData } = useAgents(agentMode && downloadOpen ? { page: 1, pageSize: 1000 } : { page: 1, pageSize: 1 });
+  const agentByName = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const a of agentData?.items ?? []) if (a.name) m.set(a.name, a.id);
+    return m;
+  }, [agentData]);
+  const agentOptions = useMemo(() => [...agentByName.keys()].sort((a, b) => a.localeCompare(b)), [agentByName]);
+  const agentPickedId = agentByName.get(agentLabel);
+  const agentPartyId = byLabel.get(agentParty);
+
+  const { data: agentList, isFetching: agentListLoading } = useAgentRateList(
+    agentMode && downloadOpen ? agentPickedId : undefined,
+    agentPartyId ?? null,
+  );
+
+  /** Categories present on the agent sheet. Taken from the rows themselves, not
+   *  the rate-list configuration: this sheet is flat and already built, so what
+   *  it carries is the only honest list to offer. */
+  const agentConfigured = useMemo(
+    () => [...new Set((agentList?.rows ?? []).map((r) => r.category))].sort((a, b) => a.localeCompare(b)),
+    [agentList],
+  );
+
   /** Whichever scope the dialog is currently working in. Everything below reads
-   *  this rather than branching on `defaultMode` in five places. */
-  const dlScope = defaultMode ? defaultConfigured : configured;
+   *  this rather than branching on the mode in five places. */
+  const dlScope = agentMode ? agentConfigured : defaultMode ? defaultConfigured : configured;
 
   /** Opening the picker starts from whatever is on screen — the user's current
    *  filter if they set one, otherwise the party's configuration (§26: the saved
    *  setup is the starting point, not a cage). */
   const openDownload = () => {
     setDefaultMode(false);
+    setAgentMode(false);
     setDlCats(catFilter.length ? catFilter : configured);
     setDownloadOpen(true);
   };
@@ -917,6 +977,7 @@ export function RateListPage() {
    *  every category the DEFAULT configuration allows. */
   const openDefaultDownload = () => {
     setDefaultMode(true);
+    setAgentMode(false);
     setDefaultName('');
     // Left empty here and seeded by the effect below — the categories are not
     // known until the sheet arrives, and guessing them now would tick a list
@@ -924,6 +985,26 @@ export function RateListPage() {
     setDlCats([]);
     setDownloadOpen(true);
   };
+
+  /** The agent sheet: no party by default, because party-specific commission
+   *  rules are the exception and an all-parties sheet is the usual ask. */
+  const openAgentDownload = () => {
+    setAgentMode(true);
+    setDefaultMode(false);
+    setAgentLabel('');
+    // Pre-filled with the party already on screen when there is one — that is
+    // almost certainly the party being asked about.
+    setAgentParty(customerId != null ? customerLabel : '');
+    setDlCats([]);
+    setDownloadOpen(true);
+  };
+
+  /* Tick everything the moment the agent sheet's categories are known — same
+     narrowing-never-opting-in rule as the other two modes. */
+  useEffect(() => {
+    if (!downloadOpen || !agentMode || !agentConfigured.length) return;
+    setDlCats((prev) => (prev.length ? prev : agentConfigured));
+  }, [downloadOpen, agentMode, agentConfigured]);
 
   /* Tick everything the moment the chart sheet's categories are known. Same
      starting point as the party dialog: the download is a narrowing of the whole
@@ -933,13 +1014,19 @@ export function RateListPage() {
     setDlCats((prev) => (prev.length ? prev : defaultConfigured));
   }, [downloadOpen, defaultMode, defaultConfigured]);
 
+  useEffect(() => {
+    if (agentMode) setDlCats([]);
+  }, [agentMode, agentPickedId, agentPartyId]);
+
   /** An empty selection is a real state now, so it has to block the download
    *  rather than silently mean "everything". */
   /** An empty selection is a real state, so it has to block the export rather
    *  than silently mean "everything" — in either mode. */
   const nothingPicked = dlScope.length > 1 && dlCats.length === 0;
-  /** The chart sheet has not arrived yet — nothing to preview or save from. */
-  const exportBlocked = defaultMode && !defaultList;
+  /** The source sheet has not arrived yet — nothing to preview or save from. On
+   *  the agent sheet that also covers "no agent chosen yet", which is a question
+   *  unanswered rather than an error to report. */
+  const exportBlocked = (defaultMode && !defaultList) || (agentMode && !agentList);
 
   /**
    * The scope every export shares.
@@ -963,6 +1050,27 @@ export function RateListPage() {
     return { ...base, customerName: name || DEFAULT_RATE_LIST_TITLE };
   };
 
+  /**
+   * The agent sheet, narrowed to the ticked categories.
+   *
+   * Filtered here rather than server-side because the payload is already in
+   * hand — and the counts are recomputed from the rows that survive, because a
+   * headline of "12 specials" printed on a sheet showing three of them is worse
+   * than no headline at all.
+   */
+  const scopedAgentList = (): AgentRateList => {
+    const base = agentList!;
+    if (dlCats.length === agentConfigured.length) return base;
+    const keep = new Set(dlCats);
+    const rows = base.rows.filter((r) => keep.has(r.category));
+    return {
+      ...base,
+      rows,
+      specialCount: rows.filter((r) => r.source === 'SPECIAL').length,
+      noCommissionCount: rows.filter((r) => r.source === 'NONE').length,
+    };
+  };
+
   const downloadOpts = () => ({
     config: defaultMode ? defaultConfig : config,
     // `null` means "no narrowing", so it may only stand for a FULL selection —
@@ -980,7 +1088,8 @@ export function RateListPage() {
    * reserved inside this tap — a popup opened after the async build is blocked.
    */
   const doPreview = async () => {
-    if (!defaultMode && customerId == null) return;
+    if (!defaultMode && !agentMode && customerId == null) return;
+    if (agentMode && !agentList) return;
     // The chart sheet is the source for the export as well as the picker, so
     // there is nothing to build until it has landed.
     if (defaultMode && !defaultList) return;
@@ -988,8 +1097,13 @@ export function RateListPage() {
     if (iosTab) showPreviewPlaceholder(iosTab);
     try {
       setBusy('preview');
-      const list = defaultMode ? namedDefaultList() : (rateList ?? (await fetchCustomerRateList(customerId!)));
-      const { blob } = await buildRateListPdfBlob(list, downloadOpts(), company?.logo ?? null);
+      let blob: Blob;
+      if (agentMode) {
+        ({ blob } = await buildAgentRateListPdfBlob(scopedAgentList()));
+      } else {
+        const list = defaultMode ? namedDefaultList() : (rateList ?? (await fetchCustomerRateList(customerId!)));
+        ({ blob } = await buildRateListPdfBlob(list, downloadOpts(), company?.logo ?? null));
+      }
       const url = URL.createObjectURL(blob);
       if (iosTab) {
         if (!iosTab.closed) iosTab.location.href = url;
@@ -1018,10 +1132,18 @@ export function RateListPage() {
     });
 
   const doDownload = async (format: 'pdf' | 'excel') => {
-    if (!defaultMode && customerId == null) return;
+    if (!defaultMode && !agentMode && customerId == null) return;
     if (defaultMode && !defaultList) return;
+    if (agentMode && !agentList) return;
     try {
       setBusy(format);
+      if (agentMode) {
+        const list = scopedAgentList();
+        if (format === 'pdf') await exportAgentRateListPdf(list);
+        else await exportAgentRateListExcel(list);
+        setDownloadOpen(false);
+        return;
+      }
       // The chart sheet is always fetched fresh — there is no on-screen preview
       // of it to reuse, and it carries no party rates to go stale against.
       const list = defaultMode ? namedDefaultList() : (rateList ?? (await fetchCustomerRateList(customerId!)));
@@ -1108,6 +1230,20 @@ export function RateListPage() {
               <span className="hidden sm:inline">Default rate list</span>
               <span className="sm:hidden">Default</span>
             </Button>
+            {/* Commission figures, so it is gated on the commission permission
+                rather than on customer:view — the same line the server draws. */}
+            {can('agentcommission:view') && (
+              <Button
+                variant="outline"
+                className={cn('h-8 rounded-[4px] text-[12px] font-bold', CONTROL)}
+                onClick={openAgentDownload}
+                title="Download an agent’s sheet — the product price beside what the agent earns on it"
+              >
+                <BadgePercent className="size-3.5" />
+                <span className="hidden sm:inline">Agent rate list</span>
+                <span className="sm:hidden">Agent</span>
+              </Button>
+            )}
             <Button
               className="bg-gradient-brand h-8 rounded-[4px] text-[12px] font-bold text-white shadow-sm hover:opacity-95"
               disabled={customerId == null}
@@ -1277,11 +1413,22 @@ export function RateListPage() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              {defaultMode ? <FileDown className="size-5 text-primary" /> : <Download className="size-5 text-primary" />}
-              {defaultMode ? 'Download default rate list' : 'Download rate list'}
+              {agentMode ? (
+                <BadgePercent className="text-primary size-5" />
+              ) : defaultMode ? (
+                <FileDown className="text-primary size-5" />
+              ) : (
+                <Download className="text-primary size-5" />
+              )}
+              {agentMode ? 'Download agent rate list' : defaultMode ? 'Download default rate list' : 'Download rate list'}
             </DialogTitle>
             <DialogDescription>
-              {defaultMode ? (
+              {agentMode ? (
+                <>
+                  Every product with its <b>price</b>, the agent’s <b>commission</b>, and any <b>special commission</b> that
+                  applies.
+                </>
+              ) : defaultMode ? (
                 <>
                   The standard chart rates — <b>no party discounts applied</b>. For quoting someone who isn’t a customer yet.
                 </>
@@ -1293,6 +1440,78 @@ export function RateListPage() {
               )}
             </DialogDescription>
           </DialogHeader>
+
+          {agentMode && (
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="dl-agent" className="text-muted-foreground text-[10.5px] font-bold tracking-wide uppercase">
+                  Agent
+                </Label>
+                <NativeSelect
+                  id="dl-agent"
+                  value={agentLabel}
+                  onChange={setAgentLabel}
+                  options={agentOptions}
+                  placeholder="Select an agent…"
+                  className="h-9 w-full font-semibold"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="dl-agent-party" className="text-muted-foreground text-[10.5px] font-bold tracking-wide uppercase">
+                  Party — optional
+                </Label>
+                <NativeSelect
+                  id="dl-agent-party"
+                  value={agentParty}
+                  onChange={setAgentParty}
+                  options={options}
+                  placeholder="All parties"
+                  className="h-9 w-full"
+                />
+                {/*
+                  * This is the one thing on the sheet a reader can get wrong, so
+                  * it is said here as well as printed on the PDF: a commission
+                  * rule aimed at one party cannot be worked out without knowing
+                  * the party, so an all-parties sheet simply has none of them.
+                  * Leaving it unsaid would understate the commission on exactly
+                  * the parties that negotiated their own.
+                  */}
+                <p
+                  className={cn(
+                    'rounded-md border px-2.5 py-1.5 text-[11px] leading-snug',
+                    agentPartyId != null
+                      ? 'border-blue-200 bg-blue-50/70 text-blue-900 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-200'
+                      : 'border-amber-200 bg-amber-50/70 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200',
+                  )}
+                >
+                  {agentPartyId != null ? (
+                    <>
+                      Prices are <b>{agentParty}</b>’s own rates, and this party’s <b>special commission</b> is included.
+                    </>
+                  ) : (
+                    <>
+                      Standard prices. Commission set for a <b>specific party</b> is <b>not</b> shown — pick a party above to
+                      see it.
+                    </>
+                  )}
+                </p>
+              </div>
+
+              {agentLabel && agentListLoading && (
+                <p className="text-muted-foreground flex items-center gap-2 text-[12px]">
+                  <Loader2 className="size-3.5 animate-spin" /> Building the sheet…
+                </p>
+              )}
+              {agentList && (
+                <div className="grid grid-cols-3 gap-px overflow-hidden rounded-[4px] border bg-border text-center">
+                  <AgentStat label="Products" value={agentList.rows.length} />
+                  <AgentStat label="Special" value={agentList.specialCount} tone="orange" />
+                  <AgentStat label="No rate" value={agentList.noCommissionCount} tone="muted" />
+                </div>
+              )}
+            </div>
+          )}
 
           {defaultMode && (
             <div className="space-y-1.5">
@@ -1373,7 +1592,13 @@ export function RateListPage() {
               variant="outline"
               className="h-12 flex-1"
               disabled={!!busy || nothingPicked || exportBlocked}
-              title={nothingPicked ? 'Pick at least one category' : 'See the sheet before saving it'}
+              title={
+                agentMode && !agentLabel
+                  ? 'Select an agent first'
+                  : nothingPicked
+                    ? 'Pick at least one category'
+                    : 'See the sheet before saving it'
+              }
               onClick={doPreview}
             >
               {busy === 'preview' ? <Loader2 className="animate-spin" /> : <Eye className="text-violet-600" />} Preview
@@ -1382,7 +1607,7 @@ export function RateListPage() {
               variant="outline"
               className="h-12 flex-1"
               disabled={!!busy || nothingPicked || exportBlocked}
-              title={nothingPicked ? 'Pick at least one category' : undefined}
+              title={agentMode && !agentLabel ? 'Select an agent first' : nothingPicked ? 'Pick at least one category' : undefined}
               onClick={() => doDownload('pdf')}
             >
               {busy === 'pdf' ? <Loader2 className="animate-spin" /> : <FileText className="text-rose-600" />} PDF
@@ -1391,7 +1616,7 @@ export function RateListPage() {
               variant="outline"
               className="h-12 flex-1"
               disabled={!!busy || nothingPicked || exportBlocked}
-              title={nothingPicked ? 'Pick at least one category' : undefined}
+              title={agentMode && !agentLabel ? 'Select an agent first' : nothingPicked ? 'Pick at least one category' : undefined}
               onClick={() => doDownload('excel')}
             >
               {busy === 'excel' ? <Loader2 className="animate-spin" /> : <FileSpreadsheet className="text-emerald-600" />} Excel
@@ -1408,7 +1633,12 @@ export function RateListPage() {
           <DialogContent className="flex h-[92dvh] w-[min(1100px,96vw)] max-w-[96vw] flex-col gap-3 overflow-hidden p-4 sm:!max-w-[1100px]">
             <DialogHeader className="space-y-0">
               <DialogTitle className="flex items-center gap-2 text-base">
-                <Eye className="size-4.5 text-violet-600" /> Preview — {defaultMode ? defaultName || 'Standard rate list' : customerLabel}
+                <Eye className="size-4.5 text-violet-600" /> Preview —{' '}
+                {agentMode
+                  ? `${agentLabel}${agentParty ? ` · ${agentParty}` : ' · all parties'}`
+                  : defaultMode
+                    ? defaultName || 'Standard rate list'
+                    : customerLabel}
               </DialogTitle>
             </DialogHeader>
 

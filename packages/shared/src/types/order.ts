@@ -144,6 +144,20 @@ export interface OrderDto {
   orderDate: string;
   completionDate: string | null;
   completionDay: number | null;
+  /**
+   * The party's payment terms in days, for the {{pay_terms}} tag on the printed
+   * Terms & Conditions.
+   *
+   * Read from the CUSTOMER (`creditPeriod`), because an order has no payment term
+   * of its own — its `completionDate` is a delivery date, which is why a sales
+   * order could show "Due Date 02/09/26" beside a clause promising 30 days and
+   * neither figure was wrong, they were just answering different questions.
+   *
+   * Only populated on the single-order read (the one the printed document uses).
+   * Null on list rows: resolving it there would be a lookup per row for a figure
+   * no list column shows.
+   */
+  paymentTermDays?: number | null;
   priority: string | null;
   status: string;
   ordType: string;

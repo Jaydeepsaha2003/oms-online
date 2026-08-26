@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
+  BulkSpecialCommissionInput,
+  BulkSpecialCommissionResult,
   AgentCommissionAccrualList,
   AgentCommissionRateDto,
   AgentCommissionRateInput,
@@ -271,6 +273,16 @@ export function useCreateSpecialCommission() {
   return useMutation({
     mutationFn: (input: AgentSpecialCommissionInput) =>
       http.post<AgentSpecialCommissionDto & { repriced: RepriceResult }>('/agent-commission/rates/special', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+/** The same special rule for several parties — one request, one re-price. */
+export function useCreateSpecialCommissionBulk() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BulkSpecialCommissionInput) =>
+      http.post<BulkSpecialCommissionResult>('/agent-commission/rates/special/bulk', input),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }

@@ -11,7 +11,7 @@ import {
   type SetStateAction,
 } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRightLeft, BadgePercent, Camera, Check, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Lock, PackageOpen, Pencil, Plus, RotateCcw, Save, Settings2, Trash2, Truck, X } from 'lucide-react';
+import { ArrowLeft, ArrowRightLeft, BadgePercent, Brush, Camera, Check, type LucideIcon, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Lock, PackageOpen, Package, Pencil, Pin, Plus, RotateCcw, Save, Settings2, Trash2, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ALL_PERMISSIONS, ORDER_PRIORITIES, RESOURCES, resolveSpecialRates, qtyOrderForCategory, type OrderInput, type QtyField } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -25,7 +25,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { DatePicker } from '@/components/ui/date-picker';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { NativeSelect } from '@/components/common/combo';
@@ -47,7 +47,18 @@ import { DesignNamePicker, resolveDesignNameChoices } from './design-name-picker
  * "Convert" action: land on New Order with the customer already picked and the
  * booking-draw sheet ready to open, instead of the older standalone convert page.
  */
-type NavState = { customerName?: string; openBookingDraw?: boolean };
+type NavState = {
+  customerName?: string;
+  openBookingDraw?: boolean;
+  /**
+   * Where Back should go, when it is not the list.
+   *
+   * Order Modify sends this with its own filters in the query string, because
+   * "back" from a line you opened there means that grid as you left it — not the
+   * View Orders list, which is a different screen you were never on.
+   */
+  backTo?: string;
+};
 
 /** A line item once added to the order. */
 interface Item {
@@ -112,6 +123,222 @@ const scopeWord = (s: string | null) =>
 const fmtDelta = (n: number) => (n > 0 ? `+${n}` : `${n}`);
 /** A design that carries a logo (standalone "LOGO" or a combo like "HAMMER+LOGO"). */
 const isLogoDesign = (designType?: string | null) => (designType ?? '').toUpperCase().includes('LOGO');
+/**
+ * A line's rate, with the product + design split behind a hover.
+ *
+ * `title` rather than a JS tooltip: this sits inside a table that can run to
+ * dozens of rows, and the native one costs nothing per row, works on keyboard
+ * focus, and cannot be clipped by the table's own overflow — which a positioned
+ * tooltip in a horizontally scrolling grid regularly is.
+ */
+type RateBreakdownItem = Pick<
+  Item,
+  'productRate' | 'designRate' | 'designType' | 'designName' | 'special' | 'bookingCode' | 'bookingId' | 'calField'
+>;
+
+/** One line of the breakdown card: a coloured dot, a label, and the money. */
+function RateLine({
+  icon: Icon,
+  label,
+  sub,
+  value,
+  accent,
+}: {
+  icon: LucideIcon;
+  label: string;
+  sub?: string | null;
+  value: string;
+  accent: 'blue' | 'violet';
+}) {
+  const tone =
+    accent === 'blue'
+      ? 'bg-blue-50 text-blue-700 ring-blue-200/70 dark:bg-blue-950/50 dark:text-blue-300 dark:ring-blue-900'
+      : 'bg-violet-50 text-violet-700 ring-violet-200/70 dark:bg-violet-950/50 dark:text-violet-300 dark:ring-violet-900';
+  return (
+    <div className="flex items-center gap-2.5">
+      <span className={cn('grid size-7 shrink-0 place-items-center rounded-[6px] ring-1', tone)}>
+        <Icon className="size-3.5" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-[11.5px] leading-tight font-semibold">{label}</p>
+        {sub && <p className="text-muted-foreground truncate text-[10.5px] leading-tight">{sub}</p>}
+      </div>
+      <span className="shrink-0 text-[13px] font-bold tabular-nums">{value}</span>
+    </div>
+  );
+}
+
+/**
+ * A line's rate, with the product + design split behind a hover card.
+ *
+ * Hover AND click, both: hover is what a mouse user discovers, and a tap is the
+ * only thing a phone can do — a hover-only card is invisible on the device where
+ * this table is hardest to read. A click PINS the card open (so the figures can
+ * be read without holding the mouse still, and so touch works at all); moving
+ * the mouse away only closes what hover opened.
+ *
+ * Radix portals the card to the body, so the surrounding table's horizontal
+ * scroll cannot clip it — the reason this is a popover and not an absolutely
+ * positioned div inside the cell.
+ */
+function RateBreakdown({ item }: { item: RateBreakdownItem }) {
+  const prod = n(item.productRate) ?? 0;
+  const dsgn = n(item.designRate) ?? 0;
+  const total = prod + dsgn;
+  const inr = (v: number) => `₹${v.toLocaleString('en-IN')}`;
+  // A line with no design rate still opens — "no design rate on this line" is
+  // itself the answer to "why is this 350?" — but only a line that HAS a split
+  // gets the dotted underline, so the hint means something when you see it.
+  const hasSplit = dsgn !== 0;
+  const perUnit = item.calField === 'PCS' ? 'per piece' : 'per kg';
+
+  const [hovered, setHovered] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const open = hovered || pinned;
+
+  /*
+   * Unpinning clears hover as well, or the mouse still sitting on the number
+   * would hold the card open and the second click would look like it did
+   * nothing. Moving away and back re-opens it on hover as usual.
+   *
+   * Two plain setStates, NOT a setHovered inside a setPinned updater: an updater
+   * must be pure, and React drops the nested update — which silently broke the
+   * click entirely.
+   */
+  const toggle = () => {
+    if (pinned) setHovered(false);
+    setPinned(!pinned);
+  };
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(o) => {
+        // Escape and outside-click come through here; both mean "gone", so they
+        // have to clear the hover flag as well or the card would spring back.
+        if (!o) {
+          setPinned(false);
+          setHovered(false);
+        }
+      }}
+    >
+      {/*
+        * Anchor, not Trigger, deliberately.
+        *
+        * Trigger toggles the popover on click all by itself, which fought the
+        * `pinned` state: a click while hover had it open told Radix to close and
+        * this component to pin, and the two cancelled out. Anchor only positions.
+        */}
+      <PopoverAnchor asChild>
+        <span
+          role="button"
+          tabIndex={0}
+          aria-expanded={open}
+          aria-label={`Rate ${total.toLocaleString('en-IN')} — show breakdown`}
+          onPointerEnter={(e) => e.pointerType === 'mouse' && setHovered(true)}
+          onPointerLeave={(e) => e.pointerType === 'mouse' && setHovered(false)}
+          onClick={(e) => {
+            e.stopPropagation();
+            toggle();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              toggle();
+            }
+          }}
+          onFocus={() => setHovered(true)}
+          onBlur={() => setHovered(false)}
+          className={cn(
+            'cursor-pointer rounded-[4px] px-1 outline-none transition-colors',
+            'hover:bg-sky-50 focus-visible:ring-2 focus-visible:ring-sky-400 dark:hover:bg-sky-950/40',
+            open && 'bg-sky-50 text-sky-800 dark:bg-sky-950/50 dark:text-sky-200',
+            hasSplit && 'underline decoration-dotted decoration-sky-400 underline-offset-[3px]',
+          )}
+        >
+          {total.toLocaleString('en-IN')}
+        </span>
+      </PopoverAnchor>
+
+      <PopoverContent
+        side="left"
+        align="center"
+        sideOffset={8}
+        // Hover must not steal focus from the cell the user is typing in, and a
+        // hovering card must not swallow the pointer either — otherwise moving
+        // the mouse one pixel further would close it by leaving the trigger.
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        onCloseAutoFocus={(e) => e.preventDefault()}
+        className={cn(
+          'w-64 overflow-hidden rounded-[10px] border-0 p-0 shadow-xl',
+          'ring-1 ring-slate-900/10 dark:ring-white/10',
+          !pinned && 'pointer-events-none',
+        )}
+      >
+        {/* Header: the answer first, in the brand gradient — the card is read
+            top-down, and the total is what the eye came for. */}
+        <div className="bg-gradient-to-r from-sky-600 via-blue-600 to-indigo-600 px-3 py-2 text-white">
+          <div className="flex items-baseline justify-between gap-2">
+            <p className="text-[10px] font-bold tracking-[0.14em] uppercase opacity-80">Rate breakdown</p>
+            <p className="text-[9.5px] font-semibold opacity-80">{perUnit}</p>
+          </div>
+          <p className="text-[19px] leading-tight font-bold tabular-nums">{inr(total)}</p>
+        </div>
+
+        <div className="bg-card space-y-2 px-3 py-2.5">
+          <RateLine icon={Package} label="Product rate" value={inr(prod)} accent="blue" />
+          {hasSplit ? (
+            <RateLine
+              icon={Brush}
+              label="Design rate"
+              sub={item.designName || item.designType || null}
+              value={inr(dsgn)}
+              accent="violet"
+            />
+          ) : (
+            <p className="text-muted-foreground rounded-[6px] border border-dashed px-2 py-1.5 text-[10.5px] leading-snug">
+              No design rate on this line — the rate is the product rate alone.
+            </p>
+          )}
+
+          {/* The sum, spelled out. The point of the card is that 350 + 15 = 365
+              is checkable; showing only the parts leaves the reader to add up. */}
+          {hasSplit && (
+            <div className="flex items-center justify-between gap-2 border-t border-dashed pt-2">
+              <p className="text-muted-foreground text-[10.5px] font-semibold">
+                {inr(prod)} + {inr(dsgn)}
+              </p>
+              <p className="text-[14px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{inr(total)}</p>
+            </div>
+          )}
+
+          {/* Why the rate is what it is, when there is a reason beyond the chart. */}
+          {(item.special || item.bookingId) && (
+            <div className="flex flex-wrap gap-1.5 pt-0.5">
+              {item.special && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                  <BadgePercent className="size-3" /> Special rate
+                </span>
+              )}
+              {item.bookingId && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-800 dark:bg-sky-950/60 dark:text-sky-300">
+                  <PackageOpen className="size-3" /> {item.bookingCode ?? 'Booking'} · rate frozen
+                </span>
+              )}
+            </div>
+          )}
+          {item.special && <p className="text-muted-foreground text-[10px] leading-snug">{item.special}</p>}
+        </div>
+
+        <div className="text-muted-foreground flex items-center gap-1 border-t bg-slate-50 px-3 py-1.5 text-[9.5px] dark:bg-slate-900/50">
+          <Pin className={cn('size-2.5', pinned && 'text-sky-600')} />
+          {pinned ? 'Pinned — click the rate again to close' : 'Click the rate to keep this open'}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 /** Line amount = rate × quantity, where the quantity is Kgs or Pcs per the line's calc field. */
 const lineAmount = (l: Pick<Item, 'productRate' | 'designRate' | 'gram' | 'pcs' | 'calField'>) => {
   const qty = l.calField === 'PCS' ? (n(l.pcs) ?? 0) : (n(l.gram) ?? 0);
@@ -235,6 +462,9 @@ export function OrderFormPage() {
   const listPath = docKind === 'quotation' ? '/quotations' : '/orders';
   const docLabel = docKind === 'quotation' ? 'quotation' : 'order';
   const navState = (location.state ?? null) as NavState | null;
+  /** Only a path within the app is honoured — a `backTo` is navigation state, and
+   *  state is not somewhere to take an absolute URL from on trust. */
+  const backPath = navState?.backTo?.startsWith('/') ? navState.backTo : listPath;
   const [saved, setSaved] = useState(false); // shows the success-tick overlay
   const [savePrompt, setSavePrompt] = useState(false); // new-order "Save & PDF / Save only" choice
 
@@ -1365,7 +1595,7 @@ export function OrderFormPage() {
       if (!isEdit && docKind === 'order') persist('quotation');
     },
     dispatch: createAndDispatch,
-    cancel: () => confirmExit(listPath),
+    cancel: () => confirmExit(backPath),
     focusItem: () => formRef.current?.querySelector<HTMLElement>('[data-tabfield="itemName"] input')?.focus(),
   };
   useEffect(() => {
@@ -1504,7 +1734,7 @@ export function OrderFormPage() {
       {/* Slim toolbar — the page title already shows in the top bar, so the big
           in-page heading is dropped to avoid a duplicate title and free up space. */}
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => confirmExit(listPath)} aria-label="Back" title="Back">
+        <Button variant="ghost" size="icon" onClick={() => confirmExit(backPath)} aria-label="Back" title="Back">
           <ArrowLeft />
         </Button>
         <div className="ml-auto flex items-center gap-2">
@@ -1868,7 +2098,17 @@ export function OrderFormPage() {
                       <td className="text-right tabular-nums">{i.pcs || '—'}</td>
                       <td className="text-right tabular-nums">{i.gram || '—'}</td>
                       <td className="text-right tabular-nums">{i.box || '—'}</td>
-                      <td className="text-right tabular-nums">{itemRate(i).toLocaleString('en-IN')}</td>
+                      {/*
+                        * The rate is a SUM of two figures the row does not show
+                        * — the product rate and the design rate — so the number
+                        * on its own cannot be checked. Opening the edit sheet was
+                        * the only way to see the split. The dotted underline is
+                        * what says "there is more here"; without it a tooltip
+                        * nobody hovers is a tooltip nobody has.
+                        */}
+                      <td className="text-right tabular-nums">
+                        <RateBreakdown item={i} />
+                      </td>
                       <td className="text-right text-[15px] font-bold tabular-nums text-emerald-700">{lineAmount(i).toLocaleString('en-IN')}</td>
                       <td className="max-w-[14rem] truncate" title={i.comment}>{i.comment || '—'}</td>
                       <td>
@@ -2044,7 +2284,7 @@ export function OrderFormPage() {
           <span className="text-lg font-bold tabular-nums text-emerald-600">₹{total.toLocaleString('en-IN')}</span>
         </p>
         <div className="grid grid-cols-2 gap-2 sm:ml-auto sm:flex sm:flex-wrap sm:justify-end">
-          <Button type="button" variant="destructive" onClick={() => confirmExit(listPath)} title="Cancel (Esc)">
+          <Button type="button" variant="destructive" onClick={() => confirmExit(backPath)} title="Cancel (Esc)">
             Cancel
           </Button>
           <Button type="button" variant="outline" onClick={resetForm} title={isEdit ? 'Revert unsaved changes' : 'Clear the form'}>

@@ -1,3 +1,4 @@
+import { OmitType } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, Min, ValidateNested } from 'class-validator';
 import {
@@ -142,6 +143,17 @@ export class CreateSpecialCommissionDto {
   ratePerUnit!: number;
   @IsString() effectiveFrom!: string;
   @IsOptional() @IsString() note?: string;
+}
+
+/**
+ * The same special rule for several parties.
+ *
+ * Deliberately NOT `CreateSpecialCommissionDto` with an extra array: that would
+ * leave both `customerId` and `customerIds` on one payload, and nothing to say
+ * which wins. This carries the list only.
+ */
+export class BulkSpecialCommissionDto extends OmitType(CreateSpecialCommissionDto, ['customerId'] as const) {
+  @IsArray() @IsInt({ each: true }) customerIds!: number[];
 }
 
 /** "What rate would apply here?" — the Special Commission screen's tester. */

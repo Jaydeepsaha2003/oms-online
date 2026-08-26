@@ -33,17 +33,17 @@ type Standing = 'IN_FORCE' | 'SUPERSEDED' | 'SCHEDULED';
 
 const STANDING: Record<Standing, { label: string; chip: string; Icon: typeof Clock }> = {
   IN_FORCE: {
-    label: 'In force',
+    label: 'Active',
     chip: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300',
     Icon: CheckCircle2,
   },
   SCHEDULED: {
-    label: 'Scheduled',
+    label: 'Starts later',
     chip: 'bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-500/15 dark:text-sky-300',
     Icon: CalendarClock,
   },
   SUPERSEDED: {
-    label: 'Superseded',
+    label: 'Replaced',
     chip: 'bg-slate-100 text-slate-500 ring-slate-200 dark:bg-white/10 dark:text-slate-400',
     Icon: Clock,
   },
@@ -97,9 +97,9 @@ export function AllRatesPanel() {
   const [kind, setKind] = useState<'' | 'BASE' | 'SPECIAL'>('');
   const [standing, setStanding] = useState<'' | Standing>('');
 
-  // A future-dated rate is NOT superseded — it simply has not started. The
+  // A future-dated rate has NOT been replaced — it simply has not started. The
   // `current` flag alone cannot tell those apart, and calling a scheduled rate
-  // "superseded" would read as "already replaced", the opposite of the truth.
+  // "Replaced" chip would say the opposite of the truth, hence "Starts later".
   const standingOf = (effectiveFrom: string, current: boolean): Standing =>
     new Date(effectiveFrom) > new Date() ? 'SCHEDULED' : current ? 'IN_FORCE' : 'SUPERSEDED';
 
@@ -178,7 +178,7 @@ export function AllRatesPanel() {
       description:
         `${r.agentName} — ${r.appliesTo} at ₹${r.ratePerUnit}/${basisUnit(r.basis)} from ${formatDate(r.effectiveFrom)}. ` +
         (r.standing === 'SUPERSEDED'
-          ? 'It is already superseded, so invoices priced on it keep their figures — but the history of why they were priced that way goes with it.'
+          ? 'This rate has already been replaced. Invoices keep their figures, but you lose the record of how they were worked out.'
           : 'Invoices will re-price to the next matching rule, or to the base rate.'),
       confirmText: 'Remove',
       destructive: true,
@@ -201,9 +201,9 @@ export function AllRatesPanel() {
     <div className="space-y-3">
       {/* ── What the book holds ─────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-        <Tile label="In force" value={counts.inForce} tone="emerald" hint="pricing invoices today" />
-        <Tile label="Scheduled" value={counts.scheduled} tone="sky" hint="start on a future date" />
-        <Tile label="Superseded" value={counts.superseded} tone="slate" hint="kept, still explain old invoices" />
+        <Tile label="Active" value={counts.inForce} tone="emerald" hint="used for today's invoices" />
+        <Tile label="Starts later" value={counts.scheduled} tone="sky" hint="begins on a future date" />
+        <Tile label="Replaced" value={counts.superseded} tone="slate" hint="kept for old invoices" />
         <Tile label="Special" value={counts.special} tone="indigo" hint="party / product / design" />
       </div>
 
@@ -220,21 +220,21 @@ export function AllRatesPanel() {
             value={kind}
             onChange={(v) => setKind(v as '' | 'BASE' | 'SPECIAL')}
             options={[
-              { value: '', label: 'Base + special' },
+              { value: '', label: 'All rates' },
               { value: 'BASE', label: 'Base only' },
               { value: 'SPECIAL', label: 'Special only' },
             ]}
           />
         </Field>
-        <Field label="Standing">
+        <Field label="Status">
           <NativeSelect
             value={standing}
             onChange={(v) => setStanding(v as '' | Standing)}
             options={[
               { value: '', label: 'Any' },
-              { value: 'IN_FORCE', label: 'In force' },
-              { value: 'SCHEDULED', label: 'Scheduled' },
-              { value: 'SUPERSEDED', label: 'Superseded' },
+              { value: 'IN_FORCE', label: 'Active' },
+              { value: 'SCHEDULED', label: 'Starts later' },
+              { value: 'SUPERSEDED', label: 'Replaced' },
             ]}
           />
         </Field>
@@ -245,7 +245,7 @@ export function AllRatesPanel() {
         <div className="flex flex-wrap items-center gap-x-2 border-b bg-slate-50/80 px-3 py-2 dark:bg-white/[0.03]">
           <span className="text-[12.5px] font-bold">All rates</span>
           <span className="text-muted-foreground text-[11.5px]">
-            {shown.length} of {rows.length} · every rate ever set, newest first per pairing
+            {shown.length} of {rows.length} · newest first
           </span>
         </div>
 
@@ -269,7 +269,7 @@ export function AllRatesPanel() {
                   <th className={TH}>Party</th>
                   <th className={cn(TH, 'text-right')}>Rate</th>
                   <th className={TH}>Effective from</th>
-                  <th className={cn(TH, 'text-center')}>Standing</th>
+                  <th className={cn(TH, 'text-center')}>Status</th>
                   <th className={TH}>Note</th>
                   {canEdit && <th className={cn(TH, 'w-12 text-center')} />}
                 </tr>
@@ -329,8 +329,8 @@ export function AllRatesPanel() {
         </div>
 
         <p className="text-muted-foreground border-t px-3 py-1.5 text-[11.5px]">
-          Superseded rates are kept on purpose — an invoice prices at the rate in force on its own invoice date, so the old rows
-          are what explain a settlement paid months ago. Deleting one is refused once a settlement covering its dates has been paid.
+          Old rates are kept because each invoice uses the rate that applied on its own date. Once a settlement covering those
+          dates is paid, the rate can no longer be deleted.
         </p>
       </div>
     </div>

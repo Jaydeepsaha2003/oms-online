@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties, useRef } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { renderDocLines } from '@oms/shared';
 import { ArrowLeft, Download, Loader2, Printer } from 'lucide-react';
 import { toast } from 'sonner';
 import html2canvas from 'html2canvas-pro';
@@ -70,11 +71,48 @@ export function OrderBillPage() {
   // documents only diverge once the business actually customises the quotation's.
   const { data: quotationTermsData, isPending: quotationTermsPending } = useQuotationTerms();
   const termsData = isQuotation ? quotationTermsData : orderTermsData;
-  const terms = termsData?.terms.length ? termsData.terms : FALLBACK_TERMS;
+  /*
+   * Terms with their tags filled in from THIS document.
+   *
+   * The clause is stored once ("Payment Should Be Made Within {{pay_terms}}
+   * Days") and resolves per party as it prints, which is the point — the same
+   * saved sentence used to print a hard-typed 30 days at every party, including
+   * the ones on 7.
+   *
+   * A clause whose tag cannot be resolved is dropped rather than printed with a
+   * hole in it; see renderDocLines.
+   */
+  const rawTerms = termsData?.terms.length ? termsData.terms : FALLBACK_TERMS;
+  const terms = useMemo(
+    () =>
+      renderDocLines(rawTerms, {
+        pay_terms: order?.paymentTermDays ?? null,
+        party: order?.customerName ?? null,
+        doc_no: order ? `#${shortOrderCode(order.code, order.id)}` : null,
+        doc_date: order ? fmtDate(order.orderDate) : null,
+        due_date: order ? fmtDate(order.completionDate) : null,
+      }),
+    [rawTerms, order],
+  );
   const docTitle = isQuotation ? 'QUOTATION' : 'SALES ORDER';
   // Editable from Settings → "Sales Order footer text"; {DOC_TYPE} is swapped for docTitle.
   const { data: footerData, isPending: footerPending } = useOrderFooter();
-  const footerLines = (footerData?.lines.length ? footerData.lines : FALLBACK_FOOTER).map((l) => l.replaceAll('{DOC_TYPE}', docTitle));
+  // The footer keeps its own older {DOC_TYPE} placeholder AND gains the tags, so
+  // an existing footer keeps working while a new one can use either.
+  const footerLines = useMemo(
+    () =>
+      renderDocLines(
+        (footerData?.lines.length ? footerData.lines : FALLBACK_FOOTER).map((l) => l.replaceAll('{DOC_TYPE}', docTitle)),
+        {
+          pay_terms: order?.paymentTermDays ?? null,
+          party: order?.customerName ?? null,
+          doc_no: order ? `#${shortOrderCode(order.code, order.id)}` : null,
+          doc_date: order ? fmtDate(order.orderDate) : null,
+          due_date: order ? fmtDate(order.completionDate) : null,
+        },
+      ),
+    [footerData, docTitle, order],
+  );
   // Uploaded via Settings → "Company branding"; falls back to the built-in Kavish
   // logo until one's been uploaded.
   const { data: company, isPending: companyPending } = useCompany();
