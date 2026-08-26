@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Camera, CalendarClock, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Filter, Flame, Hourglass, Loader2, Lock, Package, PackageCheck, RotateCcw, Search, TriangleAlert, Truck, X } from 'lucide-react';
+import { Camera, CalendarClock, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Filter, Flame, Hourglass, Loader2, Lock, Package, PackageCheck, RotateCcw, TriangleAlert, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ALL_PERMISSIONS, DISPATCH_EXPORT_COLUMNS, DISPATCH_RATE_EXPORT_COLUMN_IDS, qtyOrderForCategory, type DispatchStatus, type DuplicateDispatch, type PendingLineDto, type QtyField } from '@oms/shared';
 import { getApiErrorMessage, getDuplicateDispatch } from '@/lib/api';
@@ -296,14 +296,6 @@ const withRates = (cols: DataColumn<PendingLineDto>[]): DataColumn<PendingLineDt
 };
 
 export function DispatchOrderPage() {
-  // Free-text search over the pending pool. `/dispatch/pending` has matched on
-  // customer, item, order code and agent all along (see `applyPendingFilters` in
-  // dispatch.service.ts) — this page just never offered a box for it, so the
-  // only way to find one order was to narrow the dropdowns. Split into the raw
-  // input and a debounced value so typing doesn't fire a request per keystroke
-  // against a list that also auto-refreshes every 2s.
-  const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch] = useState('');
   const [dueType, setDueType] = useState('');
   const [customer, setCustomer] = useState('');
   const [agent, setAgent] = useState('');
@@ -331,18 +323,9 @@ export function DispatchOrderPage() {
   // product picker lists base names and one pick matches every design variant.
   const [all, setAll] = useState(false);
 
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setSearch(searchInput.trim());
-      setPage(1);
-    }, 300);
-    return () => clearTimeout(t);
-  }, [searchInput]);
-
   const query = {
     page,
     pageSize,
-    search: search || undefined,
     dueType: dueType || undefined,
     customer: customer || undefined,
     agent: agent || undefined,
@@ -363,10 +346,8 @@ export function DispatchOrderPage() {
   // below): a background refetch mid-entry would be jarring, and a successful
   // dispatch already forces its own immediate refresh via useCreateDispatch.
   const { data, isLoading } = usePendingOrders(query, { autoRefresh: !active });
-  const hasFilters = !!search || !!dueType || !!customer || !!agent || !!product || !!design || !!category || !!subCategory || all;
+  const hasFilters = !!dueType || !!customer || !!agent || !!product || !!design || !!category || !!subCategory || all;
   const resetFilters = () => {
-    setSearchInput('');
-    setSearch('');
     setDueType('');
     setCustomer('');
     setAgent('');
@@ -527,30 +508,6 @@ export function DispatchOrderPage() {
 
       <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
         <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
-          {/* Same search box, placement and behaviour as Modify Dispatch, so the
-              two dispatch screens are learned once. Full width on a phone (it is
-              the fastest way to find one order among hundreds), a fixed column on
-              desktop where the dropdowns share the row. */}
-          <div className="relative w-full sm:w-56">
-            <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
-            <Input
-              placeholder="Search order #, customer, item or agent…"
-              className={cn(CONTROL, 'pl-8 font-medium', searchInput && CONTROL_ON)}
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-            />
-            {searchInput && (
-              <button
-                type="button"
-                onClick={() => setSearchInput('')}
-                aria-label="Clear search"
-                className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 -translate-y-1/2 rounded-sm p-0.5"
-              >
-                <X className="size-3.5" />
-              </button>
-            )}
-          </div>
-
           {/* Phones: the filters people actually reach for first — Customer, Sub
               category and Product — each on their own full-width line. Everything
               else (Agent / Due / Design / ALL) lives behind the Filter icon, which
