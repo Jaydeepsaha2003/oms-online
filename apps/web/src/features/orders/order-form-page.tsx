@@ -1068,10 +1068,13 @@ export function OrderFormPage() {
           pcs: a.pcs + (n(i.pcs) ?? 0),
           gram: a.gram + (n(i.gram) ?? 0),
           box: a.box + (n(i.box) ?? 0),
-          rate: a.rate + itemRate(i),
+          // No rate total: Rate is ₹ PER UNIT, so adding the column produces a
+          // number that means nothing — eight lines at 430/460 summed to 3,560,
+          // which reads like a figure but is not a price of anything. Amount is
+          // the column that legitimately adds up.
           amount: a.amount + lineAmount(i),
         }),
-        { bags: 0, pcs: 0, gram: 0, box: 0, rate: 0, amount: 0 },
+        { bags: 0, pcs: 0, gram: 0, box: 0, amount: 0 },
       ),
     [items],
   );
@@ -1927,7 +1930,9 @@ export function OrderFormPage() {
                     <td className="text-right tabular-nums">{totals.pcs.toLocaleString('en-IN')}</td>
                     <td className="text-right tabular-nums">{totals.gram.toLocaleString('en-IN')}</td>
                     <td className="text-right tabular-nums">{totals.box.toLocaleString('en-IN')}</td>
-                    <td className="text-right tabular-nums">{totals.rate.toLocaleString('en-IN')}</td>
+                    {/* Rate column deliberately blank — see `totals`. The cell
+                        stays so Amount keeps sitting under its own heading. */}
+                    <td />
                     <td className="text-right text-[15px] tabular-nums text-emerald-700">{totals.amount.toLocaleString('en-IN')}</td>
                     <td colSpan={2} />
                   </tr>
