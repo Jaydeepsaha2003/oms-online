@@ -19,7 +19,37 @@
 // v15: notificationclick now leaves its target in this cache for the page to
 // pick up on boot (see the handler at the bottom), so the key has to survive
 // into the version the page reads it from.
-const CACHE = 'oms-v17';
+const CACHE = 'oms-v18';
+
+/** Retry pauses (ms) before a navigation with no cached shell gives up.
+ *  Sized against a real restart: restart.bat bounces the API in about 3s, and
+ *  stop/start takes a few seconds more. Anything inside that window should look
+ *  like a slow load, not a dead site. */
+const SHELL_RETRIES = [400, 900, 1800, 3000];
+
+/**
+ * A real Response for the case where the shell cannot be fetched at all.
+ *
+ * `event.respondWith()` rejecting — or resolving to undefined — is what Chrome
+ * renders as "This site can't be reached / ERR_FAILED". That is the worst
+ * possible answer during a 3-second server restart: it looks like the app is
+ * gone, and a reload is the only way out. This page says what is happening and
+ * retries itself, so a bounce heals with no user action.
+ */
+function retryingShell() {
+  return new Response(
+    `<!doctype html><html><head><meta charset="utf-8">` +
+      `<meta name="viewport" content="width=device-width,initial-scale=1">` +
+      `<title>OMS — reconnecting…</title>` +
+      `<style>body{font-family:system-ui,sans-serif;display:grid;place-items:center;height:100vh;margin:0;background:#0f172a;color:#e2e8f0}` +
+      `div{text-align:center}h1{font-size:1.05rem;font-weight:600;margin:0 0 .4rem}p{font-size:.85rem;color:#94a3b8;margin:0}` +
+      `s{display:block;width:26px;height:26px;margin:0 auto 1rem;border:3px solid #334155;border-top-color:#38bdf8;border-radius:50%;animation:r .8s linear infinite}` +
+      `@keyframes r{to{transform:rotate(360deg)}}</style></head>` +
+      `<body><div><s></s><h1>Reconnecting to OMS…</h1><p>The server is starting up. This page will continue on its own.</p></div>` +
+      `<script>setTimeout(function(){location.reload()},2000)<\/script></body></html>`,
+    { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } },
+  );
+}
 
 /** How long a navigation waits for the live shell before falling back to cache.
  *  Generous compared with the old 2.5s: a phone resuming on cellular or the
@@ -87,19 +117,39 @@ self.addEventListener('fetch', (event) => {
         event.waitUntil(network.catch(() => {}));
 
         const cached = await cache.match('/');
-        // First-ever open (nothing cached): we have to wait for the network.
-        if (!cached) {
-          try {
-            return await network;
-          } catch {
-            return fetch('/');
+        if (cached) {
+          // Prefer the live shell, but don't hang on it — a slow link gets the
+          // cached one now and the fresh one on the next open.
+          const timeout = new Promise((resolve) => setTimeout(() => resolve(null), SHELL_TIMEOUT_MS));
+          const winner = await Promise.race([network.catch(() => null), timeout]);
+          return winner && winner.ok ? winner : cached;
+        }
+
+        /*
+         * Nothing cached, so the network is the only source — and this is where
+         * the app used to die. The old code awaited the fetch and, on failure,
+         * fell back to a SECOND bare fetch('/'); when the server was briefly
+         * unreachable that one rejected too, the whole handler rejected, and
+         * Chrome rendered ERR_FAILED. It read as "the site is broken" when the
+         * server was merely mid-restart, and it was intermittent precisely
+         * because it needed an empty cache and a bounce to line up — which is
+         * exactly what a cache-version bump followed by a restart produces.
+         *
+         * Retry across a realistic restart window, then answer with a real
+         * Response either way. Never reject: a rejection is the one outcome the
+         * user cannot recover from without knowing to reload.
+         */
+        let res = await network.catch(() => null);
+        if (res && res.ok) return res;
+        for (const wait of SHELL_RETRIES) {
+          await new Promise((r) => setTimeout(r, wait));
+          res = await fetch('/', { cache: 'no-store' }).catch(() => null);
+          if (res && res.ok) {
+            cache.put('/', res.clone()).catch(() => {});
+            return res;
           }
         }
-        // Otherwise prefer the live shell, but don't hang on it — a slow link
-        // gets the cached one now and the fresh one on the next open.
-        const timeout = new Promise((resolve) => setTimeout(() => resolve(null), SHELL_TIMEOUT_MS));
-        const winner = await Promise.race([network.catch(() => null), timeout]);
-        return winner && winner.ok ? winner : cached;
+        return retryingShell();
       })(),
     );
     return;
@@ -133,10 +183,12 @@ self.addEventListener('fetch', (event) => {
       .catch(async () => {
         const hit = await caches.match(req);
         if (hit) return hit;
-        // offline navigation → last cached shell
+        // offline navigation → last cached shell, else the retrying page.
+        // Response.error() surfaces as ERR_FAILED, which for a navigation is a
+        // dead end; for sub-resources it stays the honest answer.
         if (req.mode === 'navigate') {
           const shell = await caches.match('/');
-          if (shell) return shell;
+          return shell || retryingShell();
         }
         return Response.error();
       }),
