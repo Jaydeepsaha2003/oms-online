@@ -23,6 +23,7 @@ import {
 import { toast } from 'sonner';
 import type { OrderItemPhotoInput } from '@oms/shared';
 import { getApiErrorMessage, uploadFile } from '@/lib/api';
+import { useAuthStore } from '@/stores/auth-store';
 import { cn } from '@/lib/utils';
 import { useConfirm } from '@/components/common/confirm';
 import { looksLikeImage, prepareImageForUpload } from '@/lib/image-prep';
@@ -44,6 +45,8 @@ export interface LinePhoto {
    * uses the real `filename`.
    */
   title?: string | null;
+  /** Email of whoever uploaded it — the delete control is theirs alone. */
+  uploadedBy?: string | null;
 }
 
 /** Convert draft photos to the order-line input shape sent on save. */
@@ -99,7 +102,15 @@ function PhotoManager({
    *  callers keep their current behaviour. Pass separately wherever adding and
    *  deleting need different rules (e.g. Modify Dispatch: view for everyone,
    *  delete for super admins only; Dispatch Order: add allowed, delete never). */
-  canDelete?: boolean;
+  /**
+   * Who may delete, per photo.
+   *
+   * A single flag could only ever say "this viewer may delete everything here or
+   * nothing", which is what let any operator clear a photo somebody else had
+   * attached. A predicate lets the caller answer it per tile — see LiveLinePhotos,
+   * where the answer is "only the one you uploaded".
+   */
+  canDelete?: boolean | ((photo: LinePhoto) => boolean);
   busy?: boolean;
   onAddFiles: (files: File[]) => void;
   onRemove: (photo: LinePhoto) => void;
@@ -113,7 +124,8 @@ function PhotoManager({
    *  wants fewer, larger tiles so a reference photo is actually readable. */
   gridClassName?: string;
 }) {
-  const allowDelete = canDelete ?? canEdit;
+  const allowDelete = (p: LinePhoto) =>
+    typeof canDelete === 'function' ? canDelete(p) : (canDelete ?? canEdit);
   const [viewer, setViewer] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -197,7 +209,7 @@ function PhotoManager({
                 <ZoomIn className="size-3" /> View
               </span>
             </button>
-            {allowDelete && (
+            {allowDelete(p) && (
               <button
                 type="button"
                 onClick={() => onRemove(p)}
@@ -473,13 +485,23 @@ export function LiveLinePhotos({
   orderItemId: number;
   canEdit?: boolean;
   /** See the note on PhotoManager — defaults to `canEdit` when omitted. */
-  canDelete?: boolean;
+  canDelete?: boolean | ((photo: LinePhoto) => boolean);
   title?: string;
   hideHeader?: boolean;
   /** See {@link PhotoManager} — fewer, larger tiles for narrow phone viewers. */
   gridClassName?: string;
 }) {
   const confirm = useConfirm();
+  // Only the uploader may remove a photo. The server enforces this (see
+  // OrdersService.deletePhoto) — hiding the control here just stops offering an
+  // action that would be refused, and keeps someone else's reference photo from
+  // looking like it is the current user's to discard. Matched on email,
+  // case-insensitively: the stored values are inconsistently cased.
+  const me = useAuthStore((st) => st.user?.email)?.trim().toLowerCase();
+  const ownedByMe = (photo: LinePhoto) => {
+    const owner = photo.uploadedBy?.trim().toLowerCase();
+    return !!owner && !!me && owner === me;
+  };
   const { data: photos = [], isLoading } = useOrderItemPhotos(orderItemId);
   const add = useAddOrderItemPhoto(orderItemId);
   const del = useDeleteOrderItemPhoto(orderItemId);
@@ -524,7 +546,12 @@ export function LiveLinePhotos({
     <PhotoManager
       photos={photos}
       canEdit={canEdit}
-      canDelete={canDelete}
+      // Narrows, never widens: a caller that already said "no deleting here"
+      // (challan-form-page passes canEdit={false}) keeps its answer.
+      canDelete={(photo) => {
+        const allowedByCaller = typeof canDelete === 'function' ? canDelete(photo) : (canDelete ?? canEdit);
+        return allowedByCaller && ownedByMe(photo);
+      }}
       busy={busy}
       onAddFiles={addFiles}
       onRemove={remove}

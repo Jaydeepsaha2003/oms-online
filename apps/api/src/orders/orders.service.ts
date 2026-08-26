@@ -1416,9 +1416,39 @@ export class OrdersService {
    *  evidence of what actually shipped and can no longer be removed — mirrors
    *  {@link DispatchService.assertNotBilled}, checked here too since a photo
    *  can be deleted straight from Order Modify, not only from Modify Dispatch. */
-  async deletePhoto(photoId: number): Promise<void> {
+  async deletePhoto(photoId: number, requestedBy?: string | null): Promise<void> {
     const row = await this.prisma.orderItemPhoto.findUnique({ where: { id: photoId } });
     if (!row) throw new NotFoundException('Photo not found.');
+
+    /*
+     * You may only remove a photo YOU uploaded.
+     *
+     * The delete permission is coarse — orders:update OR dispatch:create — which
+     * every operator holds, so anyone could clear a reference photo somebody else
+     * had put on the line. These are the shop-floor record of what the party
+     * asked for; the person who attached one is the only one who can say it was
+     * the wrong file. So the rule is ownership, not rank: an operator can undo
+     * their own mistaken upload and re-add the right file, and cannot touch an
+     * admin's photo (nor an admin theirs).
+     *
+     * `uploadedBy` holds the uploader's EMAIL (see uploads.controller.ts and
+     * addPhoto). Compared case-insensitively — the stored values are inconsistently
+     * cased ("KANIK@oms.local" alongside "admin@oms.local"), and a case-sensitive
+     * check would lock people out of their own uploads.
+     *
+     * Photos predating this column (uploadedBy null) have no owner to match, so
+     * nobody can delete them. That is the safe direction: they are the oldest
+     * records, and a null is not evidence that the person asking put it there.
+     */
+    const owner = row.uploadedBy?.trim().toLowerCase();
+    const asker = requestedBy?.trim().toLowerCase();
+    if (!owner || !asker || owner !== asker) {
+      throw new ForbiddenException(
+        owner
+          ? 'Only the person who uploaded a photo can remove it.'
+          : 'This photo has no recorded uploader, so it can no longer be removed.',
+      );
+    }
 
     const dispatches = await this.prisma.dispatch.findMany({
       where: { orderItemId: row.orderItemId },

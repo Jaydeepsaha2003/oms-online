@@ -109,8 +109,8 @@ export class OrdersController {
   @Delete('photos/:photoId')
   @AnyPermission(perm(R, ACTIONS.UPDATE), perm(RESOURCES.DISPATCH, ACTIONS.CREATE))
   @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Removed an order line photo' })
-  async deletePhoto(@Param('photoId', ParseIntPipe) photoId: number) {
-    await this.orders.deletePhoto(photoId);
+  async deletePhoto(@Param('photoId', ParseIntPipe) photoId: number, @CurrentUser() user?: { email?: string | null }) {
+    await this.orders.deletePhoto(photoId, user?.email ?? null);
     return { ok: true };
   }
 
