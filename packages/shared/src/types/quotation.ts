@@ -20,6 +20,9 @@ export interface QuotationDto {
   /** Quotation date — named `orderDate` so the shared order form maps 1:1. */
   orderDate: string;
   completionDate: string | null;
+  /** The party's payment terms in days, for the {{pay_terms}} tag on the printed
+   *  terms. Resolved on the single-quotation read — see OrderDto for the why. */
+  paymentTermDays?: number | null;
   completionDay: number | null;
   priority: string | null;
   status: QuotationStatus;

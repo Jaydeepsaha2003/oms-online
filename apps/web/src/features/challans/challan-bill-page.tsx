@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { flushSync } from 'react-dom';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { renderDocLines } from '@oms/shared';
 import { ArrowLeft, Download, ExternalLink, Eye, Loader2, Printer, Share2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import html2canvas from 'html2canvas-pro';
@@ -132,7 +133,19 @@ export function ChallanBillPage() {
     else navigate(-1);
   };
   const { data: termsData, isPending: termsPending } = useChallanTerms();
-  const terms = termsData?.terms ?? [];
+  /* Same tag substitution as the sales order — see the note there. A challan
+     carries its OWN payment term, so this one does not need the party record. */
+  const terms = useMemo(
+    () =>
+      renderDocLines(termsData?.terms ?? [], {
+        pay_terms: challan?.paymentTerm ?? null,
+        party: challan?.customerName ?? null,
+        doc_no: challan?.code ?? null,
+        doc_date: challan ? formatDate(challan.invDate) : null,
+        due_date: challan?.dueDate ? formatDate(challan.dueDate) : null,
+      }),
+    [termsData, challan],
+  );
   const { data: company, isPending: companyPending } = useCompany();
   const logoSrc = company?.logo || kavishLogo;
   const confirm = useConfirm();

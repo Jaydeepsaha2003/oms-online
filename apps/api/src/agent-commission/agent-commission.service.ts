@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import {
   AGENT_TDS_PERCENT,
   basisUnit,
+  type BulkSpecialCommissionResult,
   bounceTotal,
   claimableRatio,
   commissionQty,
@@ -41,6 +42,7 @@ import {
   CreateCoverDto,
   CreateRateDto,
   CreateSettlementDto,
+  BulkSpecialCommissionDto,
   CreateSpecialCommissionDto,
   PaySettlementDto,
   TestRateQueryDto,
@@ -1846,7 +1848,13 @@ export class AgentCommissionService {
    * product from an earlier pass over the form would silently stop matching
    * anything, and the list would show a rule that looks live and never fires.
    */
-  async createSpecial(dto: CreateSpecialCommissionDto, userName?: string | null): Promise<AgentSpecialCommissionDto & { repriced: RepriceResult }> {
+  async createSpecial(
+    dto: CreateSpecialCommissionDto,
+    userName?: string | null,
+    /** `skipReprice` lets {@link createSpecialBulk} write many rules and re-price
+     *  once at the end instead of once per rule. */
+    opts?: { skipReprice?: boolean },
+  ): Promise<AgentSpecialCommissionDto & { repriced: RepriceResult }> {
     const agent = await this.prisma.agent.findUnique({ where: { id: dto.agentId } });
     if (!agent) throw new NotFoundException('Agent not found.');
     if (!Number.isFinite(dto.ratePerUnit) || dto.ratePerUnit < 0) {
@@ -1903,14 +1911,116 @@ export class AgentCommissionService {
         userName: userName ?? null,
       },
     });
-    const repriced = await this.repriceAffected({
-      agentId: agent.id,
-      from: row.effectiveFrom,
-      customerId: row.customerId,
-      pCategory: row.pCategory,
-    });
+    const repriced = opts?.skipReprice
+      ? { challans: 0, accruals: 0 }
+      : await this.repriceAffected({
+          agentId: agent.id,
+          from: row.effectiveFrom,
+          customerId: row.customerId,
+          pCategory: row.pCategory,
+        });
     const saved = (await this.listSpecials(agent.id)).find((r) => r.id === row.id)!;
     return { ...saved, repriced };
+  }
+
+  /**
+   * The same special rule for several parties at once.
+   *
+   * Built on top of `createSpecial` rather than beside it, so every party's rule
+   * goes through exactly the same validation — a bulk path with its own,
+   * looser checks is how a rule aimed at nothing gets written a hundred times.
+   *
+   * The re-pricing is the reason this is one endpoint instead of a loop in the
+   * browser: `createSpecial` re-prices the invoices its rule affects, so ten
+   * parties done one request at a time means ten passes over overlapping
+   * challans. Here the rules are written first and the re-price runs once at the
+   * end, over the widest affected scope.
+   *
+   * Already-existing identical rules are SKIPPED, not duplicated: the natural way
+   * to use this is to tick every party and re-apply after adding a few, and
+   * either erroring or writing a second copy would make that unusable. The
+   * duplicate check lives here because `createSpecial` does not do one.
+   */
+  async createSpecialBulk(
+    dto: BulkSpecialCommissionDto,
+    userName?: string | null,
+  ): Promise<BulkSpecialCommissionResult> {
+    const agent = await this.prisma.agent.findUnique({ where: { id: dto.agentId } });
+    if (!agent) throw new NotFoundException('Agent not found.');
+
+    const ids = [...new Set(dto.customerIds ?? [])];
+    // No parties named = the all-parties rule, which is one row with no customer.
+    // Same shape as a single create, so it goes straight down that path.
+    if (!ids.length) {
+      const one = await this.createSpecial({ ...dto, customerId: null } as CreateSpecialCommissionDto, userName);
+      return { created: 1, skipped: 0, repriced: one.repriced };
+    }
+
+    /*
+     * Which parties already carry this exact rule.
+     *
+     * Checked here rather than relied on from `createSpecial`, which does NOT
+     * reject duplicates — re-applying a batch was writing a second identical row
+     * per party, and two rules at the same aim and date leave the precedence
+     * engine picking between them arbitrarily.
+     *
+     * "Exact" deliberately includes `effectiveFrom`: the same aim at a LATER
+     * date is how a rate is superseded, which is a legitimate second row, not a
+     * duplicate.
+     */
+    const norm2 = (v?: string | null) => {
+      const t = (v ?? '').trim().toUpperCase();
+      return t === '' ? null : t;
+    };
+    const from = day(dto.effectiveFrom, 'Effective from');
+    const existing = await this.prisma.agentSpecialCommission.findMany({
+      where: {
+        agentId: agent.id,
+        scope: dto.scope,
+        customerId: { in: ids },
+        pCategory: dto.scope === 'CUSTOMER' ? null : norm2(dto.pCategory),
+        subCategory:
+          dto.scope === 'SUBCATEGORY' || dto.scope === 'PRODUCT' || dto.scope === 'DESIGN' ? norm2(dto.subCategory) : null,
+        product: dto.scope === 'PRODUCT' ? norm2(dto.product) : null,
+        designType: dto.scope === 'DESIGN' ? norm2(dto.designType) : null,
+        effectiveFrom: from,
+      },
+      select: { customerId: true },
+    });
+    const already = new Set(existing.map((r) => r.customerId));
+
+    let created = 0;
+    let skipped = 0;
+    let earliest: Date | null = null;
+
+    for (const customerId of ids) {
+      if (already.has(customerId)) {
+        skipped += 1;
+        continue;
+      }
+      // `skipReprice` keeps each create from doing its own pass; one runs below.
+      const row = await this.createSpecial(
+        { ...dto, customerId } as CreateSpecialCommissionDto,
+        userName,
+        { skipReprice: true },
+      );
+      created += 1;
+      const at = new Date(row.effectiveFrom);
+      if (!earliest || at < earliest) earliest = at;
+    }
+
+    const repriced = created
+      ? await this.repriceAffected({
+          agentId: agent.id,
+          from: earliest ?? day(dto.effectiveFrom, 'Effective from'),
+          // Null customer/category = the widest sweep, which is what a batch
+          // spanning several parties actually needs.
+          customerId: null,
+          pCategory: null,
+        })
+      : { challans: 0, accruals: 0 };
+
+    return { created, skipped, repriced };
   }
 
   /**

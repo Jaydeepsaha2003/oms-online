@@ -1,3 +1,4 @@
+import type { RepriceResult } from './agent-commission';
 /**
  * Special Commission (Agent → Commission Rates → Special Commission)
  * ------------------------------------------------------------------
@@ -52,6 +53,31 @@ export const SPECIAL_COMMISSION_SCOPE_WEIGHT: Record<SpecialCommissionScope, num
   CATEGORY: 2,
   CUSTOMER: 1,
 };
+
+/**
+ * The same rule aimed at several parties at once.
+ *
+ * One rule per party is what the data model wants — a rule names at most one
+ * party — so this is a convenience over `create`, not a new kind of rule. It
+ * exists as an endpoint rather than a loop in the browser because every single
+ * create RE-PRICES the invoices it affects: ten parties done client-side means
+ * ten re-pricing passes over the same challans. Here the rows are written
+ * together and the re-price runs once.
+ *
+ * An empty `customerIds` means "not aimed at any party" — the all-parties rule,
+ * which is a single row with a null customer.
+ */
+export interface BulkSpecialCommissionInput extends Omit<AgentSpecialCommissionInput, 'customerId'> {
+  customerIds: number[];
+}
+
+export interface BulkSpecialCommissionResult {
+  /** How many rule rows were written. */
+  created: number;
+  /** Parties skipped because an identical rule already existed for them. */
+  skipped: number;
+  repriced: RepriceResult;
+}
 
 export interface AgentSpecialCommissionDto {
   id: number;

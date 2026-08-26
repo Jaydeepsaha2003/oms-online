@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
+  AgentRateList,
   CustomerDto,
   CustomerInput,
   CustomerList,
@@ -76,6 +77,29 @@ export function useDefaultRateList(enabled: boolean) {
     queryKey: [...KEY, 'rate-list', 'default'],
     queryFn: () => fetchDefaultRateList(),
     enabled,
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * The agent rate list — product price beside the agent's commission.
+ *
+ * `customerId` is optional and is not just a filter: naming a party both prices
+ * the products at that party's own rates AND lets party-specific commission
+ * rules resolve, which cannot happen without one. It is therefore part of the
+ * cache key, not a post-fetch filter.
+ */
+export function fetchAgentRateList(agentId: number, customerId?: number | null): Promise<AgentRateList> {
+  return http.get<AgentRateList>('/customers/rate-list/agent', {
+    params: { agentId, ...(customerId != null ? { customerId } : {}) },
+  });
+}
+
+export function useAgentRateList(agentId: number | undefined, customerId?: number | null) {
+  return useQuery({
+    queryKey: [...KEY, 'rate-list', 'agent', agentId, customerId ?? null],
+    queryFn: () => fetchAgentRateList(agentId!, customerId),
+    enabled: agentId != null,
     staleTime: 30_000,
   });
 }

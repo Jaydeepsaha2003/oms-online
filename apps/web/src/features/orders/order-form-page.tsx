@@ -47,7 +47,18 @@ import { DesignNamePicker, resolveDesignNameChoices } from './design-name-picker
  * "Convert" action: land on New Order with the customer already picked and the
  * booking-draw sheet ready to open, instead of the older standalone convert page.
  */
-type NavState = { customerName?: string; openBookingDraw?: boolean };
+type NavState = {
+  customerName?: string;
+  openBookingDraw?: boolean;
+  /**
+   * Where Back should go, when it is not the list.
+   *
+   * Order Modify sends this with its own filters in the query string, because
+   * "back" from a line you opened there means that grid as you left it — not the
+   * View Orders list, which is a different screen you were never on.
+   */
+  backTo?: string;
+};
 
 /** A line item once added to the order. */
 interface Item {
@@ -112,6 +123,39 @@ const scopeWord = (s: string | null) =>
 const fmtDelta = (n: number) => (n > 0 ? `+${n}` : `${n}`);
 /** A design that carries a logo (standalone "LOGO" or a combo like "HAMMER+LOGO"). */
 const isLogoDesign = (designType?: string | null) => (designType ?? '').toUpperCase().includes('LOGO');
+/**
+ * A line's rate, with the product + design split behind a hover.
+ *
+ * `title` rather than a JS tooltip: this sits inside a table that can run to
+ * dozens of rows, and the native one costs nothing per row, works on keyboard
+ * focus, and cannot be clipped by the table's own overflow — which a positioned
+ * tooltip in a horizontally scrolling grid regularly is.
+ */
+function RateBreakdown({ item }: { item: Pick<Item, 'productRate' | 'designRate' | 'designType'> }) {
+  const prod = n(item.productRate) ?? 0;
+  const dsgn = n(item.designRate) ?? 0;
+  const total = prod + dsgn;
+  const inr = (v: number) => `₹${v.toLocaleString('en-IN')}`;
+  // A line with no design rate has nothing to break down; it would read as
+  // "₹350 = ₹350 + ₹0", which explains nothing and invites a second look.
+  const hasSplit = dsgn !== 0;
+  const tip = hasSplit
+    ? `Product ${inr(prod)} + Design ${inr(dsgn)}${item.designType ? ` (${item.designType})` : ''} = ${inr(total)}`
+    : `Product rate ${inr(prod)} — no design rate on this line`;
+  return (
+    <span
+      title={tip}
+      tabIndex={0}
+      className={cn(
+        'cursor-help',
+        hasSplit && 'underline decoration-dotted decoration-slate-400 underline-offset-[3px]',
+      )}
+    >
+      {total.toLocaleString('en-IN')}
+    </span>
+  );
+}
+
 /** Line amount = rate × quantity, where the quantity is Kgs or Pcs per the line's calc field. */
 const lineAmount = (l: Pick<Item, 'productRate' | 'designRate' | 'gram' | 'pcs' | 'calField'>) => {
   const qty = l.calField === 'PCS' ? (n(l.pcs) ?? 0) : (n(l.gram) ?? 0);
@@ -235,6 +279,9 @@ export function OrderFormPage() {
   const listPath = docKind === 'quotation' ? '/quotations' : '/orders';
   const docLabel = docKind === 'quotation' ? 'quotation' : 'order';
   const navState = (location.state ?? null) as NavState | null;
+  /** Only a path within the app is honoured — a `backTo` is navigation state, and
+   *  state is not somewhere to take an absolute URL from on trust. */
+  const backPath = navState?.backTo?.startsWith('/') ? navState.backTo : listPath;
   const [saved, setSaved] = useState(false); // shows the success-tick overlay
   const [savePrompt, setSavePrompt] = useState(false); // new-order "Save & PDF / Save only" choice
 
@@ -1362,7 +1409,7 @@ export function OrderFormPage() {
       if (!isEdit && docKind === 'order') persist('quotation');
     },
     dispatch: createAndDispatch,
-    cancel: () => confirmExit(listPath),
+    cancel: () => confirmExit(backPath),
     focusItem: () => formRef.current?.querySelector<HTMLElement>('[data-tabfield="itemName"] input')?.focus(),
   };
   useEffect(() => {
@@ -1501,7 +1548,7 @@ export function OrderFormPage() {
       {/* Slim toolbar — the page title already shows in the top bar, so the big
           in-page heading is dropped to avoid a duplicate title and free up space. */}
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => confirmExit(listPath)} aria-label="Back" title="Back">
+        <Button variant="ghost" size="icon" onClick={() => confirmExit(backPath)} aria-label="Back" title="Back">
           <ArrowLeft />
         </Button>
         <div className="ml-auto flex items-center gap-2">
@@ -1865,7 +1912,17 @@ export function OrderFormPage() {
                       <td className="text-right tabular-nums">{i.pcs || '—'}</td>
                       <td className="text-right tabular-nums">{i.gram || '—'}</td>
                       <td className="text-right tabular-nums">{i.box || '—'}</td>
-                      <td className="text-right tabular-nums">{itemRate(i).toLocaleString('en-IN')}</td>
+                      {/*
+                        * The rate is a SUM of two figures the row does not show
+                        * — the product rate and the design rate — so the number
+                        * on its own cannot be checked. Opening the edit sheet was
+                        * the only way to see the split. The dotted underline is
+                        * what says "there is more here"; without it a tooltip
+                        * nobody hovers is a tooltip nobody has.
+                        */}
+                      <td className="text-right tabular-nums">
+                        <RateBreakdown item={i} />
+                      </td>
                       <td className="text-right text-[15px] font-bold tabular-nums text-emerald-700">{lineAmount(i).toLocaleString('en-IN')}</td>
                       <td className="max-w-[14rem] truncate" title={i.comment}>{i.comment || '—'}</td>
                       <td>
@@ -2039,7 +2096,7 @@ export function OrderFormPage() {
           <span className="text-lg font-bold tabular-nums text-emerald-600">₹{total.toLocaleString('en-IN')}</span>
         </p>
         <div className="grid grid-cols-2 gap-2 sm:ml-auto sm:flex sm:flex-wrap sm:justify-end">
-          <Button type="button" variant="destructive" onClick={() => confirmExit(listPath)} title="Cancel (Esc)">
+          <Button type="button" variant="destructive" onClick={() => confirmExit(backPath)} title="Cancel (Esc)">
             Cancel
           </Button>
           <Button type="button" variant="outline" onClick={resetForm} title={isEdit ? 'Revert unsaved changes' : 'Clear the form'}>

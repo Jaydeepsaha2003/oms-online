@@ -38,7 +38,7 @@ import {
   useSpecialRateLookups,
 } from './use-special-rates';
 import { SpecialRatesMaster } from './special-rates-master';
-import { InfoTip } from '@/components/common/info-tip';
+import { ACCENTS, AddButton, deleteAction, LevelButtons, Panel, type Accent } from '@/components/common/rate-panel';
 
 const RATE_LEVELS: { value: RateScope; label: string; title: string }[] = [
   { value: 'CATEGORY', label: 'Whole category', title: 'Apply this rate to every item in the chosen category.' },
@@ -51,49 +51,6 @@ const LOGO_LEVELS: { value: LogoScope; label: string; title: string }[] = [
 ];
 const scopeLabel = (s: string) => RATE_LEVELS.find((l) => l.value === s)?.label ?? s;
 const signed = (n: number) => (n > 0 ? `+${n.toLocaleString('en-IN')}` : n.toLocaleString('en-IN'));
-
-interface Accent {
-  ring: string;
-  head: string;
-  chip: string;
-  solid: string;
-  active: string;
-  idle: string;
-}
-const ACCENTS: Record<'PRODUCT' | 'DESIGN' | 'LOGO' | 'BAG', Accent> = {
-  PRODUCT: {
-    ring: 'border-sky-200',
-    head: 'from-sky-50 to-sky-100/40',
-    chip: 'bg-sky-100 text-sky-700',
-    solid: 'bg-sky-600 hover:bg-sky-700',
-    active: 'border-sky-600 bg-sky-600 text-white',
-    idle: 'border-slate-200 bg-white text-slate-600 hover:border-sky-300 hover:bg-sky-50 hover:text-sky-700',
-  },
-  DESIGN: {
-    ring: 'border-violet-200',
-    head: 'from-violet-50 to-violet-100/40',
-    chip: 'bg-violet-100 text-violet-700',
-    solid: 'bg-violet-600 hover:bg-violet-700',
-    active: 'border-violet-600 bg-violet-600 text-white',
-    idle: 'border-slate-200 bg-white text-slate-600 hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700',
-  },
-  LOGO: {
-    ring: 'border-rose-200',
-    head: 'from-rose-50 to-rose-100/40',
-    chip: 'bg-rose-100 text-rose-700',
-    solid: 'bg-rose-600 hover:bg-rose-700',
-    active: 'border-rose-600 bg-rose-600 text-white',
-    idle: 'border-slate-200 bg-white text-slate-600 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700',
-  },
-  BAG: {
-    ring: 'border-amber-200',
-    head: 'from-amber-50 to-amber-100/40',
-    chip: 'bg-amber-100 text-amber-700',
-    solid: 'bg-amber-600 hover:bg-amber-700',
-    active: 'border-amber-600 bg-amber-600 text-white',
-    idle: 'border-slate-200 bg-white text-slate-600 hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700',
-  },
-};
 
 type Mode = 'single' | 'bulk' | 'all';
 
@@ -327,60 +284,6 @@ function AgentSelector({
 }
 
 /* ── Shared panel shell ─────────────────────────────────────────────────────── */
-
-function Panel({ title, icon, accent, badge, info, className, children }: { title: string; icon: ReactNode; accent: Accent; badge: ReactNode; info?: string; className?: string; children: ReactNode }) {
-  return (
-    <section className={cn('overflow-hidden rounded-xl border bg-card shadow-sm', accent.ring, className)}>
-      <div className={cn('flex items-center gap-2 border-b bg-gradient-to-r px-4 py-3', accent.ring, accent.head)}>
-        <span className={cn('flex size-8 items-center justify-center rounded-lg', accent.chip)}>{icon}</span>
-        <h3 className="font-semibold text-slate-800">{title}</h3>
-        {info && <InfoTip text={info} />}
-        <span className={cn('ml-auto rounded-full px-2 py-0.5 text-xs font-semibold', accent.chip)}>{badge}</span>
-      </div>
-      <div className="space-y-3 p-4">{children}</div>
-    </section>
-  );
-}
-
-function LevelButtons<T extends string>({ levels, value, onChange, accent }: { levels: { value: T; label: string; title?: string }[]; value: T; onChange: (v: T) => void; accent: Accent }) {
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {levels.map((l) => (
-        <button
-          key={l.value}
-          type="button"
-          title={l.title}
-          onClick={() => onChange(l.value)}
-          className={cn('rounded-md border px-3.5 py-2 text-base font-medium transition-colors', value === l.value ? accent.active : accent.idle)}
-        >
-          {l.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function AddButton({ accent, onClick, disabled, title, children }: { accent: Accent; onClick: () => void; disabled?: boolean; title?: string; children: ReactNode }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      className={cn('inline-flex w-full items-center justify-center gap-1.5 rounded-md px-3 py-2.5 text-base font-semibold text-white shadow-sm transition-colors disabled:opacity-60', accent.solid)}
-    >
-      {children}
-    </button>
-  );
-}
-
-const deleteAction = <T extends { id: number }>(onDelete: (r: T) => void) => (r: T) => (
-  <div className="flex justify-end">
-    <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => onDelete(r)} aria-label="Remove" title="Remove">
-      <Trash2 className="size-4" />
-    </Button>
-  </div>
-);
 
 /* ── Product / Design rate overrides ─────────────────────────────────────────── */
 

@@ -61,6 +61,9 @@ export class QuotationsService {
     const customer = row.customerId
       ? await this.prisma.customer.findUnique({ where: { id: row.customerId } })
       : await this.prisma.customer.findFirst({ where: { partyName: row.customerName } });
+    // The customer is already loaded for the address, so the payment term rides
+    // along free — no extra query for the {{pay_terms}} tag.
+    dto.paymentTermDays = customer?.creditPeriod ?? null;
     dto.billingAddress = [customer?.city, customer?.state, customer?.region]
       .map((s) => (s ?? '').trim())
       .filter(Boolean)

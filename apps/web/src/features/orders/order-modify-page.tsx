@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Ban, ChevronLeft, ChevronRight, ExternalLink, Filter, Loader2, Pencil, RotateCcw, Save, Trash2, Truck, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { OrderDto, OrderInput, OrderItemDto, QtyField } from '@oms/shared';
@@ -217,21 +217,54 @@ export function OrderModifyPage() {
   const navigate = useNavigate();
   const confirm = useConfirm();
   const { can } = usePermissions();
-  // Deliberately NOT persisted (unlike most other list pages): these filters
-  // should start fresh every time you arrive here, rather than still be applied
-  // from whatever you were last looking for after stepping away to another page.
-  const [customer, setCustomer] = useState('');
-  const [agent, setAgent] = useState('');
-  const [product, setProduct] = useState('');
-  const [design, setDesign] = useState('');
-  const [priority, setPriority] = useState('');
-  const [orderId, setOrderId] = useState('');
+  /*
+   * Deliberately NOT persisted (unlike most other list pages): these filters
+   * should start fresh every time you arrive here, rather than still be applied
+   * from whatever you were last looking for after stepping away.
+   *
+   * The ONE exception is arriving with them in the URL. Opening a line's full
+   * order and pressing Back should land on this grid as you left it, and the
+   * only way Back can know the filters is to have carried them — so a URL that
+   * names them wins over "start fresh", while a bare /orders/modify still starts
+   * clean. Read once on mount: they are the starting point, not a binding.
+   */
+  const [urlParams] = useSearchParams();
+  const seed = (key: string) => urlParams.get(key) ?? '';
+  const [customer, setCustomer] = useState(() => seed('customer'));
+  const [agent, setAgent] = useState(() => seed('agent'));
+  const [product, setProduct] = useState(() => seed('product'));
+  const [design, setDesign] = useState(() => seed('design'));
+  const [priority, setPriority] = useState(() => seed('priority'));
+  const [orderId, setOrderId] = useState(() => seed('orderId'));
   // Item picker mode. Off (default) → the short BASE-name list, where one pick
   // covers every design variant of that item. On → the full list, one entry per
   // variant, so a pick targets exactly that item. Same control as Dispatch Order.
-  const [allVariants, setAllVariants] = useState(false);
+  const [allVariants, setAllVariants] = useState(() => urlParams.get('allVariants') === '1');
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const { page, setPage, pageSize, setPageSize } = usePageSize('order-modify');
+
+  /**
+   * This grid's own URL, filters included — what Back on the full-order form
+   * returns to.
+   *
+   * Only non-empty filters are written, so the common case (nothing filtered)
+   * produces a plain path and Back behaves exactly as it always did.
+   */
+  const modifyPathWithFilters = () => {
+    const q = new URLSearchParams();
+    const put = (k: string, v: string) => {
+      if (v.trim()) q.set(k, v.trim());
+    };
+    put('customer', customer);
+    put('agent', agent);
+    put('product', product);
+    put('design', design);
+    put('priority', priority);
+    put('orderId', orderId);
+    if (allVariants) q.set('allVariants', '1');
+    const qs = q.toString();
+    return qs ? `/orders/modify?${qs}` : '/orders/modify';
+  };
 
   // Priority goes to the server too, so it prunes lines exactly like the other
   // line-level filters instead of being trimmed off after paging.
@@ -914,7 +947,7 @@ export function OrderModifyPage() {
             onDelete={() => deleteLine(edit.order, edit.line)}
             onCancelItem={(reason, note) => cancelLine(edit.order, edit.line, reason, note)}
             onRestoreItem={() => restoreLine(edit.order, edit.line)}
-            onViewFull={() => navigate(`/orders/${edit.order.id}/edit`)}
+            onViewFull={() => navigate(`/orders/${edit.order.id}/edit`, { state: { backTo: modifyPathWithFilters() } })}
             onClose={() => setEdit(null)}
           />
         )}

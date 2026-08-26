@@ -125,6 +125,20 @@ export class CustomersController {
     return this.customers.defaultRateList(name);
   }
 
+  /**
+   * The agent rate list — product price beside the agent's commission.
+   *
+   * Above the ':id' routes, same as its siblings. Gated on the COMMISSION
+   * permission rather than customer:view: the figures on it are what an agent
+   * earns, which is not something everyone who may read a price list should see.
+   */
+  @Get('rate-list/agent')
+  @Permissions(perm(RESOURCES.AGENT_COMMISSION, ACTIONS.VIEW))
+  agentRateList(@Query('agentId', ParseIntPipe) agentId: number, @Query('customerId') customerId?: string) {
+    const party = customerId ? Number(customerId) : null;
+    return this.customers.agentRateList(agentId, Number.isFinite(party) ? party : null);
+  }
+
   @Get(':id/rate-list-config')
   @Permissions(perm(R, ACTIONS.VIEW))
   effectiveRateListConfig(@Param('id', ParseIntPipe) id: number) {

@@ -11,7 +11,12 @@ import {
   type RateChangeEntry,
   type RateHistoryKind,
   resolveSpecialRates,
+  resolveCommissionRate,
   DEFAULT_RATE_LIST_TITLE,
+  type AgentRateList,
+  type AgentRateListRow,
+  type AgentSpecialCommissionDto,
+  type CommissionBasis,
   PARTY_SOURCES,
   PAY_BYS,
 } from '@oms/shared';
@@ -533,6 +538,158 @@ export class CustomersService {
   async defaultRateList(label?: string | null): Promise<CustomerRateList> {
     const name = (label ?? '').trim();
     return this.buildRateList(0, name || DEFAULT_RATE_LIST_TITLE, []);
+  }
+
+  /**
+   * The agent rate list: what the customer pays beside what the agent earns.
+   *
+   * Built here rather than in the commission module because the PRODUCT side of
+   * it — which items are on the sheet, and at what rate for this party — is
+   * exactly the rate list this service already produces. The commission side is
+   * two lookups and the shared resolver, which is the same resolver invoice
+   * pricing uses; a second implementation here would be a second answer to
+   * "what does this agent earn", and one of the two would be wrong.
+   *
+   * `customerId` is optional and changes the sheet in two ways at once, both
+   * reported on the payload:
+   *   - the product rate becomes that party's effective rate (their special
+   *     rates applied), not the plain chart rate;
+   *   - party-scoped commission rules can resolve. Without a party they cannot,
+   *     so an all-parties sheet shows base and non-party specials only.
+   */
+  async agentRateList(agentId: number, customerId?: number | null): Promise<AgentRateList> {
+    const agent = await this.prisma.agent.findUnique({ where: { id: agentId }, select: { id: true, name: true } });
+    if (!agent) throw new NotFoundException('Agent not found');
+
+    let customer: { id: number; partyName: string | null } | null = null;
+    if (customerId != null) {
+      customer = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { id: true, partyName: true } });
+      if (!customer) throw new NotFoundException('Party not found');
+    }
+
+    // The product side, priced for the party when there is one.
+    const list = customer ? await this.rateList(customer.id) : await this.defaultRateList();
+
+    const now = new Date();
+    const [baseRates, specialRows] = await Promise.all([
+      // Newest-first so the first row per category is the one in force today.
+      this.prisma.agentCommissionRate.findMany({
+        where: { agentId: agent.id, effectiveFrom: { lte: now } },
+        orderBy: [{ effectiveFrom: 'desc' }, { id: 'desc' }],
+      }),
+      this.prisma.agentSpecialCommission.findMany({
+        where: {
+          agentId: agent.id,
+          effectiveFrom: { lte: now },
+          // A party-scoped rule is unresolvable without a party, and including
+          // one would let it win over the base and overstate every line.
+          ...(customer ? { OR: [{ customerId: null }, { customerId: customer.id }] } : { customerId: null }),
+        },
+        orderBy: [{ effectiveFrom: 'desc' }, { id: 'desc' }],
+      }),
+    ]);
+
+    /** The base rate in force per category — first wins, the list is newest-first. */
+    const baseByCategory = new Map<string, { ratePerUnit: number; basis: CommissionBasis }>();
+    for (const r of baseRates) {
+      const key = (r.pCategory ?? '').trim().toUpperCase();
+      if (!key || baseByCategory.has(key)) continue;
+      baseByCategory.set(key, { ratePerUnit: r.ratePerUnit, basis: (r.basis === 'PCS' ? 'PCS' : 'KGS') as CommissionBasis });
+    }
+
+    // The resolver wants DTOs, and `current` is not used by it — the date filter
+    // above has already done that job.
+    const rules: AgentSpecialCommissionDto[] = specialRows.map((r) => this.toSpecialCommissionDto(r, agent.name));
+
+    const rows: AgentRateListRow[] = list.products.map((prod) => {
+      const catKey = (prod.category ?? '').trim().toUpperCase();
+      const base = baseByCategory.get(catKey) ?? null;
+      const resolved = resolveCommissionRate(rules, base, {
+        customerId: customer?.id ?? null,
+        pCategory: prod.category,
+        subCategory: prod.subCategory,
+        product: prod.product,
+        // A rate-list line is a product, not a design. Design commissions are
+        // aimed at a design type, so they cannot apply to a product row —
+        // passing a design here would match rules this line is not.
+        designType: null,
+      });
+      const isSpecial = !!resolved && resolved.scope != null;
+      return {
+        category: prod.category,
+        subCategory: prod.subCategory,
+        product: prod.product,
+        size: prod.size,
+        pcs: prod.pcs,
+        productRate: prod.rate,
+        baseCommission: base?.ratePerUnit ?? null,
+        specialCommission: isSpecial ? resolved!.ratePerUnit : null,
+        effectiveCommission: resolved?.ratePerUnit ?? null,
+        basis: resolved?.basis ?? base?.basis ?? 'KGS',
+        source: !resolved ? 'NONE' : isSpecial ? 'SPECIAL' : 'BASE',
+        specialScope: isSpecial ? resolved!.scope : null,
+        specialLabel: isSpecial ? resolved!.label : null,
+        partySpecific: resolved?.partySpecific ?? false,
+      };
+    });
+
+    return {
+      agentId: agent.id,
+      agentName: agent.name,
+      customerId: customer?.id ?? null,
+      customerName: customer?.partyName ?? null,
+      partyScoped: !!customer,
+      generatedAt: new Date().toISOString(),
+      rows,
+      specialCount: rows.filter((r) => r.source === 'SPECIAL').length,
+      noCommissionCount: rows.filter((r) => r.source === 'NONE').length,
+    };
+  }
+
+  /** The special-rule shape {@link resolveCommissionRate} expects. Only the
+   *  fields the resolver reads are filled; `current` is irrelevant here because
+   *  the query already restricted to rules in force. */
+  private toSpecialCommissionDto(
+    r: {
+      id: number;
+      agentId: number;
+      scope: string;
+      customerId: number | null;
+      customerName: string | null;
+      pCategory: string | null;
+      subCategory: string | null;
+      product: string | null;
+      designType: string | null;
+      basis: string;
+      ratePerUnit: number;
+      effectiveFrom: Date;
+      note: string | null;
+      userName: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+    },
+    agentName: string,
+  ): AgentSpecialCommissionDto {
+    return {
+      id: r.id,
+      agentId: r.agentId,
+      agentName,
+      scope: r.scope as AgentSpecialCommissionDto['scope'],
+      customerId: r.customerId,
+      customerName: r.customerName,
+      pCategory: r.pCategory,
+      subCategory: r.subCategory,
+      product: r.product,
+      designType: r.designType,
+      basis: (r.basis === 'PCS' ? 'PCS' : 'KGS') as CommissionBasis,
+      ratePerUnit: r.ratePerUnit,
+      effectiveFrom: r.effectiveFrom.toISOString(),
+      note: r.note,
+      userName: r.userName,
+      current: true,
+      createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
+    };
   }
 
   /** Shared by both: the catalogue, priced through whatever special rates apply

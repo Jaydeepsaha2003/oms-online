@@ -145,22 +145,24 @@ export function CommissionRatesPage() {
       {!!gaps.length && (
         <div className="flex items-start gap-2 rounded-[4px] border border-rose-300 bg-rose-50 px-3 py-2.5 text-sm text-rose-900 dark:border-rose-400/40 dark:bg-rose-500/10 dark:text-rose-200">
           <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+          {/* One short sentence of what is wrong, one of what to do. The old
+              version packed the count, the invoice total, the oldest invoice,
+              the date advice and how pricing works into a single paragraph, and
+              the instruction — the only actionable part — was last. */}
           <p>
             <b>
-              Please set {gaps.length === 1 ? 'a rate' : `${gaps.length} rates`} — {gaps.length} agent–category{' '}
-              {gaps.length === 1 ? 'pairing has' : 'pairings have'} none
+              {gaps.length === 1 ? '1 rate is missing' : `${gaps.length} rates are missing`}
             </b>{' '}
-            — {gaps.reduce((s, g) => s + g.invoiceCount, 0).toLocaleString('en-IN')} invoices already dispatched under{' '}
-            {gaps.length === 1 ? 'it' : 'them'} are earning the agent nothing.{' '}
+            — {gaps.reduce((s, g) => s + g.invoiceCount, 0).toLocaleString('en-IN')} dispatched invoices are paying the agent
+            nothing.{' '}
+            {tab === 'BASE' ? 'Use Set on any red row below.' : 'Open the Base rates tab to set them.'}
             {oldestGap && (
               <>
-                {' '}The oldest is <b>{oldestGap.firstInvoiceNo ?? '—'}</b> of{' '}
-                <b>{formatDate(oldestGap.firstInvoiceDate!)}</b> ({oldestGap.agentName} · {oldestGap.pCategory}) — set
-                &ldquo;Effective from&rdquo; to that date to catch every invoice since.
+                {' '}Oldest unpaid invoice: <b>{oldestGap.firstInvoiceNo ?? '—'}</b>,{' '}
+                <b>{formatDate(oldestGap.firstInvoiceDate!)}</b> ({oldestGap.agentName} · {oldestGap.pCategory}) — start the
+                rate from that date to cover everything since.
               </>
-            )}{' '}
-            {tab === 'BASE' ? 'Use the Set button on any red row below.' : 'Open the Base rates tab to price them.'}{' '}
-            The invoices price themselves the moment the rate is saved.
+            )}
           </p>
         </div>
       )}

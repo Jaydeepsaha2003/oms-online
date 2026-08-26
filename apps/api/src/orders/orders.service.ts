@@ -220,6 +220,21 @@ export class OrdersService {
       new Set(dispatched.map((d) => d.orderItemId)),
       new Set(dispatched.filter((d) => d.dispatchStatus === 'FULLY DISPATCH').map((d) => d.orderItemId)),
     );
+    /*
+     * The party's payment terms, for the {{pay_terms}} tag on the printed terms.
+     *
+     * Resolved here and not in `toDto`: an order has no `customer` relation (just
+     * a loose customerId), so this is a separate query — fine for one document,
+     * an N+1 on a list of them. The printed sales order is the only thing that
+     * needs it, and it is read one at a time.
+     */
+    if (row.customerId != null) {
+      const party = await this.prisma.customer.findUnique({
+        where: { id: row.customerId },
+        select: { creditPeriod: true },
+      });
+      dto.paymentTermDays = party?.creditPeriod ?? null;
+    }
     // Only the single-order fetch needs this (the printable bill's "Bill To"
     // address line) — skipped in findMany's list rows to avoid an extra join per row.
     const customer = row.customerId

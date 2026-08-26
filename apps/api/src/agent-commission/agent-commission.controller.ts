@@ -14,6 +14,7 @@ import {
   CreateCoverDto,
   CreateRateDto,
   CreateSettlementDto,
+  BulkSpecialCommissionDto,
   CreateSpecialCommissionDto,
   PaySettlementDto,
   RateImpactQueryDto,
@@ -82,6 +83,14 @@ export class AgentCommissionController {
   @Audit({ action: ACTIONS.CREATE, resource: R, description: 'Set a special agent commission rate' })
   createSpecial(@Body() dto: CreateSpecialCommissionDto, @CurrentUser() user: AuthenticatedUser) {
     return this.svc.createSpecial(dto, user.name);
+  }
+
+  /** The same special rule for several parties — one request, one re-price. */
+  @Post('rates/special/bulk')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Bulk-added an agent special commission rate' })
+  createSpecialBulk(@Body() dto: BulkSpecialCommissionDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.svc.createSpecialBulk(dto, user?.name ?? null);
   }
 
   @Delete('rates/special/:id')
