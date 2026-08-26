@@ -33,6 +33,49 @@ function registrationFailureReason(err: unknown): string {
   return `Notifications need the app’s background service, which this device refused to start. This is usually the security certificate: open https://${typeof window !== 'undefined' ? window.location.host : ''}/oms-rootCA.crt to install the OMS certificate, then reload and try again.${detail}`;
 }
 
+/**
+ * Why permission was refused, in terms the person holding the phone can act on.
+ *
+ * `Notification.requestPermission()` resolving to anything but 'granted' does NOT
+ * mean the user said no. Chrome on Android auto-denies WITHOUT ever drawing the
+ * prompt when the origin is not trustworthy — which is this app's normal state on
+ * a phone that has not installed /oms-rootCA.crt, since it is served over LAN
+ * https with its own CA. The old flat "Notification permission was not granted."
+ * blamed the user for a certificate problem and sent them hunting through the
+ * wrong settings screen. Nothing about it is role-related either, though it looks
+ * that way when only some people's phones trust the certificate.
+ *
+ * The environment blockers explain themselves. Past those, the only way to tell
+ * "the browser refused because it does not trust this origin" from "the user
+ * tapped Block" is to find out whether a worker can register here at all: the
+ * untrusted-certificate case throws an SSL error, and that is the actionable one.
+ */
+async function permissionFailureReason(permission: NotificationPermission): Promise<string> {
+  // Insecure context / iOS-not-installed already have precise wording.
+  if (typeof window !== 'undefined' && !window.isSecureContext) return registrationFailureReason(null);
+  const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const standalone =
+    (typeof window !== 'undefined' && window.matchMedia?.('(display-mode: standalone)').matches) ||
+    (navigator as Navigator & { standalone?: boolean }).standalone === true;
+  if (iOS && !standalone) return registrationFailureReason(null);
+
+  if ('serviceWorker' in navigator) {
+    try {
+      await navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
+    } catch (err) {
+      // Registration failing here means the device could never have shown the
+      // prompt — the certificate, not the person, is what said no.
+      return registrationFailureReason(err);
+    }
+  }
+
+  if (permission === 'denied') {
+    return `Notifications are blocked for this site on this device. In Chrome, tap the icon to the left of the address bar → Permissions → Notifications → Allow, then reload and try again. On Android also check Settings → Apps → Chrome → Notifications is switched on.`;
+  }
+  // 'default' — the prompt appeared and was dismissed without choosing.
+  return 'The permission prompt was closed without choosing. Tap “Turn on” again and pick Allow.';
+}
+
 /** Converts a VAPID base64url public key into the Uint8Array pushManager.subscribe() needs. */
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -85,7 +128,7 @@ export async function subscribeToPush(): Promise<SubscribeResult> {
 
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') {
-    return { ok: false, reason: 'Notification permission was not granted.' };
+    return { ok: false, reason: await permissionFailureReason(permission) };
   }
 
   // Same guard as above: never await a `.ready` that may never settle.
