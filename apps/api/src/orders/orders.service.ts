@@ -1,6 +1,7 @@
 import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { isAdminRole } from '@oms/shared';
 import { Prisma } from '@prisma/client';
 import {
   isUncommittedOrder,
@@ -1416,7 +1417,7 @@ export class OrdersService {
    *  evidence of what actually shipped and can no longer be removed — mirrors
    *  {@link DispatchService.assertNotBilled}, checked here too since a photo
    *  can be deleted straight from Order Modify, not only from Modify Dispatch. */
-  async deletePhoto(photoId: number, requestedBy?: string | null): Promise<void> {
+  async deletePhoto(photoId: number, requestedBy?: string | null, requesterRoles: readonly string[] = []): Promise<void> {
     const row = await this.prisma.orderItemPhoto.findUnique({ where: { id: photoId } });
     if (!row) throw new NotFoundException('Photo not found.');
 
@@ -1436,17 +1437,19 @@ export class OrdersService {
      * cased ("KANIK@oms.local" alongside "admin@oms.local"), and a case-sensitive
      * check would lock people out of their own uploads.
      *
-     * Photos predating this column (uploadedBy null) have no owner to match, so
-     * nobody can delete them. That is the safe direction: they are the oldest
-     * records, and a null is not evidence that the person asking put it there.
+     * Admins are the exception, and the reason the check is not ownership alone:
+     * they moderate everyone's content, and they are also the only ones who can
+     * clear the photos that predate this column (uploadedBy null), which have no
+     * owner for anybody to match.
      */
     const owner = row.uploadedBy?.trim().toLowerCase();
     const asker = requestedBy?.trim().toLowerCase();
-    if (!owner || !asker || owner !== asker) {
+    const isOwner = !!owner && !!asker && owner === asker;
+    if (!isOwner && !isAdminRole(requesterRoles)) {
       throw new ForbiddenException(
         owner
-          ? 'Only the person who uploaded a photo can remove it.'
-          : 'This photo has no recorded uploader, so it can no longer be removed.',
+          ? 'Only the person who uploaded a photo, or an admin, can remove it.'
+          : 'This photo has no recorded uploader, so only an admin can remove it.',
       );
     }
 

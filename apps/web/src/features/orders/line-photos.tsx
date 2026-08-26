@@ -24,6 +24,7 @@ import { toast } from 'sonner';
 import type { OrderItemPhotoInput } from '@oms/shared';
 import { getApiErrorMessage, uploadFile } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth-store';
+import { isAdminRole } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { useConfirm } from '@/components/common/confirm';
 import { looksLikeImage, prepareImageForUpload } from '@/lib/image-prep';
@@ -492,13 +493,16 @@ export function LiveLinePhotos({
   gridClassName?: string;
 }) {
   const confirm = useConfirm();
-  // Only the uploader may remove a photo. The server enforces this (see
-  // OrdersService.deletePhoto) — hiding the control here just stops offering an
-  // action that would be refused, and keeps someone else's reference photo from
-  // looking like it is the current user's to discard. Matched on email,
-  // case-insensitively: the stored values are inconsistently cased.
+  // Your own photo, or anyone's if you are an admin. The server enforces this
+  // (see OrdersService.deletePhoto) — hiding the control here just stops offering
+  // an action that would be refused, and keeps someone else's reference photo
+  // from looking like it is the current user's to discard. Matched on email,
+  // case-insensitively: the stored values are inconsistently cased. Admins are
+  // also the only ones who can clear photos with no recorded uploader.
   const me = useAuthStore((st) => st.user?.email)?.trim().toLowerCase();
-  const ownedByMe = (photo: LinePhoto) => {
+  const admin = isAdminRole(useAuthStore((st) => st.user?.roles));
+  const mayRemove = (photo: LinePhoto) => {
+    if (admin) return true;
     const owner = photo.uploadedBy?.trim().toLowerCase();
     return !!owner && !!me && owner === me;
   };
@@ -550,7 +554,7 @@ export function LiveLinePhotos({
       // (challan-form-page passes canEdit={false}) keeps its answer.
       canDelete={(photo) => {
         const allowedByCaller = typeof canDelete === 'function' ? canDelete(photo) : (canDelete ?? canEdit);
-        return allowedByCaller && ownedByMe(photo);
+        return allowedByCaller && mayRemove(photo);
       }}
       busy={busy}
       onAddFiles={addFiles}
