@@ -538,6 +538,10 @@ export class DispatchService implements OnModuleInit {
     if (query.status) and.push({ dispatchStatus: uc(query.status)! });
     if (query.customer) and.push({ customerName: query.customer });
     if (query.agent) and.push({ agentName: query.agent });
+    // `pCategory` (the PRODUCT's category) rather than the order-level `category`
+    // column — same field Dispatch Order filters the pending pool by, so the two
+    // pages agree on what "GLASS" means.
+    if (query.category) and.push({ pCategory: query.category });
     // Modify Dispatch's item picker lists BASE names (like Dispatch Order), so a
     // pick also brings in that base's design variants. ALL on → exact item only.
     if (query.product) and.push(productNameWhere(query.product, !query.all));
@@ -639,6 +643,7 @@ export class DispatchService implements OnModuleInit {
         agentName: true,
         productName: true,
         product: true,
+        pCategory: true,
         designType: true,
         dispatchStatus: true,
         orderItem: { select: { design: true, designType: true, productName: true } },
@@ -653,6 +658,7 @@ export class DispatchService implements OnModuleInit {
       if (q.status) out = out.filter((r) => r.dispatchStatus === q.status);
       if (q.customer) out = out.filter((r) => r.customerName === q.customer);
       if (q.agent) out = out.filter((r) => r.agentName === q.agent);
+      if (q.category) out = out.filter((r) => r.pCategory === q.category);
       if (q.product) out = out.filter((r) => matchesProductName(r.productName || r.product, q.product!, !q.all));
       if (q.design) out = out.filter((r) => designNameOf(r) === q.design);
       return out;
@@ -667,6 +673,7 @@ export class DispatchService implements OnModuleInit {
     return {
       customers: distinct(poolFor('customer'), (r) => r.customerName),
       agents: distinct(poolFor('agent'), (r) => r.agentName),
+      categories: distinct(poolFor('category'), (r) => r.pCategory),
       products: distinct(productPool, (r) => r.productName || r.product),
       productBases: distinct(productPool, (r) => baseProductName(r.productName || r.product, r.product)),
       designs: distinct(poolFor('design'), designNameOf),

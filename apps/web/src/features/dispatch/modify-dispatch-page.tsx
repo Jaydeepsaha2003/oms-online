@@ -674,6 +674,9 @@ export function ModifyDispatchPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [customerFilter, setCustomerFilter] = useState('');
   const [agentFilter, setAgentFilter] = useState('');
+  // Sits ABOVE the item picker, same as Dispatch Order: the option lists cascade,
+  // so choosing a category first cuts the item dropdown to that category's names.
+  const [categoryFilter, setCategoryFilter] = useState('');
   const [productFilter, setProductFilter] = useState('');
   const [designFilter, setDesignFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
@@ -719,6 +722,7 @@ export function ModifyDispatchPage() {
     status: statusFilter || undefined,
     customer: customerFilter || undefined,
     agent: agentFilter || undefined,
+    category: categoryFilter || undefined,
     product: productFilter || undefined,
     design: designFilter || undefined,
   });
@@ -749,6 +753,7 @@ export function ModifyDispatchPage() {
     status: statusFilter || undefined,
     customer: customerFilter || undefined,
     agent: agentFilter || undefined,
+    category: categoryFilter || undefined,
     product: productFilter || undefined,
     design: designFilter || undefined,
     dateFrom: dateFrom || undefined,
@@ -848,12 +853,13 @@ export function ModifyDispatchPage() {
   // a notification deep-link can still set it, and without this the grid would
   // sit silently filtered with no control offering to undo it. Folding it into
   // the existing Reset-all keeps that escape hatch without reintroducing a box.
-  const hasFilters = !!(search || statusFilter || customerFilter || agentFilter || productFilter || designFilter || dateActive);
+  const hasFilters = !!(search || statusFilter || customerFilter || agentFilter || categoryFilter || productFilter || designFilter || dateActive);
   const resetFilters = () => {
     setSearch('');
     setStatusFilter('');
     setCustomerFilter('');
     setAgentFilter('');
+    setCategoryFilter('');
     setProductFilter('');
     setDesignFilter('');
     clearDates();
@@ -977,6 +983,7 @@ export function ModifyDispatchPage() {
               needing a second "apply" step inside the sheet. */}
           <div className="flex w-full flex-col gap-2 sm:hidden">
             <NativeSelect value={customerFilter} onChange={(v) => { setCustomerFilter(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="Customer" className={cn(CONTROL, 'font-medium', customerFilter && CONTROL_ON)} />
+            <NativeSelect value={categoryFilter} onChange={(v) => { setCategoryFilter(v); setProductFilter(''); setPage(1); }} options={['', ...(options?.categories ?? [])]} placeholder="Category" className={cn(CONTROL, 'font-medium', categoryFilter && CONTROL_ON)} />
             <NativeSelect value={productFilter} onChange={(v) => { setProductFilter(v); setPage(1); }} options={['', ...itemOptions]} placeholder="Item" className={cn(CONTROL, 'font-medium', productFilter && CONTROL_ON)} digitsFirst />
             <div className="flex items-center gap-2">
               <Button variant="outline" size="icon" className={cn('relative size-9 shrink-0 rounded-[4px] border-amber-300', sheetFilterCount > 0 && CONTROL_ON)} onClick={openMobileFilters} aria-label="More filters">
@@ -1032,6 +1039,9 @@ export function ModifyDispatchPage() {
                 page doesn't have — there's no Category/Sub Category filter here). */}
             <div className="sm:w-40">
               <NativeSelect value={customerFilter} onChange={(v) => { setCustomerFilter(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="All customers" className={cn(CONTROL, 'font-medium', customerFilter && CONTROL_ON)} />
+            </div>
+            <div className="sm:w-36">
+              <NativeSelect value={categoryFilter} onChange={(v) => { setCategoryFilter(v); setProductFilter(''); setPage(1); }} options={['', ...(options?.categories ?? [])]} placeholder="All categories" className={cn(CONTROL, 'font-medium', categoryFilter && CONTROL_ON)} />
             </div>
             <div className="sm:w-40">
               {/* Digits-first keyboard: item names begin with a size number. */}
