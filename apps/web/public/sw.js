@@ -19,7 +19,11 @@
 // v15: notificationclick now leaves its target in this cache for the page to
 // pick up on boot (see the handler at the bottom), so the key has to survive
 // into the version the page reads it from.
-const CACHE = 'oms-v18';
+// Stamped at build time from a fingerprint of the emitted assets — see
+// `swBuildId` in vite.config.ts. Do NOT hand-edit this back to a literal: the
+// whole point is that a deploy can no longer forget to invalidate the cache.
+// In dev the placeholder is left as-is, which is a fine stable key.
+const CACHE = 'oms-__BUILD_ID__';
 
 /** Retry pauses (ms) before a navigation with no cached shell gives up.
  *  Sized against a real restart: restart.bat bounces the API in about 3s, and
