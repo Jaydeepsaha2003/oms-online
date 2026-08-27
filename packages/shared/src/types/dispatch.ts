@@ -245,6 +245,10 @@ export type DispatchQuery = PaginationQuery & {
   status?: string;
   /** Exact-match filters (values come from {@link DispatchFilterOptions}). */
   customer?: string;
+  /** Product category (the line's `pCategory`) — same short GLASS / CUP / LOTI
+   *  list Dispatch Order filters by, and the reason it sits above the item
+   *  picker: choosing it cuts the item list to that category's names. */
+  category?: string;
   product?: string;
   design?: string;
   agent?: string;
@@ -253,8 +257,9 @@ export type DispatchQuery = PaginationQuery & {
   dateTo?: string;
 };
 /** Distinct values present in dispatch records, for the Modify Dispatch filters.
- *  `categories` / `subCategories` are only populated for the pending pool
- *  (Dispatch Order page). */
+ *  `categories` is populated for BOTH the pending pool (Dispatch Order) and the
+ *  dispatch records (Modify Dispatch). `subCategories` remains pending-only —
+ *  it is ~40 build codes like "10-PCS-FG-22G" that nobody picks an item by. */
 export interface DispatchFilterOptions {
   customers: string[];
   /** Distinct sales agents present in dispatch records (Modify Dispatch filter). */

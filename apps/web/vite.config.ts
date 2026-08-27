@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { Agent } from 'node:http';
 import { homedir, hostname, networkInterfaces } from 'node:os';
 import path from 'node:path';
@@ -207,6 +208,46 @@ const apiProxy = {
 };
 
 // https://vitejs.dev/config/
+/**
+ * Stamps the service worker's cache key with a fingerprint of the build output.
+ *
+ * `sw.js` deletes every cache whose key is not the current one on activate, so
+ * that key is what forces stranded clients onto a fresh copy. It used to be a
+ * hand-edited constant, which meant a deploy only invalidated the cache if
+ * somebody REMEMBERED to bump it — and forgetting is silent, leaves people on
+ * yesterday's bundle, and looks exactly like "the change didn't deploy".
+ *
+ * The fingerprint is taken over the emitted asset filenames. Vite content-hashes
+ * those, so it changes if and only if the built output actually changed: a
+ * rebuild that produces identical output keeps the key, and every real change
+ * rotates it. Rebuilding the file's bytes also makes the browser notice the
+ * worker itself is new (registration uses `updateViaCache: 'none'`), which is
+ * what triggers the install in the first place.
+ */
+function swBuildId(): Plugin {
+  return {
+    name: 'oms-sw-build-id',
+    apply: 'build',
+    closeBundle: {
+      sequential: true,
+      handler() {
+        const outDir = path.resolve(import.meta.dirname, 'dist');
+        const swPath = path.join(outDir, 'sw.js');
+        if (!existsSync(swPath)) return;
+        const assetsDir = path.join(outDir, 'assets');
+        // Sorted so the fingerprint does not depend on directory order.
+        const fingerprint = existsSync(assetsDir) ? readdirSync(assetsDir).sort().join('|') : '';
+        const id = createHash('sha256').update(fingerprint).digest('hex').slice(0, 12);
+        const src = readFileSync(swPath, 'utf8');
+        if (!src.includes('__BUILD_ID__')) return;
+        writeFileSync(swPath, src.replaceAll('__BUILD_ID__', id));
+        // eslint-disable-next-line no-console
+        console.log(`  service worker cache key -> oms-${id}`);
+      },
+    },
+  };
+}
+
 export default defineConfig({
   // mkcert generates a *locally-trusted* certificate (backed by a real local CA)
   // instead of a random self-signed one — required for microphone access from
@@ -226,6 +267,7 @@ export default defineConfig({
     serveRootCa,
     gzipPreview,
     keepAlive,
+    swBuildId(),
   ],
   resolve: {
     alias: {

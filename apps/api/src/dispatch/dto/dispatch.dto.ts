@@ -22,6 +22,10 @@ export class CreateDispatchDto {
 export class UpdateDispatchDto extends PartialType(CreateDispatchDto) {}
 
 export class DispatchQueryDto extends PaginationDto {
+  // Declared or `ValidationPipe({ whitelist: true })` strips it and the
+  // dropdown silently filters nothing.
+  @IsOptional() @IsString() category?: string;
+
   @IsOptional() @IsString() status?: string;
   @IsOptional() @IsString() customer?: string;
   @IsOptional() @IsString() agent?: string;

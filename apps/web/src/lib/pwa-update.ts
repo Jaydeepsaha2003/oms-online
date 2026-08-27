@@ -88,8 +88,44 @@ async function reloadIfNewBuildDeployed(): Promise<void> {
 let updatePending = false;
 const updateListeners = new Set<(pending: boolean) => void>();
 
+/**
+ * The page the user has entered data on, or null if they have not typed anything
+ * here yet.
+ *
+ * Focus alone was never enough to know whether a reload was safe. The old check
+ * asked only "is a field focused RIGHT NOW", which is false for most of a data
+ * entry session: fill a line on the order form, click Add, and focus is on a
+ * button with eight entered items sitting in React state and nothing focused.
+ * The tab looked idle and got reloaded, taking the lot — which is exactly the
+ * moment the comment above says we must not reload.
+ *
+ * Recorded per PATH, so the flag clears itself when the user leaves the screen:
+ * whatever was at risk belonged to that page, and once they navigate away it is
+ * already gone or already saved. A dashboard or list the user has never typed on
+ * still auto-updates silently, which is where that behaviour actually helps.
+ *
+ * Capture phase, on both `input` and `change`, so it sees events from every
+ * control including ones that stop propagation.
+ */
+let enteredDataOnPath: string | null = null;
+if (typeof document !== 'undefined') {
+  const remember = () => {
+    enteredDataOnPath = window.location.pathname;
+  };
+  document.addEventListener('input', remember, true);
+  document.addEventListener('change', remember, true);
+}
+
+/** True when the user has entered something on the screen they are still on. */
+function hasUnsavedEntry(): boolean {
+  return enteredDataOnPath !== null && enteredDataOnPath === window.location.pathname;
+}
+
 /** True when reloading now would cost the user nothing. */
 function safeToReloadNow(): boolean {
+  // Anything typed on this screen and not navigated away from — assume it is
+  // unsaved and let the pill wait for a deliberate tap instead.
+  if (hasUnsavedEntry()) return false;
   // Mid-typing, or a dialog is open (a form, a confirm) — their work is on screen.
   const el = document.activeElement;
   const typing = !!el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);

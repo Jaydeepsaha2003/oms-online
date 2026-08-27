@@ -664,15 +664,19 @@ function ModifyDispatchCard({
 export function ModifyDispatchPage() {
   const { can, permissions } = usePermissions();
   const confirm = useConfirm();
-  // A dispatch notification deep-links here as /dispatch?search=DSP-01234, so
-  // the grid opens showing the row the alert was about instead of everything.
+  // A dispatch notification still deep-links here as /dispatch?search=DSP-01234
+  // (the notifier sends orderCode for exactly that). The free-text box this fed
+  // has been removed, so the term is applied once to open the grid on the row the
+  // alert was about, then the param is dropped — see the effect below. There is
+  // no standing text filter on this page any more.
   const [searchParams, setSearchParams] = useSearchParams();
-  const deepLinked = searchParams.get('search') ?? '';
-  const [searchInput, setSearchInput] = useState(deepLinked);
-  const [search, setSearch] = useState(deepLinked);
+  const [search, setSearch] = useState(searchParams.get('search') ?? '');
   const [statusFilter, setStatusFilter] = useState('');
   const [customerFilter, setCustomerFilter] = useState('');
   const [agentFilter, setAgentFilter] = useState('');
+  // Sits ABOVE the item picker, same as Dispatch Order: the option lists cascade,
+  // so choosing a category first cuts the item dropdown to that category's names.
+  const [categoryFilter, setCategoryFilter] = useState('');
   const [productFilter, setProductFilter] = useState('');
   const [designFilter, setDesignFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
@@ -718,6 +722,7 @@ export function ModifyDispatchPage() {
     status: statusFilter || undefined,
     customer: customerFilter || undefined,
     agent: agentFilter || undefined,
+    category: categoryFilter || undefined,
     product: productFilter || undefined,
     design: designFilter || undefined,
   });
@@ -733,19 +738,10 @@ export function ModifyDispatchPage() {
   useEffect(() => {
     const q = searchParams.get('search');
     if (!q) return;
-    setSearchInput(q);
     setSearch(q);
     setPage(1);
     setSearchParams({}, { replace: true });
   }, [searchParams, setSearchParams, setPage]);
-
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setSearch(searchInput.trim());
-      setPage(1);
-    }, 300);
-    return () => clearTimeout(t);
-  }, [searchInput]);
 
   const query = {
     // Grouped mode needs every matching row to subtotal correctly, not just one
@@ -757,6 +753,7 @@ export function ModifyDispatchPage() {
     status: statusFilter || undefined,
     customer: customerFilter || undefined,
     agent: agentFilter || undefined,
+    category: categoryFilter || undefined,
     product: productFilter || undefined,
     design: designFilter || undefined,
     dateFrom: dateFrom || undefined,
@@ -852,11 +849,17 @@ export function ModifyDispatchPage() {
     </div>
   );
 
-  const hasFilters = !!(statusFilter || customerFilter || agentFilter || productFilter || designFilter || dateActive);
+  // `search` counts here even though nothing on the page can type it any more:
+  // a notification deep-link can still set it, and without this the grid would
+  // sit silently filtered with no control offering to undo it. Folding it into
+  // the existing Reset-all keeps that escape hatch without reintroducing a box.
+  const hasFilters = !!(search || statusFilter || customerFilter || agentFilter || categoryFilter || productFilter || designFilter || dateActive);
   const resetFilters = () => {
+    setSearch('');
     setStatusFilter('');
     setCustomerFilter('');
     setAgentFilter('');
+    setCategoryFilter('');
     setProductFilter('');
     setDesignFilter('');
     clearDates();
@@ -972,16 +975,6 @@ export function ModifyDispatchPage() {
       {/* ── Toolbar: search + filters, then column settings — one card. */}
       <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
         <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
-          <div className="relative w-full sm:w-56">
-            <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
-            <Input
-              placeholder="Search #, customer, item, design name or remark…"
-              className={cn(CONTROL, 'pl-8 font-medium', searchInput && CONTROL_ON)}
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-            />
-          </div>
-
           {/* Phones: just the two filters people actually reach for first —
               Customer and Item — each on their own full-width line. Everything
               else (Agent / Design / Status) lives behind the Filter icon; Date
@@ -990,6 +983,7 @@ export function ModifyDispatchPage() {
               needing a second "apply" step inside the sheet. */}
           <div className="flex w-full flex-col gap-2 sm:hidden">
             <NativeSelect value={customerFilter} onChange={(v) => { setCustomerFilter(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="Customer" className={cn(CONTROL, 'font-medium', customerFilter && CONTROL_ON)} />
+            <NativeSelect value={categoryFilter} onChange={(v) => { setCategoryFilter(v); setProductFilter(''); setPage(1); }} options={['', ...(options?.categories ?? [])]} placeholder="Category" className={cn(CONTROL, 'font-medium', categoryFilter && CONTROL_ON)} />
             <NativeSelect value={productFilter} onChange={(v) => { setProductFilter(v); setPage(1); }} options={['', ...itemOptions]} placeholder="Item" className={cn(CONTROL, 'font-medium', productFilter && CONTROL_ON)} digitsFirst />
             <div className="flex items-center gap-2">
               <Button variant="outline" size="icon" className={cn('relative size-9 shrink-0 rounded-[4px] border-amber-300', sheetFilterCount > 0 && CONTROL_ON)} onClick={openMobileFilters} aria-label="More filters">
@@ -1045,6 +1039,9 @@ export function ModifyDispatchPage() {
                 page doesn't have — there's no Category/Sub Category filter here). */}
             <div className="sm:w-40">
               <NativeSelect value={customerFilter} onChange={(v) => { setCustomerFilter(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="All customers" className={cn(CONTROL, 'font-medium', customerFilter && CONTROL_ON)} />
+            </div>
+            <div className="sm:w-36">
+              <NativeSelect value={categoryFilter} onChange={(v) => { setCategoryFilter(v); setProductFilter(''); setPage(1); }} options={['', ...(options?.categories ?? [])]} placeholder="All categories" className={cn(CONTROL, 'font-medium', categoryFilter && CONTROL_ON)} />
             </div>
             <div className="sm:w-40">
               {/* Digits-first keyboard: item names begin with a size number. */}

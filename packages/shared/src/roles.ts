@@ -129,3 +129,10 @@ export const SYSTEM_ROLES: SystemRoleDef[] = [
 
 /** Machine name of the role that always has every permission. */
 export const SUPER_ADMIN_ROLE = 'super_admin';
+/** The admin tier: may moderate other people's content, not just their own. */
+export const ADMIN_ROLES = ['super_admin', 'admin'] as const;
+/** True when these role names include an admin tier. Shared so the server's
+ *  enforcement and the UI's affordance can never drift apart. */
+export function isAdminRole(roles: readonly string[] | null | undefined): boolean {
+  return !!roles?.some((r) => (ADMIN_ROLES as readonly string[]).includes(r));
+}
