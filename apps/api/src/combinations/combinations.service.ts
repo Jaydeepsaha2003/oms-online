@@ -1,9 +1,10 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { type CombinationDto, type Paginated } from '@oms/shared';
+import { type BulkCombinationResult, type CombinationDto, type Paginated } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { uc } from '../common/coerce';
 import {
+  BulkCombinationsDto,
   CombinationQueryDto,
   CreateCombinationDto,
   ImportCombinationsDto,
@@ -70,6 +71,49 @@ export class CombinationsService {
       include: INCLUDE,
     });
     return this.toDto(await this.ensureCode(created));
+  }
+
+  /**
+   * Several combinations at once — the "which combinations?" step after a design
+   * is added, which pairs the new design with each partner across every
+   * sub-category it was created in.
+   *
+   * Built on `create` per group so every row gets the same name resolution and
+   * code. Two kinds of group are skipped rather than written:
+   *   - one whose exact design set is already a combination (re-running the step
+   *     after ticking one more partner must not double up the earlier ones), and
+   *   - one holding fewer than two designs, which is not a combination at all.
+   * `seen` is updated as we go, so duplicates WITHIN one request are caught too.
+   */
+  async createBulk(dto: BulkCombinationsDto): Promise<BulkCombinationResult> {
+    const groups = dto.groups ?? [];
+    if (!groups.length) throw new BadRequestException('Nothing to create.');
+    const existing = await this.prisma.combination.findMany({
+      select: { designLinks: { select: { designId: true } } },
+    });
+    const seen = new Set(existing.map((c) => this.designSetKey(c.designLinks.map((l) => l.designId))));
+
+    let created = 0;
+    let skipped = 0;
+    for (const g of groups) {
+      const ids = [...new Set(g.designIds ?? [])];
+      const key = this.designSetKey(ids);
+      if (ids.length < 2 || seen.has(key)) {
+        skipped += 1;
+        continue;
+      }
+      await this.create({ name: g.name, designIds: ids });
+      seen.add(key);
+      created += 1;
+    }
+    return { created, skipped };
+  }
+
+  /** A combination's identity for duplicate detection: its design ids, order
+   *  independent — the same two designs are the same combination whichever way
+   *  round they were ticked. */
+  private designSetKey(ids: number[]): string {
+    return [...new Set(ids)].sort((a, b) => a - b).join(',');
   }
 
   async update(id: number, dto: UpdateCombinationDto): Promise<CombinationDto> {

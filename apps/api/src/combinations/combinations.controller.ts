@@ -19,6 +19,7 @@ import { Permissions } from '../common/decorators/permissions.decorator';
 import { ExcelService } from '../excel/excel.service';
 import { CombinationsService } from './combinations.service';
 import {
+  BulkCombinationsDto,
   CombinationQueryDto,
   CreateCombinationDto,
   ImportCombinationsDto,
@@ -74,6 +75,15 @@ export class CombinationsController {
   @Audit({ action: ACTIONS.CREATE, resource: R })
   create(@Body() dto: CreateCombinationDto) {
     return this.combinations.create(dto);
+  }
+
+  /** Several combinations in one request — the Designs screen's "which
+   *  combinations?" step. Declared before ':id' so "bulk" is a route, not an id. */
+  @Post('bulk')
+  @Permissions(perm(R, ACTIONS.CREATE))
+  @Audit({ action: ACTIONS.CREATE, resource: R, description: 'Created several combinations at once' })
+  createBulk(@Body() dto: BulkCombinationsDto) {
+    return this.combinations.createBulk(dto);
   }
 
   @Patch(':id')

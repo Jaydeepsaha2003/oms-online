@@ -29,6 +29,7 @@ import {
   type RepriceResult,
   type ResolvedCommissionRate,
   type AgentSpecialCommissionDto,
+  type CustomerCommissionAddOns,
   type SpecialCommissionScope,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
@@ -143,13 +144,13 @@ export class AgentCommissionService {
     agentId: number,
     pCategory: string,
     on: Date,
-  ): Promise<{ ratePerUnit: number; basis: CommissionBasis } | null> {
+  ): Promise<{ ratePerUnit: number; basis: CommissionBasis; addToRate: boolean } | null> {
     const row = await db.agentCommissionRate.findFirst({
       where: { agentId, pCategory, effectiveFrom: { lte: on } },
       orderBy: [{ effectiveFrom: 'desc' }, { id: 'desc' }],
-      select: { ratePerUnit: true, basis: true },
+      select: { ratePerUnit: true, basis: true, addToRate: true },
     });
-    return row ? { ratePerUnit: row.ratePerUnit, basis: normBasis(row.basis) } : null;
+    return row ? { ratePerUnit: row.ratePerUnit, basis: normBasis(row.basis), addToRate: row.addToRate } : null;
   }
 
   async listRates(agentId?: number): Promise<AgentCommissionRateDto[]> {
@@ -174,6 +175,7 @@ export class AgentCommissionService {
         effectiveFrom: r.effectiveFrom.toISOString(),
         note: r.note,
         current,
+        addToRate: r.addToRate,
         createdAt: r.createdAt.toISOString(),
       };
     });
@@ -281,6 +283,7 @@ export class AgentCommissionService {
         effectiveFrom: rate?.effectiveFrom ?? null,
         suggestedBasis: suggested.get(s.pCategory) ?? null,
         gap: !rate,
+        addToRate: rate?.addToRate ?? false,
       });
     }
 
@@ -295,6 +298,7 @@ export class AgentCommissionService {
         ratePerUnit: r.ratePerUnit, basis: r.basis, effectiveFrom: r.effectiveFrom,
         suggestedBasis: suggested.get(r.pCategory) ?? null,
         gap: false,
+        addToRate: r.addToRate,
       });
     }
 
@@ -366,6 +370,7 @@ export class AgentCommissionService {
         effectiveFrom,
         note: dto.note?.trim() || null,
         userName: userName ?? null,
+        addToRate: dto.addToRate ?? false,
       },
     });
     // Price the invoices this rate reaches, now, as part of the same action.
@@ -1852,14 +1857,24 @@ export class AgentCommissionService {
    * customer: a general rule still earns commission normally, it just has no
    * one party to charge it to (see `addToRate` on the schema).
    */
-  async listAddOnsForCustomer(customerId: number): Promise<AgentSpecialCommissionDto[]> {
+  async listAddOnsForCustomer(customerId: number): Promise<CustomerCommissionAddOns> {
+    const empty: CustomerCommissionAddOns = { specials: [], bases: [] };
     const customer = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { agentName: true } });
     const agentName = customer?.agentName?.trim();
-    if (!agentName || agentName.toUpperCase() === 'SELF') return [];
+    if (!agentName || agentName.toUpperCase() === 'SELF') return empty;
     const agent = await this.prisma.agent.findFirst({ where: { name: agentName } });
-    if (!agent) return [];
-    const all = await this.listSpecials(agent.id);
-    return all.filter((r) => r.current && r.addToRate && r.customerId === customerId);
+    if (!agent) return empty;
+
+    const [specialsAll, ratesAll] = await Promise.all([this.listSpecials(agent.id), this.listRates(agent.id)]);
+    return {
+      // Every current rule that could reach this customer: their own, plus the
+      // agent's general ones. NOT filtered to `addToRate` — see the type's own
+      // comment: an unflagged special has to be able to beat a flagged base.
+      specials: specialsAll.filter((r) => r.current && (r.customerId == null || r.customerId === customerId)),
+      bases: ratesAll
+        .filter((r) => r.current)
+        .map((r) => ({ pCategory: r.pCategory, ratePerUnit: r.ratePerUnit, basis: r.basis, addToRate: r.addToRate })),
+    };
   }
 
   /**

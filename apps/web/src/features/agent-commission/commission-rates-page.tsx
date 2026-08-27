@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarClock, History, Loader2, Pencil, Plus, Trash2, TriangleAlert } from 'lucide-react';
+import { CalendarClock, History, IndianRupee, Loader2, Pencil, Plus, Receipt, Trash2, TriangleAlert, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { basisUnit, COMMISSION_BASES, type AgentRateCoverageRow, type CommissionBasis } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -11,6 +11,7 @@ import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAgents } from '@/features/agents/use-agents';
 import { useOrderLookups } from '@/features/orders/use-orders';
@@ -272,9 +273,22 @@ export function CommissionRatesPage() {
                         {r.ratePerUnit == null ? (
                           <span className="text-muted-foreground font-normal">—</span>
                         ) : (
-                          <span className="text-emerald-700 dark:text-emerald-400">
-                            ₹{r.ratePerUnit}
-                            <span className="text-muted-foreground text-[10px] font-normal">/{basisUnit(r.basis ?? 'KGS')}</span>
+                          <span className="inline-flex items-baseline gap-1.5">
+                            <span className="text-emerald-700 dark:text-emerald-400">
+                              ₹{r.ratePerUnit}
+                              <span className="text-muted-foreground text-[10px] font-normal">/{basisUnit(r.basis ?? 'KGS')}</span>
+                            </span>
+                            {/* Charged through to customers — visible without
+                                opening the rate, since it is a PRICE decision
+                                affecting every party this agent sells to. */}
+                            {r.addToRate && (
+                              <span
+                                className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9.5px] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
+                                title="Added onto the product price for every party this agent sells this category to"
+                              >
+                                <Receipt className="size-2.5" /> in rate
+                              </span>
+                            )}
                           </span>
                         )}
                       </td>
@@ -446,6 +460,16 @@ function RateDialog({ seed, agents, categories, lookups, history, onClose }: {
   const [rate, setRate] = useState('');
   const [effectiveFrom, setEffectiveFrom] = useState(ymd(new Date()));
   const [note, setNote] = useState('');
+  /*
+   * Charge this commission through to the customer as well as paying the agent.
+   *
+   * Seeded from the rate currently in force, because saving here writes the NEXT
+   * dated rate for the same pairing — silently dropping back to "off" would
+   * quietly stop charging it through on the next rate change, which is a price
+   * cut nobody asked for. See the effect below for why it is not just an
+   * initialiser.
+   */
+  const [addToRate, setAddToRate] = useState(false);
 
   const suggested = categoryBasis.get(pCategory.trim().toUpperCase());
   const overridden = !!suggested && suggested !== basis;
@@ -492,6 +516,22 @@ function RateDialog({ seed, agents, categories, lookups, history, onClose }: {
     setEffectiveFrom(ymd(new Date(earliest)));
   }, [impact.data?.earliestInvDate, past.length, agentName, pCategory]);
 
+  /*
+   * Follow the rate in force as the pairing changes.
+   *
+   * `current` only lands once the agent and category are picked (and the
+   * history has loaded), so this cannot be a useState initialiser. Keyed on the
+   * pairing so switching agent/category re-seeds, while a toggle the user has
+   * since flipped on the SAME pairing is left alone.
+   */
+  const flagSeededRef = useRef('');
+  useEffect(() => {
+    const key = `${agentName}|${pCategory.trim().toUpperCase()}`;
+    if (!agentName || !pCategory.trim() || flagSeededRef.current === key) return;
+    flagSeededRef.current = key;
+    setAddToRate(current?.addToRate ?? false);
+  }, [agentName, pCategory, current?.addToRate]);
+
   const save = async () => {
     const agentId = agents.find((a) => a.name === agentName)?.id;
     if (!agentId) return toast.error('Choose an agent.');
@@ -522,8 +562,26 @@ function RateDialog({ seed, agents, categories, lookups, history, onClose }: {
       });
       if (!ok) return;
     }
+    /*
+     * Turning this on is a PRICE change for every party this agent sells the
+     * category to — unlike the party-level Special Commission, a base rate
+     * names nobody. Worth stopping for once, and only when it is being switched
+     * on (or the amount changed while on); turning it off lowers prices back,
+     * which needs no ceremony.
+     */
+    if (addToRate && !(current?.addToRate && current.ratePerUnit === value)) {
+      const ok = await confirm({
+        title: `Charge ₹${value}/${basisUnit(basis)} through to customers?`,
+        description:
+          `Every party ${agentName} sells ${pCategory.toUpperCase()} to will have ₹${value}/${basisUnit(basis)} added onto the ` +
+          `product rate on new orders from ${effectiveFrom}. ${agentName} is still paid this at settlement exactly as before — ` +
+          'this only changes what the customer is charged.',
+        confirmText: 'Yes, add it to the price',
+      });
+      if (!ok) return;
+    }
     create.mutate(
-      { agentId, pCategory: pCategory.trim().toUpperCase(), basis, ratePerUnit: value, effectiveFrom, note: note.trim() || null },
+      { agentId, pCategory: pCategory.trim().toUpperCase(), basis, ratePerUnit: value, effectiveFrom, note: note.trim() || null, addToRate },
       {
         onSuccess: (saved) => {
           // Say what the save actually DID. "Saved" would leave the user
@@ -564,10 +622,13 @@ function RateDialog({ seed, agents, categories, lookups, history, onClose }: {
           </div>
         </div>
 
-        <div className="flex flex-wrap items-end gap-3">
+        {/* The three figures that ARE the rate, in one bordered block — they
+            were a wrapping flex row where the ₹ box could end up beside the
+            date on one line and under it on another. */}
+        <div className="bg-muted/30 grid gap-3 rounded-lg border p-3 sm:grid-cols-[auto_1fr_auto]">
           <div className="space-y-1.5">
             <Label className="text-sm">Charge per</Label>
-            <div className="flex h-10 items-center rounded-[4px] border p-0.5">
+            <div className="bg-background flex h-10 items-center rounded-[4px] border p-0.5">
               {COMMISSION_BASES.map((b) => (
                 <button
                   key={b}
@@ -584,23 +645,74 @@ function RateDialog({ seed, agents, categories, lookups, history, onClose }: {
             </div>
           </div>
           <div className="space-y-1.5">
-            <Label className="text-sm">₹ per {basisUnit(basis)}</Label>
-            <Input
-              type="number"
-              step="any"
-              min={0}
-              autoFocus
-              className="h-10 w-32 text-right text-base font-semibold tabular-nums"
-              value={rate}
-              onChange={(e) => setRate(e.target.value)}
-              placeholder={basis === 'PCS' ? '2' : '40'}
-            />
+            <Label className="text-sm">Rate per {basisUnit(basis)}</Label>
+            {/* Spinners hidden: they invite nudging a price by ±1 with an
+                accidental scroll, and a commission rate is typed, not dialled. */}
+            <div className="relative">
+              <IndianRupee className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
+              <Input
+                type="number"
+                step="any"
+                min={0}
+                autoFocus
+                className="h-10 pl-8 text-base font-bold tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                value={rate}
+                onChange={(e) => setRate(e.target.value)}
+                placeholder={basis === 'PCS' ? '2' : '40'}
+              />
+            </div>
           </div>
           <div className="space-y-1.5">
             <Label className="text-sm">Effective from</Label>
-            <Input type="date" className="h-10 w-44 tabular-nums" value={effectiveFrom} onChange={(e) => setEffectiveFrom(e.target.value)} />
+            <Input type="date" className="h-10 w-full tabular-nums sm:w-44" value={effectiveFrom} onChange={(e) => setEffectiveFrom(e.target.value)} />
           </div>
         </div>
+
+        {/*
+          * Charge it through to the customer, or absorb it.
+          *
+          * The same switch the party-level Special Commission carries, and the
+          * copy has to say what is different about this one: a base rate names
+          * no party, so ON reaches EVERY party this agent sells the category to.
+          */}
+        <label
+          className={cn(
+            'flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 transition-colors',
+            addToRate
+              ? 'border-amber-300 bg-amber-50 dark:border-amber-400/40 dark:bg-amber-400/10'
+              : 'hover:bg-muted/40',
+          )}
+        >
+          <Switch checked={addToRate} onCheckedChange={setAddToRate} className="mt-0.5" />
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center gap-1.5 text-[13px] font-semibold">
+              <Receipt className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+              Add this rate to the product price
+            </span>
+            <span className="text-muted-foreground mt-0.5 block text-[11.5px] leading-snug">
+              {addToRate ? (
+                <>
+                  {/* The box starts empty on a new dated rate, and "₹—/kg" reads
+                      like a broken figure — name the amount only once there is one. */}
+                  {rate.trim() ? `₹${rate}/${basisUnit(basis)} is` : 'This rate is'} added onto the product rate on new orders,
+                  so the customer pays it. {agentName || 'The agent'} is still paid it at settlement exactly as before.
+                </>
+              ) : (
+                <>
+                  Off (usual): {agentName || 'the agent'} is paid this out of margin at settlement — customers’ prices are
+                  untouched. Turn on to charge it through instead.
+                </>
+              )}
+            </span>
+            {addToRate && (
+              <span className="mt-1.5 flex items-start gap-1.5 text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">
+                <Users className="mt-[1px] size-3.5 shrink-0" />
+                This is the base rate, so it applies to EVERY party {agentName || 'this agent'} sells{' '}
+                {pCategory ? pCategory.toUpperCase() : 'this category'} to. For one party only, use Special Commission.
+              </span>
+            )}
+          </span>
+        </label>
 
         {/* The consequence of that date, in invoices. */}
         {!!impact.data && !!pCategory.trim() && (

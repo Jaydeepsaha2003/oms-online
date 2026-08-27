@@ -133,6 +133,24 @@ export interface AgentSpecialCommissionInput {
   addToRate?: boolean;
 }
 
+/**
+ * Everything the order form needs to decide whether a line's agent commission
+ * is charged through to one customer, and how much.
+ *
+ * Both halves are required, and `specials` deliberately carries EVERY current
+ * rule that could apply — not just the flagged ones. Only one rule ever wins:
+ * a matching special replaces the base outright. So an UNFLAGGED special
+ * covering a line must be able to suppress a FLAGGED base, and filtering the
+ * list down to flagged rules would lose exactly that and overcharge the
+ * customer.
+ */
+export interface CustomerCommissionAddOns {
+  /** Current special rules for this customer's agent — party-named or general. */
+  specials: AgentSpecialCommissionDto[];
+  /** The base rate in force per category, with its own flag. */
+  bases: { pCategory: string; ratePerUnit: number; basis: CommissionBasis; addToRate: boolean }[];
+}
+
 /** What a challan LINE is, for the purpose of pricing its commission. */
 export interface CommissionRateContext {
   customerId: number | null;
@@ -154,9 +172,15 @@ export interface ResolvedCommissionRate {
   label: string;
   /** The special rule's id, for tracing a figure back to the rule that set it. */
   specialId: number | null;
-  /** True when the winning rule is flagged to also raise the customer's price
-   *  by this amount (see {@link AgentSpecialCommissionDto.addToRate}). Always
-   *  false when the base rate applied — a base rate is never customer-priced. */
+  /**
+   * True when whatever won — a special rule OR the base rate — is flagged to
+   * also raise the customer's price by this amount. See `addToRate` on
+   * {@link AgentSpecialCommissionDto} and on `AgentCommissionRateDto`.
+   *
+   * Only ever ONE flag applies, because only one rule wins: a matching special
+   * replaces the base outright, so a flagged base and an unflagged special
+   * covering the same line means no add-on, not a partial one.
+   */
   addToRate: boolean;
 }
 
@@ -263,7 +287,7 @@ export function specialCommissionLabel(rule: AgentSpecialCommissionDto): string 
  */
 export function resolveCommissionRate(
   rules: AgentSpecialCommissionDto[],
-  base: { ratePerUnit: number; basis: CommissionBasis } | null,
+  base: { ratePerUnit: number; basis: CommissionBasis; addToRate?: boolean } | null,
   ctx: CommissionRateContext,
 ): ResolvedCommissionRate | null {
   const lineBasis = base?.basis ?? null;
@@ -303,6 +327,9 @@ export function resolveCommissionRate(
     partySpecific: false,
     label: 'Base rate',
     specialId: null,
-    addToRate: false,
+    // The base rate carries its own "charge this through" flag. Callers that
+    // do not set it (the accrual engine, which only ever needs the money) get
+    // false, exactly as before.
+    addToRate: base.addToRate ?? false,
   };
 }

@@ -29,6 +29,10 @@ export class CreateRateDto {
   @Type(() => Number) @IsNumber({}, { message: 'The rate must be a number.' }) @Min(0, { message: 'The rate cannot be negative.' }) ratePerUnit!: number;
   @IsString() effectiveFrom!: string;
   @IsOptional() @IsString() note?: string;
+  /** Charge this rate through to the customer as well as paying the agent — see
+   *  `addToRate` on AgentCommissionRateDto. A base rate names no party, so this
+   *  reaches every party the agent sells to in the category. */
+  @IsOptional() @IsBoolean() addToRate?: boolean;
 }
 
 export class CreateCoverDto {

@@ -1,9 +1,9 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { type DesignDto, type DesignLookups, type Paginated } from '@oms/shared';
+import { type BulkDesignResult, type DesignDto, type DesignLookups, type Paginated } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { toNum, uc } from '../common/coerce';
-import { CreateDesignDto, DesignQueryDto, ImportDesignsDto, SetDesignFlagsDto, UpdateDesignDto } from './dto/design.dto';
+import { BulkDesignsDto, CreateDesignDto, DesignQueryDto, ImportDesignsDto, SetDesignFlagsDto, UpdateDesignDto } from './dto/design.dto';
 
 const INCLUDE = { combinationLinks: { include: { combination: { select: { name: true } } } } } as const;
 type Row = Prisma.DesignGetPayload<{ include: typeof INCLUDE }>;
@@ -94,6 +94,44 @@ export class DesignsService {
     } catch (err) {
       throw this.conflictOr(err);
     }
+  }
+
+  /**
+   * One design type, written into every sub-category named.
+   *
+   * Built on top of `create` rather than beside it, so each row goes through the
+   * same normalising and code assignment — a bulk path with its own insert is
+   * how the two drift apart.
+   *
+   * Sub-categories that already carry this design type are SKIPPED and reported,
+   * not treated as an error: the natural way to use this is to tick every
+   * sub-category and re-run after a new one is added, and erroring on the
+   * fifteen that already exist would make that unusable.
+   */
+  async createBulk(dto: BulkDesignsDto): Promise<BulkDesignResult> {
+    const category = uc(dto.category) ?? '';
+    const designType = uc(dto.designType) ?? '';
+    if (!category) throw new BadRequestException('Choose the category.');
+    if (!designType) throw new BadRequestException('Enter the design type.');
+    const subCategories = [...new Set((dto.subCategories ?? []).map((s) => uc(s) ?? '').filter(Boolean))];
+    if (!subCategories.length) throw new BadRequestException('Choose at least one sub-category.');
+
+    const existing = await this.prisma.design.findMany({
+      where: { category, designType, subCategory: { in: subCategories } },
+      select: { subCategory: true },
+    });
+    const already = new Set(existing.map((r) => r.subCategory));
+
+    const created: DesignDto[] = [];
+    const skipped: string[] = [];
+    for (const subCategory of subCategories) {
+      if (already.has(subCategory)) {
+        skipped.push(subCategory);
+        continue;
+      }
+      created.push(await this.create({ ...dto, subCategory }));
+    }
+    return { created, skipped };
   }
 
   async update(id: number, dto: UpdateDesignDto, changedByName?: string | null): Promise<DesignDto> {

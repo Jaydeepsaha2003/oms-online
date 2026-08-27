@@ -77,6 +77,49 @@ export interface DesignInput {
   showOnRateList?: boolean;
 }
 
+/**
+ * Is this a BASE design, or is it already a combination of others?
+ *
+ * Design types are written as their parts joined with "+": "DL+LOGO" is the DL
+ * design and the LOGO design together, and each of those also exists as its own
+ * row. So a "+" in the name is what marks a composite — and a composite is
+ * never a valid PART of a further combination, because "DL + DL+LOGO" names the
+ * same design twice.
+ *
+ * This is why the Designs screen offers only base designs when asking which
+ * combinations to build: of the 66 design rows under GLASS / 10-PCS-FG-22G only
+ * 18 are real building blocks, and listing the other 48 alongside them is what
+ * made the picker unusable.
+ */
+export function isBaseDesignType(designType: string | null | undefined): boolean {
+  return !(designType ?? '').includes('+');
+}
+
+/**
+ * One design type created across SEVERAL sub-categories at once.
+ *
+ * The same design ("AMBIENT") is normally sold in every sub-category of its
+ * category, at the same cost and rate — so entering it once per sub-category is
+ * the same form filled in a dozen times. One row is written per sub-category;
+ * ones that already have this design type are skipped rather than erroring, so
+ * re-running after a new sub-category is added is safe.
+ */
+export interface BulkDesignInput {
+  category: string;
+  subCategories: string[];
+  designType: string;
+  cost?: number | null;
+  rate?: number | null;
+  active?: boolean;
+  showOnRateList?: boolean;
+}
+
+export interface BulkDesignResult {
+  created: DesignDto[];
+  /** Sub-categories that already carried this design type — left untouched. */
+  skipped: string[];
+}
+
 export interface DesignNameDto {
   id: number;
   designType: string;
@@ -126,6 +169,28 @@ export interface CombinationDto {
 export interface CombinationInput {
   name?: string | null;
   designIds: number[];
+}
+
+/**
+ * Several combinations in one request.
+ *
+ * Adding a design and then pairing it with each of its partners is one decision
+ * that produces many combinations — "AMBIENT + DL", "AMBIENT + LOGO",
+ * "AMBIENT + WL" — and across several sub-categories at that. Sending them one
+ * at a time means a request per row and a partial result when one fails.
+ *
+ * A group whose exact design set already exists is SKIPPED, not duplicated:
+ * re-opening the step after adding one more partner is the natural way to use
+ * it, and a second identical combination would be nothing but noise.
+ */
+export interface BulkCombinationInput {
+  groups: CombinationInput[];
+}
+
+export interface BulkCombinationResult {
+  created: number;
+  /** Groups whose design set already existed (or held fewer than two designs). */
+  skipped: number;
 }
 
 /** Existing distinct values to populate the product form's category dropdowns.

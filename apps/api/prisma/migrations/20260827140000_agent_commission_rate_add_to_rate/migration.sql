@@ -1,0 +1,15 @@
+-- Base commission rate: the same "charge this through to the customer" switch
+-- the party-level Special Commission already has.
+--
+-- The difference is reach, and it is the whole reason this column is separate
+-- rather than inferred: a base rate names no party, so turning this on raises
+-- the product price for EVERY party that agent sells to in the category. A
+-- special rule that matches a line replaces the base outright and brings its
+-- own flag, so the two never stack.
+--
+-- The agent is still accrued and settled exactly as before either way — this
+-- only decides what the customer is charged.
+--
+-- Purely additive, defaulting to false: every existing rate keeps behaving
+-- exactly as it does today until someone turns this on for it.
+ALTER TABLE "agent_commission_rates" ADD COLUMN "addToRate" BOOLEAN NOT NULL DEFAULT false;

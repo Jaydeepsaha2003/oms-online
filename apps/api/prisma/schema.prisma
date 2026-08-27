@@ -1872,6 +1872,13 @@ model AgentCommissionRate {
   effectiveFrom DateTime
   note          String?
   userName      String?
+  /// When true, this rate is added onto the PRODUCT PRICE on the order form
+  /// (charged through to the customer) as well as being paid to the agent the
+  /// normal way. Same meaning as `addToRate` on AgentSpecialCommission — but
+  /// this one carries no party, so it reaches EVERY party this agent sells to
+  /// in this category. A special rule that matches replaces this rate outright,
+  /// and brings its own flag with it.
+  addToRate     Boolean  @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

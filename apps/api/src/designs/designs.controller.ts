@@ -19,7 +19,7 @@ import { Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ExcelService } from '../excel/excel.service';
 import { DesignsService } from './designs.service';
-import { CreateDesignDto, DesignQueryDto, ImportDesignsDto, SetDesignFlagsDto, UpdateDesignDto } from './dto/design.dto';
+import { BulkDesignsDto, CreateDesignDto, DesignQueryDto, ImportDesignsDto, SetDesignFlagsDto, UpdateDesignDto } from './dto/design.dto';
 
 const R = RESOURCES.DESIGN;
 
@@ -73,6 +73,15 @@ export class DesignsController {
   @Audit({ action: ACTIONS.CREATE, resource: R })
   create(@Body() dto: CreateDesignDto) {
     return this.designs.create(dto);
+  }
+
+  /** One design type across several sub-categories at once. Declared before the
+   *  ':id' routes so "bulk" is matched as a route, not parsed as a design id. */
+  @Post('bulk')
+  @Permissions(perm(R, ACTIONS.CREATE))
+  @Audit({ action: ACTIONS.CREATE, resource: R, description: 'Created a design across several sub-categories' })
+  createBulk(@Body() dto: BulkDesignsDto) {
+    return this.designs.createBulk(dto);
   }
 
   @Patch(':id/flags')

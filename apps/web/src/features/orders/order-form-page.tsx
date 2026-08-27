@@ -751,9 +751,10 @@ export function OrderFormPage() {
 
   // The selected customer's special rates (deltas), applied when an item is picked.
   const { data: special } = useCustomerSpecialRates(customerId);
-  // This customer's own commission rules flagged to raise their price (see
-  // `addToRate` on Special Commission) — folded into Product ₹ the same way a
-  // customer special rate is, just from a different table.
+  // This customer's agent commission — the special rules AND the base rates,
+  // each carrying its own "charge this through" flag. Whichever wins for a line
+  // is folded into Product ₹ the same way a customer special rate is, just from
+  // a different table. See `addToRate` on Special Commission / the rate master.
   const { data: commissionAddOns } = useAgentRateAddOns(customerId);
 
   // Keep customerId in sync with the customer NAME + the loaded lookups. Without
@@ -1036,16 +1037,34 @@ export function OrderFormPage() {
      * per-piece commission rule must never silently price a per-kg line (see
      * ruleMatches' own comment on exactly this failure mode).
      */
-    const lineBasis = categoryFieldMap.get(it.category.trim().toUpperCase()) ?? 'KGS';
-    const commissionResolved = commissionAddOns?.length
-      ? resolveCommissionRate(commissionAddOns, { ratePerUnit: 0, basis: lineBasis }, {
-          customerId: customerId ?? null,
-          pCategory: it.category,
-          subCategory: it.subCategory,
-          product: it.product,
-          designType: it.designType ?? null,
-        })
-      : null;
+    const catKey = it.category.trim().toUpperCase();
+    /*
+     * The agent's REAL base rate for this category, not a placeholder.
+     *
+     * It has to be the real one for two reasons: it carries its own
+     * `addToRate` (a base rate can now be charged through, reaching every
+     * party the agent sells to), and its basis is what keeps a per-kg rule off
+     * a per-piece category. Passing a dummy base made a flagged base rate
+     * invisible here and left the unit to a second guess.
+     */
+    const commissionBase = commissionAddOns?.bases.find((b) => b.pCategory.trim().toUpperCase() === catKey) ?? null;
+    /*
+     * Resolved through the same precedence engine the accrual uses, over ALL
+     * current rules — not just the flagged ones. A matching special replaces
+     * the base outright, so an unflagged special has to be able to win and
+     * leave nothing added; handing over only flagged rules would let a flagged
+     * base slip through underneath one and overcharge the party.
+     */
+    const commissionResolved =
+      commissionAddOns && (commissionAddOns.specials.length || commissionBase)
+        ? resolveCommissionRate(commissionAddOns.specials, commissionBase, {
+            customerId: customerId ?? null,
+            pCategory: it.category,
+            subCategory: it.subCategory,
+            product: it.product,
+            designType: it.designType ?? null,
+          })
+        : null;
     const commissionAmount = commissionResolved?.addToRate ? commissionResolved.ratePerUnit : 0;
     const hasProd = it.productRate != null || (res?.productDelta ?? 0) !== 0 || commissionAmount !== 0;
     const hasDesign = !!it.designType && (it.designRate != null || (res?.designDelta ?? 0) !== 0);

@@ -37,6 +37,18 @@ export interface AgentCommissionRateDto {
   note: string | null;
   /** True for the row currently in force for this agent + category. */
   current: boolean;
+  /**
+   * When true, this rate is ALSO added onto the product price the customer
+   * pays (the order form folds it into Product ₹) — not just paid to the agent
+   * out of margin at settlement. The agent's accrual and settlement are
+   * unchanged either way.
+   *
+   * A base rate names no party, so this reaches EVERY party the agent sells to
+   * in this category. A party-level Special Commission that matches a line
+   * replaces this rate outright and brings its own flag, so the two never add
+   * together.
+   */
+  addToRate: boolean;
   createdAt: string;
 }
 
@@ -47,6 +59,8 @@ export interface AgentCommissionRateInput {
   ratePerUnit: number;
   effectiveFrom: string;
   note?: string | null;
+  /** Defaults to false — see {@link AgentCommissionRateDto.addToRate}. */
+  addToRate?: boolean;
 }
 
 /**
@@ -79,6 +93,9 @@ export interface AgentRateCoverageRow {
   suggestedBasis: CommissionBasis | null;
   /** Sells it but isn't paid for it: this invoicing earns nothing at all. */
   gap: boolean;
+  /** True when the rate in force is charged through to customers — see
+   *  {@link AgentCommissionRateDto.addToRate}. False when nothing is set. */
+  addToRate: boolean;
 }
 
 /** Same two units the product category master already uses for pricing. */

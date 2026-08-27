@@ -1,5 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { CombinationDto, CombinationInput, CombinationList, CombinationQuery } from '@oms/shared';
+import type {
+  BulkCombinationInput,
+  BulkCombinationResult,
+  CombinationDto,
+  CombinationInput,
+  CombinationList,
+  CombinationQuery,
+} from '@oms/shared';
 import { downloadFile, http } from '@/lib/api';
 
 export interface ImportResult {
@@ -28,6 +35,16 @@ export function useCreateCombination() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: CombinationInput) => http.post<CombinationDto>('/combinations', input),
+    onSuccess: () => invalidateCombinations(qc),
+  });
+}
+
+/** Several combinations in one request — the Designs screen's "which
+ *  combinations?" step. Already-existing design sets come back in `skipped`. */
+export function useCreateCombinationBulk() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BulkCombinationInput) => http.post<BulkCombinationResult>('/combinations/bulk', input),
     onSuccess: () => invalidateCombinations(qc),
   });
 }

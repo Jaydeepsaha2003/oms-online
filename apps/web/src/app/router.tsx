@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect } from 'react';
-import { Route, Routes } from 'react-router-dom';
+import { Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { HomeRoute } from '@/components/auth/home-route';
 import { ProtectedRoute } from '@/components/auth/protected-route';
@@ -111,6 +111,28 @@ function prefetchAllPages() {
       .then(() => setTimeout(() => loadNext(i + 1), 300));
   };
   loadNext(0);
+}
+
+/**
+ * The order / quotation form, remounted whenever the DOCUMENT changes.
+ *
+ * `/orders/new`, `/orders/:id/edit` and `/quotations/:id/edit` all render the
+ * very same component at the same position in the element tree, so React
+ * reuses the instance across those navigations and every `useState` in it
+ * survives. Going from editing an order straight to New Order therefore left
+ * the saved order's customer and all its lines sitting on a form that now
+ * means "create" — and the form's own WIP auto-save then wrote them, database
+ * row ids and all, into the local draft, so the mess came back later too.
+ *
+ * A key per document turns each one into its own mount, which is what "a new
+ * form" has to mean. The kind is part of the key because an order id and a
+ * quotation id can be the same number.
+ */
+function KeyedOrderForm() {
+  const { id } = useParams<{ id?: string }>();
+  const { pathname } = useLocation();
+  const kind = pathname.startsWith('/quotations') ? 'quotation' : 'order';
+  return <OrderFormPage key={`${kind}:${id ?? 'new'}`} />;
 }
 
 /** Explicit route table. We add a route per screen as it's built. */
@@ -256,7 +278,7 @@ export function AppRoutes() {
             path="/orders/new"
             element={
               <RequirePermission permission={perm(RESOURCES.ORDER, ACTIONS.CREATE)}>
-                <OrderFormPage />
+                <KeyedOrderForm />
               </RequirePermission>
             }
           />
@@ -272,7 +294,7 @@ export function AppRoutes() {
             path="/orders/:id/edit"
             element={
               <RequirePermission permission={perm(RESOURCES.ORDER, ACTIONS.UPDATE)}>
-                <OrderFormPage />
+                <KeyedOrderForm />
               </RequirePermission>
             }
           />
@@ -328,7 +350,7 @@ export function AppRoutes() {
             path="/quotations/:id/edit"
             element={
               <RequirePermission permission={perm(RESOURCES.QUOTATION, ACTIONS.UPDATE)}>
-                <OrderFormPage />
+                <KeyedOrderForm />
               </RequirePermission>
             }
           />

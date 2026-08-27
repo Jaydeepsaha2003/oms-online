@@ -20,7 +20,7 @@ import {
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { CombinationDto, DesignDto } from '@oms/shared';
+import { isBaseDesignType, type CombinationDto, type DesignDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { parseExcelFile } from '@/lib/excel';
 import { cn, formatDateShort, formatDateTime } from '@/lib/utils';
@@ -44,6 +44,7 @@ import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/com
 import {
   exportDesigns,
   useCreateDesign,
+  useCreateDesignBulk,
   useDeleteDesign,
   useDesignLookups,
   useDesigns,
@@ -55,6 +56,7 @@ import {
   exportCombinations,
   useCombinations,
   useCreateCombination,
+  useCreateCombinationBulk,
   useDeleteCombination,
   useImportCombinations,
 } from '../combinations/use-combinations';
@@ -174,7 +176,9 @@ export function DesignsPage() {
   const [selected, setSelected] = useState<Map<number, DesignDto>>(new Map());
   const [combining, setCombining] = useState(false);
   // After a new design is created, offer to combine it with same-category designs.
-  const [combineWith, setCombineWith] = useState<DesignDto | null>(null);
+  // The rows just created, handed to the "which combinations?" step. An array
+  // because Advanced mode writes one per sub-category.
+  const [combineWith, setCombineWith] = useState<DesignDto[] | null>(null);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const activeFilterCount = (category ? 1 : 0) + (subCategory ? 1 : 0) + (combinationStatus ? 1 : 0);
   const resetFilters = () => {
@@ -972,7 +976,7 @@ export function DesignsPage() {
       {(creating || editing) && (
         <DesignDialog
           design={editing}
-          onCreated={can('combination:create') ? (d) => setCombineWith(d) : undefined}
+          onCreated={can('combination:create') ? (created) => setCombineWith(created) : undefined}
           onClose={() => {
             setCreating(false);
             setEditing(null);
@@ -989,7 +993,9 @@ export function DesignsPage() {
           }}
         />
       )}
-      {combineWith && <CombineWithDesignDialog base={combineWith} onClose={() => setCombineWith(null)} />}
+      {combineWith && combineWith.length > 0 && (
+        <CombineWithDesignDialog base={combineWith} onClose={() => setCombineWith(null)} />
+      )}
     </div>
   );
 }
@@ -1036,12 +1042,13 @@ function MoneyInput({ value, onChange }: { value: string; onChange: (v: string) 
   );
 }
 
-function DesignDialog({ design, onClose, onCreated }: { design: DesignDto | null; onClose: () => void; onCreated?: (d: DesignDto) => void }) {
+function DesignDialog({ design, onClose, onCreated }: { design: DesignDto | null; onClose: () => void; onCreated?: (created: DesignDto[]) => void }) {
   const isEdit = !!design;
   const create = useCreateDesign();
+  const createBulk = useCreateDesignBulk();
   const update = useUpdateDesign(design?.id ?? 0);
   const { data: lookups } = useDesignLookups();
-  const saving = create.isPending || update.isPending;
+  const saving = create.isPending || createBulk.isPending || update.isPending;
 
   const [form, setForm] = useState({
     category: design?.category ?? '',
@@ -1059,41 +1066,94 @@ function DesignDialog({ design, onClose, onCreated }: { design: DesignDto | null
     [lookups, form.category],
   );
 
+  /*
+   * Advanced: the same design type into MANY sub-categories at once.
+   *
+   * "AMBIENT" is normally sold in every sub-category of its category at the
+   * same cost and rate, so entering it one sub-category at a time is this form
+   * filled in a dozen times over. Editing stays single — an existing row is one
+   * row, and a multi-target edit would silently rewrite designs nobody opened.
+   */
+  const [advanced, setAdvanced] = useState(false);
+  const [subPicked, setSubPicked] = useState<Set<string>>(new Set());
+  const [subSearch, setSubSearch] = useState('');
+  const shownSubs = useMemo(
+    () => subCategoryOptions.filter((sc) => !subSearch.trim() || sc.toLowerCase().includes(subSearch.trim().toLowerCase())),
+    [subCategoryOptions, subSearch],
+  );
+  const allSubsPicked = subCategoryOptions.length > 0 && subPicked.size === subCategoryOptions.length;
+  const toggleSub = (sc: string) =>
+    setSubPicked((s) => {
+      const n = new Set(s);
+      if (n.has(sc)) n.delete(sc);
+      else n.add(sc);
+      return n;
+    });
+
   // Live margin readout — only meaningful once both cost and rate are entered.
   const costN = numOrNull(form.cost);
   const rateN = numOrNull(form.rate);
   const margin = costN != null && rateN != null ? rateN - costN : null;
   const marginPct = margin != null && rateN ? (margin / rateN) * 100 : null;
 
+  const bulkMode = advanced && !isEdit;
+
   const submit = () => {
-    if (!form.category.trim() || !form.subCategory.trim() || !form.designType.trim()) {
-      return toast.error('Category, Sub category and Design type are required');
+    if (!form.category.trim() || !form.designType.trim()) {
+      return toast.error('Category and Design type are required');
     }
-    const input = {
+    if (bulkMode ? subPicked.size === 0 : !form.subCategory.trim()) {
+      return toast.error(bulkMode ? 'Tick at least one sub-category' : 'Sub category is required');
+    }
+    const common = {
       category: form.category.trim(),
-      subCategory: form.subCategory.trim(),
       designType: form.designType.trim(),
       cost: numOrNull(form.cost),
       rate: numOrNull(form.rate),
       active: form.active,
       showOnRateList: form.showOnRateList,
     };
+    const onError = (e: unknown) => toast.error(getApiErrorMessage(e, 'Save failed'));
+
+    if (bulkMode) {
+      createBulk.mutate(
+        { ...common, subCategories: [...subPicked] },
+        {
+          onSuccess: (res) => {
+            const n = res.created.length;
+            toast.success(
+              n
+                ? `${form.designType.trim()} added to ${n} sub-categor${n === 1 ? 'y' : 'ies'}` +
+                    (res.skipped.length ? ` — ${res.skipped.length} already had it` : '')
+                : `Already in every sub-category picked — nothing to add`,
+            );
+            onClose();
+            // Nothing was written, so there is nothing to combine with.
+            if (n) onCreated?.(res.created);
+          },
+          onError,
+        },
+      );
+      return;
+    }
+
+    const input = { ...common, subCategory: form.subCategory.trim() };
     if (isEdit) {
       update.mutate(input, {
         onSuccess: () => {
           toast.success('Design updated');
           onClose();
         },
-        onError: (e: unknown) => toast.error(getApiErrorMessage(e, 'Save failed')),
+        onError,
       });
     } else {
       create.mutate(input, {
         onSuccess: (d) => {
           toast.success('Design created');
           onClose();
-          onCreated?.(d); // offer to build a combination with this new design
+          onCreated?.([d]); // offer to build combinations with this new design
         },
-        onError: (e: unknown) => toast.error(getApiErrorMessage(e, 'Save failed')),
+        onError,
       });
     }
   };
@@ -1136,20 +1196,94 @@ function DesignDialog({ design, onClose, onCreated }: { design: DesignDto | null
             <Field label="Category" required>
               <Combo
                 value={form.category}
-                onChange={(v) => { set('category', v); set('subCategory', ''); }}
+                onChange={(v) => { set('category', v); set('subCategory', ''); setSubPicked(new Set()); }}
                 options={lookups?.categories ?? []}
                 placeholder="Select or add…"
               />
             </Field>
-            <Field label="Sub category" required>
-              <Combo
-                value={form.subCategory}
-                onChange={(v) => set('subCategory', v)}
-                options={subCategoryOptions}
-                placeholder="Select or add…"
-              />
-            </Field>
+            {!bulkMode && (
+              <Field label="Sub category" required>
+                <Combo
+                  value={form.subCategory}
+                  onChange={(v) => set('subCategory', v)}
+                  options={subCategoryOptions}
+                  placeholder="Select or add…"
+                />
+              </Field>
+            )}
+            {/* Simple / Advanced sits where the single sub-category box would be
+                in Advanced mode, because that box IS what it replaces. New
+                designs only — see the `advanced` state comment. */}
+            {!isEdit && (
+              <div className={cn('flex items-end', bulkMode && 'justify-start')}>
+                <div role="group" aria-label="Sub-category mode" className="inline-flex h-9 overflow-hidden rounded-md border normal-case">
+                  {([[false, 'Simple'], [true, 'Advanced']] as const).map(([v, label]) => (
+                    <button
+                      key={label}
+                      type="button"
+                      aria-pressed={advanced === v}
+                      onClick={() => setAdvanced(v)}
+                      title={v ? 'Add this design to several sub-categories at once' : 'Add it to one sub-category'}
+                      className={cn(
+                        'px-3 text-[12.5px] font-semibold transition-colors',
+                        advanced === v ? 'bg-slate-700 text-white' : 'text-muted-foreground hover:bg-muted',
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
+
+          {/* Advanced: every sub-category of the chosen category, as a checklist.
+              Ticking none is blocked on submit rather than silently meaning
+              "all" — writing a dozen rows is not something to infer. */}
+          {bulkMode && (
+            <Field label={`Sub categories — ${subPicked.size} of ${subCategoryOptions.length} ticked`} required>
+              <div className="overflow-hidden rounded-lg border normal-case">
+                <div className="bg-muted/50 flex flex-wrap items-center gap-2 border-b px-2.5 py-1.5">
+                  <label className="flex cursor-pointer items-center gap-2 text-[12.5px] font-medium">
+                    <RowCheckbox
+                      checked={allSubsPicked}
+                      disabled={!subCategoryOptions.length}
+                      onChange={() => setSubPicked(allSubsPicked ? new Set() : new Set(subCategoryOptions))}
+                      label="All sub-categories"
+                    />
+                    All
+                  </label>
+                  {subCategoryOptions.length > 8 && (
+                    <div className="relative ml-auto min-w-0 flex-1">
+                      <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2" />
+                      <Input
+                        className="h-7 pl-7 text-[12.5px] normal-case"
+                        placeholder="Filter…"
+                        value={subSearch}
+                        onChange={(e) => setSubSearch(e.target.value)}
+                      />
+                    </div>
+                  )}
+                </div>
+                <div className="max-h-44 overflow-auto p-1.5">
+                  {!form.category.trim() ? (
+                    <p className="text-muted-foreground px-2 py-5 text-center text-[12.5px]">Pick a category first.</p>
+                  ) : shownSubs.length === 0 ? (
+                    <p className="text-muted-foreground px-2 py-5 text-center text-[12.5px]">
+                      No sub-categories under {form.category}.
+                    </p>
+                  ) : (
+                    shownSubs.map((sc) => (
+                      <label key={sc} className="hover:bg-accent flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-[12.5px]">
+                        <RowCheckbox checked={subPicked.has(sc)} onChange={() => toggleSub(sc)} label={`Add to ${sc}`} />
+                        <span className="font-medium">{sc}</span>
+                      </label>
+                    ))
+                  )}
+                </div>
+              </div>
+            </Field>
+          )}
 
           <Field label="Design type" required>
             <Input value={form.designType} onChange={(e) => set('designType', e.target.value)} autoFocus />
@@ -1205,7 +1339,11 @@ function DesignDialog({ design, onClose, onCreated }: { design: DesignDto | null
             </Button>
             <Button type="submit" disabled={saving}>
               {saving ? <Loader2 className="animate-spin" /> : <Check className="size-4" />}
-              {isEdit ? 'Save changes' : 'Create design'}
+              {isEdit
+                ? 'Save changes'
+                : bulkMode && subPicked.size > 0
+                  ? `Create in ${subPicked.size} sub-categor${subPicked.size === 1 ? 'y' : 'ies'}`
+                  : 'Create design'}
             </Button>
           </DialogFooter>
         </form>
@@ -1309,44 +1447,130 @@ function CombinationDialog({
 }
 
 /**
- * Shown right after a NEW design is created: offers to build a combination with
- * it by ticking other designs in the SAME category + sub-category.
+ * The "which combinations do you want?" step, shown right after new designs are
+ * created.
+ *
+ * Two things make this usable that did not hold before:
+ *
+ * 1. Only BASE designs are offered. Design types are written as their parts
+ *    joined with "+", so the design table itself holds both the parts and the
+ *    composites — under GLASS / 10-PCS-FG-22G, 66 rows of which only 18 are
+ *    real building blocks. Listing DL, LOGO *and* DL+LOGO side by side is what
+ *    made the picker unreadable, and picking the composite would produce
+ *    "DL + DL+LOGO", naming the same design twice. See `isBaseDesignType`.
+ *
+ * 2. Partners are chosen by design TYPE, not by row, and the work is repeated
+ *    in every sub-category the new design landed in. Advanced mode can create
+ *    AMBIENT across a dozen sub-categories; the combinations wanted are the
+ *    same in each, and nobody wants to tick "LOGO" a dozen times. A partner
+ *    that does not exist in one of those sub-categories is reported rather than
+ *    silently dropped.
  */
-function CombineWithDesignDialog({ base, onClose }: { base: DesignDto; onClose: () => void }) {
-  const create = useCreateCombination();
-  // Pull all designs once and narrow to the same category + sub-category.
-  const { data, isLoading } = useDesigns({ page: 1, pageSize: 1000 });
-  const candidates = useMemo(
-    () =>
-      (data?.items ?? [])
-        .filter((d) => d.id !== base.id && d.category === base.category && d.subCategory === base.subCategory)
-        .sort((a, b) => a.designType.localeCompare(b.designType)),
-    [data, base],
-  );
+function CombineWithDesignDialog({ base, onClose }: { base: DesignDto[]; onClose: () => void }) {
+  const createBulk = useCreateCombinationBulk();
+  const category = base[0]?.category ?? '';
+  const newType = base[0]?.designType ?? '';
+  /** The sub-categories the new design was just written into. */
+  const targetSubs = useMemo(() => [...new Set(base.map((b) => b.subCategory))].sort(), [base]);
+
+  // Only this category's designs — enough to resolve every partner row, and far
+  // less than pulling the whole catalogue.
+  const { data, isLoading } = useDesigns({ page: 1, pageSize: 2000, category });
+
+  /** (subCategory → designType → row) for the category, base designs only. */
+  const rowsBySub = useMemo(() => {
+    const m = new Map<string, Map<string, DesignDto>>();
+    for (const d of data?.items ?? []) {
+      if (!isBaseDesignType(d.designType)) continue;
+      if (!m.has(d.subCategory)) m.set(d.subCategory, new Map());
+      m.get(d.subCategory)!.set(d.designType, d);
+    }
+    return m;
+  }, [data]);
+
+  /**
+   * The partner design types on offer: every base type present in any of the
+   * target sub-categories, minus the one just created. Deduped across
+   * sub-categories, which is what makes this a list of DESIGNS rather than a
+   * list of rows — "DL" appears once, not once per sub-category.
+   */
+  const partnerTypes = useMemo(() => {
+    const set = new Set<string>();
+    for (const sub of targetSubs) {
+      for (const t of rowsBySub.get(sub)?.keys() ?? []) {
+        if (t !== newType) set.add(t);
+      }
+    }
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [rowsBySub, targetSubs, newType]);
 
   const [search, setSearch] = useState('');
-  const [picked, setPicked] = useState<Set<number>>(new Set());
-  const toggle = (id: number) =>
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  /** 'each' → one combination per partner; 'all' → a single combination of the lot. */
+  const [mode, setMode] = useState<'each' | 'all'>('each');
+  const toggle = (t: string) =>
     setPicked((s) => {
       const n = new Set(s);
-      n.has(id) ? n.delete(id) : n.add(id);
+      if (n.has(t)) n.delete(t);
+      else n.add(t);
       return n;
     });
+  const shown = partnerTypes.filter((t) => !search.trim() || t.toLowerCase().includes(search.trim().toLowerCase()));
 
-  const filtered = candidates.filter((d) => !search.trim() || d.designType.toLowerCase().includes(search.toLowerCase()));
-  const chosen = candidates.filter((d) => picked.has(d.id));
-  const all = [base, ...chosen];
-  const autoName = all.map((d) => d.designType).join(' + ');
-  const cost = all.reduce((s, d) => s + (d.cost ?? 0), 0);
-  const rate = all.reduce((s, d) => s + (d.rate ?? 0), 0);
+  /**
+   * Exactly what will be written, so the button is never a mystery.
+   *
+   * The name is set here rather than left to the server so the preview and the
+   * stored row cannot disagree — both sort the component types and join them
+   * with " + ".
+   */
+  const plan = useMemo(() => {
+    const groups: { name: string; designIds: number[]; subCategory: string }[] = [];
+    const missing: string[] = [];
+    const chosen = [...picked];
+    if (chosen.length === 0) return { groups, missing };
+
+    for (const b of base) {
+      const inSub = rowsBySub.get(b.subCategory);
+      const nameOf = (types: string[]) => [...types].sort((x, y) => x.localeCompare(y)).join(' + ');
+      if (mode === 'each') {
+        for (const t of chosen) {
+          const partner = inSub?.get(t);
+          if (!partner) {
+            missing.push(`${t} · ${b.subCategory}`);
+            continue;
+          }
+          groups.push({ name: nameOf([b.designType, t]), designIds: [b.id, partner.id], subCategory: b.subCategory });
+        }
+      } else {
+        const found = chosen.map((t) => ({ t, row: inSub?.get(t) }));
+        for (const f of found) if (!f.row) missing.push(`${f.t} · ${b.subCategory}`);
+        const ids = [b.id, ...found.filter((f) => f.row).map((f) => f.row!.id)];
+        if (ids.length >= 2) {
+          groups.push({
+            name: nameOf([b.designType, ...found.filter((f) => f.row).map((f) => f.t)]),
+            designIds: ids,
+            subCategory: b.subCategory,
+          });
+        }
+      }
+    }
+    return { groups, missing };
+  }, [base, picked, mode, rowsBySub]);
 
   const submit = () => {
     if (picked.size === 0) return toast.error('Tick at least one design to combine with');
-    create.mutate(
-      { name: autoName || null, designIds: all.map((d) => d.id) },
+    if (plan.groups.length === 0) return toast.error('Nothing to create — those designs are not in these sub-categories');
+    createBulk.mutate(
+      { groups: plan.groups.map((g) => ({ name: g.name, designIds: g.designIds })) },
       {
-        onSuccess: () => {
-          toast.success('Combination created');
+        onSuccess: (res) => {
+          toast.success(
+            res.created
+              ? `${res.created} combination${res.created === 1 ? '' : 's'} created` +
+                  (res.skipped ? ` — ${res.skipped} already existed` : '')
+              : 'Those combinations already exist',
+          );
           onClose();
         },
         onError: (e) => toast.error(getApiErrorMessage(e, 'Create failed')),
@@ -1358,69 +1582,136 @@ function CombineWithDesignDialog({ base, onClose }: { base: DesignDto; onClose: 
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Layers className="text-primary size-5" /> Create a combination with “{base.designType}”?
-          </DialogTitle>
+      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-lg">
+        <DialogHeader className="bg-muted/40 border-b px-5 py-3.5 text-left">
+          <div className="flex items-center gap-3">
+            <div className="bg-primary/10 text-primary ring-primary/15 flex size-9 items-center justify-center rounded-lg ring-1">
+              <Layers className="size-5" />
+            </div>
+            <div className="min-w-0">
+              <DialogTitle className="text-base leading-tight">Combine “{newType}” with…</DialogTitle>
+              <p className="text-muted-foreground truncate text-xs">
+                {category} ·{' '}
+                {targetSubs.length === 1
+                  ? targetSubs[0]
+                  : `${targetSubs.length} sub-categories`}
+              </p>
+            </div>
+          </div>
         </DialogHeader>
 
-        <div className="grid gap-3">
-          <p className="text-muted-foreground text-sm">
-            Tick other designs in <span className="text-foreground font-medium">{base.category} / {base.subCategory}</span> to
-            combine with the new design — or skip for now.
-          </p>
-
-          {candidates.length > 8 && (
-            <div className="relative">
-              <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
-              <Input className="pl-9" placeholder="Filter design types…" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <div className="grid gap-3 px-5 py-4">
+          {/* Every created sub-category named, so "×N" is never a guess. */}
+          {targetSubs.length > 1 && (
+            <div className="flex flex-wrap gap-1">
+              {targetSubs.map((sc) => (
+                <span key={sc} className="bg-muted rounded-full px-2 py-0.5 text-[11px] font-medium">
+                  {sc}
+                </span>
+              ))}
             </div>
           )}
 
-          <div className="max-h-64 space-y-0.5 overflow-auto rounded-md border p-1.5">
+          <div role="group" aria-label="What to create" className="inline-flex h-9 self-start overflow-hidden rounded-md border">
+            {(
+              [
+                ['each', 'One per design', `A combination for each ticked design — ${newType} + DL, ${newType} + LOGO, …`],
+                ['all', 'One of all', `A single combination of ${newType} and everything ticked`],
+              ] as const
+            ).map(([v, label, title]) => (
+              <button
+                key={v}
+                type="button"
+                aria-pressed={mode === v}
+                title={title}
+                onClick={() => setMode(v)}
+                className={cn(
+                  'px-3 text-[12.5px] font-semibold transition-colors',
+                  mode === v ? 'bg-slate-700 text-white' : 'text-muted-foreground hover:bg-muted',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {partnerTypes.length > 8 && (
+            <div className="relative">
+              <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
+              <Input className="pl-9" placeholder="Filter designs…" value={search} onChange={(e) => setSearch(e.target.value)} />
+            </div>
+          )}
+
+          <div className="max-h-56 space-y-0.5 overflow-auto rounded-md border p-1.5">
             {isLoading ? (
               <div className="text-muted-foreground flex h-20 items-center justify-center text-sm">
                 <Loader2 className="size-4 animate-spin" />
               </div>
-            ) : filtered.length === 0 ? (
+            ) : shown.length === 0 ? (
               <p className="text-muted-foreground px-2 py-6 text-center text-sm">
-                No other designs in this category / sub-category yet.
+                {partnerTypes.length === 0
+                  ? 'No other base designs here yet — add one and this step will offer it.'
+                  : 'Nothing matches that filter.'}
               </p>
             ) : (
-              filtered.map((d) => (
-                <label key={d.id} className="hover:bg-accent flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm">
-                  <RowCheckbox checked={picked.has(d.id)} onChange={() => toggle(d.id)} label={`Include ${d.designType}`} />
-                  <span className="font-medium">{d.designType}</span>
-                  <span className="text-muted-foreground ml-auto text-xs tabular-nums">
-                    cost {num(d.cost)} · rate {num(d.rate)}
-                  </span>
-                </label>
-              ))
+              shown.map((t) => {
+                // How many of the target sub-categories actually have this one.
+                const have = targetSubs.filter((sub) => rowsBySub.get(sub)?.has(t)).length;
+                return (
+                  <label key={t} className="hover:bg-accent flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm">
+                    <RowCheckbox checked={picked.has(t)} onChange={() => toggle(t)} label={`Combine with ${t}`} />
+                    <span className="font-medium">{t}</span>
+                    {targetSubs.length > 1 && (
+                      <span
+                        className={cn(
+                          'ml-auto text-[11px] tabular-nums',
+                          have === targetSubs.length ? 'text-muted-foreground' : 'text-amber-700 dark:text-amber-400',
+                        )}
+                      >
+                        in {have}/{targetSubs.length}
+                      </span>
+                    )}
+                  </label>
+                );
+              })
             )}
           </div>
 
+          {/* The plan, spelled out. A count on the button with nothing behind it
+              is how people end up surprised by what got written. */}
           {picked.size > 0 && (
-            <div className="bg-muted/40 space-y-1 rounded-md px-3 py-2 text-sm">
-              <div className="truncate">
-                <span className="text-muted-foreground">Name: </span>
-                <span className="font-medium uppercase">{autoName}</span>
+            <div className="bg-muted/40 space-y-1 rounded-md px-3 py-2 text-[12.5px]">
+              <p className="font-semibold">
+                Will create {plan.groups.length} combination{plan.groups.length === 1 ? '' : 's'}
+              </p>
+              <div className="max-h-24 space-y-0.5 overflow-auto">
+                {plan.groups.slice(0, 12).map((g, i) => (
+                  <div key={`${g.name}-${g.subCategory}-${i}`} className="flex gap-2">
+                    <span className="truncate font-medium">{g.name}</span>
+                    {targetSubs.length > 1 && <span className="text-muted-foreground ml-auto shrink-0">{g.subCategory}</span>}
+                  </div>
+                ))}
+                {plan.groups.length > 12 && (
+                  <p className="text-muted-foreground">…and {plan.groups.length - 12} more</p>
+                )}
               </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">{all.length} designs · combined cost / rate</span>
-                <span className="font-semibold tabular-nums">{cost.toLocaleString('en-IN')} / {rate.toLocaleString('en-IN')}</span>
-              </div>
+              {plan.missing.length > 0 && (
+                <p className="text-amber-700 dark:text-amber-400">
+                  {plan.missing.length} skipped — that design isn’t in the sub-category ({plan.missing.slice(0, 3).join(', ')}
+                  {plan.missing.length > 3 ? ', …' : ''})
+                </p>
+              )}
             </div>
           )}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="bg-muted/20 border-t px-5 py-3">
           <Button type="button" variant="outline" onClick={onClose}>
             Not now
           </Button>
-          <Button type="button" onClick={submit} disabled={create.isPending || picked.size === 0}>
-            {create.isPending ? <Loader2 className="animate-spin" /> : <Layers className="size-4" />}
-            Create combination
+          <Button type="button" onClick={submit} disabled={createBulk.isPending || plan.groups.length === 0}>
+            {createBulk.isPending ? <Loader2 className="animate-spin" /> : <Layers className="size-4" />}
+            {plan.groups.length > 1 ? `Create ${plan.groups.length} combinations` : 'Create combination'}
           </Button>
         </DialogFooter>
       </DialogContent>

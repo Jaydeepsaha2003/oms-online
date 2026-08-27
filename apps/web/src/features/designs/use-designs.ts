@@ -1,5 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { CatalogFlagsInput, DesignDto, DesignInput, DesignList, DesignLookups, DesignQuery } from '@oms/shared';
+import type {
+  BulkDesignInput,
+  BulkDesignResult,
+  CatalogFlagsInput,
+  DesignDto,
+  DesignInput,
+  DesignList,
+  DesignLookups,
+  DesignQuery,
+} from '@oms/shared';
 import { downloadFile, http } from '@/lib/api';
 
 export interface ImportResult {
@@ -45,6 +54,16 @@ export function useCreateDesign() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: DesignInput) => http.post<DesignDto>('/designs', input),
+    onSuccess: () => invalidateDesignsAndCombos(qc),
+  });
+}
+
+/** One design type written into every ticked sub-category — the form's Advanced
+ *  mode. Sub-categories that already have it come back in `skipped`. */
+export function useCreateDesignBulk() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BulkDesignInput) => http.post<BulkDesignResult>('/designs/bulk', input),
     onSuccess: () => invalidateDesignsAndCombos(qc),
   });
 }

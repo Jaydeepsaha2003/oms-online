@@ -1,6 +1,6 @@
-import { PartialType } from '@nestjs/swagger';
+import { OmitType, PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsArray, IsBoolean, IsIn, IsNumber, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { ArrayNotEmpty, IsArray, IsBoolean, IsIn, IsNumber, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 export class CreateDesignDto {
@@ -34,6 +34,18 @@ export class CreateDesignDto {
 }
 
 export class UpdateDesignDto extends PartialType(CreateDesignDto) {}
+
+/**
+ * The same design type across several sub-categories — see `BulkDesignInput`
+ * in @oms/shared for why. `subCategory` is replaced by the list, so there is
+ * never both a single and a plural field with nothing to say which wins.
+ */
+export class BulkDesignsDto extends OmitType(CreateDesignDto, ['subCategory'] as const) {
+  @IsArray()
+  @ArrayNotEmpty({ message: 'Choose at least one sub-category.' })
+  @IsString({ each: true })
+  subCategories!: string[];
+}
 
 /** Inline toggle of a design's active / rate-list flags (partial). */
 export class SetDesignFlagsDto {

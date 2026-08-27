@@ -71,15 +71,17 @@ export class AgentCommissionController {
   }
 
   /**
-   * Which of a customer's own commission rules add themselves onto that
-   * customer's price — what the New Order form reads to fold the amount into
-   * Product ₹. Deliberately NOT gated on `agentcommission:viewrates`: once a
-   * rule is flagged `addToRate`, its figure is no longer commission-internal —
-   * it IS the price an order-taker is about to charge, so anyone who can see
-   * a party's Special Rate (the equivalent customer-facing adjustment) can see
+   * What the New Order form needs to fold this customer's agent commission into
+   * Product ₹: the agent's current special rules plus their base rates, each
+   * carrying its own `addToRate` flag.
+   *
+   * Deliberately NOT gated on `agentcommission:viewrates`: once a rate is
+   * flagged `addToRate`, its figure is no longer commission-internal — it IS
+   * the price an order-taker is about to charge, so anyone who can see a
+   * party's Special Rate (the equivalent customer-facing adjustment) can see
    * this too.
    */
-  @Get('rates/special/customer/:customerId')
+  @Get('rates/customer-add-ons/:customerId')
   @AnyPermission(perm(RESOURCES.SPECIAL_RATE, ACTIONS.VIEW), perm(R, ACTIONS.VIEWRATES))
   addOnsForCustomer(@Param('customerId', ParseIntPipe) customerId: number) {
     return this.svc.listAddOnsForCustomer(customerId);

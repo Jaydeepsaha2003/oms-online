@@ -1,5 +1,6 @@
 import { PartialType } from '@nestjs/swagger';
-import { ArrayNotEmpty, IsArray, IsInt, IsOptional, IsString, MaxLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import { ArrayNotEmpty, IsArray, IsInt, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 export class CreateCombinationDto {
@@ -15,6 +16,16 @@ export class CreateCombinationDto {
 }
 
 export class UpdateCombinationDto extends PartialType(CreateCombinationDto) {}
+
+/** Several combinations in one request — see `BulkCombinationInput` in
+ *  @oms/shared for why this is an endpoint rather than a loop in the browser. */
+export class BulkCombinationsDto {
+  @IsArray()
+  @ArrayNotEmpty({ message: 'Nothing to create.' })
+  @ValidateNested({ each: true })
+  @Type(() => CreateCombinationDto)
+  groups!: CreateCombinationDto[];
+}
 
 export class CombinationQueryDto extends PaginationDto {
   @IsOptional() @IsString() category?: string;
