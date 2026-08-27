@@ -227,6 +227,73 @@ function RateLine({
   );
 }
 
+/** A row inside {@link RateBuildUp}: a label on the left, money on the right. */
+function BuildUpRow({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className={cn('text-[11.5px] leading-tight', strong ? 'font-bold' : 'text-muted-foreground font-medium')}>{label}</span>
+      <span className={cn('shrink-0 text-[12.5px] tabular-nums', strong ? 'font-bold' : 'font-semibold')}>{value}</span>
+    </div>
+  );
+}
+
+/**
+ * How ONE side of the rate was arrived at: the base, then every add-on on its
+ * own line, then what they come to.
+ *
+ * Asked about the Product rate alone, a 256px card cannot answer in a run-on
+ * sub-line. "Base ₹320 +₹55 (category) …" is exactly where the old one ran out
+ * of width and truncated — with an ellipsis sitting where the commission, the
+ * thing being asked about, should have been.
+ *
+ * The reconciliation guard is {@link rateSub}'s: only claim a build-up that
+ * actually adds up to the figure shown. A hand-typed rate has no derivation,
+ * and inventing one would be worse than saying nothing.
+ */
+function RateBuildUp({
+  base,
+  parts,
+  total,
+  accent,
+}: {
+  base: number | null | undefined;
+  parts: { amount: number; tag: string }[];
+  total: number;
+  accent: 'blue' | 'violet';
+}) {
+  const money = (v: number) => `₹${v.toLocaleString('en-IN')}`;
+  const real = parts.filter((p) => p.amount !== 0);
+  const reconciles = base != null && Math.abs(base + real.reduce((sum, p) => sum + p.amount, 0) - total) < 0.001;
+  if (!reconciles || real.length === 0) {
+    return (
+      <div className="space-y-1">
+        {/* "Base rate" only when the figure IS the base. Where the sum does
+            not reconcile — a rate typed over by hand — this number is not the
+            base and must not be labelled as one. */}
+        <BuildUpRow label={reconciles ? 'Base rate' : 'Rate'} value={money(total)} strong />
+        {reconciles && (
+          <p className="text-muted-foreground text-[10.5px] leading-snug">Nothing added — this is the master rate.</p>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-1">
+      <BuildUpRow label="Base rate" value={money(base ?? 0)} />
+      {real.map((part) => (
+        <BuildUpRow
+          key={part.tag}
+          label={part.tag === 'commission' ? 'Commission' : `Special rate (${part.tag})`}
+          value={`${part.amount > 0 ? '+' : '−'}₹${Math.abs(part.amount).toLocaleString('en-IN')}`}
+        />
+      ))}
+      <div className={cn('mt-1 border-t pt-1', accent === 'blue' ? 'border-blue-200/70 dark:border-blue-900/70' : 'border-violet-200/70 dark:border-violet-900/70')}>
+        <BuildUpRow label="Total" value={money(total)} strong />
+      </div>
+    </div>
+  );
+}
+
 /**
  * A line's rate, with the product + design split behind a hover card.
  *
@@ -1235,8 +1302,21 @@ export function OrderFormPage() {
   const entryHasRate = (n(entry.productRate) ?? 0) !== 0 || (n(entry.designRate) ?? 0) !== 0;
   const [entryRateHovered, setEntryRateHovered] = useState(false);
   const [entryRatePinned, setEntryRatePinned] = useState(false);
+  /** Which field the pointer is on, and so which question the card answers.
+   *  Product ₹ and Design ₹ each get their OWN build-up; only Total ₹ shows
+   *  both sides at once. One card trying to say all of it is what made this
+   *  unreadable. Frozen while pinned, so a pinned card does not change under
+   *  the mouse on its way elsewhere. */
+  const [entryRateFocus, setEntryRateFocus] = useState<'product' | 'design' | 'total'>('total');
   const entryRateOpen = entryHasRate && (entryRateHovered || entryRatePinned);
-  const onEntryRateEnter = (e: ReactPointerEvent) => e.pointerType === 'mouse' && entryHasRate && setEntryRateHovered(true);
+  /** The figure the card's header shows — whichever number is being asked about. */
+  const entryRateShown =
+    entryRateFocus === 'product' ? n(entry.productRate) ?? 0 : entryRateFocus === 'design' ? n(entry.designRate) ?? 0 : entryTotal;
+  const onEntryRateEnter = (source: 'product' | 'design' | 'total') => (e: ReactPointerEvent) => {
+    if (e.pointerType !== 'mouse' || !entryHasRate) return;
+    if (!entryRatePinned) setEntryRateFocus(source);
+    setEntryRateHovered(true);
+  };
   const onEntryRateLeave = (e: ReactPointerEvent) => e.pointerType === 'mouse' && setEntryRateHovered(false);
   const toggleEntryRatePin = () => {
     if (entryRatePinned) setEntryRateHovered(false);
@@ -2078,14 +2158,15 @@ export function OrderFormPage() {
                 onInvalidEntry={() => toast.error('Please select a correct design name')}
               />
             </div>
-            {/* Hovering either input (or Total ₹) opens the breakdown below —
-                see the state block above for why the trigger is spread across
-                all three rather than living on one of the editable fields. */}
-            <div className="space-y-1 lg:col-span-1" data-tabfield="productRate" onPointerEnter={onEntryRateEnter} onPointerLeave={onEntryRateLeave}>
+            {/* Each of the three opens the SAME card, on its own subject — see
+                `entryRateFocus`. The trigger is spread across all three rather
+                than living on one field because any of them is a fair place to
+                ask "why this number?". */}
+            <div className="space-y-1 lg:col-span-1" data-tabfield="productRate" onPointerEnter={onEntryRateEnter('product')} onPointerLeave={onEntryRateLeave}>
               <Label className="text-base">Product ₹</Label>
               <Input type="number" step="any" min={0} className="text-right tabular-nums" value={entry.productRate} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ productRate: e.target.value })} />
             </div>
-            <div className="space-y-1 lg:col-span-1" data-tabfield="designRate" onPointerEnter={onEntryRateEnter} onPointerLeave={onEntryRateLeave}>
+            <div className="space-y-1 lg:col-span-1" data-tabfield="designRate" onPointerEnter={onEntryRateEnter('design')} onPointerLeave={onEntryRateLeave}>
               <Label className="text-base">Design ₹</Label>
               <Input type="number" step="any" min={0} className="text-right tabular-nums" value={entry.designRate} disabled={!designRateEditable} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ designRate: e.target.value })} />
             </div>
@@ -2097,6 +2178,7 @@ export function OrderFormPage() {
                   if (!o) {
                     setEntryRatePinned(false);
                     setEntryRateHovered(false);
+                    setEntryRateFocus('total'); // the next open starts on the summary
                   }
                 }}
               >
@@ -2106,7 +2188,7 @@ export function OrderFormPage() {
                     tabIndex={entryHasRate ? 0 : -1}
                     aria-expanded={entryRateOpen}
                     aria-label={`Total ₹${entryTotal.toLocaleString('en-IN')} — show breakdown`}
-                    onPointerEnter={onEntryRateEnter}
+                    onPointerEnter={onEntryRateEnter('total')}
                     onPointerLeave={onEntryRateLeave}
                     onClick={() => entryHasRate && toggleEntryRatePin()}
                     onKeyDown={(e) => {
@@ -2139,14 +2221,49 @@ export function OrderFormPage() {
                     !entryRatePinned && 'pointer-events-none',
                   )}
                 >
+                  {/* The header names the subject, so it is never ambiguous
+                      which of the three numbers the card is explaining. */}
                   <div className="bg-gradient-to-r from-sky-600 via-blue-600 to-indigo-600 px-3 py-2 text-white">
                     <div className="flex items-baseline justify-between gap-2">
-                      <p className="text-[10px] font-bold tracking-[0.14em] uppercase opacity-80">Rate breakdown</p>
+                      <p className="text-[10px] font-bold tracking-[0.14em] uppercase opacity-80">
+                        {entryRateFocus === 'product' ? 'Product rate' : entryRateFocus === 'design' ? 'Design rate' : 'Rate breakdown'}
+                      </p>
                       <p className="text-[9.5px] font-semibold opacity-80">{entry.calField === 'PCS' ? 'per piece' : 'per kg'}</p>
                     </div>
-                    <p className="text-[19px] leading-tight font-bold tabular-nums">₹{entryTotal.toLocaleString('en-IN')}</p>
+                    <p className="text-[19px] leading-tight font-bold tabular-nums">
+                      ₹{entryRateShown.toLocaleString('en-IN')}
+                    </p>
                   </div>
                   <div className="bg-card space-y-2 px-3 py-2.5">
+                    {/* Product ₹ on its own: base, then each add-on, then total. */}
+                    {entryRateFocus === 'product' && (
+                      <RateBuildUp base={entry.productBase} parts={productParts(entry)} total={n(entry.productRate) ?? 0} accent="blue" />
+                    )}
+
+                    {/* Design ₹ on its own. Commission never appears here: it is
+                        folded into the product side whatever scope the winning
+                        rule was aimed at (see productParts). */}
+                    {entryRateFocus === 'design' &&
+                      ((n(entry.designRate) ?? 0) !== 0 ? (
+                        <>
+                          {(entry.designName || entry.designType) && (
+                            <p className="text-muted-foreground truncate text-[10.5px] leading-tight font-medium">
+                              {entry.designName || entry.designType}
+                            </p>
+                          )}
+                          <RateBuildUp base={entry.designBase} parts={designParts(entry)} total={n(entry.designRate) ?? 0} accent="violet" />
+                        </>
+                      ) : (
+                        <p className="text-muted-foreground rounded-[6px] border border-dashed px-2 py-1.5 text-[10.5px] leading-snug">
+                          No design rate on this line.
+                        </p>
+                      ))}
+
+                    {/* Total ₹: the two sides and how they add up. The per-side
+                        detail lives on their own fields now, so this stays a
+                        summary instead of trying to be both. */}
+                    {entryRateFocus === 'total' && (
+                      <>
                     <RateLine
                       icon={Package}
                       label="Product rate"
@@ -2174,10 +2291,8 @@ export function OrderFormPage() {
                         No design rate — the total is the product rate alone.
                       </p>
                     )}
-                    {/* Flags, not repeats — the Base/Special/Commission split is
-                        already spelled out on the Product/Design lines above
-                        (see `rateSub`); saying it again here would just be the
-                        same sentence twice in a 256px-wide card. */}
+                    {/* Flags, not repeats — the split is spelled out on the
+                        lines above, and in full on each field's own card. */}
                     {(entry.special || !!entry.commissionAddOn) && (
                       <div className="flex flex-wrap gap-1.5">
                         {entry.special && (
@@ -2191,6 +2306,8 @@ export function OrderFormPage() {
                           </span>
                         )}
                       </div>
+                    )}
+                      </>
                     )}
                   </div>
                 </PopoverContent>
