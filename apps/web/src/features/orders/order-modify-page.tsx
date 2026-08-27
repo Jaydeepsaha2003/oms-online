@@ -2038,9 +2038,24 @@ function RateChoiceDialog({
             sub-form rather than answering the question, so grouping it with the
             two real answers made three equal-looking buttons out of one choice
             and one detour. */}
-        <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+        {/*
+          * Two rows, not one wrapping one.
+          *
+          * A single flex-wrap row put Cancel/Custom rate and the decision
+          * buttons on the same line and let the browser choose where it broke
+          * — which, at the widths this dialog actually opens at, wrapped mid
+          * group: one decision button stranded alone on its own line, the next
+          * indented under it, `mr-auto` fighting the wrap point. Two rows makes
+          * the two kinds of button (dismiss/detour vs. the actual answers) a
+          * deliberate layout instead of an accident of container width.
+          *
+          * The decision buttons are `flex-1` so two or three of them split the
+          * row evenly — same width, same weight — rather than each sizing to
+          * its own text and leaving ragged gaps.
+          */}
+        <DialogFooter className="flex-col gap-2.5 sm:items-stretch">
           {custom ? (
-            <>
+            <div className="flex items-center justify-end gap-2">
               <Button variant="outline" onClick={() => setCustom(false)}>
                 Back
               </Button>
@@ -2051,64 +2066,70 @@ function RateChoiceDialog({
               >
                 Use {inr(round2(customTotal))}
               </Button>
-            </>
+            </div>
           ) : (
             <>
+              <div className="flex items-center justify-between gap-2">
+                <Button variant="ghost" size="sm" onClick={() => onDone({ kind: 'cancel' })}>
+                  Cancel
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setCustom(true)}>
+                  Custom rate…
+                </Button>
+              </div>
+
               {/*
-                * One button or two, decided by whether anything is actually
+                * One button, two, or three, decided by what is actually
                 * negotiable. When only the design moved there is a single
                 * correct figure, and offering it twice under two names — which
                 * is what "Keep ₹390 / Use ₹390" did — reads as a trick
-                * question. Custom rate is always there for a agreed price.
+                * question. Custom rate above is always there for an agreed
+                * price the app doesn't already know.
                 */}
-              <Button variant="ghost" onClick={() => onDone({ kind: 'cancel' })}>
-                Cancel
-              </Button>
-              <Button variant="ghost" className="sm:mr-auto" onClick={() => setCustom(true)}>
-                Custom rate…
-              </Button>
-              {/* The escape hatch this whole dialog exists for: a rate agreed
-                  just for this order, offered back pre-filled instead of making
-                  the user retype it into Custom rate. Sky rather than the
-                  Keep/Use greys, so it reads as the one button that's actually
-                  about THIS order rather than a chart lookup. */}
-              {originalRate != null && (
-                <Button
-                  variant="outline"
-                  onClick={() => onDone({ kind: 'original' })}
-                  className="h-auto min-w-[8.5rem] flex-col gap-0 border-sky-300 py-1.5 leading-tight text-sky-800 hover:bg-sky-50 dark:border-sky-400/40 dark:text-sky-200 dark:hover:bg-sky-400/10"
-                >
-                  <span>Keep {inr(originalRate)}</span>
-                  <span className="text-[10.5px] font-normal opacity-80">your original rate — {inr(originalProductRate ?? 0)}</span>
-                </Button>
-              )}
-              {productRateMoved ? (
-                <>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                {/* The escape hatch this whole dialog exists for: a rate agreed
+                    just for this order, offered back pre-filled instead of
+                    making the user retype it into Custom rate. Sky rather than
+                    the Keep/Use greys, so it reads as the one button that's
+                    actually about THIS order rather than a chart lookup. */}
+                {originalRate != null && (
                   <Button
                     variant="outline"
-                    onClick={() => onDone({ kind: 'keep' })}
-                    className="h-auto min-w-[8.5rem] flex-col gap-0 py-1.5 leading-tight"
+                    onClick={() => onDone({ kind: 'original' })}
+                    className="h-auto min-w-0 flex-1 flex-col gap-0 border-sky-300 py-1.5 leading-tight text-sky-800 hover:bg-sky-50 dark:border-sky-400/40 dark:text-sky-200 dark:hover:bg-sky-400/10"
                   >
-                    <span>Keep {inr(keepRate ?? oldRate)}</span>
-                    <span className="text-muted-foreground text-[10.5px] font-normal">
-                      {keepAsOf ? `rate on ${formatDate(keepAsOf)}` : `product stays ${inr(keepProductRate ?? 0)}`}
-                    </span>
+                    <span>Keep {inr(originalRate)}</span>
+                    <span className="whitespace-normal text-[10.5px] font-normal opacity-80">your original rate — {inr(originalProductRate ?? 0)}</span>
                   </Button>
-                  <Button onClick={() => onDone({ kind: 'new' })} className="h-auto min-w-[8.5rem] flex-col gap-0 py-1.5 leading-tight">
+                )}
+                {productRateMoved ? (
+                  <>
+                    <Button
+                      variant="outline"
+                      onClick={() => onDone({ kind: 'keep' })}
+                      className="h-auto min-w-0 flex-1 flex-col gap-0 py-1.5 leading-tight"
+                    >
+                      <span>Keep {inr(keepRate ?? oldRate)}</span>
+                      <span className="text-muted-foreground whitespace-normal text-[10.5px] font-normal">
+                        {keepAsOf ? `rate on ${formatDate(keepAsOf)}` : `product stays ${inr(keepProductRate ?? 0)}`}
+                      </span>
+                    </Button>
+                    <Button onClick={() => onDone({ kind: 'new' })} className="h-auto min-w-0 flex-1 flex-col gap-0 py-1.5 leading-tight">
                       <span>Use {inr(newRate)}</span>
-                    <span className="text-[10.5px] font-normal opacity-80">
-                      {keepAsOf ? `today’s rate ${inr(newProductRate ?? 0)}` : `product moves to ${inr(newProductRate ?? 0)}`}
+                      <span className="whitespace-normal text-[10.5px] font-normal opacity-80">
+                        {keepAsOf ? `today’s rate ${inr(newProductRate ?? 0)}` : `product moves to ${inr(newProductRate ?? 0)}`}
+                      </span>
+                    </Button>
+                  </>
+                ) : (
+                  <Button onClick={() => onDone({ kind: 'keep' })} className="h-auto min-w-0 flex-1 flex-col gap-0 py-1.5 leading-tight">
+                    <span>Apply {inr(keepRate ?? oldRate)}</span>
+                    <span className="whitespace-normal text-[10.5px] font-normal opacity-80">
+                      your {inr(keepProductRate ?? 0)} + design {inr(keepDesignRate ?? newDesignRate ?? 0)}
                     </span>
                   </Button>
-                </>
-              ) : (
-                <Button onClick={() => onDone({ kind: 'keep' })} className="h-auto flex-col gap-0 py-1.5 leading-tight">
-                  <span>Apply {inr(keepRate ?? oldRate)}</span>
-                  <span className="text-[10.5px] font-normal opacity-80">
-                    your {inr(keepProductRate ?? 0)} + design {inr(keepDesignRate ?? newDesignRate ?? 0)}
-                  </span>
-                </Button>
-              )}
+                )}
+              </div>
             </>
           )}
         </DialogFooter>
