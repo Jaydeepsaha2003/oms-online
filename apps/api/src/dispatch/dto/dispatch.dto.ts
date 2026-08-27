@@ -1,6 +1,6 @@
 import { PartialType } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 export class CreateDispatchDto {
@@ -55,4 +55,20 @@ export class PendingQueryDto extends PaginationDto {
   @IsOptional() @Transform(({ value }) => value === true || value === 'true' || value === '1') @IsBoolean() all?: boolean;
   /** Excel export only: comma-separated column ids (see DISPATCH_EXPORT_COLUMNS). */
   @IsOptional() @IsString() columns?: string;
+}
+
+/** The Dispatch Order screen's bulk row-selection action: mark a batch of still-
+ *  pending lines URGENT (or back to NORMAL) in one call instead of opening each
+ *  line's own edit form. Capped at 500 — comfortably above a real selection
+ *  (the whole pending pool rarely runs that deep on one page), but a bound
+ *  rather than an unlimited `updateMany` on whatever a client sends. */
+export class BulkSetPendingPriorityDto {
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)
+  @ArrayUnique()
+  @IsInt({ each: true })
+  orderItemIds!: number[];
+
+  @IsIn(['URGENT', 'NORMAL'])
+  priority!: 'URGENT' | 'NORMAL';
 }

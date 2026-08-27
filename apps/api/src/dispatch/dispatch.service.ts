@@ -503,6 +503,27 @@ export class DispatchService implements OnModuleInit {
     return { items, total, page: query.page, pageSize: query.pageSize, totalPages: Math.max(1, Math.ceil(total / query.pageSize)) };
   }
 
+  /**
+   * The Dispatch Order screen's bulk row-selection action: mark a batch of
+   * ticked pending lines URGENT (or back to NORMAL) in one write, instead of
+   * opening each line's own edit form to change one field.
+   *
+   * Only applied to ids that are STILL in the current pending pool. A
+   * selection can go stale between the page loading and the click — another
+   * user finishes dispatching or cancels a line in the meantime — and writing
+   * straight from the client's id list would happily re-priority a line that
+   * isn't pending any more (or doesn't exist). `skipped` reports the
+   * difference so the screen can say so instead of silently under-counting.
+   */
+  async bulkSetPendingPriority(orderItemIds: number[], priority: 'URGENT' | 'NORMAL'): Promise<{ updated: number; skipped: number }> {
+    const pendingIds = new Set((await this.computePendingLines()).map((l) => l.orderItemId));
+    const eligible = orderItemIds.filter((id) => pendingIds.has(id));
+    if (!eligible.length) return { updated: 0, skipped: orderItemIds.length };
+    const { count } = await this.prisma.orderItem.updateMany({ where: { id: { in: eligible } }, data: { priority } });
+    this.invalidatePendingCache();
+    return { updated: count, skipped: orderItemIds.length - eligible.length };
+  }
+
   /** Order lines that already have an open back-date approval request awaiting
    *  a decision — so the pending pool can flag them instead of looking untouched
    *  after a non-approver submits and refreshes the page. */

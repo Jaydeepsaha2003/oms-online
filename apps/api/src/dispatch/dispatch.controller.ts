@@ -9,7 +9,7 @@ import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { ExcelService } from '../excel/excel.service';
 import { toExcelDate } from '../common/date.util';
 import { DispatchService } from './dispatch.service';
-import { CreateDispatchDto, DispatchQueryDto, PendingQueryDto, UpdateDispatchDto } from './dto/dispatch.dto';
+import { BulkSetPendingPriorityDto, CreateDispatchDto, DispatchQueryDto, PendingQueryDto, UpdateDispatchDto } from './dto/dispatch.dto';
 
 const R = RESOURCES.DISPATCH;
 
@@ -96,6 +96,18 @@ export class DispatchController {
   @Permissions(perm(R, ACTIONS.VIEW))
   pendingFilterOptions(@Query() query: PendingQueryDto) {
     return this.dispatch.pendingFilterOptions(query);
+  }
+
+  /** Bulk row-selection action: mark a batch of ticked pending lines URGENT (or
+   *  back to NORMAL) in one call. Declared above `:id`-shaped routes for the
+   *  same reason the Products bulk routes are — `pending` here is a fixed
+   *  segment, not a param, but keeping the convention avoids surprises if this
+   *  ever grows a param route next to it. */
+  @Patch('pending/priority')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Bulk-set priority on pending dispatch lines' })
+  bulkSetPendingPriority(@Body() dto: BulkSetPendingPriorityDto) {
+    return this.dispatch.bulkSetPendingPriority(dto.orderItemIds, dto.priority);
   }
 
   /** Has this party + item + design ever been documented with a photo? Gates

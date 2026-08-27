@@ -228,3 +228,17 @@ export function useDeleteDispatch() {
     onSuccess: () => invalidateDispatch(qc),
   });
 }
+
+/** The pending list's bulk row-selection action: mark a batch of ticked lines
+ *  URGENT (or back to NORMAL) in one call. `skipped` covers a selection that
+ *  went stale between load and click (a line got dispatched or cancelled out
+ *  from under it in the meantime) — the caller reports that count rather than
+ *  silently under-applying. */
+export function useBulkSetPendingPriority() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { orderItemIds: number[]; priority: 'URGENT' | 'NORMAL' }) =>
+      http.patch<{ updated: number; skipped: number }>('/dispatch/pending/priority', input),
+    onSuccess: () => invalidateDispatch(qc),
+  });
+}

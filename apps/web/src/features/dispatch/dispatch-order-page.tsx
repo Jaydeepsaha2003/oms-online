@@ -19,6 +19,7 @@ import { PageSizeSelect } from '@/components/common/page-size-select';
 import { ExportButton, ExportColumnsDialog } from '@/components/common/excel-actions';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { NativeSelect } from '@/components/common/combo';
+import { RowCheckbox } from '@/components/common/row-checkbox';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -26,7 +27,15 @@ import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/com
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { DuplicateDispatchDialog } from './duplicate-dispatch-dialog';
-import { exportPendingDispatch, useCreateDispatch, useDispatchPhotoCheck, useLineLock, usePendingFilterOptions, usePendingOrders } from './use-dispatch';
+import {
+  exportPendingDispatch,
+  useBulkSetPendingPriority,
+  useCreateDispatch,
+  useDispatchPhotoCheck,
+  useLineLock,
+  usePendingFilterOptions,
+  usePendingOrders,
+} from './use-dispatch';
 import { useDispatchDate } from './use-dispatch-date';
 
 /** {@link DISPATCH_EXPORT_COLUMNS} reshaped for the export dialog's `{id, label}` prop.
@@ -425,7 +434,82 @@ export function DispatchOrderPage() {
   // sticks for the rest of the calendar day once changed, resets on its own the
   // next day. See use-dispatch-date.ts.
   const dispatchDateCtl = useDispatchDate();
-  const columns = useMemo(() => (canViewRates ? withRates(COLUMNS) : COLUMNS), [canViewRates]);
+
+  /*
+   * Bulk row selection — desktop table only.
+   *
+   * The mobile cards are tap-to-dispatch (a shop-floor "grab this and go"
+   * gesture); a checkbox living in that same tap target would turn every
+   * accidental long-press into a selection instead of opening the line, so
+   * bulk actions stay on the desktop table where a row's click target and a
+   * row's checkbox can coexist without fighting each other.
+   *
+   * Kept as a Map so it can hold rows the CURRENT filtered/paged view no
+   * longer contains (the pool refreshes every 2s and a selected line can drop
+   * off between ticks) — the bar below still shows what's selected, and the
+   * bulk endpoint itself re-checks eligibility server-side regardless.
+   */
+  const [selected, setSelected] = useState<Map<number, PendingLineDto>>(new Map());
+  const toggleSelect = (r: PendingLineDto) =>
+    setSelected((m) => {
+      const n = new Map(m);
+      if (n.has(r.orderItemId)) n.delete(r.orderItemId);
+      else n.set(r.orderItemId, r);
+      return n;
+    });
+  const allOnPageSelected = items.length > 0 && items.every((r) => selected.has(r.orderItemId));
+  const toggleSelectPage = (checked: boolean) =>
+    setSelected((m) => {
+      const n = new Map(m);
+      for (const r of items) {
+        if (checked) n.set(r.orderItemId, r);
+        else n.delete(r.orderItemId);
+      }
+      return n;
+    });
+  const canBulkPriority = can('dispatch:update');
+  const bulkPriority = useBulkSetPendingPriority();
+  const markSelectedUrgent = () => {
+    const ids = [...selected.keys()];
+    if (!ids.length) return;
+    bulkPriority.mutate(
+      { orderItemIds: ids, priority: 'URGENT' },
+      {
+        onSuccess: (res) => {
+          const skippedNote = res.skipped ? ` — ${res.skipped} had already left the pending pool` : '';
+          toast.success(`Marked ${res.updated} line${res.updated === 1 ? '' : 's'} URGENT${skippedNote}`);
+          setSelected(new Map());
+        },
+        onError: (e) => toast.error(getApiErrorMessage(e, 'Could not update priority')),
+      },
+    );
+  };
+
+  // The 'sel' cell reads `selected`, so the column set is rebuilt alongside it
+  // — same pattern as the Products page's bulk-select column. `fixed: true`
+  // keeps it first and out of the Arrange-columns panel; it isn't a real data
+  // column, so a user hiding/reordering columns should never be able to lose it.
+  const selectColumn: DataColumn<PendingLineDto> = {
+    id: 'sel',
+    label: '',
+    header: (
+      <span onClick={(e) => e.stopPropagation()}>
+        <RowCheckbox checked={allOnPageSelected} onChange={toggleSelectPage} label="Select all on this page" />
+      </span>
+    ),
+    fixed: true,
+    noSort: true,
+    cell: (r) => (
+      <span onClick={(e) => e.stopPropagation()}>
+        <RowCheckbox checked={selected.has(r.orderItemId)} onChange={() => toggleSelect(r)} label={`Select ${r.productName || r.product || 'line'}`} />
+      </span>
+    ),
+  };
+  const columns = useMemo(
+    () => [selectColumn, ...(canViewRates ? withRates(COLUMNS) : COLUMNS)],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [canViewRates, selected, items, allOnPageSelected],
+  );
   const cols = useColumnOrder('dispatch-pending', columns);
   // Export the pending list under the CURRENTLY applied filters (the server
   // re-runs the same query without paging, so you get every matching line).
@@ -656,6 +740,33 @@ export function DispatchOrderPage() {
           </SheetFooter>
         </SheetContent>
       </Sheet>
+
+      {/* Bulk bar: appears only once something is ticked, desktop only (see the
+          selection-state comment above for why mobile stays tap-to-dispatch). */}
+      {selected.size > 0 && (
+        <div className="hidden items-center gap-2 rounded-[4px] bg-rose-50 px-3 py-2 text-[12.5px] font-semibold text-rose-700 ring-1 ring-rose-200 ring-inset sm:flex dark:bg-rose-400/10 dark:text-rose-300 dark:ring-rose-400/25">
+          <span className="tabular-nums">{selected.size} selected</span>
+          {canBulkPriority && (
+            <Button
+              size="sm"
+              className="h-7 rounded-[4px] bg-rose-600 text-[12px] font-bold text-white hover:bg-rose-700"
+              onClick={markSelectedUrgent}
+              disabled={bulkPriority.isPending}
+              title="Set these lines to URGENT priority"
+            >
+              {bulkPriority.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Flame className="size-3.5" />} Mark Urgent
+            </Button>
+          )}
+          <button
+            type="button"
+            onClick={() => setSelected(new Map())}
+            className="ml-auto cursor-pointer text-rose-700/70 transition-colors hover:text-rose-900 dark:text-rose-300/70 dark:hover:text-rose-200"
+            title="Clear selection"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* The table/card list takes the leftover height and scrolls WITHIN itself
           (both directions on desktop), so the horizontal scrollbar sits right
