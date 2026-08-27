@@ -1915,6 +1915,14 @@ model AgentSpecialCommission {
   effectiveFrom DateTime
   note          String?
   userName      String?
+  /// When true, this rule's rate is added onto what the CUSTOMER pays (the
+  /// order form folds it into the product rate) instead of being paid out of
+  /// margin at settlement the way commission normally is. The agent still
+  /// accrues and gets settled exactly as before either way — this only ever
+  /// changes the customer's price, never the payout. Only meaningful on a
+  /// party-named rule (customerId set); a rule with no party is never read for
+  /// pricing, so the flag has nothing to attach to there.
+  addToRate     Boolean  @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

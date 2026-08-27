@@ -296,6 +296,23 @@ export function useDeleteSpecialCommission() {
 }
 
 /**
+ * Which of THIS customer's own commission rules are flagged to raise their
+ * price — the New Order form's rate hover reads this to fold the amount into
+ * Product ₹. Empty for a party with no agent, or nothing currently flagged.
+ * Keyed under the same `KEY` prefix as every other agent-commission query, so
+ * saving/deleting a special rule (which already invalidates that prefix)
+ * picks this up too — a just-toggled rule shows up without a manual refresh.
+ */
+export function useAgentRateAddOns(customerId: number | undefined) {
+  return useQuery({
+    queryKey: [...KEY, 'addons', customerId],
+    queryFn: () => http.get<AgentSpecialCommissionDto[]>(`/agent-commission/rates/special/customer/${customerId}`),
+    enabled: customerId != null,
+    staleTime: 30_000,
+  });
+}
+
+/**
  * "What rate would apply here?" — answered by the server's own resolver, never
  * re-implemented here. A tester that disagreed with the money would be worse
  * than no tester.

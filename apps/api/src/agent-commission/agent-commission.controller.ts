@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Query } from 
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
-import { Permissions } from '../common/decorators/permissions.decorator';
+import { AnyPermission, Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { AgentCommissionService } from './agent-commission.service';
@@ -68,6 +68,21 @@ export class AgentCommissionController {
   @Permissions(perm(R, ACTIONS.VIEWRATES))
   specials(@Query('agentId') agentId?: string) {
     return this.svc.listSpecials(agentId ? Number(agentId) : undefined);
+  }
+
+  /**
+   * Which of a customer's own commission rules add themselves onto that
+   * customer's price — what the New Order form reads to fold the amount into
+   * Product ₹. Deliberately NOT gated on `agentcommission:viewrates`: once a
+   * rule is flagged `addToRate`, its figure is no longer commission-internal —
+   * it IS the price an order-taker is about to charge, so anyone who can see
+   * a party's Special Rate (the equivalent customer-facing adjustment) can see
+   * this too.
+   */
+  @Get('rates/special/customer/:customerId')
+  @AnyPermission(perm(RESOURCES.SPECIAL_RATE, ACTIONS.VIEW), perm(R, ACTIONS.VIEWRATES))
+  addOnsForCustomer(@Param('customerId', ParseIntPipe) customerId: number) {
+    return this.svc.listAddOnsForCustomer(customerId);
   }
 
   /** "What rate would apply here?" — resolved by the same code that prices an

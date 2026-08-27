@@ -104,6 +104,15 @@ export interface AgentSpecialCommissionDto {
   userName: string | null;
   /** The newest non-future rule for this exact scope — the one actually in force. */
   current: boolean;
+  /**
+   * When true, this rule's rate is ALSO added onto the price the named
+   * customer pays — the order form folds it into Product ₹. The agent still
+   * accrues and gets settled the normal way regardless; this never changes
+   * that, only what the customer is charged. Only meaningful when
+   * `customerId` is set — a rule with no party is never consulted for
+   * pricing, so the flag has nothing to attach to.
+   */
+  addToRate: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -120,6 +129,8 @@ export interface AgentSpecialCommissionInput {
   ratePerUnit: number;
   effectiveFrom: string;
   note?: string | null;
+  /** Defaults to false — see {@link AgentSpecialCommissionDto.addToRate}. */
+  addToRate?: boolean;
 }
 
 /** What a challan LINE is, for the purpose of pricing its commission. */
@@ -143,6 +154,10 @@ export interface ResolvedCommissionRate {
   label: string;
   /** The special rule's id, for tracing a figure back to the rule that set it. */
   specialId: number | null;
+  /** True when the winning rule is flagged to also raise the customer's price
+   *  by this amount (see {@link AgentSpecialCommissionDto.addToRate}). Always
+   *  false when the base rate applied — a base rate is never customer-priced. */
+  addToRate: boolean;
 }
 
 const norm = (v: string | null | undefined): string => (v ?? '').trim().toUpperCase();
@@ -276,6 +291,7 @@ export function resolveCommissionRate(
       partySpecific: best.customerId != null,
       label: specialCommissionLabel(best),
       specialId: best.id,
+      addToRate: best.addToRate,
     };
   }
 
@@ -287,5 +303,6 @@ export function resolveCommissionRate(
     partySpecific: false,
     label: 'Base rate',
     specialId: null,
+    addToRate: false,
   };
 }
