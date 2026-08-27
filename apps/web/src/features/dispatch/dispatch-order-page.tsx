@@ -453,6 +453,15 @@ export function DispatchOrderPage() {
   };
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
+  /** Quantity totals for the lines on this page. Summed from the very same
+   *  `rem*` fields the Bags/Pcs/Kgs/Box columns render, so the footer can never
+   *  disagree with the grid above it. Rounded because Kgs is fractional and a
+   *  plain float sum shows its noise (89.6 + 273.9 + … → …0000000001). */
+  const totals = useMemo(() => {
+    const sum = (pick: (r: PendingLineDto) => number) =>
+      Math.round(items.reduce((a, r) => a + (pick(r) || 0), 0) * 100) / 100;
+    return { bags: sum((r) => r.remBags), pcs: sum((r) => r.remPcs), kgs: sum((r) => r.remKgs), box: sum((r) => r.remBox) };
+  }, [items]);
   // Customer + Category + Product are their own on-screen selects on mobile, so
   // the filter-icon badge counts only what lives behind it
   // (Agent/Due/Design/Sub category/ALL).
@@ -901,6 +910,24 @@ export function DispatchOrderPage() {
           )}
         </div>
       </div>
+
+      {/* ── Quantity totals for the lines on this page ──────────────────────────
+          Shown at every width, unlike Order Modify's equivalent: this screen's
+          phone view is the card list, and a running total of what is still to go
+          out is exactly what someone on the floor is standing there adding up. */}
+      {items.length > 0 && (
+        <div className="bg-card flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-[4px] border px-3 py-2 shadow-sm">
+          <span className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Totals — this page</span>
+          <div className="ml-auto flex flex-wrap items-center gap-x-5 gap-y-1.5">
+            {([['Bags', totals.bags], ['Pcs', totals.pcs], ['Kgs', totals.kgs], ['Box', totals.box]] as const).map(([label, value]) => (
+              <span key={label} className="flex items-baseline gap-1.5">
+                <span className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">{label}</span>
+                <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(value)}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Footer: paging ─────────────────────────────────────────────────────── */}
       <div className="bg-card flex items-center justify-between rounded-[4px] border px-3 py-2 shadow-sm">
