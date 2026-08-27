@@ -665,6 +665,7 @@ export class CustomersService {
       effectiveFrom: Date;
       note: string | null;
       userName: string | null;
+      addToRate: boolean;
       createdAt: Date;
       updatedAt: Date;
     },
@@ -687,6 +688,7 @@ export class CustomersService {
       note: r.note,
       userName: r.userName,
       current: true,
+      addToRate: r.addToRate,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     };

@@ -143,6 +143,10 @@ export class CreateSpecialCommissionDto {
   ratePerUnit!: number;
   @IsString() effectiveFrom!: string;
   @IsOptional() @IsString() note?: string;
+  /** Fold this rate into the named party's product rate instead of paying it
+   *  out of margin the normal way. Only valid alongside a `customerId` — the
+   *  service rejects it otherwise. Defaults to false. */
+  @IsOptional() @IsBoolean() addToRate?: boolean;
 }
 
 /**

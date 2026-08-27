@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { FlaskConical, Loader2, Plus, Search, Sparkles } from 'lucide-react';
+import { FlaskConical, Loader2, Plus, Receipt, Search, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   basisUnit,
@@ -21,6 +21,7 @@ import { ACCENTS, AddButton, deleteAction, LevelButtons, Panel, PanelField } fro
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { useAgents } from '@/features/agents/use-agents';
 import { useOrderLookups } from '@/features/orders/use-orders';
 import {
@@ -125,6 +126,12 @@ export function SpecialCommissionPanel() {
   const [rate, setRate] = useState('');
   const [effectiveFrom, setEffectiveFrom] = useState(ymd(new Date()));
   const [note, setNote] = useState('');
+  /** Fold this rate into the party's product price instead of paying it out of
+   *  margin at settlement. Only ever writable when a party is actually
+   *  attached — see the toggle's own gating below — and reset after every
+   *  save (unlike agent/scope) since it changes what a customer is BILLED and
+   *  should never carry over unnoticed onto the next rule. */
+  const [addToRate, setAddToRate] = useState(false);
 
   const needs = NEEDS[scope];
   const agentId = agentList.find((a) => a.name === agentName)?.id;
@@ -164,6 +171,12 @@ export function SpecialCommissionPanel() {
   }, [lookups, pCategory]);
   const effectiveBasis = categoryBasis ?? basis;
 
+  // Whether a party is actually going to be attached to the rule being built —
+  // true for ANY scope, not just CUSTOMER (see NEEDS: party is always offered,
+  // only required for CUSTOMER). This is what decides whether "add to rate"
+  // has anything to attach to.
+  const partyChosen = advanced ? partyIds.size > 0 : !!customerId;
+
   const blocker = useMemo((): string | null => {
     if (!agentId) return 'Choose an agent.';
     if (advanced) {
@@ -173,6 +186,7 @@ export function SpecialCommissionPanel() {
     } else if (needs.party === 'required' && !customerId) {
       return 'A party rule needs a party.';
     }
+    if (addToRate && !partyChosen) return 'Adding this to the rate needs a party — pick one, or turn it off.';
     if (needs.category && !pCategory) return 'Choose the product category.';
     if (needs.subCategory && !subCategory) return 'Choose the sub-category.';
     if (needs.product && !product) return 'Choose the product.';
@@ -182,7 +196,7 @@ export function SpecialCommissionPanel() {
     if (n < 0) return 'The rate cannot be negative.';
     if (!effectiveFrom) return 'Set the date this rate takes effect.';
     return null;
-  }, [agentId, customerId, needs, pCategory, subCategory, product, designType, rate, effectiveFrom, advanced, partyIds]);
+  }, [agentId, customerId, needs, pCategory, subCategory, product, designType, rate, effectiveFrom, advanced, partyIds, addToRate, partyChosen]);
 
   const submit = () => {
     if (blocker) return toast.error(blocker);
@@ -197,13 +211,17 @@ export function SpecialCommissionPanel() {
       ratePerUnit: Number(rate),
       effectiveFrom,
       note: note.trim() || null,
+      addToRate: partyChosen && addToRate,
     };
 
-    // Only the figures reset on success. The agent and the aim stay put, because
-    // the next rule is nearly always the same agent at a neighbouring aim.
+    // The figures reset on success, and so does "add to rate" — the agent and
+    // the aim stay put (the next rule is nearly always the same agent at a
+    // neighbouring aim), but a billing-affecting toggle should never silently
+    // carry over onto a rule the user hasn't looked at yet.
     const done = () => {
       setRate('');
       setNote('');
+      setAddToRate(false);
     };
     const onError = (e: unknown) => toast.error(getApiErrorMessage(e, 'Could not save the rule'));
 
@@ -268,7 +286,23 @@ export function SpecialCommissionPanel() {
         </span>
       ),
     },
-    { id: 'party', label: 'Party', cell: (r) => r.customerName ?? <span className="text-muted-foreground">All parties</span> },
+    {
+      id: 'party',
+      label: 'Party',
+      cell: (r) => (
+        <span className="flex flex-wrap items-center gap-1.5">
+          {r.customerName ?? <span className="text-muted-foreground">All parties</span>}
+          {r.addToRate && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
+              title="Added onto this party's product rate — shows on their invoice, not just paid at settlement"
+            >
+              <Receipt className="size-2.5" /> in rate
+            </span>
+          )}
+        </span>
+      ),
+    },
     {
       id: 'rate',
       label: 'Rate',
@@ -423,6 +457,38 @@ export function SpecialCommissionPanel() {
                   className="text-right tabular-nums"
                 />
               </PanelField>
+
+              {/*
+                * Only offered once a party is actually attached — commission
+                * folded into "the product rate" has to be somebody's product
+                * rate, and a general (all-parties) rule has no single price to
+                * raise. `partyChosen` covers Simple and Advanced alike.
+                */}
+              {partyChosen && (
+                <div className="sm:col-span-2 lg:col-span-3">
+                  <label
+                    className={cn(
+                      'flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 transition-colors',
+                      addToRate
+                        ? 'border-amber-300 bg-amber-50 dark:border-amber-400/40 dark:bg-amber-400/10'
+                        : 'bg-white hover:bg-slate-50 dark:bg-white/[0.02] dark:hover:bg-white/[0.04]',
+                    )}
+                  >
+                    <Switch checked={addToRate} onCheckedChange={setAddToRate} className="mt-0.5" />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-1.5 text-[12.5px] font-semibold">
+                        <Receipt className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                        Add this rate to the product price
+                      </span>
+                      <span className="text-muted-foreground mt-0.5 block text-[11.5px] leading-snug">
+                        {addToRate
+                          ? `This amount is added onto the product rate on this party's orders — it shows on their invoice. The agent is still paid it separately, exactly as usual.`
+                          : `Off (usual): the agent is paid this out of margin at settlement — the party's price is untouched. Turn on to charge it through instead.`}
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              )}
 
               <PanelField label="Charged per">
                 {/* Locked to the category's own basis when the category is known:
@@ -696,6 +762,14 @@ function RateTester({
               from <span className="text-foreground font-semibold">{result.label}</span>
               {result.scope == null && ' (no special rule matches)'}
             </span>
+            {result.addToRate && (
+              <span
+                className="ml-2 inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
+                title="Added onto the party's product rate — shows on their invoice"
+              >
+                <Receipt className="size-2.5" /> in rate
+              </span>
+            )}
           </p>
         )}
       </div>

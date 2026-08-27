@@ -1841,6 +1841,28 @@ export class AgentCommissionService {
   }
 
   /**
+   * Which of THIS customer's own commission rules are currently flagged to
+   * raise their price — the New Order form's rate breakdown reads this to
+   * fold the amount into Product ₹ the same way a customer Special Rate does.
+   *
+   * Resolved through the customer master's `agentName`, the same lookup the
+   * accrual engine itself uses (see `rebuildForChallan`) — a party with no
+   * agent, or agent "SELF" (the house selling direct, not an actual agent
+   * row), simply has nothing to add. Only ever rows tied to this exact
+   * customer: a general rule still earns commission normally, it just has no
+   * one party to charge it to (see `addToRate` on the schema).
+   */
+  async listAddOnsForCustomer(customerId: number): Promise<AgentSpecialCommissionDto[]> {
+    const customer = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { agentName: true } });
+    const agentName = customer?.agentName?.trim();
+    if (!agentName || agentName.toUpperCase() === 'SELF') return [];
+    const agent = await this.prisma.agent.findFirst({ where: { name: agentName } });
+    if (!agent) return [];
+    const all = await this.listSpecials(agent.id);
+    return all.filter((r) => r.current && r.addToRate && r.customerId === customerId);
+  }
+
+  /**
    * Add a special rule.
    *
    * The scope decides which fields are REQUIRED, and everything the scope does
@@ -1891,6 +1913,12 @@ export class AgentCommissionService {
     }
     if (scope === 'PRODUCT' && !product) throw new BadRequestException('Choose the product this rule applies to.');
     if (scope === 'DESIGN' && !designType) throw new BadRequestException('Choose the design this rule applies to.');
+    // Folding a commission into the price only means something for a rule
+    // that names WHO is paying it. A general rule (no party) still earns the
+    // agent commission as normal — it just has no single customer to charge.
+    if (dto.addToRate && customer == null) {
+      throw new BadRequestException('Adding this to the rate only applies to a rule tied to one party — pick a party, or turn it off.');
+    }
 
     const row = await this.prisma.agentSpecialCommission.create({
       data: {
@@ -1909,6 +1937,7 @@ export class AgentCommissionService {
         effectiveFrom: day(dto.effectiveFrom, 'Effective from'),
         note: dto.note?.trim() || null,
         userName: userName ?? null,
+        addToRate: dto.addToRate ?? false,
       },
     });
     const repriced = opts?.skipReprice
@@ -2096,6 +2125,7 @@ export class AgentCommissionService {
       note: r.note,
       userName: r.userName,
       current,
+      addToRate: r.addToRate,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     };

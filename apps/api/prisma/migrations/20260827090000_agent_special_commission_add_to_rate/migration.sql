@@ -1,0 +1,11 @@
+-- Special Commission: an on/off switch for whether a party-named rule's rate
+-- is folded into the PRICE that customer is charged (the order form adds it
+-- onto Product ₹) instead of being paid out of margin the normal way.
+--
+-- The agent still accrues and gets settled exactly as before regardless of
+-- this flag — nothing about the commission engine changes. It only tells the
+-- order form "this amount is also part of what the customer pays."
+--
+-- Purely additive, defaulting to false: every existing rule keeps behaving
+-- exactly as it does today until someone explicitly turns this on for it.
+ALTER TABLE "agent_special_commissions" ADD COLUMN "addToRate" BOOLEAN NOT NULL DEFAULT false;

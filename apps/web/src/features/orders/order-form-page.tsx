@@ -12,9 +12,9 @@ import {
   type SetStateAction,
 } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRightLeft, BadgePercent, Brush, Camera, Check, type LucideIcon, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Lock, PackageOpen, Package, Pencil, Pin, Plus, RotateCcw, Save, Settings2, Trash2, Truck, X } from 'lucide-react';
+import { ArrowLeft, ArrowRightLeft, BadgePercent, Brush, Camera, Check, type LucideIcon, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Lock, PackageOpen, Package, Pencil, Pin, Plus, Receipt, RotateCcw, Save, Settings2, Trash2, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { ALL_PERMISSIONS, ORDER_PRIORITIES, RESOURCES, resolveSpecialRates, qtyOrderForCategory, type OrderInput, type QtyField, type RateScope } from '@oms/shared';
+import { ALL_PERMISSIONS, ORDER_PRIORITIES, RESOURCES, resolveCommissionRate, resolveSpecialRates, qtyOrderForCategory, type OrderInput, type QtyField, type RateScope } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useAutoSizePcs } from '@/lib/auto-size-pcs';
@@ -33,6 +33,7 @@ import { NativeSelect } from '@/components/common/combo';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { settingValues, useOrderQtyLayout, useSettings } from '@/features/settings/use-settings';
 import { useCustomerSpecialRates } from '@/features/special-rates/use-special-rates';
+import { useAgentRateAddOns } from '@/features/agent-commission/use-agent-commission';
 import { useCreateOrder, useOrder, useOrderLookups, useUpdateOrder } from './use-orders';
 import { useDraftPhotoCheck, useFulfillOrder } from '../dispatch/use-dispatch';
 import { useConvertQuotation, useCreateQuotation, useCreateQuotationFromOrder, useQuotation, useUpdateQuotation } from '../quotations/use-quotations';
@@ -79,6 +80,10 @@ interface Item {
   designBase?: number | null;
   designDelta?: number | null;
   designFrom?: RateScope | null;
+  // A pass-through agent commission, already folded into `productRate` when
+  // this item was picked — see `addToRate` on Special Commission. Null/absent
+  // when this customer's agent has nothing flagged, same as the fields above.
+  commissionAddOn?: number | null;
   itemName: string; // composite display: "{size|pcs} {product} {designType}"
   product: string;
   category: string;
@@ -133,19 +138,34 @@ const scopeWord = (s: string | null) =>
   s === 'ITEM' ? 'item' : s === 'SUBCATEGORY' ? 'sub-category' : s === 'CATEGORY' ? 'category' : '';
 const fmtDelta = (n: number) => (n > 0 ? `+${n}` : `${n}`);
 /**
- * "Base ₹340 +₹10 (party)" — how a Product/Design rate was actually arrived
- * at, for the rate-breakdown card. Only returned when there IS a base to show
- * (a manually-typed item never has one) AND the current on-screen figure still
- * equals base + delta — the moment someone overrides the number by hand, this
- * breakdown would be explaining a figure that isn't there any more, which is
- * worse than not explaining it at all.
+ * "Base ₹340 +₹10 (item) +₹15 (commission)" — how a Product/Design rate was
+ * actually arrived at, for the rate-breakdown card. `parts` is however many
+ * add-ons actually applied (a customer special rate, a pass-through agent
+ * commission, both, or neither) in the order they stack.
+ *
+ * Only returned when there IS a base to show (a manually-typed item never has
+ * one) AND the current on-screen figure still equals base + every part's
+ * amount — the moment someone overrides the number by hand, this breakdown
+ * would be explaining a figure that isn't there any more, which is worse than
+ * not explaining it at all.
  */
-function rateSub(base: number | null | undefined, delta: number | null | undefined, from: RateScope | null | undefined, current: number): string | null {
-  if (base == null || !delta) return null;
-  if (Math.abs(base + delta - current) > 0.001) return null;
-  const sign = delta > 0 ? '+' : '−';
-  return `Base ₹${base.toLocaleString('en-IN')} ${sign}₹${Math.abs(delta).toLocaleString('en-IN')} (${scopeWord(from ?? null)})`;
+function rateSub(base: number | null | undefined, parts: { amount: number; tag: string }[], current: number): string | null {
+  const real = parts.filter((p) => p.amount !== 0);
+  if (base == null || real.length === 0) return null;
+  if (Math.abs(base + real.reduce((s, p) => s + p.amount, 0) - current) > 0.001) return null;
+  const bits = real.map((p) => `${p.amount > 0 ? '+' : '−'}₹${Math.abs(p.amount).toLocaleString('en-IN')} (${p.tag})`);
+  return `Base ₹${base.toLocaleString('en-IN')} ${bits.join(' ')}`;
 }
+/** The Product ₹ line's add-ons: the customer special-rate delta, then a
+ *  pass-through agent commission (see `commissionAddOn` on Item) — design
+ *  never carries the second, commission is always folded into the product
+ *  side regardless of which scope the winning commission rule was aimed at. */
+const productParts = (item: Pick<Item, 'productDelta' | 'productFrom' | 'commissionAddOn'>) => [
+  ...(item.productDelta ? [{ amount: item.productDelta, tag: scopeWord(item.productFrom ?? null) }] : []),
+  ...(item.commissionAddOn ? [{ amount: item.commissionAddOn, tag: 'commission' }] : []),
+];
+const designParts = (item: Pick<Item, 'designDelta' | 'designFrom'>) =>
+  item.designDelta ? [{ amount: item.designDelta, tag: scopeWord(item.designFrom ?? null) }] : [];
 /** A design that carries a logo (standalone "LOGO" or a combo like "HAMMER+LOGO"). */
 const isLogoDesign = (designType?: string | null) => (designType ?? '').toUpperCase().includes('LOGO');
 /**
@@ -172,6 +192,7 @@ type RateBreakdownItem = Pick<
   | 'designBase'
   | 'designDelta'
   | 'designFrom'
+  | 'commissionAddOn'
 >;
 
 /** One line of the breakdown card: a coloured dot, a label, and the money. */
@@ -327,7 +348,7 @@ function RateBreakdown({ item }: { item: RateBreakdownItem }) {
           <RateLine
             icon={Package}
             label="Product rate"
-            sub={rateSub(item.productBase, item.productDelta, item.productFrom, prod)}
+            sub={rateSub(item.productBase, productParts(item), prod)}
             value={inr(prod)}
             accent="blue"
           />
@@ -335,7 +356,7 @@ function RateBreakdown({ item }: { item: RateBreakdownItem }) {
             <RateLine
               icon={Brush}
               label="Design rate"
-              sub={[item.designName || item.designType || null, rateSub(item.designBase, item.designDelta, item.designFrom, dsgn)].filter(Boolean).join(' · ') || null}
+              sub={[item.designName || item.designType || null, rateSub(item.designBase, designParts(item), dsgn)].filter(Boolean).join(' · ') || null}
               value={inr(dsgn)}
               accent="violet"
             />
@@ -357,11 +378,16 @@ function RateBreakdown({ item }: { item: RateBreakdownItem }) {
           )}
 
           {/* Why the rate is what it is, when there is a reason beyond the chart. */}
-          {(item.special || item.bookingId) && (
+          {(item.special || item.bookingId || !!item.commissionAddOn) && (
             <div className="flex flex-wrap gap-1.5 pt-0.5">
               {item.special && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
                   <BadgePercent className="size-3" /> Special rate
+                </span>
+              )}
+              {!!item.commissionAddOn && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-800 dark:bg-sky-950/60 dark:text-sky-300">
+                  <Receipt className="size-3" /> Commission added to rate
                 </span>
               )}
               {item.bookingId && (
@@ -725,6 +751,10 @@ export function OrderFormPage() {
 
   // The selected customer's special rates (deltas), applied when an item is picked.
   const { data: special } = useCustomerSpecialRates(customerId);
+  // This customer's own commission rules flagged to raise their price (see
+  // `addToRate` on Special Commission) — folded into Product ₹ the same way a
+  // customer special rate is, just from a different table.
+  const { data: commissionAddOns } = useAgentRateAddOns(customerId);
 
   // Keep customerId in sync with the customer NAME + the loaded lookups. Without
   // this, a customer set outside onCustomer() — a restored draft or an edit load —
@@ -980,7 +1010,7 @@ export function OrderFormPage() {
       // A free-typed name has no catalogue rate to break down — drop whatever
       // a PREVIOUS pick left behind, or the rate breakdown card would go on
       // explaining a number that no longer belongs to this line.
-      setEntry((e) => ({ ...e, itemName: label, product: label, productBase: null, productDelta: null, productFrom: null, designBase: null, designDelta: null, designFrom: null }));
+      setEntry((e) => ({ ...e, itemName: label, product: label, productBase: null, productDelta: null, productFrom: null, designBase: null, designDelta: null, designFrom: null, commissionAddOn: null }));
       return;
     }
     // Apply the customer's special-rate cascade (most-specific level wins) on top
@@ -993,9 +1023,33 @@ export function OrderFormPage() {
           designType: it.designType ?? null,
         })
       : null;
-    const hasProd = it.productRate != null || (res?.productDelta ?? 0) !== 0;
+    /*
+     * This customer's own agent commission, when one is flagged to raise
+     * their price (see `addToRate` on Special Commission) — resolved with the
+     * SAME precedence engine the commission accrual itself uses, so "what
+     * shows here" and "what the agent is actually owed" can never quietly
+     * disagree. Always folded into the PRODUCT side: commission is one figure
+     * per line, not a product/design split the way a rate is.
+     *
+     * `base` is a dummy — commission has no "base rate" concept for pricing,
+     * only its own special rules — but its `basis` still gates the match: a
+     * per-piece commission rule must never silently price a per-kg line (see
+     * ruleMatches' own comment on exactly this failure mode).
+     */
+    const lineBasis = categoryFieldMap.get(it.category.trim().toUpperCase()) ?? 'KGS';
+    const commissionResolved = commissionAddOns?.length
+      ? resolveCommissionRate(commissionAddOns, { ratePerUnit: 0, basis: lineBasis }, {
+          customerId: customerId ?? null,
+          pCategory: it.category,
+          subCategory: it.subCategory,
+          product: it.product,
+          designType: it.designType ?? null,
+        })
+      : null;
+    const commissionAmount = commissionResolved?.addToRate ? commissionResolved.ratePerUnit : 0;
+    const hasProd = it.productRate != null || (res?.productDelta ?? 0) !== 0 || commissionAmount !== 0;
     const hasDesign = !!it.designType && (it.designRate != null || (res?.designDelta ?? 0) !== 0);
-    const prodRate = (it.productRate ?? 0) + (res?.productDelta ?? 0);
+    const prodRate = (it.productRate ?? 0) + (res?.productDelta ?? 0) + commissionAmount;
     const desRate = (it.designRate ?? 0) + (res?.designDelta ?? 0);
 
     // When a special rate priced this pick, carry a human note onto the line so
@@ -1032,6 +1086,7 @@ export function OrderFormPage() {
       designBase: hasDesign ? (it.designRate ?? 0) : null,
       designDelta: res?.designDelta ?? 0,
       designFrom: res?.designFrom ?? null,
+      commissionAddOn: commissionAmount || null,
     }));
   };
 
@@ -2076,7 +2131,7 @@ export function OrderFormPage() {
                     <RateLine
                       icon={Package}
                       label="Product rate"
-                      sub={rateSub(entry.productBase, entry.productDelta, entry.productFrom, n(entry.productRate) ?? 0)}
+                      sub={rateSub(entry.productBase, productParts(entry), n(entry.productRate) ?? 0)}
                       value={`₹${(n(entry.productRate) ?? 0).toLocaleString('en-IN')}`}
                       accent="blue"
                     />
@@ -2087,7 +2142,7 @@ export function OrderFormPage() {
                         sub={
                           [
                             entry.designName || entry.designType || null,
-                            rateSub(entry.designBase, entry.designDelta, entry.designFrom, n(entry.designRate) ?? 0),
+                            rateSub(entry.designBase, designParts(entry), n(entry.designRate) ?? 0),
                           ]
                             .filter(Boolean)
                             .join(' · ') || null
@@ -2100,14 +2155,23 @@ export function OrderFormPage() {
                         No design rate — the total is the product rate alone.
                       </p>
                     )}
-                    {/* A flag, not a repeat — the Base/Special split is already
-                        spelled out on the Product/Design lines above (see
-                        `rateSub`); saying it again here would just be the same
-                        sentence twice in a 256px-wide card. */}
-                    {entry.special && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
-                        <BadgePercent className="size-3" /> Special rate applied
-                      </span>
+                    {/* Flags, not repeats — the Base/Special/Commission split is
+                        already spelled out on the Product/Design lines above
+                        (see `rateSub`); saying it again here would just be the
+                        same sentence twice in a 256px-wide card. */}
+                    {(entry.special || !!entry.commissionAddOn) && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {entry.special && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                            <BadgePercent className="size-3" /> Special rate applied
+                          </span>
+                        )}
+                        {!!entry.commissionAddOn && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-800 dark:bg-sky-950/60 dark:text-sky-300">
+                            <Receipt className="size-3" /> Commission added to rate
+                          </span>
+                        )}
+                      </div>
                     )}
                   </div>
                 </PopoverContent>
