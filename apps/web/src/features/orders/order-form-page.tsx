@@ -261,25 +261,24 @@ function RateBuildUp({
   total: number;
   accent: 'blue' | 'violet';
 }) {
-  const money = (v: number) => `₹${v.toLocaleString('en-IN')}`;
   const real = parts.filter((p) => p.amount !== 0);
   const reconciles = base != null && Math.abs(base + real.reduce((sum, p) => sum + p.amount, 0) - total) < 0.001;
-  if (!reconciles || real.length === 0) {
-    return (
-      <div className="space-y-1">
-        {/* "Base rate" only when the figure IS the base. Where the sum does
-            not reconcile — a rate typed over by hand — this number is not the
-            base and must not be labelled as one. */}
-        <BuildUpRow label={reconciles ? 'Base rate' : 'Rate'} value={money(total)} strong />
-        {reconciles && (
-          <p className="text-muted-foreground text-[10.5px] leading-snug">Nothing added — this is the master rate.</p>
-        )}
-      </div>
-    );
+  const rule = accent === 'blue' ? 'border-blue-200 dark:border-blue-900/70' : 'border-violet-200 dark:border-violet-900/70';
+
+  // No total row: whatever encloses this — the card header, or the Product /
+  // Design line it sits under — already shows the figure these add up to, and
+  // repeating it is the clutter this card is meant to be rid of.
+  if (!reconciles) {
+    // Two ways to land here — a rate typed over by hand, or no master rate on
+    // record to build from. Neither is knowable from here, so claim neither.
+    return <p className="text-muted-foreground text-[10.5px] leading-snug">No breakdown available for this rate.</p>;
+  }
+  if (real.length === 0) {
+    return <p className="text-muted-foreground text-[10.5px] leading-snug">Nothing added — this is the master rate.</p>;
   }
   return (
-    <div className="space-y-1">
-      <BuildUpRow label="Base rate" value={money(base ?? 0)} />
+    <div className={cn('space-y-1 border-l-2 pl-2', rule)}>
+      <BuildUpRow label="Base rate" value={`₹${(base ?? 0).toLocaleString('en-IN')}`} />
       {real.map((part) => (
         <BuildUpRow
           key={part.tag}
@@ -287,9 +286,6 @@ function RateBuildUp({
           value={`${part.amount > 0 ? '+' : '−'}₹${Math.abs(part.amount).toLocaleString('en-IN')}`}
         />
       ))}
-      <div className={cn('mt-1 border-t pt-1', accent === 'blue' ? 'border-blue-200/70 dark:border-blue-900/70' : 'border-violet-200/70 dark:border-violet-900/70')}>
-        <BuildUpRow label="Total" value={money(total)} strong />
-      </div>
     </div>
   );
 }
@@ -412,21 +408,31 @@ function RateBreakdown({ item }: { item: RateBreakdownItem }) {
         </div>
 
         <div className="bg-card space-y-2 px-3 py-2.5">
-          <RateLine
-            icon={Package}
-            label="Product rate"
-            sub={rateSub(item.productBase, productParts(item), prod)}
-            value={inr(prod)}
-            accent="blue"
-          />
+          {/* Each side: its headline, then how it was arrived at. The build-up
+              used to be crammed into the line's sub-text — "Base ₹370 +₹20
+              (category) …" — where a 256px card truncated it, usually over the
+              commission, which is the part people are hovering to find. */}
+          <div className="space-y-1.5">
+            <RateLine icon={Package} label="Product rate" value={inr(prod)} accent="blue" />
+            <div className="pl-[38px]">
+              <RateBuildUp base={item.productBase} parts={productParts(item)} total={prod} accent="blue" />
+            </div>
+          </div>
           {hasSplit ? (
-            <RateLine
-              icon={Brush}
-              label="Design rate"
-              sub={[item.designName || item.designType || null, rateSub(item.designBase, designParts(item), dsgn)].filter(Boolean).join(' · ') || null}
-              value={inr(dsgn)}
-              accent="violet"
-            />
+            <div className="space-y-1.5">
+              <RateLine
+                icon={Brush}
+                label="Design rate"
+                sub={item.designName || item.designType || null}
+                value={inr(dsgn)}
+                accent="violet"
+              />
+              {/* Commission never appears on this side — it is folded into the
+                  product rate whatever scope the winning rule was aimed at. */}
+              <div className="pl-[38px]">
+                <RateBuildUp base={item.designBase} parts={designParts(item)} total={dsgn} accent="violet" />
+              </div>
+            </div>
           ) : (
             <p className="text-muted-foreground rounded-[6px] border border-dashed px-2 py-1.5 text-[10.5px] leading-snug">
               No design rate on this line — the rate is the product rate alone.
