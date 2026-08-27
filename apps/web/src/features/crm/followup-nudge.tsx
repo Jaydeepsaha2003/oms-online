@@ -6,6 +6,7 @@ import { DEFAULT_CRM_SETTINGS, type FollowupDto } from '@oms/shared';
 import { getApiErrorMessage, http } from '@/lib/api';
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import { buzz, playChime } from '@/lib/chime';
+import { showSystemNotifications } from '@/lib/system-notification';
 import { formatDate } from '@/lib/date-format';
 import { Button } from '@/components/ui/button';
 import { useCrmSettings, useFollowupDue, useResolveFollowup, useSeenFollowup, useSnoozeFollowup } from './use-crm';
@@ -116,6 +117,10 @@ export function FollowupNudge() {
     const fresh = due.filter((f) => !seen.current.has(f.id) && now - lastNudgedAt(f) >= gapMs(f));
 
     let secondChime: ReturnType<typeof setTimeout> | undefined;
+    // The sound decision is async now (it waits to hear whether the OS took the
+    // notification), so it needs its own guard against the effect being torn
+    // down mid-flight — otherwise a chime could fire after the user navigated.
+    let chimeCancelled = false;
 
     if (fresh.length > 0) {
       // Record FIRST. This bookkeeping used to sit at the end of the block,
@@ -147,28 +152,38 @@ export function FollowupNudge() {
         return [...prev, ...toAdd];
       });
 
-      if (settings?.sound !== false) {
+      // Sound: the OS notification first, our own chime only if that fails.
+      //
+      // A page cannot play "the system notification sound" — it belongs to the
+      // OS and the only way to trigger it is to raise a real notification. So
+      // the notification goes out first, and the synthesized chime is the
+      // fallback for when none could be shown: permission not granted,
+      // desktop notifications switched off, or a platform that refuses them
+      // (iOS Safari). Previously the chime always played, which is why every
+      // reminder announced itself with a tune no other app on the machine uses.
+      void (async () => {
+        const shown = settings?.desktopNotifications
+          ? await showSystemNotifications(
+              fresh.slice(0, 3).map((f) => ({
+                title: `Follow-up: ${f.partyName}`,
+                options: {
+                  body: `${f.title}${f.promisedAt ? ` · promised ${formatDate(f.promisedAt)}` : ''}`,
+                  tag: `followup-${f.id}`,
+                },
+              })),
+            )
+          : false;
+        // The OS notification brings its own sound AND its own vibration, so
+        // neither is added on top of it.
+        if (chimeCancelled || shown || settings?.sound === false) return;
         playChime();
         buzz();
-        // Play a second chime after a short pause so it's impossible to miss
+        // A second chime after a short pause so it's impossible to miss.
         secondChime = setTimeout(() => {
           playChime();
           buzz();
         }, 2500);
-      }
-
-      if (settings?.desktopNotifications && 'Notification' in window && Notification.permission === 'granted') {
-        for (const f of fresh.slice(0, 3)) {
-          try {
-            new Notification(`Follow-up: ${f.partyName}`, {
-              body: `${f.title}${f.promisedAt ? ` · promised ${formatDate(f.promisedAt)}` : ''}`,
-              tag: `followup-${f.id}`,
-            });
-          } catch {
-            /* ignore */
-          }
-        }
-      }
+      })();
     }
 
     // Clean up tracking and banner list for resolved or rescheduled items.
@@ -181,7 +196,10 @@ export function FollowupNudge() {
       }
     }
 
-    return () => clearTimeout(secondChime);
+    return () => {
+      chimeCancelled = true;
+      clearTimeout(secondChime);
+    };
   }, [due, settings?.sound, settings?.desktopNotifications, settings?.intervalMins]);
 
   // Phones get the chime, the buzz and the OS notification — but nothing drawn
