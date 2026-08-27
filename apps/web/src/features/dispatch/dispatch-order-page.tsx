@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Camera, CalendarClock, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Filter, Flame, Hourglass, Loader2, Lock, Package, PackageCheck, RotateCcw, TriangleAlert, Truck, X } from 'lucide-react';
+import { Camera, CalendarClock, CalendarDays, CheckCircle2, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, Filter, Flame, Hourglass, Loader2, Lock, Package, PackageCheck, RotateCcw, TriangleAlert, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ALL_PERMISSIONS, DISPATCH_EXPORT_COLUMNS, DISPATCH_RATE_EXPORT_COLUMN_IDS, qtyOrderForCategory, type DispatchStatus, type DuplicateDispatch, type PendingLineDto, type QtyField } from '@oms/shared';
 import { getApiErrorMessage, getDuplicateDispatch } from '@/lib/api';
@@ -104,14 +104,40 @@ const DISPATCH_CARD_CSS = `
 const RAIL_TONE: Record<string, string> = { Due: 'bg-emerald-500', 'Past Due': 'bg-amber-500', 'Over Due': 'bg-rose-500' };
 
 /** A tactile, native-feeling pending-line card for phones. Tap anywhere to dispatch. */
-function DispatchCard({ line, index, showRates, canDeletePhotos, onClick }: { line: PendingLineDto; index: number; showRates: boolean; canDeletePhotos: boolean; onClick: () => void }) {
+function DispatchCard({
+  line,
+  index,
+  showRates,
+  canDeletePhotos,
+  onClick,
+  selectMode,
+  selected,
+  onToggleSelect,
+}: {
+  line: PendingLineDto;
+  index: number;
+  showRates: boolean;
+  canDeletePhotos: boolean;
+  onClick: () => void;
+  /** True while the bulk-select toolbar is active — see the page's own comment
+   *  on why this replaces the tap-to-dispatch gesture rather than adding a
+   *  checkbox alongside it (a checkbox living in the same tap target would turn
+   *  every accidental long-press into a selection). */
+  selectMode?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
+}) {
   const urgent = line.priority === 'URGENT';
   const locked = !!line.lockedByName;
   const qtys = ([['Bags', line.remBags], ['Pcs', line.remPcs], ['Kgs', line.remKgs], ['Box', line.remBox]] as const).filter(([, v]) => v > 0);
   const pendingAmt = line.rate != null ? Math.round(line.rate * ((line.calField ?? '').toUpperCase() === 'PCS' ? line.remPcs : line.remKgs)) : null;
   const photoCount = line.photoCount ?? 0;
   const [photosOpen, setPhotosOpen] = useState(false);
-  const open = () => (locked ? toast.error(`${line.lockedByName} is currently dispatching this line — try again in a moment.`) : onClick());
+  // In select mode the whole card IS the checkbox — locking doesn't block
+  // picking a priority for a line someone else is mid-dispatching, only
+  // opening the dispatch sheet itself does.
+  const open = () =>
+    selectMode ? onToggleSelect?.() : locked ? toast.error(`${line.lockedByName} is currently dispatching this line — try again in a moment.`) : onClick();
   return (
     // A div[role=button], not a <button>: the photo viewer below is a real button
     // and nesting one button inside another is invalid HTML — on phones it makes
@@ -131,13 +157,19 @@ function DispatchCard({ line, index, showRates, canDeletePhotos, onClick }: { li
         // URGENT also gets a faint red wash + ring across the whole card, not just
         // the rail — "deep red" should be impossible to miss while scanning.
         urgent && 'border-rose-300 bg-rose-50/60 ring-1 ring-rose-200 dark:border-rose-400/30 dark:bg-rose-500/[0.06] dark:ring-rose-400/20',
-        locked && 'opacity-60',
+        locked && !selectMode && 'opacity-60',
+        selected && 'border-primary ring-2 ring-primary bg-primary/5',
       )}
     >
       <span className={cn('absolute inset-y-0 left-0 w-1.5', urgent ? 'bg-rose-800' : (RAIL_TONE[line.dueType] ?? 'bg-blue-900'))} aria-hidden />
       <div className="dispatch-card-in space-y-2.5 py-3.5 pr-3.5 pl-5 text-[13px]" style={{ animationDelay: `${Math.min(index, 10) * 45}ms` }}>
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
+            {selectMode && (
+              <span onClick={(e) => e.stopPropagation()}>
+                <RowCheckbox checked={!!selected} onChange={() => onToggleSelect?.()} label={`Select ${line.productName || line.product || 'line'}`} />
+              </span>
+            )}
             <span className="bg-primary/10 text-primary rounded-md px-2 py-0.5 font-mono text-[13px] font-bold">{shortOrderCode(line.orderCode, line.orderId)}</span>
             <PriorityBadge p={line.priority} />
           </div>
@@ -436,13 +468,15 @@ export function DispatchOrderPage() {
   const dispatchDateCtl = useDispatchDate();
 
   /*
-   * Bulk row selection — desktop table only.
+   * Bulk row selection.
    *
-   * The mobile cards are tap-to-dispatch (a shop-floor "grab this and go"
-   * gesture); a checkbox living in that same tap target would turn every
-   * accidental long-press into a selection instead of opening the line, so
-   * bulk actions stay on the desktop table where a row's click target and a
-   * row's checkbox can coexist without fighting each other.
+   * Desktop gets a checkbox column beside the normal row click — a row's click
+   * target and its checkbox can coexist there without fighting each other. The
+   * mobile cards are tap-to-dispatch (a shop-floor "grab this and go" gesture),
+   * so a checkbox living in that same tap target would turn every accidental
+   * tap into a selection — instead `selectMode` swaps what a card's tap DOES,
+   * same idea as Photos/Gmail's "Select" toggle: on means tap-to-toggle, off
+   * (the default) means tap-to-open, and the two are never live at once.
    *
    * Kept as a Map so it can hold rows the CURRENT filtered/paged view no
    * longer contains (the pool refreshes every 2s and a selected line can drop
@@ -450,6 +484,13 @@ export function DispatchOrderPage() {
    * bulk endpoint itself re-checks eligibility server-side regardless.
    */
   const [selected, setSelected] = useState<Map<number, PendingLineDto>>(new Map());
+  /** Mobile-only: whether the card list is in tap-to-select mode. Desktop has
+   *  no equivalent — its checkbox column is always live, nothing to toggle. */
+  const [selectMode, setSelectMode] = useState(false);
+  const toggleSelectMode = () => {
+    setSelectMode((v) => !v);
+    setSelected(new Map());
+  };
   const toggleSelect = (r: PendingLineDto) =>
     setSelected((m) => {
       const n = new Map(m);
@@ -635,6 +676,22 @@ export function DispatchOrderPage() {
                   <X className="size-4" />
                 </Button>
               )}
+              {/* Bulk actions on a phone: tap Select, tap cards to build a set,
+                  then Mark Urgent from the bar below — see the `selectMode`
+                  comment above for why this is a toggle rather than a checkbox
+                  living alongside the tap-to-dispatch gesture. */}
+              {canBulkPriority && (
+                <Button
+                  variant={selectMode ? 'default' : 'outline'}
+                  size="icon"
+                  className={cn('size-9 shrink-0 rounded-[4px]', !selectMode && 'border-amber-300')}
+                  onClick={toggleSelectMode}
+                  aria-label={selectMode ? 'Exit selection' : 'Select lines'}
+                  title={selectMode ? 'Exit selection' : 'Select multiple lines to bulk-update'}
+                >
+                  <CheckSquare className="size-4" />
+                </Button>
+              )}
               <div className="min-w-0 flex-1" />
               {can('dispatch:export') && <ExportButton onClick={() => setExportDialogOpen(true)} disabled={exporting} label="Export to Excel" />}
             </div>
@@ -741,10 +798,11 @@ export function DispatchOrderPage() {
         </SheetContent>
       </Sheet>
 
-      {/* Bulk bar: appears only once something is ticked, desktop only (see the
-          selection-state comment above for why mobile stays tap-to-dispatch). */}
+      {/* Bulk bar: appears once something is ticked, on either layout — desktop
+          via its checkbox column, mobile once Select mode is on (see the
+          selection-state comment above). */}
       {selected.size > 0 && (
-        <div className="hidden items-center gap-2 rounded-[4px] bg-rose-50 px-3 py-2 text-[12.5px] font-semibold text-rose-700 ring-1 ring-rose-200 ring-inset sm:flex dark:bg-rose-400/10 dark:text-rose-300 dark:ring-rose-400/25">
+        <div className="flex flex-wrap items-center gap-2 rounded-[4px] bg-rose-50 px-3 py-2 text-[12.5px] font-semibold text-rose-700 ring-1 ring-rose-200 ring-inset dark:bg-rose-400/10 dark:text-rose-300 dark:ring-rose-400/25">
           <span className="tabular-nums">{selected.size} selected</span>
           {canBulkPriority && (
             <Button
@@ -827,7 +885,19 @@ export function DispatchOrderPage() {
               No pending order lines — everything is dispatched.
             </div>
           ) : (
-            items.map((r, i) => <DispatchCard key={r.orderItemId} line={r} index={i} showRates={canViewRates} canDeletePhotos={canDeletePhotos} onClick={() => setActive(r)} />)
+            items.map((r, i) => (
+              <DispatchCard
+                key={r.orderItemId}
+                line={r}
+                index={i}
+                showRates={canViewRates}
+                canDeletePhotos={canDeletePhotos}
+                onClick={() => setActive(r)}
+                selectMode={selectMode}
+                selected={selected.has(r.orderItemId)}
+                onToggleSelect={() => toggleSelect(r)}
+              />
+            ))
           )}
         </div>
       </div>
