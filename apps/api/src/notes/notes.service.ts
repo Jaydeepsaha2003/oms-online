@@ -3,8 +3,10 @@ import { Prisma } from '@prisma/client';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import {
   computeNoteBreakup,
+  noteRefInvoices,
   noteRoundOff,
   RETURNED_DISPATCH_STATUS,
+  type NoteClearance,
   type NoteDirectoryRow,
   type NoteDto,
   type NoteMode,
@@ -411,9 +413,10 @@ export class NotesService {
     });
 
     // 2) Accounting (each in its own transaction, mirroring the legacy post-commit calls).
+    let clearance: NoteClearance | undefined;
     if (mode === 'CREDIT') {
       await this.reverseCreditNote(code);
-      await this.applyCreditNote(code, invDate, dto.customerId, dto.customerName, b, c, dto.items, userName ?? null);
+      clearance = await this.applyCreditNote(code, invDate, dto.customerId, dto.customerName, b, c, dto.items, userName ?? null);
     } else {
       await this.insertDebitNoteLedger(code, invDate, dto.customerId, dto.customerName, b, c, dto.items, userName ?? null);
     }
@@ -427,7 +430,14 @@ export class NotesService {
     }
 
     const saved = mode === 'CREDIT' ? await this.prisma.creditNote.findUnique({ where: { code } }) : await this.prisma.challan.findUnique({ where: { code } });
-    return { mode, id: saved?.id ?? 0, code, total: breakup.total, ...(undispatched ? { undispatched } : {}) };
+    return {
+      mode,
+      id: saved?.id ?? 0,
+      code,
+      total: breakup.total,
+      ...(undispatched ? { undispatched } : {}),
+      ...(clearance ? { clearance } : {}),
+    };
   }
 
   /* ── "Undispatched": put returned goods back in the pending pool ──────────── */
@@ -672,11 +682,11 @@ export class NotesService {
     cAmt: number,
     items: SaveNoteDto['items'],
     userName: string | null,
-  ): Promise<void> {
-    if (bAmt <= 0 && cAmt <= 0) return;
+  ): Promise<NoteClearance | undefined> {
+    if (bAmt <= 0 && cAmt <= 0) return undefined;
     const { payBy, agentName } = await this.readPayBy(custId);
 
-    await this.prisma.$transaction(async (tx) => {
+    return await this.prisma.$transaction(async (tx) => {
       // 1) Ledger: CREDIT NOTE = credit side (SALES RETURN).
       await tx.acctLedger.create({
         data: {
@@ -698,8 +708,58 @@ export class NotesService {
 
       let bankLeft = r2(Math.max(0, bAmt));
       let cashLeft = r2(Math.max(0, cAmt));
+      let receiptId: string | null = null;
 
-      // 2) Clear OPENING balance first (oldest dues).
+      // 2) TARGETED clearance. When every line points at the same Ref Inv No,
+      //    that invoice is settled before anything else — a return off INV/500
+      //    has to knock money off INV/500, not off whichever bill happens to be
+      //    oldest. Anything left over falls through the normal cascade below.
+      const refs = noteRefInvoices(items);
+      const pending = await this.invoicePending(tx, custId, custName, cnDate);
+      const clearance: NoteClearance = { invNo: null, bank: 0, cash: 0, spillBank: 0, spillCash: 0, refs };
+
+      if (refs.length !== 1) {
+        clearance.skipped = refs.length === 0 ? 'NO_REF' : 'MULTIPLE_REFS';
+      } else {
+        const key = refs[0].toUpperCase();
+        const target = pending.find((p) => p.invNo.trim().toUpperCase() === key);
+        if (!target) {
+          // Distinguish "paid off already" from "no such bill" — the two need
+          // very different action from whoever reads the warning.
+          const exists = await tx.challan.findFirst({
+            where: { code: refs[0], customerName: custName, challanStatus: 'CONFIRMED' },
+            select: { id: true },
+          });
+          clearance.skipped = exists ? 'ALREADY_SETTLED' : 'NOT_FOUND';
+        } else {
+          clearance.invNo = target.invNo;
+          if (bankLeft > EPS && target.bankBal > EPS) {
+            const use = r2(Math.min(bankLeft, target.bankBal));
+            receiptId ??= await this.nextRefId(tx, 'REC', cnDate);
+            await tx.acctPaymentReceipt.create({
+              data: { refId: receiptId, recDate: cnDate, invNo: target.invNo, customerName: custName, custId, recType: 'CREDIT NOTE', recAmt: use, payMode: BANK, refRecId: code },
+            });
+            bankLeft = r2(bankLeft - use);
+            // Mutate the row so the FIFO pass below cannot spend it twice.
+            target.bankBal = r2(target.bankBal - use);
+            clearance.bank = use;
+          }
+          if (cashLeft > EPS && target.cashBal > EPS) {
+            const use = r2(Math.min(cashLeft, target.cashBal));
+            receiptId ??= await this.nextRefId(tx, 'REC', cnDate);
+            await tx.acctPaymentReceipt.create({
+              data: { refId: receiptId, recDate: cnDate, invNo: target.invNo, customerName: custName, custId, recType: 'CREDIT NOTE', recAmt: use, payMode: CASH, refRecId: code },
+            });
+            cashLeft = r2(cashLeft - use);
+            target.cashBal = r2(target.cashBal - use);
+            clearance.cash = use;
+          }
+        }
+      }
+      clearance.spillBank = Math.max(0, bankLeft);
+      clearance.spillCash = Math.max(0, cashLeft);
+
+      // 3) Clear OPENING balance next (oldest dues).
       const openings = await this.openingPending(tx, custId, custName);
       for (const o of openings) {
         if (bankLeft <= EPS && cashLeft <= EPS) break;
@@ -713,9 +773,9 @@ export class NotesService {
         cashLeft = r2(cashLeft - Math.max(0, cashApply));
       }
 
-      // 3) Clear pending invoices FIFO.
-      let receiptId: string | null = null;
-      const pending = await this.invoicePending(tx, custId, custName, cnDate);
+      // 4) Clear the remaining pending invoices FIFO. `pending` was read before
+      //    the targeted pass and its balances were decremented in place, so the
+      //    referenced invoice simply has nothing left to take here.
       for (const inv of pending) {
         if (bankLeft <= EPS && cashLeft <= EPS) break;
         if (bankLeft > EPS && inv.bankBal > EPS) {
@@ -736,7 +796,7 @@ export class NotesService {
         }
       }
 
-      // 4) Spillover parks as a party (or agent) advance.
+      // 5) Spillover parks as a party (or agent) advance.
       if (bankLeft > EPS || cashLeft > EPS) {
         const advRefId = await this.nextRefId(tx, 'ADV', cnDate);
         const payMode = bankLeft > EPS && cashLeft > EPS ? 'BOTH' : bankLeft > EPS ? BANK : CASH;
@@ -757,6 +817,8 @@ export class NotesService {
           },
         });
       }
+
+      return clearance;
     });
   }
 

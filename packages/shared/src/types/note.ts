@@ -9,8 +9,9 @@
  * A **Credit Note** (mode CREDIT) reduces what a customer owes. It is stored in its
  * own `CreditNote` table (like the legacy InvTblR) so it never counts as a pending
  * sale, posts a CREDIT NOTE ledger row (bank/cash CREDIT) and clears the customer's
- * balance in order: opening balance → pending invoices FIFO → parks the remainder as
- * a party (or agent) advance. Re-saving silently reverses the prior postings first.
+ * balance in order: the single referenced invoice (see `NoteClearance`) → opening
+ * balance → pending invoices FIFO → parks the remainder as a party (or agent)
+ * advance. Re-saving silently reverses the prior postings first.
  *
  * `b` = BANK portion, `c` = CASH portion (same B/C split used across the app).
  */
@@ -151,6 +152,50 @@ export interface NoteDto {
   items: NoteItemDto[];
 }
 
+/** Why a credit note could not be settled straight onto one referenced invoice. */
+export const NOTE_CLEARANCE_SKIPS = ['NO_REF', 'MULTIPLE_REFS', 'ALREADY_SETTLED', 'NOT_FOUND'] as const;
+export type NoteClearanceSkip = (typeof NOTE_CLEARANCE_SKIPS)[number];
+
+/**
+ * How a credit note's value was actually applied (credit notes only).
+ *
+ * When every line on the note points at the SAME "Ref Inv No", that invoice is
+ * settled first — the receipt lands on the bill the goods came back from rather
+ * than on whatever is oldest. Anything left over then follows the normal
+ * cascade (opening balance → other pending invoices FIFO → party advance).
+ */
+export interface NoteClearance {
+  /** The invoice settled directly, or null when no targeted clearance happened. */
+  invNo: string | null;
+  /** Applied straight onto `invNo` — BANK side. */
+  bank: number;
+  /** Applied straight onto `invNo` — CASH side. */
+  cash: number;
+  /** Left over after `invNo` was full; went through the normal cascade. */
+  spillBank: number;
+  spillCash: number;
+  /** Set when `invNo` is null — why the targeted clearance was not possible. */
+  skipped?: NoteClearanceSkip;
+  /** The refs found on the lines (used to explain MULTIPLE_REFS / NOT_FOUND). */
+  refs: string[];
+}
+
+/** Human-readable reason for a skipped targeted clearance. */
+export function noteClearanceReason(c: NoteClearance): string {
+  switch (c.skipped) {
+    case 'NO_REF':
+      return 'No line carries a Ref Inv No, so this went against the oldest dues.';
+    case 'MULTIPLE_REFS':
+      return `Lines reference ${c.refs.length} invoices (${c.refs.join(', ')}), so this went against the oldest dues.`;
+    case 'ALREADY_SETTLED':
+      return `${c.refs[0]} has nothing outstanding, so this went against the oldest dues.`;
+    case 'NOT_FOUND':
+      return `${c.refs[0]} is not a confirmed pending invoice for this party, so this went against the oldest dues.`;
+    default:
+      return '';
+  }
+}
+
 export interface SaveNoteResult {
   mode: NoteMode;
   id: number;
@@ -164,6 +209,26 @@ export interface SaveNoteResult {
      *  a sale with no dispatch link has no pending line to go back to. */
     skipped: string[];
   };
+  /** Credit notes only — which invoice the note actually cleared. */
+  clearance?: NoteClearance;
+}
+
+/**
+ * The distinct Ref Inv Nos on a set of note lines, in first-seen order.
+ * Shared so the entry screen can predict the clearance the API will perform.
+ */
+export function noteRefInvoices(items: { refInvNo?: string | null }[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const it of items) {
+    const ref = (it.refInvNo ?? '').trim();
+    if (!ref) continue;
+    const key = ref.toUpperCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(ref);
+  }
+  return out;
 }
 
 export interface NextNoteNoResult {

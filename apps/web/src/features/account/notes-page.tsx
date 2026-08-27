@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowUpRight, Check, FolderOpen, Layers, Loader2, Plus, Printer, RotateCcw, Trash2, Undo2 } from 'lucide-react';
+import { ArrowUpRight, Check, FolderOpen, Layers, Link2, Loader2, Plus, Printer, RotateCcw, Shuffle, Trash2, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   computeNoteBreakup,
+  noteClearanceReason,
   noteItemAmount,
+  noteRefInvoices,
   type CustomerDto,
   type NoteDirectoryRow,
   type NoteItemInput,
@@ -186,6 +188,14 @@ export function NotesPage() {
       }),
     [lines, packing, freight, pouch, otherCharges, billingRate, noBill, noBillWithoutGst],
   );
+
+  /**
+   * A credit note whose lines all point at ONE sale is settled straight against
+   * that invoice by the API. Predicted here (same shared helper the API uses) so
+   * the intent is visible before saving, not discovered afterwards.
+   */
+  const refInvoices = useMemo(() => noteRefInvoices(lines), [lines]);
+  const targetInv = mode === 'CREDIT' && refInvoices.length === 1 ? refInvoices[0] : null;
 
   const resetHeaderFromCustomer = (name: string) => {
     const c = custByName.get(name);
@@ -393,6 +403,27 @@ export function NotesPage() {
       {
         onSuccess: (res) => {
           toast.success(`${mode === 'CREDIT' ? 'Credit' : 'Debit'} Note ${res.code} saved — ${money0(res.total)}`);
+
+          // What the note actually settled. The API is authoritative here — the
+          // referenced bill may have been paid off since the lines were picked.
+          const cl = res.clearance;
+          if (cl) {
+            const spill = (cl.spillBank ?? 0) + (cl.spillCash ?? 0);
+            if (cl.invNo) {
+              const applied = (cl.bank ?? 0) + (cl.cash ?? 0);
+              if (spill > 0.005) {
+                toast.warning(`${money0(applied)} cleared against ${cl.invNo}; ${money0(spill)} went to older dues / advance.`, {
+                  duration: 10000,
+                });
+              } else {
+                toast.success(`${money0(applied)} cleared against ${cl.invNo}.`);
+              }
+            } else if (cl.skipped === 'ALREADY_SETTLED' || cl.skipped === 'NOT_FOUND') {
+              // The user aimed at a specific bill and did not get it — say so.
+              toast.warning(noteClearanceReason(cl), { duration: 10000 });
+            }
+          }
+
           const u = res.undispatched;
           if (u) {
             if (u.returned) toast.success(`${u.returned} line${u.returned === 1 ? '' : 's'} put back for dispatch.`);
@@ -501,7 +532,7 @@ export function NotesPage() {
               <p className="text-muted-foreground text-[11px] leading-snug">
                 {mode === 'DEBIT'
                   ? 'Debit note — the party owes MORE (squares off advances).'
-                  : 'Credit note — the party owes LESS (clears opening, then invoices).'}
+                  : 'Credit note — the party owes LESS (clears the Ref Inv, else the oldest dues).'}
               </p>
             </div>
 
@@ -615,6 +646,37 @@ export function NotesPage() {
             <div className="space-y-0.5 bg-amber-50/60 px-2.5 py-2 dark:bg-amber-400/[0.07]">
               <Row2 label="B (bank)" value={money0(breakup.b)} className="text-blue-700 dark:text-blue-400" />
               <Row2 label="C (cash)" value={money0(breakup.c)} className="text-emerald-700 dark:text-emerald-400" />
+
+              {/* Where this credit will land. Silent auto-allocation is exactly the
+                  kind of thing that gets queried a month later, so it is stated. */}
+              {mode === 'CREDIT' && lines.length > 0 && (
+                <div
+                  className={cn(
+                    'mt-2 flex items-start gap-2 rounded-md border px-2.5 py-2 text-[11.5px] leading-snug',
+                    targetInv
+                      ? 'border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-400/40 dark:bg-emerald-400/10 dark:text-emerald-200'
+                      : 'border-sky-300 bg-sky-50 text-sky-900 dark:border-sky-400/40 dark:bg-sky-400/10 dark:text-sky-200',
+                  )}
+                >
+                  {targetInv ? <Link2 className="mt-px size-3.5 shrink-0" /> : <Shuffle className="mt-px size-3.5 shrink-0" />}
+                  <span>
+                    {targetInv ? (
+                      <>
+                        Clears against <b className="font-mono font-bold">{targetInv}</b>. Anything more than that bill's
+                        pending amount moves on to the party's oldest dues.
+                      </>
+                    ) : refInvoices.length > 1 ? (
+                      <>
+                        Lines reference <b>{refInvoices.length} invoices</b> — clears the party's oldest dues first (FIFO).
+                        Keep one Ref Inv per note to settle that bill directly.
+                      </>
+                    ) : (
+                      <>No Ref Inv on these lines — clears the party's oldest dues first (FIFO).</>
+                    )}
+                  </span>
+                </div>
+              )}
+
               <div className="mt-2 flex gap-2">
                 <Button
                   onClick={onSave}
