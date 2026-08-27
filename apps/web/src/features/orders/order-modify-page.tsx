@@ -1372,6 +1372,26 @@ function LineEditor({
         const listRate = (offerProductRate ?? 0) + (offerDesignRate ?? 0);
 
         /*
+         * Was the line's own product rate a deliberate customization — a price
+         * agreed for THIS order that the order-date lookup would otherwise
+         * quietly erase?
+         *
+         * Only possible when the PRODUCT itself did not change: a genuine item
+         * swap means the old figure priced a different product, and offering it
+         * back would be inventing a rate for something that was never quoted.
+         * Compared against the AS-OF figure, not today's — a rate that only
+         * differs from TODAY's chart is just the chart having moved since, which
+         * is exactly what Keep/Use already cover. Differing from the order-date
+         * figure is the actual signature of "someone typed a number here".
+         */
+        const productCustomized =
+          !productChanged && dated && lineProductRate != null && Math.abs((lineProductRate ?? 0) - (keepProductRate ?? 0)) > 0.001;
+        /** The line's own product rate, kept exactly as typed, combined with the
+         *  new design's (compulsory) rate. Null unless there is one to offer. */
+        const originalProductRate = productCustomized ? lineProductRate : null;
+        const originalRate = productCustomized ? round2((lineProductRate ?? 0) + (keepDesignRate ?? 0)) : null;
+
+        /*
          * Is there actually a decision to make?
          *
          * Same product: only the DESIGN rate can be in question. If the new
@@ -1412,6 +1432,8 @@ function LineEditor({
             keepDesignRate,
             keepRate,
             productRateMoved,
+            originalProductRate,
+            originalRate,
           });
           if (choice.kind === 'cancel') {
             cancelled = true;
@@ -1429,6 +1451,9 @@ function LineEditor({
           } else if (choice.kind === 'custom') {
             finalProductRate = choice.productRate;
             finalDesignRate = choice.designRate;
+          } else if (choice.kind === 'original') {
+            finalProductRate = originalProductRate;
+            finalDesignRate = keepDesignRate;
           }
         } else {
           // Silent path: the two outcomes were the same figure, so hold the
@@ -1724,11 +1749,20 @@ interface RateAskProps {
   keepProductRate?: number | null;
   /** The whole rate "Keep" will apply. */
   keepRate?: number;
+  /** The line's own product rate, when it looks like a deliberate customization
+   *  the order-date lookup would otherwise discard — see `productCustomized` in
+   *  `onItemPick`. Null when there is nothing to preserve. */
+  originalProductRate?: number | null;
+  /** `originalProductRate` plus the new (compulsory) design rate — the figure a
+   *  third "Keep" button would apply. */
+  originalRate?: number | null;
 }
 
 type RateChoice =
   | { kind: 'new' }
   | { kind: 'keep' }
+  /** The line's own product rate, preserved as-is — see `originalRate`. */
+  | { kind: 'original' }
   | { kind: 'custom'; productRate: number | null; designRate: number | null }
   /** Backed out — the item pick is undone too, not just the rate. */
   | { kind: 'cancel' };
@@ -1772,6 +1806,8 @@ function RateChoiceDialog({
   keepProductRate,
   keepDesignRate,
   keepRate,
+  originalProductRate = null,
+  originalRate = null,
   onDone,
 }: RateAskProps & { onDone: (choice: RateChoice) => void }) {
   const newRate = (newProductRate ?? 0) + (newDesignRate ?? 0);
@@ -1833,6 +1869,20 @@ function RateChoiceDialog({
             differs from the <span className="font-semibold tabular-nums">{inr(newProductRate ?? 0)}</span> on the{' '}
             {asOf ? <>rate list of <span className="font-semibold">{formatDate(asOf)}</span> — this order&rsquo;s own date</> : <>current rate list</>}.
             That part is yours to decide.
+          </p>
+        )}
+
+        {/* The line's own figure was NOT what the chart said on the order's own
+            date either — the strongest sign this was a price agreed just for
+            this order, which the two columns above would otherwise silently
+            drop. Named and offered back explicitly rather than folded into
+            Custom rate, which asks the user to retype a number the app already
+            has. */}
+        {originalRate != null && (
+          <p className="rounded-md border border-sky-300 bg-sky-50 px-3 py-2 text-[12.5px] text-sky-900 dark:border-sky-400/40 dark:bg-sky-400/10 dark:text-sky-100">
+            This line was already at <span className="font-semibold tabular-nums">{inr(oldRate)}</span> — a rate that doesn&rsquo;t
+            match what {keepAsOf ? <>the rate list said on {formatDate(keepAsOf)}</> : 'the rate list says'}, so it looks like
+            one agreed just for this order. You can keep it, with the new design added in.
           </p>
         )}
 
@@ -2000,6 +2050,21 @@ function RateChoiceDialog({
               <Button variant="ghost" className="sm:mr-auto" onClick={() => setCustom(true)}>
                 Custom rate…
               </Button>
+              {/* The escape hatch this whole dialog exists for: a rate agreed
+                  just for this order, offered back pre-filled instead of making
+                  the user retype it into Custom rate. Sky rather than the
+                  Keep/Use greys, so it reads as the one button that's actually
+                  about THIS order rather than a chart lookup. */}
+              {originalRate != null && (
+                <Button
+                  variant="outline"
+                  onClick={() => onDone({ kind: 'original' })}
+                  className="h-auto min-w-[8.5rem] flex-col gap-0 border-sky-300 py-1.5 leading-tight text-sky-800 hover:bg-sky-50 dark:border-sky-400/40 dark:text-sky-200 dark:hover:bg-sky-400/10"
+                >
+                  <span>Keep {inr(originalRate)}</span>
+                  <span className="text-[10.5px] font-normal opacity-80">your original rate — {inr(originalProductRate ?? 0)}</span>
+                </Button>
+              )}
               {productRateMoved ? (
                 <>
                   <Button

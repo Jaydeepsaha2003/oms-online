@@ -41,17 +41,27 @@ interface Props {
  * Replaces a shadowed card per KPI. Twelve of those, each with its own border,
  * padding and drop shadow, spent more of the dialog on decoration than on
  * numbers — and on a phone they stacked two-up into a wall of boxes. This is the
- * ERP treatment instead: a hairline grid, the figure loud, the label a whisper,
- * and the exact rupee value on hover for the shortened ones.
+ * ERP treatment instead: a hairline grid, the figure loud, the label a whisper.
+ *
+ * A count-based tile (Challans, Confirmed, Cancelled) used to carry its rupee
+ * value ONLY in `hint` — a hover-only title attribute, invisible on the phone
+ * this dialog also runs on and easy to miss even on desktop. `sub` prints it in
+ * the tile itself instead, in the same "count · amount" shape the Top Parties
+ * list already uses below — so the two sections read as one idiom rather than
+ * one being more informative than the other. `hint` stays for the exact,
+ * un-rounded figure on hover.
  */
 function Fig({
   label,
   value,
+  sub,
   hint,
   tone,
 }: {
   label: string;
   value: string;
+  /** A second, smaller figure under the value — the amount behind a count. */
+  sub?: string;
   hint?: string;
   tone?: 'good' | 'warn' | 'bad';
 }) {
@@ -68,6 +78,7 @@ function Fig({
       >
         {value}
       </p>
+      {sub && <p className="text-muted-foreground/80 text-[10px] leading-tight font-semibold tabular-nums">{sub}</p>}
     </div>
   );
 }
@@ -472,17 +483,24 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
                   Sales. Two cards reading plain "Sales" is what made them look
                   like they disagreed. */}
               <Fig label="Sales" value={moneyShort(t.totalSales)} hint={money(t.totalSales)} />
-              <Fig label="Challans" value={count(t.count)} hint={`avg ${money(t.avgValue)}`} />
+              <Fig label="Challans" value={count(t.count)} sub={moneyShort(t.totalSales)} hint={`avg ${money(t.avgValue)}`} />
               <Fig label="Bags" value={count(t.totalBags)} hint="across all lines" />
               <Fig label="Billed (B)" value={moneyShort(t.totalB)} hint={money(t.totalB)} />
               <Fig label="Cash (C)" value={moneyShort(t.totalC)} hint={money(t.totalC)} />
               <Fig label="GST" value={moneyShort(t.totalGst)} hint={money(t.totalGst)} />
               <Fig label="Freight" value={money(t.totalFreight)} />
               <Fig label="Packing" value={money(t.totalPacking)} />
-              <Fig label="Confirmed" value={count(data.byStatus.confirmed.count)} hint={money(data.byStatus.confirmed.total)} tone="good" />
+              <Fig
+                label="Confirmed"
+                value={count(data.byStatus.confirmed.count)}
+                sub={moneyShort(data.byStatus.confirmed.total)}
+                hint={money(data.byStatus.confirmed.total)}
+                tone="good"
+              />
               <Fig
                 label="Cancelled"
                 value={count(data.byStatus.cancelled.count)}
+                sub={data.byStatus.cancelled.count ? moneyShort(data.byStatus.cancelled.total) : undefined}
                 hint={money(data.byStatus.cancelled.total)}
                 tone={data.byStatus.cancelled.count ? 'bad' : undefined}
               />
@@ -491,7 +509,8 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
               <Fig
                 label="Overdue"
                 value={moneyShort(data.overdue.total)}
-                hint={`${count(data.overdue.count)} challan(s)`}
+                sub={data.overdue.count ? `${count(data.overdue.count)} challan(s)` : undefined}
+                hint={money(data.overdue.total)}
                 tone={data.overdue.total ? 'bad' : 'good'}
               />
             </div>
