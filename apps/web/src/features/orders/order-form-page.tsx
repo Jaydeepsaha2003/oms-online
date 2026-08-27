@@ -14,7 +14,7 @@ import {
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRightLeft, BadgePercent, Brush, Camera, Check, type LucideIcon, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Lock, PackageOpen, Package, Pencil, Pin, Plus, RotateCcw, Save, Settings2, Trash2, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { ALL_PERMISSIONS, ORDER_PRIORITIES, RESOURCES, resolveSpecialRates, qtyOrderForCategory, type OrderInput, type QtyField } from '@oms/shared';
+import { ALL_PERMISSIONS, ORDER_PRIORITIES, RESOURCES, resolveSpecialRates, qtyOrderForCategory, type OrderInput, type QtyField, type RateScope } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useAutoSizePcs } from '@/lib/auto-size-pcs';
@@ -69,6 +69,16 @@ interface Item {
   bookingId?: number | null; // set when the line was drawn from a bag Booking (rate frozen)
   bookingCode?: string | null; // the source booking's code, for the badge
   special?: string | null; // human note when a customer special rate priced this line (shows the "special" tag)
+  // Set only when this line's rates came from picking a catalogue item (never
+  // for a booking draw or a manually-typed item name) — lets the rate
+  // breakdown card show "Base ₹340 +₹10 (party)" instead of just the total.
+  // `undefined` on a manual/booking line, which is exactly "nothing to show".
+  productBase?: number | null;
+  productDelta?: number | null;
+  productFrom?: RateScope | null;
+  designBase?: number | null;
+  designDelta?: number | null;
+  designFrom?: RateScope | null;
   itemName: string; // composite display: "{size|pcs} {product} {designType}"
   product: string;
   category: string;
@@ -122,6 +132,20 @@ const itemRate = (l: Pick<Item, 'productRate' | 'designRate'>) => (n(l.productRa
 const scopeWord = (s: string | null) =>
   s === 'ITEM' ? 'item' : s === 'SUBCATEGORY' ? 'sub-category' : s === 'CATEGORY' ? 'category' : '';
 const fmtDelta = (n: number) => (n > 0 ? `+${n}` : `${n}`);
+/**
+ * "Base ₹340 +₹10 (party)" — how a Product/Design rate was actually arrived
+ * at, for the rate-breakdown card. Only returned when there IS a base to show
+ * (a manually-typed item never has one) AND the current on-screen figure still
+ * equals base + delta — the moment someone overrides the number by hand, this
+ * breakdown would be explaining a figure that isn't there any more, which is
+ * worse than not explaining it at all.
+ */
+function rateSub(base: number | null | undefined, delta: number | null | undefined, from: RateScope | null | undefined, current: number): string | null {
+  if (base == null || !delta) return null;
+  if (Math.abs(base + delta - current) > 0.001) return null;
+  const sign = delta > 0 ? '+' : '−';
+  return `Base ₹${base.toLocaleString('en-IN')} ${sign}₹${Math.abs(delta).toLocaleString('en-IN')} (${scopeWord(from ?? null)})`;
+}
 /** A design that carries a logo (standalone "LOGO" or a combo like "HAMMER+LOGO"). */
 const isLogoDesign = (designType?: string | null) => (designType ?? '').toUpperCase().includes('LOGO');
 /**
@@ -134,7 +158,20 @@ const isLogoDesign = (designType?: string | null) => (designType ?? '').toUpperC
  */
 type RateBreakdownItem = Pick<
   Item,
-  'productRate' | 'designRate' | 'designType' | 'designName' | 'special' | 'bookingCode' | 'bookingId' | 'calField'
+  | 'productRate'
+  | 'designRate'
+  | 'designType'
+  | 'designName'
+  | 'special'
+  | 'bookingCode'
+  | 'bookingId'
+  | 'calField'
+  | 'productBase'
+  | 'productDelta'
+  | 'productFrom'
+  | 'designBase'
+  | 'designDelta'
+  | 'designFrom'
 >;
 
 /** One line of the breakdown card: a coloured dot, a label, and the money. */
@@ -287,12 +324,18 @@ function RateBreakdown({ item }: { item: RateBreakdownItem }) {
         </div>
 
         <div className="bg-card space-y-2 px-3 py-2.5">
-          <RateLine icon={Package} label="Product rate" value={inr(prod)} accent="blue" />
+          <RateLine
+            icon={Package}
+            label="Product rate"
+            sub={rateSub(item.productBase, item.productDelta, item.productFrom, prod)}
+            value={inr(prod)}
+            accent="blue"
+          />
           {hasSplit ? (
             <RateLine
               icon={Brush}
               label="Design rate"
-              sub={item.designName || item.designType || null}
+              sub={[item.designName || item.designType || null, rateSub(item.designBase, item.designDelta, item.designFrom, dsgn)].filter(Boolean).join(' · ') || null}
               value={inr(dsgn)}
               accent="violet"
             />
@@ -328,7 +371,6 @@ function RateBreakdown({ item }: { item: RateBreakdownItem }) {
               )}
             </div>
           )}
-          {item.special && <p className="text-muted-foreground text-[10px] leading-snug">{item.special}</p>}
         </div>
 
         <div className="text-muted-foreground flex items-center gap-1 border-t bg-slate-50 px-3 py-1.5 text-[9.5px] dark:bg-slate-900/50">
@@ -935,7 +977,10 @@ export function OrderFormPage() {
   const onItemPick = (label: string) => {
     const it = itemOptions.map.get(label);
     if (!it) {
-      setEntry((e) => ({ ...e, itemName: label, product: label }));
+      // A free-typed name has no catalogue rate to break down — drop whatever
+      // a PREVIOUS pick left behind, or the rate breakdown card would go on
+      // explaining a number that no longer belongs to this line.
+      setEntry((e) => ({ ...e, itemName: label, product: label, productBase: null, productDelta: null, productFrom: null, designBase: null, designDelta: null, designFrom: null }));
       return;
     }
     // Apply the customer's special-rate cascade (most-specific level wins) on top
@@ -980,6 +1025,13 @@ export function OrderFormPage() {
       designName: '',
       designRate: hasDesign ? String(desRate) : '',
       special: specialTip,
+      // The rate breakdown's raw material — see the Item field comments.
+      productBase: hasProd ? (it.productRate ?? 0) : null,
+      productDelta: res?.productDelta ?? 0,
+      productFrom: res?.productFrom ?? null,
+      designBase: hasDesign ? (it.designRate ?? 0) : null,
+      designDelta: res?.designDelta ?? 0,
+      designFrom: res?.designFrom ?? null,
     }));
   };
 
@@ -2021,12 +2073,25 @@ export function OrderFormPage() {
                     <p className="text-[19px] leading-tight font-bold tabular-nums">₹{entryTotal.toLocaleString('en-IN')}</p>
                   </div>
                   <div className="bg-card space-y-2 px-3 py-2.5">
-                    <RateLine icon={Package} label="Product rate" value={`₹${(n(entry.productRate) ?? 0).toLocaleString('en-IN')}`} accent="blue" />
+                    <RateLine
+                      icon={Package}
+                      label="Product rate"
+                      sub={rateSub(entry.productBase, entry.productDelta, entry.productFrom, n(entry.productRate) ?? 0)}
+                      value={`₹${(n(entry.productRate) ?? 0).toLocaleString('en-IN')}`}
+                      accent="blue"
+                    />
                     {(n(entry.designRate) ?? 0) !== 0 ? (
                       <RateLine
                         icon={Brush}
                         label="Design rate"
-                        sub={entry.designName || entry.designType || null}
+                        sub={
+                          [
+                            entry.designName || entry.designType || null,
+                            rateSub(entry.designBase, entry.designDelta, entry.designFrom, n(entry.designRate) ?? 0),
+                          ]
+                            .filter(Boolean)
+                            .join(' · ') || null
+                        }
                         value={`₹${(n(entry.designRate) ?? 0).toLocaleString('en-IN')}`}
                         accent="violet"
                       />
@@ -2035,14 +2100,14 @@ export function OrderFormPage() {
                         No design rate — the total is the product rate alone.
                       </p>
                     )}
-                    {/* Set when a special rate priced this pick (see onItemPick) —
-                        the same note the added-items table shows as a "special"
-                        badge, spelled out here instead since there's room. */}
+                    {/* A flag, not a repeat — the Base/Special split is already
+                        spelled out on the Product/Design lines above (see
+                        `rateSub`); saying it again here would just be the same
+                        sentence twice in a 256px-wide card. */}
                     {entry.special && (
-                      <div className="flex items-start gap-1.5 rounded-[6px] border border-amber-200 bg-amber-50 px-2 py-1.5 text-[10.5px] leading-snug text-amber-800 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-300">
-                        <BadgePercent className="mt-[1px] size-3 shrink-0" />
-                        <span>Special rate — {entry.special}</span>
-                      </div>
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                        <BadgePercent className="size-3" /> Special rate applied
+                      </span>
                     )}
                   </div>
                 </PopoverContent>
