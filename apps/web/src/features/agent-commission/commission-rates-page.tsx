@@ -28,11 +28,11 @@ import {
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const num = (n: number) => n.toLocaleString('en-IN');
 
-/** Register header / body cell. Tight vertical rhythm on purpose — this is a
- *  working list to scan, not a report to read. */
+/** Register header / body cell. Sized to be read across the room — this table
+ *  is where unpaid agents get spotted, so nothing in it should need squinting. */
 const RTH =
-  'sticky top-0 border-b bg-gradient-to-b from-blue-800 to-indigo-800 px-2.5 py-2 text-left text-[10.5px] font-extrabold tracking-wide text-white uppercase whitespace-nowrap';
-const RTD = 'px-2.5 py-1.5 align-middle';
+  'sticky top-0 border-b bg-gradient-to-b from-blue-800 to-indigo-800 px-3 py-2.5 text-left text-[12px] font-extrabold tracking-wide text-white uppercase whitespace-nowrap';
+const RTD = 'px-3 py-2.5 align-middle text-[13.5px]';
 
 /**
  * Agent → category → ₹ per kg or per piece.
@@ -276,14 +276,14 @@ export function CommissionRatesPage() {
                           <span className="inline-flex items-baseline gap-1.5">
                             <span className="text-emerald-700 dark:text-emerald-400">
                               ₹{r.ratePerUnit}
-                              <span className="text-muted-foreground text-[10px] font-normal">/{basisUnit(r.basis ?? 'KGS')}</span>
+                              <span className="text-muted-foreground text-[11.5px] font-normal">/{basisUnit(r.basis ?? 'KGS')}</span>
                             </span>
                             {/* Charged through to customers — visible without
                                 opening the rate, since it is a PRICE decision
                                 affecting every party this agent sells to. */}
                             {r.addToRate && (
                               <span
-                                className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9.5px] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
+                                className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
                                 title="Added onto the product price for every party this agent sells this category to"
                               >
                                 <Receipt className="size-2.5" /> in rate
@@ -294,11 +294,11 @@ export function CommissionRatesPage() {
                       </td>
                       <td className={cn(RTD, 'text-center')}>
                         {r.gap ? (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700 ring-1 ring-inset ring-rose-300 dark:bg-rose-500/20 dark:text-rose-300">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[11.5px] font-bold text-rose-700 ring-1 ring-inset ring-rose-300 dark:bg-rose-500/20 dark:text-rose-300">
                             <TriangleAlert className="size-3" /> NOT SET
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11.5px] font-bold text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300">
                             PRICED
                           </span>
                         )}
@@ -315,8 +315,8 @@ export function CommissionRatesPage() {
                       <td className={cn(RTD, 'whitespace-nowrap')}>
                         {r.firstInvoiceDate ? (
                           <>
-                            <span className="font-mono text-[11.5px] font-semibold">{r.firstInvoiceNo ?? '—'}</span>
-                            <span className="text-muted-foreground ml-1.5 text-[11px] tabular-nums">{formatDate(r.firstInvoiceDate)}</span>
+                            <span className="font-mono text-[13px] font-semibold">{r.firstInvoiceNo ?? '—'}</span>
+                            <span className="text-muted-foreground ml-1.5 text-[12.5px] tabular-nums">{formatDate(r.firstInvoiceDate)}</span>
                           </>
                         ) : (
                           <span className="text-muted-foreground">—</span>
@@ -333,7 +333,7 @@ export function CommissionRatesPage() {
                           <Button
                             variant={r.gap ? 'default' : 'outline'}
                             size="sm"
-                            className="h-7 px-2 text-[11.5px]"
+                            className="h-8 px-2.5 text-[12.5px]"
                             onClick={(e) => {
                               e.stopPropagation();
                               open?.();
@@ -349,8 +349,8 @@ export function CommissionRatesPage() {
                 })}
               </tbody>
               <tfoot>
-                <tr className="[&_td]:sticky [&_td]:bottom-0 [&_td]:border-t-2 [&_td]:border-slate-300 [&_td]:bg-slate-100 [&_td]:px-2.5 [&_td]:py-1.5 [&_td]:font-bold dark:[&_td]:border-white/20 dark:[&_td]:bg-slate-800">
-                  <td colSpan={6} className="text-[11px] tracking-wide uppercase">
+                <tr className="[&_td]:sticky [&_td]:bottom-0 [&_td]:border-t-2 [&_td]:border-slate-300 [&_td]:bg-slate-100 [&_td]:px-3 [&_td]:py-2.5 [&_td]:text-[13.5px] [&_td]:font-bold dark:[&_td]:border-white/20 dark:[&_td]:bg-slate-800">
+                  <td colSpan={6} className="text-[12.5px] tracking-wide uppercase">
                     Total — {shown.filter((r) => r.gap).length} unpriced of {shown.length}
                   </td>
                   <td className="text-right tabular-nums">{num(shown.reduce((a, r) => a + r.invoiceCount, 0))}</td>
@@ -377,6 +377,7 @@ export function CommissionRatesPage() {
           categories={categories}
           lookups={lookups}
           history={allRates ?? []}
+          historyLoaded={!!allRates}
           onClose={() => {
             setEditing(null);
             setAdding(false);
@@ -430,12 +431,15 @@ function Stat({ label, value, tone, hint, onClick, active, icon: Icon }: {
 /** One square: the rate, or a gap that says what it is costing. */
 /* ── Set / change a rate ──────────────────────────────────────────────────── */
 
-function RateDialog({ seed, agents, categories, lookups, history, onClose }: {
+function RateDialog({ seed, agents, categories, lookups, history, historyLoaded, onClose }: {
   seed: { agentId: number; agentName: string; pCategory: string; basis: CommissionBasis } | null;
   agents: { id: number; name: string }[];
   categories: string[];
   lookups: ReturnType<typeof useOrderLookups>['data'];
   history: import('@oms/shared').AgentCommissionRateDto[];
+  /** False until the rate history has actually arrived — the form must not be
+   *  seeded from an empty list and then left blank once the real rates land. */
+  historyLoaded: boolean;
   onClose: () => void;
 }) {
   const confirm = useConfirm();
@@ -517,20 +521,29 @@ function RateDialog({ seed, agents, categories, lookups, history, onClose }: {
   }, [impact.data?.earliestInvDate, past.length, agentName, pCategory]);
 
   /*
-   * Follow the rate in force as the pairing changes.
+   * Load the rate in force into the form.
    *
-   * `current` only lands once the agent and category are picked (and the
-   * history has loaded), so this cannot be a useState initialiser. Keyed on the
-   * pairing so switching agent/category re-seeds, while a toggle the user has
-   * since flipped on the SAME pairing is left alone.
+   * Edit used to open on an empty amount with a hardcoded "40" placeholder, so
+   * an existing rate looked like a blank new one — and the placeholder happening
+   * to match the real rate made it worse. Amount, unit and the charge-through
+   * flag all come from the rate being edited now; only the DATE stays at today,
+   * because saving writes the NEXT dated rate rather than overwriting this one.
+   *
+   * `current` only lands once the agent and category are picked and the history
+   * has arrived, so this cannot be a useState initialiser — and it must not mark
+   * the pairing seeded before `historyLoaded`, or it would latch onto nothing.
+   * Keyed on the pairing so switching agent/category re-seeds, while values the
+   * user has since typed on the SAME pairing are left alone.
    */
-  const flagSeededRef = useRef('');
+  const seededRateRef = useRef('');
   useEffect(() => {
     const key = `${agentName}|${pCategory.trim().toUpperCase()}`;
-    if (!agentName || !pCategory.trim() || flagSeededRef.current === key) return;
-    flagSeededRef.current = key;
+    if (!historyLoaded || !agentName || !pCategory.trim() || seededRateRef.current === key) return;
+    seededRateRef.current = key;
+    setRate(current ? String(current.ratePerUnit) : '');
     setAddToRate(current?.addToRate ?? false);
-  }, [agentName, pCategory, current?.addToRate]);
+    if (current) setBasis(current.basis);
+  }, [historyLoaded, agentName, pCategory, current]);
 
   const save = async () => {
     const agentId = agents.find((a) => a.name === agentName)?.id;
@@ -542,8 +555,17 @@ function RateDialog({ seed, agents, categories, lookups, history, onClose }: {
     const ceiling = basis === 'PCS' ? 500 : 5000;
     if (value > ceiling) return toast.error(`₹${value} per ${basisUnit(basis)} looks like a slipped decimal. The most that can be set is ₹${ceiling}.`);
     if (!effectiveFrom) return toast.error('Choose the date this rate takes effect.');
-    if (past.some((h) => ymd(new Date(h.effectiveFrom)) === effectiveFrom)) {
-      return toast.error(`${agentName} already has a ${pCategory} rate from this date. Pick another date.`);
+    const clash = past.find((h) => ymd(new Date(h.effectiveFrom)) === effectiveFrom);
+    if (clash) {
+      // Two rates on one date make "the rate in force" ambiguous, so the server
+      // refuses it too. Say what to do instead of just refusing.
+      return toast.error(
+        `${agentName} already has a ${pCategory} rate of ₹${clash.ratePerUnit}/${basisUnit(clash.basis)} from ${effectiveFrom}.`,
+        {
+          description: 'Pick a different date to add the next rate, or delete that one in Rate history below to correct it.',
+          duration: 9000,
+        },
+      );
     }
     if (value === 0) {
       const ok = await confirm({
@@ -658,7 +680,7 @@ function RateDialog({ seed, agents, categories, lookups, history, onClose }: {
                 className="h-10 pl-8 text-base font-bold tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 value={rate}
                 onChange={(e) => setRate(e.target.value)}
-                placeholder={basis === 'PCS' ? '2' : '40'}
+                placeholder={current ? String(current.ratePerUnit) : basis === 'PCS' ? '2' : '40'}
               />
             </div>
           </div>

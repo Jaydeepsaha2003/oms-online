@@ -13,6 +13,11 @@ import {
 
 const INCLUDE = { designLinks: { include: { design: true } } } as const;
 type Row = Prisma.CombinationGetPayload<{ include: typeof INCLUDE }>;
+/** Either the root client or a transaction client — so one write path serves both. */
+type Db = Prisma.TransactionClient;
+
+/** A combination needs at least two designs; one design is just that design. */
+const MIN_DESIGNS = 2;
 
 @Injectable()
 export class CombinationsService {
@@ -63,14 +68,47 @@ export class CombinationsService {
     return this.toDto(row);
   }
 
+  /**
+   * One combination. Rejects the two shapes that are not combinations at all —
+   * a single design, and a set that already exists — so the hand-picked path
+   * cannot write rows that `createBulk` would have refused.
+   */
   async create(dto: CreateCombinationDto): Promise<CombinationDto> {
     const designIds = await this.resolveDesignIds(dto.designIds);
-    const name = await this.resolveName(dto.name, designIds);
-    const created = await this.prisma.combination.create({
-      data: { name, designLinks: { create: designIds.map((designId) => ({ designId })) } },
+    if (designIds.length < MIN_DESIGNS) {
+      throw new BadRequestException(`A combination needs at least ${MIN_DESIGNS} designs — pick one more.`);
+    }
+    const dup = await this.findDuplicate(this.prisma, designIds);
+    if (dup) {
+      throw new BadRequestException(`Those designs are already combined as "${dup.name}" (${dup.code}).`);
+    }
+    return this.toDto(await this.createOne(this.prisma, dto.name, designIds));
+  }
+
+  /** The single write path, so `create` and `createBulk` name and code alike. */
+  private async createOne(db: Db, name: string | undefined | null, designIds: number[]): Promise<Row> {
+    const resolved = await this.resolveName(name, designIds, db);
+    const created = await db.combination.create({
+      data: { name: resolved, designLinks: { create: designIds.map((designId) => ({ designId })) } },
       include: INCLUDE,
     });
-    return this.toDto(await this.ensureCode(created));
+    return this.ensureCode(created, db);
+  }
+
+  /**
+   * An existing combination with exactly this design set, or null.
+   *
+   * Only combinations sharing the first design can possibly match, so this reads
+   * a handful of rows instead of the whole table.
+   */
+  private async findDuplicate(db: Db, ids: number[]): Promise<{ name: string; code: string } | null> {
+    const key = this.designSetKey(ids);
+    const candidates = await db.combination.findMany({
+      where: { designLinks: { some: { designId: ids[0] } } },
+      select: { id: true, name: true, code: true, designLinks: { select: { designId: true } } },
+    });
+    const hit = candidates.find((c) => this.designSetKey(c.designLinks.map((l) => l.designId)) === key);
+    return hit ? { name: hit.name, code: hit.code ?? this.codeFor(hit.id) } : null;
   }
 
   /**
@@ -78,8 +116,8 @@ export class CombinationsService {
    * is added, which pairs the new design with each partner across every
    * sub-category it was created in.
    *
-   * Built on `create` per group so every row gets the same name resolution and
-   * code. Two kinds of group are skipped rather than written:
+   * Shares `createOne` with the single-create path so every row gets the same
+   * name resolution and code. Two kinds of group are skipped rather than written:
    *   - one whose exact design set is already a combination (re-running the step
    *     after ticking one more partner must not double up the earlier ones), and
    *   - one holding fewer than two designs, which is not a combination at all.
@@ -88,25 +126,37 @@ export class CombinationsService {
   async createBulk(dto: BulkCombinationsDto): Promise<BulkCombinationResult> {
     const groups = dto.groups ?? [];
     if (!groups.length) throw new BadRequestException('Nothing to create.');
-    const existing = await this.prisma.combination.findMany({
-      select: { designLinks: { select: { designId: true } } },
-    });
-    const seen = new Set(existing.map((c) => this.designSetKey(c.designLinks.map((l) => l.designId))));
 
-    let created = 0;
-    let skipped = 0;
-    for (const g of groups) {
-      const ids = [...new Set(g.designIds ?? [])];
-      const key = this.designSetKey(ids);
-      if (ids.length < 2 || seen.has(key)) {
-        skipped += 1;
-        continue;
+    // One transaction for the whole batch: a design deleted mid-flight used to
+    // leave the earlier groups written behind a bare "Create failed".
+    return this.prisma.$transaction(async (tx) => {
+      // Any existing combination equal to one of our sets must contain at least
+      // one of our design ids, so this is the whole search space.
+      const involved = [...new Set(groups.flatMap((g) => g.designIds ?? []))];
+      const existing = involved.length
+        ? await tx.combination.findMany({
+            where: { designLinks: { some: { designId: { in: involved } } } },
+            select: { designLinks: { select: { designId: true } } },
+          })
+        : [];
+      const seen = new Set(existing.map((c) => this.designSetKey(c.designLinks.map((l) => l.designId))));
+
+      let created = 0;
+      let skipped = 0;
+      for (const g of groups) {
+        const ids = [...new Set(g.designIds ?? [])];
+        const key = this.designSetKey(ids);
+        if (ids.length < MIN_DESIGNS || seen.has(key)) {
+          skipped += 1;
+          continue;
+        }
+        await this.resolveDesignIds(ids, tx);
+        await this.createOne(tx, g.name, ids);
+        seen.add(key);
+        created += 1;
       }
-      await this.create({ name: g.name, designIds: ids });
-      seen.add(key);
-      created += 1;
-    }
-    return { created, skipped };
+      return { created, skipped };
+    });
   }
 
   /** A combination's identity for duplicate detection: its design ids, order
@@ -281,10 +331,10 @@ export class CombinationsService {
     return { error: `${token} (matches several designs — use the DSG code)` };
   }
 
-  private async resolveDesignIds(ids: number[]): Promise<number[]> {
+  private async resolveDesignIds(ids: number[], db: Db = this.prisma): Promise<number[]> {
     const unique = [...new Set(ids)];
     if (unique.length === 0) throw new BadRequestException('Select at least one design.');
-    const found = await this.prisma.design.findMany({ where: { id: { in: unique } }, select: { id: true } });
+    const found = await db.design.findMany({ where: { id: { in: unique } }, select: { id: true } });
     if (found.length !== unique.length) {
       throw new BadRequestException('One or more selected designs no longer exist.');
     }
@@ -292,10 +342,10 @@ export class CombinationsService {
   }
 
   /** Name = supplied (uppercased) or auto-built from the component design types. */
-  private async resolveName(name: string | undefined | null, designIds: number[]): Promise<string> {
+  private async resolveName(name: string | undefined | null, designIds: number[], db: Db = this.prisma): Promise<string> {
     const given = uc(name);
     if (given) return given;
-    const designs = await this.prisma.design.findMany({
+    const designs = await db.design.findMany({
       where: { id: { in: designIds } },
       select: { designType: true },
       orderBy: { designType: 'asc' },
@@ -315,9 +365,9 @@ export class CombinationsService {
     return `CMB-${String(id).padStart(5, '0')}`;
   }
 
-  private async ensureCode(row: Row): Promise<Row> {
+  private async ensureCode(row: Row, db: Db = this.prisma): Promise<Row> {
     if (row.code) return row;
-    return this.prisma.combination.update({
+    return db.combination.update({
       where: { id: row.id },
       data: { code: this.codeFor(row.id) },
       include: INCLUDE,

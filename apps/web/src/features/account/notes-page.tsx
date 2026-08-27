@@ -764,9 +764,19 @@ export function NotesPage() {
                 const locked = max === 0;
                 return (
                   <div key={field} className="space-y-1">
-                    <Label className={FIELD_LABEL}>
+                    <Label className={cn(FIELD_LABEL, 'flex items-center gap-1.5')}>
                       {label}
-                      {max ? <span className="ml-1 font-semibold tracking-normal normal-case opacity-70">max {max}</span> : null}
+                      {/* The ceiling is the whole point of these fields — it was set
+                          in a muted colour AND dimmed again, which read as absent. */}
+                      {max ? (
+                        <span className="rounded-[3px] bg-amber-200 px-1 py-px text-[10.5px] font-extrabold tracking-normal text-amber-950 normal-case tabular-nums dark:bg-amber-400/30 dark:text-amber-50">
+                          max {max}
+                        </span>
+                      ) : locked ? (
+                        <span className="rounded-[3px] bg-rose-100 px-1 py-px text-[10.5px] font-extrabold tracking-normal text-rose-800 normal-case dark:bg-rose-400/20 dark:text-rose-200">
+                          none
+                        </span>
+                      ) : null}
                     </Label>
                     <Input
                       value={entry[field]}

@@ -180,6 +180,19 @@ export function DesignsPage() {
   // because Advanced mode writes one per sub-category.
   const [combineWith, setCombineWith] = useState<DesignDto[] | null>(null);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  /**
+   * The one design type every ticked row shares, or null when they differ.
+   * Same type across sub-categories is what the combine step is built for; a
+   * mixed selection can only be a single hand-made combination.
+   */
+  const sharedType = useMemo(() => {
+    const rows = [...selected.values()];
+    if (rows.length === 0) return null;
+    const types = new Set(rows.map((d) => d.designType));
+    if (types.size !== 1) return null;
+    const [t] = [...types];
+    return isBaseDesignType(t) ? t : null;
+  }, [selected]);
   const activeFilterCount = (category ? 1 : 0) + (subCategory ? 1 : 0) + (combinationStatus ? 1 : 0);
   const resetFilters = () => {
     setCategory('');
@@ -582,9 +595,29 @@ export function DesignsPage() {
               <div className="flex items-center gap-2 rounded-[4px] bg-sky-50 px-3 py-1.5 text-[12.5px] font-semibold text-sky-700 ring-1 ring-sky-200 ring-inset dark:bg-sky-400/10 dark:text-sky-300 dark:ring-sky-400/25">
                 <span className="tabular-nums">{selected.size} selected</span>
                 {can('combination:create') && (
-                  <Button size="sm" className="h-7 rounded-[4px] text-[12px] font-bold" onClick={() => setCombining(true)}>
-                    <Layers className="size-3.5" /> Create combination
-                  </Button>
+                  <>
+                    {/* Same design type across sub-categories is exactly the shape
+                        the combine step handles, so offer it instead of one-at-a-time. */}
+                    {sharedType && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 rounded-[4px] bg-white text-[12px] font-bold"
+                        onClick={() => setCombineWith([...selected.values()])}
+                      >
+                        <Layers className="size-3.5" /> Combine {sharedType} with…
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      className="h-7 rounded-[4px] text-[12px] font-bold"
+                      onClick={() => setCombining(true)}
+                      disabled={selected.size < 2}
+                      title={selected.size < 2 ? 'Tick a second design — a combination needs at least two' : undefined}
+                    >
+                      <Layers className="size-3.5" /> Create combination
+                    </Button>
+                  </>
                 )}
                 <button
                   type="button"
@@ -714,6 +747,20 @@ export function DesignsPage() {
             actions={(d) => (
               <div className="flex items-center justify-end gap-2">
                 <DesignRateListCheckbox design={d} />
+                {/* The combine step used to fire only in the seconds after a design
+                    was created, which left the existing catalogue unreachable. */}
+                {can('combination:create') && isBaseDesignType(d.designType) && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7"
+                    onClick={() => setCombineWith([d])}
+                    aria-label={`Combine ${d.designType} with other designs`}
+                    title={`Combine ${d.designType} with…`}
+                  >
+                    <Layers className="size-4" />
+                  </Button>
+                )}
                 {can('design:update') && (
                   <Button variant="ghost" size="icon" className="size-7" onClick={() => setEditing(d)} aria-label="Edit">
                     <Pencil className="size-4" />
@@ -1368,7 +1415,9 @@ function CombinationDialog({
   const rate = designs.reduce((s, d) => s + (d.rate ?? 0), 0);
 
   const submit = () => {
-    if (designs.length === 0) return toast.error('Select at least one design');
+    // One design is not a combination — the server refuses it too, but saying so
+    // here keeps a pointless round trip out of it.
+    if (designs.length < 2) return toast.error('Pick at least two designs — one design on its own is not a combination');
     create.mutate(
       { name: name.trim() || null, designIds: designs.map((d) => d.id) },
       {
@@ -1466,6 +1515,10 @@ function CombinationDialog({
  *    that does not exist in one of those sub-categories is reported rather than
  *    silently dropped.
  */
+/** A combination's identity: its design ids, order-independent. Mirrors the
+ *  server's `designSetKey`, so both sides agree on what "already exists" means. */
+const setKey = (ids: number[]) => [...new Set(ids)].sort((a, b) => a - b).join(',');
+
 function CombineWithDesignDialog({ base, onClose }: { base: DesignDto[]; onClose: () => void }) {
   const createBulk = useCreateCombinationBulk();
   const category = base[0]?.category ?? '';
@@ -1504,6 +1557,16 @@ function CombineWithDesignDialog({ base, onClose }: { base: DesignDto[]; onClose
     return [...set].sort((a, b) => a.localeCompare(b));
   }, [rowsBySub, targetSubs, newType]);
 
+  /**
+   * The combinations that already exist, by design-id set — the same identity the
+   * server dedupes on. Without this the button promises rows the server will skip.
+   */
+  const { data: comboData } = useCombinations({ page: 1, pageSize: 2000, category });
+  const comboKeys = useMemo(
+    () => new Set((comboData?.items ?? []).map((c) => setKey(c.designs.map((d) => d.id)))),
+    [comboData],
+  );
+
   const [search, setSearch] = useState('');
   const [picked, setPicked] = useState<Set<string>>(new Set());
   /** 'each' → one combination per partner; 'all' → a single combination of the lot. */
@@ -1517,6 +1580,20 @@ function CombineWithDesignDialog({ base, onClose }: { base: DesignDto[]; onClose
     });
   const shown = partnerTypes.filter((t) => !search.trim() || t.toLowerCase().includes(search.trim().toLowerCase()));
 
+  /** partner type → how many target sub-categories already pair it with the base. */
+  const combinedWith = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const t of partnerTypes) {
+      let n = 0;
+      for (const b of base) {
+        const partner = rowsBySub.get(b.subCategory)?.get(t);
+        if (partner && comboKeys.has(setKey([b.id, partner.id]))) n += 1;
+      }
+      if (n) m.set(t, n);
+    }
+    return m;
+  }, [partnerTypes, base, rowsBySub, comboKeys]);
+
   /**
    * Exactly what will be written, so the button is never a mystery.
    *
@@ -1526,9 +1603,16 @@ function CombineWithDesignDialog({ base, onClose }: { base: DesignDto[]; onClose
    */
   const plan = useMemo(() => {
     const groups: { name: string; designIds: number[]; subCategory: string }[] = [];
+    /** Groups the server would skip because that exact set is already combined. */
+    const exists: { name: string; subCategory: string }[] = [];
     const missing: string[] = [];
     const chosen = [...picked];
-    if (chosen.length === 0) return { groups, missing };
+    if (chosen.length === 0) return { groups, exists, missing };
+
+    const take = (g: { name: string; designIds: number[]; subCategory: string }) => {
+      if (comboKeys.has(setKey(g.designIds))) exists.push({ name: g.name, subCategory: g.subCategory });
+      else groups.push(g);
+    };
 
     for (const b of base) {
       const inSub = rowsBySub.get(b.subCategory);
@@ -1540,14 +1624,14 @@ function CombineWithDesignDialog({ base, onClose }: { base: DesignDto[]; onClose
             missing.push(`${t} · ${b.subCategory}`);
             continue;
           }
-          groups.push({ name: nameOf([b.designType, t]), designIds: [b.id, partner.id], subCategory: b.subCategory });
+          take({ name: nameOf([b.designType, t]), designIds: [b.id, partner.id], subCategory: b.subCategory });
         }
       } else {
         const found = chosen.map((t) => ({ t, row: inSub?.get(t) }));
         for (const f of found) if (!f.row) missing.push(`${f.t} · ${b.subCategory}`);
         const ids = [b.id, ...found.filter((f) => f.row).map((f) => f.row!.id)];
         if (ids.length >= 2) {
-          groups.push({
+          take({
             name: nameOf([b.designType, ...found.filter((f) => f.row).map((f) => f.t)]),
             designIds: ids,
             subCategory: b.subCategory,
@@ -1555,12 +1639,18 @@ function CombineWithDesignDialog({ base, onClose }: { base: DesignDto[]; onClose
         }
       }
     }
-    return { groups, missing };
-  }, [base, picked, mode, rowsBySub]);
+    return { groups, exists, missing };
+  }, [base, picked, mode, rowsBySub, comboKeys]);
 
   const submit = () => {
     if (picked.size === 0) return toast.error('Tick at least one design to combine with');
-    if (plan.groups.length === 0) return toast.error('Nothing to create — those designs are not in these sub-categories');
+    if (plan.groups.length === 0) {
+      return toast.error(
+        plan.exists.length
+          ? 'Those combinations already exist — nothing new to create'
+          : 'Nothing to create — those designs are not in these sub-categories',
+      );
+    }
     createBulk.mutate(
       { groups: plan.groups.map((g) => ({ name: g.name, designIds: g.designIds })) },
       {
@@ -1657,20 +1747,26 @@ function CombineWithDesignDialog({ base, onClose }: { base: DesignDto[]; onClose
               shown.map((t) => {
                 // How many of the target sub-categories actually have this one.
                 const have = targetSubs.filter((sub) => rowsBySub.get(sub)?.has(t)).length;
+                // …and in how many it is already paired with the base design.
+                const done = combinedWith.get(t) ?? 0;
+                const allDone = have > 0 && done === have;
                 return (
                   <label key={t} className="hover:bg-accent flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm">
                     <RowCheckbox checked={picked.has(t)} onChange={() => toggle(t)} label={`Combine with ${t}`} />
-                    <span className="font-medium">{t}</span>
-                    {targetSubs.length > 1 && (
-                      <span
-                        className={cn(
-                          'ml-auto text-[11px] tabular-nums',
-                          have === targetSubs.length ? 'text-muted-foreground' : 'text-amber-700 dark:text-amber-400',
-                        )}
-                      >
-                        in {have}/{targetSubs.length}
-                      </span>
-                    )}
+                    <span className={cn('font-medium', allDone && 'text-muted-foreground')}>{t}</span>
+                    <span className="ml-auto flex shrink-0 items-center gap-1.5 text-[11px] tabular-nums">
+                      {/* Already-paired is the one thing that makes a tick a no-op. */}
+                      {done > 0 && (
+                        <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 font-semibold text-emerald-700 ring-1 ring-emerald-200 ring-inset dark:bg-emerald-400/10 dark:text-emerald-300 dark:ring-emerald-400/25">
+                          {allDone ? 'combined' : `${done}/${have} combined`}
+                        </span>
+                      )}
+                      {targetSubs.length > 1 && (
+                        <span className={have === targetSubs.length ? 'text-muted-foreground' : 'text-amber-700 dark:text-amber-400'}>
+                          in {have}/{targetSubs.length}
+                        </span>
+                      )}
+                    </span>
                   </label>
                 );
               })
@@ -1682,7 +1778,9 @@ function CombineWithDesignDialog({ base, onClose }: { base: DesignDto[]; onClose
           {picked.size > 0 && (
             <div className="bg-muted/40 space-y-1 rounded-md px-3 py-2 text-[12.5px]">
               <p className="font-semibold">
-                Will create {plan.groups.length} combination{plan.groups.length === 1 ? '' : 's'}
+                {plan.groups.length > 0
+                  ? `Will create ${plan.groups.length} combination${plan.groups.length === 1 ? '' : 's'}`
+                  : 'Nothing new to create'}
               </p>
               <div className="max-h-24 space-y-0.5 overflow-auto">
                 {plan.groups.slice(0, 12).map((g, i) => (
@@ -1695,6 +1793,13 @@ function CombineWithDesignDialog({ base, onClose }: { base: DesignDto[]; onClose
                   <p className="text-muted-foreground">…and {plan.groups.length - 12} more</p>
                 )}
               </div>
+              {plan.exists.length > 0 && (
+                <p className="text-emerald-700 dark:text-emerald-400">
+                  {plan.exists.length} already combined, so {plan.exists.length === 1 ? 'it is' : 'they are'} left alone (
+                  {plan.exists.slice(0, 3).map((e) => e.name).join(', ')}
+                  {plan.exists.length > 3 ? ', …' : ''})
+                </p>
+              )}
               {plan.missing.length > 0 && (
                 <p className="text-amber-700 dark:text-amber-400">
                   {plan.missing.length} skipped — that design isn’t in the sub-category ({plan.missing.slice(0, 3).join(', ')}
