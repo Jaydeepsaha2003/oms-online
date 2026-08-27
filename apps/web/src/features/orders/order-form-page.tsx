@@ -7,6 +7,7 @@ import {
   useState,
   type Dispatch,
   type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type SetStateAction,
 } from 'react';
@@ -34,7 +35,7 @@ import { settingValues, useOrderQtyLayout, useSettings } from '@/features/settin
 import { useCustomerSpecialRates } from '@/features/special-rates/use-special-rates';
 import { useCreateOrder, useOrder, useOrderLookups, useUpdateOrder } from './use-orders';
 import { useDraftPhotoCheck, useFulfillOrder } from '../dispatch/use-dispatch';
-import { useConvertQuotation, useCreateQuotation, useQuotation, useUpdateQuotation } from '../quotations/use-quotations';
+import { useConvertQuotation, useCreateQuotation, useCreateQuotationFromOrder, useQuotation, useUpdateQuotation } from '../quotations/use-quotations';
 import { clearOrderDraft, loadOrderDraft, saveOrderDraft } from './order-draft';
 import { DraftLinePhotos, toPhotoInput, type LinePhoto } from './line-photos';
 import { useActiveCustomerBookings } from '@/features/bookings/use-bookings';
@@ -488,13 +489,15 @@ export function OrderFormPage() {
   const updateQuotation = useUpdateQuotation(id ?? 0);
   const convertQuotation = useConvertQuotation();
   const fulfillOrder = useFulfillOrder();
+  const createQuotationFromOrder = useCreateQuotationFromOrder();
   const saving =
     create.isPending ||
     update.isPending ||
     createQuotation.isPending ||
     updateQuotation.isPending ||
     convertQuotation.isPending ||
-    fulfillOrder.isPending;
+    fulfillOrder.isPending ||
+    createQuotationFromOrder.isPending;
   const keyer = useRef(0);
   const formRef = useRef<HTMLDivElement>(null);
 
@@ -1092,6 +1095,28 @@ export function OrderFormPage() {
 
   const entryTotal = itemRate(entry);
 
+  /*
+   * The Product ₹ / Design ₹ / Total ₹ cluster's breakdown popover.
+   *
+   * Product ₹ and Design ₹ are live editable inputs here, unlike the
+   * read-only Rate cell in the added-items table — so the trigger can't be a
+   * click on the numbers themselves without fighting the click that's meant
+   * to focus them for typing. Hover is safe on an input (it doesn't touch
+   * focus), so the two fields carry only pointer handlers; Total ₹ is the one
+   * piece of this trio that was never interactive, so it's also where a tap
+   * pins the card open for touch.
+   */
+  const entryHasRate = (n(entry.productRate) ?? 0) !== 0 || (n(entry.designRate) ?? 0) !== 0;
+  const [entryRateHovered, setEntryRateHovered] = useState(false);
+  const [entryRatePinned, setEntryRatePinned] = useState(false);
+  const entryRateOpen = entryHasRate && (entryRateHovered || entryRatePinned);
+  const onEntryRateEnter = (e: ReactPointerEvent) => e.pointerType === 'mouse' && entryHasRate && setEntryRateHovered(true);
+  const onEntryRateLeave = (e: ReactPointerEvent) => e.pointerType === 'mouse' && setEntryRateHovered(false);
+  const toggleEntryRatePin = () => {
+    if (entryRatePinned) setEntryRateHovered(false);
+    setEntryRatePinned((v) => !v);
+  };
+
   // Items can only be built once a customer is chosen (the special rates, bag
   // weights and category all key off the customer). Lock item entry until then.
   const noCustomer = !customer.trim();
@@ -1451,6 +1476,38 @@ export function OrderFormPage() {
     });
   };
 
+  /**
+   * Editing a DRAFT order → "Create Quotation".
+   *
+   * A saved draft is exactly the situation a brand-new order is in — nothing
+   * has been confirmed yet — so it should offer the same way out a new order
+   * does. But the endpoint behind that button (see `useCreateQuotationFromOrder`)
+   * copies whatever is already SAVED on the draft; it has no idea about edits
+   * still sitting in this form. So the current edits are saved to the draft
+   * first (status stays DRAFT — this is not a confirm), and only once that
+   * lands does the quotation get created from it. The draft row itself is left
+   * alone either way, same promise the Orders list's "Save as Quotation" makes.
+   */
+  const saveDraftAsQuotation = async () => {
+    if (!validate(true)) return;
+    const ok = await confirm({
+      title: 'Save changes and create a quotation?',
+      description: `${items.length} item${items.length === 1 ? '' : 's'} · a quotation will be created from this draft — the draft itself is left as-is.`,
+      confirmText: 'Create quotation',
+    });
+    if (!ok) return;
+    const input = { ...buildInput(await resolveOrderDate()), status: 'DRAFT' };
+    const onError = (e: unknown) => toast.error(getApiErrorMessage(e, 'Save failed'));
+    update.mutate(input, {
+      onSuccess: () =>
+        createQuotationFromOrder.mutate(id!, {
+          onSuccess: (q) => finishTo(can('quotation:view') ? `/quotations/${q.id}/bill` : '/quotations'),
+          onError: (e) => toast.error(getApiErrorMessage(e, 'Could not create the quotation')),
+        }),
+      onError,
+    });
+  };
+
   // Save the order with an explicit status. DRAFT orders are hidden from Order
   // Modify until confirmed; the WIP local draft is cleared via finishTo().
   const saveOrder = async (statusValue: string, redirectToBill: boolean) => {
@@ -1590,9 +1647,12 @@ export function OrderFormPage() {
   actionsRef.current = {
     add: addItem,
     save: submit,
-    // Create-as-quotation — only on a brand-new order form.
+    // Create-as-quotation — a new order form, or a saved DRAFT being edited
+    // (see the button's own comment for why a draft gets the same offer).
     quote: () => {
-      if (!isEdit && docKind === 'order') persist('quotation');
+      if (docKind !== 'order') return;
+      if (!isEdit) persist('quotation');
+      else if (orderIsDraft) saveDraftAsQuotation();
     },
     dispatch: createAndDispatch,
     cancel: () => confirmExit(backPath),
@@ -1892,19 +1952,101 @@ export function OrderFormPage() {
                 onInvalidEntry={() => toast.error('Please select a correct design name')}
               />
             </div>
-            <div className="space-y-1 lg:col-span-1" data-tabfield="productRate">
+            {/* Hovering either input (or Total ₹) opens the breakdown below —
+                see the state block above for why the trigger is spread across
+                all three rather than living on one of the editable fields. */}
+            <div className="space-y-1 lg:col-span-1" data-tabfield="productRate" onPointerEnter={onEntryRateEnter} onPointerLeave={onEntryRateLeave}>
               <Label className="text-base">Product ₹</Label>
               <Input type="number" step="any" min={0} className="text-right tabular-nums" value={entry.productRate} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ productRate: e.target.value })} />
             </div>
-            <div className="space-y-1 lg:col-span-1" data-tabfield="designRate">
+            <div className="space-y-1 lg:col-span-1" data-tabfield="designRate" onPointerEnter={onEntryRateEnter} onPointerLeave={onEntryRateLeave}>
               <Label className="text-base">Design ₹</Label>
               <Input type="number" step="any" min={0} className="text-right tabular-nums" value={entry.designRate} disabled={!designRateEditable} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ designRate: e.target.value })} />
             </div>
             <div className="space-y-1 lg:col-span-1">
               <Label className="text-base">Total ₹</Label>
-              <div className="flex h-9 items-center justify-end rounded-md border border-emerald-200 bg-emerald-50 px-2 text-sm font-bold tabular-nums text-emerald-700">
-                {entryTotal.toLocaleString('en-IN')}
-              </div>
+              <Popover
+                open={entryRateOpen}
+                onOpenChange={(o) => {
+                  if (!o) {
+                    setEntryRatePinned(false);
+                    setEntryRateHovered(false);
+                  }
+                }}
+              >
+                <PopoverAnchor asChild>
+                  <div
+                    role="button"
+                    tabIndex={entryHasRate ? 0 : -1}
+                    aria-expanded={entryRateOpen}
+                    aria-label={`Total ₹${entryTotal.toLocaleString('en-IN')} — show breakdown`}
+                    onPointerEnter={onEntryRateEnter}
+                    onPointerLeave={onEntryRateLeave}
+                    onClick={() => entryHasRate && toggleEntryRatePin()}
+                    onKeyDown={(e) => {
+                      if (entryHasRate && (e.key === 'Enter' || e.key === ' ')) {
+                        e.preventDefault();
+                        toggleEntryRatePin();
+                      }
+                    }}
+                    onFocus={() => entryHasRate && setEntryRateHovered(true)}
+                    onBlur={() => setEntryRateHovered(false)}
+                    className={cn(
+                      'flex h-9 items-center justify-end rounded-md border border-emerald-200 bg-emerald-50 px-2 text-sm font-bold tabular-nums text-emerald-700 outline-none',
+                      'dark:border-emerald-400/30 dark:bg-emerald-400/10 dark:text-emerald-300',
+                      entryHasRate && 'cursor-help transition-colors hover:border-sky-300 hover:bg-sky-50 focus-visible:ring-2 focus-visible:ring-sky-400 dark:hover:border-sky-400/40 dark:hover:bg-sky-950/40',
+                      entryRateOpen && 'border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-400/40 dark:bg-sky-950/50 dark:text-sky-200',
+                    )}
+                  >
+                    {entryTotal.toLocaleString('en-IN')}
+                  </div>
+                </PopoverAnchor>
+                <PopoverContent
+                  side="top"
+                  align="end"
+                  sideOffset={8}
+                  onOpenAutoFocus={(e) => e.preventDefault()}
+                  onCloseAutoFocus={(e) => e.preventDefault()}
+                  className={cn(
+                    'w-64 overflow-hidden rounded-[10px] border-0 p-0 shadow-xl',
+                    'ring-1 ring-slate-900/10 dark:ring-white/10',
+                    !entryRatePinned && 'pointer-events-none',
+                  )}
+                >
+                  <div className="bg-gradient-to-r from-sky-600 via-blue-600 to-indigo-600 px-3 py-2 text-white">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className="text-[10px] font-bold tracking-[0.14em] uppercase opacity-80">Rate breakdown</p>
+                      <p className="text-[9.5px] font-semibold opacity-80">{entry.calField === 'PCS' ? 'per piece' : 'per kg'}</p>
+                    </div>
+                    <p className="text-[19px] leading-tight font-bold tabular-nums">₹{entryTotal.toLocaleString('en-IN')}</p>
+                  </div>
+                  <div className="bg-card space-y-2 px-3 py-2.5">
+                    <RateLine icon={Package} label="Product rate" value={`₹${(n(entry.productRate) ?? 0).toLocaleString('en-IN')}`} accent="blue" />
+                    {(n(entry.designRate) ?? 0) !== 0 ? (
+                      <RateLine
+                        icon={Brush}
+                        label="Design rate"
+                        sub={entry.designName || entry.designType || null}
+                        value={`₹${(n(entry.designRate) ?? 0).toLocaleString('en-IN')}`}
+                        accent="violet"
+                      />
+                    ) : (
+                      <p className="text-muted-foreground rounded-[6px] border border-dashed px-2 py-1.5 text-[10.5px] leading-snug">
+                        No design rate — the total is the product rate alone.
+                      </p>
+                    )}
+                    {/* Set when a special rate priced this pick (see onItemPick) —
+                        the same note the added-items table shows as a "special"
+                        badge, spelled out here instead since there's room. */}
+                    {entry.special && (
+                      <div className="flex items-start gap-1.5 rounded-[6px] border border-amber-200 bg-amber-50 px-2 py-1.5 text-[10.5px] leading-snug text-amber-800 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-300">
+                        <BadgePercent className="mt-[1px] size-3 shrink-0" />
+                        <span>Special rate — {entry.special}</span>
+                      </div>
+                    )}
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
           </div>
 
@@ -2302,14 +2444,18 @@ export function OrderFormPage() {
               <FilePen /> Save as Draft
             </Button>
           )}
-          {/* On a new form, offer "Create Quotation" (light red) alongside the order action. */}
-          {!isEdit && docKind === 'order' && (
+          {/* "Create Quotation" (light red): on a new form, alongside the order
+              action. A saved DRAFT gets it too — nothing about a draft has been
+              confirmed yet, so it's in the same spot a new order is; see
+              `saveDraftAsQuotation` for why editing one takes a different path
+              to get there than a brand-new form does. */}
+          {docKind === 'order' && (!isEdit || orderIsDraft) && (
             <Button
               type="button"
-              onClick={() => persist('quotation')}
+              onClick={() => (isEdit ? saveDraftAsQuotation() : persist('quotation'))}
               disabled={saving}
               className="border border-red-200 bg-red-100 text-red-700 hover:bg-red-200"
-              title="Save as a quotation (Alt+Q)"
+              title={isEdit ? 'Save changes and create a quotation from this draft (Alt+Q)' : 'Save as a quotation (Alt+Q)'}
             >
               <FileText /> Create Quotation
               <Kbd className="hidden sm:inline-flex">Alt+Q</Kbd>
