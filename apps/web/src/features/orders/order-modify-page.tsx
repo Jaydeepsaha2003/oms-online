@@ -1230,10 +1230,27 @@ function LineEditor({
     // product exactly as it was, and re-pricing a product the user never
     // re-chose is an unasked-for change — that is what made a design swap
     // announce "Product changed" and look broken.
+    /**
+     * `psize` compared only when the LINE actually carries one.
+     *
+     * For nearly every product the size lives in `subCategory` (already
+     * compared above) — "10-PCS-FG-22G" vs "8-PCS-FG-22G" IS the size — and
+     * `psize` on the order line is simply never set (true for the large
+     * majority of real lines). The catalogue row for the picked item still
+     * carries its own `size` regardless, so comparing it against an unset
+     * `form.psize` as text ('7' vs '') read as a mismatch on almost every pick
+     * and silently forced every design-only swap down the "product changed"
+     * path — the one place this line's own product rate could never be kept.
+     * Only a handful of product families (e.g. MAAP SET) genuinely vary by
+     * `psize` within one product+subCategory, and those DO record it on the
+     * line — so trusting it exactly when present, and ignoring it when not,
+     * covers both.
+     */
+    const linePsize = num(form.psize);
     const productChanged =
       norm(it.product) !== norm(form.product) ||
       norm(it.subCategory) !== norm(form.subCategory) ||
-      String(it.size ?? '') !== String(num(form.psize) ?? '');
+      (linePsize != null && linePsize !== (it.size ?? null));
     const designChanged = norm(it.designType) !== norm(form.designType);
     const itemChanged = productChanged || designChanged;
     // The rate already sitting on this line — what "keep the old rate" means.
