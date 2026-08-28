@@ -934,8 +934,17 @@ export class NotesService {
 
 function buildNoteDoc(c: NoteDto): TDocumentDefinitions {
   const isCredit = c.mode === 'CREDIT';
-  const BLUE = isCredit ? '#7A1F1F' : '#1F4E78';
-  const ACCENT = isCredit ? '#DC2626' : '#F99A0F';
+  /*
+   * One palette for both notes.
+   *
+   * A credit note used to print in maroon/red while a debit note printed in
+   * blue/amber, so the two documents looked like they came from different
+   * companies. The word CREDIT NOTE or DEBIT NOTE at the top is what tells them
+   * apart — the house colours should not, any more than they change between two
+   * invoices. These are the debit note's original values.
+   */
+  const BLUE = '#1F4E78';
+  const ACCENT = '#F99A0F';
   const AMBER = '#F59E0B';
   const BLACK = '#111111';
   const title = isCredit ? 'CREDIT NOTE' : 'DEBIT NOTE';
