@@ -1500,7 +1500,15 @@ export function OrderFormPage() {
         })),
     [items],
   );
-  const canDispatch = !isEdit && docKind === 'order' && can('dispatch:create');
+  /*
+   * Whether THIS form can dispatch — which now includes a saved draft, since
+   * Confirm & Dispatch is offered there too. It gates the photo pre-check: with
+   * a draft excluded, `missingPhotoKeys` stayed empty, the client guard passed,
+   * and the draft was confirmed only for the server to refuse the dispatch —
+   * leaving a confirmed order behind an error. Written out rather than reusing
+   * `orderIsDraft`, which is declared further down and would be in its TDZ here.
+   */
+  const canDispatch = (!isEdit || status === 'DRAFT') && docKind === 'order' && can('dispatch:create');
   const { data: photoStatus } = useDraftPhotoCheck({ customerId: customerId ?? null, lines: photoLines }, canDispatch);
 
   /** Lines that would ship undocumented: the rule applies, nothing on file from
@@ -1724,17 +1732,32 @@ export function OrderFormPage() {
   // Modify until confirmed; the WIP local draft is cleared via finishTo().
   const saveOrder = async (statusValue: string, redirectToBill: boolean) => {
     const isDraft = statusValue === 'DRAFT';
+    // Editing a DRAFT and saving it as CONFIRMED is not an ordinary update —
+    // it is the moment the order becomes real, so it says so.
+    const confirmingDraft = isEdit && !isDraft && status === 'DRAFT';
     if (!validate(isDraft)) return;
     const ok = await confirm({
       title: isEdit
-        ? `Save changes to this ${isDraft ? 'draft' : 'order'}?`
+        ? confirmingDraft
+          ? 'Confirm this draft order?'
+          : `Save changes to this ${isDraft ? 'draft' : 'order'}?`
         : isDraft
           ? 'Save this order as a draft?'
           : 'Create this order?',
       description: isDraft
         ? `${items.length} item${items.length === 1 ? '' : 's'} · kept as Draft and hidden from Order Modify until confirmed.`
-        : `${items.length} item${items.length === 1 ? '' : 's'} · total ₹${total.toLocaleString('en-IN')} for ${customer.trim()}.`,
-      confirmText: isEdit ? (isDraft ? 'Save draft' : 'Update & save') : isDraft ? 'Save draft' : 'Create order',
+        : confirmingDraft
+          ? `${items.length} item${items.length === 1 ? '' : 's'} · total ₹${total.toLocaleString('en-IN')} for ${customer.trim()}. It stops being a draft and appears in Order Modify and Dispatch.`
+          : `${items.length} item${items.length === 1 ? '' : 's'} · total ₹${total.toLocaleString('en-IN')} for ${customer.trim()}.`,
+      confirmText: isEdit
+        ? isDraft
+          ? 'Save draft'
+          : confirmingDraft
+            ? 'Update & Confirm'
+            : 'Update & save'
+        : isDraft
+          ? 'Save draft'
+          : 'Create order',
     });
     if (!ok) return;
     const input = { ...buildInput(await resolveOrderDate()), status: statusValue };
@@ -1760,11 +1783,21 @@ export function OrderFormPage() {
     });
   };
 
-  // Create & Dispatch (Alt+D): take the order AND ship every line in full in one
-  // step. Creates the CONFIRMED order, then fully dispatches all its lines, then
-  // clears the form for the next entry. New orders only; needs dispatch:create.
+  /*
+   * Create & Dispatch (Alt+D): take the order AND ship every line in full in one
+   * step.
+   *
+   * Two entry points, because a draft is an order that has not been committed
+   * yet — the same "take it and ship it" decision applies whether the lines were
+   * just typed or were parked as a draft yesterday:
+   *   • a NEW order  → create it CONFIRMED, dispatch, blank the form for the next;
+   *   • a saved DRAFT → update it to CONFIRMED, dispatch, back to the list (there
+   *     is no "next entry" to blank the form for when editing an existing order).
+   * Needs dispatch:create either way.
+   */
   const createAndDispatch = async () => {
-    if (isEdit || docKind !== 'order' || !can('dispatch:create')) return;
+    const fromDraft = isEdit && docKind === 'order' && status === 'DRAFT';
+    if ((isEdit && !fromDraft) || docKind !== 'order' || !can('dispatch:create')) return;
     if (!validate()) return;
     // Dispatching is what triggers the photo rule — see photoLines above. Block
     // before the confirm, not after: the order must not be created either, or
@@ -1781,28 +1814,41 @@ export function OrderFormPage() {
       return;
     }
     const ok = await confirm({
-      title: 'Create & fully dispatch this order?',
-      description: `${items.length} item${items.length === 1 ? '' : 's'} · total ₹${total.toLocaleString('en-IN')} for ${customer.trim()}. The order is created and every line is dispatched in full right away.`,
-      confirmText: 'Create & Dispatch',
+      title: fromDraft ? 'Confirm & fully dispatch this draft?' : 'Create & fully dispatch this order?',
+      description: `${items.length} item${items.length === 1 ? '' : 's'} · total ₹${total.toLocaleString('en-IN')} for ${customer.trim()}. ${
+        fromDraft
+          ? 'The draft is confirmed and every line is dispatched in full right away.'
+          : 'The order is created and every line is dispatched in full right away.'
+      }`,
+      confirmText: fromDraft ? 'Confirm & Dispatch' : 'Create & Dispatch',
     });
     if (!ok) return;
     const input = { ...buildInput(await resolveOrderDate()), status: 'CONFIRMED' };
-    create.mutate(input, {
-      onSuccess: (o) =>
-        fulfillOrder.mutate(o.id, {
-          onSuccess: (res) => {
-            toast.success(`Order created · ${res.dispatched} line${res.dispatched === 1 ? '' : 's'} dispatched in full`);
-            finishToNewForm();
-          },
-          // The order saved but the bulk dispatch failed — don't lose it; send the
-          // user to the order so they can dispatch the lines manually.
-          onError: (e) => {
-            toast.error(getApiErrorMessage(e, 'Order saved, but dispatch failed — dispatch it manually.'));
-            finishTo(can('order:print') ? `/orders/${o.id}/bill` : '/orders');
-          },
-        }),
-      onError: (e) => toast.error(getApiErrorMessage(e, 'Save failed')),
+    // The order exists and is dispatched — where to go next, and what to say.
+    const afterDispatch = (id: number) => ({
+      onSuccess: (res: { dispatched: number }) => {
+        toast.success(
+          `Order ${fromDraft ? 'confirmed' : 'created'} · ${res.dispatched} line${res.dispatched === 1 ? '' : 's'} dispatched in full`,
+        );
+        // Editing has no "next entry" to blank the form for.
+        if (fromDraft) finishTo('/orders');
+        else finishToNewForm();
+      },
+      // The order saved but the bulk dispatch failed — don't lose it; send the
+      // user to the order so they can dispatch the lines manually.
+      onError: (e: unknown) => {
+        toast.error(getApiErrorMessage(e, 'Order saved, but dispatch failed — dispatch it manually.'));
+        finishTo(can('order:print') ? `/orders/${id}/bill` : '/orders');
+      },
     });
+    const onError = (e: unknown) => toast.error(getApiErrorMessage(e, 'Save failed'));
+    if (fromDraft) {
+      // `id` is the edited order's route param — always present when isEdit.
+      if (id == null) return;
+      update.mutate(input, { onSuccess: () => fulfillOrder.mutate(id, afterDispatch(id)), onError });
+    } else {
+      create.mutate(input, { onSuccess: (o) => fulfillOrder.mutate(o.id, afterDispatch(o.id)), onError });
+    }
   };
 
   // The primary action (Ctrl+S / main button). Quotations go through persist();
@@ -1818,7 +1864,9 @@ export function OrderFormPage() {
   };
 
   const orderIsDraft = docKind === 'order' && status === 'DRAFT';
-  const primaryLabel = isEdit ? (orderIsDraft ? 'Update & save' : 'Update changes') : `Create ${docLabel}`;
+  // A draft's primary action CONFIRMS it (see submit → saveOrder), so the button
+  // says what it does rather than the generic "save".
+  const primaryLabel = isEdit ? (orderIsDraft ? 'Update & Confirm' : 'Update changes') : `Create ${docLabel}`;
   // Offer "Save as Draft" on a new order, or when editing one that's still a draft.
   const showSaveDraft = docKind === 'order' && (!isEdit || orderIsDraft);
 
@@ -2744,16 +2792,23 @@ export function OrderFormPage() {
               <ArrowRightLeft /> Save &amp; Convert
             </Button>
           )}
-          {/* Advanced one-step: create the order AND fully dispatch every line. */}
-          {!isEdit && docKind === 'order' && can('dispatch:create') && (
+          {/* Advanced one-step: take the order AND fully dispatch every line.
+              A saved DRAFT gets it too — nothing about a draft is committed yet,
+              so the same decision is open to it as to a brand-new order. */}
+          {(!isEdit || orderIsDraft) && docKind === 'order' && can('dispatch:create') && (
             <Button
               type="button"
               onClick={createAndDispatch}
               disabled={saving}
               className="col-span-2 bg-amber-500 text-white hover:bg-amber-600 sm:col-auto"
-              title="Create the order and dispatch every line in full (Alt+D)"
+              title={
+                orderIsDraft
+                  ? 'Confirm this draft and dispatch every line in full (Alt+D)'
+                  : 'Create the order and dispatch every line in full (Alt+D)'
+              }
             >
-              {fulfillOrder.isPending ? <Loader2 className="animate-spin" /> : <Truck />} Create &amp; Dispatch
+              {fulfillOrder.isPending ? <Loader2 className="animate-spin" /> : <Truck />}
+              {orderIsDraft ? 'Confirm & Dispatch' : 'Create & Dispatch'}
               <Kbd className="hidden sm:inline-flex">Alt+D</Kbd>
             </Button>
           )}
