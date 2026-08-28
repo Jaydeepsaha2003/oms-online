@@ -84,6 +84,9 @@ interface Item {
   // this item was picked — see `addToRate` on Special Commission. Null/absent
   // when this customer's agent has nothing flagged, same as the fields above.
   commissionAddOn?: number | null;
+  /** The winning commission rule's label ("Base rate", or the special's own),
+   *  so the breakdown can say which one is in the price. */
+  commissionFrom?: string | null;
   itemName: string; // composite display: "{size|pcs} {product} {designType}"
   product: string;
   category: string;
@@ -160,9 +163,11 @@ function rateSub(base: number | null | undefined, parts: { amount: number; tag: 
  *  pass-through agent commission (see `commissionAddOn` on Item) — design
  *  never carries the second, commission is always folded into the product
  *  side regardless of which scope the winning commission rule was aimed at. */
-const productParts = (item: Pick<Item, 'productDelta' | 'productFrom' | 'commissionAddOn'>) => [
+const productParts = (item: Pick<Item, 'productDelta' | 'productFrom' | 'commissionAddOn' | 'commissionFrom'>) => [
   ...(item.productDelta ? [{ amount: item.productDelta, tag: scopeWord(item.productFrom ?? null) }] : []),
-  ...(item.commissionAddOn ? [{ amount: item.commissionAddOn, tag: 'commission' }] : []),
+  // The commission's own tag names the rule that won it, so a special
+  // commission is distinguishable from the agent's plain base rate.
+  ...(item.commissionAddOn ? [{ amount: item.commissionAddOn, tag: `commission:${item.commissionFrom ?? ''}` }] : []),
 ];
 const designParts = (item: Pick<Item, 'designDelta' | 'designFrom'>) =>
   item.designDelta ? [{ amount: item.designDelta, tag: scopeWord(item.designFrom ?? null) }] : [];
@@ -193,6 +198,7 @@ type RateBreakdownItem = Pick<
   | 'designDelta'
   | 'designFrom'
   | 'commissionAddOn'
+  | 'commissionFrom'
 >;
 
 /** One line of the breakdown card: a coloured dot, a label, and the money. */
@@ -250,6 +256,21 @@ function BuildUpRow({ label, value, strong }: { label: string; value: string; st
  * actually adds up to the figure shown. A hand-typed rate has no derivation,
  * and inventing one would be worse than saying nothing.
  */
+/**
+ * What to call one add-on row.
+ *
+ * A commission tag carries the rule that won it ("commission:Base rate",
+ * "commission:JOHN · GLASS"), because "Commission" alone left the reader unable
+ * to tell the agent's standing rate from a rule written for this party.
+ */
+function buildUpLabel(tag: string): string {
+  if (!tag.startsWith('commission')) return `Special rate (${tag})`;
+  const from = tag.slice('commission:'.length).trim();
+  if (!from) return 'Commission';
+  // "Base rate" is the agent's standing rate; anything else is a special rule.
+  return /^base rate$/i.test(from) ? 'Commission (agent base rate)' : `Special commission (${from})`;
+}
+
 function RateBuildUp({
   base,
   parts,
@@ -282,7 +303,7 @@ function RateBuildUp({
       {real.map((part) => (
         <BuildUpRow
           key={part.tag}
-          label={part.tag === 'commission' ? 'Commission' : `Special rate (${part.tag})`}
+          label={buildUpLabel(part.tag)}
           value={`${part.amount > 0 ? '+' : '−'}₹${Math.abs(part.amount).toLocaleString('en-IN')}`}
         />
       ))}
@@ -1077,6 +1098,108 @@ export function OrderFormPage() {
     return { options, map };
   }, [lookups, showBy, special]);
 
+  /**
+   * A line's design type, or null when it has none.
+   *
+   * A saved order stores "NA" on a plain line while the catalogue stores null,
+   * so the two have to be reconciled before anything is matched on it — the
+   * same sentinel the printed documents already strip.
+   */
+  const designOf = (d: string | null | undefined) => {
+    const v = (d ?? '').trim();
+    return !v || v.toUpperCase() === 'NA' ? null : v;
+  };
+
+  /** Identity of a rate in the catalogue — everything that decides it except size. */
+  const rateKey = (l: { product: string; category: string; subCategory: string; designType?: string | null }) =>
+    [l.product, l.category, l.subCategory, designOf(l.designType) ?? ''].map((v) => (v ?? '').trim().toUpperCase()).join('|');
+
+  /**
+   * The catalogue's master product/design rate per rate-identity.
+   *
+   * Lets a line that was NOT just picked — one loaded from a saved order —
+   * still be explained. Several catalogue rows can share an identity (they
+   * differ only by size), so the first wins; `RateBuildUp` refuses to show a
+   * build-up that doesn't add up to the figure on screen, which is what keeps
+   * a wrong guess off the card.
+   */
+  const masterRates = useMemo(() => {
+    const m = new Map<string, { productRate: number | null; designRate: number | null }>();
+    for (const it of lookups?.items ?? []) {
+      const k = rateKey(it);
+      if (!m.has(k)) m.set(k, { productRate: it.productRate ?? null, designRate: it.designRate ?? null });
+    }
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lookups]);
+
+  /**
+   * The agent commission folded into this line's product rate, and which rule
+   * won it. Shared with {@link onItemPick} so the price the form applies and
+   * the breakdown that explains it can never come from two different engines.
+   */
+  const commissionFor = (line: { category: string; subCategory: string; product: string; designType?: string | null }) => {
+    const catKey = line.category.trim().toUpperCase();
+    const base = commissionAddOns?.bases.find((b) => b.pCategory.trim().toUpperCase() === catKey) ?? null;
+    const resolved =
+      commissionAddOns && (commissionAddOns.specials.length || base)
+        ? resolveCommissionRate(commissionAddOns.specials, base, {
+            customerId: customerId ?? null,
+            pCategory: line.category,
+            subCategory: line.subCategory,
+            product: line.product,
+            designType: line.designType ?? null,
+          })
+        : null;
+    return {
+      amount: resolved?.addToRate ? resolved.ratePerUnit : 0,
+      from: resolved?.addToRate ? (resolved.label ?? null) : null,
+    };
+  };
+
+  /**
+   * Work out how a line's rate is built up, for lines that never went through
+   * the picker — every line of a saved order being edited, which is where the
+   * card used to read "No breakdown available for this rate".
+   *
+   * Derived from TODAY's masters and rules, so an order priced months ago may
+   * not reconcile any more. That is handled, not hidden: `RateBuildUp` shows
+   * nothing rather than a build-up that disagrees with the printed figure.
+   */
+  const deriveBreakdown = (line: Item) => {
+    const master = masterRates.get(rateKey(line));
+    if (!master) return null;
+    const designType = designOf(line.designType);
+    const res = special
+      ? resolveSpecialRates(special, {
+          category: line.category,
+          subCategory: line.subCategory,
+          product: line.product,
+          designType,
+        })
+      : null;
+    const commission = commissionFor({ ...line, designType });
+    const hasProd = master.productRate != null || (res?.productDelta ?? 0) !== 0 || commission.amount !== 0;
+    const hasDesign = !!designType && (master.designRate != null || (res?.designDelta ?? 0) !== 0);
+    return {
+      productBase: hasProd ? (master.productRate ?? 0) : null,
+      productDelta: res?.productDelta ?? 0,
+      productFrom: res?.productFrom ?? null,
+      designBase: hasDesign ? (master.designRate ?? 0) : null,
+      designDelta: res?.designDelta ?? 0,
+      designFrom: res?.designFrom ?? null,
+      commissionAddOn: commission.amount || null,
+      commissionFrom: commission.from,
+    };
+  };
+
+  /** A line with its build-up filled in, when it isn't carrying one already. */
+  const withBreakdown = (i: Item): Item => {
+    if (i.productBase != null || i.designBase != null) return i;
+    const d = deriveBreakdown(i);
+    return d ? { ...i, ...d } : i;
+  };
+
   // Picking an item fills product, category/sub, design type, rates + weight/box info.
   const onItemPick = (label: string) => {
     const it = itemOptions.map.get(label);
@@ -1084,7 +1207,7 @@ export function OrderFormPage() {
       // A free-typed name has no catalogue rate to break down — drop whatever
       // a PREVIOUS pick left behind, or the rate breakdown card would go on
       // explaining a number that no longer belongs to this line.
-      setEntry((e) => ({ ...e, itemName: label, product: label, productBase: null, productDelta: null, productFrom: null, designBase: null, designDelta: null, designFrom: null, commissionAddOn: null }));
+      setEntry((e) => ({ ...e, itemName: label, product: label, productBase: null, productDelta: null, productFrom: null, designBase: null, designDelta: null, designFrom: null, commissionAddOn: null, commissionFrom: null }));
       return;
     }
     // Apply the customer's special-rate cascade (most-specific level wins) on top
@@ -1098,47 +1221,13 @@ export function OrderFormPage() {
         })
       : null;
     /*
-     * This customer's own agent commission, when one is flagged to raise
-     * their price (see `addToRate` on Special Commission) — resolved with the
-     * SAME precedence engine the commission accrual itself uses, so "what
-     * shows here" and "what the agent is actually owed" can never quietly
-     * disagree. Always folded into the PRODUCT side: commission is one figure
-     * per line, not a product/design split the way a rate is.
-     *
-     * `base` is a dummy — commission has no "base rate" concept for pricing,
-     * only its own special rules — but its `basis` still gates the match: a
-     * per-piece commission rule must never silently price a per-kg line (see
-     * ruleMatches' own comment on exactly this failure mode).
+     * This customer's own agent commission, when one is flagged to raise their
+     * price (see `addToRate` on Special Commission). Always folded into the
+     * PRODUCT side: commission is one figure per line, not a product/design
+     * split the way a rate is. See `commissionFor` for the resolution itself.
      */
-    const catKey = it.category.trim().toUpperCase();
-    /*
-     * The agent's REAL base rate for this category, not a placeholder.
-     *
-     * It has to be the real one for two reasons: it carries its own
-     * `addToRate` (a base rate can now be charged through, reaching every
-     * party the agent sells to), and its basis is what keeps a per-kg rule off
-     * a per-piece category. Passing a dummy base made a flagged base rate
-     * invisible here and left the unit to a second guess.
-     */
-    const commissionBase = commissionAddOns?.bases.find((b) => b.pCategory.trim().toUpperCase() === catKey) ?? null;
-    /*
-     * Resolved through the same precedence engine the accrual uses, over ALL
-     * current rules — not just the flagged ones. A matching special replaces
-     * the base outright, so an unflagged special has to be able to win and
-     * leave nothing added; handing over only flagged rules would let a flagged
-     * base slip through underneath one and overcharge the party.
-     */
-    const commissionResolved =
-      commissionAddOns && (commissionAddOns.specials.length || commissionBase)
-        ? resolveCommissionRate(commissionAddOns.specials, commissionBase, {
-            customerId: customerId ?? null,
-            pCategory: it.category,
-            subCategory: it.subCategory,
-            product: it.product,
-            designType: it.designType ?? null,
-          })
-        : null;
-    const commissionAmount = commissionResolved?.addToRate ? commissionResolved.ratePerUnit : 0;
+    const commission = commissionFor(it);
+    const commissionAmount = commission.amount;
     const hasProd = it.productRate != null || (res?.productDelta ?? 0) !== 0 || commissionAmount !== 0;
     const hasDesign = !!it.designType && (it.designRate != null || (res?.designDelta ?? 0) !== 0);
     const prodRate = (it.productRate ?? 0) + (res?.productDelta ?? 0) + commissionAmount;
@@ -1179,6 +1268,7 @@ export function OrderFormPage() {
       designDelta: res?.designDelta ?? 0,
       designFrom: res?.designFrom ?? null,
       commissionAddOn: commissionAmount || null,
+      commissionFrom: commission.from,
     }));
   };
 
@@ -2568,7 +2658,7 @@ export function OrderFormPage() {
                         * nobody hovers is a tooltip nobody has.
                         */}
                       <td className="text-right tabular-nums">
-                        <RateBreakdown item={i} />
+                        <RateBreakdown item={withBreakdown(i)} />
                       </td>
                       <td className="text-right text-[15px] font-bold tabular-nums text-emerald-700">{lineAmount(i).toLocaleString('en-IN')}</td>
                       <td className="max-w-[14rem] truncate" title={i.comment}>{i.comment || '—'}</td>
