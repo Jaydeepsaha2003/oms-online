@@ -43,6 +43,15 @@ export function fetchNote(mode: NoteMode, code: string): Promise<NoteDto> {
   return http.get<NoteDto>(`/notes/${mode}/${encodeURIComponent(code)}`);
 }
 
+/** One note as a query — the printable bill page renders straight from this. */
+export function useNote(mode: NoteMode | undefined, code: string | undefined) {
+  return useQuery({
+    queryKey: [...KEY, 'one', mode, code],
+    queryFn: () => fetchNote(mode!, code!),
+    enabled: !!mode && !!code,
+  });
+}
+
 export function useSaveNote() {
   const qc = useQueryClient();
   return useMutation({

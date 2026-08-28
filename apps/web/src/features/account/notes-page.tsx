@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ArrowUpRight, Check, FolderOpen, Layers, Link2, Loader2, Plus, Printer, RotateCcw, Shuffle, Trash2, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -27,7 +28,6 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { openPdf } from '@/lib/pdf';
 import { useCustomers } from '@/features/customers/use-customers';
 import { fetchChallanByCode } from '@/features/challans/use-challans';
 import { fetchNote, useDeleteNote, useNextNoteNo, useNoteDirectory, useRecentSold, useSaveNote } from './use-notes';
@@ -131,7 +131,7 @@ export function NotesPage() {
    * would throw away everything added since the last save.
    *
    * The tab is reserved synchronously inside the click (same trick as
-   * {@link openPdf}); opening it after the await would be swallowed as a popup.
+   * the PDF helpers do); opening it after the await would be swallowed as a popup.
    * The lines carry a Ref Inv, not the challan's row id, so the id is looked up
    * by code and the reserved tab is then pointed at the bill route.
    */
@@ -1011,6 +1011,7 @@ function NoteDirectoryDialog({
   canPrint: boolean;
   confirm: ReturnType<typeof useConfirm>;
 }) {
+  const navigate = useNavigate();
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [payMode, setPayMode] = useState('ALL');
@@ -1066,8 +1067,18 @@ function NoteDirectoryDialog({
             className={DIRECTORY_GRID_CLASSES}
             actions={(r) => (
               <div className="flex justify-end gap-1">
+                {/* Opens the letterhead bill page and prints from there, the
+                    way a challan does — the old server PDF carried none of
+                    the branding. */}
                 {canPrint && (
-                  <Button variant="ghost" size="icon" className="size-8" onClick={() => openPdf(`/notes/${r.mode}/${encodeURIComponent(r.code)}/print.pdf`, `${r.mode}-${r.code}.pdf`.replace(/[\\/:*?"<>|]/g, '-'))} aria-label="Print">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-8"
+                    onClick={() => navigate(`/account/notes/bill?mode=${r.mode}&code=${encodeURIComponent(r.code)}`, { state: { autoPrint: true } })}
+                    aria-label={`Print ${r.code}`}
+                    title={`Print ${r.code}`}
+                  >
 
                     <Printer className="size-4" />
                   </Button>

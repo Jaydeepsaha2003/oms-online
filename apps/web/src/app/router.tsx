@@ -56,6 +56,7 @@ const PaymentPage = lazy(() => import('@/features/account/payment-page').then((m
 const AdvancesPage = lazy(() => import('@/features/account/advances-page').then((m) => ({ default: m.AdvancesPage })));
 const SalesDiscountPage = lazy(() => import('@/features/account/sales-discount-page').then((m) => ({ default: m.SalesDiscountPage })));
 const NotesPage = lazy(() => import('@/features/account/notes-page').then((m) => ({ default: m.NotesPage })));
+const NoteBillPage = lazy(() => import('@/features/account/note-bill-page').then((m) => ({ default: m.NoteBillPage })));
 const PartyLedgerPage = lazy(() => import('@/features/account/party-ledger-page').then((m) => ({ default: m.PartyLedgerPage })));
 const AgentSettlementPage = lazy(() => import('@/features/agent-commission/agent-settlement-page').then((m) => ({ default: m.AgentSettlementPage })));
 const CommissionRatesPage = lazy(() => import('@/features/agent-commission/commission-rates-page').then((m) => ({ default: m.CommissionRatesPage })));
@@ -463,6 +464,16 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.NOTE, ACTIONS.VIEW)}>
                 <NotesPage />
+              </RequirePermission>
+            }
+          />
+          {/* The note code carries a slash ("CN/13"), which is why mode and code
+              travel as query parameters rather than path segments. */}
+          <Route
+            path="/account/notes/bill"
+            element={
+              <RequirePermission permission={perm(RESOURCES.NOTE, ACTIONS.PRINT)}>
+                <NoteBillPage />
               </RequirePermission>
             }
           />
