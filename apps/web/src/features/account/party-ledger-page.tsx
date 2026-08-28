@@ -14,7 +14,7 @@ import {
 import { toast } from 'sonner';
 import { GlobalWorkerOptions, getDocument, type PDFDocumentProxy } from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import type { LedgerBalanceRow, LedgerReceiptLine, PartyLedgerFooter, PartyLedgerKpis, PartyLedgerQuery, PartyLedgerRow, PartyListStanding } from '@oms/shared';
+import type { LedgerBalanceRow, LedgerReceiptLine, NoteMode, PartyLedgerFooter, PartyLedgerKpis, PartyLedgerQuery, PartyLedgerRow, PartyListStanding } from '@oms/shared';
 import { api, downloadFile, getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
@@ -314,6 +314,27 @@ export function PartyLedgerPage() {
     if (!r.challanId) return;
     navigate(`/challans/${r.challanId}/bill`);
   };
+
+  /*
+   * A note row's own document.
+   *
+   * A DEBIT NOTE is stored as a Challan, so it arrives here carrying a
+   * challanId and used to open the CHALLAN bill — a document headed SALES
+   * RECEIPT with challan columns, which is not what a debit note is. A CREDIT
+   * NOTE lives in its own table, has no challanId, and so had no way to be
+   * opened from the ledger at all. Both now go to the note bill, addressed the
+   * way that page expects: the voucher type is the mode and the voucher no is
+   * the code.
+   */
+  const canViewNote = can('note:print');
+  const noteRefOf = (r: PartyLedgerRow): { mode: NoteMode; label: string } | null => {
+    const vt = r.voucherType.trim().toUpperCase();
+    if (vt === 'CREDIT NOTE') return { mode: 'CREDIT', label: 'credit note' };
+    if (vt === 'DEBIT NOTE') return { mode: 'DEBIT', label: 'debit note' };
+    return null;
+  };
+  const viewNote = (r: PartyLedgerRow, mode: NoteMode) =>
+    navigate(`/account/notes/bill?mode=${mode}&code=${encodeURIComponent(r.voucherNo)}`);
 
   const legs = legsFor(mode);
   const grouped = legs.length === 2;
@@ -649,6 +670,7 @@ export function PartyLedgerPage() {
               ) : (
                 rows.map((r, i) => {
                   const invoice = isInvoiceRow(r);
+                  const note = noteRefOf(r);
                   return (
                     <tr
                       key={`${r.voucherNo}-${r.txnDate}-${i}`}
@@ -700,9 +722,21 @@ export function PartyLedgerPage() {
                         </td>,
                       ])}
                       <td className={cn(TD, NUM)}>{showBalance && running && <Balance net={running[i]} />}</td>
-                      {canViewChallan && (
+                      {(canViewChallan || canViewNote) && (
                         <td className={cn(TD, 'text-center')} onClick={(e) => e.stopPropagation()}>
-                          {invoice && r.challanId ? (
+                          {/* A note opens its own note bill; anything else backed
+                              by a Challan opens the challan bill. */}
+                          {note && canViewNote ? (
+                            <button
+                              type="button"
+                              onClick={() => viewNote(r, note.mode)}
+                              className="text-muted-foreground hover:text-primary hover:bg-muted inline-flex size-6 items-center justify-center rounded transition-colors"
+                              title={`View ${note.label} ${r.voucherNo}`}
+                              aria-label={`View ${note.label} ${r.voucherNo}`}
+                            >
+                              <Eye className="size-3.5" />
+                            </button>
+                          ) : invoice && r.challanId && canViewChallan ? (
                             <button
                               type="button"
                               onClick={() => viewChallan(r)}
@@ -784,6 +818,7 @@ export function PartyLedgerPage() {
             <div className="space-y-2">
               {rows.map((r, i) => {
                 const invoice = isInvoiceRow(r);
+                const note = noteRefOf(r);
                 return (
                   <div
                     key={`${r.voucherNo}-${r.txnDate}-${i}`}
@@ -866,18 +901,19 @@ export function PartyLedgerPage() {
                       </div>
                       {showBalance && running && <Balance net={running[i]} className="shrink-0 text-[13px]" />}
                     </div>
-                    {invoice && r.challanId && canViewChallan && (
+                    {(note && canViewNote) || (invoice && r.challanId && canViewChallan) ? (
                       <div className="mt-2 flex justify-end border-t pt-2" onClick={(e) => e.stopPropagation()}>
                         <Button
                           variant="outline"
                           size="sm"
                           className="h-7 rounded-[4px] text-[11.5px] font-semibold"
-                          onClick={() => viewChallan(r)}
+                          onClick={() => (note && canViewNote ? viewNote(r, note.mode) : viewChallan(r))}
                         >
-                          <Eye className="size-3.5" /> View challan
+                          <Eye className="size-3.5" />{' '}
+                          {note && canViewNote ? `View ${note.mode === 'CREDIT' ? 'credit' : 'debit'} note` : 'View challan'}
                         </Button>
                       </div>
-                    )}
+                    ) : null}
                   </div>
                 );
               })}
