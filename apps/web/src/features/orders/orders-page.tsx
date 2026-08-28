@@ -224,7 +224,10 @@ export function OrdersPage() {
               <Truck /> Order journey - {truck.label}
             </DropdownMenuItem>
           )}
-          {can('order:print') && (
+          {/* A draft is not a document yet: printing one hands someone a sales
+              order for goods nobody has committed to, and the draft can still
+              change underneath it. Confirm the order first. */}
+          {!isDraft && can('order:print') && (
             // This prints the SALES ORDER. "Bill / Invoice" named it after a tax
             // invoice, which is the challan — a different document entirely.
             <DropdownMenuItem onSelect={() => navigate(`/orders/${o.id}/bill`)}>
@@ -260,6 +263,8 @@ export function OrdersPage() {
   // Phones: one stacked card per order instead of a horizontally-scrolling table.
   const orderMobileCard = (o: OrderDto) => {
     const truck = TRUCK_STATE[o.dispatchState ?? 'NONE'] ?? TRUCK_STATE.NONE;
+    // Same rule as the kebab — otherwise a phone prints what a desktop will not.
+    const isDraft = o.status === 'DRAFT';
     return (
       <div className="space-y-2">
         <div className="flex items-start justify-between gap-2">
@@ -306,7 +311,7 @@ export function OrdersPage() {
                 <Truck className="size-4" />
               </Button>
             )}
-            {can('order:print') && (
+            {!isDraft && can('order:print') && (
               <>
                 <Button
                   variant="ghost"
@@ -330,14 +335,13 @@ export function OrdersPage() {
                 </Button>
               </>
             )}
+            {/* The SAME kebab the desktop rows use, sitting after the quick
+                icons. The icons only ever covered a few of the actions, so
+                anything added to the menu later — Save as Quotation being the
+                one that prompted this — would otherwise never reach a phone.
+                One menu, one place to add to, and the two views can't drift. */}
             {orderActionsMenu(o)}
           </div>
-          {/* The SAME kebab the desktop rows use, rather than a hand-picked row of
-              icons. The icons only ever covered five of the actions, so anything
-              added to the menu later — Save as Quotation being the one that
-              prompted this — silently never reached a phone. One menu, one place
-              to add to, and the two views can't drift apart again. */}
-          {orderActionsMenu(o)}
         </div>
       </div>
     );
