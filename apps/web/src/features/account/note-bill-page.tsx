@@ -1,12 +1,13 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { renderDocLines, type NoteMode } from '@oms/shared';
-import { ArrowLeft, Download, Loader2, Printer } from 'lucide-react';
+import { ArrowLeft, Download, ExternalLink, Eye, Loader2, Printer, Share2 } from 'lucide-react';
 import { toast } from 'sonner';
 import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
 import { Button } from '@/components/ui/button';
-import { buildBillFilename, captureScale, decodeImage, isIOS, savePdfBlob, waitForPaintable } from '@/lib/pdf';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { buildBillFilename, captureScale, decodeImage, isIOS, savePdfBlob, sharePdfFile, showPreviewPlaceholder, takePendingPreviewTab, waitForPaintable } from '@/lib/pdf';
 import { formatDate } from '@/lib/date-format';
 import kavishLogo from '@/assets/kavish-logo-order.png';
 import { useIsMobile } from '@/hooks/use-is-mobile';
@@ -83,6 +84,10 @@ function numToWords(num: number): string {
   return parts.join(' ').trim();
 }
 
+/** Hide the browser viewer's own chrome so the document sits on the app's
+ *  surface rather than the viewer's grey shell. */
+const PDF_VIEWER_PARAMS = '#toolbar=0&navpanes=0&scrollbar=0&view=FitH';
+
 const PRINT_CSS = `
 @media print {
   @page { size: A4; margin: 10mm; }
@@ -128,6 +133,13 @@ export function NoteBillPage() {
   const [printImg, setPrintImg] = useState<string | null>(null);
   /** iOS only: a finished PDF waiting for a fresh tap (see `download`). */
   const [readyPdf, setReadyPdf] = useState<{ blob: Blob; filename: string } | null>(null);
+  /** The blob URL the in-page preview is showing. */
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  /** The same bytes, kept because an object URL cannot become a File again and
+   *  the share sheet needs one. */
+  const [previewFile, setPreviewFile] = useState<{ blob: Blob; filename: string } | null>(null);
+  /** Where to go when the overlay closes, when it was opened from a list row. */
+  const [returnAfterPreview, setReturnAfterPreview] = useState<string | null>(null);
   const isMobile = useIsMobile();
   const fit = useFitToWidth(NOTE_DESIGN_W, isMobile);
 
@@ -136,6 +148,13 @@ export function NoteBillPage() {
     window.addEventListener('afterprint', clear);
     return () => window.removeEventListener('afterprint', clear);
   }, []);
+
+  // A preview blob is a few MB; don't strand it if the page is left with the
+  // overlay still open. Reads the latest URL from a ref so the effect stays
+  // mount-only rather than revoking on every change.
+  const previewUrlRef = useRef<string | null>(null);
+  previewUrlRef.current = previewUrl;
+  useEffect(() => () => { if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current); }, []);
 
   const totals = useMemo(() => {
     const items = note?.items ?? [];
@@ -189,12 +208,12 @@ export function NoteBillPage() {
     return offsets;
   };
 
-  const download = async () => {
-    if (!note) return;
-    setBusy(true);
-    try {
-      const cap = await captureImage();
-      if (!cap) return;
+  /** The finished document, shared by Preview, Print and Download so all three
+   *  are guaranteed to be the same bytes. */
+  const buildPdf = async (): Promise<jsPDF | null> => {
+    const cap = await captureImage();
+    if (!cap) return null;
+    {
       const pdf = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
       const margin = 4;
       const pageW = pdf.internal.pageSize.getWidth();
@@ -221,17 +240,94 @@ export function NoteBillPage() {
           }
         });
       }
-      const filename = buildBillFilename(pageTitle, note.code, `${isCredit ? 'credit' : 'debit'}-note`);
+      return pdf;
+    }
+  };
+
+  const pdfName = () => buildBillFilename(pageTitle, note?.code, `${isCredit ? 'credit' : 'debit'}-note`);
+
+  const download = async () => {
+    if (!note) return;
+    setBusy(true);
+    try {
+      const pdf = await buildPdf();
+      if (!pdf) return;
       const blob = pdf.output('blob');
       // iOS: the capture outlives this tap's transient activation, so the share
       // sheet would be refused. Park the PDF and let a fresh tap hand it over.
-      if (isIOS()) setReadyPdf({ blob, filename });
-      else void savePdfBlob(blob, filename);
+      if (isIOS()) setReadyPdf({ blob, filename: pdfName() });
+      else void savePdfBlob(blob, pdfName());
     } catch {
       toast.error('Could not generate the PDF');
     } finally {
       setBusy(false);
     }
+  };
+
+  /**
+   * Show the finished PDF in the page, the way the challan bill does.
+   *
+   * Opening a note used to go straight to window.print(), which hands the user
+   * the BROWSER's print dialog — a Save-as-PDF chooser, not a look at the
+   * document. Nothing is opened until there is something to show, and what is
+   * shown is the real generated file rather than a re-render of the page.
+   *
+   * iOS is the exception: Safari will not render a PDF inside an iframe, so
+   * there it goes to a tab reserved inside the original click.
+   */
+  const previewPdf = async (reservedTab?: Window | null): Promise<'inline' | 'tab' | 'none'> => {
+    if (!note) return 'none';
+    const tab = reservedTab ?? null;
+    if (isIOS()) showPreviewPlaceholder(tab);
+    setBusy(true);
+    try {
+      const pdf = await buildPdf();
+      if (!pdf) {
+        tab?.close();
+        return 'none';
+      }
+      const blob = pdf.output('blob');
+      const url = URL.createObjectURL(blob);
+      if (isIOS()) {
+        if (tab && !tab.closed) tab.location.href = url;
+        else window.location.href = url; // popup blocked -> same-tab view
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        return 'tab';
+      }
+      tab?.close();
+      setPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return url;
+      });
+      setPreviewFile({ blob, filename: pdfName() });
+      return 'inline';
+    } catch {
+      tab?.close();
+      toast.error('Could not preview the PDF');
+      return 'none';
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Close the overlay, free the blob, and go back if we came from a list row. */
+  const closePreview = () => {
+    setPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    setPreviewFile(null);
+    if (returnAfterPreview) {
+      const to = returnAfterPreview;
+      setReturnAfterPreview(null);
+      navigate(to, { replace: true });
+    }
+  };
+
+  const shareNote = async () => {
+    if (!previewFile) return;
+    if (await sharePdfFile(previewFile.blob, previewFile.filename, `${pageTitle} ${note?.code ?? ''}`)) return;
+    toast.error('Sharing is not available on this device.');
   };
 
   const deliverReadyPdf = () => {
@@ -268,23 +364,35 @@ export function NoteBillPage() {
    * a document with its whole bottom section missing.
    */
   const autoFired = useRef(false);
-  const autoState = location.state as { autoPrint?: boolean; autoPdf?: boolean } | null;
+  const autoState = location.state as { autoPrint?: boolean; autoPdf?: boolean; autoPreview?: boolean; returnTo?: string } | null;
   const wantsPrint = !!autoState?.autoPrint;
   const wantsPdf = !!autoState?.autoPdf;
+  const wantsPreview = !!autoState?.autoPreview;
   const ready = !!note;
   const printableReady = !companyPending && !termsPending;
   useEffect(() => {
-    if ((!wantsPrint && !wantsPdf) || !ready || !printableReady || autoFired.current) return;
+    if ((!wantsPrint && !wantsPdf && !wantsPreview) || !ready || !printableReady || autoFired.current) return;
     autoFired.current = true;
     void (async () => {
       const node = document.getElementById('note-bill');
       if (node) await waitForPaintable(node);
+      const back = () => navigate(location.pathname + location.search, { replace: true, state: null });
+      if (wantsPreview) {
+        // On iOS the list reserved a tab inside its own click; everywhere else
+        // the preview lands here as an overlay.
+        const how = await previewPdf(takePendingPreviewTab());
+        // Looking at the overlay — closing it is what takes them back.
+        if (how === 'inline' && autoState?.returnTo) setReturnAfterPreview(autoState.returnTo);
+        else if (autoState?.returnTo) navigate(autoState.returnTo, { replace: true });
+        else back();
+        return;
+      }
       if (wantsPrint) await print();
       else await download();
-      navigate(location.pathname + location.search, { replace: true, state: null });
+      back();
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wantsPrint, wantsPdf, ready, printableReady]);
+  }, [wantsPrint, wantsPdf, wantsPreview, ready, printableReady]);
 
   if (isLoading || !note) {
     return (
@@ -314,6 +422,9 @@ export function NoteBillPage() {
           {pageTitle} <span className="text-muted-foreground font-mono">{note.code}</span>
         </h2>
         <div className="ml-auto flex gap-2">
+          <Button variant="outline" onClick={() => void previewPdf()} disabled={busy}>
+            <Eye /> Preview
+          </Button>
           <Button variant="outline" onClick={print} disabled={busy}>
             <Printer /> Print
           </Button>
@@ -582,6 +693,43 @@ export function NoteBillPage() {
       </div>
       </div>
       </div>
+
+      {/* ── The PDF itself, previewed in place ───────────────────────────────
+          An <iframe> hands the blob to the browser's own PDF viewer, so this is
+          the real generated document — the same bytes Download writes — rather
+          than the browser's Save-as-PDF chooser, which is what window.print()
+          put in front of the user before. */}
+      {previewUrl && (
+        <Dialog open onOpenChange={(o) => !o && closePreview()}>
+          <DialogContent className="flex h-[92dvh] w-[min(1100px,96vw)] max-w-[96vw] flex-col gap-3 overflow-hidden overflow-y-hidden p-4 sm:!max-w-[1100px]">
+            <DialogHeader className="space-y-0">
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <Eye className="size-4.5 text-violet-600" /> Preview — {note?.code}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="min-h-0 w-full flex-1 overflow-hidden rounded-[6px] border bg-slate-200/60 shadow-inner dark:bg-slate-800/60">
+              <iframe src={`${previewUrl}${PDF_VIEWER_PARAMS}`} title={`${pageTitle} ${note?.code ?? ''} preview`} className="size-full border-0" />
+            </div>
+            <DialogFooter className="gap-2 sm:justify-end">
+              <Button variant="outline" onClick={closePreview}>Close</Button>
+              {/* Hiding the viewer's toolbar takes its print button with it, so
+                  the app supplies one. */}
+              <Button variant="outline" onClick={print} disabled={busy} title={`Print this ${pageTitle.toLowerCase()}`}>
+                <Printer /> Print
+              </Button>
+              <Button variant="outline" onClick={() => void shareNote()} disabled={!previewFile} title="Share — WhatsApp, Mail and the rest are targets in the share sheet">
+                <Share2 /> Share
+              </Button>
+              <Button variant="outline" onClick={() => window.open(previewUrl, '_blank')} title="Open this PDF in a browser tab">
+                <ExternalLink /> Open in tab
+              </Button>
+              <Button onClick={() => void download()} disabled={busy}>
+                {busy ? <Loader2 className="animate-spin" /> : <Download />} Download PDF
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

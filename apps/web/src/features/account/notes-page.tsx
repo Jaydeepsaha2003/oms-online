@@ -28,6 +28,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { isIOS, reservePreviewTab } from '@/lib/pdf';
 import { useCustomers } from '@/features/customers/use-customers';
 import { fetchChallanByCode } from '@/features/challans/use-challans';
 import { fetchNote, useDeleteNote, useNextNoteNo, useNoteDirectory, useRecentSold, useSaveNote } from './use-notes';
@@ -1067,19 +1068,27 @@ function NoteDirectoryDialog({
             className={DIRECTORY_GRID_CLASSES}
             actions={(r) => (
               <div className="flex justify-end gap-1">
-                {/* Opens the letterhead bill page and prints from there, the
-                    way a challan does — the old server PDF carried none of
-                    the branding. */}
+                {/* Opens the letterhead bill page and PREVIEWS the finished PDF
+                    there, exactly as the challan list does. It used to auto-print,
+                    which handed over the browser's Save-as-PDF chooser instead of
+                    a look at the document. `returnTo` brings the user back here
+                    when they close the preview. */}
                 {canPrint && (
                   <Button
                     variant="ghost"
                     size="icon"
                     className="size-8"
-                    onClick={() => navigate(`/account/notes/bill?mode=${r.mode}&code=${encodeURIComponent(r.code)}`, { state: { autoPrint: true } })}
-                    aria-label={`Print ${r.code}`}
-                    title={`Print ${r.code}`}
+                    onClick={() => {
+                      // iOS cannot render a PDF in an iframe and needs a tab
+                      // reserved inside this very click, or the popup is blocked.
+                      if (isIOS()) reservePreviewTab();
+                      navigate(`/account/notes/bill?mode=${r.mode}&code=${encodeURIComponent(r.code)}`, {
+                        state: { autoPreview: true, returnTo: '/account/notes' },
+                      });
+                    }}
+                    aria-label={`Preview ${r.code}`}
+                    title={`Preview ${r.code}`}
                   >
-
                     <Printer className="size-4" />
                   </Button>
                 )}
