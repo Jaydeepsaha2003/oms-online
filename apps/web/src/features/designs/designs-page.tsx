@@ -677,6 +677,56 @@ export function DesignsPage() {
     });
   };
 
+  /**
+   * Delete every ticked design.
+   *
+   * The confirmation counts the combinations that use them, because a design is
+   * removed FROM its combinations as well as from the catalogue — one that loses
+   * a member silently reprices to the sum of what is left, and the badge on the
+   * row is the only warning you would otherwise get.
+   *
+   * Deleted one at a time rather than in one request: there is no bulk endpoint,
+   * and doing them individually means a row that refuses (a foreign key
+   * elsewhere) does not take the rest of the batch down with it.
+   */
+  const handleDeleteSelected = async () => {
+    const designs = [...selected.values()];
+    if (!designs.length) return;
+    /*
+     * How many of the SELECTED designs are in a combination — not how many
+     * combinations are hit. A design only carries its combinations' NAMES, and
+     * names repeat across sub-categories (ten different combinations are called
+     * "DL+LOGO"), so any count taken from them would be wrong in both
+     * directions. This number is exact, and the warning is what matters.
+     */
+    const inCombinations = designs.filter((d) => d.combinationNames.length > 0).length;
+    const ok = await confirm({
+      title: `Delete ${designs.length} design${designs.length === 1 ? '' : 's'}?`,
+      description: inCombinations
+        ? `${designs.length} designs will be removed. ${inCombinations} of them ${
+            inCombinations === 1 ? 'is' : 'are'
+          } used in combinations and will be taken out of those too — which then reprice to the sum of the designs left in them.`
+        : `${designs.length} designs will be removed. None of them is used in a combination.`,
+      confirmText: `Delete ${designs.length}`,
+      destructive: true,
+    });
+    if (!ok) return;
+
+    const failed: string[] = [];
+    for (const d of designs) {
+      try {
+        await del.mutateAsync(d.id);
+      } catch (e) {
+        failed.push(`${d.designType} (${getApiErrorMessage(e, 'failed')})`);
+      }
+    }
+    setSelected(new Map());
+    const done = designs.length - failed.length;
+    if (done) toast.success(`${done} design${done === 1 ? '' : 's'} deleted`);
+    if (failed.length)
+      toast.error(`Could not delete ${failed.length}: ${failed.slice(0, 3).join('; ')}`);
+  };
+
   const handleDeleteCombo = async (c: CombinationDto) => {
     const ok = await confirm({
       title: 'Delete combination?',
@@ -1111,6 +1161,22 @@ export function DesignsPage() {
                   <Layers className="size-3.5" /> Create combination
                 </Button>
               </>
+            )}
+            {can('design:delete') && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 rounded-[4px] border-destructive/30 bg-white text-[12px] font-bold text-destructive hover:bg-destructive/5 hover:text-destructive dark:bg-transparent"
+                onClick={handleDeleteSelected}
+                disabled={del.isPending}
+              >
+                {del.isPending ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="size-3.5" />
+                )}
+                Delete {selected.size}
+              </Button>
             )}
             <button
               type="button"
