@@ -31,6 +31,7 @@ import { usePageSize } from '@/hooks/use-page-size';
 import { useConfirm } from '@/components/common/confirm';
 import { Combo, NativeSelect } from '@/components/common/combo';
 import { ColumnSettings } from '@/components/common/column-settings';
+import { InfoTip } from '@/components/common/info-tip';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { RowCheckbox } from '@/components/common/row-checkbox';
 import { PageSizeSelect } from '@/components/common/page-size-select';
@@ -1041,55 +1042,55 @@ export function DesignsPage() {
           designCount={data?.total ?? 0}
           comboCount={comboData?.total ?? 0}
         />
-        {view === 'designs' &&
-          (selected.size > 0 ? (
-            <div className="flex items-center gap-2 rounded-[4px] bg-sky-50 px-3 py-1.5 text-[12.5px] font-semibold text-sky-700 ring-1 ring-sky-200 ring-inset dark:bg-sky-400/10 dark:text-sky-300 dark:ring-sky-400/25">
-              <span className="tabular-nums">{selected.size} selected</span>
-              {can('combination:create') && (
-                <>
-                  {/* Same design type across sub-categories is exactly the shape
+        {view === 'designs' && (
+          <InfoTip
+            className="size-4"
+            text="Tick two or more designs to build a combination — its cost is the live sum of the designs it links."
+          />
+        )}
+        {view === 'designs' && selected.size > 0 && (
+          <div className="flex items-center gap-2 rounded-[4px] bg-sky-50 px-3 py-1.5 text-[12.5px] font-semibold text-sky-700 ring-1 ring-sky-200 ring-inset dark:bg-sky-400/10 dark:text-sky-300 dark:ring-sky-400/25">
+            <span className="tabular-nums">{selected.size} selected</span>
+            {can('combination:create') && (
+              <>
+                {/* Same design type across sub-categories is exactly the shape
                     the combine step handles, so offer it instead of one-at-a-time. */}
-                  {sharedType && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 rounded-[4px] bg-white text-[12px] font-bold"
-                      onClick={() => setCombineWith([...selected.values()])}
-                    >
-                      <Layers className="size-3.5" /> Combine {sharedType} with…
-                    </Button>
-                  )}
+                {sharedType && (
                   <Button
                     size="sm"
-                    className="h-7 rounded-[4px] text-[12px] font-bold"
-                    onClick={() => setCombining(true)}
-                    disabled={selected.size < 2}
-                    title={
-                      selected.size < 2
-                        ? 'Tick a second design — a combination needs at least two'
-                        : undefined
-                    }
+                    variant="outline"
+                    className="h-7 rounded-[4px] bg-white text-[12px] font-bold"
+                    onClick={() => setCombineWith([...selected.values()])}
                   >
-                    <Layers className="size-3.5" /> Create combination
+                    <Layers className="size-3.5" /> Combine {sharedType} with…
                   </Button>
-                </>
-              )}
-              <button
-                type="button"
-                onClick={() => setSelected(new Map())}
-                className="cursor-pointer text-sky-700/70 transition-colors hover:text-sky-900 dark:text-sky-300/70 dark:hover:text-sky-200"
-                title="Clear selection"
-                aria-label="Clear selection"
-              >
-                <X className="size-3.5" />
-              </button>
-            </div>
-          ) : (
-            <p className="text-muted-foreground text-[12px] font-medium">
-              Tick two or more designs to build a combination — its cost is the live sum of the
-              designs it links.
-            </p>
-          ))}
+                )}
+                <Button
+                  size="sm"
+                  className="h-7 rounded-[4px] text-[12px] font-bold"
+                  onClick={() => setCombining(true)}
+                  disabled={selected.size < 2}
+                  title={
+                    selected.size < 2
+                      ? 'Tick a second design — a combination needs at least two'
+                      : undefined
+                  }
+                >
+                  <Layers className="size-3.5" /> Create combination
+                </Button>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => setSelected(new Map())}
+              className="cursor-pointer text-sky-700/70 transition-colors hover:text-sky-900 dark:text-sky-300/70 dark:hover:text-sky-200"
+              title="Clear selection"
+              aria-label="Clear selection"
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ── Designs ─────────────────────────────────────────────────────────── */}
