@@ -164,7 +164,7 @@ export class BackupService {
    *   4. only now: snapshot what is live, swap the file in, reconnect;
    *   5. prove the new database answers a query before reporting success.
    */
-  async restoreFrom(upload: Buffer, originalName: string): Promise<RestoreResult> {
+  async restoreFrom(upload: Buffer, originalName: string, allowNewer = false): Promise<RestoreResult> {
     if (upload.length === 0) throw new BadRequestException('That file is empty.');
     if (upload.subarray(0, 16).toString('latin1') !== SQLITE_MAGIC) {
       throw new BadRequestException(
@@ -178,7 +178,7 @@ export class BackupService {
 
     try {
       await writeFile(incoming, upload);
-      await this.vetIncoming(incoming, originalName);
+      await this.vetIncoming(incoming, originalName, allowNewer);
 
       // Everything below this line changes the live database.
       const stamp = this.stamp();
@@ -204,7 +204,7 @@ export class BackupService {
    * way — on Windows a client still holding that file would stop it being
    * copied into place a moment later.
    */
-  private async vetIncoming(file: string, originalName: string): Promise<void> {
+  private async vetIncoming(file: string, originalName: string, allowNewer: boolean): Promise<void> {
     const client = new PrismaClient({ datasources: { db: { url: 'file:' + file.replace(/\\/g, '/') } } });
     try {
       const health = await this.checkIntegrity(() => client.$queryRawUnsafe('PRAGMA quick_check(1)'));
@@ -252,10 +252,32 @@ export class BackupService {
             `Restoring it would break the app. Use a newer backup, or roll the code back to match it.`,
         );
       }
+      /*
+       * A NEWER backup is a warning, not a wall.
+       *
+       * Pulling production's data down onto an older machine is a normal thing
+       * to want, and usually harmless: extra columns are simply not selected,
+       * and Prisma names the columns it writes. It is only unsafe when one of
+       * those changes is something this code cannot satisfy — a NOT NULL column
+       * with no default, say. That is a judgement about a specific migration,
+       * which the person doing the restore is better placed to make than a
+       * blanket rule, so it is refused by default and can be overridden.
+       *
+       * The reverse — an OLDER backup — stays a hard refusal above: there the
+       * server WILL select columns that do not exist, every time.
+       */
+      if (newer.length && !allowNewer) {
+        throw new BadRequestException({
+          error: 'BACKUP_NEWER',
+          message:
+            `"${originalName}" comes from a NEWER version of the app — ${newer.length} database change(s) this server ` +
+            `does not have (${newer.slice(0, 3).join(', ')}${newer.length > 3 ? ', …' : ''}). Updating this server first ` +
+            `is the safe order. You can restore it anyway if you know those changes do not matter here.`,
+        });
+      }
       if (newer.length) {
-        throw new BadRequestException(
-          `"${originalName}" comes from a NEWER version of the app — ${newer.length} change(s) this server does not have ` +
-            `(e.g. ${newer[0]}). Update this server first, then restore.`,
+        this.logger.warn(
+          `Restoring a NEWER backup on the user's say-so — this server does not have: ${newer.join(', ')}`,
         );
       }
     } finally {

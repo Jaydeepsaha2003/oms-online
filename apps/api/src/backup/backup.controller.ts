@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Get,
   Post,
@@ -77,8 +78,12 @@ export class BackupController {
       'The database being replaced is snapshotted to backups/pre-restore-<date>.db first, and the ' +
       'file itself is kept alongside as dev.db.replaced-<date>.',
   })
-  restore(@UploadedFile() file: Express.Multer.File | undefined) {
+  restore(
+    @UploadedFile() file: Express.Multer.File | undefined,
+    // Multipart text fields arrive as strings, so compare rather than trust.
+    @Body('allowNewer') allowNewer?: string,
+  ) {
     if (!file) throw new BadRequestException('Choose a backup (.db) file to restore.');
-    return this.backup.restoreFrom(file.buffer, file.originalname);
+    return this.backup.restoreFrom(file.buffer, file.originalname, allowNewer === 'true');
   }
 }

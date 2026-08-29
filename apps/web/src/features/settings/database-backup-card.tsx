@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import axios from 'axios';
 import { AlertTriangle, DatabaseBackup, Download, Loader2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { downloadFile, getApiErrorMessage, http } from '@/lib/api';
@@ -41,6 +42,11 @@ export function DatabaseBackupCard() {
   const [restoring, setRestoring] = useState(false);
   const [result, setResult] = useState<RestoreResult | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  /* Set when the server refuses a backup only for being from a newer build.
+     Ticking it re-sends with `allowNewer`, which is the one check the person
+     doing the restore is better placed to make than a blanket rule. */
+  const [newerWarning, setNewerWarning] = useState<string | null>(null);
+  const [allowNewer, setAllowNewer] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const canRestore = can('backup:import');
 
@@ -61,6 +67,8 @@ export function DatabaseBackupCard() {
     setFile(f);
     setConfirmText('');
     setResult(null);
+    setNewerWarning(null);
+    setAllowNewer(false);
   };
 
   const restore = async () => {
@@ -69,6 +77,7 @@ export function DatabaseBackupCard() {
     try {
       const body = new FormData();
       body.append('file', file);
+      if (allowNewer) body.append('allowNewer', 'true');
       const res = await http.post<RestoreResult>('/backup/restore', body);
       setResult(res);
       setConfirmOpen(false);
@@ -76,9 +85,17 @@ export function DatabaseBackupCard() {
       if (fileInput.current) fileInput.current.value = '';
       toast.success('Database restored');
     } catch (error) {
-      // The server rejects a bad file before touching anything, and says why —
-      // show that rather than a generic failure.
-      toast.error(getApiErrorMessage(error, 'Restore failed'), { duration: 12_000 });
+      const message = getApiErrorMessage(error, 'Restore failed');
+      /*
+       * "From a newer build" is the one refusal that can be overridden, so it
+       * stays in the dialog with a tick box instead of vanishing as a toast —
+       * the file is still chosen and the decision is right there.
+       */
+      const code = axios.isAxiosError(error)
+        ? (error.response?.data as { error?: string } | undefined)?.error
+        : undefined;
+      if (code === 'BACKUP_NEWER') setNewerWarning(message);
+      else toast.error(message, { duration: 12_000 });
     } finally {
       setRestoring(false);
     }
@@ -198,6 +215,23 @@ export function DatabaseBackupCard() {
               The current database is snapshotted first, and the file it replaces is kept alongside
               it — so this can be undone by restoring that snapshot.
             </p>
+            {newerWarning && (
+              <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-2.5 dark:border-amber-400/30 dark:bg-amber-400/10">
+                <p className="text-[12.5px] font-semibold text-amber-900 dark:text-amber-200">
+                  {newerWarning}
+                </p>
+                <label className="flex cursor-pointer items-start gap-2 text-[12.5px] font-medium text-amber-900 dark:text-amber-200">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 size-4 cursor-pointer"
+                    checked={allowNewer}
+                    onChange={(e) => setAllowNewer(e.target.checked)}
+                  />
+                  <span>Restore it anyway — those changes do not affect this server.</span>
+                </label>
+              </div>
+            )}
+
             <div className="space-y-1.5">
               <Label
                 htmlFor="confirm-word"
@@ -222,7 +256,11 @@ export function DatabaseBackupCard() {
             <Button
               variant="destructive"
               onClick={restore}
-              disabled={restoring || confirmText.trim().toUpperCase() !== CONFIRM_WORD}
+              disabled={
+                restoring ||
+                confirmText.trim().toUpperCase() !== CONFIRM_WORD ||
+                (!!newerWarning && !allowNewer)
+              }
             >
               {restoring ? <Loader2 className="animate-spin" /> : <Upload />}
               {restoring ? 'Restoring…' : 'Replace the database'}
