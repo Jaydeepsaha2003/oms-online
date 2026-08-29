@@ -285,7 +285,10 @@ export function DataTable<T>({
             </TableRow>
           ) : (
             sortedRows.map((row, idx) => {
-              const pinBg = idx % 2 === 1 ? 'oklch(0.984 0.003 247.858)' : 'oklch(1 0 0)';
+              // Through tokens, not literals: these were the light palette
+              // written out longhand, so every frozen column — identity and
+              // actions, on every list — stayed white in dark mode.
+              const pinBg = idx % 2 === 1 ? 'var(--table-frozen-zebra)' : 'var(--table-frozen)';
               return (
                 <TableRow
                   key={rowKey(row)}

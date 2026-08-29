@@ -11,6 +11,8 @@
   --foreground: oklch(0.22 0.035 264);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.22 0.035 264);
+  --table-frozen: oklch(1 0 0);
+  --table-frozen-zebra: oklch(0.984 0.003 247.858);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.22 0.035 264);
 
@@ -89,6 +91,8 @@
   --foreground: oklch(0.96 0.012 250);
   --card: oklch(0.235 0.04 264);
   --card-foreground: oklch(0.96 0.012 250);
+  --table-frozen: oklch(0.235 0.04 264);
+  --table-frozen-zebra: oklch(0.265 0.038 264);
   --popover: oklch(0.235 0.04 264);
   --popover-foreground: oklch(0.96 0.012 250);
   --primary: oklch(0.66 0.18 260);

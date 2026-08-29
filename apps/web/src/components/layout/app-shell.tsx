@@ -38,6 +38,7 @@ const FLUSH_ROUTES = [
   /^\/dispatch$/,
   /^\/dispatch\/new$/,
   /^\/products$/,
+  /^\/designs$/,
   /^\/design-names$/,
   /^\/customers$/,
   /^\/transporters$/,
