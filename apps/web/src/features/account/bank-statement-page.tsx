@@ -1097,16 +1097,35 @@ function LineRow({ row, checked, onToggle, selectable, vouchers }: { row: BankSt
             receipt of the same amount sits within a few days of it — naming
             that receipt is what makes the verdict checkable instead of trusted. */}
         {row.matchedRefs.length > 0 && (
-          /* The VOUCHER number, because that is what the Party Ledger prints —
-             quoting the internal REF ID alone made the two screens impossible
-             to line up. The REF ID stays in the tooltip. */
+          /*
+           * The VOUCHER number, because that is what the Party Ledger prints —
+           * quoting the internal REF ID alone made the two screens impossible to
+           * line up. The REF ID stays in the tooltip.
+           *
+           * The wording has to follow the STATUS. A "No receipt" line can still
+           * name a receipt: the party's spare receipts cover PART of it, and the
+           * remainder is the shortfall Process would post. Saying "against" there
+           * — the same word a fully matched line uses — read as a contradiction.
+           */
           <span
-            className="mt-0.5 block truncate text-[11px] font-semibold text-emerald-700 dark:text-emerald-400"
-            title={row.matchedRefs.map((r) => (vouchers[r] ? `${vouchers[r]} (${r})` : r)).join(', ')}
+            className={cn(
+              'mt-0.5 block truncate text-[11px] font-semibold',
+              row.status === 'UNMATCHED'
+                ? 'text-amber-700 dark:text-amber-400'
+                : 'text-emerald-700 dark:text-emerald-400',
+            )}
+            title={
+              (row.status === 'UNMATCHED'
+                ? `${money(row.matchedAmount)} of this ${money(row.amount)} credit is covered; ${money(row.amount - row.matchedAmount)} has no receipt and is what Process would create. Covered by: `
+                : 'Receipt(s): ') + row.matchedRefs.map((r) => (vouchers[r] ? `${vouchers[r]} (${r})` : r)).join(', ')
+            }
           >
-            {row.status === 'PARTIAL' ? 'covered by ' : 'against '}
+            {row.status === 'MATCHED' && 'against '}
+            {row.status === 'PARTIAL' && 'covered by '}
+            {row.status === 'UNMATCHED' && `${money0(row.matchedAmount)} of it against `}
             <span className="font-mono">{row.matchedRefs.slice(0, 2).map((r) => vouchers[r] ?? r).join(', ')}</span>
             {row.matchedRefs.length > 2 && ` +${row.matchedRefs.length - 2} more`}
+            {row.status === 'UNMATCHED' && ` · ${money0(row.amount - row.matchedAmount)} short`}
           </span>
         )}
       </td>

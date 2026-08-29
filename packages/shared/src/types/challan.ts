@@ -104,6 +104,16 @@ export interface ChallanDto {
   total: number | null;
   b: number | null;
   c: number | null;
+  /**
+   * Money received against this challan, and what is left on it.
+   *
+   * Only the LIST fills these in — it is the one screen that has to tell a bill
+   * that is merely late from one that is late and unpaid. Without them the DUE
+   * column could only compare the due date with today, so 1,523 settled
+   * challans sat there in red saying "40 over".
+   */
+  received?: number;
+  balance?: number;
   remarks: string | null;
   gst: number | null;
   billingRate: number | null;

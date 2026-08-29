@@ -27,6 +27,12 @@ const FALLBACK_PREFIX = 'SSS';
 const round5 = (x: number) => Math.round(x / 5) * 5;
 /** Money to 2dp — keeps the trading statement's rows from carrying float dust. */
 const r2 = (x: number) => Math.round((x + Number.EPSILON) * 100) / 100;
+/** Midnight today. A bill due today is not yet overdue. */
+const startOfToday = (): Date => {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
 const n = (v: number | null | undefined) => (Number.isFinite(v as number) ? (v as number) : 0);
 /** SCRAP parties are TCS-only — this guards against a stale client ever
  *  persisting a TDS deduction alongside it. */
@@ -405,7 +411,59 @@ export class ChallansService {
       this.prisma.challan.findMany({ where, orderBy: [{ invDate: 'desc' }, { id: 'desc' }], skip: q.skip, take: q.pageSize, include: { items: true } }),
       this.prisma.challan.count({ where }),
     ]);
-    return { items: rows.map((r) => this.map(r)), total, page: q.page, pageSize: q.pageSize, totalPages: Math.max(1, Math.ceil(total / q.pageSize)) };
+    const settled = await this.settlementFor(rows.map((r) => r.code));
+    const items = rows.map((r) => {
+      const dto = this.map(r);
+      const amount = r2((dto.b ?? 0) + (dto.c ?? 0));
+      const received = settled.received.get(r.code) ?? 0;
+      const discount = settled.discount.get(r.code) ?? 0;
+      return { ...dto, received, balance: r2(Math.max(0, amount - received - discount)) };
+    });
+    return { items, total, page: q.page, pageSize: q.pageSize, totalPages: Math.max(1, Math.ceil(total / q.pageSize)) };
+  }
+
+  /**
+   * Of the challans past their due date, the ones still owing — and how much.
+   *
+   * `total` is the OUTSTANDING amount, not the invoice value. A ₹1,00,000 bill
+   * with ₹90,000 received is ₹10,000 overdue, not ₹1,00,000; reporting the face
+   * value would overstate what there is to chase, which is the only thing this
+   * figure is used for.
+   */
+  private async overdueOf(rows: { code: string; b: number | null; c: number | null }[]): Promise<{ count: number; total: number }> {
+    if (!rows.length) return { count: 0, total: 0 };
+    const settled = await this.settlementFor(rows.map((r) => r.code));
+    let count = 0;
+    let total = 0;
+    for (const r of rows) {
+      const owed = r2(
+        (r.b ?? 0) + (r.c ?? 0) - (settled.received.get(r.code) ?? 0) - (settled.discount.get(r.code) ?? 0),
+      );
+      if (owed <= 0.004) continue; // paid, or written off
+      count += 1;
+      total = r2(total + owed);
+    }
+    return { count, total };
+  }
+
+  /**
+   * What has been received against these challans, and what was written off.
+   *
+   * The same rule the payments engine settles by (see `invoicePending` there):
+   * amount − receipts − discounts. Scoped to the codes on the current page, so
+   * it costs two grouped reads however large the ledger gets.
+   */
+  private async settlementFor(codes: string[]): Promise<{ received: Map<string, number>; discount: Map<string, number> }> {
+    const received = new Map<string, number>();
+    const discount = new Map<string, number>();
+    if (!codes.length) return { received, discount };
+    const [recs, discs] = await Promise.all([
+      this.prisma.acctPaymentReceipt.groupBy({ by: ['invNo'], where: { invNo: { in: codes } }, _sum: { recAmt: true } }),
+      this.prisma.acctPartyDiscount.groupBy({ by: ['invNo'], where: { invNo: { in: codes } }, _sum: { disAmt: true } }),
+    ]);
+    for (const r of recs) received.set(r.invNo, r2(r._sum.recAmt ?? 0));
+    for (const d of discs) discount.set(d.invNo, r2(d._sum.disAmt ?? 0));
+    return { received, discount };
   }
 
   /** KPI roll-up over the same filters as the list (ViewChallan KPI cards). */
@@ -450,7 +508,7 @@ export class ChallansService {
   async analytics(q: ChallanQueryDto): Promise<ChallanAnalytics> {
     const where = this.listWhere(q, await this.agentScope(q));
 
-    const [agg, byStatusRows, byCategoryRows, topPartyRows, overdueAgg, catRows, bagRows] = await Promise.all([
+    const [agg, byStatusRows, byCategoryRows, topPartyRows, overdueRows, catRows, bagRows] = await Promise.all([
       this.prisma.challan.aggregate({
         where,
         _count: { _all: true },
@@ -473,10 +531,20 @@ export class ChallansService {
         orderBy: { _sum: { total: 'desc' } },
         take: 10,
       }),
-      this.prisma.challan.aggregate({
-        where: { AND: [where, { challanStatus: 'CONFIRMED' }, { dueDate: { lt: new Date() } }] },
-        _count: { _all: true },
-        _sum: { total: true },
+      /*
+       * Past their due date — the CANDIDATES for overdue, not the answer. A
+       * settled bill is not overdue however long ago its date passed, and this
+       * used to count them: 1,523 of 1,822 past-due challans were already paid.
+       * The receipts are subtracted below, which needs the rows rather than an
+       * aggregate.
+       *
+       * `startOfToday`, not `new Date()`: comparing against the current instant
+       * made a challan due TODAY overdue from one second past midnight, while
+       * the list — which compares dates — still called it "0 left".
+       */
+      this.prisma.challan.findMany({
+        where: { AND: [where, { challanStatus: 'CONFIRMED' }, { dueDate: { lt: startOfToday() } }] },
+        select: { code: true, b: true, c: true },
       }),
       // All distinct categories in the master (unfiltered) so the dropdown is stable.
       this.prisma.challan.findMany({ distinct: ['category'], select: { category: true }, where: { category: { not: null } } }),
@@ -547,7 +615,7 @@ export class ChallansService {
         })
         .sort((a, b) => b.total - a.total),
       topParties: topPartyRows.map((r) => ({ customerName: r.customerName, count: r._count._all, total: r._sum.total ?? 0 })),
-      overdue: { count: overdueAgg._count._all, total: overdueAgg._sum.total ?? 0 },
+      overdue: await this.overdueOf(overdueRows),
       trading: await this.tradingAccount(q),
       categories: catRows
         .map((r) => (r.category ?? '').trim())
