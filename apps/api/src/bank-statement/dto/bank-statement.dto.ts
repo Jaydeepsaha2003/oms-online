@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ArrayNotEmpty, IsArray, IsBoolean, IsInt, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
+import { ArrayNotEmpty, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 /** Which column of the uploaded sheet holds what — see BankStatementColumnMap. */
@@ -12,6 +12,8 @@ export class ColumnMapDto {
 }
 
 export class BankStatementCreateDto {
+  /** 'ask' (default) reports lines already held and creates nothing. */
+  @IsOptional() @IsIn(['ask', 'skip', 'import']) onDuplicate?: 'ask' | 'skip' | 'import';
   @IsString() @MaxLength(255) fileName!: string;
   @IsOptional() @IsString() @MaxLength(255) bankName?: string | null;
   @IsString() fromDate!: string;

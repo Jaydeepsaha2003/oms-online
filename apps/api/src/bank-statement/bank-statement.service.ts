@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   BANK_AMOUNT_TOL,
@@ -15,6 +15,10 @@ import {
   type BankStatementRunDto,
   type BankStatementRunList,
   type BankStatementRunResult,
+  parseStatementDate,
+  statementRowKey,
+  type BankStatementCreateResponse,
+  type BankStatementDuplicate,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaymentsService } from '../payments/payments.service';
@@ -33,6 +37,8 @@ const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart
 
 @Injectable()
 export class BankStatementService {
+  private readonly logger = new Logger(BankStatementService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly payments: PaymentsService,
@@ -69,7 +75,7 @@ export class BankStatementService {
    * is the part that must not vary: which rows count (credits, in range), how
    * the amount is read, and who each one belongs to.
    */
-  async create(dto: BankStatementCreateDto, userName?: string | null): Promise<BankStatementRunResult> {
+  async create(dto: BankStatementCreateDto, userName?: string | null): Promise<BankStatementCreateResponse> {
     const map = dto.map;
     if (!map?.date?.trim() || !map?.narration?.trim() || !map?.credit?.trim()) {
       throw new BadRequestException('Map the Date, Narration and Credit columns before continuing.');
@@ -133,6 +139,142 @@ export class BankStatementService {
       );
     }
 
+    /*
+     * Lines this bank account already holds.
+     *
+     * Re-importing one is not merely untidy: a line a previous run already
+     * POSTED comes back as UNMATCHED here (this run has no receipt of its own
+     * for it yet), and Process would create the receipt a second time.
+     *
+     * The comparison is per LINE and by COUNT, not by presence. Presence was
+     * wrong in a way that loses money: a party paying ₹5,000 twice on the same
+     * day with the same narration produces two identical lines, and if one was
+     * already held, a set-based check discarded BOTH. Counting imports the
+     * second one, which is the one that is genuinely new.
+     */
+    const bank = dto.bankName!.trim();
+    const held = await this.heldRowCounts(bank, parsed);
+    const duplicates = this.duplicateReport(parsed, held);
+
+    // Nothing to decide — no line is already on record.
+    if (duplicates.length === 0) {
+      return this.createRun(dto, map, parsed, userName, 0, from, to);
+    }
+
+    const action = dto.onDuplicate ?? 'ask';
+    if (action === 'ask') {
+      // Create nothing. There is no safe automatic answer: skipping silently
+      // loses a real second payment, importing silently can double-post.
+      return {
+        outcome: 'duplicates' as const,
+        duplicates,
+        totalIncoming: parsed.length,
+        totalOnRecord: duplicates.reduce((sum, d) => sum + Math.min(d.incoming, d.onRecord), 0),
+      };
+    }
+
+    let fresh = parsed;
+    if (action === 'skip') {
+      // Drop only as many copies of each line as are already held — the surplus
+      // is new money and stays.
+      const budget = new Map(held.counts);
+      fresh = parsed.filter((p) => {
+        const key = statementRowKey(p.txnDate, p.amount, p.narration);
+        const left = budget.get(key) ?? 0;
+        if (left > 0) {
+          budget.set(key, left - 1);
+          return false;
+        }
+        return true;
+      });
+      if (!fresh.length) {
+        const names = [...new Set(duplicates.flatMap((d) => d.runIds))].sort((a, b) => a - b).map((id) => `#${id}`).join(', ');
+        throw new BadRequestException(
+          `Nothing left to load — all ${parsed.length} credit lines are already held by working ${names} for ${bank}.`,
+        );
+      }
+    }
+
+    return this.createRun(dto, map, fresh, userName, parsed.length - fresh.length, from, to);
+  }
+
+  /** How many of each incoming line this bank account already holds, and where. */
+  private async heldRowCounts(
+    bank: string,
+    parsed: { txnDate: Date; amount: number; narration: string }[],
+  ): Promise<{ counts: Map<string, number>; runs: Map<string, Set<number>>; posted: Set<string> }> {
+    const spanFrom = new Date(Math.min(...parsed.map((p) => +p.txnDate)));
+    const spanTo = new Date(Math.max(...parsed.map((p) => +p.txnDate)));
+    const prior = await this.prisma.bankStatementRow.findMany({
+      where: { txnDate: { gte: spanFrom, lte: spanTo }, run: { bankName: bank } },
+      select: { id: true, runId: true, txnDate: true, amount: true, narration: true, rowKey: true, status: true },
+    });
+
+    const counts = new Map<string, number>();
+    const runs = new Map<string, Set<number>>();
+    const posted = new Set<string>();
+    const backfill: { id: number; rowKey: string }[] = [];
+
+    for (const r of prior) {
+      const key = statementRowKey(r.txnDate, r.amount, r.narration);
+      // Rows imported before this column existed carry ''. Fill them in as they
+      // are consulted rather than in the migration — SQLite cannot do the
+      // narration squashing the key needs.
+      if (r.rowKey !== key) backfill.push({ id: r.id, rowKey: key });
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+      (runs.get(key) ?? runs.set(key, new Set()).get(key)!).add(r.runId);
+      if (r.status === 'POSTED') posted.add(key);
+    }
+
+    if (backfill.length) {
+      await this.prisma.$transaction(
+        backfill.map((b) => this.prisma.bankStatementRow.update({ where: { id: b.id }, data: { rowKey: b.rowKey } })),
+      );
+      this.logger.log(`Filled in ${backfill.length} row reference(s) for ${bank}.`);
+    }
+    return { counts, runs, posted };
+  }
+
+  /** The lines the caller has to make a decision about. */
+  private duplicateReport(
+    parsed: { txnDate: Date; amount: number; narration: string }[],
+    held: { counts: Map<string, number>; runs: Map<string, Set<number>>; posted: Set<string> },
+  ): BankStatementDuplicate[] {
+    const incoming = new Map<string, { n: number; sample: { txnDate: Date; amount: number; narration: string } }>();
+    for (const p of parsed) {
+      const key = statementRowKey(p.txnDate, p.amount, p.narration);
+      const cur = incoming.get(key);
+      if (cur) cur.n += 1;
+      else incoming.set(key, { n: 1, sample: p });
+    }
+    const out: BankStatementDuplicate[] = [];
+    for (const [key, { n, sample }] of incoming) {
+      const onRecord = held.counts.get(key) ?? 0;
+      if (!onRecord) continue;
+      out.push({
+        txnDate: iso(sample.txnDate)!,
+        amount: sample.amount,
+        narration: sample.narration,
+        incoming: n,
+        onRecord,
+        runIds: [...(held.runs.get(key) ?? [])].sort((a, b) => a - b),
+        posted: held.posted.has(key),
+      });
+    }
+    // Posted first: those are the ones that can double-post if waved through.
+    return out.sort((a, b) => Number(b.posted) - Number(a.posted) || +new Date(a.txnDate) - +new Date(b.txnDate));
+  }
+
+  /** Write the working and its rows. */
+  private async createRun(
+    dto: BankStatementCreateDto,
+    map: BankStatementColumnMap,
+    fresh: { rowNo: number; txnDate: Date; narration: string; refNo: string | null; amount: number }[],
+    userName: string | null | undefined,
+    duplicateSkipped: number,
+    from: Date,
+    to: Date,
+  ): Promise<BankStatementCreateResponse> {
     const run = await this.prisma.bankStatementRun.create({
       data: {
         fileName: dto.fileName?.trim() || 'statement',
@@ -140,19 +282,27 @@ export class BankStatementService {
         fromDate: from,
         toDate: to,
         userName: userName ?? null,
-        rowCount: parsed.length,
-        creditTotal: r2(parsed.reduce((s, p) => s + p.amount, 0)),
-        noPartyCount: parsed.length,
+        rowCount: fresh.length,
+        creditTotal: r2(fresh.reduce((s, p) => s + p.amount, 0)),
+        noPartyCount: fresh.length,
       },
     });
     await this.prisma.bankStatementRow.createMany({
-      data: parsed.map((p) => ({ ...p, runId: run.id })),
+      // The reference is written at import, so the next upload can be checked
+      // against it without re-deriving one for every stored row.
+      data: fresh.map((p) => ({ ...p, runId: run.id, rowKey: statementRowKey(p.txnDate, p.amount, p.narration) })),
     });
     await this.rememberPreset(dto.bankName?.trim() ?? '', map);
 
     await this.attributeParties(run.id);
     await this.rematch(run.id);
-    return this.result(run.id);
+    const result = await this.result(run.id);
+    if (duplicateSkipped) this.logger.log(`Run ${run.id}: left out ${duplicateSkipped} line(s) already held.`);
+    return {
+      outcome: 'created' as const,
+      ...result,
+      run: { ...result.run, ...(duplicateSkipped ? { duplicateSkipped } : {}) },
+    };
   }
 
   /* ── Who does each credit belong to? ───────────────────────────────────── */
@@ -383,14 +533,52 @@ export class BankStatementService {
 
     // Teach the narration, so the next statement recognises the same payer.
     if (dto.rememberAlias && customer) {
+      /*
+       * A fragment that also names another customer is not an alias, it is a
+       * trap. The table is keyed by fragment, so learning "CRYSTAL" for CRYSTAL
+       * STEEL would quietly capture every future line naming NX CRYSTAL IMPEX —
+       * a real pair in this data, along with VINAYAK STEEL / SHREE VINAYAK
+       * SALES. Checked against every active party, so it also holds for the
+       * customer added next month.
+       */
+      const others = await this.prisma.customer.findMany({
+        where: { active: true, partyName: { not: null }, id: { not: customer.id } },
+        select: { partyName: true },
+      });
+      const takenByOthers = new Set(others.flatMap((c) => narrationTokens(c.partyName ?? '')));
+
+      const skipped: string[] = [];
       for (const row of rows) {
         const fragment = aliasFragment(row.narration, customer.partyName ?? '');
         if (!fragment) continue;
+        if (takenByOthers.has(fragment)) {
+          skipped.push(fragment);
+          continue;
+        }
+        /*
+         * A fragment a SECOND party also turns out to be paid under identifies
+         * neither of them, and the last writer would silently take the first
+         * one's future money. The check above cannot see these — "TAMILNAD" is
+         * Tamilnad Mercantile Bank truncated past the word "bank", so it names
+         * no customer at all yet was learnable for two. Whoever claims it
+         * second retires it instead of stealing it.
+         */
+        const existing = await this.prisma.bankStatementAlias.findUnique({ where: { fragment } });
+        if (existing && existing.customerId !== customer.id) {
+          await this.prisma.bankStatementAlias.delete({ where: { fragment } });
+          skipped.push(fragment);
+          continue;
+        }
         await this.prisma.bankStatementAlias.upsert({
           where: { fragment },
           create: { fragment, customerId: customer.id, customerName: customer.partyName ?? '', createdBy: userName ?? null },
           update: { customerId: customer.id, customerName: customer.partyName ?? '' },
         });
+      }
+      if (skipped.length) {
+        this.logger.log(
+          `Not remembered for ${customer.partyName}: ${[...new Set(skipped)].join(', ')} — each also identifies another party.`,
+        );
       }
     }
 
@@ -623,10 +811,34 @@ export class BankStatementService {
       cur.total = r2(cur.total + r.amount);
       parties.set(r.customerId, cur);
     }
+    /*
+     * The voucher number behind each matched REF ID.
+     *
+     * `refRecId` is what funded the allocation: a voucher number on a fresh
+     * receipt ("RN/373"), or an advance's own REF ID where the allocation was
+     * paid out of an advance. Either is what the Party Ledger shows, which is
+     * the point — the two screens have to be checkable against each other.
+     */
+    const refIds = [...new Set(rows.flatMap((r) => (r.matchedRefs ?? '').split(',').filter(Boolean)))];
+    const receiptVouchers: Record<string, string> = {};
+    if (refIds.length) {
+      const alloc = await this.prisma.acctPaymentReceipt.findMany({
+        where: { refId: { in: refIds } },
+        select: { refId: true, refRecId: true },
+        distinct: ['refId', 'refRecId'],
+      });
+      for (const a of alloc) {
+        // One REF ID can span more than one funding voucher; name the first and
+        // let the row's own tooltip carry the rest.
+        if (a.refRecId && !receiptVouchers[a.refId]) receiptVouchers[a.refId] = a.refRecId;
+      }
+    }
+
     return {
       run: this.runDto(run),
       rows: rows.map((r) => this.rowDto(r)),
       parties: [...parties.values()].sort((a, b) => b.total - a.total),
+      receiptVouchers,
     };
   }
 
@@ -688,39 +900,10 @@ export class BankStatementService {
     return Number.isFinite(n) ? n : 0;
   }
 
-  /**
-   * A date from a spreadsheet cell.
-   *
-   * Statements are exported as text as often as dates, and Indian banks write
-   * dd/mm/yyyy — which `new Date()` reads as mm/dd, silently turning 06/07 into
-   * the wrong month. So a d/m/y string is parsed by hand and only anything else
-   * falls back to the built-in parser.
-   */
+  /** A date from a spreadsheet cell — see `parseStatementDate` in @oms/shared,
+   *  which the Bank Statement page uses to derive the range this then honours. */
   private cellDate(v: unknown): Date | null {
-    if (v == null) return null;
-    if (v instanceof Date && !Number.isNaN(v.getTime())) {
-      const d = new Date(v);
-      d.setHours(0, 0, 0, 0);
-      return d;
-    }
-    const s = String(v).trim();
-    if (!s) return null;
-    const dmy = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})/.exec(s);
-    if (dmy) {
-      const day = Number(dmy[1]);
-      const month = Number(dmy[2]);
-      let year = Number(dmy[3]);
-      if (year < 100) year += year < 70 ? 2000 : 1900;
-      if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
-        const d = new Date(year, month - 1, day);
-        d.setHours(0, 0, 0, 0);
-        return d;
-      }
-    }
-    const parsed = new Date(s);
-    if (Number.isNaN(parsed.getTime())) return null;
-    parsed.setHours(0, 0, 0, 0);
-    return parsed;
+    return parseStatementDate(v);
   }
 
   private runDto(r: {
