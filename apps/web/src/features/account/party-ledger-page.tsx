@@ -14,7 +14,16 @@ import {
 import { toast } from 'sonner';
 import { GlobalWorkerOptions, getDocument, type PDFDocumentProxy } from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import type { LedgerBalanceRow, LedgerReceiptLine, NoteMode, PartyLedgerFooter, PartyLedgerKpis, PartyLedgerQuery, PartyLedgerRow, PartyListStanding } from '@oms/shared';
+import type {
+  LedgerBalanceRow,
+  LedgerReceiptLine,
+  NoteMode,
+  PartyLedgerFooter,
+  PartyLedgerKpis,
+  PartyLedgerQuery,
+  PartyLedgerRow,
+  PartyListStanding,
+} from '@oms/shared';
 import { api, downloadFile, getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
@@ -38,7 +47,8 @@ const money = (v: number) => (v ? inr(v) : '');
 const moneyOrDash = (v: number) => (v ? inr(v) : '-');
 // Delegates to the shared formatter so this page follows the system-wide date format.
 const prettyDate = (iso: string | null) => formatDate(iso);
-const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const ymd = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const timestampedPdfName = (partyName: string) => {
   const now = new Date();
   const two = (value: number) => String(value).padStart(2, '0');
@@ -68,7 +78,8 @@ const TH_GROUP = TH;
 const TH_LINE = 'border-r border-white/15';
 /** Body cell: full grid lines, tight rows. The colour is scoped to the right edge
  *  so a row's own top/bottom rule (the totals band) isn't overridden by it. */
-const TD = 'border-r border-r-amber-200/80 px-2 py-[3px] align-middle dark:border-r-amber-400/15 last:border-r-0';
+const TD =
+  'border-r border-r-amber-200/80 px-2 py-[3px] align-middle dark:border-r-amber-400/15 last:border-r-0';
 const NUM = 'text-right tabular-nums';
 /** The panel that frames the whole worksheet. */
 const PANEL = 'border-amber-300 dark:border-amber-400/30';
@@ -78,14 +89,24 @@ function fyStart(d: Date): Date {
   const y = d.getMonth() >= FY_START_MONTH ? d.getFullYear() : d.getFullYear() - 1;
   return new Date(y, FY_START_MONTH, 1);
 }
-const RANGE_PRESETS = ['This Year', 'Last Year', 'This Quarter', 'Last Quarter', 'This Month', 'Last Month', 'Yesterday', 'Today'] as const;
+const RANGE_PRESETS = [
+  'This Year',
+  'Last Year',
+  'This Quarter',
+  'Last Quarter',
+  'This Month',
+  'Last Month',
+  'Yesterday',
+  'Today',
+] as const;
 type Preset = (typeof RANGE_PRESETS)[number];
 
 function presetRange(p: Preset): { from: Date; to: Date } {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const fys = fyStart(today);
-  const monthsSince = (today.getFullYear() - fys.getFullYear()) * 12 + (today.getMonth() - fys.getMonth());
+  const monthsSince =
+    (today.getFullYear() - fys.getFullYear()) * 12 + (today.getMonth() - fys.getMonth());
   const qIdx = Math.max(0, Math.floor(monthsSince / 3));
   const qStart = new Date(fys.getFullYear(), fys.getMonth() + qIdx * 3, 1);
   switch (p) {
@@ -98,13 +119,22 @@ function presetRange(p: Preset): { from: Date; to: Date } {
     case 'This Month':
       return { from: new Date(today.getFullYear(), today.getMonth(), 1), to: today };
     case 'Last Month':
-      return { from: new Date(today.getFullYear(), today.getMonth() - 1, 1), to: new Date(today.getFullYear(), today.getMonth(), 0) };
+      return {
+        from: new Date(today.getFullYear(), today.getMonth() - 1, 1),
+        to: new Date(today.getFullYear(), today.getMonth(), 0),
+      };
     case 'This Quarter':
       return { from: qStart, to: today };
     case 'Last Quarter':
-      return { from: new Date(qStart.getFullYear(), qStart.getMonth() - 3, 1), to: new Date(qStart.getTime() - 86400000) };
+      return {
+        from: new Date(qStart.getFullYear(), qStart.getMonth() - 3, 1),
+        to: new Date(qStart.getTime() - 86400000),
+      };
     case 'Last Year':
-      return { from: new Date(fys.getFullYear() - 1, FY_START_MONTH, 1), to: new Date(fys.getTime() - 86400000) };
+      return {
+        from: new Date(fys.getFullYear() - 1, FY_START_MONTH, 1),
+        to: new Date(fys.getTime() - 86400000),
+      };
     case 'This Year':
     default:
       return { from: fys, to: today };
@@ -120,16 +150,58 @@ interface Leg {
    *  the server withholds balances under a voucher-type filter. */
   openNet: (f: PartyLedgerFooter) => number | null;
 }
-const BANK_LEG: Leg = { group: 'Bank', dr: 'bankDr', cr: 'bankCr', openNet: (f) => f.openingBankNet };
-const CASH_LEG: Leg = { group: 'Cash', dr: 'cashDr', cr: 'cashCr', openNet: (f) => f.openingCashNet };
-const legsFor = (mode: string): Leg[] => (mode === 'B' ? [BANK_LEG] : mode === 'C' ? [CASH_LEG] : [BANK_LEG, CASH_LEG]);
+const BANK_LEG: Leg = {
+  group: 'Bank',
+  dr: 'bankDr',
+  cr: 'bankCr',
+  openNet: (f) => f.openingBankNet,
+};
+const CASH_LEG: Leg = {
+  group: 'Cash',
+  dr: 'cashDr',
+  cr: 'cashCr',
+  openNet: (f) => f.openingCashNet,
+};
+const legsFor = (mode: string): Leg[] =>
+  mode === 'B' ? [BANK_LEG] : mode === 'C' ? [CASH_LEG] : [BANK_LEG, CASH_LEG];
 
-/** A signed balance rendered the Tally way: magnitude followed by Dr or Cr. */
-function Balance({ net, className }: { net: number; className?: string }) {
-  if (!net) return <span className="text-muted-foreground/50">—</span>;
+/**
+ * A signed balance rendered the Tally way: magnitude followed by Dr or Cr.
+ *
+ * Zero is a faint dash on a per-transaction running balance, where it means
+ * "nothing to say here". On the Closing Balance it means the exact opposite —
+ * the party is square — and a dash there reads as the figure having failed to
+ * arrive. `nilLabel` makes that line spell it out instead.
+ */
+function Balance({
+  net,
+  className,
+  nilLabel,
+}: {
+  net: number;
+  className?: string;
+  nilLabel?: string;
+}) {
+  if (!net) {
+    return nilLabel ? (
+      <span
+        className={cn('font-bold tabular-nums text-emerald-700 dark:text-emerald-400', className)}
+      >
+        0<span className="ml-1 text-[10px] font-bold opacity-70">{nilLabel}</span>
+      </span>
+    ) : (
+      <span className="text-muted-foreground/50">—</span>
+    );
+  }
   const cr = net < 0;
   return (
-    <span className={cn('tabular-nums font-bold', cr ? 'text-emerald-700 dark:text-emerald-400' : 'text-slate-900 dark:text-slate-100', className)}>
+    <span
+      className={cn(
+        'tabular-nums font-bold',
+        cr ? 'text-emerald-700 dark:text-emerald-400' : 'text-slate-900 dark:text-slate-100',
+        className,
+      )}
+    >
       {inr(Math.abs(net))}
       <span className="ml-1 text-[10px] font-bold opacity-70">{cr ? 'Cr' : 'Dr'}</span>
     </span>
@@ -185,22 +257,29 @@ export function PartyLedgerPage() {
   // Off by default (`balance=1` in the URL turns it on): the running Balance per
   // transaction is a detail, not something every glance at the ledger needs —
   // Closing Balance (the actual bottom line) always shows regardless.
-  const { party, agent, from, to, mode, voucherType, preset, showBalance, patch, clear } = useLedgerFilters();
+  const { party, agent, from, to, mode, voucherType, preset, showBalance, patch, clear } =
+    useLedgerFilters();
   const [receiptFor, setReceiptFor] = useState<PartyLedgerRow | null>(null);
   const [dateOpen, setDateOpen] = useState(false);
 
-  const custByName = useMemo(() => new Map((lookups?.customers ?? []).map((c) => [c.name, c.id])), [lookups]);
+  const custByName = useMemo(
+    () => new Map((lookups?.customers ?? []).map((c) => [c.name, c.id])),
+    [lookups],
+  );
   const partyOptions = useMemo(() => (lookups?.customers ?? []).map((c) => c.name), [lookups]);
   const agentOptions = useMemo(() => ['All', ...(lookups?.agents ?? [])], [lookups]);
 
-  const query = useMemo<PartyLedgerQuery>(() => ({
-    customerId: party ? custByName.get(party) : undefined,
-    agentName: !party && agent && agent !== 'All' ? agent : undefined,
-    from,
-    to,
-    mode,
-    voucherType: voucherType || undefined,
-  }), [party, agent, from, to, mode, voucherType, custByName]);
+  const query = useMemo<PartyLedgerQuery>(
+    () => ({
+      customerId: party ? custByName.get(party) : undefined,
+      agentName: !party && agent && agent !== 'All' ? agent : undefined,
+      from,
+      to,
+      mode,
+      voucherType: voucherType || undefined,
+    }),
+    [party, agent, from, to, mode, voucherType, custByName],
+  );
 
   const { data, isFetching } = usePartyLedger(query);
   const rows = data?.rows ?? [];
@@ -214,7 +293,8 @@ export function PartyLedgerPage() {
    *  isn't this party's position. */
   const closingNet =
     footer && footer.closingBankNet != null && footer.closingCashNet != null
-      ? footer.closingBankNet * (mode === 'C' ? 0 : 1) + footer.closingCashNet * (mode === 'B' ? 0 : 1)
+      ? footer.closingBankNet * (mode === 'C' ? 0 : 1) +
+        footer.closingCashNet * (mode === 'B' ? 0 : 1)
       : null;
 
   const onReset = () => clear();
@@ -244,7 +324,9 @@ export function PartyLedgerPage() {
     },
     [pdfPreview],
   );
-  const pdfFilename = timestampedPdfName(data?.customerName || (data?.agentName ? `Agent-${data.agentName}` : 'All-Parties'));
+  const pdfFilename = timestampedPdfName(
+    data?.customerName || (data?.agentName ? `Agent-${data.agentName}` : 'All-Parties'),
+  );
   const onPdf = async () => {
     setPdfLoading(true);
     try {
@@ -278,7 +360,13 @@ export function PartyLedgerPage() {
   useEffect(() => {
     if (!canPrintLedger) return;
     const onKey = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'p') return;
+      if (
+        !(event.ctrlKey || event.metaKey) ||
+        event.altKey ||
+        event.shiftKey ||
+        event.key.toLowerCase() !== 'p'
+      )
+        return;
       if (!pdfPreview && document.querySelector('[role="dialog"], [role="alertdialog"]')) return;
       event.preventDefault();
       if (pdfPreview) {
@@ -293,7 +381,10 @@ export function PartyLedgerPage() {
   const onExcel = async () => {
     setExcelLoading(true);
     try {
-      await downloadFile(exportUrl('xlsx'), `${(data?.customerName || data?.agentName || 'party-ledger').replace(/[\\/:*?"<>|]/g, '-')}.xlsx`);
+      await downloadFile(
+        exportUrl('xlsx'),
+        `${(data?.customerName || data?.agentName || 'party-ledger').replace(/[\\/:*?"<>|]/g, '-')}.xlsx`,
+      );
       toast.success('Excel ledger downloaded');
     } catch (e) {
       toast.error(getApiErrorMessage(e, 'Export failed'));
@@ -342,11 +433,13 @@ export function PartyLedgerPage() {
   /* Running balance, Tally's defining column. Seeded from the opening net of the
      legs on screen and walked forward in the server's chronological order, so the
      last row lands exactly on the Closing Balance the footer reports. */
-  const openingNet = footer && footer.opening ? legs.reduce((sum, l) => sum + (l.openNet(footer) ?? 0), 0) : null;
+  const openingNet =
+    footer && footer.opening ? legs.reduce((sum, l) => sum + (l.openNet(footer) ?? 0), 0) : null;
   /** How many rows the sticky footer renders — Opening (when there is one),
    *  Current Total (always), Closing (when not filtered to one voucher type).
    *  Drives the body spacer that stops it covering the last invoices. */
-  const footRowCount = (footer?.opening ? 1 : 0) + 1 + (footer?.closing && closingNet != null ? 1 : 0);
+  const footRowCount =
+    (footer?.opening ? 1 : 0) + 1 + (footer?.closing && closingNet != null ? 1 : 0);
   // No opening to seed from (voucher-type filter) → there is no running balance to
   // walk, so the column stays empty rather than counting up from a made-up zero.
   const running = useMemo(() => {
@@ -405,7 +498,11 @@ export function PartyLedgerPage() {
         <span className="min-w-0 truncate text-[11.5px] font-semibold">
           {prettyDate(from)} <span className="text-muted-foreground">→</span> {prettyDate(to)}
         </span>
-        <Button size="sm" className="h-7 shrink-0 px-3 text-[12px] font-semibold" onClick={() => setDateOpen(false)}>
+        <Button
+          size="sm"
+          className="h-7 shrink-0 px-3 text-[12px] font-semibold"
+          onClick={() => setDateOpen(false)}
+        >
           Done
         </Button>
       </div>
@@ -442,7 +539,11 @@ export function PartyLedgerPage() {
             <PopoverTrigger asChild>
               <Button
                 variant="outline"
-                className={cn(CONTROL, 'w-full max-w-full justify-start font-medium sm:w-auto sm:max-w-56', CONTROL_ON)}
+                className={cn(
+                  CONTROL,
+                  'w-full max-w-full justify-start font-medium sm:w-auto sm:max-w-56',
+                  CONTROL_ON,
+                )}
                 title="Statement period"
               >
                 <CalendarRange className="size-3.5 shrink-0" />
@@ -497,10 +598,19 @@ export function PartyLedgerPage() {
             )}
             title={running ? undefined : 'Clear the voucher type filter to see running balances'}
           >
-            <Switch checked={showBalance && !!running} onCheckedChange={(v) => patch({ showBalance: v })} disabled={!running} /> Show Balance
+            <Switch
+              checked={showBalance && !!running}
+              onCheckedChange={(v) => patch({ showBalance: v })}
+              disabled={!running}
+            />{' '}
+            Show Balance
           </label>
 
-          <Button variant="outline" className="h-9 rounded-[4px] text-[12.5px] font-semibold" onClick={onReset}>
+          <Button
+            variant="outline"
+            className="h-9 rounded-[4px] text-[12.5px] font-semibold"
+            onClick={onReset}
+          >
             <X /> Reset
           </Button>
 
@@ -510,7 +620,8 @@ export function PartyLedgerPage() {
                 is the only way to know how much there is. */}
             {data && (
               <p className="text-muted-foreground text-[12px] font-medium">
-                <span className="text-foreground font-bold tabular-nums">{rows.length}</span> row{rows.length === 1 ? '' : 's'}
+                <span className="text-foreground font-bold tabular-nums">{rows.length}</span> row
+                {rows.length === 1 ? '' : 's'}
                 {isFetching && <Loader2 className="ml-1 inline size-3 animate-spin align-[-2px]" />}
               </p>
             )}
@@ -555,17 +666,43 @@ export function PartyLedgerPage() {
         />
         <Kpi
           label="Total Outstanding"
-          value={closingNet != null ? `${inr(Math.abs(closingNet))}${closingNet !== 0 ? ` ${closingNet < 0 ? 'Cr' : 'Dr'}` : ''}` : '—'}
+          value={
+            closingNet != null
+              ? `${inr(Math.abs(closingNet))}${closingNet !== 0 ? ` ${closingNet < 0 ? 'Cr' : 'Dr'}` : ''}`
+              : '—'
+          }
           note={closingNet == null && footer ? 'clear voucher type' : undefined}
-          tone={closingNet == null || closingNet === 0 ? 'slate' : closingNet < 0 ? 'emerald' : 'amber'}
+          tone={
+            closingNet == null || closingNet === 0 ? 'slate' : closingNet < 0 ? 'emerald' : 'amber'
+          }
         />
-        <Kpi label="Over Due" value={kpis ? inr(kpis.overDue.amount) : '—'} note={kpis ? `${kpis.overDue.count} inv` : undefined} tone="rose" />
-        <Kpi label="Past Due" value={kpis ? inr(kpis.pastDue.amount) : '—'} note={kpis ? `${kpis.pastDue.count} inv` : undefined} tone="amber" />
-        <Kpi label="Normal Due" value={kpis ? inr(kpis.normal.amount) : '—'} note={kpis ? `${kpis.normal.count} inv` : undefined} tone="emerald" />
+        <Kpi
+          label="Over Due"
+          value={kpis ? inr(kpis.overDue.amount) : '—'}
+          note={kpis ? `${kpis.overDue.count} inv` : undefined}
+          tone="rose"
+        />
+        <Kpi
+          label="Past Due"
+          value={kpis ? inr(kpis.pastDue.amount) : '—'}
+          note={kpis ? `${kpis.pastDue.count} inv` : undefined}
+          tone="amber"
+        />
+        <Kpi
+          label="Normal Due"
+          value={kpis ? inr(kpis.normal.amount) : '—'}
+          note={kpis ? `${kpis.normal.count} inv` : undefined}
+          tone="emerald"
+        />
       </div>
 
       {/* ── The ledger ──────────────────────────────────────────────────────── */}
-      <div className={cn('bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[4px] border shadow-sm', PANEL)}>
+      <div
+        className={cn(
+          'bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[4px] border shadow-sm',
+          PANEL,
+        )}
+      >
         {/* Document header — Tally captions every ledger with the account and the
             period it covers, on a dark bar above the amber column strip. */}
         <div className="flex items-center justify-between gap-3 bg-slate-800 px-2.5 py-1 dark:bg-slate-900">
@@ -573,18 +710,18 @@ export function PartyLedgerPage() {
             {scopeLabel || 'Ledger Account'}
           </span>
           {/*
-            * Shown on phones too.
-            *
-            * It used to be `sm:inline` on the reasoning that the Date control
-            * above already states the period. It does not, once the page is
-            * scrolled — and this is a STATEMENT: which dates it covers and
-            * whether it is bank, cash or both is part of the figures, not
-            * decoration. A ledger that does not say what it covers is the one
-            * thing a ledger must not be.
-            *
-            * `text-right` + wrapping rather than `truncate`, so a narrow screen
-            * folds it onto a second line instead of cutting the mode off the end.
-            */}
+           * Shown on phones too.
+           *
+           * It used to be `sm:inline` on the reasoning that the Date control
+           * above already states the period. It does not, once the page is
+           * scrolled — and this is a STATEMENT: which dates it covers and
+           * whether it is bank, cash or both is part of the figures, not
+           * decoration. A ledger that does not say what it covers is the one
+           * thing a ledger must not be.
+           *
+           * `text-right` + wrapping rather than `truncate`, so a narrow screen
+           * folds it onto a second line instead of cutting the mode off the end.
+           */}
           <span className="shrink-0 text-right text-[10.5px] leading-tight font-bold tracking-wide text-white tabular-nums sm:text-[11px]">
             {prettyDate(from)} — {prettyDate(to)}
             <span className="hidden sm:inline"> · </span>
@@ -611,16 +748,28 @@ export function PartyLedgerPage() {
                 <tr>
                   <th className={cn(TH_GROUP, TH_LINE, 'top-0 h-7')} colSpan={LEAD_COLS} />
                   {legs.map((l) => (
-                    <th key={l.group} className={cn(TH_GROUP, TH_LINE, 'top-0 h-7 text-center')} colSpan={2} scope="colgroup">
+                    <th
+                      key={l.group}
+                      className={cn(TH_GROUP, TH_LINE, 'top-0 h-7 text-center')}
+                      colSpan={2}
+                      scope="colgroup"
+                    >
                       {l.group}
                     </th>
                   ))}
-                  <th className={cn(TH_GROUP, 'top-0 h-7')} colSpan={1 + (canViewChallan ? 1 : 0)} />
+                  <th
+                    className={cn(TH_GROUP, 'top-0 h-7')}
+                    colSpan={1 + (canViewChallan ? 1 : 0)}
+                  />
                 </tr>
               )}
               <tr>
                 {['Date', 'Particulars', 'Vch Type', 'Vch No'].map((h) => (
-                  <th key={h} scope="col" className={cn(TH, TH_LINE, grouped ? 'top-7' : 'top-0', 'py-1.5 text-left')}>
+                  <th
+                    key={h}
+                    scope="col"
+                    className={cn(TH, TH_LINE, grouped ? 'top-7' : 'top-0', 'py-1.5 text-left')}
+                  >
                     {h}
                   </th>
                 ))}
@@ -633,10 +782,13 @@ export function PartyLedgerPage() {
                 >
                   St
                 </th>
-                <th scope="col" className={cn(TH, TH_LINE, grouped ? 'top-7' : 'top-0', 'py-1.5 text-left')}>
+                <th
+                  scope="col"
+                  className={cn(TH, TH_LINE, grouped ? 'top-7' : 'top-0', 'py-1.5 text-left')}
+                >
                   Due From
                 </th>
-                {legs.flatMap((l) => (
+                {legs.flatMap((l) =>
                   ['Debit', 'Credit'].map((side) => (
                     <th
                       key={`${l.group}-${side}`}
@@ -645,12 +797,21 @@ export function PartyLedgerPage() {
                     >
                       {grouped ? side : `${l.group} ${side}`}
                     </th>
-                  ))
-                ))}
-                <th scope="col" className={cn(TH, TH_LINE, grouped ? 'top-7' : 'top-0', 'py-1.5 text-right')}>
+                  )),
+                )}
+                <th
+                  scope="col"
+                  className={cn(TH, TH_LINE, grouped ? 'top-7' : 'top-0', 'py-1.5 text-right')}
+                >
                   Balance
                 </th>
-                {canViewChallan && <th scope="col" className={cn(TH, grouped ? 'top-7' : 'top-0', 'w-10 py-1.5')} aria-label="View" />}
+                {canViewChallan && (
+                  <th
+                    scope="col"
+                    className={cn(TH, grouped ? 'top-7' : 'top-0', 'w-10 py-1.5')}
+                    aria-label="View"
+                  />
+                )}
               </tr>
             </thead>
 
@@ -663,7 +824,10 @@ export function PartyLedgerPage() {
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={totalCols} className="text-muted-foreground h-24 text-center text-[13px] font-medium">
+                  <td
+                    colSpan={totalCols}
+                    className="text-muted-foreground h-24 text-center text-[13px] font-medium"
+                  >
                     No ledger entries for these filters.
                   </td>
                 </tr>
@@ -699,29 +863,69 @@ export function PartyLedgerPage() {
                         invoice && 'group cursor-pointer',
                       )}
                     >
-                      <td className={cn(TD, 'whitespace-nowrap tabular-nums font-semibold text-slate-700 dark:text-slate-300')}>
+                      <td
+                        className={cn(
+                          TD,
+                          'whitespace-nowrap tabular-nums font-semibold text-slate-700 dark:text-slate-300',
+                        )}
+                      >
                         {prettyDate(r.txnDate)}
                       </td>
-                      <td className={cn(TD, 'font-semibold text-slate-800 dark:text-slate-200')}>{r.particulars}</td>
-                      <td className={cn(TD, 'whitespace-nowrap text-[12px] font-medium text-slate-600 dark:text-slate-400')}>{r.voucherType}</td>
-                      <td className={cn(TD, 'whitespace-nowrap text-[12.5px] font-semibold', invoice && 'font-bold text-amber-900 underline-offset-2 group-hover:underline dark:text-amber-300')}>
+                      <td className={cn(TD, 'font-semibold text-slate-800 dark:text-slate-200')}>
+                        {r.particulars}
+                      </td>
+                      <td
+                        className={cn(
+                          TD,
+                          'whitespace-nowrap text-[12px] font-medium text-slate-600 dark:text-slate-400',
+                        )}
+                      >
+                        {r.voucherType}
+                      </td>
+                      <td
+                        className={cn(
+                          TD,
+                          'whitespace-nowrap text-[12.5px] font-semibold',
+                          invoice &&
+                            'font-bold text-amber-900 underline-offset-2 group-hover:underline dark:text-amber-300',
+                        )}
+                      >
                         {r.voucherNo}
                       </td>
                       <td className={cn(TD, 'text-center')}>
-                        <StatusChip status={r.status} side={mode === 'BOTH' ? r.pendingSide : null} />
+                        <StatusChip
+                          status={r.status}
+                          side={mode === 'BOTH' ? r.pendingSide : null}
+                        />
                       </td>
                       <td className={cn(TD, 'whitespace-nowrap')}>
                         <DueFrom text={r.dueFrom} />
                       </td>
                       {legs.flatMap((l) => [
-                        <td key={`${l.group}-dr`} className={cn(TD, NUM, 'font-semibold text-slate-900 dark:text-slate-100')}>
+                        <td
+                          key={`${l.group}-dr`}
+                          className={cn(
+                            TD,
+                            NUM,
+                            'font-semibold text-slate-900 dark:text-slate-100',
+                          )}
+                        >
                           {money(r[l.dr])}
                         </td>,
-                        <td key={`${l.group}-cr`} className={cn(TD, NUM, 'font-semibold text-emerald-700 dark:text-emerald-400')}>
+                        <td
+                          key={`${l.group}-cr`}
+                          className={cn(
+                            TD,
+                            NUM,
+                            'font-semibold text-emerald-700 dark:text-emerald-400',
+                          )}
+                        >
                           {money(r[l.cr])}
                         </td>,
                       ])}
-                      <td className={cn(TD, NUM)}>{showBalance && running && <Balance net={running[i]} />}</td>
+                      <td className={cn(TD, NUM)}>
+                        {showBalance && running && <Balance net={running[i]} />}
+                      </td>
                       {(canViewChallan || canViewNote) && (
                         <td className={cn(TD, 'text-center')} onClick={(e) => e.stopPropagation()}>
                           {/* A note opens its own note bill; anything else backed
@@ -813,7 +1017,9 @@ export function PartyLedgerPage() {
               <Loader2 className="size-5 animate-spin" />
             </div>
           ) : rows.length === 0 ? (
-            <p className="text-muted-foreground px-4 py-10 text-center text-[13px] font-medium">No ledger entries for these filters.</p>
+            <p className="text-muted-foreground px-4 py-10 text-center text-[13px] font-medium">
+              No ledger entries for these filters.
+            </p>
           ) : (
             <div className="space-y-2">
               {rows.map((r, i) => {
@@ -837,61 +1043,79 @@ export function PartyLedgerPage() {
                     }
                     className={cn(
                       'bg-card rounded-[4px] border border-amber-200 p-2.5 shadow-sm dark:border-amber-400/20',
-                      invoice && 'cursor-pointer active:bg-amber-100/70 dark:active:bg-amber-400/15',
+                      invoice &&
+                        'cursor-pointer active:bg-amber-100/70 dark:active:bg-amber-400/15',
                     )}
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="truncate text-[13.5px] leading-tight font-bold text-slate-900 dark:text-slate-100">{r.particulars}</p>
+                        <p className="truncate text-[13.5px] leading-tight font-bold text-slate-900 dark:text-slate-100">
+                          {r.particulars}
+                        </p>
                         <p className="text-muted-foreground mt-0.5 text-[11.5px] font-medium">
                           {r.voucherType} · <span className="font-semibold">{r.voucherNo}</span>
                         </p>
                       </div>
-                      <span className="text-muted-foreground shrink-0 text-[11px] font-semibold tabular-nums">{prettyDate(r.txnDate)}</span>
+                      <span className="text-muted-foreground shrink-0 text-[11px] font-semibold tabular-nums">
+                        {prettyDate(r.txnDate)}
+                      </span>
                     </div>
                     {(r.status || r.dueFrom) && (
                       <div className="mt-1 flex items-center gap-1.5">
-                        <StatusChip status={r.status} side={mode === 'BOTH' ? r.pendingSide : null} />
+                        <StatusChip
+                          status={r.status}
+                          side={mode === 'BOTH' ? r.pendingSide : null}
+                        />
                         <DueFrom text={r.dueFrom} />
                       </div>
                     )}
                     <div className="mt-2 flex items-end justify-between gap-2 border-t pt-2">
                       {/*
-                        * EVERY leg, including the empty ones.
-                        *
-                        * These used to render only when non-zero, so a bank-only
-                        * row simply had no cash figures on it — and a reader
-                        * could not tell "cash was nil" from "the card is not
-                        * showing me cash". The desktop grid always draws all four
-                        * money columns; a card that quietly drops half of them is
-                        * not the same statement.
-                        *
-                        * A dash for nil, matching the grid's own empty cell, so
-                        * the two read alike.
-                        */}
+                       * EVERY leg, including the empty ones.
+                       *
+                       * These used to render only when non-zero, so a bank-only
+                       * row simply had no cash figures on it — and a reader
+                       * could not tell "cash was nil" from "the card is not
+                       * showing me cash". The desktop grid always draws all four
+                       * money columns; a card that quietly drops half of them is
+                       * not the same statement.
+                       *
+                       * A dash for nil, matching the grid's own empty cell, so
+                       * the two read alike.
+                       */}
                       <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11.5px]">
                         {legs.flatMap((l) => [
-                          <span key={`${l.group}-dr`} className="flex items-baseline justify-between gap-1.5">
+                          <span
+                            key={`${l.group}-dr`}
+                            className="flex items-baseline justify-between gap-1.5"
+                          >
                             <span className="text-muted-foreground text-[10px] font-bold tracking-wide uppercase">
                               {grouped ? `${l.group} Dr` : 'Dr'}
                             </span>
                             <span
                               className={cn(
                                 'tabular-nums font-bold',
-                                r[l.dr] ? 'text-slate-800 dark:text-slate-200' : 'text-muted-foreground/50',
+                                r[l.dr]
+                                  ? 'text-slate-800 dark:text-slate-200'
+                                  : 'text-muted-foreground/50',
                               )}
                             >
                               {moneyOrDash(r[l.dr])}
                             </span>
                           </span>,
-                          <span key={`${l.group}-cr`} className="flex items-baseline justify-between gap-1.5">
+                          <span
+                            key={`${l.group}-cr`}
+                            className="flex items-baseline justify-between gap-1.5"
+                          >
                             <span className="text-muted-foreground text-[10px] font-bold tracking-wide uppercase">
                               {grouped ? `${l.group} Cr` : 'Cr'}
                             </span>
                             <span
                               className={cn(
                                 'tabular-nums font-bold',
-                                r[l.cr] ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground/50',
+                                r[l.cr]
+                                  ? 'text-emerald-700 dark:text-emerald-400'
+                                  : 'text-muted-foreground/50',
                               )}
                             >
                               {moneyOrDash(r[l.cr])}
@@ -899,18 +1123,27 @@ export function PartyLedgerPage() {
                           </span>,
                         ])}
                       </div>
-                      {showBalance && running && <Balance net={running[i]} className="shrink-0 text-[13px]" />}
+                      {showBalance && running && (
+                        <Balance net={running[i]} className="shrink-0 text-[13px]" />
+                      )}
                     </div>
                     {(note && canViewNote) || (invoice && r.challanId && canViewChallan) ? (
-                      <div className="mt-2 flex justify-end border-t pt-2" onClick={(e) => e.stopPropagation()}>
+                      <div
+                        className="mt-2 flex justify-end border-t pt-2"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         <Button
                           variant="outline"
                           size="sm"
                           className="h-7 rounded-[4px] text-[11.5px] font-semibold"
-                          onClick={() => (note && canViewNote ? viewNote(r, note.mode) : viewChallan(r))}
+                          onClick={() =>
+                            note && canViewNote ? viewNote(r, note.mode) : viewChallan(r)
+                          }
                         >
                           <Eye className="size-3.5" />{' '}
-                          {note && canViewNote ? `View ${note.mode === 'CREDIT' ? 'credit' : 'debit'} note` : 'View challan'}
+                          {note && canViewNote
+                            ? `View ${note.mode === 'CREDIT' ? 'credit' : 'debit'} note`
+                            : 'View challan'}
                         </Button>
                       </div>
                     ) : null}
@@ -925,23 +1158,36 @@ export function PartyLedgerPage() {
             <div className="mt-2 space-y-1.5 rounded-[4px] border-2 border-amber-600 bg-amber-100/80 px-3 py-2 dark:border-amber-400/60 dark:bg-amber-400/15">
               {footer.opening && (
                 <div className="flex items-center justify-between">
-                  <span className="text-[11.5px] font-semibold uppercase tracking-wide text-amber-950 dark:text-amber-100">Opening Balance</span>
+                  <span className="text-[11.5px] font-semibold uppercase tracking-wide text-amber-950 dark:text-amber-100">
+                    Opening Balance
+                  </span>
                   <span className="text-[12.5px] font-bold tabular-nums">
-                    {balanceCells(footer.opening).map((v) => moneyOrDash(v)).join('  /  ')}
+                    {balanceCells(footer.opening)
+                      .map((v) => moneyOrDash(v))
+                      .join('  /  ')}
                   </span>
                 </div>
               )}
-              <div className={cn('flex items-center justify-between', footer.opening && 'border-t border-amber-600/30 pt-1.5 dark:border-amber-400/30')}>
+              <div
+                className={cn(
+                  'flex items-center justify-between',
+                  footer.opening && 'border-t border-amber-600/30 pt-1.5 dark:border-amber-400/30',
+                )}
+              >
                 <span className="text-[11.5px] font-semibold uppercase tracking-wide text-amber-950 dark:text-amber-100">
                   {footer.closing ? 'Current Total' : `Current Total · ${voucherType} only`}
                 </span>
                 <span className="text-[12.5px] font-bold tabular-nums">
-                  {balanceCells(footer.current).map((v) => moneyOrDash(v)).join('  /  ')}
+                  {balanceCells(footer.current)
+                    .map((v) => moneyOrDash(v))
+                    .join('  /  ')}
                 </span>
               </div>
               {footer.closing && closingNet != null && (
                 <div className="flex items-center justify-between border-t border-amber-600/30 pt-1.5 dark:border-amber-400/30">
-                  <span className="text-[12px] font-extrabold uppercase tracking-wide text-amber-950 dark:text-amber-100">Closing Balance</span>
+                  <span className="text-[12px] font-extrabold uppercase tracking-wide text-amber-950 dark:text-amber-100">
+                    Closing Balance
+                  </span>
                   <Balance net={closingNet} className="text-[15px]" />
                 </div>
               )}
@@ -1026,16 +1272,25 @@ function FootRow({
       : 'bg-amber-100/70 dark:bg-amber-400/10 border-t border-t-amber-300 dark:border-t-amber-400/30';
   // The grid line is scoped to the RIGHT edge only — a blanket `border-amber-200`
   // also sets the top colour and would beat the totals rule above.
-  const cell = cn('border-r border-r-amber-300/60 px-2 py-1 dark:border-r-amber-400/15 last:border-r-0', bg);
+  const cell = cn(
+    'border-r border-r-amber-300/60 px-2 py-1 dark:border-r-amber-400/15 last:border-r-0',
+    bg,
+  );
   return (
     <tr className={bg}>
       {/* Date stays blank; the label runs across the remaining text columns. */}
       <td className={cell} />
-      <td className={cn(cell, strong ? 'text-[13.5px] font-extrabold' : 'text-[13px] font-bold')} colSpan={lead - 1}>
+      <td
+        className={cn(cell, strong ? 'text-[13.5px] font-extrabold' : 'text-[13px] font-bold')}
+        colSpan={lead - 1}
+      >
         {label}
       </td>
       {cells.map((v, i) => (
-        <td key={i} className={cn(cell, NUM, strong ? 'text-[13.5px] font-extrabold' : 'font-bold')}>
+        <td
+          key={i}
+          className={cn(cell, NUM, strong ? 'text-[13.5px] font-extrabold' : 'font-bold')}
+        >
           {moneyOrDash(v)}
         </td>
       ))}
@@ -1043,7 +1298,12 @@ function FootRow({
         {/* Closing Balance ignores the toggle — it's the one figure this ledger
             always needs, not an optional detail like the per-row running balance. */}
         {balance === undefined || (!strong && !showBalance) ? null : (
-          <Balance net={balance} className={strong ? 'text-[13.5px]' : undefined} />
+          <Balance
+            net={balance}
+            className={strong ? 'text-[13.5px]' : undefined}
+            // Only the bottom line names a nil balance; on the others a dash is right.
+            nilLabel={strong ? 'Settled' : undefined}
+          />
         )}
       </td>
       {trailing && <td className={cell} />}
@@ -1063,7 +1323,10 @@ function FootRow({
 function StatusChip({ status, side }: { status: string; side?: 'B' | 'C' | null }) {
   if (status === 'F')
     return (
-      <span className="rounded bg-emerald-100 px-1.5 text-[11.5px] font-bold text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300" title="Fully paid">
+      <span
+        className="rounded bg-emerald-100 px-1.5 text-[11.5px] font-bold text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300"
+        title="Fully paid"
+      >
         F
       </span>
     );
@@ -1073,14 +1336,21 @@ function StatusChip({ status, side }: { status: string; side?: 'B' | 'C' | null 
     return (
       <span
         className="rounded bg-sky-100 px-1.5 text-[11.5px] font-bold whitespace-nowrap text-sky-700 dark:bg-sky-400/15 dark:text-sky-300"
-        title={side ? `Partially paid — ${side === 'B' ? 'bank' : 'cash'} balance still pending` : 'Partially paid'}
+        title={
+          side
+            ? `Partially paid — ${side === 'B' ? 'bank' : 'cash'} balance still pending`
+            : 'Partially paid'
+        }
       >
         P{side ? <span className="ml-0.5 opacity-75">({side})</span> : null}
       </span>
     );
   if (status === 'D')
     return (
-      <span className="rounded bg-rose-100 px-1.5 text-[11.5px] font-bold text-rose-700 dark:bg-rose-400/15 dark:text-rose-300" title="Due">
+      <span
+        className="rounded bg-rose-100 px-1.5 text-[11.5px] font-bold text-rose-700 dark:bg-rose-400/15 dark:text-rose-300"
+        title="Due"
+      >
         D
       </span>
     );
@@ -1124,12 +1394,21 @@ function Kpi({
 }) {
   return (
     <div className="bg-card rounded-[4px] border border-amber-200 px-2.5 py-1.5 shadow-sm dark:border-amber-400/20">
-      <div className="text-[9.5px] font-bold tracking-widest text-amber-900/70 uppercase dark:text-amber-200/60">{label}</div>
+      <div className="text-[9.5px] font-bold tracking-widest text-amber-900/70 uppercase dark:text-amber-200/60">
+        {label}
+      </div>
       <div className="flex items-baseline gap-1.5">
-        <span className={cn('truncate text-[15px] font-bold tabular-nums', toneCls[tone])} title={value}>
+        <span
+          className={cn('truncate text-[15px] font-bold tabular-nums', toneCls[tone])}
+          title={value}
+        >
           {value}
         </span>
-        {note && <span className="text-muted-foreground shrink-0 text-[10.5px] font-medium tabular-nums">{note}</span>}
+        {note && (
+          <span className="text-muted-foreground shrink-0 text-[10.5px] font-medium tabular-nums">
+            {note}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -1166,12 +1445,22 @@ function InvDueFromKpi({
     <div
       className={cn(
         'bg-card rounded-[4px] border px-2.5 py-1.5 shadow-sm',
-        outside ? 'border-amber-400 dark:border-amber-400/50' : 'border-amber-200 dark:border-amber-400/20',
+        outside
+          ? 'border-amber-400 dark:border-amber-400/50'
+          : 'border-amber-200 dark:border-amber-400/20',
       )}
     >
-      <div className="text-[9.5px] font-bold tracking-widest text-amber-900/70 uppercase dark:text-amber-200/60">Inv Due From</div>
-      <div className="truncate text-[15px] font-bold tabular-nums text-slate-800 dark:text-slate-200">{date}</div>
-      {ref && <div className="text-muted-foreground truncate text-[10.5px] font-mono font-medium">{ref}</div>}
+      <div className="text-[9.5px] font-bold tracking-widest text-amber-900/70 uppercase dark:text-amber-200/60">
+        Inv Due From
+      </div>
+      <div className="truncate text-[15px] font-bold tabular-nums text-slate-800 dark:text-slate-200">
+        {date}
+      </div>
+      {ref && (
+        <div className="text-muted-foreground truncate text-[10.5px] font-mono font-medium">
+          {ref}
+        </div>
+      )}
       {outside && detail && (
         <button
           type="button"
@@ -1280,7 +1569,8 @@ function PdfCanvasPreview({ url }: { url: string }) {
       })
       .then(() => active && setLoading(false))
       .catch((reason: unknown) => {
-        if (active && (reason as { name?: string })?.name !== 'RenderingCancelledException') setError(true);
+        if (active && (reason as { name?: string })?.name !== 'RenderingCancelledException')
+          setError(true);
       });
     return () => {
       active = false;
@@ -1291,13 +1581,27 @@ function PdfCanvasPreview({ url }: { url: string }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-slate-100">
       <div className="flex h-10 shrink-0 items-center justify-center gap-2 border-b bg-white px-3">
-        <Button variant="ghost" size="icon" className="size-7" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} title="Previous page">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7"
+          onClick={() => setPage((p) => Math.max(1, p - 1))}
+          disabled={page <= 1}
+          title="Previous page"
+        >
           <ChevronLeft className="size-4" />
         </Button>
         <span className="min-w-24 text-center text-xs font-semibold tabular-nums">
           Page {page} of {pageCount || 1}
         </span>
-        <Button variant="ghost" size="icon" className="size-7" onClick={() => setPage((p) => Math.min(pageCount, p + 1))} disabled={!pageCount || page >= pageCount} title="Next page">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7"
+          onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+          disabled={!pageCount || page >= pageCount}
+          title="Next page"
+        >
           <ChevronRight className="size-4" />
         </Button>
       </div>
@@ -1308,7 +1612,9 @@ function PdfCanvasPreview({ url }: { url: string }) {
           </div>
         )}
         {error ? (
-          <div className="flex h-full items-center justify-center text-sm font-medium text-rose-600">Could not render the PDF preview.</div>
+          <div className="flex h-full items-center justify-center text-sm font-medium text-rose-600">
+            Could not render the PDF preview.
+          </div>
         ) : (
           <canvas ref={canvasRef} className="mx-auto h-auto max-w-full bg-white shadow-md" />
         )}
@@ -1330,13 +1636,15 @@ function ReceiptDialog({ row, onClose }: { row: PartyLedgerRow | null; onClose: 
       .finally(() => setLoading(false));
   }, [row]);
 
-  const verb = (t: string) => (t === 'CREDIT NOTE' ? 'Cleared' : t === 'ADVANCE' ? 'Adjusted' : 'Paid');
+  const verb = (t: string) =>
+    t === 'CREDIT NOTE' ? 'Cleared' : t === 'ADVANCE' ? 'Adjusted' : 'Paid';
   return (
     <Dialog open={!!row} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {row?.voucherType} — <span className="font-semibold tabular-nums">{row?.voucherNo}</span>
+            {row?.voucherType} —{' '}
+            <span className="font-semibold tabular-nums">{row?.voucherNo}</span>
           </DialogTitle>
         </DialogHeader>
         <p className="text-muted-foreground -mt-2 text-sm">{row?.particulars}</p>
@@ -1349,13 +1657,18 @@ function ReceiptDialog({ row, onClose }: { row: PartyLedgerRow | null; onClose: 
             {lines.map((l, i) => (
               <li key={i} className="flex items-center gap-2">
                 <span className="size-1.5 rounded-full bg-amber-500" />
-                {verb(l.recType)} on {prettyDate(l.recDate)} vide <span className="font-semibold">{l.refRecId || '?'}</span>
-                {l.recAmt > 0 && <span className="ml-auto tabular-nums font-semibold">₹ {inr(l.recAmt)}</span>}
+                {verb(l.recType)} on {prettyDate(l.recDate)} vide{' '}
+                <span className="font-semibold">{l.refRecId || '?'}</span>
+                {l.recAmt > 0 && (
+                  <span className="ml-auto tabular-nums font-semibold">₹ {inr(l.recAmt)}</span>
+                )}
               </li>
             ))}
           </ul>
         ) : (
-          <p className="py-3 text-sm text-muted-foreground">No payments / clearances recorded yet.</p>
+          <p className="py-3 text-sm text-muted-foreground">
+            No payments / clearances recorded yet.
+          </p>
         )}
       </DialogContent>
     </Dialog>
