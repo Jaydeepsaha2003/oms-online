@@ -108,7 +108,7 @@ export const RESOURCES = {
   ROLE: 'role',
   AUDIT_LOG: 'auditlog',
   SETTING: 'setting',
-  /** Whole-database backup download (the raw SQLite file). */
+  /** Whole-database backup: download the raw SQLite file, and restore one. */
   BACKUP: 'backup',
   /** The universal Approvals inbox — every request that needs a sign-off before
    *  it takes effect lands here (first one: back-dated dispatch entries). */
@@ -324,7 +324,9 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
     resource: RESOURCES.BACKUP,
     label: 'Database Backup',
     group: 'Administration',
-    actions: [ACTIONS.EXPORT],
+    // IMPORT replaces every row in the live database with a backup's. It is
+    // deliberately its own permission, held by nobody unless granted.
+    actions: [ACTIONS.EXPORT, ACTIONS.IMPORT],
   },
   {
     resource: RESOURCES.APPROVAL,
