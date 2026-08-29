@@ -275,7 +275,7 @@ export function NoteBillPage() {
    * iOS is the exception: Safari will not render a PDF inside an iframe, so
    * there it goes to a tab reserved inside the original click.
    */
-  const previewPdf = async (reservedTab?: Window | null): Promise<'inline' | 'tab' | 'none'> => {
+  const previewPdf = async (reservedTab?: Window | null): Promise<'inline' | 'ready' | 'tab' | 'none'> => {
     if (!note) return 'none';
     const tab = reservedTab ?? null;
     if (isIOS()) showPreviewPlaceholder(tab);
@@ -287,19 +287,30 @@ export function NoteBillPage() {
         return 'none';
       }
       const blob = pdf.output('blob');
-      const url = URL.createObjectURL(blob);
+      const filename = pdfName();
+
       if (isIOS()) {
-        if (tab && !tab.closed) tab.location.href = url;
-        else window.location.href = url; // popup blocked -> same-tab view
-        setTimeout(() => URL.revokeObjectURL(url), 60_000);
-        return 'tab';
+        /*
+         * NOT a `blob:` tab — see the same note on the Challan bill page.
+         *
+         * In a tab the only share in reach is Safari's, and Safari shares the
+         * PAGE: the `blob:https://…/uuid` string goes out as a message and the
+         * attachment has no filename ("Unknown.pdf"). Parked instead, so the
+         * banner can hand over a properly named file on a fresh tap.
+         */
+        tab?.close();
+        setPreviewFile({ blob, filename });
+        setReadyPdf({ blob, filename });
+        return 'ready';
       }
+
+      const url = URL.createObjectURL(blob);
       tab?.close();
       setPreviewUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev);
         return url;
       });
-      setPreviewFile({ blob, filename: pdfName() });
+      setPreviewFile({ blob, filename });
       return 'inline';
     } catch {
       tab?.close();
@@ -383,6 +394,9 @@ export function NoteBillPage() {
         const how = await previewPdf(takePendingPreviewTab());
         // Looking at the overlay — closing it is what takes them back.
         if (how === 'inline' && autoState?.returnTo) setReturnAfterPreview(autoState.returnTo);
+        // iOS: the PDF is parked and its banner is on THIS page; leaving now
+        // would take the banner with it.
+        else if (how === 'ready') { /* stay put */ }
         else if (autoState?.returnTo) navigate(autoState.returnTo, { replace: true });
         else back();
         return;

@@ -229,7 +229,11 @@ export function ChallanBillPage() {
       // On iOS the list reserved a tab inside its click (a popup opened later
       // would be blocked); everywhere else the preview lands on this page.
       const how = await previewPdf(takePendingPreviewTab());
-      if (how === 'inline' && autoState?.returnTo) {
+      if (how === 'ready') {
+        // iOS: the PDF is parked and the "ready" banner is on this page. Going
+        // back to the list now would take the banner with it.
+        navigate(location.pathname, { replace: true, state: { backTo: autoState?.backTo } });
+      } else if (how === 'inline' && autoState?.returnTo) {
         // The user is looking at the overlay — closing it takes them back.
         setReturnAfterPreview(autoState.returnTo);
         navigate(location.pathname, { replace: true, state: { backTo: autoState?.backTo } });
@@ -349,7 +353,7 @@ export function ChallanBillPage() {
    * Returns how the preview was delivered, so an auto-preview knows whether the
    * user is now looking at an overlay (stay put) or a tab (this page is done).
    */
-  const previewPdf = async (reservedTab?: Window | null): Promise<'inline' | 'tab' | 'none'> => {
+  const previewPdf = async (reservedTab?: Window | null): Promise<'inline' | 'ready' | 'tab' | 'none'> => {
     if (!challan) return 'none';
     let tab = reservedTab ?? null;
     if (pcsLines) {
@@ -372,21 +376,33 @@ export function ChallanBillPage() {
         return 'none';
       }
       const blob = pdf.output('blob');
-      const url = URL.createObjectURL(blob);
+      const filename = buildBillFilename('Challan', challan.code, `challan-${challanId}`);
 
       if (isIOS()) {
-        if (tab && !tab.closed) tab.location.href = url;
-        else window.location.href = url; // popup blocked → same-tab view
-        setTimeout(() => URL.revokeObjectURL(url), 60_000);
-        return 'tab';
+        /*
+         * NOT a `blob:` tab any more.
+         *
+         * Handing the PDF to a tab left the only share button in reach being
+         * Safari's own, and Safari shares the PAGE: the
+         * `blob:https://…/uuid` string went out as a WhatsApp message, and the
+         * attachment came from a URL that carries no filename — which is where
+         * "Unknown.pdf" came from. The blob is parked instead, and the banner
+         * below hands it over on a fresh tap, where `navigator.share()` sends a
+         * properly named file and nothing else.
+         */
+        tab?.close();
+        setPreviewFile({ blob, filename });
+        setReadyPdf({ blob, filename });
+        return 'ready';
       }
 
+      const url = URL.createObjectURL(blob);
       tab?.close(); // nothing to put in it — the preview stays here
       setPreviewUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev);
         return url;
       });
-      setPreviewFile({ blob, filename: buildBillFilename('Challan', challan.code, `challan-${challanId}`) });
+      setPreviewFile({ blob, filename });
       return 'inline';
     } catch {
       tab?.close();
