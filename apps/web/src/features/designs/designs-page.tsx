@@ -123,7 +123,10 @@ const TABLE_SKIN = [
   '[&_thead_th_button]:cursor-pointer',
   '[&_thead_th:hover]:from-blue-900 [&_thead_th:hover]:to-indigo-900',
   '[&_td]:py-1 [&_td]:px-2.5 [&_th]:px-2.5',
-  '[&_tbody_button:not([role=switch]):not([role=checkbox])]:size-7',
+  // Sizes the row's icon actions. A pill in a cell is not one of those, and
+  // was being stretched to a 28px square while the plain-span pill beside it
+  // stayed 22px — which is what made the column look out of line.
+  '[&_tbody_button:not([role=switch]):not([role=checkbox]):not([data-pill])]:size-7',
   '[&_tbody_tr]:border-b [&_tbody_tr]:border-slate-200 dark:[&_tbody_tr]:border-white/10',
   '[&_td]:border-r [&_td]:border-slate-200 dark:[&_td]:border-white/10 [&_td:last-child]:border-r-0',
   '[&_tbody_tr:nth-child(even)_td]:bg-slate-100/80 dark:[&_tbody_tr:nth-child(even)_td]:bg-white/[0.04]',
@@ -304,6 +307,18 @@ function DesignActiveToggle({ design }: { design: DesignDto }) {
   );
 }
 
+/**
+ * One shape for both states of the Combinations cell.
+ *
+ * A fixed height rather than vertical padding, so the chip and the "Standalone"
+ * pill sit on the same baseline down the column however the row is sized — two
+ * pills a pixel apart in height read as a misaligned column.
+ */
+const CELL_PILL =
+  // `whitespace-nowrap`, never `truncate`: the cell is auto-width, and an
+  // ellipsis-able flex child collapses to nothing rather than widening it.
+  'inline-flex h-[22px] items-center gap-1.5 rounded-full px-2.5 text-[11px] leading-none whitespace-nowrap ring-1 ring-inset';
+
 /** How many combinations a design belongs to — a chip that opens the list. */
 function CombinationChip({
   design,
@@ -315,7 +330,13 @@ function CombinationChip({
   const n = design.combinationNames.length;
   if (n === 0) {
     return (
-      <span className="text-muted-foreground inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold ring-1 ring-slate-200 ring-inset dark:bg-white/5 dark:ring-white/10">
+      <span
+        data-pill
+        className={cn(
+          CELL_PILL,
+          'text-muted-foreground bg-slate-100 font-semibold ring-slate-200 dark:bg-white/5 dark:ring-white/10',
+        )}
+      >
         Standalone
       </span>
     );
@@ -323,6 +344,7 @@ function CombinationChip({
   return (
     <button
       type="button"
+      data-pill
       // The row click selects the design; opening the list must not do that too.
       onClick={(e) => {
         e.stopPropagation();
@@ -330,10 +352,15 @@ function CombinationChip({
       }}
       title={design.combinationNames.join(', ')}
       aria-label={`Show the ${n} combination${n === 1 ? '' : 's'} ${design.designType} is part of`}
-      className="focus-visible:ring-primary/40 inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700 ring-1 ring-indigo-200 ring-inset transition-colors hover:bg-indigo-100 focus-visible:ring-2 focus-visible:outline-none dark:bg-indigo-400/10 dark:text-indigo-300 dark:ring-indigo-400/25 dark:hover:bg-indigo-400/20"
+      className={cn(
+        CELL_PILL,
+        'focus-visible:ring-primary/40 cursor-pointer bg-indigo-50 text-indigo-700 ring-indigo-200 transition-colors hover:bg-indigo-100 focus-visible:ring-2 focus-visible:outline-none dark:bg-indigo-400/10 dark:text-indigo-300 dark:ring-indigo-400/25 dark:hover:bg-indigo-400/20',
+      )}
     >
-      <Layers className="size-3 shrink-0" />
-      <span className="tabular-nums">{n}</span> combination{n === 1 ? '' : 's'}
+      <Layers className="size-3 shrink-0 opacity-70" />
+      {/* The number carries the weight; the word after it is only the unit. */}
+      <span className="font-bold tabular-nums">{n}</span>
+      <span className="font-medium opacity-90">combination{n === 1 ? '' : 's'}</span>
     </button>
   );
 }

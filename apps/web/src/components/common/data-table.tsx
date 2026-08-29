@@ -215,11 +215,13 @@ export function DataTable<T>({
           dense
             ? // Compact: tight padding so columns shrink to their content and the
               // most columns possible stay on screen. Heights are auto (padding-based).
-              '[&_thead_th]:py-2 [&_thead_th]:text-[13px] [&_td]:py-2 [&_tbody_button:not([role=switch]):not([role=checkbox])]:size-8 text-[14px] [&_td]:px-2.5 [&_th]:px-2.5'
+              '[&_thead_th]:py-2 [&_thead_th]:text-[13px] [&_td]:py-2 [&_tbody_button:not([role=switch]):not([role=checkbox]):not([data-pill])]:size-8 text-[14px] [&_td]:px-2.5 [&_th]:px-2.5'
             : // Comfortable: larger type, snug padding so rows auto-fit their content
               // (height grows only as much as the content needs). Action buttons are
-              // size-8 so they don't force tall rows.
-              '[&_thead_th]:py-2 [&_thead_th]:text-[14px] [&_td]:py-1.5 [&_tbody_button:not([role=switch]):not([role=checkbox])]:size-8 text-[16px] [&_td]:px-3 [&_th]:px-3 sm:[&_td]:px-5 sm:[&_th]:px-5',
+              // size-8 so they don't force tall rows. A cell whose content IS a
+              // button — a pill that opens something — opts out with `data-pill`,
+              // since squaring it off is not what that rule is for.
+              '[&_thead_th]:py-2 [&_thead_th]:text-[14px] [&_td]:py-1.5 [&_tbody_button:not([role=switch]):not([role=checkbox]):not([data-pill])]:size-8 text-[16px] [&_td]:px-3 [&_th]:px-3 sm:[&_td]:px-5 sm:[&_th]:px-5',
           // Page override (twMerge lets a passed font-size/padding win over the above).
           className,
         )}
