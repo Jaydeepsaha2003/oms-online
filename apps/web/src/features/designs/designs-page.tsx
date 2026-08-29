@@ -32,6 +32,7 @@ import { useConfirm } from '@/components/common/confirm';
 import { Combo, NativeSelect } from '@/components/common/combo';
 import { ColumnSettings } from '@/components/common/column-settings';
 import { InfoTip } from '@/components/common/info-tip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { RowCheckbox } from '@/components/common/row-checkbox';
 import { PageSizeSelect } from '@/components/common/page-size-select';
@@ -324,6 +325,92 @@ const CELL_PILL =
   // ellipsis-able flex child collapses to nothing rather than widening it.
   'inline-flex h-[22px] items-center gap-1.5 rounded-full px-2.5 text-[11px] leading-none whitespace-nowrap ring-1 ring-inset';
 
+/**
+ * A combination's money column, with the arithmetic behind it on hover.
+ *
+ * The grid can only show the answer — 27.5 — and a combination's whole point is
+ * that the answer is a sum of its parts. Hovering (or tabbing to) the figure
+ * shows the parts adding up to it, so the number can be checked where it is
+ * read instead of by opening something.
+ */
+function FigureTip({
+  combination,
+  field,
+  children,
+}: {
+  combination: CombinationDto;
+  field: 'cost' | 'rate' | 'margin';
+  children: ReactNode;
+}) {
+  const parts = combination.designs;
+  const total = field === 'margin' ? combination.rate - combination.cost : combination[field];
+  const accent =
+    field === 'cost'
+      ? 'text-slate-200'
+      : field === 'rate'
+        ? 'text-emerald-300'
+        : total >= 0
+          ? 'text-emerald-300'
+          : 'text-red-300';
+
+  return (
+    <Tooltip>
+      {/* A focusable trigger, so the breakdown is reachable without a mouse. */}
+      <TooltipTrigger asChild>
+        <span
+          tabIndex={0}
+          className="focus-visible:ring-primary/40 cursor-help rounded-[3px] focus-visible:ring-2 focus-visible:outline-none"
+        >
+          {children}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="left" className="max-w-none p-0">
+        <div className="min-w-56 p-2.5">
+          <p className="mb-1.5 text-[12px] font-bold">{combination.name}</p>
+          <p className="text-[10px] font-bold tracking-widest uppercase opacity-60">
+            {field === 'margin' ? 'Rate less cost' : `${field} = sum of its designs`}
+          </p>
+
+          {field === 'margin' ? (
+            <div className="mt-1.5 space-y-0.5 text-[11.5px]">
+              <div className="flex items-center justify-between gap-6">
+                <span className="opacity-80">Rate</span>
+                <span className="font-semibold tabular-nums">{money(combination.rate)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-6">
+                <span className="opacity-80">Cost</span>
+                <span className="font-semibold tabular-nums">− {money(combination.cost)}</span>
+              </div>
+              <div className="mt-1 flex items-center justify-between gap-6 border-t border-white/20 pt-1">
+                <span className="font-bold">Margin</span>
+                <span className={cn('font-bold tabular-nums', accent)}>{money(total)}</span>
+              </div>
+              {combination.rate > 0 && (
+                <p className="pt-0.5 text-[10.5px] opacity-70">
+                  {Math.round((total / combination.rate) * 100)}% of the rate
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="mt-1.5 space-y-0.5 text-[11.5px]">
+              {parts.map((d) => (
+                <div key={d.id} className="flex items-center justify-between gap-6">
+                  <span className="opacity-80">{d.designType}</span>
+                  <span className="font-semibold tabular-nums">{money(d[field] ?? 0)}</span>
+                </div>
+              ))}
+              <div className="mt-1 flex items-center justify-between gap-6 border-t border-white/20 pt-1">
+                <span className="font-bold">{parts.length} designs</span>
+                <span className={cn('font-bold tabular-nums', accent)}>{money(total)}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 /** How many combinations a design belongs to — a chip that opens the list. */
 function CombinationChip({
   design,
@@ -569,9 +656,14 @@ export function DesignsPage() {
     const [t] = [...types];
     return isBaseDesignType(t) ? t : null;
   }, [selected]);
+  // The search box narrows the list exactly as the dropdowns do, so it counts
+  // as a filter and Clear clears it. Leaving it out meant a screen showing four
+  // rows out of two hundred offered nothing to undo it with.
   const activeFilterCount =
-    (category ? 1 : 0) + (subCategory ? 1 : 0) + (combinationStatus ? 1 : 0);
+    (search ? 1 : 0) + (category ? 1 : 0) + (subCategory ? 1 : 0) + (combinationStatus ? 1 : 0);
   const resetFilters = () => {
+    setSearchInput('');
+    setSearch('');
     setCategory('');
     setSubCategory('');
     setCombinationStatus('');
@@ -613,8 +705,11 @@ export function DesignsPage() {
     setPageSize: setComboPageSize,
   } = usePageSize('combinations-merged-v2');
   const [comboMobileFiltersOpen, setComboMobileFiltersOpen] = useState(false);
-  const comboActiveFilterCount = (comboCategory ? 1 : 0) + (comboSubCategory ? 1 : 0);
+  const comboActiveFilterCount =
+    (comboSearch ? 1 : 0) + (comboCategory ? 1 : 0) + (comboSubCategory ? 1 : 0);
   const resetComboFilters = () => {
+    setComboSearchInput('');
+    setComboSearch('');
     setComboCategory('');
     setComboSubCategory('');
     setComboPage(1);
@@ -906,7 +1001,11 @@ export function DesignsPage() {
         label: 'Cost',
         align: 'right',
         sortValue: (c) => c.cost,
-        cell: (c) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(c.cost)}</span>,
+        cell: (c) => (
+          <FigureTip combination={c} field="cost">
+            <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(c.cost)}</span>
+          </FigureTip>
+        ),
       },
       {
         id: 'rate',
@@ -914,9 +1013,11 @@ export function DesignsPage() {
         align: 'right',
         sortValue: (c) => c.rate,
         cell: (c) => (
-          <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
-            {money(c.rate)}
-          </span>
+          <FigureTip combination={c} field="rate">
+            <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+              {money(c.rate)}
+            </span>
+          </FigureTip>
         ),
       },
       {
@@ -924,7 +1025,11 @@ export function DesignsPage() {
         label: 'Margin',
         align: 'right',
         sortValue: (c) => (c.cost != null && c.rate != null ? c.rate - c.cost : null),
-        cell: (c) => marginCell(c.cost, c.rate),
+        cell: (c) => (
+          <FigureTip combination={c} field="margin">
+            {marginCell(c.cost, c.rate)}
+          </FigureTip>
+        ),
       },
       {
         id: 'updated',
@@ -1265,14 +1370,17 @@ export function DesignsPage() {
               </div>
               {activeFilterCount > 0 && (
                 <Button
-                  variant="ghost"
-                  size="icon"
-                  className="text-muted-foreground hidden size-8 lg:inline-flex"
+                  variant="outline"
+                  size="sm"
+                  className="text-muted-foreground hidden h-8 gap-1 rounded-[4px] px-2 text-[12px] font-semibold lg:inline-flex"
                   onClick={resetFilters}
-                  aria-label="Reset design filters"
-                  title="Reset filters"
+                  aria-label={`Clear ${activeFilterCount} design filter${activeFilterCount === 1 ? '' : 's'}`}
+                  title="Clear filters"
                 >
-                  <RotateCcw className="size-3.5" />
+                  <RotateCcw className="size-3.5" /> Clear
+                  <span className="bg-muted rounded-full px-1 text-[10px] font-bold tabular-nums">
+                    {activeFilterCount}
+                  </span>
                 </Button>
               )}
 
@@ -1431,14 +1539,17 @@ export function DesignsPage() {
               </div>
               {comboActiveFilterCount > 0 && (
                 <Button
-                  variant="ghost"
-                  size="icon"
-                  className="text-muted-foreground hidden size-8 lg:inline-flex"
+                  variant="outline"
+                  size="sm"
+                  className="text-muted-foreground hidden h-8 gap-1 rounded-[4px] px-2 text-[12px] font-semibold lg:inline-flex"
                   onClick={resetComboFilters}
-                  aria-label="Reset combination filters"
-                  title="Reset filters"
+                  aria-label={`Clear ${comboActiveFilterCount} combination filter${comboActiveFilterCount === 1 ? '' : 's'}`}
+                  title="Clear filters"
                 >
-                  <RotateCcw className="size-3.5" />
+                  <RotateCcw className="size-3.5" /> Clear
+                  <span className="bg-muted rounded-full px-1 text-[10px] font-bold tabular-nums">
+                    {comboActiveFilterCount}
+                  </span>
                 </Button>
               )}
 
