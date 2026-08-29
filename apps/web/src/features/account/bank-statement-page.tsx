@@ -178,8 +178,15 @@ export function BankStatementPage() {
 
   /**
    * Pre-fill the mapping from what this bank used last time, or from the
-   * column names themselves. Only ever a starting point — the user confirms it,
-   * because a wrong guess here silently reconciles the wrong numbers.
+   * column names themselves.
+   *
+   * A STARTING POINT ONLY. Whatever the user leaves in these boxes is what gets
+   * used — nothing here second-guesses it. An earlier version compared the
+   * chosen column against the running balance and swapped credit and debit when
+   * they disagreed; that was wrong. A statement whose columns look inverted is
+   * a bad download, not a bank convention to be clever about, and silently
+   * reconciling the opposite side of the account to the one the user asked for
+   * is far worse than reconciling what they picked.
    */
   useEffect(() => {
     if (!columns.length) return;
@@ -198,41 +205,6 @@ export function BankStatementPage() {
       debit: find('debit', 'withdrawal', 'dr'),
       ref: find('ref', 'chq', 'cheque', 'utr'),
     };
-    /*
-     * Check the guess against the running balance rather than trusting the
-     * headers.
-     *
-     * This Axis export labels its money-IN column "DR" and its money-OUT column
-     * "CR" — read the names and you reconcile the wrong side of the account.
-     * The balance cannot lie: if the column we called `credit` carries a figure
-     * on a row where the balance FELL, the two are the wrong way round.
-     */
-    const balCol = find('balance', 'bal');
-    if (balCol && guess.credit && guess.debit) {
-      const num = (v: unknown) => Number(String(v ?? '').replace(/[₹\s,]/g, '')) || 0;
-      let agree = 0;
-      let disagree = 0;
-      let prev: number | null = null;
-      for (const r of sheetRows.slice(0, 40)) {
-        const bal = num(r[balCol]);
-        if (!bal) { prev = null; continue; }
-        const cr = num(r[guess.credit]);
-        const dr = num(r[guess.debit]);
-        if (prev != null && (cr > 0) !== (dr > 0)) {
-          const rose = bal > prev;
-          // A credit should coincide with the balance rising.
-          const correct = cr > 0 ? rose : !rose;
-          if (correct) agree += 1;
-          else disagree += 1;
-        }
-        prev = bal;
-      }
-      if (disagree > agree) {
-        const swapped = guess.credit;
-        guess.credit = guess.debit;
-        guess.debit = swapped;
-      }
-    }
     setMap(guess);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [columns, preset]);
@@ -467,10 +439,11 @@ export function BankStatementPage() {
                 ))}
               </div>
               {/* The first few rows, under the mapping.
-                  Not decoration: this Axis export labels its money-IN column
-                  "DR" and its money-OUT column "CR", so a column cannot be
-                  identified from its title alone. Seeing the actual figures is
-                  the only reliable way to pick the right one. */}
+                  Not decoration: a column cannot always be identified from its
+                  title — a statement can arrive with its amount columns the
+                  wrong way round. Showing the real figures is how the user
+                  checks the mapping before it is used, which is why nothing
+                  here tries to correct it for them. */}
               {!!sheetRows.length && (
                 <div className="mt-3 overflow-auto rounded-[4px] border bg-white dark:bg-slate-900">
                   <table className="w-full border-collapse text-[11.5px]">
