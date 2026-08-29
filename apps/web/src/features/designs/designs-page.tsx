@@ -303,10 +303,16 @@ function DesignActiveToggle({ design }: { design: DesignDto }) {
   );
 }
 
-/** Standalone vs. combined indicator for a design row — chips list the
- *  combination(s) it's a component of, or a plain "Standalone" pill. */
-function CombinationBadge({ names }: { names: string[] }) {
-  if (names.length === 0) {
+/** How many combinations a design belongs to — a chip that opens the list. */
+function CombinationChip({
+  design,
+  onOpen,
+}: {
+  design: DesignDto;
+  onOpen: (d: DesignDto) => void;
+}) {
+  const n = design.combinationNames.length;
+  if (n === 0) {
     return (
       <span className="text-muted-foreground inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold ring-1 ring-slate-200 ring-inset dark:bg-white/5 dark:ring-white/10">
         Standalone
@@ -314,16 +320,141 @@ function CombinationBadge({ names }: { names: string[] }) {
     );
   }
   return (
-    <div className="flex max-w-xs flex-wrap gap-1">
-      {names.map((n) => (
-        <span
-          key={n}
-          className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700 ring-1 ring-indigo-200 ring-inset dark:bg-indigo-400/10 dark:text-indigo-300 dark:ring-indigo-400/25"
-        >
-          {n}
-        </span>
-      ))}
-    </div>
+    <button
+      type="button"
+      // The row click selects the design; opening the list must not do that too.
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen(design);
+      }}
+      title={design.combinationNames.join(', ')}
+      aria-label={`Show the ${n} combination${n === 1 ? '' : 's'} ${design.designType} is part of`}
+      className="focus-visible:ring-primary/40 inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700 ring-1 ring-indigo-200 ring-inset transition-colors hover:bg-indigo-100 focus-visible:ring-2 focus-visible:outline-none dark:bg-indigo-400/10 dark:text-indigo-300 dark:ring-indigo-400/25 dark:hover:bg-indigo-400/20"
+    >
+      <Layers className="size-3 shrink-0" />
+      <span className="tabular-nums">{n}</span> combination{n === 1 ? '' : 's'}
+    </button>
+  );
+}
+
+/**
+ * The combinations one design belongs to.
+ *
+ * The grid used to print every name as its own badge, which on a design in five
+ * combinations grew the row tall enough to clip the last one. One chip keeps
+ * every row the same height, and the names move here — alongside the designs
+ * each one links and what it costs, which the badges could never show.
+ */
+function DesignCombinationsDialog({
+  design,
+  onClose,
+  onOpenInCombinations,
+}: {
+  design: DesignDto;
+  onClose: () => void;
+  onOpenInCombinations: (design: DesignDto) => void;
+}) {
+  // Everything combined within this design's category + sub-category. A
+  // combination's members all share one, so this design's are all in here.
+  const { data, isLoading } = useCombinations({
+    page: 1,
+    pageSize: 200,
+    category: design.category,
+    subCategory: design.subCategory,
+  });
+
+  const wanted = new Set(design.combinationNames.map((n) => n.toUpperCase()));
+  const rows = (data?.items ?? []).filter((c) => wanted.has(c.name.toUpperCase()));
+  // A name that could not be resolved to a row is still worth printing, so a
+  // sub-category with more than 200 combinations does not silently lose any.
+  const found = new Set(rows.map((c) => c.name.toUpperCase()));
+  const unresolved = design.combinationNames.filter((n) => !found.has(n.toUpperCase()));
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="font-poppins sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex flex-wrap items-center gap-2">
+            <Layers className="text-primary size-4 shrink-0" />
+            <span>{design.designType}</span>
+            <span className="text-muted-foreground text-[12px] font-medium">
+              {design.category} / {design.subCategory}
+            </span>
+          </DialogTitle>
+          <p className="text-muted-foreground text-[12.5px] font-medium">
+            In {design.combinationNames.length} combination
+            {design.combinationNames.length === 1 ? '' : 's'}. Each one costs the sum of the designs
+            it links, so changing {design.designType} moves every one of them.
+          </p>
+        </DialogHeader>
+
+        <div className="max-h-[55vh] overflow-y-auto">
+          {isLoading ? (
+            <div className="text-muted-foreground flex items-center justify-center gap-2 py-8 text-[13px] font-medium">
+              <Loader2 className="size-4 animate-spin" /> Loading…
+            </div>
+          ) : (
+            <ul className="divide-border divide-y">
+              {rows.map((c) => (
+                <li key={c.id} className="flex items-start gap-3 py-2.5">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[13px] font-bold text-indigo-700 dark:text-indigo-300">
+                      {c.name}
+                    </p>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {c.designs.map((d) => (
+                        <span
+                          key={d.id}
+                          className={cn(
+                            'rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset',
+                            // The design you came from, picked out of its parts.
+                            d.designType.toUpperCase() === design.designType.toUpperCase()
+                              ? 'bg-amber-100 text-amber-900 ring-amber-300 dark:bg-amber-400/15 dark:text-amber-200 dark:ring-amber-400/30'
+                              : 'bg-muted text-muted-foreground ring-border',
+                          )}
+                        >
+                          {d.designType} · {money(d.cost)}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="text-[13px] font-bold tabular-nums">{money(c.cost)}</p>
+                    <p className="text-[12px] font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+                      {money(c.rate)}
+                    </p>
+                  </div>
+                </li>
+              ))}
+              {unresolved.map((n) => (
+                <li
+                  key={n}
+                  className="py-2.5 text-[13px] font-bold text-indigo-700 dark:text-indigo-300"
+                >
+                  {n}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button
+            variant="outline"
+            className="font-semibold"
+            onClick={() => {
+              onOpenInCombinations(design);
+              onClose();
+            }}
+          >
+            <Layers className="size-4" /> Open in Combinations
+          </Button>
+          <Button className="font-bold" onClick={onClose}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -371,6 +502,9 @@ export function DesignsPage() {
     }
     return 'designs';
   });
+  /* The design whose combinations are being listed in the modal. */
+  const [viewingCombos, setViewingCombos] = useState<DesignDto | null>(null);
+
   const changeView = (v: View) => {
     setView(v);
     try {
@@ -628,7 +762,7 @@ export function DesignsPage() {
         id: 'combinations',
         label: 'Combinations',
         noSort: true,
-        cell: (d) => <CombinationBadge names={d.combinationNames} />,
+        cell: (d) => <CombinationChip design={d} onOpen={setViewingCombos} />,
       },
       {
         id: 'active',
@@ -769,7 +903,7 @@ export function DesignsPage() {
               {d.category} · {d.subCategory}
             </p>
             <div className="mt-1">
-              <CombinationBadge names={d.combinationNames} />
+              <CombinationChip design={d} onOpen={setViewingCombos} />
             </div>
           </div>
         </div>
@@ -1410,6 +1544,21 @@ export function DesignsPage() {
           onCreated={() => {
             setCombining(false);
             setSelected(new Map());
+          }}
+        />
+      )}
+      {viewingCombos && (
+        <DesignCombinationsDialog
+          design={viewingCombos}
+          onClose={() => setViewingCombos(null)}
+          onOpenInCombinations={(d) => {
+            // Land on the Combinations screen already narrowed to this design.
+            setComboCategory(d.category);
+            setComboSubCategory(d.subCategory);
+            setComboSearchInput(d.designType);
+            setComboSearch(d.designType);
+            setComboPage(1);
+            changeView('combinations');
           }}
         />
       )}
