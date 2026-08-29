@@ -59,7 +59,7 @@ export class CustomersController {
     const rows = await this.customers.exportRows(query);
     this.excel.setDownloadHeaders(res, 'customers');
     return new StreamableFile(
-      this.excel.jsonToBuffer(rows, {
+      await this.excel.jsonToBuffer(rows, {
         sheetName: 'Customers',
         headers: this.customers.exportHeaders(),
       }),

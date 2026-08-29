@@ -668,8 +668,14 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
                             <span className="text-muted-foreground mr-1.5 tabular-nums">{i + 1}.</span>
                             {p.customerName}
                           </span>
-                          <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
-                            {count(p.count)} · {money(p.total)}
+                          {/* Amount only. The challan count sat in front of every
+                              figure and made the column hard to scan for the
+                              thing it is actually ranked by. */}
+                          <span
+                            className="text-muted-foreground shrink-0 text-xs tabular-nums"
+                            title={`${count(p.count)} challan(s)`}
+                          >
+                            {money(p.total)}
                           </span>
                         </div>
                         <div className="bg-muted mt-1 h-1.5 overflow-hidden rounded-full">

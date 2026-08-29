@@ -66,7 +66,7 @@ export class GstRatesController {
     const rows = await this.gstRates.exportRows(query);
     this.excel.setDownloadHeaders(res, 'customer-gst-rates');
     return new StreamableFile(
-      this.excel.jsonToBuffer(rows, {
+      await this.excel.jsonToBuffer(rows, {
         sheetName: 'CUSTOMER GST RATE',
         headers: this.gstRates.exportHeaders(),
       }),
@@ -80,7 +80,7 @@ export class GstRatesController {
     const rows = await this.gstRates.templateRows();
     this.excel.setDownloadHeaders(res, 'customer-gst-rates-template');
     return new StreamableFile(
-      this.excel.jsonToBuffer(rows, {
+      await this.excel.jsonToBuffer(rows, {
         sheetName: 'GST RATE TEMPLATE',
         headers: this.gstRates.templateHeaders(),
       }),

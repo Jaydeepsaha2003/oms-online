@@ -83,7 +83,7 @@ export class DispatchController {
     const active = requested.size ? offered.filter((c) => requested.has(c.id)) : offered;
     const headers = (active.length ? active : offered).map((c) => c.header);
     this.excel.setDownloadHeaders(res, 'pending-dispatch');
-    return new StreamableFile(this.excel.jsonToBuffer(rows, { sheetName: 'Pending Dispatch', headers }));
+    return new StreamableFile(await this.excel.jsonToBuffer(rows, { sheetName: 'Pending Dispatch', headers }));
   }
 
   @Get('filter-options')

@@ -106,7 +106,7 @@ export class ProductsController {
     const rows = await this.products.exportRows(query);
     this.excel.setDownloadHeaders(res, 'products');
     return new StreamableFile(
-      this.excel.jsonToBuffer(rows, { sheetName: 'Products', headers: this.products.exportHeaders() }),
+      await this.excel.jsonToBuffer(rows, { sheetName: 'Products', headers: this.products.exportHeaders() }),
     );
   }
 

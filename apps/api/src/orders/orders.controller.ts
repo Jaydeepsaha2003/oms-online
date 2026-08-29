@@ -57,7 +57,7 @@ export class OrdersController {
     const active = requested.size ? ORDER_LINE_EXPORT_COLUMNS.filter((c) => requested.has(c.id)) : ORDER_LINE_EXPORT_COLUMNS;
     const headers = (active.length ? active : ORDER_LINE_EXPORT_COLUMNS).map((c) => c.header);
     this.excel.setDownloadHeaders(res, 'order-lines');
-    return new StreamableFile(this.excel.jsonToBuffer(rows, { sheetName: 'Order Lines', headers }));
+    return new StreamableFile(await this.excel.jsonToBuffer(rows, { sheetName: 'Order Lines', headers }));
   }
 
   @Get('lookups')

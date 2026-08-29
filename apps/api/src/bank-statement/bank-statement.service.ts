@@ -202,17 +202,18 @@ export class BankStatementService {
         source = 'ALIAS';
       }
 
-      if (!customerId) {
-        // Returns null when the narration names no one, or names two parties
-        // equally well — an unassigned line costs a click, a wrongly assigned
-        // one puts a customer's money against another customer's name.
-        const hit = bestNarrationParty(row.narration, named);
-        if (hit) {
-          customerId = hit.id;
-          source = 'NARRATION';
-        }
-      }
-
+      /*
+       * A receipt of this amount, on about this date, belonging to exactly one
+       * party — checked BEFORE the narration, because money is stronger
+       * evidence than a name.
+       *
+       * Two customers here are called "SRI MURUGAN METAL" and "SRI MURUGAN
+       * METAL (K.S.GUNASEKARAN)". A narration reading "SRI MURUGAN METAL"
+       * scores a perfect match on the first and a partial one on the second,
+       * so the name test picked the first — while every receipt for those
+       * transfers belongs to the second. Process would have posted ₹3.31L to
+       * the wrong customer. The receipt says which one it actually was.
+       */
       if (!customerId) {
         const hits = receipts.filter(
           (v) => Math.abs(v.amount - row.amount) <= BANK_AMOUNT_TOL && Math.abs(+v.recDate - +row.txnDate) <= BANK_DATE_TOL_DAYS * DAY,
@@ -221,6 +222,17 @@ export class BankStatementService {
         if (parties.length === 1) {
           customerId = parties[0];
           source = 'RECEIPT';
+        }
+      }
+
+      if (!customerId) {
+        // Returns null when the narration names no one, or names two parties
+        // equally well — an unassigned line costs a click, a wrongly assigned
+        // one puts a customer's money against another customer's name.
+        const hit = bestNarrationParty(row.narration, named);
+        if (hit) {
+          customerId = hit.id;
+          source = 'NARRATION';
         }
       }
 

@@ -70,7 +70,7 @@ export class TransRatesController {
     const rows = await this.transRates.exportRows(query);
     this.excel.setDownloadHeaders(res, 'customer-transport-rates');
     return new StreamableFile(
-      this.excel.jsonToBuffer(rows, {
+      await this.excel.jsonToBuffer(rows, {
         sheetName: 'TRANS RATE',
         headers: this.transRates.exportHeaders(),
       }),
@@ -84,7 +84,7 @@ export class TransRatesController {
     const rows = await this.transRates.templateRows();
     this.excel.setDownloadHeaders(res, 'customer-transport-rates-template');
     return new StreamableFile(
-      this.excel.jsonToBuffer(rows, {
+      await this.excel.jsonToBuffer(rows, {
         sheetName: 'TRANS RATE TEMPLATE',
         headers: this.transRates.templateHeaders(),
       }),

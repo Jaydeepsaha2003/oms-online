@@ -49,7 +49,7 @@ export class TransportersController {
     const rows = await this.transporters.exportRows(query);
     this.excel.setDownloadHeaders(res, 'transporters');
     return new StreamableFile(
-      this.excel.jsonToBuffer(rows, {
+      await this.excel.jsonToBuffer(rows, {
         sheetName: 'Transporters',
         headers: this.transporters.exportHeaders(),
       }),

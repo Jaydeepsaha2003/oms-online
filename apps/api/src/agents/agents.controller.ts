@@ -44,7 +44,7 @@ export class AgentsController {
     const rows = await this.agents.exportRows(query);
     this.excel.setDownloadHeaders(res, 'agents');
     return new StreamableFile(
-      this.excel.jsonToBuffer(rows, { sheetName: 'Agents', headers: this.agents.exportHeaders() }),
+      await this.excel.jsonToBuffer(rows, { sheetName: 'Agents', headers: this.agents.exportHeaders() }),
     );
   }
 

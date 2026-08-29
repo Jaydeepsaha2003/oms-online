@@ -49,7 +49,7 @@ export class DesignNamesController {
     const rows = await this.designNames.exportRows(query);
     this.excel.setDownloadHeaders(res, 'design-names');
     return new StreamableFile(
-      this.excel.jsonToBuffer(rows, {
+      await this.excel.jsonToBuffer(rows, {
         sheetName: 'Design Names',
         headers: this.designNames.exportHeaders(),
       }),

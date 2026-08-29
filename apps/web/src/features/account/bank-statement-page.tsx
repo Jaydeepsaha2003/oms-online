@@ -16,7 +16,7 @@ import type { BankStatementColumnMap, BankStatementRowDto, BankStatementRunResul
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
-import { parseExcelFile } from '@/lib/excel';
+import { detectHeaderRow, gridToRows, parseSheetGrid } from '@/lib/excel';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/common/confirm';
 import { NativeSelect } from '@/components/common/combo';
@@ -143,6 +143,9 @@ export function BankStatementPage() {
   const [toDate, setToDate] = useState('');
   const [map, setMap] = useState<BankStatementColumnMap>({ date: '', narration: '', credit: '', debit: '', ref: '' });
   const [parsing, setParsing] = useState(false);
+  /** The whole sheet, and which of its rows holds the column titles. */
+  const [grid, setGrid] = useState<string[][]>([]);
+  const [headerRow, setHeaderRow] = useState(0);
 
   const { data: banks } = useActiveBankAccounts();
   const { data: preset } = useColumnPreset(bankName);
@@ -188,37 +191,88 @@ export function BankStatementPage() {
     }
     const find = (...needles: string[]) =>
       columns.find((c) => needles.some((n) => c.toLowerCase().replace(/[^a-z]/g, '').includes(n))) ?? '';
-    setMap({
+    const guess = {
       date: find('date', 'txndate', 'valuedate'),
       narration: find('narration', 'description', 'particular', 'remark', 'detail'),
       credit: find('credit', 'deposit', 'cr'),
       debit: find('debit', 'withdrawal', 'dr'),
       ref: find('ref', 'chq', 'cheque', 'utr'),
-    });
+    };
+    /*
+     * Check the guess against the running balance rather than trusting the
+     * headers.
+     *
+     * This Axis export labels its money-IN column "DR" and its money-OUT column
+     * "CR" — read the names and you reconcile the wrong side of the account.
+     * The balance cannot lie: if the column we called `credit` carries a figure
+     * on a row where the balance FELL, the two are the wrong way round.
+     */
+    const balCol = find('balance', 'bal');
+    if (balCol && guess.credit && guess.debit) {
+      const num = (v: unknown) => Number(String(v ?? '').replace(/[₹\s,]/g, '')) || 0;
+      let agree = 0;
+      let disagree = 0;
+      let prev: number | null = null;
+      for (const r of sheetRows.slice(0, 40)) {
+        const bal = num(r[balCol]);
+        if (!bal) { prev = null; continue; }
+        const cr = num(r[guess.credit]);
+        const dr = num(r[guess.debit]);
+        if (prev != null && (cr > 0) !== (dr > 0)) {
+          const rose = bal > prev;
+          // A credit should coincide with the balance rising.
+          const correct = cr > 0 ? rose : !rose;
+          if (correct) agree += 1;
+          else disagree += 1;
+        }
+        prev = bal;
+      }
+      if (disagree > agree) {
+        const swapped = guess.credit;
+        guess.credit = guess.debit;
+        guess.debit = swapped;
+      }
+    }
+    setMap(guess);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [columns, preset]);
 
   const onFile = async (file: File | undefined) => {
     if (!file) return;
     setParsing(true);
     try {
-      const rows = await parseExcelFile<Record<string, string | null>>(file);
-      if (!rows.length) {
+      // Read the sheet as a grid first: a statement opens with a block of
+      // account details (the Axis export runs to 19 lines of it), so row 1 is
+      // almost never the column titles.
+      const g = await parseSheetGrid(file);
+      if (!g.length) {
         toast.error('That sheet has no rows.');
         return;
       }
-      // Union of keys, not just the first row's: an export whose first line
-      // leaves a trailing column blank would otherwise hide that column.
-      const cols = [...new Set(rows.flatMap((r) => Object.keys(r)))].filter((c) => c && !/^__EMPTY/.test(c));
-      setSheetRows(rows);
-      setColumns(cols);
+      const hdr = detectHeaderRow(g);
+      setGrid(g);
+      setHeaderRow(hdr);
       setFileName(file.name);
-      toast.success(`${rows.length.toLocaleString('en-IN')} rows read from ${file.name}`);
+      const { rows } = gridToRows(g, hdr);
+      toast.success(
+        `${rows.length.toLocaleString('en-IN')} rows read from ${file.name}` +
+          (hdr > 0 ? ` — column titles found on line ${hdr + 1}` : ''),
+      );
     } catch (e) {
       toast.error(getApiErrorMessage(e, 'Could not read that file'));
     } finally {
       setParsing(false);
     }
   };
+
+  // Columns and rows follow whichever line the user says holds the titles, so
+  // correcting a mis-detected header re-reads the whole sheet instantly.
+  useEffect(() => {
+    if (!grid.length) return;
+    const { columns: cols, rows } = gridToRows(grid, headerRow);
+    setColumns(cols);
+    setSheetRows(rows);
+  }, [grid, headerRow]);
 
   const loadStatement = () => {
     if (!sheetRows.length) return toast.error('Choose a statement file first.');
@@ -412,10 +466,70 @@ export function BankStatementPage() {
                   </div>
                 ))}
               </div>
-              <p className="text-muted-foreground mt-2 text-[11.5px]">
-                {sheetRows.length.toLocaleString('en-IN')} rows in the file. Debits and anything outside the date range are
-                dropped when it loads.
-              </p>
+              {/* The first few rows, under the mapping.
+                  Not decoration: this Axis export labels its money-IN column
+                  "DR" and its money-OUT column "CR", so a column cannot be
+                  identified from its title alone. Seeing the actual figures is
+                  the only reliable way to pick the right one. */}
+              {!!sheetRows.length && (
+                <div className="mt-3 overflow-auto rounded-[4px] border bg-white dark:bg-slate-900">
+                  <table className="w-full border-collapse text-[11.5px]">
+                    <thead>
+                      <tr>
+                        {columns.map((c) => (
+                          <th
+                            key={c}
+                            className={cn(
+                              'border-b px-2 py-1 text-left font-bold whitespace-nowrap',
+                              c === map.date && 'bg-sky-100 dark:bg-sky-500/20',
+                              c === map.narration && 'bg-violet-100 dark:bg-violet-500/20',
+                              c === map.credit && 'bg-emerald-100 dark:bg-emerald-500/20',
+                              c === map.debit && 'bg-rose-100 dark:bg-rose-500/20',
+                            )}
+                          >
+                            {c}
+                            {c === map.credit && <span className="ml-1 font-extrabold text-emerald-700">← money in</span>}
+                            {c === map.debit && <span className="ml-1 font-extrabold text-rose-700">← money out</span>}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sheetRows.slice(0, 5).map((r, i) => (
+                        <tr key={i} className="odd:bg-slate-50/70 dark:odd:bg-white/[0.03]">
+                          {columns.map((c) => (
+                            <td key={c} className="max-w-[220px] truncate border-b px-2 py-1 tabular-nums whitespace-nowrap">
+                              {r[c] ?? ''}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                <p className="text-muted-foreground text-[11.5px]">
+                  {sheetRows.length.toLocaleString('en-IN')} rows below the titles. Debits and anything outside the date range
+                  are dropped when it loads.
+                </p>
+                {/* Detection is good but not infallible, and a wrong header row
+                    means every column is wrong. Correcting it is one field. */}
+                <label className="text-muted-foreground ml-auto flex items-center gap-1.5 text-[11.5px]">
+                  Column titles are on line
+                  <Input
+                    type="number"
+                    min={1}
+                    max={grid.length}
+                    value={headerRow + 1}
+                    onChange={(e) => {
+                      const n = Number(e.target.value);
+                      if (Number.isFinite(n) && n >= 1 && n <= grid.length) setHeaderRow(n - 1);
+                    }}
+                    className="h-7 w-16 text-center text-[12px]"
+                  />
+                </label>
+              </div>
             </div>
           )}
 

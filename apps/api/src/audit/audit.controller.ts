@@ -43,7 +43,7 @@ export class AuditController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<StreamableFile> {
     const result = await this.audit.findMany({ ...query, page: 1, pageSize: MAX_PAGE_SIZE });
-    const buffer = this.excel.export(result.items, [
+    const buffer = await this.excel.export(result.items, [
       { header: 'When', key: 'createdAt' },
       { header: 'User', key: 'userName' },
       { header: 'Email', key: 'userEmail' },

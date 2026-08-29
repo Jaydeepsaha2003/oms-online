@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   BarChart3,
   CalendarRange,
@@ -85,6 +85,30 @@ const loadFilters = (): Partial<ChallanFilters> => {
   return {};
 };
 
+/**
+ * Filters read off the URL.
+ *
+ * Leaving the list to preview a challan and coming back used to land on a bare
+ * `/challans`, which rebuilt the page with default filters — a search for "DN"
+ * and the chosen date range were simply gone. The trip back now carries them,
+ * so the list the user left is the list they return to. Browser Back gets the
+ * same treatment for free.
+ *
+ * A plain `/challans` with no query still starts clean, which keeps the
+ * "a fresh visit is a fresh start" behaviour.
+ */
+const filtersFromParams = (p: URLSearchParams): Partial<ChallanFilters> => {
+  const get = (k: string) => p.get(k) ?? undefined;
+  const out: Partial<ChallanFilters> = {
+    searchInput: get('q'),
+    dateFrom: get('from'),
+    dateTo: get('to'),
+    preset: get('preset'),
+    status: get('status'),
+  };
+  return Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined)) as Partial<ChallanFilters>;
+};
+
 /** Days-to-due text from the due date (the legacy PAID state needs the accounting
  *  module, so this shows only DUE / OVER DUE relative to today). */
 function dueInfo(due: string | null): { text: string; over: boolean } {
@@ -106,7 +130,14 @@ export function ChallansListPage() {
   const canUpdate = can('challan:update');
   const canDelete = can('challan:delete');
   const canPrint = can('challan:print');
-  const initialFilters = useMemo(() => loadFilters(), []);
+  const [urlParams] = useSearchParams();
+  const location = useLocation();
+  // Read once: after this the filters are ordinary state the user drives.
+  const initialFilters = useMemo(() => {
+    const fromUrl = filtersFromParams(urlParams);
+    return Object.keys(fromUrl).length ? fromUrl : loadFilters();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const defaultFy = useMemo(() => presetRange(DEFAULT_PRESET)!, []);
 
   // Fresh visit or refresh starts at default clean filters (current Indian financial year).
@@ -130,6 +161,34 @@ export function ChallansListPage() {
     }, 300);
     return () => clearTimeout(t);
   }, [searchInput]);
+
+  /*
+   * Keep the address bar showing what is on screen.
+   *
+   * `replace`, so this never adds history entries as the user types — but it
+   * does mean the entry they leave FROM already carries their filters. That is
+   * what makes browser Back, and the bill page's own back button, return to the
+   * list they were looking at instead of a default one. The preview round-trip
+   * is the case that was reported; this covers every other way out and back.
+   */
+  useEffect(() => {
+    const target = listUrl();
+    if (`${location.pathname}${location.search}` !== target) navigate(target, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, dateFrom, dateTo, preset, status]);
+
+  /** This list, as a URL — so a page we hand off to can send the user back to
+   *  exactly what they were looking at rather than to a default list. */
+  const listUrl = () => {
+    const p = new URLSearchParams();
+    if (searchInput.trim()) p.set('q', searchInput.trim());
+    if (dateFrom) p.set('from', dateFrom);
+    if (dateTo) p.set('to', dateTo);
+    if (preset) p.set('preset', preset);
+    if (status) p.set('status', status);
+    const qs = p.toString();
+    return qs ? `/challans?${qs}` : '/challans';
+  };
 
   // Filters reset on page refresh or navigation per user requirement.
   useEffect(() => {
@@ -377,7 +436,7 @@ export function ChallansListPage() {
                     // still needs a tab reserved inside this click.
                     // `returnTo` brings the user back here when they close it.
                     if (isIOS()) reservePreviewTab();
-                    navigate(`/challans/${r.id}/bill`, { state: { autoPreview: true, returnTo: '/challans' } });
+                    navigate(`/challans/${r.id}/bill`, { state: { autoPreview: true, returnTo: listUrl() } });
                   }}
                 >
                   <FileSearch className="text-violet-600" /> Preview PDF
@@ -658,16 +717,21 @@ export function ChallansListPage() {
           {/* Actions — right-aligned in the same bar. */}
           <div className="flex w-full flex-wrap items-center gap-1.5 sm:ml-auto sm:w-auto sm:gap-2">
             <span className="text-muted-foreground mr-0.5 hidden text-[10px] font-bold tracking-widest uppercase sm:inline">Report</span>
+            {/* The two names were the wrong way round: the 'detailed' export is
+                the challan LIST (one row per challan) and the 'summary' export
+                is the list WITH its line items. The labels now describe what
+                each one produces. The `kind` values are the wire contract and
+                keep their original spelling. */}
             <Button
               variant="outline"
               size="sm"
               className="h-9 rounded-[4px] text-[12.5px] font-semibold"
               disabled={!!report}
               onClick={() => runReport('detailed')}
-              title="Export the filtered challan list to Excel"
+              title="Export the filtered challan list to Excel — one row per challan"
             >
-              <FileSpreadsheet className="text-emerald-600" /> <span className="hidden sm:inline">Detailed View</span>
-              <span className="sm:hidden">Detailed</span>
+              <Layers className="text-sky-600" /> <span className="hidden sm:inline">Challan Summary</span>
+              <span className="sm:hidden">Summary</span>
             </Button>
             <Button
               variant="outline"
@@ -675,10 +739,10 @@ export function ChallansListPage() {
               className="h-9 rounded-[4px] text-[12.5px] font-semibold"
               disabled={!!report}
               onClick={() => runReport('summary')}
-              title="Export challans plus their line items to Excel"
+              title="Export challans plus every line item to Excel"
             >
-              <Layers className="text-sky-600" /> <span className="hidden sm:inline">Challan Summary</span>
-              <span className="sm:hidden">Summary</span>
+              <FileSpreadsheet className="text-emerald-600" /> <span className="hidden sm:inline">Detailed View</span>
+              <span className="sm:hidden">Detailed</span>
             </Button>
             <Button
               size="sm"
@@ -819,7 +883,7 @@ export function ChallansListPage() {
       <ChallanAnalyticsDialog open={kpiOpen} onOpenChange={setKpiOpen} base={{ search, dateFrom, dateTo, status }} />
       <ReportDownloadOverlay
         open={!!report}
-        title={report?.kind === 'summary' ? 'Challan Summary' : 'Detailed View'}
+        title={report?.kind === 'summary' ? 'Detailed View' : 'Challan Summary'}
         phase={report?.phase ?? 'fetching'}
         count={report?.count}
         onClose={() => setReport(null)}

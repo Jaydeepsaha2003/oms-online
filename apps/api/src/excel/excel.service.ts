@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { Response } from 'express';
+import ExcelJS from 'exceljs';
 import * as XLSX from 'xlsx';
 
 /** Maps a row object to a spreadsheet column. */
@@ -35,7 +36,7 @@ function excelSerial(d: Date): number {
 @Injectable()
 export class ExcelService {
   /** Build an .xlsx file (as a Buffer) from typed rows + a column spec. */
-  export<T>(rows: T[], columns: ExcelColumn<T>[], opts: { sheetName?: string } = {}): Buffer {
+  export<T>(rows: T[], columns: ExcelColumn<T>[], opts: { sheetName?: string } = {}): Promise<Buffer> {
     const header = columns.map((c) => c.header);
     const body = rows.map((row) =>
       columns.map((col) => {
@@ -65,7 +66,7 @@ export class ExcelService {
   jsonToBuffer(
     rows: Record<string, unknown>[],
     opts: { sheetName?: string; headers?: string[] } = {},
-  ): Buffer {
+  ): Promise<Buffer> {
     if (opts.headers && rows.length === 0) {
       return this.aoaToBuffer([opts.headers], opts.sheetName);
     }
@@ -86,7 +87,7 @@ export class ExcelService {
   }
 
   /** Build a header-only template file users can fill in and re-upload. */
-  template(headers: string[], opts: { sheetName?: string } = {}): Buffer {
+  template(headers: string[], opts: { sheetName?: string } = {}): Promise<Buffer> {
     return this.aoaToBuffer([headers], opts.sheetName);
   }
 
@@ -108,38 +109,103 @@ export class ExcelService {
     });
   }
 
-  private aoaToBuffer(aoa: unknown[][], sheetName?: string): Buffer {
+  private aoaToBuffer(aoa: unknown[][], sheetName?: string): Promise<Buffer> {
     const worksheet = XLSX.utils.aoa_to_sheet(aoa, { cellDates: true });
     return this.workbookToBuffer(worksheet, sheetName);
   }
 
-  /**
-   * Rewrite every Date-valued cell as a whole-day serial carrying a dd-mm-yyyy
-   * format, so Excel treats the column as real dates.
-   *
-   * Exports used to hand SheetJS a preformatted "30-07-2025" STRING, which Excel
-   * sorts character by character — i.e. by day of month, then month, then year.
-   * That put 28-05-2026 above 30-06-2025 and made "sort oldest first" look
-   * broken. Any caller that passes a real Date now gets a sortable, filterable
-   * column for free; callers still passing strings are unaffected.
-   */
-  private stampDateCells(worksheet: XLSX.WorkSheet): void {
-    for (const ref of Object.keys(worksheet)) {
-      if (ref.startsWith('!')) continue;
-      const cell = worksheet[ref] as XLSX.CellObject;
-      if (cell?.t === 'd' && cell.v instanceof Date) {
-        cell.t = 'n';
-        cell.v = excelSerial(cell.v);
-        cell.z = DATE_FMT;
-        delete cell.w; // stale cached text from the old value
-      }
-    }
-  }
+  /* ── Writing ───────────────────────────────────────────────────────────
+     Sheets are BUILT with SheetJS (its json_to_sheet column ordering and
+     restriction are what every caller relies on) and WRITTEN with ExcelJS,
+     which is the only one of the two that can set a font. The community
+     build of SheetJS ignores cell styles entirely, which is why exports
+     used to arrive in Calibri 11 only by accident of Excel's default and
+     with no header, widths or borders at all. */
 
-  private workbookToBuffer(worksheet: XLSX.WorkSheet, sheetName = 'Sheet1'): Buffer {
-    this.stampDateCells(worksheet);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
-    return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+  /** House look for every export in the app. */
+  private static readonly FONT = 'Calibri';
+  private static readonly SIZE = 11;
+  /** The navy the app's own grid headers use. */
+  private static readonly HEADER_BG = 'FF163E64';
+  private static readonly ZEBRA_BG = 'FFF5F7FA';
+  private static readonly GRID = 'FFD9DEE5';
+
+  private async workbookToBuffer(worksheet: XLSX.WorkSheet, sheetName = 'Sheet1'): Promise<Buffer> {
+    // Back to a plain grid, values intact — numbers as numbers, dates as Dates
+    // (the sheet was built with cellDates), so Excel gets real types.
+    const aoa = XLSX.utils.sheet_to_json<unknown[]>(worksheet, { header: 1, raw: true, defval: null, blankrows: false });
+    const [header = [], ...body] = aoa;
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'OMS';
+    wb.created = new Date();
+    const ws = wb.addWorksheet(sheetName, {
+      views: [{ state: 'frozen', ySplit: 1 }],
+    });
+
+    ws.addRow(header as unknown[]);
+    for (const r of body) ws.addRow(r as unknown[]);
+
+    const cols = Math.max(header.length, ...body.map((r) => (r as unknown[]).length), 1);
+    const thin = { style: 'thin' as const, color: { argb: ExcelService.GRID } };
+
+    // Header — navy, white, bold, and filterable.
+    const head = ws.getRow(1);
+    head.height = 22;
+    head.eachCell({ includeEmpty: true }, (cell) => {
+      cell.font = { name: ExcelService.FONT, size: ExcelService.SIZE, bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ExcelService.HEADER_BG } };
+      cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
+      cell.border = { top: thin, left: thin, bottom: thin, right: thin };
+    });
+    if (cols > 0 && body.length > 0) {
+      ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols } };
+    }
+
+    // Body — one font, real number and date formats, quiet zebra.
+    for (let i = 0; i < body.length; i++) {
+      const row = ws.getRow(i + 2);
+      row.eachCell({ includeEmpty: true }, (cell) => {
+        cell.font = { name: ExcelService.FONT, size: ExcelService.SIZE };
+        cell.border = { top: thin, left: thin, bottom: thin, right: thin };
+        if (i % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ExcelService.ZEBRA_BG } };
+        const v = cell.value;
+        if (v instanceof Date) {
+          /*
+           * Written as a whole-day SERIAL, not as a Date.
+           *
+           * ExcelJS serialises a Date in UTC, and these are local midnight — so
+           * 11-08-2026 in IST went into the file as 2026-08-10T18:30Z and Excel
+           * showed the 10th. Every exported date was a day early. The serial is
+           * taken from the local calendar day, which also keeps whole-day values
+           * so Excel's Date Filters match (see excelSerial).
+           */
+          cell.value = excelSerial(v);
+          cell.numFmt = DATE_FMT;
+          cell.alignment = { horizontal: 'center' };
+        } else if (typeof v === 'number') {
+          // Whole numbers keep their shape (a challan count is not 42.00);
+          // anything with paise is shown to two places.
+          cell.numFmt = Number.isInteger(v) ? '#,##0' : '#,##0.00';
+          cell.alignment = { horizontal: 'right' };
+        } else {
+          cell.alignment = { horizontal: 'left', vertical: 'top' };
+        }
+      });
+    }
+
+    // Widths from the widest cell in each column, within sane bounds.
+    for (let c = 1; c <= cols; c++) {
+      let width = String(header[c - 1] ?? '').length + 4;
+      for (const r of body) {
+        const v = (r as unknown[])[c - 1];
+        const len = v instanceof Date ? 12 : String(v ?? '').length + 2;
+        if (len > width) width = len;
+      }
+      ws.getColumn(c).width = Math.max(10, Math.min(45, width));
+    }
+
+    // ExcelJS types this as its own Buffer alias; the value is a real Node Buffer.
+    return Buffer.from((await wb.xlsx.writeBuffer()) as ArrayBuffer);
   }
 }

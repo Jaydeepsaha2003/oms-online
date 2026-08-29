@@ -50,7 +50,7 @@ export class CombinationsController {
     const rows = await this.combinations.exportRows(query);
     this.excel.setDownloadHeaders(res, 'combinations');
     return new StreamableFile(
-      this.excel.jsonToBuffer(rows, {
+      await this.excel.jsonToBuffer(rows, {
         sheetName: 'Combinations',
         headers: this.combinations.exportHeaders(),
       }),

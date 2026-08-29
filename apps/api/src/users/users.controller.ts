@@ -48,7 +48,7 @@ export class UsersController {
   async export(@Query() query: UserQueryDto, @Res({ passthrough: true }) res: Response) {
     const rows = await this.users.exportRows(query);
     this.excel.setDownloadHeaders(res, 'users');
-    return new StreamableFile(this.excel.jsonToBuffer(rows, { sheetName: 'Users' }));
+    return new StreamableFile(await this.excel.jsonToBuffer(rows, { sheetName: 'Users' }));
   }
 
   @Get(':id')

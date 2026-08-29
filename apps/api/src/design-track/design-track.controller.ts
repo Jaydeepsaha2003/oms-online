@@ -63,7 +63,7 @@ export class DesignTrackController {
       Remaining: r.remaining,
     }));
     this.excel.setDownloadHeaders(res, 'design-track');
-    return new StreamableFile(this.excel.jsonToBuffer(rows, { sheetName: 'Design Track' }));
+    return new StreamableFile(await this.excel.jsonToBuffer(rows, { sheetName: 'Design Track' }));
   }
 
   /** Save (or clear, with null) one line's hand-entered processed quantity. */
