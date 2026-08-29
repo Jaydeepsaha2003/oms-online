@@ -138,7 +138,7 @@ export class DesignsService {
     const before = await this.prisma.design.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('Design not found.');
     try {
-      const row = await this.prisma.design.update({ where: { id }, data: this.toData(dto), include: INCLUDE });
+      const row = await this.prisma.design.update({ where: { id }, data: this.toUpdateData(dto), include: INCLUDE });
       await this.logRateChange(before, row, changedByName);
       return this.toDto(await this.ensureCode(row));
     } catch (err) {
@@ -253,6 +253,28 @@ export class DesignsService {
       active: dto.active ?? true,
       showOnRateList: dto.showOnRateList ?? true,
     };
+  }
+
+  /**
+   * Only the fields the caller actually sent.
+   *
+   * `toData` fills in a default for everything, which is right for a create and
+   * destructive for a PATCH: `{ cost: 2 }` went in and came back out as a row
+   * whose category, sub-category and design type had been blanked and whose
+   * rate had been cleared. A partial update must leave untouched what it does
+   * not mention, so this reads the keys present on the DTO rather than their
+   * values — `cost: null` clears the cost, an absent `cost` leaves it alone.
+   */
+  private toUpdateData(dto: UpdateDesignDto): Prisma.DesignUncheckedUpdateInput {
+    const data: Prisma.DesignUncheckedUpdateInput = {};
+    if ('category' in dto) data.category = (uc(dto.category) ?? '') as string;
+    if ('subCategory' in dto) data.subCategory = (uc(dto.subCategory) ?? '') as string;
+    if ('designType' in dto) data.designType = (uc(dto.designType) ?? '') as string;
+    if ('cost' in dto) data.cost = dto.cost ?? null;
+    if ('rate' in dto) data.rate = dto.rate ?? null;
+    if ('active' in dto) data.active = dto.active ?? true;
+    if ('showOnRateList' in dto) data.showOnRateList = dto.showOnRateList ?? true;
+    return data;
   }
 
   private codeFor(id: number): string {

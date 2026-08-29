@@ -883,7 +883,10 @@ export class OrdersService {
         category,
         subCategory,
         designType: combination.name,
-        designName: combination.name,
+        // Through the Design Names master, exactly as a plain design is. A
+        // combination converted from a composite design row ("DL+LOGO") still
+        // has its friendly names there, and the picker must keep offering them.
+        designName: nameOf(combination.name),
         rate: members.reduce((sum, design) => sum + (design.rate ?? 0), 0),
         componentDesignTypes: members.map((design) => design.designType),
       });

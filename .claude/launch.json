@@ -4,14 +4,20 @@
     {
       "name": "web",
       "runtimeExecutable": "cmd.exe",
-      "runtimeArgs": ["/c", "scripts\\preview-web.cmd"],
+      "runtimeArgs": [
+        "/c",
+        "scripts\\preview-web.cmd"
+      ],
       "port": 6173,
       "autoPort": true
     },
     {
       "name": "web5199",
       "runtimeExecutable": "cmd.exe",
-      "runtimeArgs": ["/c", "scripts\\preview-web-5199.cmd"],
+      "runtimeArgs": [
+        "/c",
+        "scripts\\preview-web-5199.cmd"
+      ],
       "port": 5199,
       "autoPort": false,
       "url": "http://127.0.0.1:5199"
@@ -19,9 +25,23 @@
     {
       "name": "api",
       "runtimeExecutable": "cmd.exe",
-      "runtimeArgs": ["/c", "scripts\\preview-api.cmd"],
+      "runtimeArgs": [
+        "/c",
+        "scripts\\preview-api.cmd"
+      ],
       "port": 4000,
       "autoPort": false
+    },
+    {
+      "name": "webtest",
+      "runtimeExecutable": "cmd.exe",
+      "runtimeArgs": [
+        "/c",
+        "scripts\\preview-web-test.cmd"
+      ],
+      "port": 5299,
+      "autoPort": false,
+      "url": "http://127.0.0.1:5299"
     }
   ]
 }

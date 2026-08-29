@@ -101,14 +101,14 @@ export class CombinationsService {
    * Only combinations sharing the first design can possibly match, so this reads
    * a handful of rows instead of the whole table.
    */
-  private async findDuplicate(db: Db, ids: number[]): Promise<{ name: string; code: string } | null> {
+  private async findDuplicate(db: Db, ids: number[]): Promise<{ id: number; name: string; code: string } | null> {
     const key = this.designSetKey(ids);
     const candidates = await db.combination.findMany({
       where: { designLinks: { some: { designId: ids[0] } } },
       select: { id: true, name: true, code: true, designLinks: { select: { designId: true } } },
     });
     const hit = candidates.find((c) => this.designSetKey(c.designLinks.map((l) => l.designId)) === key);
-    return hit ? { name: hit.name, code: hit.code ?? this.codeFor(hit.id) } : null;
+    return hit ? { id: hit.id, name: hit.name, code: hit.code ?? this.codeFor(hit.id) } : null;
   }
 
   /**
@@ -240,7 +240,16 @@ export class CombinationsService {
         const nameSeed = uc(row['NAME']) ?? uc(row['DESIGN TYPE']) ?? uc(row['DESIGNS']);
         const name = await this.resolveName(nameSeed, designIds);
         const code = uc(row['CODE']);
-        const existing = code ? await this.prisma.combination.findUnique({ where: { code } }) : null;
+        /*
+         * A row is matched by its CODE when it carries one, and otherwise by
+         * the design set it names — the same rule `create` enforces. Without
+         * that second lookup a file uploaded twice built the whole catalogue
+         * twice over, since nothing else stops two combinations holding
+         * identical designs.
+         */
+        const existing =
+          (code ? await this.prisma.combination.findUnique({ where: { code } }) : null) ??
+          (await this.findDuplicate(this.prisma, designIds));
         if (existing) {
           await this.prisma.combination.update({
             where: { id: existing.id },

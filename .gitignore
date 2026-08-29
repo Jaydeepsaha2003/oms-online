@@ -23,7 +23,9 @@ apps/web/dist/
 
 # Prisma
 apps/api/prisma/*.db
-apps/api/prisma/*.db.bak*
+# Any database copy kept beside the live one — a dated backup taken before a
+# data migration is still the whole customer list, and must never be pushed.
+apps/api/prisma/*.db.*
 apps/api/prisma/migrations/dev.db*
 
 # Logs

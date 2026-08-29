@@ -164,9 +164,14 @@ const keepAlive: Plugin = {
 // Reuse upstream sockets to the Nest API instead of opening one per request.
 const apiAgent = new Agent({ keepAlive: true, maxSockets: 64 });
 
+// The Nest server this proxies to. Fixed at 4000 in normal use; VITE_API_TARGET
+// re-points it at a throwaway API (running against a COPY of the database) so
+// the app can be exercised without the live server being involved.
+const API_TARGET = process.env.VITE_API_TARGET ?? 'http://127.0.0.1:4000';
+
 const apiProxy = {
   '/api': {
-    target: 'http://127.0.0.1:4000',
+    target: API_TARGET,
     changeOrigin: true,
     agent: apiAgent,
     // Pass the real client on as X-Forwarded-For. Without it every request
@@ -194,7 +199,7 @@ const apiProxy = {
   // Test-notification WebSocket (Socket.IO's default path) — same single-origin
   // reasoning as /api above, extended with `ws: true` for the upgrade.
   '/socket.io': {
-    target: 'http://127.0.0.1:4000',
+    target: API_TARGET,
     changeOrigin: true,
     ws: true,
     xfwd: true, // same reasoning as /api above
