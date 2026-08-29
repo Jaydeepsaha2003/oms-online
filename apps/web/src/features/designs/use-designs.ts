@@ -99,12 +99,26 @@ export function useSetDesignFlags() {
 export function useImportDesigns() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (rows: Record<string, unknown>[]) => http.post<ImportResult>('/designs/import', { rows }),
+    mutationFn: (rows: Record<string, unknown>[]) =>
+      http.post<ImportResult>('/designs/import', { rows }),
     onSuccess: () => invalidateDesignsAndCombos(qc),
   });
 }
 
+/**
+ * The designs on screen, as a sheet.
+ *
+ * Every filter goes through, not just the search. Sending only `search` meant a
+ * screen narrowed to one category — or to the standalone designs — still
+ * downloaded all of them, which is not what "export" reads as when you are
+ * looking at a filtered list.
+ */
 export function exportDesigns(query: DesignQuery) {
-  const qs = query.search ? `?search=${encodeURIComponent(query.search)}` : '';
-  return downloadFile(`/designs/export${qs}`, 'designs.xlsx');
+  const params = new URLSearchParams();
+  if (query.search) params.set('search', query.search);
+  if (query.category) params.set('category', query.category);
+  if (query.subCategory) params.set('subCategory', query.subCategory);
+  if (query.combinationStatus) params.set('combinationStatus', query.combinationStatus);
+  const qs = params.toString();
+  return downloadFile(`/designs/export${qs ? `?${qs}` : ''}`, 'designs.xlsx');
 }

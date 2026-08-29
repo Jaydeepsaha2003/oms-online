@@ -80,10 +80,15 @@ const CONTROL =
 const CONTROL_ON =
   'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
 
+/*
+ * The neutral option names the axis rather than saying "All designs", which is
+ * what every other filter's empty state says and told you nothing about what
+ * this one does — the control was there all along and read as a spare dropdown.
+ */
 const COMBINATION_STATUS_OPTIONS = [
-  { value: '', label: 'All designs' },
+  { value: '', label: 'Standalone & combined' },
   { value: 'standalone', label: 'Standalone only' },
-  { value: 'combined', label: 'Combined only' },
+  { value: 'combined', label: 'In a combination' },
 ];
 
 /** Margin = rate − cost; up/green for profit, down/red for loss, dash when unknown. */
@@ -1180,7 +1185,7 @@ export function DesignsPage() {
                   className={cn(CONTROL, 'h-8 font-medium', subCategory && CONTROL_ON)}
                 />
               </div>
-              <div className="hidden w-36 lg:block">
+              <div className="hidden w-44 lg:block">
                 <NativeSelect
                   value={combinationStatus}
                   onChange={(v) => {
@@ -1188,7 +1193,7 @@ export function DesignsPage() {
                     setPage(1);
                   }}
                   options={COMBINATION_STATUS_OPTIONS}
-                  placeholder="All designs"
+                  placeholder="Standalone & combined"
                   className={cn(CONTROL, 'h-8 font-medium', combinationStatus && CONTROL_ON)}
                 />
               </div>
@@ -1487,7 +1492,7 @@ export function DesignsPage() {
                   setPage(1);
                 }}
                 options={COMBINATION_STATUS_OPTIONS}
-                placeholder="All designs"
+                placeholder="Standalone & combined"
               />
             </div>
           </div>

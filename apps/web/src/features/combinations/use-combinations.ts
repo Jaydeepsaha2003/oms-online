@@ -44,7 +44,8 @@ export function useCreateCombination() {
 export function useCreateCombinationBulk() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: BulkCombinationInput) => http.post<BulkCombinationResult>('/combinations/bulk', input),
+    mutationFn: (input: BulkCombinationInput) =>
+      http.post<BulkCombinationResult>('/combinations/bulk', input),
     onSuccess: () => invalidateCombinations(qc),
   });
 }
@@ -52,7 +53,8 @@ export function useCreateCombinationBulk() {
 export function useUpdateCombination(id: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: CombinationInput) => http.patch<CombinationDto>(`/combinations/${id}`, input),
+    mutationFn: (input: CombinationInput) =>
+      http.patch<CombinationDto>(`/combinations/${id}`, input),
     onSuccess: () => invalidateCombinations(qc),
   });
 }
@@ -68,12 +70,18 @@ export function useDeleteCombination() {
 export function useImportCombinations() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (rows: Record<string, unknown>[]) => http.post<ImportResult>('/combinations/import', { rows }),
+    mutationFn: (rows: Record<string, unknown>[]) =>
+      http.post<ImportResult>('/combinations/import', { rows }),
     onSuccess: () => invalidateCombinations(qc),
   });
 }
 
+/** The combinations on screen, as a sheet — every filter, not just the search. */
 export function exportCombinations(query: CombinationQuery) {
-  const qs = query.search ? `?search=${encodeURIComponent(query.search)}` : '';
-  return downloadFile(`/combinations/export${qs}`, 'combinations.xlsx');
+  const params = new URLSearchParams();
+  if (query.search) params.set('search', query.search);
+  if (query.category) params.set('category', query.category);
+  if (query.subCategory) params.set('subCategory', query.subCategory);
+  const qs = params.toString();
+  return downloadFile(`/combinations/export${qs ? `?${qs}` : ''}`, 'combinations.xlsx');
 }

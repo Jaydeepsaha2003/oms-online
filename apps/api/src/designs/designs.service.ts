@@ -1,11 +1,30 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { type BulkDesignResult, type DesignDto, type DesignLookups, type Paginated } from '@oms/shared';
+import {
+  type BulkDesignResult,
+  type DesignDto,
+  type DesignLookups,
+  type Paginated,
+} from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { toNum, uc } from '../common/coerce';
-import { BulkDesignsDto, CreateDesignDto, DesignQueryDto, ImportDesignsDto, SetDesignFlagsDto, UpdateDesignDto } from './dto/design.dto';
+import {
+  BulkDesignsDto,
+  CreateDesignDto,
+  DesignQueryDto,
+  ImportDesignsDto,
+  SetDesignFlagsDto,
+  UpdateDesignDto,
+} from './dto/design.dto';
 
-const INCLUDE = { combinationLinks: { include: { combination: { select: { name: true } } } } } as const;
+const INCLUDE = {
+  combinationLinks: { include: { combination: { select: { name: true } } } },
+} as const;
 type Row = Prisma.DesignGetPayload<{ include: typeof INCLUDE }>;
 /** Plain design columns, no combination-links include — what most internal
  *  helpers (rate-history logging, import matching) actually need. */
@@ -78,12 +97,23 @@ export class DesignsService {
         distinct: ['category', 'subCategory'],
       }),
     ]);
-    const categories = [...new Set([...designPairs, ...productPairs].map((p) => p.category).filter(Boolean))].sort();
+    const categories = [
+      ...new Set([...designPairs, ...productPairs].map((p) => p.category).filter(Boolean)),
+    ].sort();
     const seen = new Set<string>();
     const subCategories = [...designPairs, ...productPairs]
-      .filter((p) => p.category && p.subCategory && !seen.has(`${p.category}|${p.subCategory}`) && seen.add(`${p.category}|${p.subCategory}`))
+      .filter(
+        (p) =>
+          p.category &&
+          p.subCategory &&
+          !seen.has(`${p.category}|${p.subCategory}`) &&
+          seen.add(`${p.category}|${p.subCategory}`),
+      )
       .map((p) => ({ category: p.category, subCategory: p.subCategory }))
-      .sort((a, b) => a.category.localeCompare(b.category) || a.subCategory.localeCompare(b.subCategory));
+      .sort(
+        (a, b) =>
+          a.category.localeCompare(b.category) || a.subCategory.localeCompare(b.subCategory),
+      );
     return { categories, subCategories };
   }
 
@@ -113,7 +143,9 @@ export class DesignsService {
     const designType = uc(dto.designType) ?? '';
     if (!category) throw new BadRequestException('Choose the category.');
     if (!designType) throw new BadRequestException('Enter the design type.');
-    const subCategories = [...new Set((dto.subCategories ?? []).map((s) => uc(s) ?? '').filter(Boolean))];
+    const subCategories = [
+      ...new Set((dto.subCategories ?? []).map((s) => uc(s) ?? '').filter(Boolean)),
+    ];
     if (!subCategories.length) throw new BadRequestException('Choose at least one sub-category.');
 
     const existing = await this.prisma.design.findMany({
@@ -134,11 +166,19 @@ export class DesignsService {
     return { created, skipped };
   }
 
-  async update(id: number, dto: UpdateDesignDto, changedByName?: string | null): Promise<DesignDto> {
+  async update(
+    id: number,
+    dto: UpdateDesignDto,
+    changedByName?: string | null,
+  ): Promise<DesignDto> {
     const before = await this.prisma.design.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('Design not found.');
     try {
-      const row = await this.prisma.design.update({ where: { id }, data: this.toUpdateData(dto), include: INCLUDE });
+      const row = await this.prisma.design.update({
+        where: { id },
+        data: this.toUpdateData(dto),
+        include: INCLUDE,
+      });
       await this.logRateChange(before, row, changedByName);
       return this.toDto(await this.ensureCode(row));
     } catch (err) {
@@ -147,7 +187,11 @@ export class DesignsService {
   }
 
   /** Record an old→new design-rate change (for booking-date repricing + audit). */
-  private async logRateChange(before: BareRow, after: BareRow, changedByName?: string | null): Promise<void> {
+  private async logRateChange(
+    before: BareRow,
+    after: BareRow,
+    changedByName?: string | null,
+  ): Promise<void> {
     if ((before.rate ?? null) === (after.rate ?? null)) return;
     await this.prisma.designRateHistory.create({
       data: {
@@ -182,12 +226,33 @@ export class DesignsService {
   }
 
   /** Stable export/import column order — also used as the empty-export template. */
+  /*
+   * STATUS and COMBINATION COUNT sit beside the names on purpose. The names
+   * alone are a comma-joined string, which Excel can neither filter nor sort —
+   * so the sheet could not answer "show me the standalone ones", which is
+   * exactly what the Designs screen's own filter is for.
+   */
   exportHeaders(): string[] {
-    return ['ID', 'CODE', 'CATEGORY', 'SUB CATEGORY', 'DESIGN TYPE', 'COST', 'RATE', 'COMBINATIONS'];
+    return [
+      'ID',
+      'CODE',
+      'CATEGORY',
+      'SUB CATEGORY',
+      'DESIGN TYPE',
+      'COST',
+      'RATE',
+      'STATUS',
+      'COMBINATION COUNT',
+      'COMBINATIONS',
+    ];
   }
 
   async exportRows(query: DesignQueryDto): Promise<Record<string, unknown>[]> {
-    const { items } = await this.findMany({ ...query, page: 1, pageSize: 100_000 } as DesignQueryDto);
+    const { items } = await this.findMany({
+      ...query,
+      page: 1,
+      pageSize: 100_000,
+    } as DesignQueryDto);
     return items.map((r) => ({
       ID: r.id,
       CODE: r.code ?? this.codeFor(r.id),
@@ -196,6 +261,8 @@ export class DesignsService {
       'DESIGN TYPE': r.designType,
       COST: r.cost ?? '',
       RATE: r.rate ?? '',
+      STATUS: r.combinationNames.length ? 'Combined' : 'Standalone',
+      'COMBINATION COUNT': r.combinationNames.length,
       COMBINATIONS: r.combinationNames.join(', '),
     }));
   }
@@ -211,10 +278,18 @@ export class DesignsService {
         const subCategory = uc(row['SUB CATEGORY']);
         const designType = uc(row['DESIGN TYPE']);
         if (!category || !subCategory || !designType) {
-          result.errors.push(`Row ${i + 2}: CATEGORY, SUB CATEGORY and DESIGN TYPE required — skipped.`);
+          result.errors.push(
+            `Row ${i + 2}: CATEGORY, SUB CATEGORY and DESIGN TYPE required — skipped.`,
+          );
           continue;
         }
-        const data = { category, subCategory, designType, cost: toNum(row['COST']), rate: toNum(row['RATE']) };
+        const data = {
+          category,
+          subCategory,
+          designType,
+          cost: toNum(row['COST']),
+          rate: toNum(row['RATE']),
+        };
         // Match an existing design so the update keeps its id — and therefore every
         // combination link (and its code) — intact. Prefer the stable ID/CODE from an
         // exported sheet, then fall back to the category + sub + type identity.
@@ -223,7 +298,9 @@ export class DesignsService {
         let existing = id != null ? await this.prisma.design.findUnique({ where: { id } }) : null;
         if (!existing && code) existing = await this.prisma.design.findUnique({ where: { code } });
         if (!existing) {
-          existing = await this.prisma.design.findFirst({ where: { category, subCategory, designType } });
+          existing = await this.prisma.design.findFirst({
+            where: { category, subCategory, designType },
+          });
         }
         if (existing) {
           const updated = await this.prisma.design.update({ where: { id: existing.id }, data });
@@ -283,7 +360,11 @@ export class DesignsService {
 
   private async ensureCode(row: Row): Promise<Row> {
     if (row.code) return row;
-    return this.prisma.design.update({ where: { id: row.id }, data: { code: this.codeFor(row.id) }, include: INCLUDE });
+    return this.prisma.design.update({
+      where: { id: row.id },
+      data: { code: this.codeFor(row.id) },
+      include: INCLUDE,
+    });
   }
 
   private async ensureExists(id: number): Promise<void> {
@@ -293,7 +374,9 @@ export class DesignsService {
 
   private conflictOr(err: unknown): unknown {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-      return new ConflictException('A design with this category, sub-category and design type already exists.');
+      return new ConflictException(
+        'A design with this category, sub-category and design type already exists.',
+      );
     }
     return err;
   }
