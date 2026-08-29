@@ -1,5 +1,16 @@
-import ExcelJS from 'exceljs';
+import type ExcelJS from 'exceljs';
 import type { ChallanDto } from '@oms/shared';
+import {
+  addMetaBlock,
+  addTitle,
+  addTotalRow,
+  asDate,
+  fitColumns,
+  newWorkbook,
+  styleBody,
+  styleHeader,
+  toBuffer,
+} from '../excel/report-style';
 
 /**
  * The Challans list's two Excel reports.
@@ -21,36 +32,6 @@ export interface ChallanReportMeta {
   search: string;
 }
 
-const FONT = 'Calibri';
-const SIZE = 11;
-/** The navy and amber the app's own grids use. */
-const NAVY = 'FF163E64';
-const AMBER = 'FFE2A346';
-const ZEBRA = 'FFF5F7FA';
-const GRID = 'FFD9DEE5';
-const MONEY = '#,##0.00';
-const DATE_FMT = 'dd-mm-yyyy';
-
-const thin = { style: 'thin' as const, color: { argb: GRID } };
-const box = { top: thin, left: thin, bottom: thin, right: thin };
-
-/**
- * Excel's day serial for a date, from its LOCAL calendar day.
- *
- * ExcelJS writes a Date in UTC, and these are local midnight — so 11-08-2026
- * would go into the file as 2026-08-10T18:30Z and Excel would show the 10th.
- * A whole-day serial also keeps Excel's Date Filters matching whole days.
- */
-function excelSerial(d: Date): number {
-  return Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(1899, 11, 30)) / 86_400_000);
-}
-
-const asDate = (iso: string | null | undefined): number | '' => {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '' : excelSerial(d);
-};
-
 /** DUE / OVER DUE text relative to today (mirrors the list's Due column). */
 function dueText(due: string | null | undefined): string {
   if (!due) return '—';
@@ -62,108 +43,25 @@ function dueText(due: string | null | undefined): string {
   return days < 0 ? `${Math.abs(days)} over` : `${days} left`;
 }
 
-/** Header row: navy, white, bold, frozen and filterable. */
-function styleHeader(ws: ExcelJS.Worksheet, rowNo: number, cols: number): void {
-  const row = ws.getRow(rowNo);
-  row.height = 22;
-  for (let c = 1; c <= cols; c++) {
-    const cell = row.getCell(c);
-    cell.font = { name: FONT, size: SIZE, bold: true, color: { argb: 'FFFFFFFF' } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
-    cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
-    cell.border = box;
-  }
-}
-
-/** Body rows: one font, real formats, quiet zebra. */
-function styleBody(ws: ExcelJS.Worksheet, firstRow: number, lastRow: number, cols: number, moneyCols: number[], dateCols: number[]): void {
-  for (let r = firstRow; r <= lastRow; r++) {
-    const row = ws.getRow(r);
-    const zebra = (r - firstRow) % 2 === 1;
-    for (let c = 1; c <= cols; c++) {
-      const cell = row.getCell(c);
-      cell.font = { name: FONT, size: SIZE };
-      cell.border = box;
-      if (zebra) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
-      if (dateCols.includes(c)) {
-        cell.numFmt = DATE_FMT;
-        cell.alignment = { horizontal: 'center' };
-      } else if (moneyCols.includes(c)) {
-        cell.numFmt = MONEY;
-        cell.alignment = { horizontal: 'right' };
-      } else if (typeof cell.value === 'number') {
-        cell.numFmt = '#,##0';
-        cell.alignment = { horizontal: 'right' };
-      } else {
-        cell.alignment = { horizontal: 'left', vertical: 'top' };
-      }
-    }
-  }
-}
-
-/** A bold total row under the table, so the figures foot without a formula. */
-function addTotalRow(ws: ExcelJS.Worksheet, cols: number, values: (string | number | null)[], moneyCols: number[]): void {
-  const row = ws.addRow(values);
-  for (let c = 1; c <= cols; c++) {
-    const cell = row.getCell(c);
-    cell.font = { name: FONT, size: SIZE, bold: true };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: AMBER } };
-    cell.border = box;
-    if (moneyCols.includes(c)) {
-      cell.numFmt = MONEY;
-      cell.alignment = { horizontal: 'right' };
-    }
-  }
-}
-
-function fitColumns(ws: ExcelJS.Worksheet, headerRow: number, cols: number, min = 10, max = 42): void {
-  for (let c = 1; c <= cols; c++) {
-    let width = String(ws.getRow(headerRow).getCell(c).value ?? '').length + 4;
-    ws.eachRow({ includeEmpty: false }, (row, n) => {
-      if (n <= headerRow) return;
-      const v = row.getCell(c).value;
-      const len = typeof v === 'number' ? 12 : String(v ?? '').length + 2;
-      if (len > width) width = len;
-    });
-    ws.getColumn(c).width = Math.max(min, Math.min(max, width));
-  }
-}
-
 /** The "Challans" sheet — title, the filters it was run with, then the table. */
 function addChallansSheet(wb: ExcelJS.Workbook, rows: ChallanDto[], meta: ChallanReportMeta, title: string): void {
   const headers = ['Date', 'Challan No', 'Party', 'Category', 'B (₹)', 'C (₹)', 'GST (₹)', 'TDS (₹)', 'Total (₹)', 'Due', 'Status', 'Remarks'];
   const cols = headers.length;
   const ws = wb.addWorksheet('Challans', { views: [{ state: 'frozen', ySplit: 8 }] });
 
-  // Title band.
-  ws.mergeCells(1, 1, 1, cols);
-  const t = ws.getCell(1, 1);
-  t.value = title;
-  t.font = { name: FONT, size: 16, bold: true, color: { argb: 'FFFFFFFF' } };
-  t.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
-  t.alignment = { vertical: 'middle', horizontal: 'left' };
-  ws.getRow(1).height = 28;
-
-  // The filters this was run with — a saved file that cannot say what it covers
-  // is a file nobody can trust six months later.
-  const metaRows: [string, string][] = [
-    ['Status', meta.status],
-    ['Category', meta.category],
-    ['Date Range', meta.dateRange],
-    ['Search', meta.search],
-  ];
-  metaRows.forEach(([k, v], i) => {
-    const r = ws.getRow(2 + i);
-    r.getCell(1).value = k;
-    r.getCell(1).font = { name: FONT, size: SIZE, bold: true, color: { argb: 'FF555555' } };
-    r.getCell(2).value = v;
-    r.getCell(2).font = { name: FONT, size: SIZE };
-  });
-  ws.mergeCells(6, 1, 6, cols);
-  const gen = ws.getCell(6, 1);
-  gen.value = `Generated ${new Date().toLocaleString('en-IN')}   ·   ${rows.length} challan(s)`;
-  gen.font = { name: FONT, size: 10, italic: true, color: { argb: 'FF555555' } };
-
+  addTitle(ws, cols, title);
+  const headerRow = addMetaBlock(
+    ws,
+    cols,
+    [
+      ['Status', meta.status],
+      ['Category', meta.category],
+      ['Date Range', meta.dateRange],
+      ['Search', meta.search],
+    ],
+    `Generated ${new Date().toLocaleString('en-IN')}   ·   ${rows.length} challan(s)`,
+  );
+  void headerRow; // the sheet is frozen at 8, which is where the block lands
   ws.addRow([]); // spacer, row 7
   ws.addRow(headers); // row 8
   styleHeader(ws, 8, cols);
@@ -242,9 +140,7 @@ export async function buildChallanReport(
   meta: ChallanReportMeta,
   kind: 'detailed' | 'summary',
 ): Promise<Buffer> {
-  const wb = new ExcelJS.Workbook();
-  wb.creator = 'OMS';
-  wb.created = new Date();
+  const wb = newWorkbook();
   /*
    * The two names are the wrong way round in the wire contract and stay that
    * way: `detailed` is the challan LIST and `summary` is the list WITH its line
@@ -253,5 +149,5 @@ export async function buildChallanReport(
   const isItemised = kind === 'summary';
   addChallansSheet(wb, rows, meta, isItemised ? 'SALES CHALLANS — DETAILED VIEW' : 'SALES CHALLANS — CHALLAN SUMMARY');
   if (isItemised) addItemsSheet(wb, rows);
-  return Buffer.from((await wb.xlsx.writeBuffer()) as ArrayBuffer);
+  return toBuffer(wb);
 }

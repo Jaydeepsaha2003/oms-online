@@ -17,7 +17,7 @@ import { toast } from 'sonner';
 import type { LedgerEntryDto, PendingInvoiceRow, SavePaymentResult } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
-import { getApiErrorMessage } from '@/lib/api';
+import { downloadFilePost, getApiErrorMessage } from '@/lib/api';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { Button } from '@/components/ui/button';
@@ -31,7 +31,6 @@ import { useConfirm } from '@/components/common/confirm';
 import { useCustomers } from '@/features/customers/use-customers';
 import { useAgents } from '@/features/agents/use-agents';
 import { useActiveBankAccounts, useChequeOptions, useDeletePayment, useEditPayment, usePaymentContext, usePaymentLedger, useSavePayment } from './use-account';
-import { exportPendingInvoices } from './payment-pending-export';
 
 const inr = (v: number | null | undefined) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
 const money = (v: number | null | undefined) => `₹ ${inr(v)}`;
@@ -450,17 +449,49 @@ export function PaymentPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [ownerChosen]);
 
-  const exportPending = () => {
+  /**
+   * Built on the SERVER, like the challan reports.
+   *
+   * The browser copy used SheetJS, which cannot write a font, a fill or a
+   * border in its free build, so the file was a bare grid. The rows go UP
+   * already computed — the Adj Amt column is the allocation being composed on
+   * screen and has not been saved, so no query could reproduce it — and the
+   * formatted workbook comes back.
+   */
+  const exportPending = async () => {
     if (!invoices.length) return toast.error('No invoices to export.');
-    exportPendingInvoices(invoices, {
-      owner: ownerLabel,
-      ownerKind: isAgent ? 'Agent' : 'Party',
-      payMode,
-      asOf: prettyDate(new Date(recDate).toISOString()),
-      bucket,
-      showParty: isAgent,
-      adjByInv: preview.adjByInv,
-    });
+    try {
+      await downloadFilePost(
+        '/payments/pending-report.xlsx',
+        {
+          owner: ownerLabel,
+          ownerKind: isAgent ? 'Agent' : 'Party',
+          payMode,
+          asOf: prettyDate(new Date(recDate).toISOString()),
+          bucket,
+          showParty: isAgent,
+          rows: invoices.map((r) => {
+            const amt = bucket === 'BANK' ? r.bankBal : r.cashBal;
+            const adj = preview.adjByInv.get(r.invNo) ?? 0;
+            return {
+              invDate: r.invDate,
+              invNo: r.invNo,
+              customerName: r.customerName,
+              transaction: r.transaction,
+              dueDate: r.dueDate,
+              dueType: r.dueType,
+              amt,
+              adj,
+              bal: Math.max(0, amt - adj),
+              dueDays: r.dueDays,
+            };
+          }),
+        },
+        'Pending_Invoices.xlsx',
+      );
+    } catch (e) {
+      toast.error(getApiErrorMessage(e, 'Could not build the export'));
+    }
   };
 
   const needsBank = payMode === 'BANK' || payMode === 'CHEQUE';

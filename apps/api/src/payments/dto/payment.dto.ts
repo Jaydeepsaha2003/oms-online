@@ -1,4 +1,4 @@
-import { IsArray, IsIn, IsInt, IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ADJ_MODES, PAY_MODES, TAKE_ACC_ON } from '@oms/shared';
 import { PaginationDto } from '../../common/dto/pagination.dto';
@@ -46,4 +46,39 @@ export class EditPaymentDto {
   @Type(() => Number) @IsNumber() receiptAmt!: number;
   @IsString() recDate!: string;
   @IsOptional() @IsString() remarks?: string | null;
+}
+
+/** One line of the Pending Invoices export, exactly as the screen showed it. */
+export class PendingReportRowDto {
+  @IsOptional() @IsString() invDate?: string | null;
+  @IsString() invNo!: string;
+  @IsOptional() @IsString() customerName?: string;
+  @IsOptional() @IsString() transaction?: string;
+  @IsOptional() @IsString() dueDate?: string | null;
+  @IsOptional() @IsString() dueType?: string;
+  @IsNumber() amt!: number;
+  @IsNumber() adj!: number;
+  @IsNumber() bal!: number;
+  @IsOptional() @IsString() dueDays?: string;
+}
+
+/**
+ * The Pending Invoices export.
+ *
+ * The rows are POSTED rather than re-queried because the ADJ AMT column is the
+ * allocation the user is composing on screen and has not saved — there is no
+ * query that could reproduce it.
+ */
+export class PendingReportDto {
+  @IsString() owner!: string;
+  @IsString() ownerKind!: string;
+  @IsOptional() @IsString() payMode?: string;
+  @IsString() asOf!: string;
+  @IsString() bucket!: string;
+  @IsOptional() @IsBoolean() showParty?: boolean;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PendingReportRowDto)
+  rows!: PendingReportRowDto[];
 }

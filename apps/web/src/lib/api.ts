@@ -188,6 +188,29 @@ export async function downloadFile(
   URL.revokeObjectURL(blobUrl);
 }
 
+/**
+ * Download a file produced by a POST.
+ *
+ * Some reports are built from state that only exists on screen — the Pending
+ * Invoices export carries the allocation the user is composing — so the data
+ * goes UP and the file comes back, which a GET cannot express.
+ */
+export async function downloadFilePost(url: string, body: unknown, fallbackName?: string): Promise<void> {
+  const res = await api.post(url, body, { responseType: 'blob' });
+  const disposition = res.headers['content-disposition'] as string | undefined;
+  const match = disposition?.match(/filename="?([^"]+)"?/);
+  const filename = match?.[1] ?? fallbackName ?? 'download';
+
+  const blobUrl = URL.createObjectURL(res.data as Blob);
+  const link = document.createElement('a');
+  link.href = blobUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(blobUrl);
+}
+
 /** The already-saved record a 409 duplicate conflict pointed at, or null when
  *  this error is anything else. Lets a caller offer "open the existing one"
  *  instead of just reporting a failure. */

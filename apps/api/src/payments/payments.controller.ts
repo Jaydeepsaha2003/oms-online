@@ -1,11 +1,13 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
+import { buildPendingInvoicesReport } from './pending-report.builder';
 import { PaymentsService } from './payments.service';
-import { EditPaymentDto, LedgerQueryDto, PaymentContextQueryDto, SavePaymentDto } from './dto/payment.dto';
+import { EditPaymentDto, LedgerQueryDto, PaymentContextQueryDto, PendingReportDto, SavePaymentDto } from './dto/payment.dto';
 
 const R = RESOURCES.PAYMENT;
 
@@ -41,6 +43,44 @@ export class PaymentsController {
   @Permissions(perm(R, ACTIONS.VIEW))
   ledger(@Query() query: LedgerQueryDto) {
     return this.payments.ledger(query);
+  }
+
+  /**
+   * The Pending Invoices export, formatted.
+   *
+   * A POST because the rows carry the allocation the user is composing on
+   * screen — unsaved working the server has no way to re-derive. Nothing is
+   * written; this only turns what was on the screen into a styled workbook.
+   */
+  @Post('pending-report.xlsx')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  async pendingReport(@Body() dto: PendingReportDto, @Res() res: Response) {
+    const buffer = await buildPendingInvoicesReport({
+      owner: dto.owner,
+      ownerKind: dto.ownerKind === 'Agent' ? 'Agent' : 'Party',
+      payMode: dto.payMode ?? '',
+      asOf: dto.asOf,
+      bucket: dto.bucket === 'CASH' ? 'CASH' : 'BANK',
+      showParty: !!dto.showParty,
+      rows: (dto.rows ?? []).map((r) => ({
+        invDate: r.invDate ?? null,
+        invNo: r.invNo,
+        customerName: r.customerName ?? '',
+        transaction: r.transaction ?? '',
+        dueDate: r.dueDate ?? null,
+        dueType: r.dueType ?? '',
+        amt: r.amt,
+        adj: r.adj,
+        bal: r.bal,
+        dueDays: r.dueDays ?? '',
+      })),
+    });
+    const owner = dto.owner.replace(/[\/:*?"<>|]/g, '-').replace(/\s+/g, '_').slice(0, 30);
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="Pending_Invoices_${owner}-${new Date().toISOString().slice(0, 10)}.xlsx"`,
+    });
+    res.send(buffer);
   }
 
   /** Save a receipt — runs the full legacy allocation waterfall in one txn. */
