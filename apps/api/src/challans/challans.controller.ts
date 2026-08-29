@@ -4,6 +4,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { Audit } from '../common/decorators/audit.decorator';
+import { buildChallanReport } from './challan-report.builder';
 import { ChallansService } from './challans.service';
 import {
   ChallanQueryDto,
@@ -77,6 +78,45 @@ export class ChallansController {
   @Permissions(perm(R, ACTIONS.VIEW))
   exportAll(@Query() query: ChallanQueryDto) {
     return this.challans.exportAll(query);
+  }
+
+  /**
+   * The two Excel reports, built and STYLED here.
+   *
+   * They used to be assembled in the browser with SheetJS, whose free build
+   * cannot write a font, a fill or a border — so they arrived as bare grids.
+   * The filters are the same ones the list is showing; the meta strings are
+   * passed through so the file's header block says what it covers.
+   */
+  @Get('report.xlsx')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  async report(
+    @Query() query: ChallanQueryDto,
+    @Query('kind') kind: string,
+    @Query('metaStatus') metaStatus: string | undefined,
+    @Query('metaCategory') metaCategory: string | undefined,
+    @Query('metaDateRange') metaDateRange: string | undefined,
+    @Query('metaSearch') metaSearch: string | undefined,
+    @Res() res: Response,
+  ) {
+    const itemised = kind === 'summary';
+    const { items } = await this.challans.exportAll(query);
+    const buffer = await buildChallanReport(
+      items,
+      {
+        status: metaStatus || 'All',
+        category: metaCategory || 'All',
+        dateRange: metaDateRange || 'All',
+        search: metaSearch || '—',
+      },
+      itemised ? 'summary' : 'detailed',
+    );
+    const stamp = new Date().toISOString().slice(0, 10);
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="Challans-${itemised ? 'Detailed' : 'Summary'}-${stamp}.xlsx"`,
+    });
+    res.send(buffer);
   }
 
   @Get('item-names')

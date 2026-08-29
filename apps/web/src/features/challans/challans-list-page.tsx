@@ -46,8 +46,8 @@ import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/com
 import { fetchAllChallans, useChallans, useChallanSummary, useDeleteChallan, useUpdateChallanStatus } from './use-challans';
 import { PRESETS, presetRange } from './date-presets';
 import { ChallanAnalyticsDialog } from './challan-analytics-dialog';
+import { downloadFile } from '@/lib/api';
 import { ReportDownloadOverlay, type ReportPhase } from './report-download-overlay';
-import { exportDetailedReport, exportSummaryReport, type ReportMeta } from './challan-report';
 
 const money = (v: number | null) => `₹ ${(v ?? 0).toLocaleString('en-IN')}`;
 
@@ -237,16 +237,28 @@ export function ChallansListPage() {
         return;
       }
       setReport({ kind, phase: 'building', count: rows.length });
-      const meta: ReportMeta = {
-        status: status || 'All',
-        category: 'All',
-        dateRange: dateFrom || dateTo ? `${dateFrom ? formatDate(dateFrom) : '…'} to ${dateTo ? formatDate(dateTo) : '…'}` : 'All',
-        search: search || '—',
-      };
+      /*
+       * Built on the SERVER now.
+       *
+       * The browser copy used SheetJS, whose free build cannot write a font, a
+       * fill or a border, so no amount of asking produced a formatted file.
+       * The same filters go up as query parameters, along with the wording of
+       * the filter block so the saved file says what it covers.
+       */
+      const params = new URLSearchParams({
+        ...(Object.fromEntries(
+          Object.entries(query).filter(([, v]) => v !== undefined && v !== '' && v !== null),
+        ) as Record<string, string>),
+        kind,
+        metaStatus: status || 'All',
+        metaCategory: 'All',
+        metaDateRange:
+          dateFrom || dateTo ? `${dateFrom ? formatDate(dateFrom) : '…'} to ${dateTo ? formatDate(dateTo) : '…'}` : 'All',
+        metaSearch: search || '—',
+      });
       // brief pause so the download animation registers before the file save dialog
       await new Promise((r) => setTimeout(r, 650));
-      if (kind === 'detailed') exportDetailedReport(rows, meta);
-      else exportSummaryReport(rows, meta);
+      await downloadFile(`/challans/report.xlsx?${params.toString()}`, `Challans-${kind === 'summary' ? 'Detailed' : 'Summary'}.xlsx`);
       // Stay open on "done" so the user can dismiss it themselves (X, Close, or backdrop).
       setReport({ kind, phase: 'done', count: rows.length });
     } catch {
