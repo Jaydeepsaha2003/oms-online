@@ -79,3 +79,6 @@ certs/
 
 # Rendered PDF design previews (scripts/render-rate-list-pdf.mjs) — build artefacts
 .design-preview*/
+
+# The plan fix-combinations.cmd writes out for checking before it converts.
+combination-plan.xlsx
