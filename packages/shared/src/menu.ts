@@ -519,6 +519,13 @@ export const MENU: MenuNode[] = [
         permission: perm(RESOURCES.TALLY_RECON, ACTIONS.VIEW),
       },
       {
+        id: 'bank-statement',
+        label: 'Bank Statement Recon',
+        to: '/account/bank-statement',
+        icon: 'Landmark',
+        permission: perm(RESOURCES.BANK_STATEMENT, ACTIONS.VIEW),
+      },
+      {
         id: 'manage-cheques',
         label: 'Manage Cheques',
         to: '/account/cheques',

@@ -2199,3 +2199,106 @@ model NotificationLog {
   @@index([sentAt])
   @@map("notification_log")
 }
+
+/// One uploaded bank statement, reconciled against OMS receipts.
+///
+/// A run is a saved WORKING, not a posting: it holds the credit lines and every
+/// party assignment the user has made, and touches nothing until Process. That
+/// is what makes the screen safe to leave and come back to.
+model BankStatementRun {
+  id         Int      @id @default(autoincrement())
+  fileName   String
+  /// Our receiving bank account, as named in Bank Accounts. Carried onto every
+  /// receipt Process creates, so the money lands in the right account.
+  bankName   String?
+  /// The range the user reconciled. Lines outside it are dropped at upload.
+  fromDate   DateTime
+  toDate     DateTime
+  uploadedAt DateTime @default(now())
+  userName   String?
+
+  /// DRAFT until Process runs, PROCESSED after. A processed run is read-only.
+  status      String    @default("DRAFT")
+  processedAt DateTime?
+
+  /// Headline counters, so the runs list needn't re-aggregate every row.
+  rowCount       Int   @default(0)
+  creditTotal    Float @default(0)
+  matchedCount   Int   @default(0)
+  partialCount   Int   @default(0)
+  unmatchedCount Int   @default(0)
+  noPartyCount   Int   @default(0)
+  postedCount    Int   @default(0)
+  ignoredCount   Int   @default(0)
+
+  rows BankStatementRow[]
+
+  @@index([uploadedAt])
+  @@map("bank_statement_run")
+}
+
+/// One CREDIT line of a statement. Debits are never stored — money going out is
+/// not a customer receipt, so it has nothing to reconcile against.
+model BankStatementRow {
+  id    Int              @id @default(autoincrement())
+  runId Int
+  run   BankStatementRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  /// 1-based line number in the uploaded sheet, so a row can be found again in
+  /// the original file when someone disputes it.
+  rowNo     Int
+  txnDate   DateTime
+  narration String
+  refNo     String?
+  /// Always positive — this side of the statement is money in.
+  amount    Float
+
+  customerId   Int?
+  customerName String?
+  /// RECEIPT | ALIAS | NARRATION | MANUAL — how the party was decided, so an
+  /// automatic guess is never mistaken for something a human confirmed.
+  partySource  String?
+
+  /// MATCHED | PARTIAL | UNMATCHED | NO_PARTY | IGNORED | POSTED
+  status        String  @default("NO_PARTY")
+  /// The OMS receipt REF IDs this line was paired with, comma-separated.
+  matchedRefs   String?
+  matchedAmount Float   @default(0)
+  note          String?
+
+  /// Set once Process has created a receipt from this line.
+  postedRef String?
+  postedAt  DateTime?
+
+  @@index([runId])
+  @@index([runId, status])
+  @@index([customerId])
+  @@map("bank_statement_row")
+}
+
+/// A narration fragment the user has tied to a party, so the next upload
+/// recognises the same payer without being told again.
+model BankStatementAlias {
+  id           Int      @id @default(autoincrement())
+  /// Uppercased narration token(s) — matched against a new line's narration.
+  fragment     String   @unique
+  customerId   Int
+  customerName String
+  createdAt    DateTime @default(now())
+  createdBy    String?
+
+  @@map("bank_statement_alias")
+}
+
+/// The column layout last used for a bank account, so the mapping step is
+/// answered once per bank rather than once per upload.
+model BankStatementColumnPreset {
+  id        Int      @id @default(autoincrement())
+  /// Bank account name, or '' for the mapping used when no account was chosen.
+  bankName  String   @unique
+  /// BankStatementColumnMap as JSON.
+  mapJson   String
+  updatedAt DateTime @updatedAt
+
+  @@map("bank_statement_column_preset")
+}

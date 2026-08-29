@@ -46,6 +46,7 @@ import { DiscountsModule } from './discounts/discounts.module';
 import { NotesModule } from './notes/notes.module';
 import { PartyLedgerModule } from './party-ledger/party-ledger.module';
 import { DaybookModule } from './daybook/daybook.module';
+import { BankStatementModule } from './bank-statement/bank-statement.module';
 import { TallyReconModule } from './tally-recon/tally-recon.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { ReportsModule } from './reports/reports.module';
@@ -107,6 +108,7 @@ import { AgentCommissionModule } from './agent-commission/agent-commission.modul
     PartyLedgerModule,
     DaybookModule,
     TallyReconModule,
+    BankStatementModule,
     AnalyticsModule,
     ReportsModule,
     UploadsModule,

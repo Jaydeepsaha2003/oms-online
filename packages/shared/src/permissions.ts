@@ -102,6 +102,7 @@ export const RESOURCES = {
   DAYBOOK: 'daybook',
   /** Accounts → Reconciliation with Tally: upload a register, compare, fix gaps. */
   TALLY_RECON: 'tallyrecon',
+  BANK_STATEMENT: 'bankstatement',
   REPORT: 'report',
   USER: 'user',
   ROLE: 'role',
@@ -277,6 +278,15 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
     label: 'Tally Reconciliation',
     group: 'Accounts',
     actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.DELETE, ACTIONS.EXPORT],
+  },
+  {
+    resource: RESOURCES.BANK_STATEMENT,
+    // CREATE uploads a statement and edits the working; UPDATE is the one that
+    // posts receipts to the ledger, so it can be withheld from whoever does the
+    // matching without stopping them doing it.
+    label: 'Bank Statement Recon',
+    group: 'Accounts',
+    actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE],
   },
 
   { resource: RESOURCES.PRODUCT, label: 'Products', group: 'Catalog', actions: STANDARD },

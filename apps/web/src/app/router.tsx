@@ -56,6 +56,7 @@ const PaymentPage = lazy(() => import('@/features/account/payment-page').then((m
 const AdvancesPage = lazy(() => import('@/features/account/advances-page').then((m) => ({ default: m.AdvancesPage })));
 const SalesDiscountPage = lazy(() => import('@/features/account/sales-discount-page').then((m) => ({ default: m.SalesDiscountPage })));
 const NotesPage = lazy(() => import('@/features/account/notes-page').then((m) => ({ default: m.NotesPage })));
+const BankStatementPage = lazy(() => import('@/features/account/bank-statement-page').then((m) => ({ default: m.BankStatementPage })));
 const NoteBillPage = lazy(() => import('@/features/account/note-bill-page').then((m) => ({ default: m.NoteBillPage })));
 const PartyLedgerPage = lazy(() => import('@/features/account/party-ledger-page').then((m) => ({ default: m.PartyLedgerPage })));
 const AgentSettlementPage = lazy(() => import('@/features/agent-commission/agent-settlement-page').then((m) => ({ default: m.AgentSettlementPage })));
@@ -464,6 +465,14 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.NOTE, ACTIONS.VIEW)}>
                 <NotesPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/account/bank-statement"
+            element={
+              <RequirePermission permission={perm(RESOURCES.BANK_STATEMENT, ACTIONS.VIEW)}>
+                <BankStatementPage />
               </RequirePermission>
             }
           />

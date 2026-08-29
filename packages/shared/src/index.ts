@@ -42,6 +42,7 @@ export * from './types/analytics';
 export * from './types/report';
 export * from './types/party-list';
 export * from './types/discount';
+export * from './types/bank-statement';
 export * from './types/note';
 export * from './types/notification';
 export * from './types/approval';
