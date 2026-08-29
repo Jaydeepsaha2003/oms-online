@@ -95,6 +95,7 @@ export class ChallansController {
     @Query('kind') kind: string,
     @Query('metaStatus') metaStatus: string | undefined,
     @Query('metaCategory') metaCategory: string | undefined,
+    @Query('metaAgent') metaAgent: string | undefined,
     @Query('metaDateRange') metaDateRange: string | undefined,
     @Query('metaSearch') metaSearch: string | undefined,
     @Res() res: Response,
@@ -106,6 +107,7 @@ export class ChallansController {
       {
         status: metaStatus || 'All',
         category: metaCategory || 'All',
+        agent: metaAgent || 'All',
         dateRange: metaDateRange || 'All',
         search: metaSearch || '—',
       },

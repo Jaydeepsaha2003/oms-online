@@ -46,6 +46,7 @@ import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/com
 import { fetchAllChallans, useChallans, useChallanSummary, useDeleteChallan, useUpdateChallanStatus } from './use-challans';
 import { PRESETS, presetRange } from './date-presets';
 import { ChallanAnalyticsDialog } from './challan-analytics-dialog';
+import { NativeSelect } from '@/components/common/combo';
 import { downloadFile } from '@/lib/api';
 import { ReportDownloadOverlay, type ReportPhase } from './report-download-overlay';
 
@@ -76,6 +77,7 @@ interface ChallanFilters {
   dateTo: string;
   preset: string;
   status: string;
+  agent: string;
   page: number;
 }
 const loadFilters = (): Partial<ChallanFilters> => {
@@ -105,6 +107,7 @@ const filtersFromParams = (p: URLSearchParams): Partial<ChallanFilters> => {
     dateTo: get('to'),
     preset: get('preset'),
     status: get('status'),
+    agent: get('agent'),
   };
   return Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined)) as Partial<ChallanFilters>;
 };
@@ -147,12 +150,13 @@ export function ChallansListPage() {
   const [dateTo, setDateTo] = useState(() => initialFilters.dateTo ?? defaultFy.to);
   const [preset, setPreset] = useState(() => initialFilters.preset ?? DEFAULT_PRESET);
   const [status, setStatus] = useState(() => initialFilters.status ?? '');
+  const [agent, setAgent] = useState(() => initialFilters.agent ?? '');
   const { page, setPage, pageSize, setPageSize } = usePageSize('challans-list', undefined, 1);
   // Phones: date range / quick range / status live behind this Filter icon.
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [dateOpen, setDateOpen] = useState(false);
   const dateActive = !!(dateFrom || dateTo || preset);
-  const activeFilterCount = (dateActive ? 1 : 0) + (status ? 1 : 0);
+  const activeFilterCount = (dateActive ? 1 : 0) + (status ? 1 : 0) + (agent ? 1 : 0);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -175,7 +179,7 @@ export function ChallansListPage() {
     const target = listUrl();
     if (`${location.pathname}${location.search}` !== target) navigate(target, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, dateFrom, dateTo, preset, status]);
+  }, [search, dateFrom, dateTo, preset, status, agent]);
 
   /** This list, as a URL — so a page we hand off to can send the user back to
    *  exactly what they were looking at rather than to a default list. */
@@ -186,6 +190,7 @@ export function ChallansListPage() {
     if (dateTo) p.set('to', dateTo);
     if (preset) p.set('preset', preset);
     if (status) p.set('status', status);
+    if (agent) p.set('agent', agent);
     const qs = p.toString();
     return qs ? `/challans?${qs}` : '/challans';
   };
@@ -204,6 +209,7 @@ export function ChallansListPage() {
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
     status: status || undefined,
+    agent: agent || undefined,
   };
   const { data, isLoading } = useChallans(query);
   // KPI totals cover the whole filtered set, not the current page — so they only
@@ -214,6 +220,7 @@ export function ChallansListPage() {
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
     status: status || undefined,
+    agent: agent || undefined,
   });
   const updateStatus = useUpdateChallanStatus();
   const del = useDeleteChallan();
@@ -252,6 +259,7 @@ export function ChallansListPage() {
         kind,
         metaStatus: status || 'All',
         metaCategory: 'All',
+        metaAgent: agent || 'All',
         metaDateRange:
           dateFrom || dateTo ? `${dateFrom ? formatDate(dateFrom) : '…'} to ${dateTo ? formatDate(dateTo) : '…'}` : 'All',
         metaSearch: search || '—',
@@ -289,10 +297,11 @@ export function ChallansListPage() {
     setDateTo(defaultFy.to);
     setPreset(DEFAULT_PRESET);
     setStatus('');
+    setAgent('');
     setPage(1);
   };
   const isDefaultFy = preset === DEFAULT_PRESET && dateFrom === defaultFy.from && dateTo === defaultFy.to;
-  const hasFilters = !!(search || status || !isDefaultFy);
+  const hasFilters = !!(search || status || agent || !isDefaultFy);
 
   const setRowStatus = (c: ChallanDto, next: 'CONFIRMED' | 'CANCELLED') =>
     updateStatus.mutate(
@@ -539,6 +548,27 @@ export function ChallansListPage() {
     );
   };
 
+  /**
+   * Agent filter.
+   *
+   * A challan records the party, not its agent, so this asks the server to
+   * resolve the agent's customers and match on those — see `agentScope`. The
+   * options come from the customer master unfiltered, so picking one never
+   * empties the list it was chosen from.
+   */
+  const agentSelect = (
+    <NativeSelect
+      value={agent}
+      onChange={(v) => {
+        setAgent(v);
+        setPage(1);
+      }}
+      options={['', ...(summary?.agents ?? [])]}
+      placeholder="All agents"
+      className={cn(CONTROL, 'font-medium', agent && CONTROL_ON)}
+    />
+  );
+
   /** Status segmented control — three states, so pills beat a dropdown. */
   const statusPills = (
     <div className="flex items-center gap-1 rounded-[4px] border border-amber-300 bg-amber-50/40 p-0.5">
@@ -697,6 +727,8 @@ export function ChallansListPage() {
 
           <div className="hidden sm:block">{statusPills}</div>
 
+          <div className="hidden w-44 sm:block">{agentSelect}</div>
+
           <Popover open={dateOpen} onOpenChange={setDateOpen}>
             <PopoverTrigger asChild>
               <Button
@@ -805,6 +837,10 @@ export function ChallansListPage() {
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Status</Label>
               {statusPills}
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Agent</Label>
+              {agentSelect}
             </div>
             {datePanel}
           </div>

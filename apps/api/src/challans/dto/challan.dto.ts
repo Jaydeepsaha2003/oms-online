@@ -22,6 +22,8 @@ export class ChallanQueryDto extends PaginationDto {
   @IsOptional() @IsString() dateTo?: string;
   /** Restrict to one customer category (exact, from the master). */
   @IsOptional() @IsString() category?: string;
+  /** Restrict to the parties of one agent (exact, from the customer master). */
+  @IsOptional() @IsString() agent?: string;
 }
 
 export class UpdateChallanStatusDto {

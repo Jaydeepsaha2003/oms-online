@@ -123,6 +123,13 @@ export type ChallanQuery = PaginationQuery & {
   dateTo?: string;
   /** Restrict to one customer category (exact, from the master). */
   category?: string;
+  /**
+   * Restrict to the parties of one agent (exact, from the customer master).
+   *
+   * A challan records the party, not the agent, so this resolves to that
+   * agent's customers and matches those — see `agentScope` in the service.
+   */
+  agent?: string;
 };
 export type ChallanList = Paginated<ChallanDto>;
 
@@ -138,6 +145,12 @@ export interface ChallanSummary {
   /** Status split across the filtered set (not just the current page). */
   confirmed: number;
   cancelled: number;
+  /**
+   * Every agent named on the customer master, UNFILTERED — the options for the
+   * list's agent dropdown. Unfiltered on purpose: narrowing it to the current
+   * result set would make an agent disappear the moment you picked them.
+   */
+  agents: string[];
 }
 
 /** Rich analytics roll-up for the Challans "Show KPI" modal. Honours the same

@@ -28,6 +28,7 @@ import {
 export interface ChallanReportMeta {
   status: string;
   category: string;
+  agent: string;
   dateRange: string;
   search: string;
 }
@@ -47,7 +48,14 @@ function dueText(due: string | null | undefined): string {
 function addChallansSheet(wb: ExcelJS.Workbook, rows: ChallanDto[], meta: ChallanReportMeta, title: string): void {
   const headers = ['Date', 'Challan No', 'Party', 'Category', 'B (₹)', 'C (₹)', 'GST (₹)', 'TDS (₹)', 'Total (₹)', 'Due', 'Status', 'Remarks'];
   const cols = headers.length;
-  const ws = wb.addWorksheet('Challans', { views: [{ state: 'frozen', ySplit: 8 }] });
+  /*
+   * The header row is computed, not counted.
+   *
+   * These were all the literal 8 that four meta rows happened to produce, so
+   * adding a fifth (Agent) slid the table one row down while the styling,
+   * the freeze and the autofilter stayed pointing at the old line.
+   */
+  const ws = wb.addWorksheet('Challans');
 
   addTitle(ws, cols, title);
   const headerRow = addMetaBlock(
@@ -56,15 +64,16 @@ function addChallansSheet(wb: ExcelJS.Workbook, rows: ChallanDto[], meta: Challa
     [
       ['Status', meta.status],
       ['Category', meta.category],
+      ['Agent', meta.agent],
       ['Date Range', meta.dateRange],
       ['Search', meta.search],
     ],
     `Generated ${new Date().toLocaleString('en-IN')}   ·   ${rows.length} challan(s)`,
   );
-  void headerRow; // the sheet is frozen at 8, which is where the block lands
-  ws.addRow([]); // spacer, row 7
-  ws.addRow(headers); // row 8
-  styleHeader(ws, 8, cols);
+  ws.addRow([]); // spacer between the meta block and the table
+  ws.addRow(headers);
+  ws.views = [{ state: 'frozen', ySplit: headerRow }];
+  styleHeader(ws, headerRow, cols);
 
   for (const r of rows) {
     ws.addRow([
@@ -83,7 +92,7 @@ function addChallansSheet(wb: ExcelJS.Workbook, rows: ChallanDto[], meta: Challa
     ]);
   }
   const money = [5, 6, 7, 8, 9];
-  styleBody(ws, 9, 8 + rows.length, cols, money, [1]);
+  styleBody(ws, headerRow + 1, headerRow + rows.length, cols, money, [1]);
 
   const sum = (pick: (r: ChallanDto) => number | null | undefined) => rows.reduce((s, r) => s + (pick(r) ?? 0), 0);
   addTotalRow(
@@ -93,8 +102,8 @@ function addChallansSheet(wb: ExcelJS.Workbook, rows: ChallanDto[], meta: Challa
     money,
   );
 
-  if (rows.length) ws.autoFilter = { from: { row: 8, column: 1 }, to: { row: 8, column: cols } };
-  fitColumns(ws, 8, cols);
+  if (rows.length) ws.autoFilter = { from: { row: headerRow, column: 1 }, to: { row: headerRow, column: cols } };
+  fitColumns(ws, headerRow, cols);
 }
 
 /** The "Challan Items" sheet — one row per line across every challan. */

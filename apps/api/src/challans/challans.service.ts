@@ -32,6 +32,9 @@ const n = (v: number | null | undefined) => (Number.isFinite(v as number) ? (v a
  *  persisting a TDS deduction alongside it. */
 const isScrapCategory = (category: string | null | undefined) => (category ?? '').toUpperCase() === 'SCRAP';
 
+/** The customers of the agent being filtered on, or null when there is none. */
+type AgentScope = { ids: number[]; names: string[] } | null;
+
 @Injectable()
 export class ChallansService {
   constructor(
@@ -397,7 +400,7 @@ export class ChallansService {
   }
 
   async findMany(q: ChallanQueryDto): Promise<Paginated<ChallanDto>> {
-    const where = this.listWhere(q);
+    const where = this.listWhere(q, await this.agentScope(q));
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.challan.findMany({ where, orderBy: [{ invDate: 'desc' }, { id: 'desc' }], skip: q.skip, take: q.pageSize, include: { items: true } }),
       this.prisma.challan.count({ where }),
@@ -407,16 +410,22 @@ export class ChallansService {
 
   /** KPI roll-up over the same filters as the list (ViewChallan KPI cards). */
   async summary(q: ChallanQueryDto): Promise<ChallanSummary> {
-    const where = this.listWhere(q);
+    const where = this.listWhere(q, await this.agentScope(q));
     // Aggregate over the whole filtered set (listWhere is filter-only — no
     // pagination), so the KPI rail reflects every matching challan, not the page.
-    const [agg, byStatus] = await Promise.all([
+    const [agg, byStatus, agentRows] = await Promise.all([
       this.prisma.challan.aggregate({
         where,
         _count: { _all: true },
         _sum: { total: true, b: true, c: true, tax: true, tds: true },
       }),
       this.prisma.challan.groupBy({ by: ['challanStatus'], where, _count: { _all: true } }),
+      // Unfiltered — see `agents` on ChallanSummary for why.
+      this.prisma.customer.findMany({
+        distinct: ['agentName'],
+        select: { agentName: true },
+        where: { agentName: { not: null } },
+      }),
     ]);
     const confirmed = byStatus.find((g) => g.challanStatus === 'CONFIRMED')?._count._all ?? 0;
     return {
@@ -429,13 +438,17 @@ export class ChallansService {
       confirmed,
       // Anything not CONFIRMED (CANCELLED, plus any legacy state) counts as cancelled.
       cancelled: agg._count._all - confirmed,
+      agents: agentRows
+        .map((r) => (r.agentName ?? '').trim())
+        .filter((x) => x.length > 0)
+        .sort((x, y) => x.localeCompare(y)),
     };
   }
 
   /** Rich analytics roll-up for the "Show KPI" modal — honours the list filters
    *  (search / date range / status) plus an optional customer category. */
   async analytics(q: ChallanQueryDto): Promise<ChallanAnalytics> {
-    const where = this.listWhere(q);
+    const where = this.listWhere(q, await this.agentScope(q));
 
     const [agg, byStatusRows, byCategoryRows, topPartyRows, overdueAgg, catRows, bagRows] = await Promise.all([
       this.prisma.challan.aggregate({
@@ -478,7 +491,7 @@ export class ChallansService {
       this.prisma.challanItem.findMany({
         where: { challan: where },
         select: { bags: true, challan: { select: { category: true } } },
-      }),
+      })
     ]);
 
     const count = agg._count._all;
@@ -558,7 +571,8 @@ export class ChallansService {
    * nothing to match it against.
    */
   private async tradingAccount(q: ChallanQueryDto): Promise<TradingAccount> {
-    const where = this.listWhere(q);
+    const scope = await this.agentScope(q);
+    const where = this.listWhere(q, scope);
     const goodsOf = (rows: { items: { amount: number | null }[] }[]) =>
       rows.reduce((sum, r) => sum + r.items.reduce((s, i) => s + (i.amount ?? 0), 0), 0);
 
@@ -623,7 +637,7 @@ export class ChallansService {
       // Always measured, whatever the status filter is — the UI states plainly
       // whether cancelled documents are inside these figures or outside them.
       this.prisma.challan.aggregate({
-        where: { AND: [this.listWhere({ ...q, status: undefined } as ChallanQueryDto), { challanStatus: 'CANCELLED' }] },
+        where: { AND: [this.listWhere({ ...q, status: undefined } as ChallanQueryDto, scope), { challanStatus: 'CANCELLED' }] },
         _count: { _all: true },
         _sum: { total: true },
       }),
@@ -685,7 +699,7 @@ export class ChallansService {
    *  Feeds the client-side "Get Report by" Excel exports (Detailed / Summary). */
   async exportAll(q: ChallanQueryDto): Promise<{ items: ChallanDto[] }> {
     const rows = await this.prisma.challan.findMany({
-      where: this.listWhere(q),
+      where: this.listWhere(q, await this.agentScope(q)),
       orderBy: [{ invDate: 'desc' }, { id: 'desc' }],
       include: { items: true },
     });
@@ -973,10 +987,38 @@ export class ChallansService {
     return { items, total, page: q.page, pageSize: q.pageSize, totalPages: Math.max(1, Math.ceil(total / q.pageSize)) };
   }
 
-  private listWhere(q: ChallanQueryDto): Prisma.ChallanWhereInput {
+  /**
+   * The parties belonging to one agent, or null when no agent is being filtered.
+   *
+   * A challan records the party it was raised for, not that party's agent — the
+   * agent lives on the customer master and can be reassigned — so filtering by
+   * agent means resolving their customers first and matching the challan
+   * against those. Read once per request and handed to `listWhere`, which stays
+   * synchronous because it is called from inside transaction arrays.
+   *
+   * Matched on id OR name: `customerId` is nullable and older challans carry
+   * only the name, so keying on either alone would quietly drop rows.
+   */
+  private async agentScope(q: ChallanQueryDto): Promise<AgentScope> {
+    const agent = q.agent?.trim();
+    if (!agent) return null;
+    const rows = await this.prisma.customer.findMany({
+      where: { agentName: agent },
+      select: { id: true, partyName: true },
+    });
+    return {
+      ids: rows.map((r) => r.id),
+      names: rows.map((r) => r.partyName ?? '').filter(Boolean),
+    };
+  }
+
+  private listWhere(q: ChallanQueryDto, scope: AgentScope = null): Prisma.ChallanWhereInput {
     const and: Prisma.ChallanWhereInput[] = [];
     if (q.status) and.push({ challanStatus: q.status.toUpperCase() });
     if (q.category?.trim()) and.push({ category: q.category.trim() });
+    if (scope) {
+      and.push({ OR: [{ customerId: { in: scope.ids } }, { customerName: { in: scope.names } }] });
+    }
     if (q.dateFrom) {
       const from = new Date(q.dateFrom);
       from.setHours(0, 0, 0, 0);
