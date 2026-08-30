@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsInt, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsArray, IsNumber, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 export class UpsertTransRateDto {
@@ -23,9 +23,18 @@ export class UpsertTransRateDto {
   @MaxLength(255)
   transportName?: string;
 
+  /*
+   * A number, not an integer.
+   *
+   * The service rounds with `toInt` (the column is an Int), and the bulk grid
+   * path has always done exactly that — so `12.5` saved as 13 from the grid and
+   * came back "Validation failed" from the single-rate form. Same value, two
+   * answers. It rounds in both places now; see the note on the column if paise
+   * are ever needed.
+   */
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
+  @IsNumber()
   rate?: number;
 }
 

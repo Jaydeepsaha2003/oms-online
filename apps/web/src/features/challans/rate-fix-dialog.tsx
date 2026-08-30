@@ -79,7 +79,11 @@ export function RateFixDialog({ open, onOpenChange, customerName, transportName,
         }
         for (const type of ['Freight', 'Packing'] as const) {
           if (!g.missing.includes(type)) continue;
-          await http.post('/trans-rates', {
+          // `transport-rates`, not `trans-rates`: the module is named
+          // trans-rates but its controller has always been @Controller(
+          // 'transport-rates'), so this posted to a route that does not exist
+          // and every freight/packing fix from here failed.
+          await http.post('/transport-rates', {
             customerName,
             category: g.pCategory,
             type: type.toUpperCase(),

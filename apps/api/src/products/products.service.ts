@@ -174,8 +174,7 @@ export class ProductsService {
     const before = await this.prisma.product.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('Product not found.');
     try {
-      const data = this.toData(dto);
-      const row = await this.prisma.product.update({ where: { id }, data });
+      const row = await this.prisma.product.update({ where: { id }, data: this.toUpdateData(dto) });
       await this.logRateChange(before, row, changedByName);
       await this.logFieldChanges(before, row, changedByName);
       return this.toDto(await this.ensureCode(row));
@@ -497,6 +496,30 @@ export class ProductsService {
       active: dto.active ?? true,
       showOnRateList: dto.showOnRateList ?? true,
     };
+  }
+
+  /**
+   * Only the fields the caller actually sent.
+   *
+   * `toData` fills in a default for everything, which is right for a create and
+   * destructive for a PATCH: `{ rate: 350 }` would go in and come back out as a
+   * product whose category, sub-category and name had been blanked and whose
+   * size, weight and pcs had been cleared. Reads the KEYS present rather than
+   * their values, so `rate: null` clears the rate and an absent `rate` leaves
+   * it alone.
+   */
+  private toUpdateData(dto: UpdateProductDto): Prisma.ProductUncheckedUpdateInput {
+    const data: Prisma.ProductUncheckedUpdateInput = {};
+    if ('category' in dto) data.category = (uc(dto.category) ?? '') as string;
+    if ('subCategory' in dto) data.subCategory = (uc(dto.subCategory) ?? '') as string;
+    if ('product' in dto) data.product = (uc(dto.product) ?? '') as string;
+    if ('size' in dto) data.size = dto.size ?? null;
+    if ('weight' in dto) data.weight = dto.weight ?? null;
+    if ('pcs' in dto) data.pcs = dto.pcs ?? null;
+    if ('rate' in dto) data.rate = dto.rate ?? null;
+    if ('active' in dto) data.active = dto.active ?? true;
+    if ('showOnRateList' in dto) data.showOnRateList = dto.showOnRateList ?? true;
+    return data;
   }
 
   private codeFor(id: number): string {
