@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useState } from 'react';
 
 /**
  * "Fit to width" preview scaling for phones. A fixed-width, large-font A4 document
@@ -9,6 +9,18 @@ import { useLayoutEffect, useRef, useState } from 'react';
  * (scale 1, no wrapper styling). The print/PDF path is unaffected: it re-clones
  * the document at its own width, independent of this on-screen transform.
  *
+ * The refs are CALLBACK refs, and that is load-bearing. Every caller renders a
+ * spinner until its data arrives, so on a cold open the document — and both
+ * elements this needs to measure — does not exist yet. With plain object refs
+ * the layout effect ran once against nulls, bailed out, attached no observer,
+ * and never ran again, because neither `designWidth` nor `enabled` had changed
+ * by the time the document finally mounted. Scale stayed 1 and the A4 document
+ * hung off the side of the screen. Reopening looked fine only because the query
+ * was cached by then and the document existed on the first render.
+ *
+ * Callback refs make the nodes state, so mounting them re-runs the effect and
+ * the measure happens whenever the document actually appears.
+ *
  * Usage:
  *   const fit = useFitToWidth(DESIGN_W, isMobile);
  *   <div ref={fit.outerRef} style={isMobile ? { height: fit.height } : undefined}>
@@ -18,10 +30,13 @@ import { useLayoutEffect, useRef, useState } from 'react';
  *   </div>
  */
 export function useFitToWidth(designWidth: number, enabled: boolean) {
-  const outerRef = useRef<HTMLDivElement>(null);
-  const innerRef = useRef<HTMLDivElement>(null);
+  const [outer, setOuter] = useState<HTMLDivElement | null>(null);
+  const [inner, setInner] = useState<HTMLDivElement | null>(null);
   const [scale, setScale] = useState(1);
   const [height, setHeight] = useState<number | undefined>(undefined);
+
+  const outerRef = useCallback((node: HTMLDivElement | null) => setOuter(node), []);
+  const innerRef = useCallback((node: HTMLDivElement | null) => setInner(node), []);
 
   useLayoutEffect(() => {
     if (!enabled) {
@@ -29,8 +44,6 @@ export function useFitToWidth(designWidth: number, enabled: boolean) {
       setHeight(undefined);
       return;
     }
-    const outer = outerRef.current;
-    const inner = innerRef.current;
     if (!outer || !inner) return;
     const measure = () => {
       const s = Math.min(1, outer.clientWidth / designWidth);
@@ -40,11 +53,13 @@ export function useFitToWidth(designWidth: number, enabled: boolean) {
       setHeight(inner.offsetHeight * s);
     };
     measure();
+    // Observing `inner` also covers the logo and web fonts landing after the
+    // first measure, which change the document's height.
     const ro = new ResizeObserver(measure);
     ro.observe(outer);
     ro.observe(inner);
     return () => ro.disconnect();
-  }, [designWidth, enabled]);
+  }, [designWidth, enabled, outer, inner]);
 
   return { outerRef, innerRef, scale, height };
 }
