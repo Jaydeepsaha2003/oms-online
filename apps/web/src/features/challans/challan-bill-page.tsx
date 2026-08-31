@@ -121,6 +121,11 @@ export function ChallanBillPage() {
   // window.opener / history.length, neither of which is dependable once the
   // user has clicked around inside the tab.
   const inOwnTab = new URLSearchParams(location.search).get('from') === 'tab';
+  /* Where the opener wants us to land. The challans list sends the URL of the
+   * exact filtered view the user left, because plain history-back is not good
+   * enough: an auto-print or an iOS preview replaces this entry first, and the
+   * user then returns to an unfiltered list having lost their search. */
+  const backTarget = (location.state as { returnTo?: string } | null)?.returnTo;
   const goBack = () => {
     if (inOwnTab) {
       window.close();
@@ -130,6 +135,7 @@ export function ChallanBillPage() {
       return;
     }
     if (smartBack) navigate((pending?.total ?? 0) > 0 ? '/challans/pending' : '/challans');
+    else if (backTarget) navigate(backTarget);
     else navigate(-1);
   };
   const { data: termsData, isPending: termsPending } = useChallanTerms();
@@ -223,7 +229,7 @@ export function ChallanBillPage() {
       if (node) await waitForPaintable(node);
       if (wantsAutoPrint) {
         await print();
-        navigate(location.pathname, { replace: true, state: { backTo: autoState?.backTo } });
+        navigate(location.pathname, { replace: true, state: { backTo: autoState?.backTo, returnTo: autoState?.returnTo } });
         return;
       }
       // On iOS the list reserved a tab inside its click (a popup opened later
@@ -232,16 +238,16 @@ export function ChallanBillPage() {
       if (how === 'ready') {
         // iOS: the PDF is parked and the "ready" banner is on this page. Going
         // back to the list now would take the banner with it.
-        navigate(location.pathname, { replace: true, state: { backTo: autoState?.backTo } });
+        navigate(location.pathname, { replace: true, state: { backTo: autoState?.backTo, returnTo: autoState?.returnTo } });
       } else if (how === 'inline' && autoState?.returnTo) {
         // The user is looking at the overlay — closing it takes them back.
         setReturnAfterPreview(autoState.returnTo);
-        navigate(location.pathname, { replace: true, state: { backTo: autoState?.backTo } });
+        navigate(location.pathname, { replace: true, state: { backTo: autoState?.backTo, returnTo: autoState?.returnTo } });
       } else if (autoState?.returnTo) {
         navigate(autoState.returnTo, { replace: true });
       } else {
         // Drop the flag so a refresh or Back/Forward doesn't repeat it.
-        navigate(location.pathname, { replace: true, state: { backTo: autoState?.backTo } });
+        navigate(location.pathname, { replace: true, state: { backTo: autoState?.backTo, returnTo: autoState?.returnTo } });
       }
     })();
     // Deps are booleans, and there is no cleanup that aborts the run: saving

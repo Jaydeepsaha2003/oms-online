@@ -455,10 +455,20 @@ export function ChallansListPage() {
             <div className="p-1.5">
             {canPrint && (
               <>
-                <DropdownMenuItem className="rounded-md px-2.5 py-1.5 font-medium" onSelect={() => navigate(`/challans/${r.id}/bill`)}>
+                {/* `returnTo` on every exit, not just Preview: the bill page's
+                    back button otherwise falls through to history, and Edit to a
+                    bare `/challans`, either of which drops the filters the user
+                    is looking at. */}
+                <DropdownMenuItem
+                  className="rounded-md px-2.5 py-1.5 font-medium"
+                  onSelect={() => navigate(`/challans/${r.id}/bill`, { state: { returnTo: listUrl() } })}
+                >
                   <Eye className="text-slate-600" /> View challan
                 </DropdownMenuItem>
-                <DropdownMenuItem className="rounded-md px-2.5 py-1.5 font-medium" onSelect={() => navigate(`/challans/${r.id}/bill`)}>
+                <DropdownMenuItem
+                  className="rounded-md px-2.5 py-1.5 font-medium"
+                  onSelect={() => navigate(`/challans/${r.id}/bill`, { state: { returnTo: listUrl() } })}
+                >
                   <Printer className="text-blue-600" /> Print / PDF
                 </DropdownMenuItem>
                 <DropdownMenuItem
@@ -480,7 +490,10 @@ export function ChallansListPage() {
               </>
             )}
             {canUpdate && (
-              <DropdownMenuItem className="rounded-md px-2.5 py-1.5 font-medium" onSelect={() => navigate(`/challans/${r.id}/edit`)}>
+              <DropdownMenuItem
+                className="rounded-md px-2.5 py-1.5 font-medium"
+                onSelect={() => navigate(`/challans/${r.id}/edit`, { state: { returnTo: listUrl() } })}
+              >
                 <Pencil className="text-amber-600" /> Edit challan
               </DropdownMenuItem>
             )}
