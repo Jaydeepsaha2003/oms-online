@@ -494,11 +494,43 @@ export class DispatchService implements OnModuleInit {
       });
       for (const g of grouped) photoCounts.set(g.orderItemId, g._count.id);
     }
+    /*
+     * Which of these lines are already billed, and on what.
+     *
+     * A line can be part-dispatched and part-billed and still be pending, and
+     * its photos are then locked: OrdersService.deletePhoto refuses to remove
+     * them. Resolved for the whole page in two queries, the same way the photo
+     * counts above avoid one request per card. `dispatchId` on a challan item is
+     * a plain int with no relation, so the dispatches come first and the challan
+     * items are matched against their ids — exactly what deletePhoto does.
+     */
+    const billedOn = new Map<number, string>();
+    if (pageItemIds.length) {
+      const disps = await this.prisma.dispatch.findMany({
+        where: { orderItemId: { in: pageItemIds } },
+        select: { id: true, orderItemId: true },
+      });
+      if (disps.length) {
+        const billed = await this.prisma.challanItem.findMany({
+          where: {
+            dispatchId: { in: disps.map((d) => d.id) },
+            challan: { challanStatus: { not: 'CANCELLED' } },
+          },
+          select: { dispatchId: true, challan: { select: { code: true } } },
+        });
+        const itemOf = new Map(disps.map((d) => [d.id, d.orderItemId]));
+        for (const b of billed) {
+          const itemId = b.dispatchId == null ? undefined : itemOf.get(b.dispatchId);
+          if (itemId != null && !billedOn.has(itemId)) billedOn.set(itemId, b.challan?.code ?? '');
+        }
+      }
+    }
     const items = page.map((l) => ({
       ...l,
       ...(pendingIds.has(l.orderItemId) ? { hasPendingApproval: true } : {}),
       lockedByName: locks.get(l.orderItemId) ?? null,
       photoCount: photoCounts.get(l.orderItemId) ?? 0,
+      billedChallanCode: billedOn.get(l.orderItemId) ?? null,
     }));
     return { items, total, page: query.page, pageSize: query.pageSize, totalPages: Math.max(1, Math.ceil(total / query.pageSize)) };
   }
