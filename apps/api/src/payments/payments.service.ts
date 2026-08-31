@@ -670,11 +670,24 @@ export class PaymentsService {
       let advIdx = 0;
       let advLeft = advRows.length ? (bankish ? advRows[0].bankBal : advRows[0].cashBal) : 0;
 
-      // Legacy two-tracker behavior: allocations are SIZED by today's receipt
-      // (`sizeLeft`), but only the receipt-funded portions consume the actual
-      // cash (`remaining`) — receipt money freed by old-advance funding parks
-      // as a NEW advance at the end, exactly like PaymentForm.vb.
-      let sizeLeft = remaining;
+      /*
+       * Two trackers, and they measure different things.
+       *
+       * `sizeLeft` is how much debt this voucher may clear: today's receipt PLUS
+       * whatever the party already has on account. `remaining` is the cash, and
+       * only the receipt-funded portions spend it — what an old advance pays for
+       * costs today's receipt nothing, and any cash left over at the end parks
+       * as a new advance.
+       *
+       * The advance used to be left OUT of the sizing (`sizeLeft = remaining`),
+       * faithfully to PaymentForm.vb. That made an advance unusable: it funded
+       * part of the allocation, freeing exactly its own value of receipt, which
+       * then parked straight back as a new advance. A ₹1 advance stayed ₹1
+       * forever and never came off a bill. Including it here is what lets an
+       * advance actually be spent.
+       */
+      const advTotal = r2(advRows.reduce((sum, a) => sum + (bankish ? a.bankBal : a.cashBal), 0));
+      let sizeLeft = r2(remaining + advTotal);
       for (const inv of rows) {
         if (sizeLeft <= EPS) break;
         const pend = bankish ? inv.bankBal : inv.cashBal;

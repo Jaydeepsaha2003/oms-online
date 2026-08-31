@@ -12,7 +12,8 @@ import {
   Upload,
   UserPlus,
 } from 'lucide-react';
-import type { BankStatementColumnMap, BankStatementRowDto, BankStatementRunResult } from '@oms/shared';
+import { parseStatementPeriod, statementDateToYmd, trimStatementTrailer, type BankStatementColumnMap, type BankStatementCreateResponse, type BankStatementRowDto, type BankStatementRunResult } from '@oms/shared';
+import { detectBankAccount, statementIdentityText } from './bank-statement-detect';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
@@ -77,9 +78,9 @@ const STATUS_META: Record<string, { label: string; cls: string; hint: string }> 
     hint: 'Assign a customer before this line can be reconciled.',
   },
   IGNORED: {
-    label: 'Ignored',
+    label: 'Not required',
     cls: 'bg-slate-100 text-slate-600 ring-slate-300 dark:bg-white/10 dark:text-slate-300',
-    hint: 'Left out of the reconciliation — not a customer receipt.',
+    hint: 'Left out of the reconciliation — not a customer receipt. Nothing is posted for it.',
   },
   POSTED: {
     label: 'Posted',
@@ -143,6 +144,13 @@ export function BankStatementPage() {
   const [toDate, setToDate] = useState('');
   const [map, setMap] = useState<BankStatementColumnMap>({ date: '', narration: '', credit: '', debit: '', ref: '' });
   const [parsing, setParsing] = useState(false);
+  /** True while From/To are the file's own range rather than the user's. Any
+   *  edit to either date turns it off, so a chosen range is never overwritten
+   *  by a re-read (changing the header line re-parses every row). */
+  const [rangeFromFile, setRangeFromFile] = useState(false);
+  /** How the bank was recognised — shown next to the field so an auto-pick is
+   *  visibly a pick, not a default someone forgot to change. */
+  const [bankReason, setBankReason] = useState<string | null>(null);
   /** The whole sheet, and which of its rows holds the column titles. */
   const [grid, setGrid] = useState<string[][]>([]);
   const [headerRow, setHeaderRow] = useState(0);
@@ -225,10 +233,25 @@ export function BankStatementPage() {
       setGrid(g);
       setHeaderRow(hdr);
       setFileName(file.name);
+      // A new file owns the range again — see `rangeFromFile`.
+      setRangeFromFile(true);
       const { rows } = gridToRows(g, hdr);
+
+      // Which of OUR accounts is this? Matched on the account number, the IFSC
+      // or the bank's name, whichever the statement carries — never on a list
+      // of bank names in the code, so tomorrow's bank needs no change here.
+      const match = detectBankAccount(statementIdentityText(file.name, g, hdr), banks ?? []);
+      if (match) {
+        setBankName(match.bankName);
+        setBankReason(match.reason);
+      } else {
+        setBankReason(null);
+      }
+
       toast.success(
         `${rows.length.toLocaleString('en-IN')} rows read from ${file.name}` +
-          (hdr > 0 ? ` — column titles found on line ${hdr + 1}` : ''),
+          (hdr > 0 ? ` — column titles found on line ${hdr + 1}` : '') +
+          (match ? ` · ${match.bankName} matched by ${match.reason}` : ''),
       );
     } catch (e) {
       toast.error(getApiErrorMessage(e, 'Could not read that file'));
@@ -246,31 +269,171 @@ export function BankStatementPage() {
     setSheetRows(rows);
   }, [grid, headerRow]);
 
+  /**
+   * The first and last dates in the file, read through the SAME parser the
+   * server uses to decide which rows fall inside the range (`parseStatementDate`
+   * in @oms/shared). Typing these by hand was guesswork against a 605-row sheet,
+   * and a range that missed either end silently dropped real credits.
+   */
+  /** The sheet's rows with the sign-off prose cut off — what the preview shows,
+   *  what the range is read from, and what is sent to the server. */
+  const trimmed = useMemo(() => trimStatementTrailer(sheetRows, map.date), [sheetRows, map.date]);
+  const statementRows = trimmed.rows;
+
+  const rowScan = useMemo(() => {
+    if (!map.date || !statementRows.length) return null;
+    let min: string | null = null;
+    let max: string | null = null;
+    let dated = 0;
+    for (const row of statementRows) {
+      const ymd = statementDateToYmd(row[map.date]);
+      if (!ymd) continue; // a blank separator inside the table
+      dated++;
+      if (min === null || ymd < min) min = ymd;
+      if (max === null || ymd > max) max = ymd;
+    }
+    return min && max ? { from: min, to: max, dated } : null;
+  }, [statementRows, map.date]);
+
+  /** The period the statement DECLARES, above its column titles — better than
+   *  the rows, which cannot know about opening days that had no transactions. */
+  const declaredPeriod = useMemo(
+    () => parseStatementPeriod(statementIdentityText(fileName, grid, headerRow)),
+    [fileName, grid, headerRow],
+  );
+
+  const fileRange = declaredPeriod ?? (rowScan ? { from: rowScan.from, to: rowScan.to } : null);
+  const rangeSource = declaredPeriod ? 'from the statement' : 'from the rows';
+
+  useEffect(() => {
+    if (!rangeFromFile || !fileRange) return;
+    setFromDate(fileRange.from);
+    setToDate(fileRange.to);
+  }, [rangeFromFile, fileRange]);
+
   const loadStatement = () => {
-    if (!sheetRows.length) return toast.error('Choose a statement file first.');
+    if (!statementRows.length) return toast.error('Choose a statement file first.');
     if (!map.date || !map.narration || !map.credit) return toast.error('Map the Date, Narration and Credit columns.');
     if (!fromDate || !toDate) return toast.error('Choose the date range this statement covers.');
     // Every receipt Process creates is a BANK receipt and needs an account on it.
     if (!bankName) return toast.error('Choose which bank account this statement is for.');
+    submitRun('ask');
+  };
+
+  /**
+   * Send the statement, and deal with the answer.
+   *
+   * `ask` is the first attempt: the server creates nothing if any line is
+   * already held, and hands back which ones. Whoever is uploading then decides,
+   * and the same request goes again carrying that decision. Nothing about it is
+   * automatic, because neither answer is safe in general — skipping loses a
+   * party's second identical payment of the day, importing can post a receipt
+   * that already exists.
+   */
+  const submitRun = (onDuplicate: 'ask' | 'skip' | 'import') => {
     createRun.mutate(
-      { fileName, bankName: bankName || null, fromDate, toDate, map, rows: sheetRows },
+      { onDuplicate, fileName, bankName: bankName || null, fromDate, toDate, map, rows: statementRows },
       {
         onSuccess: (res) => {
+          if (res.outcome === 'duplicates') {
+            void askAboutDuplicates(res);
+            return;
+          }
           setRunId(res.run.id);
-          toast.success(`${res.run.rowCount} credit lines loaded — ${res.run.noPartyCount} need a party`);
+          const dup = res.run.duplicateSkipped ?? 0;
+          toast.success(`${res.run.rowCount} credit lines loaded — ${res.run.noPartyCount} need a party`, {
+            // A silent skip is worse than no skip: the totals would not add up
+            // against the statement and nothing would say why.
+            description: dup ? `${dup} line${dup === 1 ? '' : 's'} left out — already on record.` : undefined,
+            duration: dup ? 10000 : 4000,
+          });
         },
         onError: (e) => toast.error(getApiErrorMessage(e, 'Could not load the statement'), { duration: 10000 }),
       },
     );
   };
 
+  /** Put the overlap to the user, then re-send with what they chose. */
+  const askAboutDuplicates = async (res: Extract<BankStatementCreateResponse, { outcome: 'duplicates' }>) => {
+    const anyPosted = res.duplicates.some((d) => d.posted);
+    const ok = await confirm({
+      title: `${res.totalOnRecord} of ${res.totalIncoming} lines are already on record`,
+      description: (
+        <div className="space-y-2">
+          <p>
+            This bank account already holds these lines from an earlier working. Loading them again would leave two copies of
+            the same money in the reconciliation
+            {anyPosted ? ', and at least one has already been posted to the ledger — importing it would create a second receipt.' : '.'}
+          </p>
+          <div className="max-h-52 overflow-auto rounded-[4px] border">
+            <table className="w-full text-[11.5px]">
+              <thead className="bg-muted/60">
+                <tr>
+                  <th className="px-2 py-1 text-left font-bold">Date</th>
+                  <th className="px-2 py-1 text-left font-bold">Narration</th>
+                  <th className="px-2 py-1 text-right font-bold">Amount</th>
+                  <th className="px-2 py-1 text-right font-bold">In file / held</th>
+                </tr>
+              </thead>
+              <tbody>
+                {res.duplicates.slice(0, 40).map((d, i) => (
+                  <tr key={i} className={cn('border-t', d.posted && 'bg-rose-50 dark:bg-rose-500/10')}>
+                    <td className="px-2 py-1 whitespace-nowrap tabular-nums">{formatDate(d.txnDate)}</td>
+                    <td className="max-w-[220px] truncate px-2 py-1" title={d.narration}>
+                      {d.narration}
+                      {d.posted && <span className="ml-1 font-bold text-rose-700">posted</span>}
+                    </td>
+                    <td className="px-2 py-1 text-right tabular-nums">{money0(d.amount)}</td>
+                    <td className="px-2 py-1 text-right tabular-nums">
+                      {d.incoming} / {d.onRecord}
+                      {d.incoming > d.onRecord && (
+                        <span className="ml-1 font-bold text-emerald-700" title="More copies in this file than are held — the extra is new money">
+                          +{d.incoming - d.onRecord} new
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {res.duplicates.length > 40 && (
+            <p className="text-muted-foreground text-[11.5px]">…and {res.duplicates.length - 40} more.</p>
+          )}
+          <p className="text-[12px] font-semibold">
+            Skip them — load only what is new. Any line the file holds more copies of than are on record still comes in.
+          </p>
+        </div>
+      ),
+      confirmText: 'Skip the ones already held',
+      cancelText: 'Cancel the upload',
+    });
+    if (ok) submitRun('skip');
+  };
+
   /* ── Review ───────────────────────────────────────────────────────────── */
 
   const rows = runResult?.rows ?? [];
+  /** Narrow the list to one kind of line. Without this a line marked "not
+   *  required" fades into a 293-row list and can never be found to undo. */
+  const [statusFilter, setStatusFilter] = useState('');
   const shown = useMemo(
-    () => (selectedParty ? rows.filter((r) => r.customerId === selectedParty) : rows),
-    [rows, selectedParty],
+    () =>
+      rows.filter(
+        (r) => (!selectedParty || r.customerId === selectedParty) && (!statusFilter || r.status === statusFilter),
+      ),
+    [rows, selectedParty, statusFilter],
   );
+  /** How many lines sit in each status, for the filter's own labels. */
+  const statusCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of rows) m.set(r.status, (m.get(r.status) ?? 0) + 1);
+    return m;
+  }, [rows]);
+  /** Whether the current selection is already marked not-required, which
+   *  decides whether the button offers to mark or to undo. */
+  const checkedRows = useMemo(() => rows.filter((r) => checked.has(r.id)), [rows, checked]);
+  const allCheckedIgnored = checkedRows.length > 0 && checkedRows.every((r) => r.status === 'IGNORED');
   const run = runResult?.run;
   const isDraft = run?.status === 'DRAFT';
 
@@ -282,16 +445,35 @@ export function BankStatementPage() {
       return n;
     });
 
+  /**
+   * Assign the ticked lines to a party.
+   *
+   * `remember` defaults to TRUE. Telling the app who a payer is, is work; doing
+   * it again next month for the same narration is the same work twice. The
+   * fragment it learns is a distinctive word shared between the narration and
+   * the party's name — generic and transaction words are thrown out first (see
+   * `aliasFragment`), so "NEFT" or "PAYMENT" can never become an alias.
+   *
+   * `Assign once` is there for the narration that happens to name a party but
+   * will not next time, where teaching it would mis-attribute a later line.
+   */
   const doAssign = (remember: boolean) => {
     const id = customers.find((c) => c.name === assignTo)?.id;
     if (!id) return toast.error('Pick a customer.');
     if (!checked.size) return toast.error('Tick the lines to assign.');
+    const n = checked.size;
     assign.mutate(
       { rowIds: [...checked], customerId: id, rememberAlias: remember },
       {
         onSuccess: () => {
-          toast.success(`${checked.size} line${checked.size === 1 ? '' : 's'} assigned to ${assignTo}${remember ? ' — narration remembered' : ''}`);
+          toast.success(
+            `${n} line${n === 1 ? '' : 's'} assigned to ${assignTo}` +
+              (remember ? ' — this narration will be recognised next time' : ' — narration not remembered'),
+          );
           setChecked(new Set());
+          // Show the working straight away: what was just assigned is exactly
+          // when someone wants to see whether it matched and what it changes.
+          setSelectedParty(id);
         },
         onError: (e) => toast.error(getApiErrorMessage(e, 'Could not assign')),
       },
@@ -304,7 +486,9 @@ export function BankStatementPage() {
       { rowIds: [...checked], ignored },
       {
         onSuccess: () => {
-          toast.success(`${checked.size} line${checked.size === 1 ? '' : 's'} ${ignored ? 'ignored' : 'restored'}`);
+          toast.success(
+            `${checked.size} line${checked.size === 1 ? '' : 's'} ${ignored ? 'marked not required — left out of the reconciliation' : 'brought back into the reconciliation'}`,
+          );
           setChecked(new Set());
         },
         onError: (e) => toast.error(getApiErrorMessage(e, 'Could not update')),
@@ -390,21 +574,47 @@ export function BankStatementPage() {
               </Button>
             </div>
             <div className="space-y-1">
-              <Label className={FIELD_LABEL}>Received into *</Label>
+              <Label className={FIELD_LABEL}>
+                Received into *
+                {bankReason && bankName && <span className="ml-1.5 font-medium normal-case opacity-70">matched by {bankReason}</span>}
+              </Label>
               <NativeSelect
                 value={bankName}
-                onChange={setBankName}
+                onChange={(v) => {
+                  setBankReason(null); // the user's pick, not ours
+                  setBankName(v);
+                }}
                 options={['', ...(banks ?? []).map((b) => b.bankName)]}
                 className={CONTROL}
               />
             </div>
             <div className="space-y-1">
-              <Label className={FIELD_LABEL}>From</Label>
-              <DatePicker value={fromDate} onChange={setFromDate} className={CONTROL} />
+              <Label className={FIELD_LABEL}>
+                From
+                {rangeFromFile && fileRange && <span className="ml-1.5 font-medium normal-case opacity-70">{rangeSource}</span>}
+              </Label>
+              <DatePicker
+                value={fromDate}
+                onChange={(v) => {
+                  setRangeFromFile(false);
+                  setFromDate(v);
+                }}
+                className={CONTROL}
+              />
             </div>
             <div className="space-y-1">
-              <Label className={FIELD_LABEL}>To</Label>
-              <DatePicker value={toDate} onChange={setToDate} className={CONTROL} />
+              <Label className={FIELD_LABEL}>
+                To
+                {rangeFromFile && fileRange && <span className="ml-1.5 font-medium normal-case opacity-70">{rangeSource}</span>}
+              </Label>
+              <DatePicker
+                value={toDate}
+                onChange={(v) => {
+                  setRangeFromFile(false);
+                  setToDate(v);
+                }}
+                className={CONTROL}
+              />
             </div>
           </div>
 
@@ -444,8 +654,13 @@ export function BankStatementPage() {
                   wrong way round. Showing the real figures is how the user
                   checks the mapping before it is used, which is why nothing
                   here tries to correct it for them. */}
-              {!!sheetRows.length && (
-                <div className="mt-3 overflow-auto rounded-[4px] border bg-white dark:bg-slate-900">
+              {!!statementRows.length && (
+                /* EVERY row, not the first five. The point of this table is to
+                   check the mapping against real figures, and five rows of a
+                   605-row statement cannot show a column that only fills in
+                   further down. Its own scroll box with the titles pinned, so
+                   it stays checkable without swallowing the page. */
+                <div className="mt-3 max-h-[420px] overflow-auto rounded-[4px] border bg-white dark:bg-slate-900">
                   <table className="w-full border-collapse text-[11.5px]">
                     <thead>
                       <tr>
@@ -453,7 +668,7 @@ export function BankStatementPage() {
                           <th
                             key={c}
                             className={cn(
-                              'border-b px-2 py-1 text-left font-bold whitespace-nowrap',
+                              'sticky top-0 z-10 border-b bg-white px-2 py-1 text-left font-bold whitespace-nowrap dark:bg-slate-900',
                               c === map.date && 'bg-sky-100 dark:bg-sky-500/20',
                               c === map.narration && 'bg-violet-100 dark:bg-violet-500/20',
                               c === map.credit && 'bg-emerald-100 dark:bg-emerald-500/20',
@@ -468,7 +683,7 @@ export function BankStatementPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {sheetRows.slice(0, 5).map((r, i) => (
+                      {statementRows.map((r, i) => (
                         <tr key={i} className="odd:bg-slate-50/70 dark:odd:bg-white/[0.03]">
                           {columns.map((c) => (
                             <td key={c} className="max-w-[220px] truncate border-b px-2 py-1 tabular-nums whitespace-nowrap">
@@ -483,8 +698,20 @@ export function BankStatementPage() {
               )}
               <div className="mt-2 flex flex-wrap items-center gap-3">
                 <p className="text-muted-foreground text-[11.5px]">
-                  {sheetRows.length.toLocaleString('en-IN')} rows below the titles. Debits and anything outside the date range
-                  are dropped when it loads.
+                  All {statementRows.length.toLocaleString('en-IN')} statement rows are shown — scroll the table.
+                  {trimmed.trimmed > 0 && (
+                    <>
+                      {' '}The <span className="font-semibold">{trimmed.trimmed.toLocaleString('en-IN')}</span> lines of legend
+                      and disclaimer below them are left out.
+                    </>
+                  )}
+                  {fileRange && (
+                    <>
+                      {' '}Covering <span className="font-semibold">{formatDate(fileRange.from)}</span> to{' '}
+                      <span className="font-semibold">{formatDate(fileRange.to)}</span> ({rangeSource}).
+                    </>
+                  )}{' '}
+                  Debits and anything outside the date range are dropped when it loads.
                 </p>
                 {/* Detection is good but not infallible, and a wrong header row
                     means every column is wrong. Correcting it is one field. */}
@@ -640,6 +867,20 @@ export function BankStatementPage() {
                   ]}
                   className={cn(CONTROL, 'min-w-[260px] flex-1')}
                 />
+                {/* Status filter. The one that matters is "Not required": a line
+                    left out of the reconciliation is otherwise unfindable in a
+                    list this long, and undoing it would be impossible. */}
+                <NativeSelect
+                  value={statusFilter}
+                  onChange={setStatusFilter}
+                  options={[
+                    { value: '', label: 'Any status' },
+                    ...(['MATCHED', 'PARTIAL', 'UNMATCHED', 'NO_PARTY', 'IGNORED', 'POSTED'] as const)
+                      .filter((k) => (statusCounts.get(k) ?? 0) > 0)
+                      .map((k) => ({ value: k, label: `${STATUS_META[k].label} (${statusCounts.get(k)})` })),
+                  ]}
+                  className={cn(CONTROL, 'w-48', statusFilter && 'font-bold')}
+                />
                 {!!checked.size && isDraft && canEdit && (
                   <div className="flex flex-wrap items-center gap-2 rounded-[4px] bg-sky-50 px-2 py-1.5 ring-1 ring-sky-200 ring-inset dark:bg-sky-400/10 dark:ring-sky-400/25">
                     <span className="text-[12px] font-bold text-sky-800 dark:text-sky-200">{checked.size} selected</span>
@@ -650,23 +891,46 @@ export function BankStatementPage() {
                       placeholder="Assign to customer…"
                       className={cn(CONTROL, 'w-56')}
                     />
-                    <Button size="sm" className="h-8" onClick={() => doAssign(false)} disabled={assign.isPending}>
+                    {/* The default REMEMBERS. Teaching the narration is what
+                        stops the same payer being re-assigned by hand on every
+                        future statement, so it should not need a second thought. */}
+                    <Button
+                      size="sm"
+                      className="h-8"
+                      onClick={() => doAssign(true)}
+                      disabled={assign.isPending}
+                      title="Assign, and recognise this narration as this party on future statements"
+                    >
                       <UserPlus className="size-3.5" /> Assign
                     </Button>
-                    {/* Teaching the narration is what stops the same payer being
-                        re-assigned by hand on every future statement. */}
                     <Button
                       size="sm"
                       variant="outline"
                       className="h-8"
-                      onClick={() => doAssign(true)}
+                      onClick={() => doAssign(false)}
                       disabled={assign.isPending}
-                      title="Assign, and recognise this narration as this party next time"
+                      title="Assign these lines only — do not recognise this narration next time"
                     >
-                      Assign & remember
+                      Assign once
                     </Button>
-                    <Button size="sm" variant="outline" className="h-8" onClick={() => doIgnore(true)} disabled={ignore.isPending}>
-                      <Ban className="size-3.5" /> Ignore
+                    {/* Marking a line not-required is the answer for a credit
+                        that is not a customer receipt at all — a sweep reversal,
+                        interest, an inter-account transfer. It is excluded from
+                        every total and Process never posts it. Reversible, which
+                        is why the same button offers the undo. */}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8"
+                      onClick={() => doIgnore(!allCheckedIgnored)}
+                      disabled={ignore.isPending}
+                      title={
+                        allCheckedIgnored
+                          ? 'Put these lines back into the reconciliation'
+                          : 'Leave these out — not a customer receipt, nothing will be posted for them'
+                      }
+                    >
+                      <Ban className="size-3.5" /> {allCheckedIgnored ? 'Bring back' : 'Not required'}
                     </Button>
                   </div>
                 )}
@@ -698,7 +962,7 @@ export function BankStatementPage() {
                         </td>
                       </tr>
                     ) : (
-                      shown.map((r) => <LineRow key={r.id} row={r} checked={checked.has(r.id)} onToggle={() => toggleRow(r.id)} selectable={isDraft && canEdit} />)
+                      shown.map((r) => <LineRow key={r.id} row={r} checked={checked.has(r.id)} onToggle={() => toggleRow(r.id)} selectable={isDraft && canEdit} vouchers={runResult?.receiptVouchers ?? {}} />)
                     )}
                   </tbody>
                 </table>
@@ -799,7 +1063,7 @@ function BalanceCard({ title, b, highlight }: { title: string; b: { receiptCount
   );
 }
 
-function LineRow({ row, checked, onToggle, selectable }: { row: BankStatementRowDto; checked: boolean; onToggle: () => void; selectable: boolean }) {
+function LineRow({ row, checked, onToggle, selectable, vouchers }: { row: BankStatementRowDto; checked: boolean; onToggle: () => void; selectable: boolean; vouchers: Record<string, string> }) {
   return (
     <tr
       className={cn(
@@ -829,6 +1093,41 @@ function LineRow({ row, checked, onToggle, selectable }: { row: BankStatementRow
           {row.narration || '—'}
         </span>
         {row.refNo && <span className="text-muted-foreground font-mono text-[11px]">{row.refNo}</span>}
+        {/* The evidence, not just the verdict. A line says "Matched" because a
+            receipt of the same amount sits within a few days of it — naming
+            that receipt is what makes the verdict checkable instead of trusted. */}
+        {row.matchedRefs.length > 0 && (
+          /*
+           * The VOUCHER number, because that is what the Party Ledger prints —
+           * quoting the internal REF ID alone made the two screens impossible to
+           * line up. The REF ID stays in the tooltip.
+           *
+           * The wording has to follow the STATUS. A "No receipt" line can still
+           * name a receipt: the party's spare receipts cover PART of it, and the
+           * remainder is the shortfall Process would post. Saying "against" there
+           * — the same word a fully matched line uses — read as a contradiction.
+           */
+          <span
+            className={cn(
+              'mt-0.5 block truncate text-[11px] font-semibold',
+              row.status === 'UNMATCHED'
+                ? 'text-amber-700 dark:text-amber-400'
+                : 'text-emerald-700 dark:text-emerald-400',
+            )}
+            title={
+              (row.status === 'UNMATCHED'
+                ? `${money(row.matchedAmount)} of this ${money(row.amount)} credit is covered; ${money(row.amount - row.matchedAmount)} has no receipt and is what Process would create. Covered by: `
+                : 'Receipt(s): ') + row.matchedRefs.map((r) => (vouchers[r] ? `${vouchers[r]} (${r})` : r)).join(', ')
+            }
+          >
+            {row.status === 'MATCHED' && 'against '}
+            {row.status === 'PARTIAL' && 'covered by '}
+            {row.status === 'UNMATCHED' && `${money0(row.matchedAmount)} of it against `}
+            <span className="font-mono">{row.matchedRefs.slice(0, 2).map((r) => vouchers[r] ?? r).join(', ')}</span>
+            {row.matchedRefs.length > 2 && ` +${row.matchedRefs.length - 2} more`}
+            {row.status === 'UNMATCHED' && ` · ${money0(row.amount - row.matchedAmount)} short`}
+          </span>
+        )}
       </td>
       <td className={cn(TD, NUM, 'font-bold')}>{money0(row.amount)}</td>
       <td className={TD}>

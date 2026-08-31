@@ -4,6 +4,7 @@ import type {
   BankStatementAssignInput,
   BankStatementColumnMap,
   BankStatementCreateInput,
+  BankStatementCreateResponse,
   BankStatementProcessResult,
   BankStatementRunList,
   BankStatementRunResult,
@@ -50,7 +51,7 @@ export function useBankParty(runId: number | undefined, customerId: number | und
 export function useCreateBankRun() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: BankStatementCreateInput) => http.post<BankStatementRunResult>('/bank-statement/runs', input),
+    mutationFn: (input: BankStatementCreateInput) => http.post<BankStatementCreateResponse>('/bank-statement/runs', input),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }

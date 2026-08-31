@@ -112,17 +112,28 @@ const filtersFromParams = (p: URLSearchParams): Partial<ChallanFilters> => {
   return Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined)) as Partial<ChallanFilters>;
 };
 
-/** Days-to-due text from the due date (the legacy PAID state needs the accounting
- *  module, so this shows only DUE / OVER DUE relative to today). */
-function dueInfo(due: string | null): { text: string; over: boolean } {
-  if (!due) return { text: '—', over: false };
+/**
+ * What the DUE column says.
+ *
+ * A settled bill is never overdue, however long ago its date passed. This used
+ * to compare the due date with today and nothing else — the note here said the
+ * paid state "needs the accounting module" — so a challan paid weeks early
+ * still sat in red claiming "40 over". The list now carries what is left on
+ * each challan (see `balance` on ChallanDto), which is the same amount − receipts
+ * − discounts the payments engine settles by.
+ */
+function dueInfo(due: string | null, balance?: number): { text: string; over: boolean; paid: boolean } {
+  // Nil balance wins over any date. Undefined means the caller did not supply
+  // one, and then the old date-only answer is the honest one.
+  if (balance != null && balance <= 0.004) return { text: 'Paid', over: false, paid: true };
+  if (!due) return { text: '—', over: false, paid: false };
   const d = new Date(due);
   d.setHours(0, 0, 0, 0);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const days = Math.round((d.getTime() - today.getTime()) / 86_400_000);
-  if (days < 0) return { text: `${Math.abs(days)} over`, over: true };
-  return { text: `${days} left`, over: false };
+  if (days < 0) return { text: `${Math.abs(days)} over`, over: true, paid: false };
+  return { text: `${days} left`, over: false, paid: false };
 }
 
 export function ChallansListPage() {
@@ -367,13 +378,17 @@ export function ChallansListPage() {
         id: 'due',
         label: 'Due',
         cell: (r) => {
-          const di = dueInfo(r.dueDate);
+          const di = dueInfo(r.dueDate, r.balance);
           if (di.text === '—') return <span className="text-[13px] text-slate-400">—</span>;
           return (
             <span
               className={cn(
                 'inline-flex items-center rounded-[4px] px-1.5 py-0.5 text-[11.5px] font-bold whitespace-nowrap tabular-nums ring-1 ring-inset',
-                di.over ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-slate-50 text-slate-600 ring-slate-200',
+                di.paid
+                  ? 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300'
+                  : di.over
+                    ? 'bg-rose-50 text-rose-700 ring-rose-200'
+                    : 'bg-slate-50 text-slate-600 ring-slate-200',
               )}
             >
               {di.text}
@@ -500,7 +515,7 @@ export function ChallansListPage() {
 
   // Phones: one card per challan (mirrors the Quotations/Bookings mobile list).
   const challanMobileCard = (r: ChallanDto) => {
-    const di = dueInfo(r.dueDate);
+    const di = dueInfo(r.dueDate, r.balance);
     const ok = r.challanStatus === 'CONFIRMED';
     return (
       <div className="space-y-2">
@@ -527,7 +542,7 @@ export function ChallansListPage() {
           </div>
           <div>
             <p className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Due</p>
-            <p className={cn('font-bold tabular-nums', di.over ? 'text-rose-600' : 'text-slate-700')}>{di.text}</p>
+            <p className={cn('font-bold tabular-nums', di.paid ? 'text-emerald-700 dark:text-emerald-400' : di.over ? 'text-rose-600' : 'text-slate-700')}>{di.text}</p>
           </div>
           <div>
             <p className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">B / C</p>

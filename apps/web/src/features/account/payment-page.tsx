@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import {
   BookOpenCheck,
@@ -226,7 +226,11 @@ export function PaymentPage() {
   const preview = useMemo(() => {
     const openingPend = (ctx?.openings ?? []).reduce((a, o) => a + (bucket === 'BANK' ? o.pendingBank : o.pendingCash), 0);
     const openingUse = Math.min(openingPend, Math.max(0, receipt));
-    let avail = Math.max(0, receipt - openingUse);
+    /* What this voucher can clear: today's receipt after any opening balance,
+       PLUS the party's existing advance — the engine sizes it the same way, so
+       an advance on account comes off the bill instead of rolling forward. */
+    const canClear = Math.max(0, receipt - openingUse) + (isAgent ? 0 : advanceAvail);
+    let avail = canClear;
     const adjByInv = new Map<string, number>();
     if (adjMode !== 'ADVANCE') {
       const order =
@@ -242,16 +246,18 @@ export function PaymentPage() {
       }
     }
     const adjTotal = [...adjByInv.values()].reduce((a, v) => a + v, 0);
-    const fromReceipt = Math.max(0, Math.round((receipt - openingUse - adjTotal) * 100) / 100);
-    /** Old advance spent on the invoices above — frees the same amount of receipt. */
+    /** Old advance spent on the invoices above — this part costs no cash. */
     const advanceUsed = isAgent ? 0 : Math.round(Math.min(advanceAvail, adjTotal) * 100) / 100;
+    /** Only the rest of the allocation is paid for out of today's receipt. */
+    const cashOnInvoices = Math.round((adjTotal - advanceUsed) * 100) / 100;
     return {
       openingPend,
       openingUse,
       adjByInv,
       adjTotal,
       advanceUsed,
-      advanceToSave: Math.round((fromReceipt + advanceUsed) * 100) / 100,
+      // Whatever cash the invoices did not need parks on account.
+      advanceToSave: Math.max(0, Math.round((receipt - openingUse - cashOnInvoices) * 100) / 100),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctx, receipt, adjMode, selected, bucket, invoices, advanceAvail, isAgent]);
@@ -298,10 +304,29 @@ export function PaymentPage() {
   const outstandingAfterAdj = Math.max(0, Math.round((currentOutstanding - allocated) * 100) / 100);
   const remainingBalance = Math.max(0, Math.round((receipt - allocated) * 100) / 100);
   /** Nothing left to clear → the only sensible adjustment is to park the money,
-   *  so the legacy form locks the mode to ADVANCE. Mirror that. */
+   *  so the legacy form locks the mode to ADVANCE. Mirror that.
+   *
+   *  BOTH WAYS, though. This used to be one-way: a party with nothing pending
+   *  flipped the mode to ADVANCE and it stayed there, so the NEXT party — with
+   *  bills open and an advance on account — had the whole receipt parked
+   *  on account too. ADVANCE mode skips invoice allocation entirely, and with
+   *  it the step that spends old advances first, so the money sat there while
+   *  the invoice stayed past due. Undo it when there is something to clear
+   *  again. */
   const noPending = ownerChosen && !ctxLoading && invoices.length === 0;
+  /** True only while ADVANCE was chosen by the FORM. A mode the user picked
+   *  themselves is never overridden — see the mode select's onChange. */
+  const advanceForced = useRef(false);
   useEffect(() => {
-    if (noPending && adjMode !== 'ADVANCE') setAdjMode('ADVANCE');
+    if (noPending) {
+      if (adjMode !== 'ADVANCE') {
+        advanceForced.current = true;
+        setAdjMode('ADVANCE');
+      }
+    } else if (advanceForced.current) {
+      advanceForced.current = false;
+      setAdjMode('AUTOMATIC');
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noPending]);
 
@@ -335,6 +360,7 @@ export function PaymentPage() {
     setChequeNo('');
     setCashLoc('');
     setCashBy('');
+    advanceForced.current = false;
     setAdjMode('AUTOMATIC');
     setReceiptStr('');
     setRemarks('');
@@ -397,6 +423,7 @@ export function PaymentPage() {
             // by the time mutate() reads it.
             adjModeToSave = 'AGST REF';
             selectedToSave = [inv.invNo];
+            advanceForced.current = false;
             setAdjMode('AGST REF');
             setSelected([inv.invNo]);
           }
@@ -651,7 +678,7 @@ export function PaymentPage() {
               <NativeSelect
                 id="adj-mode"
                 value={adjMode}
-                onChange={(v) => { setAdjMode(v); setSelected([]); }}
+                onChange={(v) => { advanceForced.current = false; setAdjMode(v); setSelected([]); }}
                 options={noPending ? ['ADVANCE'] : ['AUTOMATIC', 'ADVANCE', 'AGST REF']}
                 disabled={noPending}
                 className={cn(CONTROL, 'font-medium', CONTROL_ON)}

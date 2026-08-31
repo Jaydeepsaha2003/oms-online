@@ -51,7 +51,25 @@ export function parseExcelFile<T = Record<string, unknown>>(
     reader.onload = (event) => {
       try {
         const data = new Uint8Array(event.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+        /*
+         * `raw: true` is load-bearing, not tidiness.
+         *
+         * Without it SheetJS type-guesses every CSV cell, and on an Indian
+         * statement that means reading dd-mm-yyyy as MM-DD-YYYY: "01-04-2026"
+         * (1 April) became the Date 4 January and was reprinted "1/4/26", while
+         * "27-08-2026" survived untouched because month 27 does not exist. On
+         * the file this was found with, 214 of 577 dates were rewritten and 363
+         * were not. It happened to come out right only because our own parser
+         * reads d/m and the two swaps cancelled — a coincidence of SheetJS's
+         * output format, not a guarantee, and silently a month wrong the day
+         * that format changes.
+         *
+         * With `raw` the grid holds exactly what the file holds, and
+         * `parseStatementDate` is the only thing that interprets it. Verified
+         * to change nothing in a real .xlsx (dates there are typed cells, which
+         * `cellDates` still resolves).
+         */
+        const workbook = XLSX.read(data, { type: 'array', cellDates: true, raw: true });
         const sheetName = opts.sheet ?? workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
         resolve(XLSX.utils.sheet_to_json<T>(worksheet, { defval: null, raw: false }));

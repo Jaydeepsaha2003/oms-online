@@ -510,7 +510,7 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
                 label="Overdue"
                 value={moneyShort(data.overdue.total)}
                 sub={data.overdue.count ? `${count(data.overdue.count)} challan(s)` : undefined}
-                hint={money(data.overdue.total)}
+                hint={`${money(data.overdue.total)} still owed on ${count(data.overdue.count)} challan(s) past their due date — settled bills are not counted`}
                 tone={data.overdue.total ? 'bad' : 'good'}
               />
             </div>
@@ -692,7 +692,7 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
               {data.overdue.total > 0 ? (
                 <>
                   <AlertTriangle className="size-3.5 text-rose-500" />
-                  {money(data.overdue.total)} across {count(data.overdue.count)} confirmed challan(s) is past due.
+                  {money(data.overdue.total)} is still owed across {count(data.overdue.count)} confirmed challan(s) past their due date.
                 </>
               ) : (
                 <>

@@ -32,6 +32,176 @@ import type { Paginated } from './common';
  * the layout is stated once by the user rather than guessed, and remembered
  * against the bank account for next time.
  */
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+/**
+ * A date out of a bank-statement cell.
+ *
+ * Statements are exported as text at least as often as dates, and Indian banks
+ * write dd/mm/yyyy — which `new Date()` reads as mm/dd, silently turning 06/07
+ * into the wrong month. So a d/m/y string is parsed by hand and only anything
+ * else falls back to the built-in parser.
+ *
+ * Shared deliberately: the server uses it to decide which rows fall inside the
+ * range, and the page uses it to WORK OUT that range from the file. Two copies
+ * of this rule would mean the dates offered and the dates honoured could differ
+ * by a month and nothing would say so.
+ */
+export function parseStatementDate(v: unknown): Date | null {
+  if (v == null) return null;
+  if (v instanceof Date && !Number.isNaN(v.getTime())) {
+    const d = new Date(v);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }
+  const s = String(v).trim();
+  if (!s) return null;
+  const dmy = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})/.exec(s);
+  if (dmy) {
+    const day = Number(dmy[1]);
+    const month = Number(dmy[2]);
+    let year = Number(dmy[3]);
+    if (year < 100) year += year < 70 ? 2000 : 1900;
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+      const d = new Date(year, month - 1, day);
+      d.setHours(0, 0, 0, 0);
+      return d;
+    }
+  }
+  // "01-Apr-2026", "1 Apr 2026", "01 APRIL 2026" — Kotak and SBI write the
+  // month as a word, and `new Date()` will not take the hyphenated form.
+  const named = /^(\d{1,2})[-\s/]([A-Za-z]{3,9})[-\s/](\d{2,4})/.exec(s);
+  if (named) {
+    const month = MONTHS.indexOf(named[2].slice(0, 3).toLowerCase());
+    if (month >= 0) {
+      const day = Number(named[1]);
+      let year = Number(named[3]);
+      if (year < 100) year += year < 70 ? 2000 : 1900;
+      if (day >= 1 && day <= 31) {
+        const d = new Date(year, month, day);
+        d.setHours(0, 0, 0, 0);
+        return d;
+      }
+    }
+  }
+  const parsed = new Date(s);
+  if (Number.isNaN(parsed.getTime())) return null;
+  parsed.setHours(0, 0, 0, 0);
+  return parsed;
+}
+
+/** `parseStatementDate` as the 'YYYY-MM-DD' the date pickers and the API use. */
+export function statementDateToYmd(v: unknown): string | null {
+  const d = parseStatementDate(v);
+  if (!d) return null;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+
+/** Either shape a statement writes a date in, for the period patterns below. */
+const PERIOD_DATE = String.raw`\d{1,2}[-/.\s][A-Za-z0-9]{2,9}[-/.\s]\d{2,4}`;
+
+/**
+ * The period a statement says it covers, read out of the block above its column
+ * titles.
+ *
+ * Every Indian bank prints this, and each prints it differently:
+ *
+ *   Axis   `for the period (From : 01-04-2026  To : 27-08-2026)`
+ *   HDFC   `From : 01/04/2026   To : 27/08/2026`
+ *   ICICI  `Period : 01-04-2026 to 27-08-2026`
+ *   Kotak  `Statement Period : 01-Apr-2026 To 27-Aug-2026`
+ *   SBI    `Account Statement from 1 Apr 2026 to 27 Aug 2026`
+ *
+ * So the bank is never named or matched — only the shape of the sentence is.
+ * A statement from a bank nobody has seen is read the same way, provided it
+ * says From/To or Period, which is the convention rather than the exception.
+ *
+ * Returns null rather than guessing. The caller falls back to the first and
+ * last dates in the rows, which is always available and only slightly weaker:
+ * it cannot know about a period whose opening days had no transactions.
+ */
+export function parseStatementPeriod(text: string): { from: string; to: string } | null {
+  if (!text) return null;
+  const SEP = String.raw`(?:\bto\b|\btill\b|\buntil\b|[-–—])`;
+  const patterns = [
+    // "From : X To : Y" — the most common, and unambiguous about direction.
+    new RegExp(String.raw`\bfrom\b\s*:?\s*(${PERIOD_DATE})\s*${SEP}\s*:?\s*(${PERIOD_DATE})`, 'i'),
+    // "Period : X to Y" / "Statement Period X - Y"
+    new RegExp(String.raw`\bperiod\b[^0-9A-Za-z]{0,12}(${PERIOD_DATE})\s*${SEP}\s*:?\s*(${PERIOD_DATE})`, 'i'),
+  ];
+  for (const re of patterns) {
+    const m = re.exec(text);
+    if (!m) continue;
+    const from = statementDateToYmd(m[1]);
+    const to = statementDateToYmd(m[2]);
+    if (!from || !to || from > to) continue; // a backwards pair is a mis-read, not a period
+    // A statement covers days or months. Anything spanning years is something
+    // else that happened to look like a date pair.
+    const span = (new Date(to).getTime() - new Date(from).getTime()) / 86_400_000;
+    if (span > 800) continue;
+    return { from, to };
+  }
+  return null;
+}
+
+/**
+ * A statement's rows, without the block of prose it signs off with.
+ *
+ * Banks append pages of it below the last transaction — Axis adds 28 lines of
+ * legend, DICGC notice and "never share your password", each spilling across
+ * the columns so it arrives looking like data. It is not data: it has no date,
+ * no amount, and nothing to reconcile.
+ *
+ * The cut is the last row whose DATE column reads as a date. Everything after
+ * it is the trailer by definition, since a transaction cannot follow the end of
+ * the transactions. Undated rows BEFORE that point are kept — a blank separator
+ * or a carried-over narration is still inside the table, and the caller (and
+ * the server) already ignore rows they cannot date.
+ *
+ * With no date column chosen, or nothing in it that parses, the rows are
+ * returned untouched: a mis-mapped column should show the user everything so
+ * they can see the mistake, never silently empty the table.
+ */
+export function trimStatementTrailer<T extends Record<string, unknown>>(
+  rows: T[],
+  dateColumn: string | null | undefined,
+): { rows: T[]; trimmed: number } {
+  if (!dateColumn || !rows.length) return { rows, trimmed: 0 };
+  let last = -1;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (parseStatementDate(rows[i][dateColumn])) {
+      last = i;
+      break;
+    }
+  }
+  if (last < 0) return { rows, trimmed: 0 };
+  return { rows: rows.slice(0, last + 1), trimmed: rows.length - 1 - last };
+}
+
+/**
+ * What makes two statement lines THE SAME line.
+ *
+ * A bank re-issues the same transaction identically every time it is
+ * downloaded, so the date, the amount and the narration together identify it.
+ * The row number cannot: the same transaction sits on a different line of a
+ * statement pulled over a different range. Nor can the UTR — plenty of lines
+ * carry none.
+ *
+ * Narration is squashed to letters and digits because the same line comes back
+ * with different padding between downloads ("SAVITA JAYANTIL      " vs
+ * "SAVITA JAYANTIL"), and a space is not a difference worth calling a new
+ * transaction.
+ */
+export function statementRowKey(txnDate: Date | string, amount: number, narration: string): string {
+  const d = txnDate instanceof Date ? txnDate : new Date(txnDate);
+  const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const amt = (Math.round((amount + Number.EPSILON) * 100) / 100).toFixed(2);
+  const text = (narration ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return `${day}|${amt}|${text}`;
+}
+
 export interface BankStatementColumnMap {
   /** Transaction date. */
   date: string;
@@ -103,6 +273,37 @@ export interface BankStatementRowDto {
 export const BANK_RUN_STATUSES = ['DRAFT', 'PROCESSED'] as const;
 export type BankRunStatus = (typeof BANK_RUN_STATUSES)[number];
 
+/** One line the incoming statement shares with a working already on record. */
+export interface BankStatementDuplicate {
+  txnDate: string;
+  amount: number;
+  narration: string;
+  /** How many of this exact line the file holds. */
+  incoming: number;
+  /** How many are already held for this bank account in the same date range. */
+  onRecord: number;
+  /** The workings holding them. */
+  runIds: number[];
+  /** True when one of those has already been posted to the ledger — importing
+   *  this line again is how a receipt gets created twice. */
+  posted: boolean;
+}
+
+/**
+ * What to do about lines already on record.
+ *
+ * `ask` (the default) creates nothing and hands back the report, so the person
+ * uploading decides. There is no safe automatic answer: skipping silently loses
+ * a party's second identical payment of the day, and importing silently can
+ * post a receipt twice.
+ */
+export type DuplicateAction = 'ask' | 'skip' | 'import';
+
+/** The upload either made a working, or is waiting to be told what to do. */
+export type BankStatementCreateResponse =
+  | ({ outcome: 'created' } & BankStatementRunResult)
+  | { outcome: 'duplicates'; duplicates: BankStatementDuplicate[]; totalIncoming: number; totalOnRecord: number };
+
 export interface BankStatementRunDto {
   id: number;
   fileName: string;
@@ -123,6 +324,11 @@ export interface BankStatementRunDto {
   noPartyCount: number;
   postedCount: number;
   ignoredCount: number;
+  /** Lines left out of THIS run because an earlier run of the same bank account
+   *  already holds them — only ever set on the response to an upload. */
+  duplicateSkipped?: number;
+  /** The runs those lines came from, so the message can name them. */
+  duplicateOfRuns?: number[];
 }
 
 export type BankStatementRunList = Paginated<BankStatementRunDto>;
@@ -133,6 +339,15 @@ export interface BankStatementRunResult {
   rows: BankStatementRowDto[];
   /** Every party the run touches, for the dropdown. */
   parties: { customerId: number; customerName: string; lines: number; total: number }[];
+  /**
+   * Receipt REF ID → the voucher number the Party Ledger prints for it.
+   *
+   * The reconciliation keys on the REF ID ("REC-2026-0291") because that is
+   * what groups a receipt's per-invoice allocation rows. The ledger shows the
+   * VOUCHER number ("RN/373"). Both name the same money, and quoting only the
+   * first left the two screens impossible to line up against each other.
+   */
+  receiptVouchers: Record<string, string>;
 }
 
 /* ── Per-party before / after ─────────────────────────────────────────────── */
@@ -182,6 +397,8 @@ export interface BankPartyPreview {
 /* ── Inputs ───────────────────────────────────────────────────────────────── */
 
 export interface BankStatementCreateInput {
+  /** What to do about lines already held — omitted means `ask`. */
+  onDuplicate?: DuplicateAction;
   fileName: string;
   bankName?: string | null;
   fromDate: string;
@@ -299,7 +516,56 @@ const TXN_WORDS = new Set([
   'SETTLEMENT', 'CAPITALISED', 'CAPITALIZED', 'INTEREST', 'CHARGES', 'CHARGE', 'REVERSAL', 'REFUND',
   'CLEARING', 'COLLECTION', 'INWARD', 'OUTWARD', 'CREDIT', 'DEBIT', 'TRANSACTION', 'PAYMENT', 'AGAINST',
   'INVOICE', 'AMOUNT', 'AMT', 'AGST', 'MISC', 'OTHERS', 'ONLINE', 'FUND', 'FUNDS', 'BILL', 'BILLS',
+  // Seen on real RTGS lines: "…/ICICI BANK LIMITED//SL/./BL/.//URGENT  //"
+  'URGENT', 'NORMAL', 'PRIORITY', 'TRANSFER', 'REMITTANCE', 'SELFFT', 'TPFT',
+  // Found by asking which fragments would point at two different parties:
+  // "TOWARDS" was learnable off both ST ANTHONY and JALARAM MART.
+  'TOWARDS', 'REMARK', 'REMARKS', 'DETAILS', 'DETAIL', 'INWARD', 'CLOSURE', 'MERCANTILE',
 ]);
+
+/**
+ * Anything in a narration that names a BANK rather than a payer.
+ *
+ * Nearly every one carries the word itself — "HDFC BANK", "STATE BANK OF INDIA",
+ * "BANK OF MA" truncated. The rest are the eight-character forms IMPS uses
+ * ("UNIONBAN", "ICICIBAN") and the lenders that do not say "bank" at all
+ * ("UJJIVAN SMALL FINANC").
+ */
+const BANKISH = /BANK|FINANC|SAHAKARI|CO-?OP|NIDHI|MAHILA/i;
+const BANK_SHORTHAND = new Set([
+  'UNIONBAN', 'ICICIBAN', 'KOTAKMAH', 'HDFCBANK', 'AXISBANK', 'CANARABA', 'IDFCFIRS',
+  'INDUSIND', 'YESBANK', 'IDBIBANK', 'FEDERALB', 'BANDHANB', 'UJJIVAN', 'KARURVYS',
+  'SOUTHIND', 'CENTRALB', 'PUNJABNA', 'INDIANBA', 'SARASWAT', 'COSMOSBA', 'RBLBANK',
+  'TAMILNAD', 'KARNATAK', 'JAMMUKAS', 'DHANLAXM', 'CITYUNIO', 'ESAFSMAL', 'EQUITASS',
+]);
+
+/**
+ * The part of a narration that could name the payer.
+ *
+ * A NEFT/RTGS/IMPS narration is slash-delimited, and only one of those segments
+ * is the person who paid. The others are the remitter's BANK and the UTR — and
+ * both are poison for an alias: learn "MAHINDRA" off `KOTAK MAHINDRA BANK` and
+ * every future Kotak transfer is attributed to whoever you assigned first;
+ * learn "HDFCH" off the reference `HDFCH00909482619` and the same happens for
+ * HDFC. Both were real outputs before this existed.
+ *
+ * So two kinds of segment are dropped: the bank-looking ones, and any segment
+ * carrying a digit — a UTR, an account number, a date — because a payer's name
+ * does not. What is left is the name, if the narration holds one at all.
+ */
+export function payerNarration(narration: string): string {
+  return (narration ?? '')
+    .split('/')
+    .filter((seg) => {
+      const t = seg.trim();
+      if (!t) return false;
+      if (/\d/.test(t)) return false; // UTR, account number, date
+      if (BANKISH.test(t)) return false;
+      if (BANK_SHORTHAND.has(t.toUpperCase().replace(/[^A-Z]/g, ''))) return false;
+      return true;
+    })
+    .join('/');
+}
 
 /**
  * The word to remember a payer by, or null when there is nothing safe to learn.
@@ -315,7 +581,11 @@ const TXN_WORDS = new Set([
  * silently, on a screen whose whole job is to stop exactly that.
  */
 export function aliasFragment(narration: string, partyName?: string): string | null {
-  const words = narrationTokens(narration).filter((w) => w.length >= 5 && !GENERIC_PARTY_WORDS.has(w) && !TXN_WORDS.has(w));
+  // Only the payer part: a bank name or a UTR reference in here is how an alias
+  // ends up attributing a whole bank's transfers to one customer.
+  const words = narrationTokens(payerNarration(narration)).filter(
+    (w) => w.length >= 5 && !GENERIC_PARTY_WORDS.has(w) && !TXN_WORDS.has(w),
+  );
   if (!words.length) return null;
   if (partyName) {
     const party = new Set(narrationTokens(partyName));

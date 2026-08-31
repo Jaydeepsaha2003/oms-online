@@ -2253,6 +2253,16 @@ model BankStatementRow {
   /// Always positive — this side of the statement is money in.
   amount    Float
 
+  /// The line's identity across uploads: `date|amount|squashed narration`, from
+  /// `statementRowKey` in @oms/shared. Written on import so a later statement
+  /// can be checked against what is already held without recomputing it, and
+  /// indexed because that check is the slow part of an upload.
+  ///
+  /// NOT unique. A party genuinely can pay the same amount twice on one day
+  /// with the same narration, and both are real money — the duplicate check
+  /// counts occurrences rather than forbidding them.
+  rowKey    String  @default("")
+
   customerId   Int?
   customerName String?
   /// RECEIPT | ALIAS | NARRATION | MANUAL — how the party was decided, so an
@@ -2273,6 +2283,7 @@ model BankStatementRow {
   @@index([runId])
   @@index([runId, status])
   @@index([customerId])
+  @@index([rowKey])
   @@map("bank_statement_row")
 }
 
