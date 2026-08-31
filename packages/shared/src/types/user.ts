@@ -41,6 +41,16 @@ export interface UserDto {
   lastActiveAt?: string | null;
   /** Live sign-ins right now — refresh tokens neither revoked nor expired. */
   activeSessions?: number;
+  /**
+   * Devices this user has switched push alerts on for.
+   *
+   * Zero means every notification sent to them is discarded unless they happen
+   * to have the app open at that moment — a push subscription is per device and
+   * only the person holding it can create one. Surfaced here because there was
+   * no way to see it: orders were notifying all six users and five of them had
+   * never enrolled, which read as "notifications are broken".
+   */
+  alertDevices?: number;
   createdAt: string;
   updatedAt: string;
 }
