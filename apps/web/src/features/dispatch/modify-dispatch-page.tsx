@@ -1,8 +1,38 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Camera, CalendarRange, ChevronDown, ChevronLeft, ChevronRight, Eye, Filter, History, Layers, Loader2, Lock, MoreVertical, Pencil, Search, Trash2, TriangleAlert, Users, X } from 'lucide-react';
+import {
+  Camera,
+  CalendarRange,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  Filter,
+  History,
+  Layers,
+  Loader2,
+  Lock,
+  MoreVertical,
+  Pencil,
+  Search,
+  Trash2,
+  TriangleAlert,
+  Users,
+  X,
+} from 'lucide-react';
 import { toast } from 'sonner';
-import { ACTIONS, ALL_PERMISSIONS, DISPATCH_STATUSES, MAX_PAGE_SIZE, RESOURCES, RETURNED_DISPATCH_STATUS, perm, qtyOrderForCategory, type DispatchDto, type QtyField } from '@oms/shared';
+import {
+  ACTIONS,
+  ALL_PERMISSIONS,
+  DISPATCH_STATUSES,
+  MAX_PAGE_SIZE,
+  RESOURCES,
+  RETURNED_DISPATCH_STATUS,
+  perm,
+  qtyOrderForCategory,
+  type DispatchDto,
+  type QtyField,
+} from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn, shortDispatchCode, shortOrderCode } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
@@ -17,16 +47,34 @@ import { RecordHistory } from '@/components/common/record-history';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { DateRangeCalendar } from '@/components/common/date-range-calendar';
 import { PRESETS, presetRange } from '@/features/challans/date-presets';
-import { useDeleteDispatch, useDispatches, useDispatchFilterOptions, useLineLock, useUpdateDispatch } from './use-dispatch';
+import {
+  useDeleteDispatch,
+  useDispatches,
+  useDispatchFilterOptions,
+  useLineLock,
+  useUpdateDispatch,
+} from './use-dispatch';
 import { LiveLinePhotos } from '../orders/line-photos';
 import { useOrderItemPhotos } from '../orders/use-orders';
 
@@ -34,11 +82,14 @@ const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? 0 : Num
 const qty = (v: number | null) => (v ? v.toLocaleString('en-IN') : '—');
 
 const STATUS_STYLE: Record<string, string> = {
-  'PARTIALLY DISPATCH': 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/25',
-  'FULLY DISPATCH': 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/25',
+  'PARTIALLY DISPATCH':
+    'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/25',
+  'FULLY DISPATCH':
+    'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/25',
   // A return gives quantity BACK, so it reads as its own thing rather than as a
   // shade of "dispatched".
-  [RETURNED_DISPATCH_STATUS]: 'bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-400/25',
+  [RETURNED_DISPATCH_STATUS]:
+    'bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-400/25',
 };
 const STATUS_DOT: Record<string, string> = {
   'PARTIALLY DISPATCH': 'bg-amber-500',
@@ -65,7 +116,12 @@ const ChallanBadge = ({ d }: { d: DispatchDto }) =>
 
 /** A status pill with a coloured dot — carries the state alongside the word. */
 const StatusBadge = ({ s }: { s: string }) => (
-  <span className={cn('inline-flex items-center gap-1.5 rounded-[4px] px-1.5 py-0.5 text-[11.5px] font-bold ring-1 ring-inset', STATUS_STYLE[s] ?? 'bg-muted text-muted-foreground ring-border')}>
+  <span
+    className={cn(
+      'inline-flex items-center gap-1.5 rounded-[4px] px-1.5 py-0.5 text-[11.5px] font-bold ring-1 ring-inset',
+      STATUS_STYLE[s] ?? 'bg-muted text-muted-foreground ring-border',
+    )}
+  >
     <span className={cn('size-1.5 shrink-0 rounded-full', STATUS_DOT[s] ?? 'bg-slate-400')} />
     {s}
   </span>
@@ -76,7 +132,8 @@ const TEXT_CELL = 'text-[13px] font-semibold text-slate-800 dark:text-slate-200'
 /** Compact, amber-bordered filter controls — same language as the other list pages. */
 const CONTROL =
   'h-9 rounded-[4px] border-amber-300 dark:border-amber-400/40 text-[12.5px] focus-visible:border-amber-500 focus-visible:ring-amber-400/30';
-const CONTROL_ON = 'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
+const CONTROL_ON =
+  'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
 
 /** True when this row is a return rather than an outward dispatch. */
 const isReturn = (d: DispatchDto) => d.dispatchStatus === RETURNED_DISPATCH_STATUS;
@@ -87,18 +144,27 @@ const isReturn = (d: DispatchDto) => d.dispatchStatus === RETURNED_DISPATCH_STAT
 function QtyCell({ d, v }: { d: DispatchDto; v: number | null }) {
   const ret = isReturn(d);
   return (
-    <span className={cn(TEXT_CELL, 'tabular-nums', ret && 'text-rose-600 dark:text-rose-400')}>{qty(v)}</span>
+    <span className={cn(TEXT_CELL, 'tabular-nums', ret && 'text-rose-600 dark:text-rose-400')}>
+      {qty(v)}
+    </span>
   );
 }
 
 /** Quantities of one return, as a readable phrase ("2 bags · 10 kgs"). */
-const returnQtyText = (r: { bags: number | null; pcs: number | null; kgs: number | null; box: number | null }) =>
-  ([
-    [r.bags, 'bags'],
-    [r.pcs, 'pcs'],
-    [r.kgs, 'kgs'],
-    [r.box, 'box'],
-  ] as const)
+const returnQtyText = (r: {
+  bags: number | null;
+  pcs: number | null;
+  kgs: number | null;
+  box: number | null;
+}) =>
+  (
+    [
+      [r.bags, 'bags'],
+      [r.pcs, 'pcs'],
+      [r.kgs, 'kgs'],
+      [r.box, 'box'],
+    ] as const
+  )
     .filter(([v]) => v != null && v !== 0)
     .map(([v, unit]) => `${qty(Math.abs(v as number))} ${unit}`)
     .join(' · ') || '—';
@@ -117,9 +183,10 @@ function DispatchSummary({ d }: { d: DispatchDto }) {
     <div className="space-y-1.5">
       {d.returnOf ? (
         <span className="text-rose-700 dark:text-rose-300">
-          Return recorded on credit note <span className="font-semibold">{d.returnOf.creditNoteCode}</span>
-          {d.returnOf.dispatchId ? <> — against dispatch #{d.returnOf.dispatchId}</> : null}. This quantity went back into
-          Dispatch Orders.
+          Return recorded on credit note{' '}
+          <span className="font-semibold">{d.returnOf.creditNoteCode}</span>
+          {d.returnOf.dispatchId ? <> — against dispatch #{d.returnOf.dispatchId}</> : null}. This
+          quantity went back into Dispatch Orders.
         </span>
       ) : d.challanCode ? (
         <span>
@@ -136,9 +203,13 @@ function DispatchSummary({ d }: { d: DispatchDto }) {
             Returned {returns.length > 1 ? `· ${returns.length} times` : ''}
           </div>
           {returns.map((r) => (
-            <div key={r.returnDispatchId} className="text-[11.5px] text-rose-900 dark:text-rose-200">
+            <div
+              key={r.returnDispatchId}
+              className="text-[11.5px] text-rose-900 dark:text-rose-200"
+            >
               <span className="font-semibold">{returnQtyText(r)}</span> on credit note{' '}
-              <span className="font-semibold">{r.creditNoteCode}</span> · {formatDate(r.creditNoteDate)}
+              <span className="font-semibold">{r.creditNoteCode}</span> ·{' '}
+              {formatDate(r.creditNoteDate)}
             </div>
           ))}
         </div>
@@ -148,20 +219,69 @@ function DispatchSummary({ d }: { d: DispatchDto }) {
 }
 
 const COLUMNS: DataColumn<DispatchDto>[] = [
-  { id: 'code', label: 'DIS#', pin: 'left0', pinWidthClass: 'sm:w-16 sm:min-w-16', fixed: true, cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums text-indigo-700 dark:text-indigo-300')}>{shortDispatchCode(d.code, d.id)}</span> },
-  { id: 'date', label: 'Date', cell: (d) => <span className={cn(TEXT_CELL, 'whitespace-nowrap tabular-nums')}>{formatDate(d.dispatchDate)}</span> },
-  { id: 'order', label: 'ORD#', cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{shortOrderCode(d.orderCode, d.orderId)}</span> },
-  { id: 'customer', label: 'Customer', cell: (d) => <span className={TEXT_CELL}>{d.customerName}</span> },
-  { id: 'product', label: 'Product', cell: (d) => <span className={TEXT_CELL}>{d.productName || d.product || '—'}</span> },
-  { id: 'design', label: 'Design Name', cell: (d) => <span className={TEXT_CELL}>{d.designType || '—'}</span> },
+  {
+    id: 'code',
+    label: 'DIS#',
+    pin: 'left0',
+    pinWidthClass: 'sm:w-16 sm:min-w-16',
+    fixed: true,
+    cell: (d) => (
+      <span className={cn(TEXT_CELL, 'tabular-nums text-indigo-700 dark:text-indigo-300')}>
+        {shortDispatchCode(d.code, d.id)}
+      </span>
+    ),
+  },
+  {
+    id: 'date',
+    label: 'Date',
+    cell: (d) => (
+      <span className={cn(TEXT_CELL, 'whitespace-nowrap tabular-nums')}>
+        {formatDate(d.dispatchDate)}
+      </span>
+    ),
+  },
+  {
+    id: 'order',
+    label: 'ORD#',
+    cell: (d) => (
+      <span className={cn(TEXT_CELL, 'tabular-nums')}>
+        {shortOrderCode(d.orderCode, d.orderId)}
+      </span>
+    ),
+  },
+  {
+    id: 'customer',
+    label: 'Customer',
+    cell: (d) => <span className={TEXT_CELL}>{d.customerName}</span>,
+  },
+  {
+    id: 'product',
+    label: 'Product',
+    cell: (d) => <span className={TEXT_CELL}>{d.productName || d.product || '—'}</span>,
+  },
+  {
+    id: 'design',
+    label: 'Design Name',
+    cell: (d) => <span className={TEXT_CELL}>{d.designType || '—'}</span>,
+  },
   { id: 'bags', label: 'Bags', align: 'right', cell: (d) => <QtyCell d={d} v={d.bags} /> },
   { id: 'pcs', label: 'Pcs', align: 'right', cell: (d) => <QtyCell d={d} v={d.pcs} /> },
   { id: 'kgs', label: 'Kgs', align: 'right', cell: (d) => <QtyCell d={d} v={d.gram} /> },
   { id: 'box', label: 'Box', align: 'right', cell: (d) => <QtyCell d={d} v={d.box} /> },
   { id: 'status', label: 'Status', cell: (d) => <StatusBadge s={d.dispatchStatus} /> },
   { id: 'challan', label: 'Challan Status', cell: (d) => <ChallanBadge d={d} /> },
-  { id: 'dispatchedBy', label: 'Dispatched By', cell: (d) => <span className={TEXT_CELL}>{d.userName || '—'}</span> },
-  { id: 'remarks', label: 'Remarks', cell: (d) => <span className="text-muted-foreground text-[13px] font-medium">{d.comment || '—'}</span> },
+  {
+    id: 'dispatchedBy',
+    label: 'Dispatched By',
+    cell: (d) => <span className={TEXT_CELL}>{d.userName || '—'}</span>,
+  },
+  {
+    id: 'remarks',
+    label: 'Remarks',
+    cell: (d) => (
+      <span className="text-muted-foreground text-[13px] font-medium">{d.comment || '—'}</span>
+    ),
+  },
 ];
 
 const money = (v: number | null) => (v == null ? '—' : `₹${v.toLocaleString('en-IN')}`);
@@ -169,16 +289,39 @@ const money = (v: number | null) => (v == null ? '—' : `₹${v.toLocaleString(
 /** Rate columns, shown only with `dispatch:viewrates`. Amount = rate × the
  *  dispatched quantity (pcs or kgs, per the line's calc field). */
 const RATE_COLUMNS: DataColumn<DispatchDto>[] = [
-  { id: 'productRate', label: 'Product ₹', align: 'right', cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(d.productRate)}</span> },
-  { id: 'designRate', label: 'Design ₹', align: 'right', cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(d.designRate)}</span> },
-  { id: 'rate', label: 'Rate ₹', align: 'right', cell: (d) => <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(d.rate)}</span> },
+  {
+    id: 'productRate',
+    label: 'Product ₹',
+    align: 'right',
+    cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(d.productRate)}</span>,
+  },
+  {
+    id: 'designRate',
+    label: 'Design ₹',
+    align: 'right',
+    cell: (d) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(d.designRate)}</span>,
+  },
+  {
+    id: 'rate',
+    label: 'Rate ₹',
+    align: 'right',
+    cell: (d) => (
+      <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+        {money(d.rate)}
+      </span>
+    ),
+  },
   {
     id: 'amount',
     label: 'Amount ₹',
     align: 'right',
     cell: (d) => {
       const q = (d.calField ?? '').toUpperCase() === 'PCS' ? d.pcs : d.gram;
-      return <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(d.rate != null && q != null ? Math.round(d.rate * q) : null)}</span>;
+      return (
+        <span className={cn(TEXT_CELL, 'tabular-nums')}>
+          {money(d.rate != null && q != null ? Math.round(d.rate * q) : null)}
+        </span>
+      );
     },
   },
 ];
@@ -249,7 +392,8 @@ function buildDateGroups(items: DispatchDto[]): DateGroup[] {
     if (!byDate.has(dk)) byDate.set(dk, new Map());
     const parties = byDate.get(dk)!;
     const party = d.customerName?.trim() || '—';
-    if (!parties.has(party)) parties.set(party, { party, lines: [], bags: 0, pcs: 0, kgs: 0, box: 0 });
+    if (!parties.has(party))
+      parties.set(party, { party, lines: [], bags: 0, pcs: 0, kgs: 0, box: 0 });
     const p = parties.get(party)!;
     p.lines.push(d);
     p.bags += d.bags ?? 0;
@@ -262,10 +406,20 @@ function buildDateGroups(items: DispatchDto[]): DateGroup[] {
     .map(([dateKey, partiesMap]) => {
       const parties = [...partiesMap.values()].sort((a, b) => a.party.localeCompare(b.party));
       const totals = parties.reduce(
-        (acc, p) => ({ bags: acc.bags + p.bags, pcs: acc.pcs + p.pcs, kgs: acc.kgs + p.kgs, box: acc.box + p.box }),
+        (acc, p) => ({
+          bags: acc.bags + p.bags,
+          pcs: acc.pcs + p.pcs,
+          kgs: acc.kgs + p.kgs,
+          box: acc.box + p.box,
+        }),
         { bags: 0, pcs: 0, kgs: 0, box: 0 },
       );
-      return { dateKey, parties, ...totals, lineCount: parties.reduce((a, p) => a + p.lines.length, 0) };
+      return {
+        dateKey,
+        parties,
+        ...totals,
+        lineCount: parties.reduce((a, p) => a + p.lines.length, 0),
+      };
     });
 }
 
@@ -286,8 +440,20 @@ function GroupQtyBadges({
   size?: 'sm' | 'lg';
   tone?: 'default' | 'light';
 }) {
-  const vals = ([['Bags', bags], ['Pcs', pcs], ['Kgs', kgs], ['Box', box]] as const).filter(([, v]) => v > 0);
-  if (!vals.length) return <span className={cn('text-xs', tone === 'light' ? 'text-white/70' : 'text-muted-foreground')}>No quantities</span>;
+  const vals = (
+    [
+      ['Bags', bags],
+      ['Pcs', pcs],
+      ['Kgs', kgs],
+      ['Box', box],
+    ] as const
+  ).filter(([, v]) => v > 0);
+  if (!vals.length)
+    return (
+      <span className={cn('text-xs', tone === 'light' ? 'text-white/70' : 'text-muted-foreground')}>
+        No quantities
+      </span>
+    );
   return (
     <div className={cn('flex flex-wrap', size === 'lg' ? 'gap-2' : 'gap-1.5')}>
       {vals.map(([label, v]) => (
@@ -295,12 +461,29 @@ function GroupQtyBadges({
           key={label}
           className={cn(
             'inline-flex items-baseline gap-1 rounded-full border',
-            tone === 'light' ? 'border-white/25 bg-white/10 text-white' : 'border-primary/15 bg-primary/5 text-primary',
+            tone === 'light'
+              ? 'border-white/25 bg-white/10 text-white'
+              : 'border-primary/15 bg-primary/5 text-primary',
             size === 'lg' ? 'px-3 py-1.5' : 'px-2 py-0.5',
           )}
         >
-          <span className={cn('font-semibold uppercase', size === 'lg' ? 'text-[11px]' : 'text-[10px]', tone === 'light' ? 'opacity-80' : 'opacity-70')}>{label}</span>
-          <span className={cn('font-bold tabular-nums', size === 'lg' ? 'text-[17px]' : 'text-[12.5px]')}>{qty(v)}</span>
+          <span
+            className={cn(
+              'font-semibold uppercase',
+              size === 'lg' ? 'text-[11px]' : 'text-[10px]',
+              tone === 'light' ? 'opacity-80' : 'opacity-70',
+            )}
+          >
+            {label}
+          </span>
+          <span
+            className={cn(
+              'font-bold tabular-nums',
+              size === 'lg' ? 'text-[17px]' : 'text-[12.5px]',
+            )}
+          >
+            {qty(v)}
+          </span>
         </span>
       ))}
     </div>
@@ -329,15 +512,31 @@ function GroupedLineRow({
   onDelete: () => void;
 }) {
   const locked = !!d.challanCode;
-  const amount = d.rate != null ? Math.round(d.rate * ((d.calField ?? '').toUpperCase() === 'PCS' ? (d.pcs ?? 0) : (d.gram ?? 0))) : null;
-  const qtyText = ([['B', d.bags], ['P', d.pcs], ['K', d.gram], ['X', d.box]] as const)
+  const amount =
+    d.rate != null
+      ? Math.round(
+          d.rate * ((d.calField ?? '').toUpperCase() === 'PCS' ? (d.pcs ?? 0) : (d.gram ?? 0)),
+        )
+      : null;
+  const qtyText = (
+    [
+      ['B', d.bags],
+      ['P', d.pcs],
+      ['K', d.gram],
+      ['X', d.box],
+    ] as const
+  )
     .filter(([, v]) => v && v > 0)
     .map(([u, v]) => `${qty(v)}${u}`)
     .join(' · ');
   return (
     <div className="bg-card flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border px-2.5 py-1.5 text-[12.5px]">
-      <span className="font-mono font-bold text-indigo-700 dark:text-indigo-300">{shortDispatchCode(d.code, d.id)}</span>
-      <span className="text-muted-foreground font-mono text-[11px]">{shortOrderCode(d.orderCode, d.orderId)}</span>
+      <span className="font-mono font-bold text-indigo-700 dark:text-indigo-300">
+        {shortDispatchCode(d.code, d.id)}
+      </span>
+      <span className="text-muted-foreground font-mono text-[11px]">
+        {shortOrderCode(d.orderCode, d.orderId)}
+      </span>
       <span className="min-w-0 flex-1 truncate font-semibold text-slate-800 dark:text-slate-200">
         {d.productName || d.product || '—'}
         {d.designType && d.designType.toUpperCase() !== 'NA' ? ` · ${d.designType}` : ''}
@@ -345,12 +544,28 @@ function GroupedLineRow({
       <span className="text-muted-foreground tabular-nums">{qtyText || '—'}</span>
       <StatusBadge s={d.dispatchStatus} />
       <ChallanBadge d={d} />
-      {showRates && <span className="font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(amount)}</span>}
+      {showRates && (
+        <span className="font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+          {money(amount)}
+        </span>
+      )}
       <div className="ml-auto flex items-center gap-1">
-        <Button variant="ghost" size="icon" className="size-6" onClick={onView} aria-label="View" title="View details">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-6"
+          onClick={onView}
+          aria-label="View"
+          title="View details"
+        >
           <Eye className="size-3.5" />
         </Button>
-        <DispatchPhotosButton orderItemId={d.orderItemId} isSuperAdmin={isSuperAdmin} challanCode={d.challanCode} compact />
+        <DispatchPhotosButton
+          orderItemId={d.orderItemId}
+          isSuperAdmin={isSuperAdmin}
+          challanCode={d.challanCode}
+          compact
+        />
         {canEdit && (
           <Button
             variant="ghost"
@@ -364,7 +579,15 @@ function GroupedLineRow({
           </Button>
         )}
         {canDelete && (
-          <Button variant="ghost" size="icon" className="size-6 text-destructive hover:text-destructive" onClick={onDelete} disabled={locked} aria-label="Delete" title={locked ? `Billed on ${d.challanCode} — cannot be deleted` : 'Delete'}>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-6 text-destructive hover:text-destructive"
+            onClick={onDelete}
+            disabled={locked}
+            aria-label="Delete"
+            title={locked ? `Billed on ${d.challanCode} — cannot be deleted` : 'Delete'}
+          >
             <Trash2 className="size-3.5" />
           </Button>
         )}
@@ -412,12 +635,17 @@ function GroupedDesktopView({
           <div className="flex flex-wrap items-center justify-between gap-2 bg-gradient-to-r from-blue-900 to-indigo-900 px-3.5 py-2.5 text-white">
             <div className="flex items-center gap-2">
               <CalendarRange className="size-4 opacity-80" />
-              <span className="text-[15px] font-extrabold tracking-wide">{dayLabel(g.dateKey)}</span>
-              <span className="text-[12px] font-medium text-white/70 tabular-nums">{formatDate(g.dateKey)}</span>
+              <span className="text-[15px] font-extrabold tracking-wide">
+                {dayLabel(g.dateKey)}
+              </span>
+              <span className="text-[12px] font-medium text-white/70 tabular-nums">
+                {formatDate(g.dateKey)}
+              </span>
             </div>
             <div className="flex items-center gap-3">
               <span className="flex items-center gap-1 text-[12px] font-semibold text-white/80">
-                <Users className="size-3.5" /> {g.parties.length} part{g.parties.length === 1 ? 'y' : 'ies'}
+                <Users className="size-3.5" /> {g.parties.length} part
+                {g.parties.length === 1 ? 'y' : 'ies'}
               </span>
               <GroupQtyBadges bags={g.bags} pcs={g.pcs} kgs={g.kgs} box={g.box} tone="light" />
             </div>
@@ -435,8 +663,15 @@ function GroupedDesktopView({
                     className="flex w-full flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 text-left transition-colors hover:bg-amber-50 dark:hover:bg-amber-400/5"
                   >
                     <div className="flex min-w-0 items-center gap-2">
-                      <ChevronDown className={cn('text-muted-foreground size-4 shrink-0 transition-transform', open && 'rotate-180')} />
-                      <span className="truncate text-[14px] font-bold text-slate-900 dark:text-slate-100">{p.party}</span>
+                      <ChevronDown
+                        className={cn(
+                          'text-muted-foreground size-4 shrink-0 transition-transform',
+                          open && 'rotate-180',
+                        )}
+                      />
+                      <span className="truncate text-[14px] font-bold text-slate-900 dark:text-slate-100">
+                        {p.party}
+                      </span>
                       <span className="text-muted-foreground shrink-0 text-[11.5px] font-semibold">
                         {p.lines.length} line{p.lines.length === 1 ? '' : 's'}
                       </span>
@@ -447,7 +682,17 @@ function GroupedDesktopView({
                   {open && (
                     <div className="space-y-1.5 border-t bg-slate-50/60 px-3.5 py-2 dark:bg-white/[0.02]">
                       {p.lines.map((d) => (
-                        <GroupedLineRow key={d.id} d={d} canEdit={canEdit && !isReturn(d)} canDelete={canDelete && !isReturn(d)} showRates={showRates} isSuperAdmin={isSuperAdmin} onView={() => onView(d)} onEdit={() => onEdit(d)} onDelete={() => onDelete(d)} />
+                        <GroupedLineRow
+                          key={d.id}
+                          d={d}
+                          canEdit={canEdit && !isReturn(d)}
+                          canDelete={canDelete && !isReturn(d)}
+                          showRates={showRates}
+                          isSuperAdmin={isSuperAdmin}
+                          onView={() => onView(d)}
+                          onEdit={() => onEdit(d)}
+                          onDelete={() => onDelete(d)}
+                        />
                       ))}
                     </div>
                   )}
@@ -488,7 +733,11 @@ function GroupedMobileView({
   onDelete: (d: DispatchDto) => void;
 }) {
   if (!groups.length) {
-    return <div className="text-muted-foreground rounded-2xl border border-dashed bg-card px-4 py-12 text-center text-sm">No dispatch records match these filters.</div>;
+    return (
+      <div className="text-muted-foreground rounded-2xl border border-dashed bg-card px-4 py-12 text-center text-sm">
+        No dispatch records match these filters.
+      </div>
+    );
   }
   return (
     <div className="space-y-5">
@@ -498,10 +747,18 @@ function GroupedMobileView({
             <div className="min-w-0">
               <p className="text-[18px] font-extrabold leading-tight">{dayLabel(g.dateKey)}</p>
               <p className="text-[11.5px] font-medium text-white/70">
-                {formatDate(g.dateKey)} · {g.parties.length} part{g.parties.length === 1 ? 'y' : 'ies'}
+                {formatDate(g.dateKey)} · {g.parties.length} part
+                {g.parties.length === 1 ? 'y' : 'ies'}
               </p>
             </div>
-            <GroupQtyBadges bags={g.bags} pcs={g.pcs} kgs={g.kgs} box={g.box} size="lg" tone="light" />
+            <GroupQtyBadges
+              bags={g.bags}
+              pcs={g.pcs}
+              kgs={g.kgs}
+              box={g.box}
+              size="lg"
+              tone="light"
+            />
           </div>
 
           <div className="space-y-2.5">
@@ -510,28 +767,66 @@ function GroupedMobileView({
               const open = expanded.has(key);
               return (
                 <div key={key} className="bg-card overflow-hidden rounded-2xl border shadow-sm">
-                  <button type="button" onClick={() => onToggle(key)} className="active:bg-muted/60 flex w-full flex-col gap-2.5 p-4 text-left transition-colors [touch-action:manipulation]">
+                  <button
+                    type="button"
+                    onClick={() => onToggle(key)}
+                    className="active:bg-muted/60 flex w-full flex-col gap-2.5 p-4 text-left transition-colors [touch-action:manipulation]"
+                  >
                     <div className="flex items-center justify-between gap-2">
                       <p className="truncate text-[17px] leading-tight font-bold">{p.party}</p>
-                      <ChevronDown className={cn('text-muted-foreground size-5 shrink-0 transition-transform', open && 'rotate-180')} />
+                      <ChevronDown
+                        className={cn(
+                          'text-muted-foreground size-5 shrink-0 transition-transform',
+                          open && 'rotate-180',
+                        )}
+                      />
                     </div>
                     <div className="grid grid-cols-4 gap-2">
-                      {([['Bags', p.bags], ['Pcs', p.pcs], ['Kgs', p.kgs], ['Box', p.box]] as const).map(([label, v]) => (
-                        <div key={label} className={cn('rounded-xl px-1 py-2 text-center', v > 0 ? 'bg-primary/[0.07]' : 'bg-muted/40 opacity-50')}>
-                          <p className="text-muted-foreground text-[9.5px] font-bold tracking-widest uppercase">{label}</p>
-                          <p className="text-[18px] leading-tight font-extrabold tabular-nums">{v > 0 ? qty(v) : '—'}</p>
+                      {(
+                        [
+                          ['Bags', p.bags],
+                          ['Pcs', p.pcs],
+                          ['Kgs', p.kgs],
+                          ['Box', p.box],
+                        ] as const
+                      ).map(([label, v]) => (
+                        <div
+                          key={label}
+                          className={cn(
+                            'rounded-xl px-1 py-2 text-center',
+                            v > 0 ? 'bg-primary/[0.07]' : 'bg-muted/40 opacity-50',
+                          )}
+                        >
+                          <p className="text-muted-foreground text-[9.5px] font-bold tracking-widest uppercase">
+                            {label}
+                          </p>
+                          <p className="text-[18px] leading-tight font-extrabold tabular-nums">
+                            {v > 0 ? qty(v) : '—'}
+                          </p>
                         </div>
                       ))}
                     </div>
                     <p className="text-muted-foreground text-[11.5px] font-semibold">
-                      {p.lines.length} line{p.lines.length === 1 ? '' : 's'} · tap to {open ? 'collapse' : 'view'}
+                      {p.lines.length} line{p.lines.length === 1 ? '' : 's'} · tap to{' '}
+                      {open ? 'collapse' : 'view'}
                     </p>
                   </button>
 
                   {open && (
                     <div className="space-y-2 border-t bg-slate-50/60 p-3 dark:bg-white/[0.02]">
                       {p.lines.map((d, i) => (
-                        <ModifyDispatchCard key={d.id} d={d} index={i} canEdit={canEdit && !isReturn(d)} canDelete={canDelete && !isReturn(d)} showRates={showRates} isSuperAdmin={isSuperAdmin} onView={() => onView(d)} onEdit={() => onEdit(d)} onDelete={() => onDelete(d)} />
+                        <ModifyDispatchCard
+                          key={d.id}
+                          d={d}
+                          index={i}
+                          canEdit={canEdit && !isReturn(d)}
+                          canDelete={canDelete && !isReturn(d)}
+                          showRates={showRates}
+                          isSuperAdmin={isSuperAdmin}
+                          onView={() => onView(d)}
+                          onEdit={() => onEdit(d)}
+                          onDelete={() => onDelete(d)}
+                        />
                       ))}
                     </div>
                   )}
@@ -568,17 +863,36 @@ function ModifyDispatchCard({
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const qtys = ([['Bags', d.bags], ['Pcs', d.pcs], ['Kgs', d.gram], ['Box', d.box]] as const).filter(([, v]) => v && v > 0);
-  const amount = d.rate != null ? Math.round(d.rate * ((d.calField ?? '').toUpperCase() === 'PCS' ? (d.pcs ?? 0) : (d.gram ?? 0))) : null;
+  const qtys = (
+    [
+      ['Bags', d.bags],
+      ['Pcs', d.pcs],
+      ['Kgs', d.gram],
+      ['Box', d.box],
+    ] as const
+  ).filter(([, v]) => v && v > 0);
+  const amount =
+    d.rate != null
+      ? Math.round(
+          d.rate * ((d.calField ?? '').toUpperCase() === 'PCS' ? (d.pcs ?? 0) : (d.gram ?? 0)),
+        )
+      : null;
   // Billed lines: qty/date/remarks are locked but status & photos can still be changed.
   const locked = !!d.challanCode;
   return (
-    <div className="mdisp-card-in bg-card relative overflow-hidden rounded-2xl border shadow-sm" style={{ animationDelay: `${Math.min(index, 10) * 40}ms` }}>
+    <div
+      className="mdisp-card-in bg-card relative overflow-hidden rounded-2xl border shadow-sm"
+      style={{ animationDelay: `${Math.min(index, 10) * 40}ms` }}
+    >
       <div className="space-y-2.5 p-3.5 text-[13px]">
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="bg-primary/10 text-primary rounded-md px-2 py-0.5 font-mono text-[13px] font-bold">{shortDispatchCode(d.code, d.id)}</span>
-            <span className="text-muted-foreground font-mono text-[12px]">{shortOrderCode(d.orderCode, d.orderId)}</span>
+            <span className="bg-primary/10 text-primary rounded-md px-2 py-0.5 font-mono text-[13px] font-bold">
+              {shortDispatchCode(d.code, d.id)}
+            </span>
+            <span className="text-muted-foreground font-mono text-[12px]">
+              {shortOrderCode(d.orderCode, d.orderId)}
+            </span>
           </div>
           <StatusBadge s={d.dispatchStatus} />
         </div>
@@ -592,14 +906,21 @@ function ModifyDispatchCard({
         </div>
 
         <div className="bg-muted/50 rounded-lg px-3 py-1.5">
-          <p className="text-[14.5px] leading-snug font-semibold">{d.productName || d.product || '—'}</p>
-          {d.designType && d.designType.toUpperCase() !== 'NA' && <p className="text-muted-foreground text-[12px]">{d.designType}</p>}
+          <p className="text-[14.5px] leading-snug font-semibold">
+            {d.productName || d.product || '—'}
+          </p>
+          {d.designType && d.designType.toUpperCase() !== 'NA' && (
+            <p className="text-muted-foreground text-[12px]">{d.designType}</p>
+          )}
         </div>
 
         <div className="flex flex-wrap gap-1.5">
           {qtys.length ? (
             qtys.map(([label, v]) => (
-              <span key={label} className="border-primary/15 bg-primary/5 text-primary inline-flex items-baseline gap-1 rounded-full border px-2.5 py-1">
+              <span
+                key={label}
+                className="border-primary/15 bg-primary/5 text-primary inline-flex items-baseline gap-1 rounded-full border px-2.5 py-1"
+              >
                 <span className="text-[11px] font-semibold uppercase opacity-70">{label}</span>
                 <span className="text-[14px] font-bold tabular-nums">{qty(v)}</span>
               </span>
@@ -611,13 +932,25 @@ function ModifyDispatchCard({
 
         {showRates && (
           <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 border-t pt-2 text-[12px]">
-            <span>Rate <span className="text-foreground font-semibold tabular-nums">{money(d.rate)}</span></span>
-            <span>Amount <span className="text-foreground font-semibold tabular-nums">{money(amount)}</span></span>
+            <span>
+              Rate{' '}
+              <span className="text-foreground font-semibold tabular-nums">{money(d.rate)}</span>
+            </span>
+            <span>
+              Amount{' '}
+              <span className="text-foreground font-semibold tabular-nums">{money(amount)}</span>
+            </span>
           </div>
         )}
 
-        {d.userName && <p className="text-muted-foreground text-[11.5px]">Dispatched by <span className="text-foreground font-semibold">{d.userName}</span></p>}
-        {d.comment && <p className="text-muted-foreground text-[12.5px] leading-snug">{d.comment}</p>}
+        {d.userName && (
+          <p className="text-muted-foreground text-[11.5px]">
+            Dispatched by <span className="text-foreground font-semibold">{d.userName}</span>
+          </p>
+        )}
+        {d.comment && (
+          <p className="text-muted-foreground text-[12.5px] leading-snug">{d.comment}</p>
+        )}
       </div>
 
       {/* Actions mirror the desktop row's set — view, photos, edit, delete —
@@ -633,7 +966,11 @@ function ModifyDispatchCard({
         </button>
         <div className="bg-border w-px" />
         <div className="flex flex-1 items-center justify-center py-1">
-          <DispatchPhotosButton orderItemId={d.orderItemId} isSuperAdmin={isSuperAdmin} challanCode={d.challanCode} />
+          <DispatchPhotosButton
+            orderItemId={d.orderItemId}
+            isSuperAdmin={isSuperAdmin}
+            challanCode={d.challanCode}
+          />
         </div>
         {canEdit && (
           <>
@@ -651,7 +988,11 @@ function ModifyDispatchCard({
         {canDelete && !locked && (
           <>
             <div className="bg-border w-px" />
-            <button type="button" onClick={onDelete} className="text-destructive active:bg-destructive/5 flex flex-1 items-center justify-center gap-1.5 py-2.5 transition-colors">
+            <button
+              type="button"
+              onClick={onDelete}
+              className="text-destructive active:bg-destructive/5 flex flex-1 items-center justify-center gap-1.5 py-2.5 transition-colors"
+            >
               <Trash2 className="size-4" /> Delete
             </button>
           </>
@@ -767,7 +1108,10 @@ export function ModifyDispatchPage() {
   const totalPages = data?.totalPages ?? 1;
   const dateActive = !!(dateFrom || dateTo || datePreset);
   const dateGroups = useMemo(() => (grouped ? buildDateGroups(items) : []), [grouped, items]);
-  const partyCount = useMemo(() => new Set(items.map((d) => d.customerName?.trim() || '—')).size, [items]);
+  const partyCount = useMemo(
+    () => new Set(items.map((d) => d.customerName?.trim() || '—')).size,
+    [items],
+  );
 
   const applyDatePreset = (p: string) => {
     if (p === datePreset) {
@@ -791,7 +1135,11 @@ export function ModifyDispatchPage() {
     setDatePreset('');
     setPage(1);
   };
-  const dateLabel = datePreset || (dateFrom || dateTo ? `${dateFrom ? formatDate(dateFrom) : '…'} → ${dateTo ? formatDate(dateTo) : '…'}` : 'Any date');
+  const dateLabel =
+    datePreset ||
+    (dateFrom || dateTo
+      ? `${dateFrom ? formatDate(dateFrom) : '…'} → ${dateTo ? formatDate(dateTo) : '…'}`
+      : 'Any date');
   // Shared body of the Date popover — same control on mobile and desktop.
   const datePanel = (
     <div className="w-[15.5rem] space-y-2">
@@ -829,7 +1177,8 @@ export function ModifyDispatchPage() {
         <span className="min-w-0 truncate text-[11.5px] font-semibold">
           {dateActive ? (
             <>
-              {dateFrom ? formatDate(dateFrom) : '…'} <span className="text-muted-foreground">→</span> {dateTo ? formatDate(dateTo) : '…'}
+              {dateFrom ? formatDate(dateFrom) : '…'}{' '}
+              <span className="text-muted-foreground">→</span> {dateTo ? formatDate(dateTo) : '…'}
             </>
           ) : (
             <span className="text-muted-foreground font-medium">All dates</span>
@@ -837,11 +1186,20 @@ export function ModifyDispatchPage() {
         </span>
         <div className="flex shrink-0 gap-1.5">
           {dateActive && (
-            <Button variant="ghost" size="sm" className="h-7 px-2 text-[12px] font-semibold" onClick={clearDates}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-[12px] font-semibold"
+              onClick={clearDates}
+            >
               Clear
             </Button>
           )}
-          <Button size="sm" className="h-7 shrink-0 px-3 text-[12px] font-semibold" onClick={() => setDateOpen(false)}>
+          <Button
+            size="sm"
+            className="h-7 shrink-0 px-3 text-[12px] font-semibold"
+            onClick={() => setDateOpen(false)}
+          >
             Done
           </Button>
         </div>
@@ -853,7 +1211,16 @@ export function ModifyDispatchPage() {
   // a notification deep-link can still set it, and without this the grid would
   // sit silently filtered with no control offering to undo it. Folding it into
   // the existing Reset-all keeps that escape hatch without reintroducing a box.
-  const hasFilters = !!(search || statusFilter || customerFilter || agentFilter || categoryFilter || productFilter || designFilter || dateActive);
+  const hasFilters = !!(
+    search ||
+    statusFilter ||
+    customerFilter ||
+    agentFilter ||
+    categoryFilter ||
+    productFilter ||
+    designFilter ||
+    dateActive
+  );
   const resetFilters = () => {
     setSearch('');
     setStatusFilter('');
@@ -867,7 +1234,14 @@ export function ModifyDispatchPage() {
   };
   // The behind-the-icon count on mobile — just the three fields the sheet holds.
   const sheetFilterCount = (agentFilter ? 1 : 0) + (designFilter ? 1 : 0) + (statusFilter ? 1 : 0);
-  const draftDirty = !!(draftAgent || draftDesign || draftStatus || agentFilter || designFilter || statusFilter);
+  const draftDirty = !!(
+    draftAgent ||
+    draftDesign ||
+    draftStatus ||
+    agentFilter ||
+    designFilter ||
+    statusFilter
+  );
   // Open the mobile sheet with its drafts seeded from what's currently applied.
   const openMobileFilters = () => {
     setDraftAgent(agentFilter);
@@ -982,11 +1356,49 @@ export function ModifyDispatchPage() {
               controls, so they stay visible in the row below rather than
               needing a second "apply" step inside the sheet. */}
           <div className="flex w-full flex-col gap-2 sm:hidden">
-            <NativeSelect value={customerFilter} onChange={(v) => { setCustomerFilter(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="Customer" className={cn(CONTROL, 'font-medium', customerFilter && CONTROL_ON)} />
-            <NativeSelect value={categoryFilter} onChange={(v) => { setCategoryFilter(v); setProductFilter(''); setPage(1); }} options={['', ...(options?.categories ?? [])]} placeholder="Category" className={cn(CONTROL, 'font-medium', categoryFilter && CONTROL_ON)} />
-            <NativeSelect value={productFilter} onChange={(v) => { setProductFilter(v); setPage(1); }} options={['', ...itemOptions]} placeholder="Item" className={cn(CONTROL, 'font-medium', productFilter && CONTROL_ON)} digitsFirst />
+            <NativeSelect
+              value={customerFilter}
+              onChange={(v) => {
+                setCustomerFilter(v);
+                setPage(1);
+              }}
+              options={['', ...(options?.customers ?? [])]}
+              placeholder="Customer"
+              className={cn(CONTROL, 'font-medium', customerFilter && CONTROL_ON)}
+            />
+            <NativeSelect
+              value={categoryFilter}
+              onChange={(v) => {
+                setCategoryFilter(v);
+                setProductFilter('');
+                setPage(1);
+              }}
+              options={['', ...(options?.categories ?? [])]}
+              placeholder="Category"
+              className={cn(CONTROL, 'font-medium', categoryFilter && CONTROL_ON)}
+            />
+            <NativeSelect
+              value={productFilter}
+              onChange={(v) => {
+                setProductFilter(v);
+                setPage(1);
+              }}
+              options={['', ...itemOptions]}
+              placeholder="Item"
+              className={cn(CONTROL, 'font-medium', productFilter && CONTROL_ON)}
+              digitsFirst
+            />
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="icon" className={cn('relative size-9 shrink-0 rounded-[4px] border-amber-300', sheetFilterCount > 0 && CONTROL_ON)} onClick={openMobileFilters} aria-label="More filters">
+              <Button
+                variant="outline"
+                size="icon"
+                className={cn(
+                  'relative size-9 shrink-0 rounded-[4px] border-amber-300',
+                  sheetFilterCount > 0 && CONTROL_ON,
+                )}
+                onClick={openMobileFilters}
+                aria-label="More filters"
+              >
                 <Filter className="size-4" />
                 {sheetFilterCount > 0 && (
                   <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-bold tabular-nums">
@@ -1008,13 +1420,20 @@ export function ModifyDispatchPage() {
               )}
               <Popover open={dateOpen} onOpenChange={setDateOpen}>
                 <PopoverTrigger asChild>
-                  <Button variant="outline" className={cn(CONTROL, 'min-w-0 flex-1 font-medium', dateActive && CONTROL_ON)} title="Filter by dispatch date">
+                  <Button
+                    variant="outline"
+                    className={cn(CONTROL, 'min-w-0 flex-1 font-medium', dateActive && CONTROL_ON)}
+                    title="Filter by dispatch date"
+                  >
                     <CalendarRange className="size-3.5 shrink-0" />
                     <span className="truncate">{dateLabel}</span>
                     <ChevronDown className="size-3 shrink-0 opacity-60" />
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent align="start" className="font-poppins w-auto max-w-[calc(100vw-1.5rem)] p-2.5">
+                <PopoverContent
+                  align="start"
+                  className="font-poppins w-auto max-w-[calc(100vw-1.5rem)] p-2.5"
+                >
                   {datePanel}
                 </PopoverContent>
               </Popover>
@@ -1022,7 +1441,9 @@ export function ModifyDispatchPage() {
             <label
               className={cn(
                 'flex cursor-pointer items-center justify-between gap-2 rounded-[4px] border px-2.5 py-2 text-[12.5px] font-semibold select-none',
-                grouped ? 'border-primary/40 bg-primary/5 text-primary' : 'border-amber-300 text-slate-600 dark:border-amber-400/40',
+                grouped
+                  ? 'border-primary/40 bg-primary/5 text-primary'
+                  : 'border-amber-300 text-slate-600 dark:border-amber-400/40',
               )}
             >
               <span className="flex items-center gap-1.5">
@@ -1038,36 +1459,99 @@ export function ModifyDispatchPage() {
                 Category, Sub Category, Design Name (skipping whichever of those this
                 page doesn't have — there's no Category/Sub Category filter here). */}
             <div className="sm:w-40">
-              <NativeSelect value={customerFilter} onChange={(v) => { setCustomerFilter(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="All customers" className={cn(CONTROL, 'font-medium', customerFilter && CONTROL_ON)} />
+              <NativeSelect
+                value={customerFilter}
+                onChange={(v) => {
+                  setCustomerFilter(v);
+                  setPage(1);
+                }}
+                options={['', ...(options?.customers ?? [])]}
+                placeholder="All customers"
+                className={cn(CONTROL, 'font-medium', customerFilter && CONTROL_ON)}
+              />
             </div>
             <div className="sm:w-36">
-              <NativeSelect value={categoryFilter} onChange={(v) => { setCategoryFilter(v); setProductFilter(''); setPage(1); }} options={['', ...(options?.categories ?? [])]} placeholder="All categories" className={cn(CONTROL, 'font-medium', categoryFilter && CONTROL_ON)} />
+              <NativeSelect
+                value={categoryFilter}
+                onChange={(v) => {
+                  setCategoryFilter(v);
+                  setProductFilter('');
+                  setPage(1);
+                }}
+                options={['', ...(options?.categories ?? [])]}
+                placeholder="All categories"
+                className={cn(CONTROL, 'font-medium', categoryFilter && CONTROL_ON)}
+              />
             </div>
             <div className="sm:w-40">
               {/* Digits-first keyboard: item names begin with a size number. */}
-              <NativeSelect value={productFilter} onChange={(v) => { setProductFilter(v); setPage(1); }} options={['', ...itemOptions]} placeholder="All items" className={cn(CONTROL, 'font-medium', productFilter && CONTROL_ON)} digitsFirst />
+              <NativeSelect
+                value={productFilter}
+                onChange={(v) => {
+                  setProductFilter(v);
+                  setPage(1);
+                }}
+                options={['', ...itemOptions]}
+                placeholder="All items"
+                className={cn(CONTROL, 'font-medium', productFilter && CONTROL_ON)}
+                digitsFirst
+              />
             </div>
             <div className="sm:w-36">
-              <NativeSelect value={agentFilter} onChange={(v) => { setAgentFilter(v); setPage(1); }} options={['', ...(options?.agents ?? [])]} placeholder="All agents" className={cn(CONTROL, 'font-medium', agentFilter && CONTROL_ON)} />
+              <NativeSelect
+                value={agentFilter}
+                onChange={(v) => {
+                  setAgentFilter(v);
+                  setPage(1);
+                }}
+                options={['', ...(options?.agents ?? [])]}
+                placeholder="All agents"
+                className={cn(CONTROL, 'font-medium', agentFilter && CONTROL_ON)}
+              />
             </div>
             <div className="sm:w-44">
-              <NativeSelect value={designFilter} onChange={(v) => { setDesignFilter(v); setPage(1); }} options={['', ...(options?.designs ?? [])]} placeholder="All design names" className={cn(CONTROL, 'font-medium', designFilter && CONTROL_ON)} />
+              <NativeSelect
+                value={designFilter}
+                onChange={(v) => {
+                  setDesignFilter(v);
+                  setPage(1);
+                }}
+                options={['', ...(options?.designs ?? [])]}
+                placeholder="All design names"
+                className={cn(CONTROL, 'font-medium', designFilter && CONTROL_ON)}
+              />
             </div>
             <div className="sm:w-36">
-              <NativeSelect value={statusFilter} onChange={(v) => { setStatusFilter(v); setPage(1); }} options={['', ...DISPATCH_STATUSES, RETURNED_DISPATCH_STATUS]} placeholder="All statuses" className={cn(CONTROL, 'font-medium', statusFilter && CONTROL_ON)} />
+              <NativeSelect
+                value={statusFilter}
+                onChange={(v) => {
+                  setStatusFilter(v);
+                  setPage(1);
+                }}
+                options={['', ...DISPATCH_STATUSES, RETURNED_DISPATCH_STATUS]}
+                placeholder="All statuses"
+                className={cn(CONTROL, 'font-medium', statusFilter && CONTROL_ON)}
+              />
             </div>
 
             {/* Dispatch-date range — scopes the Group by Date & Party view (and the
                 flat table too, when set). */}
             <Popover open={dateOpen} onOpenChange={setDateOpen}>
               <PopoverTrigger asChild>
-                <Button variant="outline" className={cn(CONTROL, 'max-w-52 font-medium', dateActive && CONTROL_ON)} title="Filter by dispatch date">
+                <Button
+                  variant="outline"
+                  className={cn(CONTROL, 'max-w-52 font-medium', dateActive && CONTROL_ON)}
+                  title="Filter by dispatch date"
+                >
                   <CalendarRange className="size-3.5 shrink-0" />
                   <span className="truncate">{dateLabel}</span>
                   <ChevronDown className="size-3 shrink-0 opacity-60" />
                 </Button>
               </PopoverTrigger>
-              <PopoverContent align="start" className="font-poppins w-auto max-w-[calc(100vw-1.5rem)] p-2.5">
+              <PopoverContent
+                align="start"
+                className="font-poppins w-auto max-w-[calc(100vw-1.5rem)] p-2.5"
+              >
                 {datePanel}
               </PopoverContent>
             </Popover>
@@ -1076,7 +1560,9 @@ export function ModifyDispatchPage() {
             <label
               className={cn(
                 'flex h-9 shrink-0 cursor-pointer items-center gap-2 rounded-[4px] border px-2.5 text-[12.5px] font-semibold whitespace-nowrap select-none',
-                grouped ? 'border-primary/40 bg-primary/5 text-primary' : 'border-amber-300 text-slate-600 dark:border-amber-400/40',
+                grouped
+                  ? 'border-primary/40 bg-primary/5 text-primary'
+                  : 'border-amber-300 text-slate-600 dark:border-amber-400/40',
               )}
               title="Group the current list by Date, then Party — with a running subtotal of Bags/Pcs/Kgs/Box for each"
             >
@@ -1118,7 +1604,13 @@ export function ModifyDispatchPage() {
           <SheetHeader>
             <div className="flex items-center justify-between">
               <SheetTitle>Filters</SheetTitle>
-              <Button variant="ghost" size="sm" className="-mr-2 gap-1.5 font-bold text-rose-600 hover:bg-rose-50 hover:text-rose-700 disabled:text-rose-600/40" onClick={resetSheetFilters} disabled={!draftDirty}>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="-mr-2 gap-1.5 font-bold text-rose-600 hover:bg-rose-50 hover:text-rose-700 disabled:text-rose-600/40"
+                onClick={resetSheetFilters}
+                disabled={!draftDirty}
+              >
                 <X className="size-3.5" /> Reset
               </Button>
             </div>
@@ -1126,15 +1618,30 @@ export function ModifyDispatchPage() {
           <div className="space-y-4">
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-xs font-medium uppercase">Agent</Label>
-              <NativeSelect value={draftAgent} onChange={setDraftAgent} options={['', ...(options?.agents ?? [])]} placeholder="All agents" />
+              <NativeSelect
+                value={draftAgent}
+                onChange={setDraftAgent}
+                options={['', ...(options?.agents ?? [])]}
+                placeholder="All agents"
+              />
             </div>
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-xs font-medium uppercase">Design</Label>
-              <NativeSelect value={draftDesign} onChange={setDraftDesign} options={['', ...(options?.designs ?? [])]} placeholder="All design names" />
+              <NativeSelect
+                value={draftDesign}
+                onChange={setDraftDesign}
+                options={['', ...(options?.designs ?? [])]}
+                placeholder="All design names"
+              />
             </div>
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-xs font-medium uppercase">Status</Label>
-              <NativeSelect value={draftStatus} onChange={setDraftStatus} options={['', ...DISPATCH_STATUSES, RETURNED_DISPATCH_STATUS]} placeholder="All statuses" />
+              <NativeSelect
+                value={draftStatus}
+                onChange={setDraftStatus}
+                options={['', ...DISPATCH_STATUSES, RETURNED_DISPATCH_STATUS]}
+                placeholder="All statuses"
+              />
             </div>
           </div>
           <SheetFooter>
@@ -1179,46 +1686,52 @@ export function ModifyDispatchPage() {
               />
             )
           ) : (
-          <DataTable
-            columns={cols.visibleColumns}
-            rows={items}
-            rowKey={(d) => d.id}
-            isLoading={isLoading}
-            dense
-            // Bounded to the space actually left on screen — its own scroll
-            // region (vertical + horizontal) stays fully visible on first
-            // paint, no scrolling the whole page down to reach it.
-            fill
-            hideSortIcon
-            emptyText="No dispatch records yet."
-            // Once a challan has billed this line, its qty is an invoiced fact —
-            // editing/deleting it here would silently desync the two, so it's
-            // read-only from this point on (backend enforces the same rule).
-            onRowClick={(d) => can('dispatch:update') && !d.challanCode && !isReturn(d) && setEditing(d)}
-            className={[
-              'font-sans text-[13px]',
-              // Rows are click-to-edit, so block accidental text selection (a
-              // stray drag while scrolling otherwise highlights the row's text).
-              '[&_tbody]:select-none',
-              '[&_thead_th]:text-[13.5px] [&_thead_th]:font-extrabold [&_thead_th]:uppercase [&_thead_th]:tracking-wide [&_thead_th]:py-1.5',
-              '[&_thead_th_button]:cursor-pointer',
-              '[&_thead_th:hover]:from-blue-900 [&_thead_th:hover]:to-indigo-900',
-              '[&_td]:py-1 [&_td]:px-3 [&_th]:px-3',
-              '[&_tbody_button:not([role=switch]):not([role=checkbox])]:size-7',
-              '[&_tbody_tr]:border-b [&_tbody_tr]:border-slate-200 dark:[&_tbody_tr]:border-white/10',
-              '[&_td]:border-r [&_td]:border-slate-200 dark:[&_td]:border-white/10 [&_td:last-child]:border-r-0',
-              '[&_tbody_tr:nth-child(even)_td]:bg-slate-100/80 dark:[&_tbody_tr:nth-child(even)_td]:bg-white/[0.04]',
-              '[&_tbody_tr:hover:hover_td]:bg-amber-100/70 dark:[&_tbody_tr:hover:hover_td]:bg-amber-400/10',
-            ].join(' ')}
-            actions={(d) => (
-              <div className="flex justify-end gap-1">
-                {/* Photos stay OUT of the menu: the badge counts what is already
+            <DataTable
+              columns={cols.visibleColumns}
+              rows={items}
+              rowKey={(d) => d.id}
+              isLoading={isLoading}
+              dense
+              // Bounded to the space actually left on screen — its own scroll
+              // region (vertical + horizontal) stays fully visible on first
+              // paint, no scrolling the whole page down to reach it.
+              fill
+              hideSortIcon
+              emptyText="No dispatch records yet."
+              // Once a challan has billed this line, its qty is an invoiced fact —
+              // editing/deleting it here would silently desync the two, so it's
+              // read-only from this point on (backend enforces the same rule).
+              onRowClick={(d) =>
+                can('dispatch:update') && !d.challanCode && !isReturn(d) && setEditing(d)
+              }
+              className={[
+                'font-sans text-[13px]',
+                // Rows are click-to-edit, so block accidental text selection (a
+                // stray drag while scrolling otherwise highlights the row's text).
+                '[&_tbody]:select-none',
+                '[&_thead_th]:text-[13.5px] [&_thead_th]:font-extrabold [&_thead_th]:uppercase [&_thead_th]:tracking-wide [&_thead_th]:py-1.5',
+                '[&_thead_th_button]:cursor-pointer',
+                '[&_thead_th:hover]:from-blue-900 [&_thead_th:hover]:to-indigo-900',
+                '[&_td]:py-1 [&_td]:px-3 [&_th]:px-3',
+                '[&_tbody_button:not([role=switch]):not([role=checkbox])]:size-7',
+                '[&_tbody_tr]:border-b [&_tbody_tr]:border-slate-200 dark:[&_tbody_tr]:border-white/10',
+                '[&_td]:border-r [&_td]:border-slate-200 dark:[&_td]:border-white/10 [&_td:last-child]:border-r-0',
+                '[&_tbody_tr:nth-child(even)_td]:bg-slate-100/80 dark:[&_tbody_tr:nth-child(even)_td]:bg-white/[0.04]',
+                '[&_tbody_tr:hover:hover_td]:bg-amber-100/70 dark:[&_tbody_tr:hover:hover_td]:bg-amber-400/10',
+              ].join(' ')}
+              actions={(d) => (
+                <div className="flex justify-end gap-1">
+                  {/* Photos stay OUT of the menu: the badge counts what is already
                     attached, and a count hidden behind a menu tells nobody. */}
-                <DispatchPhotosButton orderItemId={d.orderItemId} isSuperAdmin={permissions.includes(ALL_PERMISSIONS)} challanCode={d.challanCode} />
-                <RowActions d={d} />
-              </div>
-            )}
-          />
+                  <DispatchPhotosButton
+                    orderItemId={d.orderItemId}
+                    isSuperAdmin={permissions.includes(ALL_PERMISSIONS)}
+                    challanCode={d.challanCode}
+                  />
+                  <RowActions d={d} />
+                </div>
+              )}
+            />
           )}
         </div>
 
@@ -1228,7 +1741,9 @@ export function ModifyDispatchPage() {
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto sm:hidden">
           <style>{MODIFY_CARD_CSS}</style>
           {isLoading ? (
-            [0, 1, 2, 3].map((i) => <div key={i} className="bg-muted/40 h-44 animate-pulse rounded-2xl border" />)
+            [0, 1, 2, 3].map((i) => (
+              <div key={i} className="bg-muted/40 h-44 animate-pulse rounded-2xl border" />
+            ))
           ) : grouped ? (
             <GroupedMobileView
               groups={dateGroups}
@@ -1243,7 +1758,9 @@ export function ModifyDispatchPage() {
               onDelete={(d) => handleDelete(d)}
             />
           ) : items.length === 0 ? (
-            <div className="text-muted-foreground rounded-2xl border border-dashed bg-card px-4 py-12 text-center text-sm">No dispatch records yet.</div>
+            <div className="text-muted-foreground rounded-2xl border border-dashed bg-card px-4 py-12 text-center text-sm">
+              No dispatch records yet.
+            </div>
           ) : (
             items.map((d, i) => (
               <ModifyDispatchCard
@@ -1268,23 +1785,39 @@ export function ModifyDispatchPage() {
       <div className="bg-card flex items-center justify-between rounded-[4px] border px-3 py-2 shadow-sm">
         {grouped ? (
           <p className="text-muted-foreground text-[12px] font-medium">
-            <span className="font-bold tabular-nums text-foreground">{items.length}</span> line{items.length === 1 ? '' : 's'} ·{' '}
-            <span className="font-bold tabular-nums text-foreground">{partyCount}</span> part{partyCount === 1 ? 'y' : 'ies'} ·{' '}
-            <span className="font-bold tabular-nums text-foreground">{dateGroups.length}</span> date{dateGroups.length === 1 ? '' : 's'}
+            <span className="font-bold tabular-nums text-foreground">{items.length}</span> line
+            {items.length === 1 ? '' : 's'} ·{' '}
+            <span className="font-bold tabular-nums text-foreground">{partyCount}</span> part
+            {partyCount === 1 ? 'y' : 'ies'} ·{' '}
+            <span className="font-bold tabular-nums text-foreground">{dateGroups.length}</span> date
+            {dateGroups.length === 1 ? '' : 's'}
           </p>
         ) : (
           <p className="text-muted-foreground text-[12px] font-medium">
-            Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
+            Page{' '}
+            <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
             <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
           </p>
         )}
         <div className={cn('flex items-center gap-3', grouped && 'hidden')}>
           <PageSizeSelect value={pageSize} onChange={setPageSize} />
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-[4px] font-semibold"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+            >
               <ChevronLeft /> Prev
             </Button>
-            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-[4px] font-semibold"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+            >
               Next <ChevronRight />
             </Button>
           </div>
@@ -1323,8 +1856,10 @@ const QTY_FIELD_INFO: Record<QtyField, { key: 'bags' | 'pcs' | 'gram' | 'box'; l
 };
 /** Bags/Pcs/Kgs/Box in the order configured for this dispatch's product category
  *  (Settings → Order quantity fields) — same layout as the New Order form. */
-const orderedQtyFields = (qtyLayout: Parameters<typeof qtyOrderForCategory>[0], pCategory: string | null) =>
-  qtyOrderForCategory(qtyLayout, pCategory).map((f) => QTY_FIELD_INFO[f]);
+const orderedQtyFields = (
+  qtyLayout: Parameters<typeof qtyOrderForCategory>[0],
+  pCategory: string | null,
+) => qtyOrderForCategory(qtyLayout, pCategory).map((f) => QTY_FIELD_INFO[f]);
 
 /** ISO datetime → the `YYYY-MM-DD` an `<input type="date">` needs, in local time
  *  (a plain `.slice(0, 10)` on an ISO string would use UTC and can land on the
@@ -1345,8 +1880,8 @@ function DispatchPhotosButton({
 }: {
   orderItemId: number;
   isSuperAdmin: boolean;
-  /** Once this dispatch is billed, its photos are evidence of what actually
-   *  shipped — even a super admin can no longer delete them here. */
+  /** Once billed, these photos are the record of what shipped. Frozen for
+   *  everyone but a super admin, who may still take down a wrong one. */
   challanCode?: string | null;
   compact?: boolean;
 }) {
@@ -1360,7 +1895,10 @@ function DispatchPhotosButton({
         variant="ghost"
         size="icon"
         className={cn('relative', compact ? 'size-6' : 'size-7')}
-        onClick={(e) => { e.stopPropagation(); setOpen(true); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(true);
+        }}
         aria-label="View photos"
         title={count > 0 ? `View ${count} photo${count === 1 ? '' : 's'}` : 'No photos'}
       >
@@ -1379,12 +1917,20 @@ function DispatchPhotosButton({
                 <Camera className="size-4" /> Line photos
               </DialogTitle>
               {locked && (
-                <p className="text-muted-foreground text-xs">
-                  Billed on {challanCode} — photos can no longer be deleted.
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  Billed on {challanCode} — these photos are the record of what shipped.
+                  {isSuperAdmin
+                    ? ' Remove one only if it is genuinely wrong.'
+                    : ' They cannot be removed.'}
                 </p>
               )}
             </DialogHeader>
-            <LiveLinePhotos orderItemId={orderItemId} canEdit={false} canDelete={isSuperAdmin && !locked} hideHeader />
+            <LiveLinePhotos
+              orderItemId={orderItemId}
+              canEdit={false}
+              canDelete={isSuperAdmin}
+              hideHeader
+            />
           </DialogContent>
         </Dialog>
       )}
@@ -1398,17 +1944,29 @@ function DispatchPhotosButton({
  * for billed lines — which are exactly the ones you most often just want to
  * look at. So "view" is its own, always-available action.
  */
-function ViewDispatchDialog({ dispatch: d, onClose }: { dispatch: DispatchDto; onClose: () => void }) {
+function ViewDispatchDialog({
+  dispatch: d,
+  onClose,
+}: {
+  dispatch: DispatchDto;
+  onClose: () => void;
+}) {
   const { formatDate: fmtDate } = useDateFormat();
   const fmt = (iso: string | null) => (iso ? fmtDate(iso) : '—');
   const { can } = usePermissions();
   const showRates = can('dispatch:viewrates');
   const amount =
-    d.rate != null ? Math.round(d.rate * ((d.calField ?? '').toUpperCase() === 'PCS' ? (d.pcs ?? 0) : (d.gram ?? 0))) : null;
+    d.rate != null
+      ? Math.round(
+          d.rate * ((d.calField ?? '').toUpperCase() === 'PCS' ? (d.pcs ?? 0) : (d.gram ?? 0)),
+        )
+      : null;
 
   const Row = ({ label, children }: { label: string; children: React.ReactNode }) => (
     <div className="flex items-baseline justify-between gap-3 border-b border-dashed py-1.5 last:border-0">
-      <span className="text-muted-foreground shrink-0 text-[11px] font-semibold tracking-wide uppercase">{label}</span>
+      <span className="text-muted-foreground shrink-0 text-[11px] font-semibold tracking-wide uppercase">
+        {label}
+      </span>
       <span className="min-w-0 text-right text-[13px] font-medium break-words">{children}</span>
     </div>
   );
@@ -1426,7 +1984,9 @@ function ViewDispatchDialog({ dispatch: d, onClose }: { dispatch: DispatchDto; o
         </DialogHeader>
         <div className="min-h-0 flex-1 overflow-y-auto pr-1">
           <Row label="Item">{d.productName || d.product || '—'}</Row>
-          <Row label="Design">{d.designType && d.designType.toUpperCase() !== 'NA' ? d.designType : '—'}</Row>
+          <Row label="Design">
+            {d.designType && d.designType.toUpperCase() !== 'NA' ? d.designType : '—'}
+          </Row>
           <Row label="Party">{d.customerName}</Row>
           {d.agentName && <Row label="Agent">{d.agentName}</Row>}
           <Row label="Order">{shortOrderCode(d.orderCode, d.orderId)}</Row>
@@ -1442,7 +2002,9 @@ function ViewDispatchDialog({ dispatch: d, onClose }: { dispatch: DispatchDto; o
             </>
           )}
           <Row label="Billed on">
-            {d.challanCode ? `${d.challanCode}${d.challanStatus ? ` · ${d.challanStatus}` : ''}` : 'Not billed yet'}
+            {d.challanCode
+              ? `${d.challanCode}${d.challanStatus ? ` · ${d.challanStatus}` : ''}`
+              : 'Not billed yet'}
           </Row>
           {d.comment && <Row label="Remarks">{d.comment}</Row>}
           <Row label="Entered by">{d.userName || '—'}</Row>
@@ -1481,7 +2043,10 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lockDenied]);
   const { data: qtyLayout } = useOrderQtyLayout();
-  const qtyFields = useMemo(() => orderedQtyFields(qtyLayout, dispatch.pCategory), [qtyLayout, dispatch.pCategory]);
+  const qtyFields = useMemo(
+    () => orderedQtyFields(qtyLayout, dispatch.pCategory),
+    [qtyLayout, dispatch.pCategory],
+  );
   const s = (v: number | null) => (v == null ? '' : String(v));
   const [form, setForm] = useState({
     bags: s(dispatch.bags),
@@ -1508,15 +2073,20 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
       update.mutate(
         { dispatchStatus: form.dispatchStatus },
         {
-          onSuccess: () => { toast.success('Dispatch status updated'); onClose(); },
+          onSuccess: () => {
+            toast.success('Dispatch status updated');
+            onClose();
+          },
           onError: (e) => toast.error(getApiErrorMessage(e, 'Update failed')),
         },
       );
       return;
     }
     const cf = (dispatch.calField ?? '').toUpperCase();
-    if (cf === 'PCS' && num(form.pcs) <= 0) return toast.error('Pcs is required — this item is priced by PCS.');
-    if (cf === 'KGS' && num(form.gram) <= 0) return toast.error('Kgs is required to dispatch this item.');
+    if (cf === 'PCS' && num(form.pcs) <= 0)
+      return toast.error('Pcs is required — this item is priced by PCS.');
+    if (cf === 'KGS' && num(form.gram) <= 0)
+      return toast.error('Kgs is required to dispatch this item.');
     update.mutate(
       {
         bags: num(form.bags),
@@ -1579,7 +2149,9 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
           <div className="from-primary/[0.07] rounded-lg border bg-gradient-to-r to-transparent p-3">
             <div className="text-sm font-semibold">
               {dispatch.productName || dispatch.product}
-              {dispatch.designType && dispatch.designType.toUpperCase() !== 'NA' ? ` · ${dispatch.designType}` : ''}
+              {dispatch.designType && dispatch.designType.toUpperCase() !== 'NA'
+                ? ` · ${dispatch.designType}`
+                : ''}
             </div>
             <div className="text-muted-foreground mt-0.5 text-xs">
               {dispatch.customerName} · {shortOrderCode(dispatch.orderCode, dispatch.orderId)}
@@ -1591,15 +2163,19 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
             <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-[12.5px] font-medium text-amber-800 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-300">
               <Lock className="mt-0.5 size-3.5 shrink-0" />
               <span>
-                Billed on challan <span className="font-bold">{dispatch.challanCode}</span> — quantities, date and remarks are locked.
-                You can still change the <span className="font-bold">dispatch status</span> and <span className="font-bold">manage photos</span>.
+                Billed on challan <span className="font-bold">{dispatch.challanCode}</span> —
+                quantities, date and remarks are locked. You can still change the{' '}
+                <span className="font-bold">dispatch status</span> and{' '}
+                <span className="font-bold">manage photos</span>.
               </span>
             </div>
           )}
 
           {/* Dispatch date — editable (unlocked only). */}
           <div className="space-y-1.5">
-            <Label className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">Dispatch date</Label>
+            <Label className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">
+              Dispatch date
+            </Label>
             <Input
               type="date"
               value={form.dispatchDate}
@@ -1609,18 +2185,30 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
             />
             {dateChanged && !canApprove && !locked && (
               <p className="flex items-center gap-1 text-[11.5px] font-medium text-amber-700 dark:text-amber-400">
-                <TriangleAlert className="size-3.5 shrink-0" /> This move needs admin approval — everything else you change here still saves right away.
+                <TriangleAlert className="size-3.5 shrink-0" /> This move needs admin approval —
+                everything else you change here still saves right away.
               </p>
             )}
           </div>
 
           {/* Quantities — disabled when billed. */}
           <div className="space-y-1.5">
-            <Label className={cn('text-[11px] font-semibold tracking-wide uppercase', locked ? 'text-muted-foreground/50' : 'text-muted-foreground')}>Quantities</Label>
+            <Label
+              className={cn(
+                'text-[11px] font-semibold tracking-wide uppercase',
+                locked ? 'text-muted-foreground/50' : 'text-muted-foreground',
+              )}
+            >
+              Quantities
+            </Label>
             <div className="grid grid-cols-4 gap-2.5">
               {qtyFields.map(({ key: k, label }) => (
                 <div key={k} className="space-y-1">
-                  <Label className={cn('text-[11px] font-medium', locked && 'text-muted-foreground/50')}>{label}</Label>
+                  <Label
+                    className={cn('text-[11px] font-medium', locked && 'text-muted-foreground/50')}
+                  >
+                    {label}
+                  </Label>
                   <Input
                     type="number"
                     step="any"
@@ -1637,7 +2225,9 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
 
           {/* Status — always editable, even for billed dispatches. */}
           <div className="space-y-1.5">
-            <Label className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">Dispatch status</Label>
+            <Label className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">
+              Dispatch status
+            </Label>
             <div className="bg-muted grid grid-cols-2 gap-1 rounded-lg p-1">
               {[...DISPATCH_STATUSES].map((val) => (
                 <button
@@ -1647,7 +2237,12 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
                   className={cn(
                     'rounded-md py-2 text-xs font-bold transition-all active:scale-[0.98]',
                     form.dispatchStatus === val
-                      ? cn('bg-card shadow-sm', val === 'FULLY DISPATCH' ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300')
+                      ? cn(
+                          'bg-card shadow-sm',
+                          val === 'FULLY DISPATCH'
+                            ? 'text-emerald-700 dark:text-emerald-300'
+                            : 'text-amber-700 dark:text-amber-300',
+                        )
                       : 'text-muted-foreground',
                   )}
                 >
@@ -1659,8 +2254,20 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
 
           {/* Remarks — disabled when billed. */}
           <div className="space-y-1.5">
-            <Label className={cn('text-[11px] font-semibold tracking-wide uppercase', locked ? 'text-muted-foreground/50' : 'text-muted-foreground')}>Remarks</Label>
-            <Input value={form.comment} onChange={(e) => set({ comment: e.target.value })} placeholder="Dispatch remark…" disabled={locked} />
+            <Label
+              className={cn(
+                'text-[11px] font-semibold tracking-wide uppercase',
+                locked ? 'text-muted-foreground/50' : 'text-muted-foreground',
+              )}
+            >
+              Remarks
+            </Label>
+            <Input
+              value={form.comment}
+              onChange={(e) => set({ comment: e.target.value })}
+              placeholder="Dispatch remark…"
+              disabled={locked}
+            />
           </div>
 
           {/* Line photos — always accessible. Adding/rearranging allowed for all;
@@ -1668,14 +2275,25 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
               once billed, the photos are proof of what actually shipped and
               can no longer be removed by anyone. */}
           <div className="rounded-lg border border-slate-200 bg-slate-50/70 dark:border-slate-700 dark:bg-slate-800/30">
-            <button type="button" onClick={() => setPhotosOpen((o) => !o)} className="flex w-full items-center justify-between gap-2 px-3 py-2.5">
+            <button
+              type="button"
+              onClick={() => setPhotosOpen((o) => !o)}
+              className="flex w-full items-center justify-between gap-2 px-3 py-2.5"
+            >
               <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300">
                 <Camera className="size-3.5" /> Line photos
                 {!!photos?.length && (
-                  <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300">{photos.length}</span>
+                  <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300">
+                    {photos.length}
+                  </span>
                 )}
               </span>
-              <ChevronDown className={cn('text-muted-foreground size-4 shrink-0 transition-transform', photosOpen && 'rotate-180')} />
+              <ChevronDown
+                className={cn(
+                  'text-muted-foreground size-4 shrink-0 transition-transform',
+                  photosOpen && 'rotate-180',
+                )}
+              />
             </button>
             {photosOpen && (
               <div className="px-3 pb-3">
@@ -1684,17 +2302,26 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
                     Billed on {dispatch.challanCode} — photos can no longer be deleted.
                   </p>
                 )}
-                <LiveLinePhotos orderItemId={dispatch.orderItemId} canEdit={true} canDelete={isSuperAdmin && !locked} hideHeader />
+                <LiveLinePhotos
+                  orderItemId={dispatch.orderItemId}
+                  canEdit={true}
+                  canDelete={isSuperAdmin}
+                  hideHeader
+                />
               </div>
             )}
           </div>
         </div>
 
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+          <Button type="button" variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
           <Button onClick={submit} disabled={update.isPending} title="Save changes (Ctrl+S)">
             {update.isPending ? <Loader2 className="animate-spin" /> : null} Save
-            <kbd className="ml-1 hidden rounded bg-white/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold sm:inline">Ctrl+S</kbd>
+            <kbd className="ml-1 hidden rounded bg-white/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold sm:inline">
+              Ctrl+S
+            </kbd>
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -382,14 +382,19 @@ function DispatchCard({
                 in the PWA" report. Same rule as Modify Dispatch now, and it says
                 so rather than letting the attempt fail. */}
             {billedOn && (
-              <p className="text-muted-foreground text-xs">
-                Billed on {billedOn} — photos can no longer be deleted.
+              <p className="text-amber-700 text-xs dark:text-amber-400">
+                Billed on {billedOn} — these photos are the record of what shipped.
+                {canDeletePhotos
+                  ? ' Remove one only if it is genuinely wrong.'
+                  : ' They cannot be removed.'}
               </p>
             )}
             <LiveLinePhotos
               orderItemId={line.orderItemId}
               canEdit={false}
-              canDelete={canDeletePhotos && !billedOn}
+              // A super admin can still take down a wrong photo; anyone else
+              // never had the delete here in the first place.
+              canDelete={canDeletePhotos}
               hideHeader
               gridClassName="grid-cols-2 gap-3"
             />
@@ -1949,14 +1954,17 @@ function DispatchSheet({
                   photo dialog for why this cannot assume a pending line is
                   unbilled. */}
               {line.billedChallanCode && (
-                <p className="text-muted-foreground mb-2 text-xs">
-                  Billed on {line.billedChallanCode} — photos can no longer be deleted.
+                <p className="mb-2 text-xs text-amber-700 dark:text-amber-400">
+                  Billed on {line.billedChallanCode} — these photos are the record of what shipped.
+                  {isSuperAdmin
+                    ? ' Remove one only if it is genuinely wrong.'
+                    : ' They cannot be removed.'}
                 </p>
               )}
               <LiveLinePhotos
                 orderItemId={line.orderItemId}
                 canEdit={can('dispatch:create')}
-                canDelete={isSuperAdmin && !line.billedChallanCode}
+                canDelete={isSuperAdmin}
                 hideHeader
               />
             </div>
