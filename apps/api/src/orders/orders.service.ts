@@ -1,7 +1,7 @@
 import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { isAdminRole } from '@oms/shared';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { isAdminRole, SUPER_ADMIN_ROLE } from '@oms/shared';
 import { Prisma } from '@prisma/client';
 import {
   isUncommittedOrder,
@@ -51,6 +51,8 @@ export interface OrderLineExportRow {
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly pdf: PdfService,
@@ -1481,8 +1483,23 @@ export class OrdersService {
         select: { challan: { select: { code: true } } },
       });
       if (billed) {
-        throw new BadRequestException(
-          `This line is billed on challan ${billed.challan?.code ?? ''} — its photos can no longer be deleted.`,
+        /*
+         * Billed photos are evidence of what shipped, so they are frozen — for
+         * everyone except a super admin.
+         *
+         * The rule exists to stop the record being quietly rewritten, not to
+         * make a mistake permanent: a photo of the wrong item is worse evidence
+         * than no photo, and somebody has to be able to take it down. That
+         * somebody is the top role only, and the removal is logged with the
+         * challan it belonged to so the override is never silent.
+         */
+        if (!(requesterRoles ?? []).includes(SUPER_ADMIN_ROLE)) {
+          throw new BadRequestException(
+            `This line is billed on challan ${billed.challan?.code ?? ''} — only a super admin can remove its photos.`,
+          );
+        }
+        this.logger.warn(
+          `Super admin ${requestedBy ?? '?'} removed photo ${photoId} from a line billed on ${billed.challan?.code ?? '?'}`,
         );
       }
     }

@@ -66,6 +66,15 @@ export const DISPATCH_RATE_EXPORT_COLUMN_IDS: readonly string[] = ['productRate'
 /** An order line with its still-to-dispatch (remaining) quantities. */
 export interface PendingLineDto {
   orderItemId: number;
+  /**
+   * The challan this line is already billed on, when it is.
+   *
+   * Photos on a billed line are evidence of what shipped, so the server refuses
+   * to delete them — for everyone, super admin included (OrdersService.
+   * deletePhoto). The UI needs to know that to stop offering a delete that will
+   * come back as a 400.
+   */
+  billedChallanCode?: string | null;
   orderId: number;
   orderCode: string | null;
   orderDate: string;

@@ -1,7 +1,36 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Camera, CalendarClock, CalendarDays, CheckCircle2, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, Filter, Flame, Hourglass, Loader2, Lock, Package, PackageCheck, RotateCcw, TriangleAlert, Truck, X } from 'lucide-react';
+import {
+  Camera,
+  CalendarClock,
+  CalendarDays,
+  CheckCircle2,
+  CheckSquare,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Filter,
+  Flame,
+  Hourglass,
+  Loader2,
+  Lock,
+  Package,
+  PackageCheck,
+  RotateCcw,
+  TriangleAlert,
+  Truck,
+  X,
+} from 'lucide-react';
 import { toast } from 'sonner';
-import { ALL_PERMISSIONS, DISPATCH_EXPORT_COLUMNS, DISPATCH_RATE_EXPORT_COLUMN_IDS, qtyOrderForCategory, type DispatchStatus, type DuplicateDispatch, type PendingLineDto, type QtyField } from '@oms/shared';
+import {
+  ALL_PERMISSIONS,
+  DISPATCH_EXPORT_COLUMNS,
+  DISPATCH_RATE_EXPORT_COLUMN_IDS,
+  qtyOrderForCategory,
+  type DispatchStatus,
+  type DuplicateDispatch,
+  type PendingLineDto,
+  type QtyField,
+} from '@oms/shared';
 import { getApiErrorMessage, getDuplicateDispatch } from '@/lib/api';
 import { cn, shortOrderCode } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
@@ -24,7 +53,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { DuplicateDispatchDialog } from './duplicate-dispatch-dialog';
 import {
@@ -42,7 +78,9 @@ import { useDispatchDate } from './use-dispatch-date';
  *  The ₹ columns are only offered to users with `dispatch:viewrates` (the API
  *  drops them regardless). */
 const EXPORT_COLUMN_OPTIONS = DISPATCH_EXPORT_COLUMNS.map((c) => ({ id: c.id, label: c.header }));
-const EXPORT_COLUMN_OPTIONS_NO_RATES = EXPORT_COLUMN_OPTIONS.filter((c) => !DISPATCH_RATE_EXPORT_COLUMN_IDS.includes(c.id));
+const EXPORT_COLUMN_OPTIONS_NO_RATES = EXPORT_COLUMN_OPTIONS.filter(
+  (c) => !DISPATCH_RATE_EXPORT_COLUMN_IDS.includes(c.id),
+);
 const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? 0 : Number(s));
 const qty = (v: number | null) => (v ? v.toLocaleString('en-IN') : '—');
 
@@ -55,7 +93,12 @@ const DUE_TONE: Record<string, string> = {
   'Over Due': 'bg-rose-50 text-rose-700 ring-rose-200',
 };
 const DueBadge = ({ t }: { t: string }) => (
-  <span className={cn('inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset', DUE_TONE[t] ?? DUE_TONE.Due)}>
+  <span
+    className={cn(
+      'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset',
+      DUE_TONE[t] ?? DUE_TONE.Due,
+    )}
+  >
     <CalendarClock className="size-3" />
     {t}
   </span>
@@ -88,7 +131,9 @@ const PriorityBadge = ({ p }: { p: string | null }) =>
       <Flame className="size-2.5" /> URGENT
     </span>
   ) : (
-    <span className="rounded-full bg-slate-100 px-1.5 py-[1px] text-[10px] font-semibold text-slate-500">{p || 'NORMAL'}</span>
+    <span className="rounded-full bg-slate-100 px-1.5 py-[1px] text-[10px] font-semibold text-slate-500">
+      {p || 'NORMAL'}
+    </span>
   );
 
 // Staggered fade+rise for the mobile cards; press-scale lives on the card button
@@ -101,7 +146,11 @@ const DISPATCH_CARD_CSS = `
 
 /** Left rail colour: URGENT priority gets a deep, unmissable red regardless of
  *  due status; NORMAL priority reads the due bucket's own tone (green/amber/red). */
-const RAIL_TONE: Record<string, string> = { Due: 'bg-emerald-500', 'Past Due': 'bg-amber-500', 'Over Due': 'bg-rose-500' };
+const RAIL_TONE: Record<string, string> = {
+  Due: 'bg-emerald-500',
+  'Past Due': 'bg-amber-500',
+  'Over Due': 'bg-rose-500',
+};
 
 /** A tactile, native-feeling pending-line card for phones. Tap anywhere to dispatch. */
 function DispatchCard({
@@ -129,15 +178,35 @@ function DispatchCard({
 }) {
   const urgent = line.priority === 'URGENT';
   const locked = !!line.lockedByName;
-  const qtys = ([['Bags', line.remBags], ['Pcs', line.remPcs], ['Kgs', line.remKgs], ['Box', line.remBox]] as const).filter(([, v]) => v > 0);
-  const pendingAmt = line.rate != null ? Math.round(line.rate * ((line.calField ?? '').toUpperCase() === 'PCS' ? line.remPcs : line.remKgs)) : null;
+  const qtys = (
+    [
+      ['Bags', line.remBags],
+      ['Pcs', line.remPcs],
+      ['Kgs', line.remKgs],
+      ['Box', line.remBox],
+    ] as const
+  ).filter(([, v]) => v > 0);
+  const pendingAmt =
+    line.rate != null
+      ? Math.round(
+          line.rate * ((line.calField ?? '').toUpperCase() === 'PCS' ? line.remPcs : line.remKgs),
+        )
+      : null;
   const photoCount = line.photoCount ?? 0;
+  /** Set once any of this line's dispatches is on a live challan. */
+  const billedOn = line.billedChallanCode || null;
   const [photosOpen, setPhotosOpen] = useState(false);
   // In select mode the whole card IS the checkbox — locking doesn't block
   // picking a priority for a line someone else is mid-dispatching, only
   // opening the dispatch sheet itself does.
   const open = () =>
-    selectMode ? onToggleSelect?.() : locked ? toast.error(`${line.lockedByName} is currently dispatching this line — try again in a moment.`) : onClick();
+    selectMode
+      ? onToggleSelect?.()
+      : locked
+        ? toast.error(
+            `${line.lockedByName} is currently dispatching this line — try again in a moment.`,
+          )
+        : onClick();
   return (
     // A div[role=button], not a <button>: the photo viewer below is a real button
     // and nesting one button inside another is invalid HTML — on phones it makes
@@ -156,21 +225,37 @@ function DispatchCard({
         'group bg-card relative block w-full cursor-pointer overflow-hidden rounded-2xl border text-left shadow-sm transition-transform duration-150 ease-out active:scale-[0.98] [touch-action:manipulation]',
         // URGENT also gets a faint red wash + ring across the whole card, not just
         // the rail — "deep red" should be impossible to miss while scanning.
-        urgent && 'border-rose-300 bg-rose-50/60 ring-1 ring-rose-200 dark:border-rose-400/30 dark:bg-rose-500/[0.06] dark:ring-rose-400/20',
+        urgent &&
+          'border-rose-300 bg-rose-50/60 ring-1 ring-rose-200 dark:border-rose-400/30 dark:bg-rose-500/[0.06] dark:ring-rose-400/20',
         locked && !selectMode && 'opacity-60',
         selected && 'border-primary ring-2 ring-primary bg-primary/5',
       )}
     >
-      <span className={cn('absolute inset-y-0 left-0 w-1.5', urgent ? 'bg-rose-800' : (RAIL_TONE[line.dueType] ?? 'bg-blue-900'))} aria-hidden />
-      <div className="dispatch-card-in space-y-2.5 py-3.5 pr-3.5 pl-5 text-[13px]" style={{ animationDelay: `${Math.min(index, 10) * 45}ms` }}>
+      <span
+        className={cn(
+          'absolute inset-y-0 left-0 w-1.5',
+          urgent ? 'bg-rose-800' : (RAIL_TONE[line.dueType] ?? 'bg-blue-900'),
+        )}
+        aria-hidden
+      />
+      <div
+        className="dispatch-card-in space-y-2.5 py-3.5 pr-3.5 pl-5 text-[13px]"
+        style={{ animationDelay: `${Math.min(index, 10) * 45}ms` }}
+      >
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
             {selectMode && (
               <span onClick={(e) => e.stopPropagation()}>
-                <RowCheckbox checked={!!selected} onChange={() => onToggleSelect?.()} label={`Select ${line.productName || line.product || 'line'}`} />
+                <RowCheckbox
+                  checked={!!selected}
+                  onChange={() => onToggleSelect?.()}
+                  label={`Select ${line.productName || line.product || 'line'}`}
+                />
               </span>
             )}
-            <span className="bg-primary/10 text-primary rounded-md px-2 py-0.5 font-mono text-[13px] font-bold">{shortOrderCode(line.orderCode, line.orderId)}</span>
+            <span className="bg-primary/10 text-primary rounded-md px-2 py-0.5 font-mono text-[13px] font-bold">
+              {shortOrderCode(line.orderCode, line.orderId)}
+            </span>
             <PriorityBadge p={line.priority} />
           </div>
           <DueBadge t={line.dueType} />
@@ -185,12 +270,18 @@ function DispatchCard({
 
         <div>
           <p className="truncate text-[16px] font-semibold leading-tight">{line.customerName}</p>
-          <p className="text-muted-foreground mt-1 text-[12px]">Due {formatDate(line.dueDate)} · ordered {formatDate(line.orderDate)}</p>
+          <p className="text-muted-foreground mt-1 text-[12px]">
+            Due {formatDate(line.dueDate)} · ordered {formatDate(line.orderDate)}
+          </p>
         </div>
 
         <div className="bg-muted/50 rounded-lg px-3 py-1.5">
-          <p className="text-[14.5px] leading-snug font-semibold">{line.productName || line.product || '—'}</p>
-          {line.designType && line.designType.toUpperCase() !== 'NA' && <p className="text-muted-foreground text-[12px]">{line.designType}</p>}
+          <p className="text-[14.5px] leading-snug font-semibold">
+            {line.productName || line.product || '—'}
+          </p>
+          {line.designType && line.designType.toUpperCase() !== 'NA' && (
+            <p className="text-muted-foreground text-[12px]">{line.designType}</p>
+          )}
         </div>
 
         {/* Remaining-quantity pills (non-zero units only) + the tap-to-dispatch truck. */}
@@ -198,7 +289,10 @@ function DispatchCard({
           <div className="flex min-w-0 flex-wrap gap-1.5">
             {qtys.length ? (
               qtys.map(([label, v]) => (
-                <span key={label} className="border-primary/15 bg-primary/5 text-primary inline-flex items-baseline gap-1 rounded-full border px-2.5 py-1">
+                <span
+                  key={label}
+                  className="border-primary/15 bg-primary/5 text-primary inline-flex items-baseline gap-1 rounded-full border px-2.5 py-1"
+                >
                   <span className="text-[11px] font-semibold uppercase opacity-70">{label}</span>
                   <span className="text-[14px] font-bold tabular-nums">{qty(v)}</span>
                 </span>
@@ -228,7 +322,10 @@ function DispatchCard({
                 </span>
               </button>
             )}
-            <span className="bg-primary/10 text-primary flex size-9 items-center justify-center rounded-full transition-transform group-active:translate-x-0.5" aria-hidden>
+            <span
+              className="bg-primary/10 text-primary flex size-9 items-center justify-center rounded-full transition-transform group-active:translate-x-0.5"
+              aria-hidden
+            >
               <Truck className="size-4.5" />
             </span>
           </div>
@@ -236,15 +333,25 @@ function DispatchCard({
 
         {showRates && (
           <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 border-t pt-2 text-[12px]">
-            <span>Rate <span className="text-foreground font-semibold tabular-nums">{money(line.rate)}</span></span>
-            <span>Pending <span className="text-foreground font-semibold tabular-nums">{money(pendingAmt)}</span></span>
+            <span>
+              Rate{' '}
+              <span className="text-foreground font-semibold tabular-nums">{money(line.rate)}</span>
+            </span>
+            <span>
+              Pending{' '}
+              <span className="text-foreground font-semibold tabular-nums">
+                {money(pendingAmt)}
+              </span>
+            </span>
           </div>
         )}
 
         {line.comment && (
           <div className="flex items-start gap-1.5 rounded-lg bg-rose-50 px-2.5 py-2 ring-1 ring-rose-100">
             <TriangleAlert className="mt-[1px] size-3.5 shrink-0 text-rose-600" />
-            <p className="line-clamp-5 text-[13.5px] leading-snug font-bold text-rose-600">{line.comment}</p>
+            <p className="line-clamp-5 text-[13.5px] leading-snug font-bold text-rose-600">
+              {line.comment}
+            </p>
           </div>
         )}
       </div>
@@ -254,7 +361,10 @@ function DispatchCard({
           {/* Radix portals this to <body>, so it isn't nested inside the card —
               but stop the click anyway so dismissing it can't fall through and
               open the dispatch sheet underneath. */}
-          <DialogContent className="max-h-[85dvh] w-[min(30rem,96vw)] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+          <DialogContent
+            className="max-h-[85dvh] w-[min(30rem,96vw)] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <Camera className="size-4" /> Line photos
@@ -263,12 +373,31 @@ function DispatchCard({
                 {line.productName || line.product || '—'} · {line.customerName}
               </DialogDescription>
             </DialogHeader>
-            {/* A pending line has no challan yet — the "billed lines are frozen"
-                rule (see Modify Dispatch) can't apply, so the only gate here is
-                who may remove a reference photo at all. Phones previously got no
-                delete whatsoever, which left a mis-shot photo unfixable on the
-                one screen packers actually use. */}
-            <LiveLinePhotos orderItemId={line.orderItemId} canEdit={false} canDelete={canDeletePhotos} hideHeader gridClassName="grid-cols-2 gap-3" />
+            {/* A pending line CAN already be billed — part dispatched, part
+                billed, still short of its ordered quantity — and the server
+                refuses to delete photos on one whatever the role
+                (OrdersService.deletePhoto). This used to assume otherwise and
+                offered the delete anyway, so a super admin on a phone tapped
+                Remove, confirmed, and got a 400 back: the "cannot delete photos
+                in the PWA" report. Same rule as Modify Dispatch now, and it says
+                so rather than letting the attempt fail. */}
+            {billedOn && (
+              <p className="text-amber-700 text-xs dark:text-amber-400">
+                Billed on {billedOn} — these photos are the record of what shipped.
+                {canDeletePhotos
+                  ? ' Remove one only if it is genuinely wrong.'
+                  : ' They cannot be removed.'}
+              </p>
+            )}
+            <LiveLinePhotos
+              orderItemId={line.orderItemId}
+              canEdit={false}
+              // A super admin can still take down a wrong photo; anyone else
+              // never had the delete here in the first place.
+              canDelete={canDeletePhotos}
+              hideHeader
+              gridClassName="grid-cols-2 gap-3"
+            />
           </DialogContent>
         </Dialog>
       )}
@@ -281,12 +410,42 @@ const TEXT_CELL = 'text-[13px] font-semibold text-slate-800 dark:text-slate-200'
 /** Compact, amber-bordered filter controls — same language as the other list pages. */
 const CONTROL =
   'h-9 rounded-[4px] border-amber-300 dark:border-amber-400/40 text-[12.5px] focus-visible:border-amber-500 focus-visible:ring-amber-400/30';
-const CONTROL_ON = 'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
+const CONTROL_ON =
+  'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
 
 const COLUMNS: DataColumn<PendingLineDto>[] = [
-  { id: 'order', label: 'ORD#', pin: 'left0', pinWidthClass: 'sm:w-16 sm:min-w-16', fixed: true, cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{shortOrderCode(r.orderCode, r.orderId)}</span> },
-  { id: 'orderDate', label: 'Order date', cell: (r) => <span className={cn(TEXT_CELL, 'whitespace-nowrap tabular-nums')}>{formatDate(r.orderDate)}</span> },
-  { id: 'due', label: 'Due', cell: (r) => <span className={cn(TEXT_CELL, 'flex items-center gap-1.5 whitespace-nowrap tabular-nums')}>{formatDate(r.dueDate)} <DueBadge t={r.dueType} /> {r.hasPendingApproval && <PendingApprovalBadge />} {r.lockedByName && <LockedBadge name={r.lockedByName} />}</span> },
+  {
+    id: 'order',
+    label: 'ORD#',
+    pin: 'left0',
+    pinWidthClass: 'sm:w-16 sm:min-w-16',
+    fixed: true,
+    cell: (r) => (
+      <span className={cn(TEXT_CELL, 'tabular-nums')}>
+        {shortOrderCode(r.orderCode, r.orderId)}
+      </span>
+    ),
+  },
+  {
+    id: 'orderDate',
+    label: 'Order date',
+    cell: (r) => (
+      <span className={cn(TEXT_CELL, 'whitespace-nowrap tabular-nums')}>
+        {formatDate(r.orderDate)}
+      </span>
+    ),
+  },
+  {
+    id: 'due',
+    label: 'Due',
+    cell: (r) => (
+      <span className={cn(TEXT_CELL, 'flex items-center gap-1.5 whitespace-nowrap tabular-nums')}>
+        {formatDate(r.dueDate)} <DueBadge t={r.dueType} />{' '}
+        {r.hasPendingApproval && <PendingApprovalBadge />}{' '}
+        {r.lockedByName && <LockedBadge name={r.lockedByName} />}
+      </span>
+    ),
+  },
   {
     id: 'customer',
     label: 'Customer',
@@ -301,13 +460,50 @@ const COLUMNS: DataColumn<PendingLineDto>[] = [
       </span>
     ),
   },
-  { id: 'product', label: 'Product', cell: (r) => <span className={TEXT_CELL}>{r.productName || r.product || '—'}</span> },
-  { id: 'design', label: 'Design', cell: (r) => <span className={TEXT_CELL}>{r.designType || '—'}</span> },
-  { id: 'bags', label: 'Bags', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(r.remBags)}</span> },
-  { id: 'pcs', label: 'Pcs', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(r.remPcs)}</span> },
-  { id: 'kgs', label: 'Kgs', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(r.remKgs)}</span> },
-  { id: 'box', label: 'Box', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(r.remBox)}</span> },
-  { id: 'comment', label: 'Comment', cell: (r) => (r.comment ? <span className="text-[13px] font-bold text-rose-600 dark:text-rose-400">{r.comment}</span> : <span className="text-muted-foreground text-[13px]">—</span>) },
+  {
+    id: 'product',
+    label: 'Product',
+    cell: (r) => <span className={TEXT_CELL}>{r.productName || r.product || '—'}</span>,
+  },
+  {
+    id: 'design',
+    label: 'Design',
+    cell: (r) => <span className={TEXT_CELL}>{r.designType || '—'}</span>,
+  },
+  {
+    id: 'bags',
+    label: 'Bags',
+    align: 'right',
+    cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(r.remBags)}</span>,
+  },
+  {
+    id: 'pcs',
+    label: 'Pcs',
+    align: 'right',
+    cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(r.remPcs)}</span>,
+  },
+  {
+    id: 'kgs',
+    label: 'Kgs',
+    align: 'right',
+    cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(r.remKgs)}</span>,
+  },
+  {
+    id: 'box',
+    label: 'Box',
+    align: 'right',
+    cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(r.remBox)}</span>,
+  },
+  {
+    id: 'comment',
+    label: 'Comment',
+    cell: (r) =>
+      r.comment ? (
+        <span className="text-[13px] font-bold text-rose-600 dark:text-rose-400">{r.comment}</span>
+      ) : (
+        <span className="text-muted-foreground text-[13px]">—</span>
+      ),
+  },
 ];
 
 const money = (v: number | null) => (v == null ? '—' : `₹${v.toLocaleString('en-IN')}`);
@@ -315,16 +511,39 @@ const money = (v: number | null) => (v == null ? '—' : `₹${v.toLocaleString(
 /** Rate columns, shown only to users with `dispatch:viewrates`. Amount is the
  *  ₹ value of the still-pending quantity (rate × remaining pcs or kgs). */
 const RATE_COLUMNS: DataColumn<PendingLineDto>[] = [
-  { id: 'productRate', label: 'Product ₹', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(r.productRate)}</span> },
-  { id: 'designRate', label: 'Design ₹', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(r.designRate)}</span> },
-  { id: 'rate', label: 'Rate ₹', align: 'right', cell: (r) => <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(r.rate)}</span> },
+  {
+    id: 'productRate',
+    label: 'Product ₹',
+    align: 'right',
+    cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(r.productRate)}</span>,
+  },
+  {
+    id: 'designRate',
+    label: 'Design ₹',
+    align: 'right',
+    cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(r.designRate)}</span>,
+  },
+  {
+    id: 'rate',
+    label: 'Rate ₹',
+    align: 'right',
+    cell: (r) => (
+      <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+        {money(r.rate)}
+      </span>
+    ),
+  },
   {
     id: 'amount',
     label: 'Pending ₹',
     align: 'right',
     cell: (r) => {
       const qtyLeft = (r.calField ?? '').toUpperCase() === 'PCS' ? r.remPcs : r.remKgs;
-      return <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(r.rate != null ? Math.round(r.rate * qtyLeft) : null)}</span>;
+      return (
+        <span className={cn(TEXT_CELL, 'tabular-nums')}>
+          {money(r.rate != null ? Math.round(r.rate * qtyLeft) : null)}
+        </span>
+      );
     },
   },
 ];
@@ -387,7 +606,15 @@ export function DispatchOrderPage() {
   // below): a background refetch mid-entry would be jarring, and a successful
   // dispatch already forces its own immediate refresh via useCreateDispatch.
   const { data, isLoading } = usePendingOrders(query, { autoRefresh: !active });
-  const hasFilters = !!dueType || !!customer || !!agent || !!product || !!design || !!category || !!subCategory || all;
+  const hasFilters =
+    !!dueType ||
+    !!customer ||
+    !!agent ||
+    !!product ||
+    !!design ||
+    !!category ||
+    !!subCategory ||
+    all;
   const resetFilters = () => {
     setDueType('');
     setCustomer('');
@@ -432,7 +659,17 @@ export function DispatchOrderPage() {
   // `all` counts here: the ALL switch is rendered inside this sheet, so leaving it
   // out left Reset DISABLED whenever ALL was the only active filter — making it
   // impossible to turn off from a phone.
-  const draftDirty = !!(draftDue || draftDesign || draftSubCategory || draftAgent || dueType || design || subCategory || agent || all);
+  const draftDirty = !!(
+    draftDue ||
+    draftDesign ||
+    draftSubCategory ||
+    draftAgent ||
+    dueType ||
+    design ||
+    subCategory ||
+    agent ||
+    all
+  );
   const resetSheetFilters = () => {
     setDraftDue('');
     setDraftDesign('');
@@ -460,12 +697,18 @@ export function DispatchOrderPage() {
   const totals = useMemo(() => {
     const sum = (pick: (r: PendingLineDto) => number) =>
       Math.round(items.reduce((a, r) => a + (pick(r) || 0), 0) * 100) / 100;
-    return { bags: sum((r) => r.remBags), pcs: sum((r) => r.remPcs), kgs: sum((r) => r.remKgs), box: sum((r) => r.remBox) };
+    return {
+      bags: sum((r) => r.remBags),
+      pcs: sum((r) => r.remPcs),
+      kgs: sum((r) => r.remKgs),
+      box: sum((r) => r.remBox),
+    };
   }, [items]);
   // Customer + Category + Product are their own on-screen selects on mobile, so
   // the filter-icon badge counts only what lives behind it
   // (Agent/Due/Design/Sub category/ALL).
-  const sheetFilterCount = (agent ? 1 : 0) + (dueType ? 1 : 0) + (design ? 1 : 0) + (subCategory ? 1 : 0) + (all ? 1 : 0);
+  const sheetFilterCount =
+    (agent ? 1 : 0) + (dueType ? 1 : 0) + (design ? 1 : 0) + (subCategory ? 1 : 0) + (all ? 1 : 0);
   const { can, permissions } = usePermissions();
   const canViewRates = can('dispatch:viewrates');
   const canApproveDispatch = can('dispatch:approve');
@@ -526,8 +769,12 @@ export function DispatchOrderPage() {
       { orderItemIds: ids, priority: 'URGENT' },
       {
         onSuccess: (res) => {
-          const skippedNote = res.skipped ? ` — ${res.skipped} had already left the pending pool` : '';
-          toast.success(`Marked ${res.updated} line${res.updated === 1 ? '' : 's'} URGENT${skippedNote}`);
+          const skippedNote = res.skipped
+            ? ` — ${res.skipped} had already left the pending pool`
+            : '';
+          toast.success(
+            `Marked ${res.updated} line${res.updated === 1 ? '' : 's'} URGENT${skippedNote}`,
+          );
           setSelected(new Map());
         },
         onError: (e) => toast.error(getApiErrorMessage(e, 'Could not update priority')),
@@ -544,14 +791,22 @@ export function DispatchOrderPage() {
     label: '',
     header: (
       <span onClick={(e) => e.stopPropagation()}>
-        <RowCheckbox checked={allOnPageSelected} onChange={toggleSelectPage} label="Select all on this page" />
+        <RowCheckbox
+          checked={allOnPageSelected}
+          onChange={toggleSelectPage}
+          label="Select all on this page"
+        />
       </span>
     ),
     fixed: true,
     noSort: true,
     cell: (r) => (
       <span onClick={(e) => e.stopPropagation()}>
-        <RowCheckbox checked={selected.has(r.orderItemId)} onChange={() => toggleSelect(r)} label={`Select ${r.productName || r.product || 'line'}`} />
+        <RowCheckbox
+          checked={selected.has(r.orderItemId)}
+          onChange={() => toggleSelect(r)}
+          label={`Select ${r.productName || r.product || 'line'}`}
+        />
       </span>
     ),
   };
@@ -605,7 +860,10 @@ export function DispatchOrderPage() {
       >
         <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
           <CalendarDays className="text-muted-foreground size-4 shrink-0" />
-          <Label htmlFor="dispatch-date" className="shrink-0 text-[11px] font-bold tracking-wide text-muted-foreground uppercase">
+          <Label
+            htmlFor="dispatch-date"
+            className="shrink-0 text-[11px] font-bold tracking-wide text-muted-foreground uppercase"
+          >
             Dispatching for
           </Label>
           <Input
@@ -647,7 +905,16 @@ export function DispatchOrderPage() {
               else (Agent / Due / Design / ALL) lives behind the Filter icon, which
               sits with Export and a one-tap Reset-all. */}
           <div className="flex w-full flex-col gap-2 sm:hidden">
-            <NativeSelect value={customer} onChange={(v) => { setCustomer(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="Customer" className={cn(CONTROL, 'font-medium', customer && CONTROL_ON)} />
+            <NativeSelect
+              value={customer}
+              onChange={(v) => {
+                setCustomer(v);
+                setPage(1);
+              }}
+              options={['', ...(options?.customers ?? [])]}
+              placeholder="Customer"
+              className={cn(CONTROL, 'font-medium', customer && CONTROL_ON)}
+            />
             {/* Category sits ABOVE Product on purpose: the option lists cascade
                 (see `usePendingFilterOptions`), so picking it first narrows the
                 product dropdown to that category's items — 856 names down to 47
@@ -658,14 +925,42 @@ export function DispatchOrderPage() {
                 "10-PCS-FG-22G" that nobody picks a product by — that one stays
                 behind the Filter icon. Applies straight away, same as Customer
                 and Product (no draft/"Show" step). */}
-            <NativeSelect value={category} onChange={(v) => { setCategory(v); setPage(1); }} options={['', ...(options?.categories ?? [])]} placeholder="Category" className={cn(CONTROL, 'font-medium', category && CONTROL_ON)} />
+            <NativeSelect
+              value={category}
+              onChange={(v) => {
+                setCategory(v);
+                setPage(1);
+              }}
+              options={['', ...(options?.categories ?? [])]}
+              placeholder="Category"
+              className={cn(CONTROL, 'font-medium', category && CONTROL_ON)}
+            />
             {/* Item names start with a size then words ("15 MIRROR (26 G)
                 LASER"), so the keyboard opens on digits and hands over to
                 letters exactly when no item continues the typed number — see
                 `digitsFirst`. */}
-            <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...productOptions]} placeholder={all ? 'Product (any design)' : 'Product'} className={cn(CONTROL, 'font-medium', product && CONTROL_ON)} digitsFirst />
+            <NativeSelect
+              value={product}
+              onChange={(v) => {
+                setProduct(v);
+                setPage(1);
+              }}
+              options={['', ...productOptions]}
+              placeholder={all ? 'Product (any design)' : 'Product'}
+              className={cn(CONTROL, 'font-medium', product && CONTROL_ON)}
+              digitsFirst
+            />
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="icon" className={cn('relative size-9 shrink-0 rounded-[4px] border-amber-300', sheetFilterCount > 0 && CONTROL_ON)} onClick={openMobileFilters} aria-label="More filters">
+              <Button
+                variant="outline"
+                size="icon"
+                className={cn(
+                  'relative size-9 shrink-0 rounded-[4px] border-amber-300',
+                  sheetFilterCount > 0 && CONTROL_ON,
+                )}
+                onClick={openMobileFilters}
+                aria-label="More filters"
+              >
                 <Filter className="size-4" />
                 {sheetFilterCount > 0 && (
                   <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-bold tabular-nums">
@@ -702,14 +997,29 @@ export function DispatchOrderPage() {
                 </Button>
               )}
               <div className="min-w-0 flex-1" />
-              {can('dispatch:export') && <ExportButton onClick={() => setExportDialogOpen(true)} disabled={exporting} label="Export to Excel" />}
+              {can('dispatch:export') && (
+                <ExportButton
+                  onClick={() => setExportDialogOpen(true)}
+                  disabled={exporting}
+                  label="Export to Excel"
+                />
+              )}
             </div>
           </div>
 
           {/* Desktop: filters inline. */}
           <div className="hidden flex-wrap items-center gap-2 sm:flex">
             <div className="w-36">
-              <NativeSelect value={dueType} onChange={(v) => { setDueType(v); setPage(1); }} options={['', 'Due', 'Past Due', 'Over Due']} placeholder="All due" className={cn(CONTROL, 'font-medium', dueType && CONTROL_ON)} />
+              <NativeSelect
+                value={dueType}
+                onChange={(v) => {
+                  setDueType(v);
+                  setPage(1);
+                }}
+                options={['', 'Due', 'Past Due', 'Over Due']}
+                placeholder="All due"
+                className={cn(CONTROL, 'font-medium', dueType && CONTROL_ON)}
+              />
             </div>
             {/* Filter order follows the house pattern: Customer, Item Name, Agent,
                 Category, Sub Category, Design. Category is placed before Item
@@ -717,25 +1027,84 @@ export function DispatchOrderPage() {
                 phones: the lists cascade, so picking it first is what shrinks the
                 product dropdown. */}
             <div className="w-56">
-              <NativeSelect value={customer} onChange={(v) => { setCustomer(v); setPage(1); }} options={['', ...(options?.customers ?? [])]} placeholder="All customers" className={cn(CONTROL, 'font-medium', customer && CONTROL_ON)} />
+              <NativeSelect
+                value={customer}
+                onChange={(v) => {
+                  setCustomer(v);
+                  setPage(1);
+                }}
+                options={['', ...(options?.customers ?? [])]}
+                placeholder="All customers"
+                className={cn(CONTROL, 'font-medium', customer && CONTROL_ON)}
+              />
             </div>
             <div className="w-36">
-              <NativeSelect value={category} onChange={(v) => { setCategory(v); setPage(1); }} options={['', ...(options?.categories ?? [])]} placeholder="All categories" className={cn(CONTROL, 'font-medium', category && CONTROL_ON)} />
+              <NativeSelect
+                value={category}
+                onChange={(v) => {
+                  setCategory(v);
+                  setPage(1);
+                }}
+                options={['', ...(options?.categories ?? [])]}
+                placeholder="All categories"
+                className={cn(CONTROL, 'font-medium', category && CONTROL_ON)}
+              />
             </div>
             <div className="w-56">
-              <NativeSelect value={product} onChange={(v) => { setProduct(v); setPage(1); }} options={['', ...productOptions]} placeholder={all ? 'All (any design)' : 'All products'} className={cn(CONTROL, 'font-medium', product && CONTROL_ON)} digitsFirst />
+              <NativeSelect
+                value={product}
+                onChange={(v) => {
+                  setProduct(v);
+                  setPage(1);
+                }}
+                options={['', ...productOptions]}
+                placeholder={all ? 'All (any design)' : 'All products'}
+                className={cn(CONTROL, 'font-medium', product && CONTROL_ON)}
+                digitsFirst
+              />
             </div>
-            <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[12.5px] font-semibold select-none" title="ALL: one product pick matches every design variant">
+            <label
+              className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[12.5px] font-semibold select-none"
+              title="ALL: one product pick matches every design variant"
+            >
               <Switch checked={all} onCheckedChange={toggleAll} /> All
             </label>
             <div className="w-40">
-              <NativeSelect value={agent} onChange={(v) => { setAgent(v); setPage(1); }} options={['', ...(options?.agents ?? [])]} placeholder="All agents" className={cn(CONTROL, 'font-medium', agent && CONTROL_ON)} />
+              <NativeSelect
+                value={agent}
+                onChange={(v) => {
+                  setAgent(v);
+                  setPage(1);
+                }}
+                options={['', ...(options?.agents ?? [])]}
+                placeholder="All agents"
+                className={cn(CONTROL, 'font-medium', agent && CONTROL_ON)}
+              />
             </div>
             <div className="w-40">
-              <NativeSelect value={subCategory} onChange={(v) => { setSubCategory(v); setPage(1); }} options={['', ...(options?.subCategories ?? [])]} placeholder="All sub categories" className={cn(CONTROL, 'font-medium', subCategory && CONTROL_ON)} />
+              <NativeSelect
+                value={subCategory}
+                onChange={(v) => {
+                  setSubCategory(v);
+                  setPage(1);
+                }}
+                options={['', ...(options?.subCategories ?? [])]}
+                placeholder="All sub categories"
+                className={cn(CONTROL, 'font-medium', subCategory && CONTROL_ON)}
+              />
             </div>
             <div className="w-36">
-              <NativeSelect value={design} onChange={(v) => { setDesign(v); setPage(1); }} options={['', ...(options?.designs ?? [])]} placeholder="All designs" disabled={all} className={cn(CONTROL, 'font-medium', design && CONTROL_ON)} />
+              <NativeSelect
+                value={design}
+                onChange={(v) => {
+                  setDesign(v);
+                  setPage(1);
+                }}
+                options={['', ...(options?.designs ?? [])]}
+                placeholder="All designs"
+                disabled={all}
+                className={cn(CONTROL, 'font-medium', design && CONTROL_ON)}
+              />
             </div>
             {hasFilters && (
               <Button
@@ -749,7 +1118,13 @@ export function DispatchOrderPage() {
               </Button>
             )}
             <div className="ml-auto flex shrink-0 items-center gap-2">
-              {can('dispatch:export') && <ExportButton onClick={() => setExportDialogOpen(true)} disabled={exporting} label="Export pending list to Excel" />}
+              {can('dispatch:export') && (
+                <ExportButton
+                  onClick={() => setExportDialogOpen(true)}
+                  disabled={exporting}
+                  label="Export pending list to Excel"
+                />
+              )}
               <ColumnSettings
                 columns={cols.orderedReorderable}
                 hidden={cols.hidden}
@@ -769,7 +1144,13 @@ export function DispatchOrderPage() {
           <SheetHeader>
             <div className="flex items-center justify-between">
               <SheetTitle>Filters</SheetTitle>
-              <Button variant="ghost" size="sm" className="-mr-2 gap-1.5 font-bold text-rose-600 hover:bg-rose-50 hover:text-rose-700 disabled:text-rose-600/40" onClick={resetSheetFilters} disabled={!draftDirty}>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="-mr-2 gap-1.5 font-bold text-rose-600 hover:bg-rose-50 hover:text-rose-700 disabled:text-rose-600/40"
+                onClick={resetSheetFilters}
+                disabled={!draftDirty}
+              >
                 <X className="size-3.5" /> Reset
               </Button>
             </div>
@@ -778,25 +1159,50 @@ export function DispatchOrderPage() {
             <label className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5">
               <span className="flex flex-col">
                 <span className="text-sm font-medium">All designs</span>
-                <span className="text-muted-foreground text-xs">One product pick matches every design variant</span>
+                <span className="text-muted-foreground text-xs">
+                  One product pick matches every design variant
+                </span>
               </span>
               <Switch checked={all} onCheckedChange={toggleAll} />
             </label>
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-xs font-medium uppercase">Agent</Label>
-              <NativeSelect value={draftAgent} onChange={setDraftAgent} options={['', ...(options?.agents ?? [])]} placeholder="All agents" />
+              <NativeSelect
+                value={draftAgent}
+                onChange={setDraftAgent}
+                options={['', ...(options?.agents ?? [])]}
+                placeholder="All agents"
+              />
             </div>
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-xs font-medium uppercase">Due</Label>
-              <NativeSelect value={draftDue} onChange={setDraftDue} options={['', 'Due', 'Past Due', 'Over Due']} placeholder="All due" />
+              <NativeSelect
+                value={draftDue}
+                onChange={setDraftDue}
+                options={['', 'Due', 'Past Due', 'Over Due']}
+                placeholder="All due"
+              />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-muted-foreground text-xs font-medium uppercase">Sub category</Label>
-              <NativeSelect value={draftSubCategory} onChange={setDraftSubCategory} options={['', ...(options?.subCategories ?? [])]} placeholder="All sub categories" />
+              <Label className="text-muted-foreground text-xs font-medium uppercase">
+                Sub category
+              </Label>
+              <NativeSelect
+                value={draftSubCategory}
+                onChange={setDraftSubCategory}
+                options={['', ...(options?.subCategories ?? [])]}
+                placeholder="All sub categories"
+              />
             </div>
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-xs font-medium uppercase">Design</Label>
-              <NativeSelect value={draftDesign} onChange={setDraftDesign} options={['', ...(options?.designs ?? [])]} placeholder={all ? 'Any (ALL on)' : 'All designs'} disabled={all} />
+              <NativeSelect
+                value={draftDesign}
+                onChange={setDraftDesign}
+                options={['', ...(options?.designs ?? [])]}
+                placeholder={all ? 'Any (ALL on)' : 'All designs'}
+                disabled={all}
+              />
             </div>
           </div>
           <SheetFooter>
@@ -821,7 +1227,12 @@ export function DispatchOrderPage() {
               disabled={bulkPriority.isPending}
               title="Set these lines to URGENT priority"
             >
-              {bulkPriority.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Flame className="size-3.5" />} Mark Urgent
+              {bulkPriority.isPending ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Flame className="size-3.5" />
+              )}{' '}
+              Mark Urgent
             </Button>
           )}
           <button
@@ -861,7 +1272,13 @@ export function DispatchOrderPage() {
             // paint, no scrolling the whole page down to reach it.
             fill
             emptyText="No pending order lines — everything is dispatched."
-            onRowClick={(r) => (r.lockedByName ? toast.error(`${r.lockedByName} is currently dispatching this line — try again in a moment.`) : setActive(r))}
+            onRowClick={(r) =>
+              r.lockedByName
+                ? toast.error(
+                    `${r.lockedByName} is currently dispatching this line — try again in a moment.`,
+                  )
+                : setActive(r)
+            }
             className={[
               'font-sans text-[13px]',
               // Rows are click-to-dispatch, so block accidental text selection (a
@@ -887,7 +1304,9 @@ export function DispatchOrderPage() {
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-2 sm:hidden sm:px-0">
           <style>{DISPATCH_CARD_CSS}</style>
           {isLoading ? (
-            [0, 1, 2, 3].map((i) => <div key={i} className="bg-muted/40 h-40 animate-pulse rounded-2xl border" />)
+            [0, 1, 2, 3].map((i) => (
+              <div key={i} className="bg-muted/40 h-40 animate-pulse rounded-2xl border" />
+            ))
           ) : items.length === 0 ? (
             <div className="text-muted-foreground flex flex-col items-center gap-2 rounded-2xl border border-dashed bg-card px-4 py-12 text-center text-sm">
               <PackageCheck className="size-9 text-blue-500" />
@@ -917,11 +1336,22 @@ export function DispatchOrderPage() {
           out is exactly what someone on the floor is standing there adding up. */}
       {items.length > 0 && (
         <div className="bg-card flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-[4px] border px-3 py-2 shadow-sm">
-          <span className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Totals — this page</span>
+          <span className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">
+            Totals — this page
+          </span>
           <div className="ml-auto flex flex-wrap items-center gap-x-5 gap-y-1.5">
-            {([['Bags', totals.bags], ['Pcs', totals.pcs], ['Kgs', totals.kgs], ['Box', totals.box]] as const).map(([label, value]) => (
+            {(
+              [
+                ['Bags', totals.bags],
+                ['Pcs', totals.pcs],
+                ['Kgs', totals.kgs],
+                ['Box', totals.box],
+              ] as const
+            ).map(([label, value]) => (
               <span key={label} className="flex items-baseline gap-1.5">
-                <span className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">{label}</span>
+                <span className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">
+                  {label}
+                </span>
                 <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(value)}</span>
               </span>
             ))}
@@ -932,16 +1362,28 @@ export function DispatchOrderPage() {
       {/* ── Footer: paging ─────────────────────────────────────────────────────── */}
       <div className="bg-card flex items-center justify-between rounded-[4px] border px-3 py-2 shadow-sm">
         <p className="text-muted-foreground text-[12px] font-medium">
-          Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
-          <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
+          Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span>{' '}
+          of <span className="font-bold tabular-nums text-foreground">{totalPages}</span>
         </p>
         <div className="flex items-center gap-3">
           <PageSizeSelect value={pageSize} onChange={setPageSize} />
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-[4px] font-semibold"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+            >
               <ChevronLeft /> Prev
             </Button>
-            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-[4px] font-semibold"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+            >
               Next <ChevronRight />
             </Button>
           </div>
@@ -962,7 +1404,9 @@ export function DispatchOrderPage() {
         )}
       </Sheet>
 
-      {shipped !== null && <DispatchTruckAnimation code={shipped} onDone={() => setShipped(null)} />}
+      {shipped !== null && (
+        <DispatchTruckAnimation code={shipped} onDone={() => setShipped(null)} />
+      )}
 
       <ExportColumnsDialog
         open={exportDialogOpen}
@@ -1034,7 +1478,14 @@ function DispatchTruckAnimation({ code, onDone }: { code: string; onDone: () => 
 
 /** Maps the shared QtyField key ('kgs') to this sheet's own field name ('gram')
  *  + its form key + remaining-quantity key. */
-const QTY_FIELD_INFO: Record<QtyField, { key: 'bags' | 'pcs' | 'gram' | 'box'; label: string; remKey: 'remBags' | 'remPcs' | 'remKgs' | 'remBox' }> = {
+const QTY_FIELD_INFO: Record<
+  QtyField,
+  {
+    key: 'bags' | 'pcs' | 'gram' | 'box';
+    label: string;
+    remKey: 'remBags' | 'remPcs' | 'remKgs' | 'remBox';
+  }
+> = {
   bags: { key: 'bags', label: 'Bags', remKey: 'remBags' },
   pcs: { key: 'pcs', label: 'Pcs', remKey: 'remPcs' },
   kgs: { key: 'gram', label: 'Kgs', remKey: 'remKgs' },
@@ -1043,8 +1494,10 @@ const QTY_FIELD_INFO: Record<QtyField, { key: 'bags' | 'pcs' | 'gram' | 'box'; l
 /** Bags/Pcs/Kgs/Box in the order configured for this line's product category
  *  (Settings → Order quantity fields) — the same layout the New Order form uses,
  *  so the packing floor sees quantities arranged the same way end to end. */
-const orderedQtyFields = (qtyLayout: Parameters<typeof qtyOrderForCategory>[0], pCategory: string | null) =>
-  qtyOrderForCategory(qtyLayout, pCategory).map((f) => QTY_FIELD_INFO[f]);
+const orderedQtyFields = (
+  qtyLayout: Parameters<typeof qtyOrderForCategory>[0],
+  pCategory: string | null,
+) => qtyOrderForCategory(qtyLayout, pCategory).map((f) => QTY_FIELD_INFO[f]);
 
 /** Slide-over to dispatch a pending order line — a native bottom sheet on phones,
  *  a right side-panel on desktop. Qty fields start blank. */
@@ -1115,7 +1568,10 @@ function DispatchSheet({
   // Bags/Pcs/Kgs/Box entry order follows this line's product category, per
   // Settings → Order quantity fields — same layout as the New Order form.
   const { data: qtyLayout } = useOrderQtyLayout();
-  const qtyFields = useMemo(() => orderedQtyFields(qtyLayout, line.pCategory), [qtyLayout, line.pCategory]);
+  const qtyFields = useMemo(
+    () => orderedQtyFields(qtyLayout, line.pCategory),
+    [qtyLayout, line.pCategory],
+  );
   const [form, setForm] = useState({
     bags: '',
     pcs: '',
@@ -1141,16 +1597,38 @@ function DispatchSheet({
   // dialog is open; doCreate() below is the single path that actually saves.
   const [overageOpen, setOverageOpen] = useState(false);
   const [overagePending, setOveragePending] = useState<{
-    bags: number; pcs: number; gram: number; box: number;
+    bags: number;
+    pcs: number;
+    gram: number;
+    box: number;
     over: readonly (readonly [string, number, number | null])[];
   } | null>(null);
   const { data: settings } = useSettings();
-  const overageReasons = useMemo(() => settingValues(settings, 'DISPATCH_OVERAGE_REASON'), [settings]);
+  const overageReasons = useMemo(
+    () => settingValues(settings, 'DISPATCH_OVERAGE_REASON'),
+    [settings],
+  );
 
-  const doCreate = (bags: number, pcs: number, gram: number, box: number, status: DispatchStatus, extraComment?: string) => {
+  const doCreate = (
+    bags: number,
+    pcs: number,
+    gram: number,
+    box: number,
+    status: DispatchStatus,
+    extraComment?: string,
+  ) => {
     const comment = [form.comment.trim(), extraComment].filter(Boolean).join(' | ') || null;
     create.mutate(
-      { orderItemId: line.orderItemId, bags, pcs, gram, box, dispatchStatus: status, comment, dispatchDate },
+      {
+        orderItemId: line.orderItemId,
+        bags,
+        pcs,
+        gram,
+        box,
+        dispatchStatus: status,
+        comment,
+        dispatchDate,
+      },
       {
         onSuccess: (res) => {
           if (res.status === 'CREATED') {
@@ -1182,27 +1660,35 @@ function DispatchSheet({
     // Hard requirement, no override: this item + design has never been
     // documented with a photo for this party. The backend enforces the same
     // rule, so this is purely about surfacing it before a wasted round trip.
-    if (!photoCheckReady) return toast.error('Still checking photo history — try again in a moment.');
+    if (!photoCheckReady)
+      return toast.error('Still checking photo history — try again in a moment.');
     if (!hasPhotoOnFile) {
       setPhotosOpen(true);
       return toast.error('Attach a reference photo before dispatching this item + design.');
     }
-    const bags = num(form.bags), pcs = num(form.pcs), gram = num(form.gram), box = num(form.box);
+    const bags = num(form.bags),
+      pcs = num(form.pcs),
+      gram = num(form.gram),
+      box = num(form.box);
     const cf = (line.calField ?? '').toUpperCase();
-    if (cf === 'PCS' && pcs <= 0) return toast.error('Pcs is required — this item is priced by PCS.');
+    if (cf === 'PCS' && pcs <= 0)
+      return toast.error('Pcs is required — this item is priced by PCS.');
     if (cf === 'KGS' && gram <= 0) return toast.error('Kgs is required to dispatch this item.');
-    if (cf !== 'PCS' && cf !== 'KGS' && bags <= 0 && pcs <= 0 && gram <= 0 && box <= 0) return toast.error('Enter at least one quantity to dispatch');
+    if (cf !== 'PCS' && cf !== 'KGS' && bags <= 0 && pcs <= 0 && gram <= 0 && box <= 0)
+      return toast.error('Enter at least one quantity to dispatch');
 
     // Over-dispatch is allowed (packing/weighing variance is normal) but never
     // silently — flag exactly which unit(s) go past what's left and make the
     // user explicitly confirm before it's saved.
     const n = (v: number) => v.toLocaleString('en-IN');
-    const over = ([
-      ['Bags', bags, line.remBags],
-      ['Pcs', pcs, line.remPcs],
-      ['Kgs', gram, line.remKgs],
-      ['Box', box, line.remBox],
-    ] as const).filter(([, v, rem]) => v > (rem ?? 0));
+    const over = (
+      [
+        ['Bags', bags, line.remBags],
+        ['Pcs', pcs, line.remPcs],
+        ['Kgs', gram, line.remKgs],
+        ['Box', box, line.remBox],
+      ] as const
+    ).filter(([, v, rem]) => v > (rem ?? 0));
 
     let status = form.dispatchStatus;
     if (over.length) {
@@ -1268,17 +1754,29 @@ function DispatchSheet({
   }, []);
 
   return (
-    <SheetContent side={isMobile ? 'bottom' : 'right'} className={cn('flex w-full flex-col', isMobile ? 'rounded-t-2xl' : 'max-w-lg')}>
+    <SheetContent
+      side={isMobile ? 'bottom' : 'right'}
+      className={cn('flex w-full flex-col', isMobile ? 'rounded-t-2xl' : 'max-w-lg')}
+    >
       {/* Rendered from inside the sheet so it layers ABOVE it — the refusal has
           to interrupt the form the user is still looking at. */}
-      {duplicate && <DuplicateDispatchDialog match={duplicate} onClose={() => setDuplicate(null)} />}
+      {duplicate && (
+        <DuplicateDispatchDialog match={duplicate} onClose={() => setDuplicate(null)} />
+      )}
 
       {/* Native grabber handle on the phone bottom sheet. */}
-      {isMobile && <div className="bg-muted-foreground/25 mx-auto -mt-1 mb-1 h-1.5 w-10 shrink-0 rounded-full" aria-hidden />}
+      {isMobile && (
+        <div
+          className="bg-muted-foreground/25 mx-auto -mt-1 mb-1 h-1.5 w-10 shrink-0 rounded-full"
+          aria-hidden
+        />
+      )}
 
       <SheetHeader>
         <div className="flex items-center gap-2">
-          <span className="bg-primary/10 text-primary rounded-md px-1.5 py-0.5 font-mono text-sm font-bold">{shortOrderCode(line.orderCode, line.orderId)}</span>
+          <span className="bg-primary/10 text-primary rounded-md px-1.5 py-0.5 font-mono text-sm font-bold">
+            {shortOrderCode(line.orderCode, line.orderId)}
+          </span>
           {line.priority === 'URGENT' && (
             <span className="inline-flex items-center gap-0.5 rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">
               <Flame className="size-2.5" /> URGENT
@@ -1294,9 +1792,13 @@ function DispatchSheet({
         <div className="bg-muted/40 rounded-xl border p-2.5 sm:p-3">
           <div className="text-sm font-semibold">
             {line.productName || line.product}
-            {line.designType && line.designType.toUpperCase() !== 'NA' ? ` · ${line.designType}` : ''}
+            {line.designType && line.designType.toUpperCase() !== 'NA'
+              ? ` · ${line.designType}`
+              : ''}
           </div>
-          {line.calField && <div className="text-muted-foreground mt-0.5 text-xs">Priced by {line.calField}</div>}
+          {line.calField && (
+            <div className="text-muted-foreground mt-0.5 text-xs">Priced by {line.calField}</div>
+          )}
         </div>
 
         {/* Read-only — set from the "Dispatching for" control at the top of the
@@ -1306,11 +1808,16 @@ function DispatchSheet({
           <CalendarDays className="text-muted-foreground size-3.5 shrink-0" />
           <span className="text-muted-foreground">Dispatching for</span>
           <span className="font-semibold">{formatDate(dispatchDate)}</span>
-          <span className="text-muted-foreground hidden sm:inline">— change it from the top of the page.</span>
+          <span className="text-muted-foreground hidden sm:inline">
+            — change it from the top of the page.
+          </span>
         </div>
 
         <div>
-          <p className="text-muted-foreground mb-2 text-xs">Enter what's going out — tap <span className="text-primary font-semibold">MAX</span> to fill the remaining amount.</p>
+          <p className="text-muted-foreground mb-2 text-xs">
+            Enter what's going out — tap <span className="text-primary font-semibold">MAX</span> to
+            fill the remaining amount.
+          </p>
           <div className="grid grid-cols-2 gap-2">
             {qtyFields.map(({ key: k, label, remKey }, i) => {
               const rem = line[remKey] ?? 0;
@@ -1348,14 +1855,21 @@ function DispatchSheet({
         <div className="space-y-1.5">
           <Label className="text-xs">Dispatch status</Label>
           <div className="bg-muted grid grid-cols-2 gap-1 rounded-xl p-1">
-            {([['PARTIALLY DISPATCH', 'Partial'], ['FULLY DISPATCH', 'Full']] as const).map(([val, label]) => (
+            {(
+              [
+                ['PARTIALLY DISPATCH', 'Partial'],
+                ['FULLY DISPATCH', 'Full'],
+              ] as const
+            ).map(([val, label]) => (
               <button
                 key={val}
                 type="button"
                 onClick={() => set({ dispatchStatus: val })}
                 className={cn(
                   'rounded-lg py-2 text-sm font-semibold transition-all active:scale-[0.97]',
-                  form.dispatchStatus === val ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
+                  form.dispatchStatus === val
+                    ? 'bg-card text-foreground shadow-sm'
+                    : 'text-muted-foreground',
                 )}
               >
                 {label}
@@ -1366,7 +1880,11 @@ function DispatchSheet({
 
         <div className="space-y-1.5">
           <Label className="text-xs">Comment</Label>
-          <Input value={form.comment} onChange={(e) => set({ comment: e.target.value })} placeholder="Dispatch remark…" />
+          <Input
+            value={form.comment}
+            onChange={(e) => set({ comment: e.target.value })}
+            placeholder="Dispatch remark…"
+          />
         </div>
 
         {/* Reference-photo requirement: this party + item + design must have a
@@ -1383,7 +1901,11 @@ function DispatchSheet({
                 : 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-400/25 dark:bg-rose-500/10 dark:text-rose-300',
             )}
           >
-            {hasPhotoOnFile ? <CheckCircle2 className="mt-[1px] size-3.5 shrink-0" /> : <TriangleAlert className="mt-[1px] size-3.5 shrink-0" />}
+            {hasPhotoOnFile ? (
+              <CheckCircle2 className="mt-[1px] size-3.5 shrink-0" />
+            ) : (
+              <TriangleAlert className="mt-[1px] size-3.5 shrink-0" />
+            )}
             <span>
               {hasPhotoOnFile
                 ? photoCheck.data?.fromHistory
@@ -1411,7 +1933,12 @@ function DispatchSheet({
                 </span>
               )}
             </span>
-            <ChevronDown className={cn('text-muted-foreground size-4 shrink-0 transition-transform', photosOpen && 'rotate-180')} />
+            <ChevronDown
+              className={cn(
+                'text-muted-foreground size-4 shrink-0 transition-transform',
+                photosOpen && 'rotate-180',
+              )}
+            />
           </button>
           {photosOpen && (
             <div className="px-3 pb-3">
@@ -1423,32 +1950,73 @@ function DispatchSheet({
                   order:update — a shop-floor dispatch role otherwise gets
                   blocked by the mandatory-photo rule above with no way to
                   satisfy it, since it usually doesn't hold order:update. */}
-              <LiveLinePhotos orderItemId={line.orderItemId} canEdit={can('dispatch:create')} canDelete={isSuperAdmin} hideHeader />
+              {/* Billed lines are frozen here too — see the note in the card's
+                  photo dialog for why this cannot assume a pending line is
+                  unbilled. */}
+              {line.billedChallanCode && (
+                <p className="mb-2 text-xs text-amber-700 dark:text-amber-400">
+                  Billed on {line.billedChallanCode} — these photos are the record of what shipped.
+                  {isSuperAdmin
+                    ? ' Remove one only if it is genuinely wrong.'
+                    : ' They cannot be removed.'}
+                </p>
+              )}
+              <LiveLinePhotos
+                orderItemId={line.orderItemId}
+                canEdit={can('dispatch:create')}
+                canDelete={isSuperAdmin}
+                hideHeader
+              />
             </div>
           )}
         </div>
       </div>
 
       <SheetFooter className="flex-col gap-2 pb-[max(env(safe-area-inset-bottom),0.25rem)] sm:flex-row sm:items-center sm:justify-between sm:pb-4">
-        <Button type="button" variant="outline" className="w-full transition-transform active:scale-[0.98] sm:w-auto" onClick={dispatchAll} title="Fill the remaining quantities and mark Fully Dispatch">
+        <Button
+          type="button"
+          variant="outline"
+          className="w-full transition-transform active:scale-[0.98] sm:w-auto"
+          onClick={dispatchAll}
+          title="Fill the remaining quantities and mark Fully Dispatch"
+        >
           <PackageCheck /> Dispatch Full
         </Button>
         <div className="flex w-full gap-2 sm:w-auto">
-          <Button type="button" variant="outline" className="flex-1 transition-transform active:scale-[0.98] sm:flex-none" onClick={onClose}>
+          <Button
+            type="button"
+            variant="outline"
+            className="flex-1 transition-transform active:scale-[0.98] sm:flex-none"
+            onClick={onClose}
+          >
             Cancel
           </Button>
           <Button
             onClick={submit}
             disabled={create.isPending || !photoCheckReady || !hasPhotoOnFile}
             className="flex-1 transition-transform active:scale-[0.98] sm:flex-none"
-            title={!photoCheckReady ? 'Checking photo history…' : !hasPhotoOnFile ? 'Attach a reference photo to continue' : 'Save dispatch (Ctrl+S)'}
+            title={
+              !photoCheckReady
+                ? 'Checking photo history…'
+                : !hasPhotoOnFile
+                  ? 'Attach a reference photo to continue'
+                  : 'Save dispatch (Ctrl+S)'
+            }
           >
             {create.isPending ? <Loader2 className="animate-spin" /> : <Truck />} Save dispatch
           </Button>
         </div>
       </SheetFooter>
 
-      <Dialog open={overageOpen} onOpenChange={(o) => { if (!o) { setOverageOpen(false); setOveragePending(null); } }}>
+      <Dialog
+        open={overageOpen}
+        onOpenChange={(o) => {
+          if (!o) {
+            setOverageOpen(false);
+            setOveragePending(null);
+          }
+        }}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Dispatch more than what remains?</DialogTitle>
@@ -1459,17 +2027,39 @@ function DispatchSheet({
               <ul className="mt-1.5 list-disc space-y-0.5 pl-4">
                 {overagePending?.over.map(([label, v, rem]) => (
                   <li key={label}>
-                    <span className="text-foreground font-semibold">{label}</span>: dispatching {v.toLocaleString('en-IN')}, only {(rem ?? 0).toLocaleString('en-IN')} remaining.
+                    <span className="text-foreground font-semibold">{label}</span>: dispatching{' '}
+                    {v.toLocaleString('en-IN')}, only {(rem ?? 0).toLocaleString('en-IN')}{' '}
+                    remaining.
                   </li>
                 ))}
               </ul>
               <p className="mt-2">The line will be marked Fully Dispatched.</p>
             </div>
-            <CancelReasonFields reasons={overageReasons} reason={overageReason} note={overageNote} onReason={setOverageReason} onNote={setOverageNote} />
+            <CancelReasonFields
+              reasons={overageReasons}
+              reason={overageReason}
+              note={overageNote}
+              onReason={setOverageReason}
+              onNote={setOverageNote}
+            />
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => { setOverageOpen(false); setOveragePending(null); }}>Cancel</Button>
-            <Button type="button" variant="destructive" onClick={confirmOverage} disabled={create.isPending}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setOverageOpen(false);
+                setOveragePending(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={confirmOverage}
+              disabled={create.isPending}
+            >
               {create.isPending ? <Loader2 className="animate-spin" /> : <Truck />} Dispatch anyway
             </Button>
           </DialogFooter>
