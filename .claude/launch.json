@@ -33,6 +33,16 @@
       "autoPort": false
     },
     {
+      "name": "apitest",
+      "runtimeExecutable": "cmd.exe",
+      "runtimeArgs": [
+        "/c",
+        "scripts\\preview-api-test.cmd"
+      ],
+      "port": 4055,
+      "autoPort": false
+    },
+    {
       "name": "webtest",
       "runtimeExecutable": "cmd.exe",
       "runtimeArgs": [

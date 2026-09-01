@@ -128,6 +128,19 @@ export class CreateCustomerDto {
   @IsIn([...PAY_BYS])
   payBy?: string;
 
+  /**
+   * JSON per-bucket override of payBy — { "bank": "PARTY"|"AGENT", "cash": … }.
+   *
+   * Validated as a string here and canonicalised on the way in (see
+   * normalisePayByModes), rather than as a nested DTO: it is stored and read as
+   * one document, and anything unrecognised in it must degrade to "no override"
+   * instead of rejecting the whole customer save.
+   */
+  @IsOptional()
+  @Transform(emptyToUndefined)
+  @IsString()
+  payByModes?: string;
+
   @IsOptional()
   @Type(() => Boolean)
   @IsBoolean()

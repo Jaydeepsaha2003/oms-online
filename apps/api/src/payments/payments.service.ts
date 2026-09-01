@@ -15,14 +15,19 @@ import {
   type SameDayReceiptDto,
   type OpeningPendingRow,
   type SavePaymentResult,
+  type PayBucket,
+  payBucketOf,
+  payByFor,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { EditPaymentDto, LedgerQueryDto, PaymentContextQueryDto, SavePaymentDto } from './dto/payment.dto';
 
 const r2 = (x: number) => Math.round(x * 100) / 100;
 const EPS = 0.005;
-/** BANK and CHEQUE receipts settle the bank bucket; CASH settles the cash bucket. */
-const isBankMode = (m: string) => m === 'BANK' || m === 'CHEQUE';
+/** BANK and CHEQUE receipts settle the bank bucket; CASH settles the cash bucket.
+ *  Defers to the shared rule so the bucket a receipt lands in and the bucket a
+ *  party's routing is judged on can never disagree. */
+const isBankMode = (m: string) => payBucketOf(m) === 'bank';
 const BANK_MODES = ['BANK', 'CHEQUE'];
 
 function parseDay(s: string | undefined, label: string): Date {
@@ -104,7 +109,10 @@ export class PaymentsService {
 
   async context(q: PaymentContextQueryDto): Promise<PaymentContext> {
     const recDate = parseDay(q.recDate, 'Receipt date');
-    const customers = await this.resolveCustomers(this.prisma, q.customerId ?? null, q.agentName ?? null);
+    // Which parties are reachable depends on the bucket being collected, so the
+    // screen sends its pay mode and the list changes with it.
+    const bucket = payBucketOf(q.payMode);
+    const customers = await this.resolveCustomers(this.prisma, q.customerId ?? null, q.agentName ?? null, bucket);
     const [invoices, advances, openings, sameDayReceipts] = await Promise.all([
       this.invoicePending(this.prisma, customers, recDate),
       this.advancePending(this.prisma, customers),
@@ -347,7 +355,7 @@ export class PaymentsService {
     const remarks = dto.remarks?.trim().toUpperCase() || null;
 
     return this.prisma.$transaction(async (tx) => {
-      const customers = await this.resolveCustomers(tx, isAgent ? null : (dto.customerId ?? null), isAgent ? (dto.agentName ?? null) : null);
+      const customers = await this.resolveCustomers(tx, isAgent ? null : (dto.customerId ?? null), isAgent ? (dto.agentName ?? null) : null, payBucketOf(dto.payMode));
       const agentName = isAgent ? dto.agentName!.trim() : null;
       const headName = isAgent ? agentName! : customers[0].name;
       const headId = isAgent ? 0 : customers[0].id;
@@ -553,7 +561,7 @@ export class PaymentsService {
    *  corrected. Voucher number and REC-/ADV- ref ids are always reused. */
   private async replayRow(tx: Db, row: LedgerRow, override?: ReplayOverride): Promise<void> {
     const isAgent = row.custId === 0;
-    const customers = await this.resolveCustomers(tx, isAgent ? null : row.custId, isAgent ? row.agentName : null);
+    const customers = await this.resolveCustomers(tx, isAgent ? null : row.custId, isAgent ? row.agentName : null, payBucketOf(row.transMode), true);
     await this.runWaterfall(tx, {
       voucherNo: row.voucherNo,
       receiptRefId: row.receiptRefId,
@@ -662,8 +670,8 @@ export class PaymentsService {
         if (!rows.length) throw new BadRequestException('AGST REF mode requires selecting at least one invoice.');
       }
 
-      // Party mode: fund each allocation from OLD advances FIFO first, then from
-      // today's receipt (the legacy two-step). Agent mode uses only the receipt.
+      // Party mode: fund each allocation from today's receipt first, then from
+      // OLD advances FIFO for any shortfall. Agent mode uses only the receipt.
       const advRows = !p.isAgent
         ? (await this.advancePending(tx, p.customers)).filter((a) => (bankish ? a.bankBal : a.cashBal) > EPS)
         : [];
@@ -685,6 +693,12 @@ export class PaymentsService {
        * then parked straight back as a new advance. A ₹1 advance stayed ₹1
        * forever and never came off a bill. Including it here is what lets an
        * advance actually be spent.
+       *
+       * Sizing alone was not enough, though: while advances were still drained
+       * BEFORE the receipt, a voucher for the exact invoice total kept freeing
+       * the advance's value straight back into a new advance, so the same ₹5
+       * rolled from voucher to voucher indefinitely. The order below — receipt
+       * first, advance only for the shortfall — is what actually ends that.
        */
       const advTotal = r2(advRows.reduce((sum, a) => sum + (bankish ? a.bankBal : a.cashBal), 0));
       let sizeLeft = r2(remaining + advTotal);
@@ -696,7 +710,44 @@ export class PaymentsService {
         sizeLeft = r2(sizeLeft - need);
         invoicesCleared = r2(invoicesCleared + need);
 
-        // Step 1: old advances FIFO.
+        // Step 1: today's receipt (this is the part that consumes actual cash).
+        //
+        // Deliberately BEFORE the advances. Draining the advance first meant a
+        // receipt for the exact invoice total always had the advance's value
+        // left over, which parked straight back as a fresh advance of the same
+        // size — so one ₹5 overpayment rolled forward voucher after voucher,
+        // putting an ADVANCE line on every invoice it touched and never
+        // clearing. Spending today's money first leaves the advance untouched
+        // when it is not needed, and still lets it settle a genuine shortfall
+        // below.
+        const fromReceipt = r2(Math.min(need, remaining));
+        if (fromReceipt > EPS) {
+          receiptRefId ??= await this.nextRefId(tx, 'REC', p.recDate);
+          await tx.acctPaymentReceipt.create({
+            data: {
+              refId: receiptRefId,
+              recDate: p.recDate,
+              invNo: inv.invNo,
+              customerName: inv.customerName,
+              custId: inv.customerId,
+              recType: 'RECEIPT',
+              recAmt: fromReceipt,
+              payMode: p.payMode,
+              bankName: p.bankName,
+              chequeNo: p.chequeNo,
+              cashTransLocation: p.cashLoc,
+              cashRecBy: p.cashBy,
+              modeOfAdj: p.adjMode,
+              refRecId: p.voucherNo,
+              sourceVoucherNo: p.voucherNo,
+            },
+          });
+          allocations.push({ kind: 'INVOICE', customerName: inv.customerName, invNo: inv.invNo, fundedBy: p.voucherNo, modeOfAdj: p.adjMode, amount: fromReceipt });
+          remaining = r2(remaining - fromReceipt);
+          need = r2(need - fromReceipt);
+        }
+
+        // Step 2: old advances FIFO, for whatever today's receipt did not cover.
         while (need > EPS && advIdx < advRows.length) {
           if (advLeft <= EPS) {
             advIdx += 1;
@@ -727,31 +778,6 @@ export class PaymentsService {
           allocations.push({ kind: 'INVOICE', customerName: inv.customerName, invNo: inv.invNo, fundedBy: advRows[advIdx].refId, modeOfAdj: 'ADVANCE', amount: use });
           need = r2(need - use);
           advLeft = r2(advLeft - use);
-        }
-        // Step 2: today's receipt (this is the part that consumes actual cash).
-        if (need > EPS) {
-          receiptRefId ??= await this.nextRefId(tx, 'REC', p.recDate);
-          await tx.acctPaymentReceipt.create({
-            data: {
-              refId: receiptRefId,
-              recDate: p.recDate,
-              invNo: inv.invNo,
-              customerName: inv.customerName,
-              custId: inv.customerId,
-              recType: 'RECEIPT',
-              recAmt: need,
-              payMode: p.payMode,
-              bankName: p.bankName,
-              chequeNo: p.chequeNo,
-              cashTransLocation: p.cashLoc,
-              cashRecBy: p.cashBy,
-              modeOfAdj: p.adjMode,
-              refRecId: p.voucherNo,
-              sourceVoucherNo: p.voucherNo,
-            },
-          });
-          allocations.push({ kind: 'INVOICE', customerName: inv.customerName, invNo: inv.invNo, fundedBy: p.voucherNo, modeOfAdj: p.adjMode, amount: need });
-          remaining = r2(remaining - need);
         }
       }
     }
@@ -802,30 +828,50 @@ export class PaymentsService {
 
   /* ── Derivations (the legacy Access "…Summary" views) ─────────────────────── */
 
-  /** PARTY: the one customer (blocked when payBy=AGENT). AGENT: the agent's customers. */
+  /**
+   * PARTY: the one customer. AGENT: the agent's customers. Both judged for ONE
+   * money bucket.
+   *
+   * Routing is per bucket (see payByFor): a party commonly settles its own bank
+   * transfers while its agent hands over the cash. So the same party is legal in
+   * Party mode for a BANK receipt and illegal for a CASH one, and shows up under
+   * its agent only for the bucket that agent actually collects.
+   *
+   * `replay` relaxes the PARTY check: it guards data *entry*, so a voucher already
+   * recorded in Party mode must stay editable even if the party has since been
+   * switched to AGENT for that bucket. Without this, flipping a party's routing
+   * silently freezes every receipt ever taken from it.
+   */
   private async resolveCustomers(
     db: Db,
     customerId: number | null,
     agentName: string | null,
+    bucket: PayBucket,
+    replay = false,
   ): Promise<{ id: number; name: string; payBy: string | null }[]> {
+    const money = bucket === 'cash' ? 'cash' : 'bank';
     if (customerId != null) {
       const c = await db.customer.findUnique({ where: { id: customerId } });
       if (!c) throw new NotFoundException('Customer not found.');
-      if ((c.payBy ?? '').trim().toUpperCase() === 'AGENT') {
-        throw new BadRequestException('This party always makes payment through an Agent. Please use the Agent Name field to process this receipt.');
+      if (!replay && payByFor(c, bucket) === 'AGENT') {
+        throw new BadRequestException(
+          `This party's ${money} payments come through Agent: ${c.agentName ?? '(none set)'}. Please use the Agent Name field to process this receipt.`,
+        );
       }
       return [{ id: c.id, name: c.partyName ?? `#${c.id}`, payBy: c.payBy }];
     }
     const agent = agentName?.trim();
     if (!agent) throw new BadRequestException('Please select either Customer / Party Name or Agent Name.');
     const list = await db.customer.findMany({ where: { agentName: agent }, orderBy: { partyName: 'asc' } });
-    const linked = list.filter((c) => (c.payBy ?? '').trim().toUpperCase() === 'AGENT');
+    const linked = list.filter((c) => payByFor(c, bucket) === 'AGENT');
     if (!linked.length) {
       throw new BadRequestException(
-        `No parties are configured for Agent: ${agent}. Please ensure at least one party has 'PAY BY = AGENT' linked to this agent in the Customer master.`,
+        `No parties send their ${money} through Agent: ${agent}. Set PAY BY (${money}) = AGENT on at least one of this agent's parties in the Customer master.`,
       );
     }
-    return list.map((c) => ({ id: c.id, name: c.partyName ?? `#${c.id}`, payBy: c.payBy }));
+    // Only the parties whose money in THIS bucket comes through the agent — one
+    // that settles this bucket directly is collected in Party mode, never here.
+    return linked.map((c) => ({ id: c.id, name: c.partyName ?? `#${c.id}`, payBy: c.payBy }));
   }
 
   /** InvPendingSummary: per CONFIRMED challan dated ≤ recDate, bank/cash pending. */

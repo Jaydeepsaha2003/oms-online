@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   AgentRateList,
+  BulkCustomerPlan,
+  BulkUpdateCustomersInput,
   CustomerDto,
   CustomerInput,
   CustomerList,
@@ -162,6 +164,37 @@ export function useDeleteCustomer() {
   });
 }
 
+/**
+ * What a bulk edit would change. Writes nothing — the server plans the change
+ * once and the apply below re-runs that same planner, so the table the dialog
+ * shows is what gets written.
+ *
+ * A query rather than a mutation, for the reason the bulk-rate preview is one:
+ * it runs as soon as the inputs make sense, so the rows are already on screen
+ * when the user reaches for Apply, instead of being something they must
+ * remember to ask for before a write this wide.
+ */
+export function useBulkUpdateCustomersPreview(input: BulkUpdateCustomersInput | null) {
+  return useQuery({
+    queryKey: [...KEY, 'bulk-update-preview', input],
+    queryFn: () => http.post<BulkCustomerPlan>('/customers/bulk-update/preview', input),
+    enabled: !!input,
+    // The master can move under a long-open dialog; never serve a stale preview
+    // for a write this wide.
+    staleTime: 0,
+    placeholderData: (prev) => prev,
+  });
+}
+
+/** Apply the previewed change. Refuses outright if the plan has any blockers. */
+export function useBulkUpdateCustomers() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BulkUpdateCustomersInput) => http.patch<{ updated: number }>('/customers/bulk-update', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
 export function useImportCustomers() {
   const qc = useQueryClient();
   return useMutation({
@@ -169,6 +202,13 @@ export function useImportCustomers() {
       http.post<ImportResult>('/customers/import', { rows }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
+}
+
+/** Every customer the current filters match, in one page — backs "select all N
+ *  matching" so a bulk edit can span pages without ticking each row. */
+export async function fetchAllMatchingCustomers(query: CustomerQuery, total: number): Promise<CustomerDto[]> {
+  const res = await http.get<CustomerList>('/customers', { params: { ...query, page: 1, pageSize: Math.min(total, 2000) } });
+  return res.items;
 }
 
 export function exportCustomers(query: CustomerQuery) {

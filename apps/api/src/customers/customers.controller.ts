@@ -21,6 +21,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ExcelService } from '../excel/excel.service';
 import { CustomersService } from './customers.service';
 import { RateListConfigService } from './rate-list-config.service';
+import { BulkUpdateCustomersDto } from './dto/bulk-update-customers.dto';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { CustomerQueryDto } from './dto/customer-query.dto';
 import { ImportCustomersDto } from './dto/import-customers.dto';
@@ -71,6 +72,26 @@ export class CustomersController {
   @Audit({ action: ACTIONS.IMPORT, resource: R, description: 'Imported customers from Excel' })
   import(@Body() dto: ImportCustomersDto) {
     return this.customers.importRows(dto.rows);
+  }
+
+  /** Bulk edit of the dropdown-backed columns for the ticked rows, or for every
+   *  party matching the list's current filter.
+   *
+   *  Preview is a POST because it carries a body, not because it writes — it
+   *  changes nothing. Both are declared ABOVE ':id' for the same reason as the
+   *  rate-list routes below: so "bulk-update" is matched as a route rather than
+   *  parsed as a customer id. */
+  @Post('bulk-update/preview')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  previewBulkUpdate(@Body() dto: BulkUpdateCustomersDto) {
+    return this.customers.previewBulkUpdate(dto);
+  }
+
+  @Patch('bulk-update')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Bulk-updated customer dropdown columns' })
+  bulkUpdate(@Body() dto: BulkUpdateCustomersDto) {
+    return this.customers.bulkUpdate(dto);
   }
 
   /* ── Rate List Settings (spec §5/§9/§10) ─────────────────────────────────

@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import type { LedgerReceiptLine, PartyLedgerLookups, PartyLedgerQuery, PartyLedgerResult } from '@oms/shared';
+import type {
+  LedgerClearedResult, LedgerReceiptLine, PartyLedgerLookups, PartyLedgerQuery, PartyLedgerResult } from '@oms/shared';
 import { http } from '@/lib/api';
 
 const KEY = ['party-ledger'] as const;
@@ -22,6 +23,13 @@ export function usePartyLedger(query: PartyLedgerQuery | null) {
   });
 }
 
-export function fetchLedgerReceipts(invNo: string): Promise<LedgerReceiptLine[]> {
-  return http.get<LedgerReceiptLine[]>('/party-ledger/receipts', { params: { invNo } });
+/** What a receipt voucher cleared: which parties' invoices, and what it parked. */
+export function fetchLedgerCleared(voucherNo: string): Promise<LedgerClearedResult> {
+  return http.get<LedgerClearedResult>('/party-ledger/cleared', { params: { voucherNo } });
+}
+
+/** `mode` mirrors the grid's Bank/Cash toggle so the dialog cannot show payments
+ *  from the side the user is not looking at. */
+export function fetchLedgerReceipts(invNo: string, mode?: string): Promise<LedgerReceiptLine[]> {
+  return http.get<LedgerReceiptLine[]>('/party-ledger/receipts', { params: { invNo, mode } });
 }

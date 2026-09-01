@@ -205,7 +205,12 @@ export function useDeleteOpeningBalance() {
 const PAYMENT_KEY = ['payments'] as const;
 
 /** Pending invoices + advances + openings for the chosen party or agent. */
-export function usePaymentContext(q: { customerId?: number; agentName?: string; recDate?: string }, enabled = true) {
+/** `payMode` picks the money bucket, which decides which parties are reachable —
+ *  it is part of the key, so changing the mode refetches the pending list. */
+export function usePaymentContext(
+  q: { customerId?: number; agentName?: string; recDate?: string; payMode?: string },
+  enabled = true,
+) {
   return useQuery({
     queryKey: [...PAYMENT_KEY, 'context', q],
     queryFn: () => http.get<PaymentContext>('/payments/context', { params: q }),

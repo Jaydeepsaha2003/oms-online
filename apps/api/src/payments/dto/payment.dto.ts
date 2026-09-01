@@ -8,6 +8,14 @@ export class PaymentContextQueryDto {
   @IsOptional() @IsString() agentName?: string;
   /** Receipt date (yyyy-mm-dd) — invoices dated after it are excluded. */
   @IsOptional() @IsString() recDate?: string;
+  /**
+   * The mode being collected, which decides the money bucket and therefore WHICH
+   * parties are reachable: a party whose cash comes through its agent is listed
+   * under that agent for CASH and under itself for BANK.
+   *
+   * Optional, and absent means BANK — the same default the screen opens on.
+   */
+  @IsOptional() @IsIn(PAY_MODES as unknown as string[]) payMode?: string;
 }
 
 export class LedgerQueryDto extends PaginationDto {

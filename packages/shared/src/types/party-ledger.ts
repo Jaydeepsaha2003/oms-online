@@ -155,6 +155,53 @@ export interface LedgerReceiptLine {
   refRecId: string;
   recType: string; // RECEIPT | CREDIT NOTE | ADVANCE
   recAmt: number;
+  /** Which side of the invoice this line settled: 'B' bank, 'C' cash.
+   *  An invoice usually has both, and the ledger can be filtered to one — a line
+   *  has to say which side it belongs to or it reads as a stray payment. */
+  bucket: 'B' | 'C';
+}
+
+/** One invoice a receipt voucher settled, and where the money for it came from. */
+export interface LedgerClearedLine {
+  invNo: string;
+  /** The party whose invoice this is — NOT necessarily the party the voucher is
+   *  booked against. An agent receipt is booked to the agent but clears his
+   *  parties' invoices, which is exactly what this view exists to show. */
+  customerName: string;
+  amount: number;
+  /** RECEIPT = funded by this voucher's own money; ADVANCE = funded by money the
+   *  party already had on account, so it is not a second payment. */
+  kind: 'RECEIPT' | 'ADVANCE';
+  /** The voucher or ADV- reference the money came from. */
+  fundedBy: string;
+}
+
+/**
+ * What one receipt voucher did with its money.
+ *
+ * The identity that must hold is `fromReceipt + parked === voucherTotal`: this
+ * voucher's own money either came off an invoice or went on account.
+ *
+ * `fromAdvance` is deliberately OUTSIDE that sum. A voucher can settle more than
+ * it carried by also spending money the party had already paid in earlier, and
+ * counting that against this voucher's total would make a correct receipt look
+ * over-applied. It is reported separately so the extra clearing is visible
+ * without being double-counted.
+ */
+export interface LedgerClearedResult {
+  voucherNo: string;
+  /** Who the voucher itself is booked against (a party, or an agent). */
+  bookedTo: string;
+  voucherTotal: number;
+  lines: LedgerClearedLine[];
+  /** Total put on invoices — from this receipt AND from older advances. */
+  cleared: number;
+  /** The part of `cleared` funded by this voucher's own money. */
+  fromReceipt: number;
+  /** The part of `cleared` funded by money already on account. */
+  fromAdvance: number;
+  /** Money left on account by this voucher, if any. */
+  parked: { refId: string; amount: number } | null;
 }
 
 export interface PartyLedgerLookups {

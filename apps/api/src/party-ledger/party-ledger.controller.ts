@@ -4,7 +4,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { PartyLedgerService } from './party-ledger.service';
-import { LedgerReceiptsQueryDto, PartyLedgerQueryDto } from './dto/party-ledger.dto';
+import { LedgerClearedQueryDto, LedgerReceiptsQueryDto, PartyLedgerQueryDto } from './dto/party-ledger.dto';
 
 const R = RESOURCES.PARTY_LEDGER;
 
@@ -25,7 +25,16 @@ export class PartyLedgerController {
   @Get('receipts')
   @Permissions(perm(R, ACTIONS.VIEW))
   receipts(@Query() q: LedgerReceiptsQueryDto) {
-    return this.svc.receipts(q.invNo);
+    return this.svc.receipts(q.invNo, q.mode);
+  }
+
+  /** What one receipt voucher cleared — which parties' invoices, and what it
+   *  left on account. The reverse of `receipts`, and the only view that names
+   *  the parties behind an agent's receipt. */
+  @Get('cleared')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  cleared(@Query() q: LedgerClearedQueryDto) {
+    return this.svc.cleared(q.voucherNo);
   }
 
   /** Ledger as a landscape PDF. */

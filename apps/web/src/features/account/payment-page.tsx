@@ -169,12 +169,20 @@ export function PaymentPage() {
   const ownerLabel = party || agent;
 
   /* ── pending context ────────────────────────────────────────────────────── */
-  const ctxQuery = { customerId: isAgent ? undefined : customerId, agentName: isAgent ? agent : undefined, recDate };
+  // payMode is part of the query: routing is per money bucket, so which parties
+  // an agent can be paid for — and therefore which invoices are pending — changes
+  // when the mode does.
+  const ctxQuery = { customerId: isAgent ? undefined : customerId, agentName: isAgent ? agent : undefined, recDate, payMode: payMode || undefined };
   const { data: ctx, error: ctxError, isLoading: ctxLoading } = usePaymentContext(ctxQuery, ownerChosen);
   useEffect(() => {
     // Legacy PAY BY / agent-parties restrictions come back as 400s — surface them.
     if (ctxError) toast.error(getApiErrorMessage(ctxError, 'Failed to load pending data'));
   }, [ctxError]);
+
+  // Switching mode reloads a different set of parties, so invoices ticked under
+  // the old one may no longer be on screen — clear them rather than carry a
+  // selection the user can no longer see.
+  useEffect(() => setSelected([]), [payMode]);
 
   const bucket: 'BANK' | 'CASH' = payMode === 'CASH' ? 'CASH' : 'BANK';
   const allInvoices = ctx?.invoices ?? [];

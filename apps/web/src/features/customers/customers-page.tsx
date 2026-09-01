@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, EllipsisVertical, Loader2, Pencil, Plus, Power, PowerOff, Search, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, EllipsisVertical, Loader2, Pencil, PencilRuler, Plus, Power, PowerOff, Search, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
-import type { CustomerDto, CustomerStatus } from '@oms/shared';
+import { type CustomerDto, type CustomerStatus, payByFor } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { parseExcelFile } from '@/lib/excel';
 import { cn } from '@/lib/utils';
@@ -12,6 +12,7 @@ import { usePageSize } from '@/hooks/use-page-size';
 import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
 import { PageSizeSelect } from '@/components/common/page-size-select';
+import { RowCheckbox } from '@/components/common/row-checkbox';
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { ExportButton, ImportButton } from '@/components/common/excel-actions';
 import { Button } from '@/components/ui/button';
@@ -19,11 +20,13 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Input } from '@/components/ui/input';
 import {
   exportCustomers,
+  fetchAllMatchingCustomers,
   useCustomers,
   useDeleteCustomer,
   useImportCustomers,
   useSetCustomerActive,
 } from './use-customers';
+import { BulkEditDialog } from './bulk-edit-dialog';
 
 const num = (n: number | null) => (n == null ? '—' : n.toLocaleString('en-IN'));
 /** Amount prefixed with the rupee symbol; dash when unknown. */
@@ -76,7 +79,26 @@ const COLUMNS: DataColumn<CustomerDto>[] = [
   { id: 'freight', label: 'Freight', align: 'right', cell: (c) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(c.freight)}</span> },
   { id: 'boxRate', label: 'Box rate', align: 'right', cell: (c) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money(c.boxRate)}</span> },
   { id: 'billRatePc', label: 'Billing Rate/Pcs', align: 'right', cell: (c) => <span className="text-[14px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(c.billRatePc)}</span> },
-  { id: 'payBy', label: 'Pay by', cell: (c) => <span className={TEXT_CELL}>{txt(c.payBy)}</span> },
+  {
+    id: 'payBy',
+    label: 'Pay by',
+    // The EFFECTIVE routing per bucket, not the raw column — a party can send
+    // its bank direct and its cash through the agent, and the master should say
+    // so at a glance. Collapses to a single value when both agree.
+    cell: (c) => {
+      const bank = payByFor(c, 'bank');
+      const cash = payByFor(c, 'cash');
+      return bank === cash ? (
+        <span className={TEXT_CELL}>{bank}</span>
+      ) : (
+        <span className={cn(TEXT_CELL, 'whitespace-nowrap')}>
+          <span className="text-muted-foreground text-[10px] font-bold">B</span> {bank}
+          <span className="text-muted-foreground mx-1">·</span>
+          <span className="text-muted-foreground text-[10px] font-bold">C</span> {cash}
+        </span>
+      );
+    },
+  },
   { id: 'partySource', label: 'Party source', cell: (c) => <span className={TEXT_CELL}>{txt(c.partySource)}</span> },
 ];
 
@@ -183,11 +205,91 @@ export function CustomersPage() {
   const { data, isLoading, isFetching } = useCustomers(query);
   const del = useDeleteCustomer();
   const importMut = useImportCustomers();
-  const cols = useColumnOrder('customers', COLUMNS);
 
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
   const totalPages = data?.totalPages ?? 1;
+
+  // ── Bulk row selection ───────────────────────────────────────────────────
+  // Kept across page turns and filter changes, so a set can be built up from
+  // more than one page before acting on it.
+  const canBulkEdit = can('customer:update');
+  const [selected, setSelected] = useState<Map<number, CustomerDto>>(new Map());
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [selectingAll, setSelectingAll] = useState(false);
+
+  const toggleSelect = (c: CustomerDto) =>
+    setSelected((m) => {
+      const n = new Map(m);
+      if (n.has(c.id)) n.delete(c.id);
+      else n.set(c.id, c);
+      return n;
+    });
+
+  // The header tick box covers THIS page; "Select all N matching" below reaches
+  // across every page the current search/filters match.
+  const allOnPageSelected = items.length > 0 && items.every((c) => selected.has(c.id));
+  const toggleSelectPage = (checked: boolean) =>
+    setSelected((m) => {
+      const n = new Map(m);
+      for (const c of items) {
+        if (checked) n.set(c.id, c);
+        else n.delete(c.id);
+      }
+      return n;
+    });
+
+  const selectAllMatching = async () => {
+    if (!data || selectingAll) return;
+    setSelectingAll(true);
+    try {
+      const all = await fetchAllMatchingCustomers(query, data.total);
+      setSelected((m) => {
+        const n = new Map(m);
+        for (const c of all) n.set(c.id, c);
+        return n;
+      });
+    } catch (e) {
+      toast.error(getApiErrorMessage(e, 'Could not select all matching customers'));
+    } finally {
+      setSelectingAll(false);
+    }
+  };
+
+  // The tick box rides inside the frozen identity column rather than in a column
+  // of its own: this grid pans sideways, and an unpinned checkbox column would
+  // slide under the pinned name — so the selection would vanish exactly when the
+  // user is scrolling to decide on it.
+  const columns = useMemo<DataColumn<CustomerDto>[]>(() => {
+    const [name, ...rest] = COLUMNS;
+    if (!canBulkEdit) return COLUMNS;
+    return [
+      {
+        ...name,
+        pinWidthClass: 'sm:w-60 sm:min-w-60',
+        header: (
+          <span className="flex items-center gap-2">
+            <span onClick={(e) => e.stopPropagation()}>
+              <RowCheckbox checked={allOnPageSelected} onChange={toggleSelectPage} label="Select all on this page" />
+            </span>
+            Customer name
+          </span>
+        ),
+        cell: (c) => (
+          <span className="flex items-center gap-2">
+            <span onClick={(e) => e.stopPropagation()}>
+              <RowCheckbox checked={selected.has(c.id)} onChange={() => toggleSelect(c)} label={`Select ${c.partyName ?? c.id}`} />
+            </span>
+            <span className={cn(TEXT_CELL, 'truncate text-indigo-700 dark:text-indigo-300')}>{txt(c.partyName)}</span>
+          </span>
+        ),
+      },
+      ...rest,
+    ];
+  }, [selected, items, allOnPageSelected, canBulkEdit]);
+
+  const cols = useColumnOrder('customers', columns);
+  const allMatchingSelected = total > 0 && selected.size >= total;
 
   // Phones: one stacked card per customer instead of a horizontally-scrolling
   // table — surfaces the most-used fields only (full detail stays behind Edit).
@@ -304,6 +406,19 @@ export function CustomersPage() {
             <span className="font-bold text-foreground">{total.toLocaleString('en-IN')}</span> record{total === 1 ? '' : 's'}
             {isFetching && <Loader2 className="ml-1 inline size-3 animate-spin align-[-2px]" />}
           </p>
+          {/* Reaches past the current page, so a filter-shaped change ("every
+              party of this agent") does not have to be ticked row by row. */}
+          {canBulkEdit && total > items.length && !allMatchingSelected && (
+            <button
+              type="button"
+              onClick={selectAllMatching}
+              disabled={selectingAll}
+              className="shrink-0 cursor-pointer text-[12px] font-bold text-indigo-700 underline-offset-2 hover:underline disabled:opacity-50 dark:text-indigo-300"
+            >
+              {selectingAll && <Loader2 className="mr-1 inline size-3 animate-spin align-[-2px]" />}
+              Select all {total.toLocaleString('en-IN')} matching
+            </button>
+          )}
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <ColumnSettings
               columns={cols.orderedReorderable}
@@ -325,6 +440,39 @@ export function CustomersPage() {
           </div>
         </div>
       </div>
+
+      {/* ── Selection bar: only present once something is ticked, so the toolbar
+          stays quiet the rest of the time. */}
+      {canBulkEdit && selected.size > 0 && (
+        <div className="font-poppins flex flex-wrap items-center gap-2 rounded-[4px] border border-indigo-300 bg-indigo-50 px-2.5 py-2 shadow-sm dark:border-indigo-400/40 dark:bg-indigo-500/10">
+          <p className="text-[12.5px] font-bold text-indigo-900 tabular-nums dark:text-indigo-200">
+            {selected.size.toLocaleString('en-IN')} selected
+          </p>
+          <button
+            type="button"
+            onClick={() => setSelected(new Map())}
+            className="cursor-pointer text-[12px] font-semibold text-indigo-700/80 underline-offset-2 hover:underline dark:text-indigo-300/80"
+          >
+            <X className="mr-0.5 inline size-3 align-[-1px]" />
+            Clear
+          </button>
+          <div className="ml-auto">
+            <Button size="sm" className="h-8 rounded-[4px] text-[12.5px] font-bold" onClick={() => setBulkOpen(true)}>
+              <PencilRuler /> Bulk edit
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {bulkOpen && (
+        <BulkEditDialog
+          customers={[...selected.values()]}
+          onClose={() => {
+            setBulkOpen(false);
+            setSelected(new Map());
+          }}
+        />
+      )}
 
       {/* The grid pans sideways when columns outgrow the screen; slim scrollbars
           make that discoverable. */}

@@ -16,6 +16,7 @@ import { GlobalWorkerOptions, getDocument, type PDFDocumentProxy } from 'pdfjs-d
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import type {
   LedgerBalanceRow,
+  LedgerClearedResult,
   LedgerReceiptLine,
   NoteMode,
   PartyLedgerFooter,
@@ -35,7 +36,7 @@ import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { fetchLedgerReceipts, usePartyLedger, usePartyLedgerLookups } from './use-party-ledger';
+import { fetchLedgerCleared, fetchLedgerReceipts, usePartyLedger, usePartyLedgerLookups } from './use-party-ledger';
 
 const inr = (v: number) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 GlobalWorkerOptions.workerSrc = pdfWorker;
@@ -397,6 +398,9 @@ export function PartyLedgerPage() {
     const vt = r.voucherType.toUpperCase();
     return vt === 'SALES INVOICE' || vt === 'DEBIT NOTE';
   };
+  /** Rows that open the detail dialog: an invoice shows what paid it, a receipt
+   *  shows what it cleared. Both directions of the same question. */
+  const isOpenableRow = (r: PartyLedgerRow) => isInvoiceRow(r) || r.voucherType.toUpperCase() === 'RECEIPT';
 
   // Both desktop and mobile navigate to the in-app Challan bill page
   // (matches the Sales Order / Quotation "Print / PDF" pattern).
@@ -833,7 +837,7 @@ export function PartyLedgerPage() {
                 </tr>
               ) : (
                 rows.map((r, i) => {
-                  const invoice = isInvoiceRow(r);
+                  const invoice = isOpenableRow(r);
                   const note = noteRefOf(r);
                   return (
                     <tr
@@ -842,7 +846,13 @@ export function PartyLedgerPage() {
                       // affordance via Enter / Space on the focused row.
                       tabIndex={invoice ? 0 : undefined}
                       role={invoice ? 'button' : undefined}
-                      aria-label={invoice ? `Receipts against ${r.voucherNo}` : undefined}
+                      aria-label={
+                        invoice
+                          ? isInvoiceRow(r)
+                            ? `Receipts against ${r.voucherNo}`
+                            : `Invoices cleared by ${r.voucherNo}`
+                          : undefined
+                      }
                       onClick={invoice ? () => setReceiptFor(r) : undefined}
                       onKeyDown={
                         invoice
@@ -1023,7 +1033,7 @@ export function PartyLedgerPage() {
           ) : (
             <div className="space-y-2">
               {rows.map((r, i) => {
-                const invoice = isInvoiceRow(r);
+                const invoice = isOpenableRow(r);
                 const note = noteRefOf(r);
                 return (
                   <div
@@ -1228,7 +1238,7 @@ export function PartyLedgerPage() {
         </DialogContent>
       </Dialog>
 
-      <ReceiptDialog row={receiptFor} onClose={() => setReceiptFor(null)} />
+      <ReceiptDialog row={receiptFor} mode={mode} onClose={() => setReceiptFor(null)} />
     </div>
   );
 }
@@ -1623,24 +1633,120 @@ function PdfCanvasPreview({ url }: { url: string }) {
   );
 }
 
-function ReceiptDialog({ row, onClose }: { row: PartyLedgerRow | null; onClose: () => void }) {
+/**
+ * What a receipt voucher did with its money, grouped by the party that owed it.
+ *
+ * Grouping is the whole point for an agent receipt: the voucher is booked
+ * against the agent, but the invoices belong to his parties, so a flat list
+ * would never say whose debt just moved. The footer reconciles cleared + parked
+ * against the voucher total, so every rupee is accounted for rather than a
+ * difference being left for the reader to notice.
+ */
+function ClearedBreakdown({ data }: { data: LedgerClearedResult | null }) {
+  if (!data) return <p className="py-3 text-sm text-muted-foreground">Could not load what this receipt cleared.</p>;
+  if (!data.lines.length && !data.parked) {
+    return <p className="py-3 text-sm text-muted-foreground">This receipt has no allocation recorded against it.</p>;
+  }
+
+  const byParty = new Map<string, typeof data.lines>();
+  for (const l of data.lines) byParty.set(l.customerName, [...(byParty.get(l.customerName) ?? []), l]);
+  // Only this voucher's OWN money reconciles against its total — clearing paid
+  // for from an older advance is real but was not carried by this receipt.
+  const balanced = Math.abs(data.fromReceipt + (data.parked?.amount ?? 0) - data.voucherTotal) < 0.01;
+
+  return (
+    <div className="space-y-3 py-1 text-sm">
+      {[...byParty.entries()].map(([party, ls]) => (
+        <div key={party}>
+          <div className="flex items-baseline justify-between gap-2 border-b pb-1">
+            <span className="truncate font-bold text-indigo-700 dark:text-indigo-300">{party}</span>
+            <span className="text-muted-foreground shrink-0 text-[11.5px] font-semibold tabular-nums">
+              {ls.length} invoice{ls.length === 1 ? '' : 's'} · ₹ {inr(ls.reduce((t, l) => t + l.amount, 0))}
+            </span>
+          </div>
+          <ul className="mt-1 space-y-1">
+            {ls.map((l, i) => (
+              <li key={i} className="flex items-center gap-2">
+                <span className="size-1.5 shrink-0 rounded-full bg-amber-500" />
+                <span className="font-semibold tabular-nums">{l.invNo}</span>
+                {l.kind === 'ADVANCE' && (
+                  <span
+                    className="rounded-[3px] bg-slate-100 px-1 text-[10px] font-bold text-slate-600 dark:bg-white/10 dark:text-slate-300"
+                    title={`Funded from money already on account (${l.fundedBy}) — not a second payment`}
+                  >
+                    ADV
+                  </span>
+                )}
+                <span className="ml-auto shrink-0 font-semibold tabular-nums">₹ {inr(l.amount)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+
+      <div className="space-y-1 border-t pt-2 text-[13px]">
+        <div className="flex justify-between">
+          <span className="text-muted-foreground font-medium">
+            {data.lines.length} invoice{data.lines.length === 1 ? '' : 's'} cleared
+          </span>
+          <span className="font-semibold tabular-nums">₹ {inr(data.cleared)}</span>
+        </div>
+        {data.fromAdvance > 0 && (
+          <div className="flex justify-between text-[12px]">
+            <span className="text-muted-foreground pl-3">
+              of which from money already on account
+            </span>
+            <span className="text-muted-foreground tabular-nums">− ₹ {inr(data.fromAdvance)}</span>
+          </div>
+        )}
+        {data.parked && (
+          <div className="flex justify-between">
+            <span className="text-muted-foreground font-medium">Parked on account ({data.parked.refId})</span>
+            <span className="font-semibold tabular-nums">₹ {inr(data.parked.amount)}</span>
+          </div>
+        )}
+        <div className="flex justify-between border-t pt-1 font-bold">
+          <span>Receipt {data.voucherNo}</span>
+          <span className="tabular-nums">
+            ₹ {inr(data.voucherTotal)} {balanced && <span className="text-emerald-600 dark:text-emerald-400">✓</span>}
+          </span>
+        </div>
+        {!balanced && (
+          <p className="text-[11.5px] font-medium text-amber-700 dark:text-amber-300">
+            ₹ {inr(Math.abs(data.voucherTotal - data.fromReceipt - (data.parked?.amount ?? 0)))} of this voucher could
+            not be traced to an invoice or an advance.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ReceiptDialog({ row, mode, onClose }: { row: PartyLedgerRow | null; mode: string; onClose: () => void }) {
   const [lines, setLines] = useState<LedgerReceiptLine[] | null>(null);
+  const [cleared, setCleared] = useState<LedgerClearedResult | null>(null);
   const [loading, setLoading] = useState(false);
+  // A receipt row asks the opposite question of an invoice row: not "what paid
+  // this bill" but "whose bills did this money pay".
+  const isReceipt = (row?.voucherType ?? '').toUpperCase() === 'RECEIPT';
   useEffect(() => {
     if (!row) return;
     setLoading(true);
     setLines(null);
-    fetchLedgerReceipts(row.voucherNo)
-      .then(setLines)
-      .catch(() => setLines([]))
-      .finally(() => setLoading(false));
-  }, [row]);
+    setCleared(null);
+    const done = () => setLoading(false);
+    if ((row.voucherType ?? '').toUpperCase() === 'RECEIPT') {
+      fetchLedgerCleared(row.voucherNo).then(setCleared).catch(() => setCleared(null)).finally(done);
+    } else {
+      fetchLedgerReceipts(row.voucherNo, mode).then(setLines).catch(() => setLines([])).finally(done);
+    }
+  }, [row, mode]);
 
   const verb = (t: string) =>
     t === 'CREDIT NOTE' ? 'Cleared' : t === 'ADVANCE' ? 'Adjusted' : 'Paid';
   return (
     <Dialog open={!!row} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-md">
+      <DialogContent className={isReceipt ? 'max-w-lg' : 'max-w-md'}>
         <DialogHeader>
           <DialogTitle>
             {row?.voucherType} —{' '}
@@ -1650,13 +1756,26 @@ function ReceiptDialog({ row, onClose }: { row: PartyLedgerRow | null; onClose: 
         <p className="text-muted-foreground -mt-2 text-sm">{row?.particulars}</p>
         {loading ? (
           <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" /> Loading receipts…
+            <Loader2 className="size-4 animate-spin" /> Loading{isReceipt ? ' allocation' : ' receipts'}…
           </div>
+        ) : isReceipt ? (
+          <ClearedBreakdown data={cleared} />
         ) : lines && lines.length ? (
           <ul className="space-y-1.5 py-1 text-sm">
             {lines.map((l, i) => (
               <li key={i} className="flex items-center gap-2">
                 <span className="size-1.5 rounded-full bg-amber-500" />
+                <span
+                  className={cn(
+                    'rounded-[3px] px-1 text-[10px] font-bold',
+                    l.bucket === 'B'
+                      ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300'
+                      : 'bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-300',
+                  )}
+                  title={l.bucket === 'B' ? 'Settled the bank side' : 'Settled the cash side'}
+                >
+                  {l.bucket}
+                </span>
                 {verb(l.recType)} on {prettyDate(l.recDate)} vide{' '}
                 <span className="font-semibold">{l.refRecId || '?'}</span>
                 {l.recAmt > 0 && (
@@ -1667,7 +1786,9 @@ function ReceiptDialog({ row, onClose }: { row: PartyLedgerRow | null; onClose: 
           </ul>
         ) : (
           <p className="py-3 text-sm text-muted-foreground">
-            No payments / clearances recorded yet.
+            {mode === 'BOTH'
+              ? 'No payments / clearances recorded yet.'
+              : `No ${mode === 'B' ? 'bank' : 'cash'} payments against this invoice. Switch to Both to see the other side.`}
           </p>
         )}
       </DialogContent>

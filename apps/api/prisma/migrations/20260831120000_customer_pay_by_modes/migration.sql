@@ -1,0 +1,16 @@
+-- Per-bucket payment routing for a customer.
+--
+-- WHY: `payBy` is a single switch — a party either pays directly or through its
+-- agent, for everything. Reality is per money bucket: a party settles its bank
+-- transfers itself while its agent physically hands over the cash and asks for
+-- the pending invoices to be cleared FIFO or against refs. One flag cannot say
+-- that, so Receive Payment refused the agent ("No parties are configured for
+-- Agent: X") for exactly the parties whose cash he was carrying.
+--
+-- JSON: { "bank": "PARTY"|"AGENT", "cash": "PARTY"|"AGENT" }.
+--
+-- Deliberately NULLable with NO backfill: a null column (or a missing key)
+-- falls back to `payBy`, so every existing party keeps today's behaviour until
+-- someone sets a bucket. That also leaves credit/debit notes untouched — they
+-- read `payBy`, which this never writes.
+ALTER TABLE "customers" ADD COLUMN "payByModes" TEXT;

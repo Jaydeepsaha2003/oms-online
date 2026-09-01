@@ -1,9 +1,12 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
+import { payBucketOf } from '@oms/shared';
 import type {
   LedgerBalanceRow,
+  LedgerClearedLine,
+  LedgerClearedResult,
   LedgerReceiptLine,
   PartyLedgerKpis,
   PartyLedgerLookups,
@@ -19,6 +22,8 @@ import { PdfService } from '../pdf/pdf.service';
 import { PartyListsService } from '../party-lists/party-lists.service';
 
 const r0 = (x: number) => Math.round(x);
+/** Money rounding, same as the payments waterfall so totals reconcile exactly. */
+const r2 = (x: number) => Math.round(x * 100) / 100;
 const EPS = 0.5;
 const DAY = 86_400_000;
 /** Debit Notes live in Challan (prefix DN) but reach the ledger via AcctLedger, so
@@ -102,19 +107,100 @@ export class PartyLedgerService {
     };
   }
 
-  /** Receipts / clearances against one invoice (row-click detail). */
-  async receipts(invNo: string): Promise<LedgerReceiptLine[]> {
+  /**
+   * Receipts / clearances against one invoice (row-click detail).
+   *
+   * `mode` follows the ledger's own Bank/Cash toggle. An invoice has a bank side
+   * and a cash side settled by different vouchers on different days, so listing
+   * both while the grid is filtered to one shows payments that do not belong to
+   * the column being read — which is exactly how a settled invoice comes to look
+   * like it was paid twice. Every line also carries its own bucket, so a BOTH
+   * view can still say which side each one settled.
+   */
+  async receipts(invNo: string, mode?: string): Promise<LedgerReceiptLine[]> {
     if (!invNo?.trim()) return [];
     const rows = await this.prisma.acctPaymentReceipt.findMany({
       where: { invNo: invNo.trim() },
       orderBy: [{ recDate: 'asc' }, { id: 'asc' }],
     });
-    return rows.map((r) => ({
-      recDate: r.recDate.toISOString(),
-      refRecId: r.refRecId ?? '',
-      recType: (r.recType ?? '').toUpperCase(),
-      recAmt: r.recAmt ?? 0,
+    const want = (mode ?? 'BOTH').toUpperCase();
+    return rows
+      .map((r) => ({
+        recDate: r.recDate.toISOString(),
+        refRecId: r.refRecId ?? '',
+        recType: (r.recType ?? '').toUpperCase(),
+        recAmt: r.recAmt ?? 0,
+        bucket: (payBucketOf(r.payMode) === 'bank' ? 'B' : 'C') as 'B' | 'C',
+      }))
+      .filter((l) => want === 'BOTH' || l.bucket === want);
+  }
+
+  /**
+   * What one receipt voucher settled — which parties' invoices, and what was
+   * left on account.
+   *
+   * The reverse of `receipts()`, and the only place the ledger can answer "an
+   * agent handed over cash, whose bills did it clear?": an agent voucher is
+   * booked against the AGENT (custId 0) while every line it creates is credited
+   * to the party that owed the money, so the voucher row alone never names them.
+   *
+   * Lines are matched three ways because the back-link has changed over time:
+   *   refId = the ledger's receiptRefId  — every line this voucher wrote, and
+   *                                        the ONLY way to find the ones funded
+   *                                        from an old advance (their refRecId
+   *                                        names the advance, not the voucher).
+   *   refRecId = voucherNo               — the receipt-funded lines.
+   *   sourceVoucherNo = voucherNo        — newer rows carry it outright.
+   * Older vouchers predate `sourceVoucherNo` on 2,600+ rows, so dropping any of
+   * the three would silently under-report what a voucher did.
+   */
+  async cleared(voucherNo: string): Promise<LedgerClearedResult> {
+    const v = voucherNo?.trim();
+    if (!v) throw new BadRequestException('Voucher number is required.');
+    const ledger = await this.prisma.acctLedger.findFirst({
+      where: { voucherNo: v, voucherType: 'RECEIPT' },
+    });
+    if (!ledger) throw new NotFoundException('Receipt voucher not found.');
+
+    const rows = await this.prisma.acctPaymentReceipt.findMany({
+      where: {
+        OR: [
+          ...(ledger.receiptRefId ? [{ refId: ledger.receiptRefId }] : []),
+          { refRecId: v },
+          { sourceVoucherNo: v },
+        ],
+      },
+      orderBy: [{ customerName: 'asc' }, { invNo: 'asc' }, { id: 'asc' }],
+    });
+
+    const lines: LedgerClearedLine[] = rows.map((r) => ({
+      invNo: r.invNo,
+      customerName: r.customerName,
+      amount: r.recAmt ?? 0,
+      kind: (r.refRecId ?? '').startsWith('ADV-') ? 'ADVANCE' : 'RECEIPT',
+      fundedBy: r.refRecId ?? v,
     }));
+    const cleared = r2(lines.reduce((sum, l) => sum + l.amount, 0));
+    // Split by funding source: only this voucher's own money reconciles against
+    // its total. Clearing paid for from an older advance is real, but it is not
+    // money this voucher carried.
+    const fromAdvance = r2(lines.filter((l) => l.kind === 'ADVANCE').reduce((sum, l) => sum + l.amount, 0));
+    const fromReceipt = r2(cleared - fromAdvance);
+
+    // Whatever this voucher did not put on a bill went on account.
+    const advance = await this.prisma.acctPartyAdvance.findFirst({ where: { refRecId: v } });
+    const parked = advance ? { refId: advance.refId, amount: r2(advance.bankAmt + advance.cashAmt) } : null;
+
+    return {
+      voucherNo: v,
+      bookedTo: ledger.customerName,
+      voucherTotal: r2(ledger.bankCredit + ledger.cashCredit),
+      lines,
+      cleared,
+      fromReceipt,
+      fromAdvance,
+      parked,
+    };
   }
 
   async ledger(q: PartyLedgerQuery): Promise<PartyLedgerResult> {
@@ -448,7 +534,7 @@ export class PartyLedgerService {
     const bankRec = new Map<string, number>();
     const cashRec = new Map<string, number>();
     for (const r of recs) {
-      const m = r.payMode === 'BANK' || r.payMode === 'CHEQUE' ? bankRec : cashRec;
+      const m = payBucketOf(r.payMode) === 'bank' ? bankRec : cashRec;
       m.set(r.invNo, (m.get(r.invNo) ?? 0) + (r._sum.recAmt ?? 0));
     }
     const bankDisc = new Map<string, number>();

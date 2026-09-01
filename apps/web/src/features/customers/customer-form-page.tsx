@@ -14,7 +14,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { CustomerInput } from '@oms/shared';
+import { type CustomerInput, parsePayByModes } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { cn } from '@/lib/utils';
@@ -53,6 +53,9 @@ const EMPTY = {
   brand: '',
   billRatePc: '',
   payBy: '',
+  // Per-bucket routing. '' = follow Pay By.
+  payByBank: '',
+  payByCash: '',
   tdsApplicable: false,
   tdsPercent: '',
   active: true,
@@ -119,6 +122,8 @@ export function CustomerFormPage() {
       brand: existing.brand ?? '',
       billRatePc: existing.billRatePc?.toString() ?? '',
       payBy: existing.payBy ?? '',
+      payByBank: parsePayByModes(existing.payByModes).bank ?? '',
+      payByCash: parsePayByModes(existing.payByModes).cash ?? '',
       tdsApplicable: existing.tdsApplicable ?? false,
       tdsPercent: existing.tdsPercent?.toString() ?? '',
       active: existing.active ?? true,
@@ -204,6 +209,12 @@ export function CustomerFormPage() {
       brand: form.brand || null,
       billRatePc: numOrNull(form.billRatePc),
       payBy: form.payBy || null,
+      // Only the buckets actually overridden are sent; the server drops an empty
+      // object to null so "follows Pay By" has one representation, not two.
+      payByModes: JSON.stringify({
+        ...(form.payByBank ? { bank: form.payByBank } : {}),
+        ...(form.payByCash ? { cash: form.payByCash } : {}),
+      }),
       tdsApplicable: form.tdsApplicable,
       tdsPercent: form.tdsApplicable ? numOrNull(form.tdsPercent) : null,
       active: form.active,
@@ -403,6 +414,25 @@ export function CustomerFormPage() {
               value={form.payBy}
               onChange={(v) => set('payBy', v)}
               options={lookups?.payBys ?? ['PARTY', 'AGENT']}
+            />
+          </Field>
+          {/* Per-bucket routing, for the common case of a party that pays its
+              bank transfers directly while its agent hands over the cash.
+              Blank follows Pay By, so an untouched customer behaves as before. */}
+          <Field label="Pay By — Bank">
+            <NativeSelect
+              value={form.payByBank}
+              onChange={(v) => set('payByBank', v)}
+              options={['', ...(lookups?.payBys ?? ['PARTY', 'AGENT'])]}
+              placeholder={`Same as Pay By (${form.payBy || 'PARTY'})`}
+            />
+          </Field>
+          <Field label="Pay By — Cash">
+            <NativeSelect
+              value={form.payByCash}
+              onChange={(v) => set('payByCash', v)}
+              options={['', ...(lookups?.payBys ?? ['PARTY', 'AGENT'])]}
+              placeholder={`Same as Pay By (${form.payBy || 'PARTY'})`}
             />
           </Field>
           <Field label="Credit Period" required>

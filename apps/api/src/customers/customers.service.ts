@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   type CustomerDto,
@@ -19,9 +19,19 @@ import {
   type CommissionBasis,
   PARTY_SOURCES,
   PAY_BYS,
+  PAY_BUCKETS,
+  type PayByModes,
+  parsePayByModes,
+  payByFor,
+  BULK_CUSTOMER_COLUMNS,
+  type BulkCustomerColumn,
+  type BulkCustomerChange,
+  type BulkCustomerBlocker,
+  type BulkCustomerPlan,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { isValidEmail, isValidMobile } from '../common/validation';
+import { BulkUpdateCustomersDto } from './dto/bulk-update-customers.dto';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { CustomerQueryDto } from './dto/customer-query.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
@@ -41,8 +51,18 @@ const SORTABLE = new Set([
   'createdAt',
 ]);
 
-/** Excel header (legacy Access column) → CustomerDto field. */
-const EXCEL_COLUMNS: { header: string; key: keyof CustomerDto }[] = [
+/**
+ * Excel header (legacy Access column) → CustomerDto field, or a derived value.
+ *
+ * PAY BY BANK / PAY BY CASH are derived rather than stored: the override lives
+ * in one JSON column, but a spreadsheet wants a column per bucket. They export
+ * the EFFECTIVE routing (override, else PAY BY), so what the sheet shows is what
+ * Receive Payment will actually do.
+ */
+type ExcelColumn =
+  | { header: string; key: keyof CustomerDto }
+  | { header: string; value: (dto: CustomerDto) => unknown };
+const EXCEL_COLUMNS: ExcelColumn[] = [
   { header: 'ID', key: 'id' },
   { header: 'CODE', key: 'code' },
   { header: 'PARTY SOURCE', key: 'partySource' },
@@ -65,6 +85,8 @@ const EXCEL_COLUMNS: { header: string; key: keyof CustomerDto }[] = [
   { header: 'BRAND', key: 'brand' },
   { header: 'BILL RATE PC', key: 'billRatePc' },
   { header: 'PAY BY', key: 'payBy' },
+  { header: 'PAY BY BANK', value: (d) => payByFor(d, 'bank') },
+  { header: 'PAY BY CASH', value: (d) => payByFor(d, 'cash') },
 ];
 
 export interface ImportResult {
@@ -146,6 +168,102 @@ export class CustomersService {
     await this.prisma.customer.delete({ where: { id } });
   }
 
+  /* ── Bulk edit of the dropdown-backed columns ──────────────────────────────
+   *
+   * Preview and apply share one planner, so what the dialog shows is what gets
+   * written — a second implementation for the preview is how the two drift.
+   *
+   * Like setActive, this deliberately avoids update()/toData(), which rebuild
+   * the whole record with `?? null` fallbacks and would blank every column the
+   * bulk edit never mentioned.
+   */
+
+  /** Work out every column that actually moves, and everything that blocks the write. */
+  private async planBulkUpdate(dto: BulkUpdateCustomersDto): Promise<BulkCustomerPlan> {
+    // Blank means "leave this column alone", never "clear it" — a bulk editor
+    // that empties a column across 100 rows because a field was left untouched
+    // is a footgun. Clearing a column stays a per-customer edit.
+    const set = new Map<BulkCustomerColumn, string>();
+    for (const col of BULK_CUSTOMER_COLUMNS) {
+      const v = uc(dto.set[col]);
+      if (v) set.set(col, v);
+    }
+    if (!set.size) throw new BadRequestException('Pick at least one column to change.');
+
+    const rows = await this.prisma.customer.findMany({ where: { id: { in: dto.ids } }, orderBy: { partyName: 'asc' } });
+
+    const changes: BulkCustomerChange[] = [];
+    const blocked: BulkCustomerBlocker[] = [];
+    for (const row of rows) {
+      for (const [column, to] of set) {
+        const from = (row as unknown as Record<string, string | null>)[column] ?? null;
+        if (from === to) continue;
+        changes.push({ id: row.id, partyName: row.partyName, column, from, to });
+      }
+      // Routing to AGENT is only collectible through a real agent: Receive
+      // Payment blocks the party in Party mode for that bucket and finds it in
+      // Agent mode only via customers.agentName. A party left on SELF (or
+      // nothing) is reachable by neither, so it would quietly stop being
+      // collectible at all.
+      //
+      // Judged on the state this change WOULD leave behind, per bucket — a bulk
+      // edit sets payBy, but an existing per-bucket override can still be the
+      // thing that routes the party to an agent it does not have.
+      const after = { payBy: set.get('payBy') ?? row.payBy, payByModes: row.payByModes };
+      const routed = PAY_BUCKETS.filter((b) => payByFor(after, b) === 'AGENT');
+      if (routed.length) {
+        const agent = uc(set.get('agentName') ?? row.agentName);
+        if (!agent || agent === 'SELF') {
+          blocked.push({
+            id: row.id,
+            partyName: row.partyName,
+            reason: `Its ${routed.join(' and ')} would be collected by an agent, but this party's agent is ${agent ?? 'not set'}. Set the Agent column in the same change, or leave this party out.`,
+          });
+        }
+      }
+    }
+
+    const warnings: string[] = [];
+    if (set.get('payBy') === 'AGENT') {
+      warnings.push('These parties can no longer be paid in Party mode on Receive Payment — every future receipt from them must go through their agent. Receipts already recorded stay editable.');
+    }
+
+    const affected = new Set(changes.map((c) => c.id)).size;
+    return { matched: rows.length, affected, changes, blocked, warnings };
+  }
+
+  /** What the change would do. Writes nothing. */
+  previewBulkUpdate(dto: BulkUpdateCustomersDto): Promise<BulkCustomerPlan> {
+    return this.planBulkUpdate(dto);
+  }
+
+  /** Apply the plan. Refuses outright if anything is blocked — a bulk write that
+   *  silently does 20 of 23 rows is worse than one that does none. */
+  async bulkUpdate(dto: BulkUpdateCustomersDto): Promise<{ updated: number }> {
+    const plan = await this.planBulkUpdate(dto);
+    if (plan.blocked.length) {
+      throw new BadRequestException(
+        `${plan.blocked.length} part${plan.blocked.length === 1 ? 'y' : 'ies'} cannot take this change: ${plan.blocked.map((b) => b.partyName ?? `#${b.id}`).join(', ')}. ${plan.blocked[0].reason}`,
+      );
+    }
+    if (!plan.affected) return { updated: 0 };
+
+    // Same values for every row, so one statement — but only the columns the
+    // plan actually carries, and only the rows one of them moves on.
+    const data: Prisma.CustomerUpdateInput = {};
+    for (const col of BULK_CUSTOMER_COLUMNS) {
+      const v = uc(dto.set[col]);
+      if (v) (data as Record<string, string>)[col] = v;
+    }
+    // Keeps the Agents master in step with what parties reference, exactly as
+    // create()/update() do for a single customer.
+    if (data.agentName) await this.resolveAgent(data.agentName as string);
+
+    const affectedIds = [...new Set(plan.changes.map((c) => c.id))];
+    const { count } = await this.prisma.customer.updateMany({ where: { id: { in: affectedIds } }, data });
+    return { updated: count };
+  }
+
   /** Distinct existing values + transporters, to populate the form's dropdowns. */
   async lookups(): Promise<CustomerLookups> {
     const distinct = async (field: keyof CustomerRow): Promise<string[]> => {
@@ -205,7 +323,7 @@ export class CustomersService {
     return rows.map((r) => {
       const dto = this.toDto(r);
       const out: Record<string, unknown> = {};
-      for (const col of EXCEL_COLUMNS) out[col.header] = dto[col.key] ?? '';
+      for (const col of EXCEL_COLUMNS) out[col.header] = ('value' in col ? col.value(dto) : dto[col.key]) ?? '';
       return out;
     });
   }
@@ -278,6 +396,9 @@ export class CustomersService {
           brand: uc(row['BRAND']),
           billRatePc: toNum(row['BILL RATE PC']),
           payBy: uc(row['PAY BY']),
+          // An older sheet has only PAY BY: both buckets follow it and no
+          // override is written, so those files keep importing unchanged.
+          payByModes: payByModesFromColumns(row['PAY BY BANK'], row['PAY BY CASH'], uc(row['PAY BY'])),
         };
 
         // Add the agent to the master list if it's new.
@@ -403,6 +524,7 @@ export class CustomersService {
       brand: uc(dto.brand),
       billRatePc: dto.billRatePc ?? null,
       payBy: uc(dto.payBy),
+      payByModes: normalisePayByModes(dto.payByModes),
       tdsApplicable: dto.tdsApplicable ?? false,
       tdsPercent: dto.tdsApplicable ? (dto.tdsPercent ?? null) : null,
       // Pass-through: undefined ⇒ Prisma default (true) on create, unchanged on update.
@@ -472,6 +594,7 @@ export class CustomersService {
       brand: r.brand,
       billRatePc: r.billRatePc,
       payBy: r.payBy,
+      payByModes: r.payByModes,
       tdsApplicable: r.tdsApplicable,
       tdsPercent: r.tdsPercent,
       active: r.active,
@@ -786,6 +909,33 @@ function toStr(v: unknown): string | null {
   if (v == null) return null;
   const s = String(v).trim();
   return s === '' ? null : s;
+}
+
+/**
+ * Canonicalise the per-bucket routing override before it is stored.
+ *
+ * Round-trips through the shared parser, so only the two known buckets and the
+ * two known values survive — a hand-typed or stale payload cannot put a party
+ * into a state Receive Payment does not understand. An override that says
+ * nothing is stored as NULL rather than "{}", keeping "no override" a single
+ * representation instead of two.
+ */
+function normalisePayByModes(v: unknown): string | null {
+  if (v == null || v === '') return null;
+  const clean: PayByModes = parsePayByModes(typeof v === 'string' ? v : JSON.stringify(v));
+  return Object.keys(clean).length ? JSON.stringify(clean) : null;
+}
+
+/** Build the override from two per-bucket spreadsheet cells. A cell that repeats
+ *  the party's PAY BY is not an override, so it is left out entirely. */
+function payByModesFromColumns(bank: unknown, cash: unknown, payBy: string | null): string | null {
+  const fallback = (payBy ?? '').trim().toUpperCase() === 'AGENT' ? 'AGENT' : 'PARTY';
+  const out: Record<string, string> = {};
+  for (const [bucket, raw] of [['bank', bank], ['cash', cash]] as const) {
+    const val = uc(raw);
+    if (val && val !== fallback) out[bucket] = val;
+  }
+  return normalisePayByModes(Object.keys(out).length ? JSON.stringify(out) : null);
 }
 
 function uc(v: unknown): string | null {

@@ -267,7 +267,21 @@ model Customer {
   email         String?
   brand         String?
   billRatePc    Float?
+  /// Who settles this party's bills: PARTY (pays directly) or AGENT (collected
+  /// by its agent). The default for both money buckets; `payByModes` overrides
+  /// it per bucket. Still the only thing credit/debit notes read.
   payBy         String?
+  /// JSON: { "bank": "PARTY"|"AGENT", "cash": "PARTY"|"AGENT" } — routing per
+  /// money bucket, for the common case of a party that pays bank transfers
+  /// direct while its agent hands over the cash. A missing key (or the whole
+  /// column being null) falls back to `payBy`, so every existing party keeps
+  /// behaving exactly as before until a bucket is set here.
+  ///
+  /// JSON in a TEXT column for the reason RateListConfig.payload gives: it is a
+  /// small document read and written whole, never queried by its innards — the
+  /// per-bucket filtering happens in JS on an already-narrowed list of one
+  /// agent's parties. SQLite has no native Json type either way.
+  payByModes    String?
   // TDS: whether tax is deducted at source for this customer, and at what %.
   tdsApplicable Boolean  @default(false)
   tdsPercent    Float?
