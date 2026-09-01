@@ -209,15 +209,16 @@ function NotePriceBreakdown({
       designLabel={line.design || null}
       perUnitLabel={(line.unit ?? '').toUpperCase() === 'PCS' ? 'per piece' : 'per kg'}
       special={special !== 0}
+      // Only when the figure itself needs an asterisk — a challan edited after
+      // the fact. The commission disclaimer used to show on every line whether
+      // or not one applied; a price card should read as prices, not boilerplate.
       note={
         edited ? (
           <>
-            Billed on the invoice at <span className="font-bold">{money(billed)}</span> — the
-            challan was edited, so it differs from the rate this sale carried.
+            Billed <span className="font-bold">{money(billed)}</span> — challan edited from{' '}
+            {money(rate ?? 0)}.
           </>
-        ) : (
-          <>An agent commission set to add to the rate is already inside the product rate.</>
-        )
+        ) : undefined
       }
     >
       {children}
@@ -1173,14 +1174,7 @@ export function NotesPage() {
                       unit: entry.unit,
                     }}
                   >
-                    <span
-                      className={cn(
-                        entry.dispatchRate != null &&
-                          'underline decoration-dotted decoration-sky-400 underline-offset-[3px]',
-                      )}
-                    >
-                      Price
-                    </span>
+                    Price
                   </NotePriceBreakdown>
                 </Label>
                 <Input

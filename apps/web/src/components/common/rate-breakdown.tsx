@@ -296,10 +296,12 @@ export function RateBreakdownCard({
           onFocus={() => setHovered(true)}
           onBlur={() => setHovered(false)}
           className={cn(
-            'cursor-pointer rounded-[4px] px-1 outline-none transition-colors',
-            'hover:bg-sky-50 focus-visible:ring-2 focus-visible:ring-sky-400 dark:hover:bg-sky-950/40',
-            open && 'bg-sky-50 text-sky-800 dark:bg-sky-950/50 dark:text-sky-200',
-            hasSplit && 'underline decoration-dotted decoration-sky-400 underline-offset-[3px]',
+            // Highlighted whenever there's a breakdown to show, not only when the
+            // rate has a design split — otherwise a plain product-only rate looks
+            // like inert text and the hover never gets discovered.
+            'cursor-pointer rounded-[4px] px-1 underline decoration-dotted decoration-sky-400 underline-offset-[3px] outline-none transition-colors',
+            'bg-sky-50/70 text-sky-800 ring-1 ring-sky-200/70 hover:bg-sky-100 focus-visible:ring-2 focus-visible:ring-sky-400 dark:bg-sky-950/30 dark:text-sky-200 dark:ring-sky-900/60 dark:hover:bg-sky-950/50',
+            open && 'bg-sky-100 dark:bg-sky-950/60',
           )}
         >
           {children}
@@ -361,7 +363,7 @@ export function RateBreakdownCard({
             </div>
           ) : (
             <p className="text-muted-foreground rounded-[6px] border border-dashed px-2 py-1.5 text-[10.5px] leading-snug">
-              No design rate on this line — the rate is the product rate alone.
+              No design rate — {inr(prod)} is the product rate alone.
             </p>
           )}
 
