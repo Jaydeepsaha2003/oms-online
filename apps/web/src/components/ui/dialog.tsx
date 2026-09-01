@@ -8,7 +8,10 @@ const Dialog = DialogPrimitive.Root;
 const DialogTrigger = DialogPrimitive.Trigger;
 const DialogClose = DialogPrimitive.Close;
 
-function DialogOverlay({ className, ...props }: React.ComponentProps<typeof DialogPrimitive.Overlay>) {
+function DialogOverlay({
+  className,
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Overlay>) {
   return (
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
@@ -48,23 +51,55 @@ function DialogContent({
         }}
         {...props}
       >
+        {/*
+          Sticky, and ahead of the content — not absolute, and not after it.
+
+          These panels are their own scroll container, and an absolutely
+          positioned child scrolls away with the content it is positioned
+          against. On a desktop most dialogs fit, so the X stayed on screen and
+          the bug never showed. On a phone almost everything scrolls, so the
+          close disappeared the moment you moved a finger — "there is no close
+          button in the PWA".
+
+          A zero-height sticky row keeps it in the corner while costing no
+          layout (the negative margin cancels the flex/grid gap it would
+          otherwise introduce), and the top offset clears the notch: a
+          full-screen dialog reaches into the safe area, where a plain `top-4`
+          put the X underneath the status bar.
+
+          Sized for a fingertip rather than a cursor, with a backing so it is
+          visible over whatever it floats above.
+        */}
+        <div
+          className="pointer-events-none sticky z-20 -mb-4 flex h-0 justify-end"
+          style={{ top: 'max(0.25rem, env(safe-area-inset-top, 0px))' }}
+        >
+          <DialogPrimitive.Close
+            className="bg-background/85 ring-border/70 focus-visible:ring-ring pointer-events-auto flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full opacity-90 shadow-sm ring-1 backdrop-blur-sm transition-opacity hover:opacity-100 focus-visible:ring-2 focus-visible:outline-none"
+            aria-label="Close"
+          >
+            <XIcon className="size-4" />
+            <span className="sr-only">Close</span>
+          </DialogPrimitive.Close>
+        </div>
         {children}
-        <DialogPrimitive.Close className="ring-offset-background focus:ring-ring absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-none">
-          <XIcon className="size-4" />
-          <span className="sr-only">Close</span>
-        </DialogPrimitive.Close>
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>
   );
 }
 
 function DialogHeader({ className, ...props }: React.ComponentProps<'div'>) {
-  return <div className={cn('flex flex-col gap-1.5 text-center sm:text-left', className)} {...props} />;
+  return (
+    <div className={cn('flex flex-col gap-1.5 text-center sm:text-left', className)} {...props} />
+  );
 }
 
 function DialogFooter({ className, ...props }: React.ComponentProps<'div'>) {
   return (
-    <div className={cn('flex flex-col-reverse gap-2 sm:flex-row sm:justify-end', className)} {...props} />
+    <div
+      className={cn('flex flex-col-reverse gap-2 sm:flex-row sm:justify-end', className)}
+      {...props}
+    />
   );
 }
 
