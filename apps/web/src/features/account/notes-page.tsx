@@ -1,6 +1,19 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowUpRight, Check, FolderOpen, Layers, Link2, Loader2, Plus, Printer, RotateCcw, Shuffle, Trash2, Undo2 } from 'lucide-react';
+import {
+  ArrowUpRight,
+  Check,
+  FolderOpen,
+  Layers,
+  Link2,
+  Loader2,
+  Plus,
+  Printer,
+  RotateCcw,
+  Shuffle,
+  Trash2,
+  Undo2,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import {
   computeNoteBreakup,
@@ -15,6 +28,7 @@ import {
 } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
@@ -27,17 +41,32 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { DatePicker } from '@/components/ui/date-picker';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { isIOS, reservePreviewTab } from '@/lib/pdf';
 import { useCustomers } from '@/features/customers/use-customers';
 import { fetchChallanByCode } from '@/features/challans/use-challans';
-import { fetchNote, useDeleteNote, useNextNoteNo, useNoteDirectory, useRecentSold, useSaveNote } from './use-notes';
+import {
+  fetchNote,
+  useDeleteNote,
+  useNextNoteNo,
+  useNoteDirectory,
+  useRecentSold,
+  useSaveNote,
+} from './use-notes';
 
-const money = (v: number) => `₹ ${(v ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const money = (v: number) =>
+  `₹ ${(v ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const money0 = (v: number) => `₹ ${(v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
 // Delegates to the shared formatter so this page follows the system-wide date format.
 const prettyDate = (iso: string | null) => formatDate(iso);
-const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const ymd = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const numOrU = (s: string) => (s.trim() === '' ? undefined : Number(s));
 
 /** Matches the Dispatch / Orders / Pending Challan grids: Inter, semibold, near-black. */
@@ -45,7 +74,8 @@ const TEXT_CELL = 'text-[13px] font-semibold text-slate-800 dark:text-slate-200'
 /** Compact, amber-bordered filter controls — same language as the other list pages. */
 const CONTROL =
   'h-9 rounded-[4px] border-amber-300 dark:border-amber-400/40 text-[12.5px] focus-visible:border-amber-500 focus-visible:ring-amber-400/30';
-const CONTROL_ON = 'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
+const CONTROL_ON =
+  'border-amber-500 bg-amber-50 text-amber-900 font-semibold dark:border-amber-400/60 dark:bg-amber-400/10 dark:text-amber-200';
 /** House grid className block — typography/border/zebra treatment shared across list & entry tables. */
 const GRID_CLASSES = [
   'font-sans text-[13px]',
@@ -65,21 +95,32 @@ const DIRECTORY_GRID_CLASSES =
    Receive Payment screens use, so this voucher reads as one of the family. ─── */
 
 /** Small-caps caption above each control. */
-const FIELD_LABEL = 'text-[10px] font-bold tracking-widest text-amber-900/70 uppercase dark:text-amber-200/60';
+const FIELD_LABEL =
+  'text-[10px] font-bold tracking-widest text-amber-900/70 uppercase dark:text-amber-200/60';
 /** Sticky navy→indigo column strip. */
 const TH =
   'sticky top-0 z-10 bg-gradient-to-b from-blue-800 to-indigo-800 px-2 py-1.5 text-left text-[11px] font-extrabold tracking-wide text-white uppercase whitespace-nowrap dark:from-blue-900 dark:to-indigo-900';
 const TH_LINE = 'border-r border-white/15';
-const TD = 'border-r border-r-amber-200/80 px-2 py-[3px] align-middle dark:border-r-amber-400/15 last:border-r-0';
+const TD =
+  'border-r border-r-amber-200/80 px-2 py-[3px] align-middle dark:border-r-amber-400/15 last:border-r-0';
 const NUM = 'text-right tabular-nums';
 /** The frame around each worksheet pane. */
 const PANEL = 'border-amber-300 dark:border-amber-400/30';
 /** The dark document caption bar that tops each pane. */
-const DOC_BAR = 'flex shrink-0 items-center justify-between gap-3 bg-slate-800 px-2.5 py-1 dark:bg-slate-900';
+const DOC_BAR =
+  'flex shrink-0 items-center justify-between gap-3 bg-slate-800 px-2.5 py-1 dark:bg-slate-900';
 const DOC_TITLE = 'truncate text-[12px] font-extrabold tracking-wide text-amber-300 uppercase';
 
 /** An item on the working note (input + the fields the grid shows). */
-type Line = NoteItemInput & { gstRate?: number; invDate?: string };
+type Line = NoteItemInput & {
+  gstRate?: number;
+  invDate?: string;
+  /** What the original sale's price was made of — see RecentSoldRow. Held
+   *  on the line so the breakdown survives being added to the note. */
+  productRate?: number | null;
+  designRate?: number | null;
+  dispatchRate?: number | null;
+};
 
 /** The quantity boxes on the add-line bar. */
 const QTY_FIELDS = [
@@ -95,7 +136,108 @@ type QtyField = (typeof QTY_FIELDS)[number][0];
  *  (hand-typed line), so nothing to check against. */
 type QtyLimits = Record<QtyField, number>;
 
-const EMPTY_ENTRY = { product: '', design: '', unit: '', bags: '', pcs: '', kgs: '', box: '', price: '', comment: '', refInvNo: '', dispatchId: 0, pCategory: '', gstRate: 0, invDate: '', limits: null as QtyLimits | null };
+const EMPTY_ENTRY = {
+  product: '',
+  design: '',
+  unit: '',
+  bags: '',
+  pcs: '',
+  kgs: '',
+  box: '',
+  price: '',
+  comment: '',
+  refInvNo: '',
+  dispatchId: 0,
+  pCategory: '',
+  gstRate: 0,
+  invDate: '',
+  productRate: null as number | null,
+  designRate: null as number | null,
+  dispatchRate: null as number | null,
+  limits: null as QtyLimits | null,
+};
+
+/**
+ * What a note line's price is made of, on hover.
+ *
+ * A note prices from the original sale, and that sale's rate was assembled from
+ * parts the challan does not keep — only the dispatch behind it does. Showing
+ * them here is the difference between "₹377, take it or leave it" and being
+ * able to see the ₹365 product and the ₹12 design that make it up before
+ * crediting any of it back.
+ *
+ * The special-rate line is the REMAINDER (rate less product less design), which
+ * is what a customer special rate actually is in this system. An agent
+ * commission flagged "add to rate" is already inside the product rate by the
+ * time a dispatch stores it and cannot be separated out afterwards, so it is
+ * not listed as if it were a distinct component — saying so is better than
+ * showing a figure that would be a guess.
+ *
+ * Nothing is rendered for a line with no source dispatch; there is nothing to
+ * break down and an empty card is worse than none.
+ */
+function PriceBreakdown({ line, children }: { line: Line; children: ReactNode }) {
+  const base = line.productRate;
+  const design = line.designRate;
+  const rate = line.dispatchRate;
+  if (base == null && design == null && rate == null) return <>{children}</>;
+
+  const parts = (base ?? 0) + (design ?? 0);
+  const special = rate != null ? Math.round((rate - parts) * 100) / 100 : 0;
+  const billed = line.price ?? 0;
+  const edited = rate != null && Math.abs(billed - rate) > 0.001;
+
+  const Row = ({ label, value, strong }: { label: string; value: string; strong?: boolean }) => (
+    <div className={cn('flex items-center justify-between gap-6', strong && 'font-bold')}>
+      <span className={strong ? undefined : 'opacity-80'}>{label}</span>
+      <span className="tabular-nums">{value}</span>
+    </div>
+  );
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          tabIndex={0}
+          className="focus-visible:ring-primary/40 cursor-help rounded-[3px] focus-visible:ring-2 focus-visible:outline-none"
+        >
+          {children}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="left" className="max-w-none p-0">
+        <div className="min-w-56 space-y-1 p-2.5 text-[11.5px]">
+          <p className="text-[10px] font-bold tracking-widest uppercase opacity-60">
+            How this price was built{line.refInvNo ? ` · ${line.refInvNo}` : ''}
+          </p>
+          {base != null && <Row label="Product rate" value={money(base)} />}
+          {design != null && <Row label="Design rate" value={money(design)} />}
+          {special !== 0 && (
+            <Row
+              label="Special rate"
+              value={`${special > 0 ? '+' : '−'} ${money(Math.abs(special))}`}
+            />
+          )}
+          {rate != null && (
+            <div className="mt-1 border-t border-white/20 pt-1">
+              <Row label="Rate on the sale" value={money(rate)} strong />
+            </div>
+          )}
+          {edited && (
+            <div className="mt-1 border-t border-white/20 pt-1">
+              <Row label="Billed on the invoice" value={money(billed)} strong />
+              <p className="pt-0.5 text-[10.5px] opacity-70">
+                Edited on the challan, so it differs from the rate above.
+              </p>
+            </div>
+          )}
+          <p className="pt-1 text-[10.5px] opacity-60">
+            An agent commission set to add to the rate is already inside the product rate.
+          </p>
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 export function NotesPage() {
   const { can } = usePermissions();
@@ -142,7 +284,9 @@ export function NotesPage() {
     // setting). Say so — the alternative is an arrow that looks broken, and the
     // silent-nothing case is worse than the error.
     if (!tab) {
-      toast.error('Your browser blocked the new tab. Allow pop-ups for this site to view the challan.');
+      toast.error(
+        'Your browser blocked the new tab. Allow pop-ups for this site to view the challan.',
+      );
       return;
     }
     fetchChallanByCode(code)
@@ -164,7 +308,10 @@ export function NotesPage() {
     for (const c of customerData?.items ?? []) if (c.partyName) m.set(c.partyName, c);
     return m;
   }, [customerData]);
-  const partyOptions = useMemo(() => [...custByName.keys()].sort((a, b) => a.localeCompare(b)), [custByName]);
+  const partyOptions = useMemo(
+    () => [...custByName.keys()].sort((a, b) => a.localeCompare(b)),
+    [custByName],
+  );
   const customerId = party ? custByName.get(party)?.id : undefined;
 
   const { data: nextNo } = useNextNoteNo(mode);
@@ -243,7 +390,11 @@ export function NotesPage() {
    *  just single items. Asked ONCE per invoice per note — picking a second item
    *  off an invoice already answered for must not re-prompt. */
   const [invoiceChoice, setInvoiceChoice] = useState<Record<string, 'ALL' | 'ONE'>>({});
-  const [askInvoice, setAskInvoice] = useState<{ invNo: string; rows: RecentSoldRow[]; picked: RecentSoldRow } | null>(null);
+  const [askInvoice, setAskInvoice] = useState<{
+    invNo: string;
+    rows: RecentSoldRow[];
+    picked: RecentSoldRow;
+  } | null>(null);
 
   /** Build a note line straight from a sold row, at the full sold quantity —
    *  what "add all items from this invoice" means: a full return of that
@@ -262,11 +413,19 @@ export function NotesPage() {
     pCategory: r.pCategory || undefined,
     gstRate: r.gstRate,
     invDate: r.invDate,
+    productRate: r.productRate,
+    designRate: r.designRate,
+    dispatchRate: r.dispatchRate,
   });
 
   /** Same identity the manual add uses, so both paths agree on "already there". */
-  const sameLine = (a: { refInvNo?: string; productName?: string; design?: string }, r: RecentSoldRow) =>
-    (a.refInvNo ?? '') === r.invNo && a.productName === r.productName && (a.design ?? '') === (r.design ?? '');
+  const sameLine = (
+    a: { refInvNo?: string; productName?: string; design?: string },
+    r: RecentSoldRow,
+  ) =>
+    (a.refInvNo ?? '') === r.invNo &&
+    a.productName === r.productName &&
+    (a.design ?? '') === (r.design ?? '');
 
   /** Add every remaining item of one invoice in one go. */
   const addWholeInvoice = (invNo: string) => {
@@ -310,6 +469,9 @@ export function NotesPage() {
       pCategory: r.pCategory,
       gstRate: r.gstRate,
       invDate: r.invDate,
+      productRate: r.productRate ?? null,
+      designRate: r.designRate ?? null,
+      dispatchRate: r.dispatchRate ?? null,
       limits: { bags: r.bags || 0, pcs: r.pcs || 0, kgs: r.kgs || 0, box: r.box || 0 },
     });
   };
@@ -325,15 +487,30 @@ export function NotesPage() {
     setEntry((s) => ({ ...s, [field]: raw }));
   };
 
-  const entryAmount = noteItemAmount({ bags: numOrU(entry.bags), pcs: numOrU(entry.pcs), kgs: numOrU(entry.kgs), box: numOrU(entry.box), unit: entry.unit, price: numOrU(entry.price) });
+  const entryAmount = noteItemAmount({
+    bags: numOrU(entry.bags),
+    pcs: numOrU(entry.pcs),
+    kgs: numOrU(entry.kgs),
+    box: numOrU(entry.box),
+    unit: entry.unit,
+    price: numOrU(entry.price),
+  });
 
   const addLine = () => {
     if (!entry.product.trim()) return toast.error('Pick a product from the dropdown first.');
     const qtyOk = [entry.bags, entry.pcs, entry.kgs, entry.box].some((q) => Number(q) > 0);
     if (!qtyOk) return toast.error('Enter at least one quantity (Bags / Pcs / Kgs / Box).');
     const over = entry.limits && QTY_FIELDS.find(([f]) => Number(entry[f] || 0) > entry.limits![f]);
-    if (over) return toast.error(`${over[1]} is more than the ${entry.limits![over[0]]} sold on ${entry.refInvNo || 'this sale'}.`);
-    const dup = lines.some((l) => (l.refInvNo ?? '') === entry.refInvNo && l.productName === entry.product && (l.design ?? '') === entry.design);
+    if (over)
+      return toast.error(
+        `${over[1]} is more than the ${entry.limits![over[0]]} sold on ${entry.refInvNo || 'this sale'}.`,
+      );
+    const dup = lines.some(
+      (l) =>
+        (l.refInvNo ?? '') === entry.refInvNo &&
+        l.productName === entry.product &&
+        (l.design ?? '') === entry.design,
+    );
     if (dup) return toast.error('This item already exists (same Ref Inv + Product + Design).');
     setLines((prev) => [
       ...prev,
@@ -351,6 +528,9 @@ export function NotesPage() {
         comment: entry.comment || undefined,
         pCategory: entry.pCategory || undefined,
         gstRate: entry.gstRate,
+        productRate: entry.productRate,
+        designRate: entry.designRate,
+        dispatchRate: entry.dispatchRate,
         invDate: entry.invDate,
       },
     ]);
@@ -403,7 +583,9 @@ export function NotesPage() {
       },
       {
         onSuccess: (res) => {
-          toast.success(`${mode === 'CREDIT' ? 'Credit' : 'Debit'} Note ${res.code} saved — ${money0(res.total)}`);
+          toast.success(
+            `${mode === 'CREDIT' ? 'Credit' : 'Debit'} Note ${res.code} saved — ${money0(res.total)}`,
+          );
 
           // What the note actually settled. The API is authoritative here — the
           // referenced bill may have been paid off since the lines were picked.
@@ -413,9 +595,12 @@ export function NotesPage() {
             if (cl.invNo) {
               const applied = (cl.bank ?? 0) + (cl.cash ?? 0);
               if (spill > 0.005) {
-                toast.warning(`${money0(applied)} cleared against ${cl.invNo}; ${money0(spill)} went to older dues / advance.`, {
-                  duration: 10000,
-                });
+                toast.warning(
+                  `${money0(applied)} cleared against ${cl.invNo}; ${money0(spill)} went to older dues / advance.`,
+                  {
+                    duration: 10000,
+                  },
+                );
               } else {
                 toast.success(`${money0(applied)} cleared against ${cl.invNo}.`);
               }
@@ -427,13 +612,19 @@ export function NotesPage() {
 
           const u = res.undispatched;
           if (u) {
-            if (u.returned) toast.success(`${u.returned} line${u.returned === 1 ? '' : 's'} put back for dispatch.`);
+            if (u.returned)
+              toast.success(
+                `${u.returned} line${u.returned === 1 ? '' : 's'} put back for dispatch.`,
+              );
             // Never silent: a line that did not come back is exactly the kind of
             // thing that gets noticed weeks later.
             if (u.skipped.length) {
-              toast.warning(`${u.skipped.length} line${u.skipped.length === 1 ? '' : 's'} could not be put back — ${u.skipped.join('; ')}`, {
-                duration: 10000,
-              });
+              toast.warning(
+                `${u.skipped.length} line${u.skipped.length === 1 ? '' : 's'} could not be put back — ${u.skipped.join('; ')}`,
+                {
+                  duration: 10000,
+                },
+              );
             }
           }
           resetForNew();
@@ -491,17 +682,23 @@ export function NotesPage() {
 
   const noteLabel = mode === 'CREDIT' ? 'Credit Note' : 'Debit Note';
 
-
   return (
     // Fills the viewport on desktop: the voucher pane stays put while only the
     // item grid scrolls. Below `lg` it falls back to a normal scrolling page.
     <div className="flex h-full min-h-0 flex-col gap-2 overflow-y-auto p-2.5 font-sans sm:gap-2.5 sm:p-3 lg:overflow-hidden">
       <div className="grid gap-2 sm:gap-2.5 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(19rem,21rem)_1fr]">
         {/* ── Voucher pane: identity → charges → totals → commit ──────────── */}
-        <section className={cn('bg-card flex flex-col overflow-hidden rounded-[4px] border shadow-sm lg:min-h-0', PANEL)}>
+        <section
+          className={cn(
+            'bg-card flex flex-col overflow-hidden rounded-[4px] border shadow-sm lg:min-h-0',
+            PANEL,
+          )}
+        >
           <div className={DOC_BAR}>
             <span className={DOC_TITLE}>{editingCode ? `Edit ${noteLabel}` : noteLabel}</span>
-            <span className="shrink-0 font-mono text-[11px] font-bold text-white tabular-nums">{voucherNo}</span>
+            <span className="shrink-0 font-mono text-[11px] font-bold text-white tabular-nums">
+              {voucherNo}
+            </span>
           </div>
 
           <div className="space-y-2.5 p-2.5 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
@@ -510,7 +707,11 @@ export function NotesPage() {
                 control rather than a dropdown. */}
             <div className="space-y-1">
               <span className={FIELD_LABEL}>Note Type *</span>
-              <div role="group" aria-label="Note type" className="grid grid-cols-2 gap-0.5 rounded-[4px] border border-amber-300 bg-amber-50/40 p-0.5 dark:border-amber-400/40 dark:bg-transparent">
+              <div
+                role="group"
+                aria-label="Note type"
+                className="grid grid-cols-2 gap-0.5 rounded-[4px] border border-amber-300 bg-amber-50/40 p-0.5 dark:border-amber-400/40 dark:bg-transparent"
+              >
                 {(['DEBIT', 'CREDIT'] as const).map((m) => (
                   <button
                     key={m}
@@ -538,12 +739,22 @@ export function NotesPage() {
             </div>
 
             <div className="space-y-1">
-              <Label htmlFor="n-date" className={FIELD_LABEL}>Date *</Label>
-              <DatePicker id="n-date" value={invDate} onChange={(v) => v && setInvDate(v)} clearable={false} className={cn(CONTROL, 'w-full')} />
+              <Label htmlFor="n-date" className={FIELD_LABEL}>
+                Date *
+              </Label>
+              <DatePicker
+                id="n-date"
+                value={invDate}
+                onChange={(v) => v && setInvDate(v)}
+                clearable={false}
+                className={cn(CONTROL, 'w-full')}
+              />
             </div>
 
             <div className="space-y-1">
-              <Label htmlFor="n-party" className={FIELD_LABEL}>Party Name *</Label>
+              <Label htmlFor="n-party" className={FIELD_LABEL}>
+                Party Name *
+              </Label>
               <NativeSelect
                 id="n-party"
                 value={party}
@@ -556,38 +767,88 @@ export function NotesPage() {
 
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <Label htmlFor="n-cat" className={FIELD_LABEL}>Category</Label>
-                <Input id="n-cat" value={category} onChange={(e) => setCategory(e.target.value)} className={cn(CONTROL, 'uppercase')} />
+                <Label htmlFor="n-cat" className={FIELD_LABEL}>
+                  Category
+                </Label>
+                <Input
+                  id="n-cat"
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  className={cn(CONTROL, 'uppercase')}
+                />
               </div>
               <div className="space-y-1">
-                <Label htmlFor="n-term" className={FIELD_LABEL}>Term (days)</Label>
-                <Input id="n-term" value={paymentTerm} onChange={(e) => setPaymentTerm(e.target.value)} inputMode="numeric" className={cn(CONTROL, 'text-right tabular-nums')} />
+                <Label htmlFor="n-term" className={FIELD_LABEL}>
+                  Term (days)
+                </Label>
+                <Input
+                  id="n-term"
+                  value={paymentTerm}
+                  onChange={(e) => setPaymentTerm(e.target.value)}
+                  inputMode="numeric"
+                  className={cn(CONTROL, 'text-right tabular-nums')}
+                />
               </div>
             </div>
 
             <div className="space-y-1">
-              <Label htmlFor="n-trans" className={FIELD_LABEL}>Transport</Label>
-              <Input id="n-trans" value={transName} onChange={(e) => setTransName(e.target.value)} className={cn(CONTROL, 'uppercase')} />
+              <Label htmlFor="n-trans" className={FIELD_LABEL}>
+                Transport
+              </Label>
+              <Input
+                id="n-trans"
+                value={transName}
+                onChange={(e) => setTransName(e.target.value)}
+                className={cn(CONTROL, 'uppercase')}
+              />
             </div>
 
             {/* ── Charges ── */}
             <div className="space-y-2 rounded-[4px] border border-amber-300 bg-amber-50/50 p-2 dark:border-amber-400/30 dark:bg-amber-400/[0.07]">
-              <span className="text-[10px] font-extrabold tracking-widest text-amber-900/80 uppercase dark:text-amber-200/70">Charges</span>
+              <span className="text-[10px] font-extrabold tracking-widest text-amber-900/80 uppercase dark:text-amber-200/70">
+                Charges
+              </span>
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <Label htmlFor="n-pack" className={FIELD_LABEL}>Packing</Label>
-                  <Input id="n-pack" value={packing} onChange={(e) => setPacking(e.target.value)} inputMode="decimal" className={cn(CONTROL, 'bg-background text-right tabular-nums')} />
+                  <Label htmlFor="n-pack" className={FIELD_LABEL}>
+                    Packing
+                  </Label>
+                  <Input
+                    id="n-pack"
+                    value={packing}
+                    onChange={(e) => setPacking(e.target.value)}
+                    inputMode="decimal"
+                    className={cn(CONTROL, 'bg-background text-right tabular-nums')}
+                  />
                 </div>
                 <div className="space-y-1">
-                  <Label htmlFor="n-freight" className={FIELD_LABEL}>Freight</Label>
-                  <Input id="n-freight" value={freight} onChange={(e) => setFreight(e.target.value)} inputMode="decimal" className={cn(CONTROL, 'bg-background text-right tabular-nums')} />
+                  <Label htmlFor="n-freight" className={FIELD_LABEL}>
+                    Freight
+                  </Label>
+                  <Input
+                    id="n-freight"
+                    value={freight}
+                    onChange={(e) => setFreight(e.target.value)}
+                    inputMode="decimal"
+                    className={cn(CONTROL, 'bg-background text-right tabular-nums')}
+                  />
                 </div>
                 <div className="space-y-1">
-                  <Label htmlFor="n-pouch" className={FIELD_LABEL}>Box / Pouch</Label>
-                  <Input id="n-pouch" value={pouch} onChange={(e) => setPouch(e.target.value)} inputMode="decimal" className={cn(CONTROL, 'bg-background text-right tabular-nums')} />
+                  <Label htmlFor="n-pouch" className={FIELD_LABEL}>
+                    Box / Pouch
+                  </Label>
+                  <Input
+                    id="n-pouch"
+                    value={pouch}
+                    onChange={(e) => setPouch(e.target.value)}
+                    inputMode="decimal"
+                    className={cn(CONTROL, 'bg-background text-right tabular-nums')}
+                  />
                 </div>
                 <div className="space-y-1">
-                  <Label htmlFor="n-other" className={FIELD_LABEL}>Other Charges</Label>
+                  <Label htmlFor="n-other" className={FIELD_LABEL}>
+                    Other Charges
+                  </Label>
                   <Input
                     id="n-other"
                     value={otherCharges}
@@ -599,37 +860,79 @@ export function NotesPage() {
                 </div>
                 {mode === 'DEBIT' ? (
                   <div className="space-y-1">
-                    <Label htmlFor="n-tcs" className={FIELD_LABEL}>TCS</Label>
-                    <Input id="n-tcs" value={tcs} onChange={(e) => setTcs(e.target.value)} inputMode="decimal" className={cn(CONTROL, 'bg-background text-right tabular-nums')} />
+                    <Label htmlFor="n-tcs" className={FIELD_LABEL}>
+                      TCS
+                    </Label>
+                    <Input
+                      id="n-tcs"
+                      value={tcs}
+                      onChange={(e) => setTcs(e.target.value)}
+                      inputMode="decimal"
+                      className={cn(CONTROL, 'bg-background text-right tabular-nums')}
+                    />
                   </div>
                 ) : (
                   <div className="space-y-1">
-                    <Label htmlFor="n-brate" className={FIELD_LABEL}>Billing Rate</Label>
-                    <Input id="n-brate" value={billingRate} onChange={(e) => setBillingRate(e.target.value)} inputMode="decimal" placeholder="0 = full" className={cn(CONTROL, 'bg-background text-right tabular-nums')} />
+                    <Label htmlFor="n-brate" className={FIELD_LABEL}>
+                      Billing Rate
+                    </Label>
+                    <Input
+                      id="n-brate"
+                      value={billingRate}
+                      onChange={(e) => setBillingRate(e.target.value)}
+                      inputMode="decimal"
+                      placeholder="0 = full"
+                      className={cn(CONTROL, 'bg-background text-right tabular-nums')}
+                    />
                   </div>
                 )}
               </div>
               {mode === 'DEBIT' && (
                 <div className="space-y-1">
-                  <Label htmlFor="n-brate2" className={FIELD_LABEL}>Billing Rate</Label>
-                  <Input id="n-brate2" value={billingRate} onChange={(e) => setBillingRate(e.target.value)} inputMode="decimal" placeholder="0 = full bill" className={cn(CONTROL, 'bg-background text-right tabular-nums')} />
+                  <Label htmlFor="n-brate2" className={FIELD_LABEL}>
+                    Billing Rate
+                  </Label>
+                  <Input
+                    id="n-brate2"
+                    value={billingRate}
+                    onChange={(e) => setBillingRate(e.target.value)}
+                    inputMode="decimal"
+                    placeholder="0 = full bill"
+                    className={cn(CONTROL, 'bg-background text-right tabular-nums')}
+                  />
                 </div>
               )}
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-amber-600/25 pt-1.5 dark:border-amber-400/25">
                 <label className="flex cursor-pointer items-center gap-1.5 text-[12px] font-semibold select-none">
-                  <Switch checked={noBill} onCheckedChange={(v) => { setNoBill(v); if (!v) setNoBillWithoutGst(false); }} /> No Bill
+                  <Switch
+                    checked={noBill}
+                    onCheckedChange={(v) => {
+                      setNoBill(v);
+                      if (!v) setNoBillWithoutGst(false);
+                    }}
+                  />{' '}
+                  No Bill
                 </label>
                 {noBill && (
                   <label className="text-muted-foreground flex cursor-pointer items-center gap-1.5 text-[12px] font-medium select-none">
-                    <Switch checked={noBillWithoutGst} onCheckedChange={setNoBillWithoutGst} /> Without GST
+                    <Switch checked={noBillWithoutGst} onCheckedChange={setNoBillWithoutGst} />{' '}
+                    Without GST
                   </label>
                 )}
               </div>
             </div>
 
             <div className="space-y-1">
-              <Label htmlFor="n-rem" className={FIELD_LABEL}>Remarks</Label>
-              <Input id="n-rem" value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Optional" className={cn(CONTROL, 'uppercase')} />
+              <Label htmlFor="n-rem" className={FIELD_LABEL}>
+                Remarks
+              </Label>
+              <Input
+                id="n-rem"
+                value={remarks}
+                onChange={(e) => setRemarks(e.target.value)}
+                placeholder="Optional"
+                className={cn(CONTROL, 'uppercase')}
+              />
             </div>
           </div>
 
@@ -637,16 +940,36 @@ export function NotesPage() {
           <div className="shrink-0 border-t border-amber-300 dark:border-amber-400/30">
             <div className="space-y-0.5 bg-amber-50/60 px-2.5 py-2 dark:bg-amber-400/[0.07]">
               <Row2 label="Items total" value={money(breakup.tAmt)} />
-              <Row2 label={`GST${breakup.gstPercent ? ` @ ${breakup.gstPercent}%` : ''}`} value={money(breakup.tax)} />
+              <Row2
+                label={`GST${breakup.gstPercent ? ` @ ${breakup.gstPercent}%` : ''}`}
+                value={money(breakup.tax)}
+              />
               <Row2 label="Round off" value={money(breakup.roundOff)} />
             </div>
-            <div className={cn('flex items-center justify-between px-2.5 py-2 text-white', mode === 'DEBIT' ? 'bg-slate-800 dark:bg-slate-700' : 'bg-emerald-600')}>
-              <span className="text-[11px] font-extrabold tracking-widest uppercase">{mode === 'DEBIT' ? 'Total Dr' : 'Total Cr'}</span>
-              <span className="text-[16px] font-extrabold tabular-nums">{money0(breakup.total)}</span>
+            <div
+              className={cn(
+                'flex items-center justify-between px-2.5 py-2 text-white',
+                mode === 'DEBIT' ? 'bg-slate-800 dark:bg-slate-700' : 'bg-emerald-600',
+              )}
+            >
+              <span className="text-[11px] font-extrabold tracking-widest uppercase">
+                {mode === 'DEBIT' ? 'Total Dr' : 'Total Cr'}
+              </span>
+              <span className="text-[16px] font-extrabold tabular-nums">
+                {money0(breakup.total)}
+              </span>
             </div>
             <div className="space-y-0.5 bg-amber-50/60 px-2.5 py-2 dark:bg-amber-400/[0.07]">
-              <Row2 label="B (bank)" value={money0(breakup.b)} className="text-blue-700 dark:text-blue-400" />
-              <Row2 label="C (cash)" value={money0(breakup.c)} className="text-emerald-700 dark:text-emerald-400" />
+              <Row2
+                label="B (bank)"
+                value={money0(breakup.b)}
+                className="text-blue-700 dark:text-blue-400"
+              />
+              <Row2
+                label="C (cash)"
+                value={money0(breakup.c)}
+                className="text-emerald-700 dark:text-emerald-400"
+              />
 
               {/* Where this credit will land. Silent auto-allocation is exactly the
                   kind of thing that gets queried a month later, so it is stated. */}
@@ -659,17 +982,22 @@ export function NotesPage() {
                       : 'border-sky-300 bg-sky-50 text-sky-900 dark:border-sky-400/40 dark:bg-sky-400/10 dark:text-sky-200',
                   )}
                 >
-                  {targetInv ? <Link2 className="mt-px size-3.5 shrink-0" /> : <Shuffle className="mt-px size-3.5 shrink-0" />}
+                  {targetInv ? (
+                    <Link2 className="mt-px size-3.5 shrink-0" />
+                  ) : (
+                    <Shuffle className="mt-px size-3.5 shrink-0" />
+                  )}
                   <span>
                     {targetInv ? (
                       <>
-                        Clears against <b className="font-mono font-bold">{targetInv}</b>. Anything more than that bill's
-                        pending amount moves on to the party's oldest dues.
+                        Clears against <b className="font-mono font-bold">{targetInv}</b>. Anything
+                        more than that bill's pending amount moves on to the party's oldest dues.
                       </>
                     ) : refInvoices.length > 1 ? (
                       <>
-                        Lines reference <b>{refInvoices.length} invoices</b> — clears the party's oldest dues first (FIFO).
-                        Keep one Ref Inv per note to settle that bill directly.
+                        Lines reference <b>{refInvoices.length} invoices</b> — clears the party's
+                        oldest dues first (FIFO). Keep one Ref Inv per note to settle that bill
+                        directly.
                       </>
                     ) : (
                       <>No Ref Inv on these lines — clears the party's oldest dues first (FIFO).</>
@@ -685,7 +1013,8 @@ export function NotesPage() {
                   title={`${editingCode ? 'Update' : 'Save'} ${noteLabel} (Ctrl+S)`}
                   className="h-11 flex-[2] bg-emerald-600 font-bold text-white hover:bg-emerald-700 lg:h-10"
                 >
-                  {saveMut.isPending ? <Loader2 className="animate-spin" /> : <Check />} {editingCode ? 'UPDATE' : 'SAVE'}
+                  {saveMut.isPending ? <Loader2 className="animate-spin" /> : <Check />}{' '}
+                  {editingCode ? 'UPDATE' : 'SAVE'}
                 </Button>
                 <Button
                   variant="outline"
@@ -700,7 +1029,12 @@ export function NotesPage() {
         </section>
 
         {/* ── Item workspace: add-line bar + the note's lines ─────────────── */}
-        <section className={cn('bg-card flex flex-col overflow-hidden rounded-[4px] border shadow-sm lg:min-h-0', PANEL)}>
+        <section
+          className={cn(
+            'bg-card flex flex-col overflow-hidden rounded-[4px] border shadow-sm lg:min-h-0',
+            PANEL,
+          )}
+        >
           <div className={DOC_BAR}>
             <span className={DOC_TITLE}>Items — {party || 'no party selected'}</span>
             <div className="flex shrink-0 items-center gap-1.5">
@@ -713,7 +1047,8 @@ export function NotesPage() {
                 title={`Browse past ${noteLabel}s`}
                 className="flex cursor-pointer items-center gap-1 rounded-[3px] px-1.5 py-1 text-[11px] font-bold tracking-wide text-amber-200 uppercase transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:outline-none"
               >
-                <FolderOpen className="size-3.5" /> <span className="hidden sm:inline">Directory</span>
+                <FolderOpen className="size-3.5" />{' '}
+                <span className="hidden sm:inline">Directory</span>
               </button>
             </div>
           </div>
@@ -733,7 +1068,10 @@ export function NotesPage() {
                     <Combobox
                       value=""
                       onChange={pickRecent}
-                      options={recentSold.map((r: RecentSoldRow, i) => ({ value: String(i), label: `${r.invNo} · ${r.productName}${r.design ? ` · ${r.design}` : ''} · ${money(r.price)}` }))}
+                      options={recentSold.map((r: RecentSoldRow, i) => ({
+                        value: String(i),
+                        label: `${r.invNo} · ${r.productName}${r.design ? ` · ${r.design}` : ''} · ${money(r.price)}`,
+                      }))}
                       placeholder={customerId ? 'Search a past sale…' : 'Select a party first'}
                       className={cn(CONTROL, 'w-full')}
                     />
@@ -746,20 +1084,55 @@ export function NotesPage() {
                       className="size-9 shrink-0"
                       disabled={!entry.refInvNo}
                       onClick={() => openChallan(entry.refInvNo)}
-                      title={entry.refInvNo ? `View challan ${entry.refInvNo}` : 'Pick a past sale to view its challan'}
-                      aria-label={entry.refInvNo ? `View challan ${entry.refInvNo}` : 'View challan'}
+                      title={
+                        entry.refInvNo
+                          ? `View challan ${entry.refInvNo}`
+                          : 'Pick a past sale to view its challan'
+                      }
+                      aria-label={
+                        entry.refInvNo ? `View challan ${entry.refInvNo}` : 'View challan'
+                      }
                     >
                       <ArrowUpRight className="size-4" />
                     </Button>
                   )}
                 </div>
               </div>
-              <div className="space-y-1"><Label className={FIELD_LABEL}>Product *</Label><Input value={entry.product} onChange={(e) => setEntry((s) => ({ ...s, product: e.target.value }))} className={cn(CONTROL, 'bg-background')} /></div>
-              <div className="space-y-1"><Label className={FIELD_LABEL}>Design</Label><Input value={entry.design} onChange={(e) => setEntry((s) => ({ ...s, design: e.target.value }))} className={cn(CONTROL, 'bg-background')} /></div>
-              <div className="space-y-1"><Label className={FIELD_LABEL}>Ref Inv</Label><Input value={entry.refInvNo} onChange={(e) => setEntry((s) => ({ ...s, refInvNo: e.target.value }))} className={cn(CONTROL, 'bg-background font-mono')} /></div>
+              <div className="space-y-1">
+                <Label className={FIELD_LABEL}>Product *</Label>
+                <Input
+                  value={entry.product}
+                  onChange={(e) => setEntry((s) => ({ ...s, product: e.target.value }))}
+                  className={cn(CONTROL, 'bg-background')}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className={FIELD_LABEL}>Design</Label>
+                <Input
+                  value={entry.design}
+                  onChange={(e) => setEntry((s) => ({ ...s, design: e.target.value }))}
+                  className={cn(CONTROL, 'bg-background')}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className={FIELD_LABEL}>Ref Inv</Label>
+                <Input
+                  value={entry.refInvNo}
+                  onChange={(e) => setEntry((s) => ({ ...s, refInvNo: e.target.value }))}
+                  className={cn(CONTROL, 'bg-background font-mono')}
+                />
+              </div>
             </div>
             <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-8">
-              <div className="space-y-1"><Label className={FIELD_LABEL}>Unit</Label><Input value={entry.unit} onChange={(e) => setEntry((s) => ({ ...s, unit: e.target.value }))} placeholder="KGS" className={cn(CONTROL, 'bg-background uppercase')} /></div>
+              <div className="space-y-1">
+                <Label className={FIELD_LABEL}>Unit</Label>
+                <Input
+                  value={entry.unit}
+                  onChange={(e) => setEntry((s) => ({ ...s, unit: e.target.value }))}
+                  placeholder="KGS"
+                  className={cn(CONTROL, 'bg-background uppercase')}
+                />
+              </div>
               {QTY_FIELDS.map(([field, label]) => {
                 const max = entry.limits?.[field] ?? null;
                 const locked = max === 0;
@@ -783,72 +1156,197 @@ export function NotesPage() {
                       value={entry[field]}
                       onChange={(e) => setQty(field, e.target.value)}
                       disabled={locked}
-                      title={locked ? `${entry.refInvNo || 'This sale'} has no ${label.toLowerCase()} to adjust` : undefined}
+                      title={
+                        locked
+                          ? `${entry.refInvNo || 'This sale'} has no ${label.toLowerCase()} to adjust`
+                          : undefined
+                      }
                       inputMode="decimal"
-                      className={cn(CONTROL, 'bg-background text-right tabular-nums', locked && 'text-muted-foreground cursor-not-allowed opacity-60')}
+                      className={cn(
+                        CONTROL,
+                        'bg-background text-right tabular-nums',
+                        locked && 'text-muted-foreground cursor-not-allowed opacity-60',
+                      )}
                     />
                   </div>
                 );
               })}
-              <div className="space-y-1"><Label className={FIELD_LABEL}>Price</Label><Input value={entry.price} onChange={(e) => setEntry((s) => ({ ...s, price: e.target.value }))} inputMode="decimal" className={cn(CONTROL, 'bg-background text-right tabular-nums')} /></div>
-              <div className="space-y-1"><Label className={FIELD_LABEL}>Amount</Label><Input value={money(entryAmount)} readOnly tabIndex={-1} className={cn(CONTROL, 'bg-muted/50 cursor-default text-right font-bold tabular-nums')} /></div>
+              <div className="space-y-1">
+                <Label className={FIELD_LABEL}>Price</Label>
+                <Input
+                  value={entry.price}
+                  onChange={(e) => setEntry((s) => ({ ...s, price: e.target.value }))}
+                  inputMode="decimal"
+                  className={cn(CONTROL, 'bg-background text-right tabular-nums')}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className={FIELD_LABEL}>Amount</Label>
+                <Input
+                  value={money(entryAmount)}
+                  readOnly
+                  tabIndex={-1}
+                  className={cn(
+                    CONTROL,
+                    'bg-muted/50 cursor-default text-right font-bold tabular-nums',
+                  )}
+                />
+              </div>
               <div className="flex items-end">
-                <Button type="button" onClick={addLine} className="h-9 w-full rounded-[4px] font-bold"><Plus className="size-3.5" /> ADD</Button>
+                <Button
+                  type="button"
+                  onClick={addLine}
+                  className="h-9 w-full rounded-[4px] font-bold"
+                >
+                  <Plus className="size-3.5" /> ADD
+                </Button>
               </div>
             </div>
-            <Input value={entry.comment} onChange={(e) => setEntry((s) => ({ ...s, comment: e.target.value }))} placeholder="Line comment (optional)" className={cn(CONTROL, 'bg-background')} />
+            <Input
+              value={entry.comment}
+              onChange={(e) => setEntry((s) => ({ ...s, comment: e.target.value }))}
+              placeholder="Line comment (optional)"
+              className={cn(CONTROL, 'bg-background')}
+            />
           </div>
 
           {/* Desktop line grid. */}
-          <div className={cn('hidden overflow-x-auto overscroll-x-contain sm:block lg:min-h-0 lg:flex-1 lg:overflow-auto', '[scrollbar-width:thin] [scrollbar-color:var(--color-amber-400)_var(--color-amber-100)]')}>
+          <div
+            className={cn(
+              'hidden overflow-x-auto overscroll-x-contain sm:block lg:min-h-0 lg:flex-1 lg:overflow-auto',
+              '[scrollbar-width:thin] [scrollbar-color:var(--color-amber-400)_var(--color-amber-100)]',
+            )}
+          >
             <table className="w-full border-collapse text-[13px]">
               <caption className="sr-only">Lines on this {noteLabel}</caption>
               <thead>
                 <tr>
-                  <th scope="col" className={cn(TH, TH_LINE, 'w-9 text-center')}>#</th>
-                  <th scope="col" className={cn(TH, TH_LINE, 'w-28')}>Ref Inv</th>
-                  <th scope="col" className={cn(TH, TH_LINE)}>Product</th>
-                  <th scope="col" className={cn(TH, TH_LINE, 'w-24')}>Design</th>
-                  <th scope="col" className={cn(TH, TH_LINE, 'w-16 text-right')}>Bags</th>
-                  <th scope="col" className={cn(TH, TH_LINE, 'w-16 text-right')}>Pcs</th>
-                  <th scope="col" className={cn(TH, TH_LINE, 'w-16 text-right')}>Kgs</th>
-                  <th scope="col" className={cn(TH, TH_LINE, 'w-16 text-right')}>Box</th>
-                  <th scope="col" className={cn(TH, TH_LINE, 'w-14')}>Unit</th>
-                  <th scope="col" className={cn(TH, TH_LINE, 'w-24 text-right')}>Price</th>
-                  <th scope="col" className={cn(TH, TH_LINE, 'w-28 text-right')}>Amount</th>
-                  <th scope="col" className={cn(TH, TH_LINE, 'w-14 text-right')}>GST%</th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-9 text-center')}>
+                    #
+                  </th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-28')}>
+                    Ref Inv
+                  </th>
+                  <th scope="col" className={cn(TH, TH_LINE)}>
+                    Product
+                  </th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-24')}>
+                    Design
+                  </th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-16 text-right')}>
+                    Bags
+                  </th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-16 text-right')}>
+                    Pcs
+                  </th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-16 text-right')}>
+                    Kgs
+                  </th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-16 text-right')}>
+                    Box
+                  </th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-14')}>
+                    Unit
+                  </th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-24 text-right')}>
+                    Price
+                  </th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-28 text-right')}>
+                    Amount
+                  </th>
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-14 text-right')}>
+                    GST%
+                  </th>
                   <th scope="col" className={cn(TH, 'w-20')} aria-label="Actions" />
                 </tr>
               </thead>
               <tbody>
                 {lines.length === 0 ? (
                   <tr>
-                    <td colSpan={13} className="text-muted-foreground h-28 text-center text-[13px] font-medium">
-                      {party ? 'No lines yet — pick a past sale or type a product above, then press ADD.' : 'Select a party to begin.'}
+                    <td
+                      colSpan={13}
+                      className="text-muted-foreground h-28 text-center text-[13px] font-medium"
+                    >
+                      {party
+                        ? 'No lines yet — pick a past sale or type a product above, then press ADD.'
+                        : 'Select a party to begin.'}
                     </td>
                   </tr>
                 ) : (
                   lines.map((l, i) => (
-                    <tr key={i} className="border-b border-amber-200/70 even:bg-amber-50/70 hover:bg-amber-200/70 dark:border-amber-400/10 dark:even:bg-amber-400/[0.05] dark:hover:bg-amber-400/20">
-                      <td className={cn(TD, 'text-center text-[12px] font-bold text-slate-500 tabular-nums dark:text-slate-400')}>{i + 1}</td>
-                      <td className={cn(TD, 'font-mono text-[12.5px] font-bold whitespace-nowrap')}>{l.refInvNo ?? '—'}</td>
-                      <td className={cn(TD, 'font-semibold text-slate-800 dark:text-slate-200')}>{l.productName}</td>
-                      <td className={cn(TD, 'text-[12px] font-medium text-slate-600 dark:text-slate-400')}>{l.design ?? '—'}</td>
+                    <tr
+                      key={i}
+                      className="border-b border-amber-200/70 even:bg-amber-50/70 hover:bg-amber-200/70 dark:border-amber-400/10 dark:even:bg-amber-400/[0.05] dark:hover:bg-amber-400/20"
+                    >
+                      <td
+                        className={cn(
+                          TD,
+                          'text-center text-[12px] font-bold text-slate-500 tabular-nums dark:text-slate-400',
+                        )}
+                      >
+                        {i + 1}
+                      </td>
+                      <td className={cn(TD, 'font-mono text-[12.5px] font-bold whitespace-nowrap')}>
+                        {l.refInvNo ?? '—'}
+                      </td>
+                      <td className={cn(TD, 'font-semibold text-slate-800 dark:text-slate-200')}>
+                        {l.productName}
+                      </td>
+                      <td
+                        className={cn(
+                          TD,
+                          'text-[12px] font-medium text-slate-600 dark:text-slate-400',
+                        )}
+                      >
+                        {l.design ?? '—'}
+                      </td>
                       <td className={cn(TD, NUM, 'font-semibold')}>{l.bags ?? '-'}</td>
                       <td className={cn(TD, NUM, 'font-semibold')}>{l.pcs ?? '-'}</td>
                       <td className={cn(TD, NUM, 'font-semibold')}>{l.kgs ?? '-'}</td>
                       <td className={cn(TD, NUM, 'font-semibold')}>{l.box ?? '-'}</td>
-                      <td className={cn(TD, 'text-[11.5px] font-bold tracking-wide uppercase text-slate-500 dark:text-slate-400')}>{l.unit ?? '—'}</td>
-                      <td className={cn(TD, NUM, 'font-semibold')}>{money(l.price ?? 0)}</td>
-                      <td className={cn(TD, NUM, 'font-bold text-slate-900 dark:text-slate-100')}>{money(noteItemAmount(l))}</td>
-                      <td className={cn(TD, NUM, 'text-[12px] font-medium text-slate-600 dark:text-slate-400')}>{l.gstRate ?? 0}</td>
+                      <td
+                        className={cn(
+                          TD,
+                          'text-[11.5px] font-bold tracking-wide uppercase text-slate-500 dark:text-slate-400',
+                        )}
+                      >
+                        {l.unit ?? '—'}
+                      </td>
+                      <td className={cn(TD, NUM, 'font-semibold')}>
+                        <PriceBreakdown line={l}>{money(l.price ?? 0)}</PriceBreakdown>
+                      </td>
+                      <td className={cn(TD, NUM, 'font-bold text-slate-900 dark:text-slate-100')}>
+                        <PriceBreakdown line={l}>{money(noteItemAmount(l))}</PriceBreakdown>
+                      </td>
+                      <td
+                        className={cn(
+                          TD,
+                          NUM,
+                          'text-[12px] font-medium text-slate-600 dark:text-slate-400',
+                        )}
+                      >
+                        {l.gstRate ?? 0}
+                      </td>
                       <td className={cn(TD, 'text-center whitespace-nowrap')}>
                         {canViewChallans && l.refInvNo && (
-                          <Button variant="ghost" size="icon" className="size-7" onClick={() => openChallan(l.refInvNo!)} title={`View challan ${l.refInvNo}`} aria-label={`View challan ${l.refInvNo}`}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-7"
+                            onClick={() => openChallan(l.refInvNo!)}
+                            title={`View challan ${l.refInvNo}`}
+                            aria-label={`View challan ${l.refInvNo}`}
+                          >
                             <ArrowUpRight className="size-4" />
                           </Button>
                         )}
-                        <Button variant="ghost" size="icon" className="size-7 text-destructive hover:text-destructive" onClick={() => removeLine(i)} aria-label={`Remove line ${i + 1}`}>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-7 text-destructive hover:text-destructive"
+                          onClick={() => removeLine(i)}
+                          aria-label={`Remove line ${i + 1}`}
+                        >
                           <Trash2 className="size-4" />
                         </Button>
                       </td>
@@ -860,8 +1358,17 @@ export function NotesPage() {
                 <tfoot className="sticky bottom-0 z-20">
                   <tr className="bg-amber-200/90 font-bold shadow-[inset_0_2px_0_0_var(--color-amber-700)] dark:bg-amber-400/20 dark:shadow-[inset_0_2px_0_0_var(--color-amber-400)]">
                     <td className={TD} colSpan={9} />
-                    <td className={cn(TD, 'text-[11px] font-extrabold tracking-wide text-amber-950 uppercase dark:text-amber-100')}>Total</td>
-                    <td className={cn(TD, NUM, 'text-[13.5px] font-extrabold')}>{money(breakup.tAmt)}</td>
+                    <td
+                      className={cn(
+                        TD,
+                        'text-[11px] font-extrabold tracking-wide text-amber-950 uppercase dark:text-amber-100',
+                      )}
+                    >
+                      Total
+                    </td>
+                    <td className={cn(TD, NUM, 'text-[13.5px] font-extrabold')}>
+                      {money(breakup.tAmt)}
+                    </td>
                     <td className={TD} colSpan={2} />
                   </tr>
                 </tfoot>
@@ -877,22 +1384,58 @@ export function NotesPage() {
               </p>
             ) : (
               lines.map((l, i) => (
-                <div key={i} className="rounded-[4px] border border-amber-200 bg-amber-50/60 p-2.5 shadow-sm dark:border-amber-400/20 dark:bg-amber-400/[0.06]">
+                <div
+                  key={i}
+                  className="rounded-[4px] border border-amber-200 bg-amber-50/60 p-2.5 shadow-sm dark:border-amber-400/20 dark:bg-amber-400/[0.06]"
+                >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="truncate text-[13.5px] font-bold text-slate-900 dark:text-slate-100">{l.productName}{l.design ? ` · ${l.design}` : ''}</p>
-                      {l.refInvNo && <p className="text-muted-foreground font-mono text-[11px]">Ref {l.refInvNo}</p>}
+                      <p className="truncate text-[13.5px] font-bold text-slate-900 dark:text-slate-100">
+                        {l.productName}
+                        {l.design ? ` · ${l.design}` : ''}
+                      </p>
+                      {l.refInvNo && (
+                        <p className="text-muted-foreground font-mono text-[11px]">
+                          Ref {l.refInvNo}
+                        </p>
+                      )}
                       <p className="text-muted-foreground text-[11.5px]">
-                        {[l.bags ? `${l.bags} bags` : null, l.pcs ? `${l.pcs} pcs` : null, l.kgs ? `${l.kgs} kgs` : null, l.box ? `${l.box} box` : null].filter(Boolean).join(' · ') || '—'}
-                        {' · '}{money(l.price ?? 0)}
+                        {[
+                          l.bags ? `${l.bags} bags` : null,
+                          l.pcs ? `${l.pcs} pcs` : null,
+                          l.kgs ? `${l.kgs} kgs` : null,
+                          l.box ? `${l.box} box` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ') || '—'}
+                        {' · '}
+                        {money(l.price ?? 0)}
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
-                      <span className="text-[13.5px] font-extrabold tabular-nums">{money(noteItemAmount(l))}</span>
+                      <span className="text-[13.5px] font-extrabold tabular-nums">
+                        {money(noteItemAmount(l))}
+                      </span>
                       {canViewChallans && l.refInvNo && (
-                        <Button variant="ghost" size="icon" className="size-8" onClick={() => openChallan(l.refInvNo!)} aria-label={`View challan ${l.refInvNo}`}><ArrowUpRight className="size-4" /></Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-8"
+                          onClick={() => openChallan(l.refInvNo!)}
+                          aria-label={`View challan ${l.refInvNo}`}
+                        >
+                          <ArrowUpRight className="size-4" />
+                        </Button>
                       )}
-                      <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => removeLine(i)} aria-label={`Remove line ${i + 1}`}><Trash2 className="size-4" /></Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-8 text-destructive hover:text-destructive"
+                        onClick={() => removeLine(i)}
+                        aria-label={`Remove line ${i + 1}`}
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
                     </div>
                   </div>
                 </div>
@@ -902,7 +1445,16 @@ export function NotesPage() {
         </section>
       </div>
 
-      <NoteDirectoryDialog open={dirOpen} onOpenChange={setDirOpen} mode={mode} onEdit={loadForEdit} onDelete={del} canDelete={can('note:delete')} canPrint={can('note:print')} confirm={confirm} />
+      <NoteDirectoryDialog
+        open={dirOpen}
+        onOpenChange={setDirOpen}
+        mode={mode}
+        onEdit={loadForEdit}
+        onDelete={del}
+        canDelete={can('note:delete')}
+        canPrint={can('note:print')}
+        confirm={confirm}
+      />
 
       {/* Whole invoice, or just this item? Asked once per invoice per note. */}
       <Dialog open={!!askInvoice} onOpenChange={(o) => !o && setAskInvoice(null)}>
@@ -917,8 +1469,8 @@ export function NotesPage() {
             <b>{askInvoice?.picked.productName}</b>?
           </p>
           <p className="text-muted-foreground text-[11.5px]">
-            Adding all brings each item in at its full sold quantity — you can still change any line afterwards. You will not be
-            asked about {askInvoice?.invNo} again on this note.
+            Adding all brings each item in at its full sold quantity — you can still change any line
+            afterwards. You will not be asked about {askInvoice?.invNo} again on this note.
           </p>
           <DialogFooter className="gap-2 sm:justify-between">
             <Button
@@ -961,19 +1513,31 @@ export function NotesPage() {
           <p className="text-[13px]">Did these goods physically come back?</p>
           <div className="text-muted-foreground space-y-1.5 text-[11.5px]">
             <p>
-              <b className="text-foreground">Mark as Undispatched</b> — the credit note is raised <i>and</i> the returned
-              quantity goes back into Dispatch Orders, so it can be dispatched again.
+              <b className="text-foreground">Mark as Undispatched</b> — the credit note is raised{' '}
+              <i>and</i> the returned quantity goes back into Dispatch Orders, so it can be
+              dispatched again.
             </p>
             <p>
-              <b className="text-foreground">Just the credit note</b> — money only. Nothing changes in dispatch.
+              <b className="text-foreground">Just the credit note</b> — money only. Nothing changes
+              in dispatch.
             </p>
           </div>
           <DialogFooter className="gap-2 sm:justify-between">
-            <Button variant="outline" className="h-11 flex-1" disabled={saveMut.isPending} onClick={() => doSave(false)}>
+            <Button
+              variant="outline"
+              className="h-11 flex-1"
+              disabled={saveMut.isPending}
+              onClick={() => doSave(false)}
+            >
               Just the credit note
             </Button>
-            <Button className="h-11 flex-1" disabled={saveMut.isPending} onClick={() => doSave(true)}>
-              {saveMut.isPending ? <Loader2 className="animate-spin" /> : <Undo2 />} Mark as Undispatched
+            <Button
+              className="h-11 flex-1"
+              disabled={saveMut.isPending}
+              onClick={() => doSave(true)}
+            >
+              {saveMut.isPending ? <Loader2 className="animate-spin" /> : <Undo2 />} Mark as
+              Undispatched
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1016,22 +1580,72 @@ function NoteDirectoryDialog({
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [payMode, setPayMode] = useState('ALL');
-  const { data, isLoading } = useNoteDirectory({ mode, fromDate: fromDate || undefined, toDate: toDate || undefined, payMode });
+  const { data, isLoading } = useNoteDirectory({
+    mode,
+    fromDate: fromDate || undefined,
+    toDate: toDate || undefined,
+    payMode,
+  });
   const rows = data?.items ?? [];
 
   const handleDelete = async (r: NoteDirectoryRow) => {
-    const ok = await confirm({ title: `Delete ${r.code}?`, description: 'This reverses its ledger, receipts, advance and opening entries. This cannot be undone.', confirmText: 'Delete', destructive: true });
+    const ok = await confirm({
+      title: `Delete ${r.code}?`,
+      description:
+        'This reverses its ledger, receipts, advance and opening entries. This cannot be undone.',
+      confirmText: 'Delete',
+      destructive: true,
+    });
     if (!ok) return;
-    onDelete.mutate({ mode: r.mode, code: r.code }, { onSuccess: () => toast.success(`${r.code} deleted`), onError: (e) => toast.error(getApiErrorMessage(e, 'Delete failed')) });
+    onDelete.mutate(
+      { mode: r.mode, code: r.code },
+      {
+        onSuccess: () => toast.success(`${r.code} deleted`),
+        onError: (e) => toast.error(getApiErrorMessage(e, 'Delete failed')),
+      },
+    );
   };
 
   const cols: DataColumn<NoteDirectoryRow>[] = [
-    { id: 'code', label: 'No', cell: (r) => <span className={cn(TEXT_CELL, 'font-mono')}>{r.code}</span> },
-    { id: 'date', label: 'Date', cell: (r) => <span className={cn(TEXT_CELL, 'whitespace-nowrap tabular-nums')}>{prettyDate(r.invDate)}</span> },
-    { id: 'party', label: 'Customer', cell: (r) => <span className={TEXT_CELL}>{r.customerName}</span> },
-    { id: 'b', label: 'B (bank)', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money0(r.b)}</span> },
-    { id: 'c', label: 'C (cash)', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money0(r.c)}</span> },
-    { id: 'total', label: 'Total', align: 'right', cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums font-bold')}>{money0(r.total)}</span> },
+    {
+      id: 'code',
+      label: 'No',
+      cell: (r) => <span className={cn(TEXT_CELL, 'font-mono')}>{r.code}</span>,
+    },
+    {
+      id: 'date',
+      label: 'Date',
+      cell: (r) => (
+        <span className={cn(TEXT_CELL, 'whitespace-nowrap tabular-nums')}>
+          {prettyDate(r.invDate)}
+        </span>
+      ),
+    },
+    {
+      id: 'party',
+      label: 'Customer',
+      cell: (r) => <span className={TEXT_CELL}>{r.customerName}</span>,
+    },
+    {
+      id: 'b',
+      label: 'B (bank)',
+      align: 'right',
+      cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money0(r.b)}</span>,
+    },
+    {
+      id: 'c',
+      label: 'C (cash)',
+      align: 'right',
+      cell: (r) => <span className={cn(TEXT_CELL, 'tabular-nums')}>{money0(r.c)}</span>,
+    },
+    {
+      id: 'total',
+      label: 'Total',
+      align: 'right',
+      cell: (r) => (
+        <span className={cn(TEXT_CELL, 'tabular-nums font-bold')}>{money0(r.total)}</span>
+      ),
+    },
   ];
 
   return (
@@ -1043,18 +1657,35 @@ function NoteDirectoryDialog({
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1">
             <Label className="text-sm">From</Label>
-            <Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className={cn(CONTROL, 'font-medium', fromDate && CONTROL_ON)} />
+            <Input
+              type="date"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+              className={cn(CONTROL, 'font-medium', fromDate && CONTROL_ON)}
+            />
           </div>
           <div className="space-y-1">
             <Label className="text-sm">To</Label>
-            <Input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className={cn(CONTROL, 'font-medium', toDate && CONTROL_ON)} />
+            <Input
+              type="date"
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
+              className={cn(CONTROL, 'font-medium', toDate && CONTROL_ON)}
+            />
           </div>
           <div className="w-40 space-y-1">
             <Label className="text-sm">Pay Mode</Label>
-            <NativeSelect value={payMode} onChange={setPayMode} options={['ALL', 'BANK', 'CASH', 'BOTH']} className={cn(CONTROL, 'font-medium', payMode && payMode !== 'ALL' && CONTROL_ON)} />
+            <NativeSelect
+              value={payMode}
+              onChange={setPayMode}
+              options={['ALL', 'BANK', 'CASH', 'BOTH']}
+              className={cn(CONTROL, 'font-medium', payMode && payMode !== 'ALL' && CONTROL_ON)}
+            />
           </div>
           <div className="bg-card ml-auto rounded-[4px] border px-3 py-2 shadow-sm">
-            <p className="text-muted-foreground text-[12px] font-medium">{rows.length} record{rows.length === 1 ? '' : 's'}</p>
+            <p className="text-muted-foreground text-[12px] font-medium">
+              {rows.length} record{rows.length === 1 ? '' : 's'}
+            </p>
           </div>
         </div>
         <div className="max-h-[55vh] overflow-auto">
@@ -1082,9 +1713,12 @@ function NoteDirectoryDialog({
                       // iOS cannot render a PDF in an iframe and needs a tab
                       // reserved inside this very click, or the popup is blocked.
                       if (isIOS()) reservePreviewTab();
-                      navigate(`/account/notes/bill?mode=${r.mode}&code=${encodeURIComponent(r.code)}`, {
-                        state: { autoPreview: true, returnTo: '/account/notes' },
-                      });
+                      navigate(
+                        `/account/notes/bill?mode=${r.mode}&code=${encodeURIComponent(r.code)}`,
+                        {
+                          state: { autoPreview: true, returnTo: '/account/notes' },
+                        },
+                      );
                     }}
                     aria-label={`Preview ${r.code}`}
                     title={`Preview ${r.code}`}
@@ -1093,7 +1727,13 @@ function NoteDirectoryDialog({
                   </Button>
                 )}
                 {canDelete && (
-                  <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => handleDelete(r)} aria-label="Delete">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-8 text-destructive hover:text-destructive"
+                    onClick={() => handleDelete(r)}
+                    aria-label="Delete"
+                  >
                     <Trash2 className="size-4" />
                   </Button>
                 )}

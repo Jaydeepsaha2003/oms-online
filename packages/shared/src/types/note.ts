@@ -45,6 +45,23 @@ export interface RecentSoldRow {
   gstRate: number;
   /** Product category (from the source dispatch) — drives the GST lookup. */
   pCategory: string;
+  /**
+   * What the sale's price was made of, from the dispatch it came from.
+   *
+   * `rate = productRate + designRate + special-rate adjustment`, which is how
+   * the order form builds it (see BookingQuoteLine). The adjustment is not
+   * stored on its own, so it is the remainder — that is the only honest way to
+   * show it after the fact. An agent commission flagged `addToRate` is already
+   * inside `productRate` by the time a dispatch stores it and cannot be split
+   * back out, so it is not claimed as a separate line.
+   *
+   * Null on a line with no source dispatch (a manual or SCRAP row): there is
+   * nothing to break down, and the UI shows nothing rather than guessing.
+   */
+  productRate?: number | null;
+  designRate?: number | null;
+  /** The dispatch's resolved rate. May differ from `price` if the challan was edited. */
+  dispatchRate?: number | null;
 }
 
 /** One item line on a note (both DN and CN). */

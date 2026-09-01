@@ -67,9 +67,29 @@ export class NotesService {
       orderBy: [{ invDate: 'desc' }, { id: 'desc' }],
       include: { items: true },
     });
+    /*
+     * What each sale's price was made of.
+     *
+     * The challan item stores only the final price; the parts live on the
+     * dispatch it came from. Loaded for every line in one query rather than per
+     * row — a year of a busy customer's sales is hundreds of items.
+     */
+    const dispatchIds = [
+      ...new Set(challans.flatMap((ch) => ch.items.map((it) => it.dispatchId).filter((id): id is number => !!id))),
+    ];
+    const parts = new Map<number, { productRate: number | null; designRate: number | null; rate: number | null }>();
+    if (dispatchIds.length) {
+      const ds = await this.prisma.dispatch.findMany({
+        where: { id: { in: dispatchIds } },
+        select: { id: true, productRate: true, designRate: true, rate: true },
+      });
+      for (const d of ds) parts.set(d.id, { productRate: d.productRate, designRate: d.designRate, rate: d.rate });
+    }
+
     const rows: RecentSoldRow[] = [];
     for (const ch of challans) {
       for (const it of ch.items) {
+        const part = it.dispatchId ? parts.get(it.dispatchId) : undefined;
         rows.push({
           dispatchId: it.dispatchId ?? 0,
           invNo: ch.code,
@@ -84,6 +104,9 @@ export class NotesService {
           unit: it.unit ?? '',
           gstRate: ch.gst ?? 0,
           pCategory: it.pCategory ?? '',
+          productRate: part?.productRate ?? null,
+          designRate: part?.designRate ?? null,
+          dispatchRate: part?.rate ?? null,
         });
       }
     }
