@@ -28,7 +28,7 @@ import {
 } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { RateBreakdownCard } from '@/components/common/rate-breakdown';
 import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
@@ -158,25 +158,33 @@ const EMPTY_ENTRY = {
 };
 
 /**
- * What a note line's price is made of, on hover.
+ * What a note line's price is made of — the same card the New Order form uses.
  *
- * A note prices from the original sale, and that sale's rate was assembled from
- * parts the challan does not keep — only the dispatch behind it does. Showing
- * them here is the difference between "₹377, take it or leave it" and being
- * able to see the ₹365 product and the ₹12 design that make it up before
- * crediting any of it back.
+ * A note prices from an earlier sale, so the figure arrives with no explanation
+ * unless one is carried across. The parts come from the dispatch behind the
+ * challan: the order form resolves them live from the masters, a note reads
+ * them off what was actually charged.
  *
- * The special-rate line is the REMAINDER (rate less product less design), which
- * is what a customer special rate actually is in this system. An agent
- * commission flagged "add to rate" is already inside the product rate by the
- * time a dispatch stores it and cannot be separated out afterwards, so it is
- * not listed as if it were a distinct component — saying so is better than
- * showing a figure that would be a guess.
+ * The special-rate line is the REMAINDER — the sale's rate less its product and
+ * design rates — because that is what a customer special rate is here and it is
+ * not stored on its own. An agent commission flagged "add to rate" is already
+ * inside the product rate by the time a dispatch records it and cannot be split
+ * back out, so the card says where it went instead of inventing a row: a made-up
+ * split of somebody's money is worse than none.
  *
- * Nothing is rendered for a line with no source dispatch; there is nothing to
- * break down and an empty card is worse than none.
+ * Renders nothing but its child for a line with no source dispatch (a manual or
+ * SCRAP row) — there is nothing to break down.
  */
-function PriceBreakdown({ line, children }: { line: Line; children: ReactNode }) {
+function NotePriceBreakdown({
+  line,
+  children,
+}: {
+  line: Pick<
+    Line,
+    'productRate' | 'designRate' | 'dispatchRate' | 'price' | 'refInvNo' | 'design' | 'unit'
+  >;
+  children: ReactNode;
+}) {
   const base = line.productRate;
   const design = line.designRate;
   const rate = line.dispatchRate;
@@ -187,55 +195,33 @@ function PriceBreakdown({ line, children }: { line: Line; children: ReactNode })
   const billed = line.price ?? 0;
   const edited = rate != null && Math.abs(billed - rate) > 0.001;
 
-  const Row = ({ label, value, strong }: { label: string; value: string; strong?: boolean }) => (
-    <div className={cn('flex items-center justify-between gap-6', strong && 'font-bold')}>
-      <span className={strong ? undefined : 'opacity-80'}>{label}</span>
-      <span className="tabular-nums">{value}</span>
-    </div>
-  );
-
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span
-          tabIndex={0}
-          className="focus-visible:ring-primary/40 cursor-help rounded-[3px] focus-visible:ring-2 focus-visible:outline-none"
-        >
-          {children}
-        </span>
-      </TooltipTrigger>
-      <TooltipContent side="left" className="max-w-none p-0">
-        <div className="min-w-56 space-y-1 p-2.5 text-[11.5px]">
-          <p className="text-[10px] font-bold tracking-widest uppercase opacity-60">
-            How this price was built{line.refInvNo ? ` · ${line.refInvNo}` : ''}
-          </p>
-          {base != null && <Row label="Product rate" value={money(base)} />}
-          {design != null && <Row label="Design rate" value={money(design)} />}
-          {special !== 0 && (
-            <Row
-              label="Special rate"
-              value={`${special > 0 ? '+' : '−'} ${money(Math.abs(special))}`}
-            />
-          )}
-          {rate != null && (
-            <div className="mt-1 border-t border-white/20 pt-1">
-              <Row label="Rate on the sale" value={money(rate)} strong />
-            </div>
-          )}
-          {edited && (
-            <div className="mt-1 border-t border-white/20 pt-1">
-              <Row label="Billed on the invoice" value={money(billed)} strong />
-              <p className="pt-0.5 text-[10.5px] opacity-70">
-                Edited on the challan, so it differs from the rate above.
-              </p>
-            </div>
-          )}
-          <p className="pt-1 text-[10.5px] opacity-60">
-            An agent commission set to add to the rate is already inside the product rate.
-          </p>
-        </div>
-      </TooltipContent>
-    </Tooltip>
+    <RateBreakdownCard
+      // productRate must equal productBase + its parts (the card only shows a
+      // build-up when that reconciles) — so the special-rate remainder folds
+      // into the product side here, same place it lands in the sale itself.
+      productRate={(base ?? 0) + special}
+      designRate={design ?? 0}
+      productBase={base ?? 0}
+      productParts={special !== 0 ? [{ amount: special, tag: '' }] : []}
+      designBase={design ?? 0}
+      designParts={[]}
+      designLabel={line.design || null}
+      perUnitLabel={(line.unit ?? '').toUpperCase() === 'PCS' ? 'per piece' : 'per kg'}
+      special={special !== 0}
+      note={
+        edited ? (
+          <>
+            Billed on the invoice at <span className="font-bold">{money(billed)}</span> — the
+            challan was edited, so it differs from the rate this sale carried.
+          </>
+        ) : (
+          <>An agent commission set to add to the rate is already inside the product rate.</>
+        )
+      }
+    >
+      {children}
+    </RateBreakdownCard>
   );
 }
 
@@ -1172,7 +1158,31 @@ export function NotesPage() {
                 );
               })}
               <div className="space-y-1">
-                <Label className={FIELD_LABEL}>Price</Label>
+                <Label className={FIELD_LABEL}>
+                  {/* The hover lives on the LABEL, not the input: a card over a
+                      field you are typing into fights the caret, and hovering a
+                      text box to read something is not a gesture anyone expects. */}
+                  <NotePriceBreakdown
+                    line={{
+                      productRate: entry.productRate,
+                      designRate: entry.designRate,
+                      dispatchRate: entry.dispatchRate,
+                      price: numOrU(entry.price),
+                      refInvNo: entry.refInvNo,
+                      design: entry.design,
+                      unit: entry.unit,
+                    }}
+                  >
+                    <span
+                      className={cn(
+                        entry.dispatchRate != null &&
+                          'underline decoration-dotted decoration-sky-400 underline-offset-[3px]',
+                      )}
+                    >
+                      Price
+                    </span>
+                  </NotePriceBreakdown>
+                </Label>
                 <Input
                   value={entry.price}
                   onChange={(e) => setEntry((s) => ({ ...s, price: e.target.value }))}
@@ -1313,10 +1323,10 @@ export function NotesPage() {
                         {l.unit ?? '—'}
                       </td>
                       <td className={cn(TD, NUM, 'font-semibold')}>
-                        <PriceBreakdown line={l}>{money(l.price ?? 0)}</PriceBreakdown>
+                        <NotePriceBreakdown line={l}>{money(l.price ?? 0)}</NotePriceBreakdown>
                       </td>
                       <td className={cn(TD, NUM, 'font-bold text-slate-900 dark:text-slate-100')}>
-                        <PriceBreakdown line={l}>{money(noteItemAmount(l))}</PriceBreakdown>
+                        <NotePriceBreakdown line={l}>{money(noteItemAmount(l))}</NotePriceBreakdown>
                       </td>
                       <td
                         className={cn(

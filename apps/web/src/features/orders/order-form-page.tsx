@@ -12,9 +12,47 @@ import {
   type SetStateAction,
 } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRightLeft, BadgePercent, Brush, Camera, Check, type LucideIcon, ChevronDown, ChevronUp, FilePen, FileText, History, Keyboard, Loader2, Lock, PackageOpen, Package, Pencil, Pin, Plus, Receipt, RotateCcw, Save, Settings2, Trash2, Truck, X } from 'lucide-react';
+import {
+  ArrowLeft,
+  ArrowRightLeft,
+  BadgePercent,
+  Brush,
+  Camera,
+  Check,
+  type LucideIcon,
+  ChevronDown,
+  ChevronUp,
+  FilePen,
+  FileText,
+  History,
+  Keyboard,
+  Loader2,
+  Lock,
+  PackageOpen,
+  Package,
+  Pencil,
+  Pin,
+  Plus,
+  Receipt,
+  RotateCcw,
+  Save,
+  Settings2,
+  Trash2,
+  Truck,
+  X,
+} from 'lucide-react';
 import { toast } from 'sonner';
-import { ALL_PERMISSIONS, ORDER_PRIORITIES, RESOURCES, resolveCommissionRate, resolveSpecialRates, qtyOrderForCategory, type OrderInput, type QtyField, type RateScope } from '@oms/shared';
+import {
+  ALL_PERMISSIONS,
+  ORDER_PRIORITIES,
+  RESOURCES,
+  resolveCommissionRate,
+  resolveSpecialRates,
+  qtyOrderForCategory,
+  type OrderInput,
+  type QtyField,
+  type RateScope,
+} from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useAutoSizePcs } from '@/lib/auto-size-pcs';
@@ -27,7 +65,20 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  RateBreakdownCard,
+  RateBuildUp,
+  RateLine,
+  scopeWord,
+} from '@/components/common/rate-breakdown';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { NativeSelect } from '@/components/common/combo';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -36,7 +87,13 @@ import { useCustomerSpecialRates } from '@/features/special-rates/use-special-ra
 import { useAgentRateAddOns } from '@/features/agent-commission/use-agent-commission';
 import { useCreateOrder, useOrder, useOrderLookups, useUpdateOrder } from './use-orders';
 import { useDraftPhotoCheck, useFulfillOrder } from '../dispatch/use-dispatch';
-import { useConvertQuotation, useCreateQuotation, useCreateQuotationFromOrder, useQuotation, useUpdateQuotation } from '../quotations/use-quotations';
+import {
+  useConvertQuotation,
+  useCreateQuotation,
+  useCreateQuotationFromOrder,
+  useQuotation,
+  useUpdateQuotation,
+} from '../quotations/use-quotations';
 import { clearOrderDraft, loadOrderDraft, saveOrderDraft } from './order-draft';
 import { DraftLinePhotos, toPhotoInput, type LinePhoto } from './line-photos';
 import { useActiveCustomerBookings } from '@/features/bookings/use-bookings';
@@ -136,9 +193,8 @@ const blankEntry = (): Omit<Item, 'key'> => ({
 const fmtNum = (v: number | null) => (v == null ? '' : String(v));
 
 const n = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? null : Number(s));
-const itemRate = (l: Pick<Item, 'productRate' | 'designRate'>) => (n(l.productRate) ?? 0) + (n(l.designRate) ?? 0);
-const scopeWord = (s: string | null) =>
-  s === 'ITEM' ? 'item' : s === 'SUBCATEGORY' ? 'sub-category' : s === 'CATEGORY' ? 'category' : '';
+const itemRate = (l: Pick<Item, 'productRate' | 'designRate'>) =>
+  (n(l.productRate) ?? 0) + (n(l.designRate) ?? 0);
 const fmtDelta = (n: number) => (n > 0 ? `+${n}` : `${n}`);
 /**
  * "Base ₹340 +₹10 (item) +₹15 (commission)" — how a Product/Design rate was
@@ -152,27 +208,40 @@ const fmtDelta = (n: number) => (n > 0 ? `+${n}` : `${n}`);
  * would be explaining a figure that isn't there any more, which is worse than
  * not explaining it at all.
  */
-function rateSub(base: number | null | undefined, parts: { amount: number; tag: string }[], current: number): string | null {
+function rateSub(
+  base: number | null | undefined,
+  parts: { amount: number; tag: string }[],
+  current: number,
+): string | null {
   const real = parts.filter((p) => p.amount !== 0);
   if (base == null || real.length === 0) return null;
   if (Math.abs(base + real.reduce((s, p) => s + p.amount, 0) - current) > 0.001) return null;
-  const bits = real.map((p) => `${p.amount > 0 ? '+' : '−'}₹${Math.abs(p.amount).toLocaleString('en-IN')} (${p.tag})`);
+  const bits = real.map(
+    (p) => `${p.amount > 0 ? '+' : '−'}₹${Math.abs(p.amount).toLocaleString('en-IN')} (${p.tag})`,
+  );
   return `Base ₹${base.toLocaleString('en-IN')} ${bits.join(' ')}`;
 }
 /** The Product ₹ line's add-ons: the customer special-rate delta, then a
  *  pass-through agent commission (see `commissionAddOn` on Item) — design
  *  never carries the second, commission is always folded into the product
  *  side regardless of which scope the winning commission rule was aimed at. */
-const productParts = (item: Pick<Item, 'productDelta' | 'productFrom' | 'commissionAddOn' | 'commissionFrom'>) => [
-  ...(item.productDelta ? [{ amount: item.productDelta, tag: scopeWord(item.productFrom ?? null) }] : []),
+const productParts = (
+  item: Pick<Item, 'productDelta' | 'productFrom' | 'commissionAddOn' | 'commissionFrom'>,
+) => [
+  ...(item.productDelta
+    ? [{ amount: item.productDelta, tag: scopeWord(item.productFrom ?? null) }]
+    : []),
   // The commission's own tag names the rule that won it, so a special
   // commission is distinguishable from the agent's plain base rate.
-  ...(item.commissionAddOn ? [{ amount: item.commissionAddOn, tag: `commission:${item.commissionFrom ?? ''}` }] : []),
+  ...(item.commissionAddOn
+    ? [{ amount: item.commissionAddOn, tag: `commission:${item.commissionFrom ?? ''}` }]
+    : []),
 ];
 const designParts = (item: Pick<Item, 'designDelta' | 'designFrom'>) =>
   item.designDelta ? [{ amount: item.designDelta, tag: scopeWord(item.designFrom ?? null) }] : [];
 /** A design that carries a logo (standalone "LOGO" or a combo like "HAMMER+LOGO"). */
-const isLogoDesign = (designType?: string | null) => (designType ?? '').toUpperCase().includes('LOGO');
+const isLogoDesign = (designType?: string | null) =>
+  (designType ?? '').toUpperCase().includes('LOGO');
 /**
  * A line's rate, with the product + design split behind a hover.
  *
@@ -201,304 +270,31 @@ type RateBreakdownItem = Pick<
   | 'commissionFrom'
 >;
 
-/** One line of the breakdown card: a coloured dot, a label, and the money. */
-function RateLine({
-  icon: Icon,
-  label,
-  sub,
-  value,
-  accent,
-}: {
-  icon: LucideIcon;
-  label: string;
-  sub?: string | null;
-  value: string;
-  accent: 'blue' | 'violet';
-}) {
-  const tone =
-    accent === 'blue'
-      ? 'bg-blue-50 text-blue-700 ring-blue-200/70 dark:bg-blue-950/50 dark:text-blue-300 dark:ring-blue-900'
-      : 'bg-violet-50 text-violet-700 ring-violet-200/70 dark:bg-violet-950/50 dark:text-violet-300 dark:ring-violet-900';
-  return (
-    <div className="flex items-center gap-2.5">
-      <span className={cn('grid size-7 shrink-0 place-items-center rounded-[6px] ring-1', tone)}>
-        <Icon className="size-3.5" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="text-[11.5px] leading-tight font-semibold">{label}</p>
-        {sub && <p className="text-muted-foreground truncate text-[10.5px] leading-tight">{sub}</p>}
-      </div>
-      <span className="shrink-0 text-[13px] font-bold tabular-nums">{value}</span>
-    </div>
-  );
-}
-
-/** A row inside {@link RateBuildUp}: a label on the left, money on the right. */
-function BuildUpRow({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3">
-      <span className={cn('text-[11.5px] leading-tight', strong ? 'font-bold' : 'text-muted-foreground font-medium')}>{label}</span>
-      <span className={cn('shrink-0 text-[12.5px] tabular-nums', strong ? 'font-bold' : 'font-semibold')}>{value}</span>
-    </div>
-  );
-}
-
 /**
- * How ONE side of the rate was arrived at: the base, then every add-on on its
- * own line, then what they come to.
+ * A line's rate, with the product + design split behind a hover.
  *
- * Asked about the Product rate alone, a 256px card cannot answer in a run-on
- * sub-line. "Base ₹320 +₹55 (category) …" is exactly where the old one ran out
- * of width and truncated — with an ellipsis sitting where the commission, the
- * thing being asked about, should have been.
- *
- * The reconciliation guard is {@link rateSub}'s: only claim a build-up that
- * actually adds up to the figure shown. A hand-typed rate has no derivation,
- * and inventing one would be worse than saying nothing.
- */
-/**
- * What to call one add-on row.
- *
- * A commission tag carries the rule that won it ("commission:Base rate",
- * "commission:JOHN · GLASS"), because "Commission" alone left the reader unable
- * to tell the agent's standing rate from a rule written for this party.
- */
-function buildUpLabel(tag: string): string {
-  if (!tag.startsWith('commission')) return `Special rate (${tag})`;
-  const from = tag.slice('commission:'.length).trim();
-  if (!from) return 'Commission';
-  // "Base rate" is the agent's standing rate; anything else is a special rule.
-  return /^base rate$/i.test(from) ? 'Commission (agent base rate)' : `Special commission (${from})`;
-}
-
-function RateBuildUp({
-  base,
-  parts,
-  total,
-  accent,
-}: {
-  base: number | null | undefined;
-  parts: { amount: number; tag: string }[];
-  total: number;
-  accent: 'blue' | 'violet';
-}) {
-  const real = parts.filter((p) => p.amount !== 0);
-  const reconciles = base != null && Math.abs(base + real.reduce((sum, p) => sum + p.amount, 0) - total) < 0.001;
-  const rule = accent === 'blue' ? 'border-blue-200 dark:border-blue-900/70' : 'border-violet-200 dark:border-violet-900/70';
-
-  // No total row: whatever encloses this — the card header, or the Product /
-  // Design line it sits under — already shows the figure these add up to, and
-  // repeating it is the clutter this card is meant to be rid of.
-  if (!reconciles) {
-    // Two ways to land here — a rate typed over by hand, or no master rate on
-    // record to build from. Neither is knowable from here, so claim neither.
-    return <p className="text-muted-foreground text-[10.5px] leading-snug">No breakdown available for this rate.</p>;
-  }
-  if (real.length === 0) {
-    return <p className="text-muted-foreground text-[10.5px] leading-snug">Nothing added — this is the master rate.</p>;
-  }
-  return (
-    <div className={cn('space-y-1 border-l-2 pl-2', rule)}>
-      <BuildUpRow label="Base rate" value={`₹${(base ?? 0).toLocaleString('en-IN')}`} />
-      {real.map((part) => (
-        <BuildUpRow
-          key={part.tag}
-          label={buildUpLabel(part.tag)}
-          value={`${part.amount > 0 ? '+' : '−'}₹${Math.abs(part.amount).toLocaleString('en-IN')}`}
-        />
-      ))}
-    </div>
-  );
-}
-
-/**
- * A line's rate, with the product + design split behind a hover card.
- *
- * Hover AND click, both: hover is what a mouse user discovers, and a tap is the
- * only thing a phone can do — a hover-only card is invisible on the device where
- * this table is hardest to read. A click PINS the card open (so the figures can
- * be read without holding the mouse still, and so touch works at all); moving
- * the mouse away only closes what hover opened.
- *
- * Radix portals the card to the body, so the surrounding table's horizontal
- * scroll cannot clip it — the reason this is a popover and not an absolutely
- * positioned div inside the cell.
+ * The card itself now lives in components/common/rate-breakdown so the Debit /
+ * Credit Note form can show the same one — this is only the adapter that turns
+ * an order Item into what it wants.
  */
 function RateBreakdown({ item }: { item: RateBreakdownItem }) {
-  const prod = n(item.productRate) ?? 0;
-  const dsgn = n(item.designRate) ?? 0;
-  const total = prod + dsgn;
-  const inr = (v: number) => `₹${v.toLocaleString('en-IN')}`;
-  // A line with no design rate still opens — "no design rate on this line" is
-  // itself the answer to "why is this 350?" — but only a line that HAS a split
-  // gets the dotted underline, so the hint means something when you see it.
-  const hasSplit = dsgn !== 0;
-  const perUnit = item.calField === 'PCS' ? 'per piece' : 'per kg';
-
-  const [hovered, setHovered] = useState(false);
-  const [pinned, setPinned] = useState(false);
-  const open = hovered || pinned;
-
-  /*
-   * Unpinning clears hover as well, or the mouse still sitting on the number
-   * would hold the card open and the second click would look like it did
-   * nothing. Moving away and back re-opens it on hover as usual.
-   *
-   * Two plain setStates, NOT a setHovered inside a setPinned updater: an updater
-   * must be pure, and React drops the nested update — which silently broke the
-   * click entirely.
-   */
-  const toggle = () => {
-    if (pinned) setHovered(false);
-    setPinned(!pinned);
-  };
-
   return (
-    <Popover
-      open={open}
-      onOpenChange={(o) => {
-        // Escape and outside-click come through here; both mean "gone", so they
-        // have to clear the hover flag as well or the card would spring back.
-        if (!o) {
-          setPinned(false);
-          setHovered(false);
-        }
-      }}
+    <RateBreakdownCard
+      productRate={n(item.productRate) ?? 0}
+      designRate={n(item.designRate) ?? 0}
+      productBase={item.productBase}
+      productParts={productParts(item)}
+      designBase={item.designBase}
+      designParts={designParts(item)}
+      designLabel={item.designName || item.designType || null}
+      perUnitLabel={item.calField === 'PCS' ? 'per piece' : 'per kg'}
+      special={!!item.special}
+      commissionAdded={!!item.commissionAddOn}
+      bookingCode={item.bookingCode}
+      bookingId={item.bookingId}
     >
-      {/*
-        * Anchor, not Trigger, deliberately.
-        *
-        * Trigger toggles the popover on click all by itself, which fought the
-        * `pinned` state: a click while hover had it open told Radix to close and
-        * this component to pin, and the two cancelled out. Anchor only positions.
-        */}
-      <PopoverAnchor asChild>
-        <span
-          role="button"
-          tabIndex={0}
-          aria-expanded={open}
-          aria-label={`Rate ${total.toLocaleString('en-IN')} — show breakdown`}
-          onPointerEnter={(e) => e.pointerType === 'mouse' && setHovered(true)}
-          onPointerLeave={(e) => e.pointerType === 'mouse' && setHovered(false)}
-          onClick={(e) => {
-            e.stopPropagation();
-            toggle();
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              toggle();
-            }
-          }}
-          onFocus={() => setHovered(true)}
-          onBlur={() => setHovered(false)}
-          className={cn(
-            'cursor-pointer rounded-[4px] px-1 outline-none transition-colors',
-            'hover:bg-sky-50 focus-visible:ring-2 focus-visible:ring-sky-400 dark:hover:bg-sky-950/40',
-            open && 'bg-sky-50 text-sky-800 dark:bg-sky-950/50 dark:text-sky-200',
-            hasSplit && 'underline decoration-dotted decoration-sky-400 underline-offset-[3px]',
-          )}
-        >
-          {total.toLocaleString('en-IN')}
-        </span>
-      </PopoverAnchor>
-
-      <PopoverContent
-        side="left"
-        align="center"
-        sideOffset={8}
-        // Hover must not steal focus from the cell the user is typing in, and a
-        // hovering card must not swallow the pointer either — otherwise moving
-        // the mouse one pixel further would close it by leaving the trigger.
-        onOpenAutoFocus={(e) => e.preventDefault()}
-        onCloseAutoFocus={(e) => e.preventDefault()}
-        className={cn(
-          'w-64 overflow-hidden rounded-[10px] border-0 p-0 shadow-xl',
-          'ring-1 ring-slate-900/10 dark:ring-white/10',
-          !pinned && 'pointer-events-none',
-        )}
-      >
-        {/* Header: the answer first, in the brand gradient — the card is read
-            top-down, and the total is what the eye came for. */}
-        <div className="bg-gradient-to-r from-sky-600 via-blue-600 to-indigo-600 px-3 py-2 text-white">
-          <div className="flex items-baseline justify-between gap-2">
-            <p className="text-[10px] font-bold tracking-[0.14em] uppercase opacity-80">Rate breakdown</p>
-            <p className="text-[9.5px] font-semibold opacity-80">{perUnit}</p>
-          </div>
-          <p className="text-[19px] leading-tight font-bold tabular-nums">{inr(total)}</p>
-        </div>
-
-        <div className="bg-card space-y-2 px-3 py-2.5">
-          {/* Each side: its headline, then how it was arrived at. The build-up
-              used to be crammed into the line's sub-text — "Base ₹370 +₹20
-              (category) …" — where a 256px card truncated it, usually over the
-              commission, which is the part people are hovering to find. */}
-          <div className="space-y-1.5">
-            <RateLine icon={Package} label="Product rate" value={inr(prod)} accent="blue" />
-            <div className="pl-[38px]">
-              <RateBuildUp base={item.productBase} parts={productParts(item)} total={prod} accent="blue" />
-            </div>
-          </div>
-          {hasSplit ? (
-            <div className="space-y-1.5">
-              <RateLine
-                icon={Brush}
-                label="Design rate"
-                sub={item.designName || item.designType || null}
-                value={inr(dsgn)}
-                accent="violet"
-              />
-              {/* Commission never appears on this side — it is folded into the
-                  product rate whatever scope the winning rule was aimed at. */}
-              <div className="pl-[38px]">
-                <RateBuildUp base={item.designBase} parts={designParts(item)} total={dsgn} accent="violet" />
-              </div>
-            </div>
-          ) : (
-            <p className="text-muted-foreground rounded-[6px] border border-dashed px-2 py-1.5 text-[10.5px] leading-snug">
-              No design rate on this line — the rate is the product rate alone.
-            </p>
-          )}
-
-          {/* The sum, spelled out. The point of the card is that 350 + 15 = 365
-              is checkable; showing only the parts leaves the reader to add up. */}
-          {hasSplit && (
-            <div className="flex items-center justify-between gap-2 border-t border-dashed pt-2">
-              <p className="text-muted-foreground text-[10.5px] font-semibold">
-                {inr(prod)} + {inr(dsgn)}
-              </p>
-              <p className="text-[14px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{inr(total)}</p>
-            </div>
-          )}
-
-          {/* Why the rate is what it is, when there is a reason beyond the chart. */}
-          {(item.special || item.bookingId || !!item.commissionAddOn) && (
-            <div className="flex flex-wrap gap-1.5 pt-0.5">
-              {item.special && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
-                  <BadgePercent className="size-3" /> Special rate
-                </span>
-              )}
-              {!!item.commissionAddOn && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-800 dark:bg-sky-950/60 dark:text-sky-300">
-                  <Receipt className="size-3" /> Commission added to rate
-                </span>
-              )}
-              {item.bookingId && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-800 dark:bg-sky-950/60 dark:text-sky-300">
-                  <PackageOpen className="size-3" /> {item.bookingCode ?? 'Booking'} · rate frozen
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="text-muted-foreground flex items-center gap-1 border-t bg-slate-50 px-3 py-1.5 text-[9.5px] dark:bg-slate-900/50">
-          <Pin className={cn('size-2.5', pinned && 'text-sky-600')} />
-          {pinned ? 'Pinned — click the rate again to close' : 'Click the rate to keep this open'}
-        </div>
-      </PopoverContent>
-    </Popover>
+      {((n(item.productRate) ?? 0) + (n(item.designRate) ?? 0)).toLocaleString('en-IN')}
+    </RateBreakdownCard>
   );
 }
 
@@ -555,7 +351,9 @@ const TAB_PREF_KEY = 'oms:order-tab-order';
 const ROWS_PREF_KEY = 'oms:order-rows-to-show:v2';
 const ROWS_OPTIONS = [0, 5, 8, 10, 15, 20];
 const rowsLabel = (n: number) => (n === 0 ? 'All rows' : `${n} rows`);
-const FIELD_LABEL: Record<string, string> = Object.fromEntries(TAB_FIELDS.map((f) => [f.key, f.label]));
+const FIELD_LABEL: Record<string, string> = Object.fromEntries(
+  TAB_FIELDS.map((f) => [f.key, f.label]),
+);
 
 interface TabEntry {
   key: string;
@@ -571,7 +369,9 @@ function loadTabOrder(): TabEntry[] {
       const saved = JSON.parse(raw) as TabEntry[];
       const known = new Set<string>(TAB_FIELDS.map((f) => f.key));
       const seen = new Set<string>();
-      const merged = saved.filter((t) => t && known.has(t.key) && !seen.has(t.key) && seen.add(t.key));
+      const merged = saved.filter(
+        (t) => t && known.has(t.key) && !seen.has(t.key) && seen.add(t.key),
+      );
       for (const f of TAB_FIELDS) if (!seen.has(f.key)) merged.push({ key: f.key, enabled: true });
       return merged.map((t) => ({ key: t.key, enabled: t.enabled !== false }));
     }
@@ -604,7 +404,12 @@ const focusField = (root: HTMLElement | null, key: string): boolean => {
 
 function Kbd({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <kbd className={cn('bg-muted text-muted-foreground inline-flex h-5 min-w-5 items-center justify-center rounded border px-1.5 font-mono text-[10px] font-semibold', className)}>
+    <kbd
+      className={cn(
+        'bg-muted text-muted-foreground inline-flex h-5 min-w-5 items-center justify-center rounded border px-1.5 font-mono text-[10px] font-semibold',
+        className,
+      )}
+    >
       {children}
     </kbd>
   );
@@ -621,7 +426,9 @@ export function OrderFormPage() {
   const isEdit = id != null;
   // The same form drives both orders and quotations. The route decides which
   // document we're editing; on /orders/new the user picks via the two buttons.
-  const docKind: 'order' | 'quotation' = location.pathname.startsWith('/quotations') ? 'quotation' : 'order';
+  const docKind: 'order' | 'quotation' = location.pathname.startsWith('/quotations')
+    ? 'quotation'
+    : 'order';
   const listPath = docKind === 'quotation' ? '/quotations' : '/orders';
   const docLabel = docKind === 'quotation' ? 'quotation' : 'order';
   const navState = (location.state ?? null) as NavState | null;
@@ -674,7 +481,10 @@ export function OrderFormPage() {
   }, [tabOrder]);
 
   // The enabled field keys, in the user's chosen order.
-  const tabSequence = useMemo(() => tabOrder.filter((t) => t.enabled).map((t) => t.key), [tabOrder]);
+  const tabSequence = useMemo(
+    () => tabOrder.filter((t) => t.enabled).map((t) => t.key),
+    [tabOrder],
+  );
   // Live qty-field tab order = the picked category's layout order (Settings → Order
   // quantity fields). Updated each render once `entry` exists; read by handleTabNav
   // so Tab walks Bags/Box/Pcs/Kgs in the SAME order they're laid out.
@@ -742,7 +552,10 @@ export function OrderFormPage() {
     if (advance()) e.preventDefault();
   };
 
-  const completionDayOptions = useMemo(() => settingValues(settings, 'COMPLETION_DAYS'), [settings]);
+  const completionDayOptions = useMemo(
+    () => settingValues(settings, 'COMPLETION_DAYS'),
+    [settings],
+  );
   const orderTypeOptions = useMemo(() => settingValues(settings, 'ORDER_TYPE'), [settings]);
 
   // Header
@@ -784,12 +597,17 @@ export function OrderFormPage() {
   // Cap the grid's height to the chosen number of rows (row ≈ 2.5rem + header) —
   // capped again by the actual item count so a handful of lines doesn't leave a
   // tall blank strip reserved for rows that don't exist yet.
-  const gridMaxHeight = rowsToShow === 0 ? undefined : `${Math.min(rowsToShow, Math.max(items.length, 1)) * 2.5 + 2.9}rem`;
+  const gridMaxHeight =
+    rowsToShow === 0
+      ? undefined
+      : `${Math.min(rowsToShow, Math.max(items.length, 1)) * 2.5 + 2.9}rem`;
 
   // Bag-booking draw-down: pull a customer's reserved bags into this order. The
   // button only shows when the customer actually has a drawable booking.
   const [bookingSheetOpen, setBookingSheetOpen] = useState(false);
-  const { data: activeBookings = [] } = useActiveCustomerBookings(docKind === 'order' ? customer.trim() : '');
+  const { data: activeBookings = [] } = useActiveCustomerBookings(
+    docKind === 'order' ? customer.trim() : '',
+  );
   // Arriving from Bag Bookings' "Convert" action: once the pre-filled customer's
   // bookings have actually loaded, open the sheet automatically instead of making
   // the user click "Draw from Bag Booking" themselves. Fires at most once — after
@@ -806,7 +624,10 @@ export function OrderFormPage() {
   // show the true remaining before the order is even saved).
   const alreadyQueuedForBooking = (bookingId: number) =>
     items.reduce(
-      (a, i) => (i.bookingId === bookingId && i.status !== 'CANCELLED' ? { bags: a.bags + (n(i.bags) ?? 0), kgs: a.kgs + (n(i.gram) ?? 0) } : a),
+      (a, i) =>
+        i.bookingId === bookingId && i.status !== 'CANCELLED'
+          ? { bags: a.bags + (n(i.bags) ?? 0), kgs: a.kgs + (n(i.gram) ?? 0) }
+          : a,
       { bags: 0, kgs: 0 },
     );
   // Append booking-drawn lines (already priced at the frozen rate) to the order.
@@ -857,7 +678,9 @@ export function OrderFormPage() {
   // never load (rates aren't applied, blocked logos still show). Setting the same
   // id is a no-op, so this never fights onCustomer.
   useEffect(() => {
-    const id = customer.trim() ? lookups?.customers.find((x) => x.name === customer)?.id : undefined;
+    const id = customer.trim()
+      ? lookups?.customers.find((x) => x.name === customer)?.id
+      : undefined;
     setCustomerId(id);
   }, [customer, lookups]);
 
@@ -878,7 +701,8 @@ export function OrderFormPage() {
 
   // Default the entry's order type once options load.
   useEffect(() => {
-    if (!entry.ordType && orderTypeOptions.length) setEntry((e) => ({ ...e, ordType: orderTypeOptions[0] }));
+    if (!entry.ordType && orderTypeOptions.length)
+      setEntry((e) => ({ ...e, ordType: orderTypeOptions[0] }));
   }, [orderTypeOptions, entry.ordType]);
 
   // Populate every field from a saved order (used on load + by the Reset button).
@@ -906,7 +730,9 @@ export function OrderFormPage() {
           category: it.pCategory ?? '',
           subCategory: it.subCategory ?? '',
           designType: it.designType ?? '',
-          designName: it.design?.trim() || (it.designType ? (nameByCode.get(it.designType.toUpperCase()) ?? '') : ''),
+          designName:
+            it.design?.trim() ||
+            (it.designType ? (nameByCode.get(it.designType.toUpperCase()) ?? '') : ''),
           productRate: it.productRate?.toString() ?? '',
           designRate: it.designRate?.toString() ?? '',
           weight: '',
@@ -975,13 +801,34 @@ export function OrderFormPage() {
     if (!draftEnabled || !draftReady.current) return;
     const t = window.setTimeout(() => {
       if (customer.trim() || items.length > 0) {
-        saveOrderDraft({ customer, poNumber, agentName, category, orderDate, completionDay, status, showBy, items });
+        saveOrderDraft({
+          customer,
+          poNumber,
+          agentName,
+          category,
+          orderDate,
+          completionDay,
+          status,
+          showBy,
+          items,
+        });
       } else {
         clearOrderDraft();
       }
     }, 600);
     return () => window.clearTimeout(t);
-  }, [draftEnabled, customer, poNumber, agentName, category, orderDate, completionDay, status, showBy, items]);
+  }, [
+    draftEnabled,
+    customer,
+    poNumber,
+    agentName,
+    category,
+    orderDate,
+    completionDay,
+    status,
+    showBy,
+    items,
+  ]);
 
   // Clear the whole form back to a blank state.
   const blankForm = () => {
@@ -1077,7 +924,9 @@ export function OrderFormPage() {
       logos.some(
         (l) =>
           (l.scope === 'CATEGORY' && norm(l.category) === norm(category)) ||
-          (l.scope === 'SUBCATEGORY' && norm(l.category) === norm(category) && norm(l.subCategory) === norm(subCategory)),
+          (l.scope === 'SUBCATEGORY' &&
+            norm(l.category) === norm(category) &&
+            norm(l.subCategory) === norm(subCategory)),
       );
     const map = new Map<string, (typeof list)[number]>();
     const options: { value: string; label: string; keywords: string }[] = [];
@@ -1092,7 +941,9 @@ export function OrderFormPage() {
       // still found by typing "15" (its pcs / "15-PCS" sub-category), and a
       // Pcs-view row is found by its size. Matches the user's Size/Pcs setting
       // for display while staying findable either way.
-      const keywords = [fmtNum(it.size), fmtNum(it.pcs), it.subCategory ?? ''].filter(Boolean).join(' ');
+      const keywords = [fmtNum(it.size), fmtNum(it.pcs), it.subCategory ?? '']
+        .filter(Boolean)
+        .join(' ');
       options.push({ value: label, label, keywords });
     }
     return { options, map };
@@ -1111,8 +962,15 @@ export function OrderFormPage() {
   };
 
   /** Identity of a rate in the catalogue — everything that decides it except size. */
-  const rateKey = (l: { product: string; category: string; subCategory: string; designType?: string | null }) =>
-    [l.product, l.category, l.subCategory, designOf(l.designType) ?? ''].map((v) => (v ?? '').trim().toUpperCase()).join('|');
+  const rateKey = (l: {
+    product: string;
+    category: string;
+    subCategory: string;
+    designType?: string | null;
+  }) =>
+    [l.product, l.category, l.subCategory, designOf(l.designType) ?? '']
+      .map((v) => (v ?? '').trim().toUpperCase())
+      .join('|');
 
   /**
    * The catalogue's master product/design rate per rate-identity.
@@ -1127,7 +985,8 @@ export function OrderFormPage() {
     const m = new Map<string, { productRate: number | null; designRate: number | null }>();
     for (const it of lookups?.items ?? []) {
       const k = rateKey(it);
-      if (!m.has(k)) m.set(k, { productRate: it.productRate ?? null, designRate: it.designRate ?? null });
+      if (!m.has(k))
+        m.set(k, { productRate: it.productRate ?? null, designRate: it.designRate ?? null });
     }
     return m;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1138,9 +997,15 @@ export function OrderFormPage() {
    * won it. Shared with {@link onItemPick} so the price the form applies and
    * the breakdown that explains it can never come from two different engines.
    */
-  const commissionFor = (line: { category: string; subCategory: string; product: string; designType?: string | null }) => {
+  const commissionFor = (line: {
+    category: string;
+    subCategory: string;
+    product: string;
+    designType?: string | null;
+  }) => {
     const catKey = line.category.trim().toUpperCase();
-    const base = commissionAddOns?.bases.find((b) => b.pCategory.trim().toUpperCase() === catKey) ?? null;
+    const base =
+      commissionAddOns?.bases.find((b) => b.pCategory.trim().toUpperCase() === catKey) ?? null;
     const resolved =
       commissionAddOns && (commissionAddOns.specials.length || base)
         ? resolveCommissionRate(commissionAddOns.specials, base, {
@@ -1179,7 +1044,8 @@ export function OrderFormPage() {
         })
       : null;
     const commission = commissionFor({ ...line, designType });
-    const hasProd = master.productRate != null || (res?.productDelta ?? 0) !== 0 || commission.amount !== 0;
+    const hasProd =
+      master.productRate != null || (res?.productDelta ?? 0) !== 0 || commission.amount !== 0;
     const hasDesign = !!designType && (master.designRate != null || (res?.designDelta ?? 0) !== 0);
     return {
       productBase: hasProd ? (master.productRate ?? 0) : null,
@@ -1207,7 +1073,19 @@ export function OrderFormPage() {
       // A free-typed name has no catalogue rate to break down — drop whatever
       // a PREVIOUS pick left behind, or the rate breakdown card would go on
       // explaining a number that no longer belongs to this line.
-      setEntry((e) => ({ ...e, itemName: label, product: label, productBase: null, productDelta: null, productFrom: null, designBase: null, designDelta: null, designFrom: null, commissionAddOn: null, commissionFrom: null }));
+      setEntry((e) => ({
+        ...e,
+        itemName: label,
+        product: label,
+        productBase: null,
+        productDelta: null,
+        productFrom: null,
+        designBase: null,
+        designDelta: null,
+        designFrom: null,
+        commissionAddOn: null,
+        commissionFrom: null,
+      }));
       return;
     }
     // Apply the customer's special-rate cascade (most-specific level wins) on top
@@ -1228,7 +1106,8 @@ export function OrderFormPage() {
      */
     const commission = commissionFor(it);
     const commissionAmount = commission.amount;
-    const hasProd = it.productRate != null || (res?.productDelta ?? 0) !== 0 || commissionAmount !== 0;
+    const hasProd =
+      it.productRate != null || (res?.productDelta ?? 0) !== 0 || commissionAmount !== 0;
     const hasDesign = !!it.designType && (it.designRate != null || (res?.designDelta ?? 0) !== 0);
     const prodRate = (it.productRate ?? 0) + (res?.productDelta ?? 0) + commissionAmount;
     const desRate = (it.designRate ?? 0) + (res?.designDelta ?? 0);
@@ -1238,8 +1117,12 @@ export function OrderFormPage() {
     const specialTip =
       res && (res.productDelta !== 0 || res.designDelta !== 0)
         ? [
-            res.productDelta !== 0 ? `product ${fmtDelta(res.productDelta)} (${scopeWord(res.productFrom)})` : '',
-            res.designDelta !== 0 ? `design ${fmtDelta(res.designDelta)} (${scopeWord(res.designFrom)})` : '',
+            res.productDelta !== 0
+              ? `product ${fmtDelta(res.productDelta)} (${scopeWord(res.productFrom)})`
+              : '',
+            res.designDelta !== 0
+              ? `design ${fmtDelta(res.designDelta)} (${scopeWord(res.designFrom)})`
+              : '',
           ]
             .filter(Boolean)
             .join(' · ')
@@ -1290,12 +1173,16 @@ export function OrderFormPage() {
     const nameTerms = t.slice(lead.length).trim().toLowerCase().split(SEP).filter(Boolean);
     const named = nameTerms.length
       ? list.filter((it) => {
-          const words = `${it.product} ${it.designType ?? ''}`.toLowerCase().split(SEP).filter(Boolean);
+          const words = `${it.product} ${it.designType ?? ''}`
+            .toLowerCase()
+            .split(SEP)
+            .filter(Boolean);
           return nameTerms.every((q) => words.some((w) => w.startsWith(q)));
         })
       : list;
     const pool = named.length ? named : list;
-    const some = (key: 'size' | 'pcs', test: (v: string) => boolean) => pool.some((it) => it[key] != null && test(String(it[key])));
+    const some = (key: 'size' | 'pcs', test: (v: string) => boolean) =>
+      pool.some((it) => it[key] != null && test(String(it[key])));
     const sizeExact = some('size', (v) => v === lead);
     const pcsExact = some('pcs', (v) => v === lead);
     if (pcsExact && !sizeExact) return setShowBy('PCS');
@@ -1407,13 +1294,18 @@ export function OrderFormPage() {
   const entryRateOpen = entryHasRate && (entryRateHovered || entryRatePinned);
   /** The figure the card's header shows — whichever number is being asked about. */
   const entryRateShown =
-    entryRateFocus === 'product' ? n(entry.productRate) ?? 0 : entryRateFocus === 'design' ? n(entry.designRate) ?? 0 : entryTotal;
+    entryRateFocus === 'product'
+      ? (n(entry.productRate) ?? 0)
+      : entryRateFocus === 'design'
+        ? (n(entry.designRate) ?? 0)
+        : entryTotal;
   const onEntryRateEnter = (source: 'product' | 'design' | 'total') => (e: ReactPointerEvent) => {
     if (e.pointerType !== 'mouse' || !entryHasRate) return;
     if (!entryRatePinned) setEntryRateFocus(source);
     setEntryRateHovered(true);
   };
-  const onEntryRateLeave = (e: ReactPointerEvent) => e.pointerType === 'mouse' && setEntryRateHovered(false);
+  const onEntryRateLeave = (e: ReactPointerEvent) =>
+    e.pointerType === 'mouse' && setEntryRateHovered(false);
   const toggleEntryRatePin = () => {
     if (entryRatePinned) setEntryRateHovered(false);
     setEntryRatePinned((v) => !v);
@@ -1434,14 +1326,19 @@ export function OrderFormPage() {
   /** Attach to the item-entry area: any attempt to interact without a customer
    *  is what makes the prompt relevant. */
   const itemAreaGuard = {
-    onFocusCapture: () => { if (noCustomer) setTriedItemEntry(true); },
-    onPointerDownCapture: () => { if (noCustomer) setTriedItemEntry(true); },
+    onFocusCapture: () => {
+      if (noCustomer) setTriedItemEntry(true);
+    },
+    onPointerDownCapture: () => {
+      if (noCustomer) setTriedItemEntry(true);
+    },
   };
 
   // Per-category price-calc field (KGS/PCS), configured on the Products page.
   const categoryFieldMap = useMemo(() => {
     const m = new Map<string, 'KGS' | 'PCS'>();
-    for (const cf of lookups?.categoryFields ?? []) m.set(cf.category.toUpperCase(), cf.field === 'PCS' ? 'PCS' : 'KGS');
+    for (const cf of lookups?.categoryFields ?? [])
+      m.set(cf.category.toUpperCase(), cf.field === 'PCS' ? 'PCS' : 'KGS');
     return m;
   }, [lookups]);
 
@@ -1478,13 +1375,17 @@ export function OrderFormPage() {
     }
     // The line's price-calc field follows the product's category mapping; if the
     // category isn't configured, fall back to the Size/Pcs selection.
-    const calField = categoryFieldMap.get(entry.category.trim().toUpperCase()) ?? (showBy === 'PCS' ? 'PCS' : 'KGS');
+    const calField =
+      categoryFieldMap.get(entry.category.trim().toUpperCase()) ??
+      (showBy === 'PCS' ? 'PCS' : 'KGS');
     // The billing quantity (Kgs or Pcs, per the calc field) must be entered —
     // otherwise the line's amount would silently be ₹0.
     const billQty = calField === 'PCS' ? n(entry.pcs) : n(entry.gram);
     if (billQty == null || billQty <= 0) {
       return toast.error(
-        calField === 'PCS' ? 'Enter Pcs — this item is billed by pieces' : 'Enter Kgs — this item is billed by weight',
+        calField === 'PCS'
+          ? 'Enter Pcs — this item is billed by pieces'
+          : 'Enter Kgs — this item is billed by weight',
       );
     }
     // Same rule as Order Modify: an empty (and disabled) name picker means the
@@ -1545,7 +1446,8 @@ export function OrderFormPage() {
   // history — Order Modify owns that), and booking-drawn lines are rate-frozen.
   // A QUOTATION's saved lines have neither concern: the server replaces its
   // items wholesale on save, so they stay editable right up to conversion.
-  const lineLocked = (item: Item) => (docKind === 'order' && item.id != null) || item.bookingId != null;
+  const lineLocked = (item: Item) =>
+    (docKind === 'order' && item.id != null) || item.bookingId != null;
   const editItem = (item: Item) => {
     if (lineLocked(item)) return;
     if (editingItemKey != null) {
@@ -1556,7 +1458,9 @@ export function OrderFormPage() {
     setEditingItemKey(key);
     setEntry(rest);
     requestAnimationFrame(() => {
-      formRef.current?.querySelector<HTMLElement>('[data-tabfield="itemName"]')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      formRef.current
+        ?.querySelector<HTMLElement>('[data-tabfield="itemName"]')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       focusField(formRef.current, 'itemName');
     });
     toast.info('Editing item — change the fields above, then tap Update.');
@@ -1598,8 +1502,12 @@ export function OrderFormPage() {
    * leaving a confirmed order behind an error. Written out rather than reusing
    * `orderIsDraft`, which is declared further down and would be in its TDZ here.
    */
-  const canDispatch = (!isEdit || status === 'DRAFT') && docKind === 'order' && can('dispatch:create');
-  const { data: photoStatus } = useDraftPhotoCheck({ customerId: customerId ?? null, lines: photoLines }, canDispatch);
+  const canDispatch =
+    (!isEdit || status === 'DRAFT') && docKind === 'order' && can('dispatch:create');
+  const { data: photoStatus } = useDraftPhotoCheck(
+    { customerId: customerId ?? null, lines: photoLines },
+    canDispatch,
+  );
 
   /** Lines that would ship undocumented: the rule applies, nothing on file from
    *  an earlier dispatch, and nothing attached here either. */
@@ -1616,7 +1524,9 @@ export function OrderFormPage() {
   /** What the camera button for a line should say — undefined when this form
    *  can't dispatch, so nothing changes for plain order entry. */
   const photoStatusFor = (key: string) =>
-    canDispatch ? { required: missingPhotoKeys.has(key), onFile: photoStatus?.[key]?.sampleUrl ?? null } : undefined;
+    canDispatch
+      ? { required: missingPhotoKeys.has(key), onFile: photoStatus?.[key]?.sampleUrl ?? null }
+      : undefined;
 
   const setItemPhotos = (key: string, photos: LinePhoto[]) =>
     setItems((its) => its.map((i) => (i.key === key ? { ...i, photos } : i)));
@@ -1668,7 +1578,8 @@ export function OrderFormPage() {
     if (!customer.trim()) return !toast.error('Please select a correct customer');
     if (!forDraft && !completionDay.trim()) return !toast.error('Please Select the Completion Day');
     if (items.length === 0) return !toast.error('There are no items to save.');
-    if (editingItemKey != null) return !toast.error('Finish or cancel the current item edit before saving.');
+    if (editingItemKey != null)
+      return !toast.error('Finish or cancel the current item edit before saving.');
     return true;
   };
 
@@ -1698,7 +1609,8 @@ export function OrderFormPage() {
     agentName: agentName.trim() || null,
     category: category.trim() || null,
     orderDate: orderDateArg,
-    completionDate: (completionDay.trim() === '' ? '' : addDays(orderDateArg, Number(completionDay))) || null,
+    completionDate:
+      (completionDay.trim() === '' ? '' : addDays(orderDateArg, Number(completionDay))) || null,
     status,
     items: items.map((i) => ({
       id: i.id,
@@ -1709,7 +1621,10 @@ export function OrderFormPage() {
       product: i.product.trim() || null,
       design: i.designName.trim() || 'NA',
       designType: i.designType.trim() || null,
-      productName: i.itemName.trim() || [i.product.trim(), i.designType.trim()].filter(Boolean).join(' ') || null,
+      productName:
+        i.itemName.trim() ||
+        [i.product.trim(), i.designType.trim()].filter(Boolean).join(' ') ||
+        null,
       productRate: n(i.productRate),
       designRate: n(i.designRate),
       rate: itemRate(i),
@@ -1750,10 +1665,13 @@ export function OrderFormPage() {
       // ("CONFIRMED"), which the quotation API rejects. A new quotation starts as DRAFT.
       // After creating, jump to the printable page so it can be downloaded right
       // away. Back from there returns to this New Order form (browser history).
-      createQuotation.mutate({ ...input, status: 'DRAFT' }, {
-        onSuccess: (q) => finishTo(can('quotation:view') ? `/quotations/${q.id}/bill` : listDest),
-        onError,
-      });
+      createQuotation.mutate(
+        { ...input, status: 'DRAFT' },
+        {
+          onSuccess: (q) => finishTo(can('quotation:view') ? `/quotations/${q.id}/bill` : listDest),
+          onError,
+        },
+      );
     } else {
       create.mutate(input, {
         onSuccess: (o) => finishTo(can('order:print') ? `/orders/${o.id}/bill` : listDest),
@@ -1778,7 +1696,8 @@ export function OrderFormPage() {
         convertQuotation.mutate(
           { id: id!, mode: 'EDITED' },
           {
-            onSuccess: (order) => finishTo(can('order:print') ? `/orders/${order.id}/bill` : '/orders'),
+            onSuccess: (order) =>
+              finishTo(can('order:print') ? `/orders/${order.id}/bill` : '/orders'),
             onError: (e) => toast.error(getApiErrorMessage(e, 'Convert failed')),
           },
         ),
@@ -1811,7 +1730,8 @@ export function OrderFormPage() {
     update.mutate(input, {
       onSuccess: () =>
         createQuotationFromOrder.mutate(id!, {
-          onSuccess: (q) => finishTo(can('quotation:view') ? `/quotations/${q.id}/bill` : '/quotations'),
+          onSuccess: (q) =>
+            finishTo(can('quotation:view') ? `/quotations/${q.id}/bill` : '/quotations'),
           onError: (e) => toast.error(getApiErrorMessage(e, 'Could not create the quotation')),
         }),
       onError,
@@ -1853,7 +1773,9 @@ export function OrderFormPage() {
     const input = { ...buildInput(await resolveOrderDate()), status: statusValue };
     const onError = (e: unknown) => toast.error(getApiErrorMessage(e, 'Save failed'));
     const done = (orderId?: number) =>
-      finishTo(redirectToBill && orderId && can('order:print') ? `/orders/${orderId}/bill` : '/orders');
+      finishTo(
+        redirectToBill && orderId && can('order:print') ? `/orders/${orderId}/bill` : '/orders',
+      );
     if (isEdit) update.mutate(input, { onSuccess: () => done(), onError });
     else create.mutate(input, { onSuccess: (o) => done(o.id), onError });
   };
@@ -1904,7 +1826,9 @@ export function OrderFormPage() {
       return;
     }
     const ok = await confirm({
-      title: fromDraft ? 'Confirm & fully dispatch this draft?' : 'Create & fully dispatch this order?',
+      title: fromDraft
+        ? 'Confirm & fully dispatch this draft?'
+        : 'Create & fully dispatch this order?',
       description: `${items.length} item${items.length === 1 ? '' : 's'} · total ₹${total.toLocaleString('en-IN')} for ${customer.trim()}. ${
         fromDraft
           ? 'The draft is confirmed and every line is dispatched in full right away.'
@@ -1927,7 +1851,9 @@ export function OrderFormPage() {
       // The order saved but the bulk dispatch failed — don't lose it; send the
       // user to the order so they can dispatch the lines manually.
       onError: (e: unknown) => {
-        toast.error(getApiErrorMessage(e, 'Order saved, but dispatch failed — dispatch it manually.'));
+        toast.error(
+          getApiErrorMessage(e, 'Order saved, but dispatch failed — dispatch it manually.'),
+        );
         finishTo(can('order:print') ? `/orders/${id}/bill` : '/orders');
       },
     });
@@ -1935,9 +1861,15 @@ export function OrderFormPage() {
     if (fromDraft) {
       // `id` is the edited order's route param — always present when isEdit.
       if (id == null) return;
-      update.mutate(input, { onSuccess: () => fulfillOrder.mutate(id, afterDispatch(id)), onError });
+      update.mutate(input, {
+        onSuccess: () => fulfillOrder.mutate(id, afterDispatch(id)),
+        onError,
+      });
     } else {
-      create.mutate(input, { onSuccess: (o) => fulfillOrder.mutate(o.id, afterDispatch(o.id)), onError });
+      create.mutate(input, {
+        onSuccess: (o) => fulfillOrder.mutate(o.id, afterDispatch(o.id)),
+        onError,
+      });
     }
   };
 
@@ -1956,7 +1888,11 @@ export function OrderFormPage() {
   const orderIsDraft = docKind === 'order' && status === 'DRAFT';
   // A draft's primary action CONFIRMS it (see submit → saveOrder), so the button
   // says what it does rather than the generic "save".
-  const primaryLabel = isEdit ? (orderIsDraft ? 'Update & Confirm' : 'Update changes') : `Create ${docLabel}`;
+  const primaryLabel = isEdit
+    ? orderIsDraft
+      ? 'Update & Confirm'
+      : 'Update changes'
+    : `Create ${docLabel}`;
   // Offer "Save as Draft" on a new order, or when editing one that's still a draft.
   const showSaveDraft = docKind === 'order' && (!isEdit || orderIsDraft);
 
@@ -1993,7 +1929,14 @@ export function OrderFormPage() {
 
   // Keep the latest action handlers in a ref so the global shortcut listener
   // (bound once) always calls the current closures.
-  const actionsRef = useRef<{ add: () => void; save: () => void; quote: () => void; dispatch: () => void; cancel: () => void; focusItem: () => void } | null>(null);
+  const actionsRef = useRef<{
+    add: () => void;
+    save: () => void;
+    quote: () => void;
+    dispatch: () => void;
+    cancel: () => void;
+    focusItem: () => void;
+  } | null>(null);
   actionsRef.current = {
     add: addItem,
     save: submit,
@@ -2006,7 +1949,8 @@ export function OrderFormPage() {
     },
     dispatch: createAndDispatch,
     cancel: () => confirmExit(backPath),
-    focusItem: () => formRef.current?.querySelector<HTMLElement>('[data-tabfield="itemName"] input')?.focus(),
+    focusItem: () =>
+      formRef.current?.querySelector<HTMLElement>('[data-tabfield="itemName"] input')?.focus(),
   };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -2040,7 +1984,12 @@ export function OrderFormPage() {
         a.focusItem();
       } else if (e.key === 'Escape') {
         // Let an open dropdown / popover / dialog swallow Esc; only cancel when nothing is open.
-        if (!document.querySelector('[data-slot="popover-content"], [role="dialog"], [role="alertdialog"]')) a.cancel();
+        if (
+          !document.querySelector(
+            '[data-slot="popover-content"], [role="dialog"], [role="alertdialog"]',
+          )
+        )
+          a.cancel();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -2068,7 +2017,10 @@ export function OrderFormPage() {
         <div className="bg-background/70 fixed inset-0 z-[100] flex items-center justify-center backdrop-blur-sm">
           <div className="animate-in fade-in zoom-in-50 flex flex-col items-center gap-3 duration-300">
             <div className="flex size-24 items-center justify-center rounded-full bg-emerald-500 shadow-xl shadow-emerald-500/30 ring-8 ring-emerald-500/15">
-              <Check className="animate-in zoom-in-50 size-12 text-white duration-500" strokeWidth={3} />
+              <Check
+                className="animate-in zoom-in-50 size-12 text-white duration-500"
+                strokeWidth={3}
+              />
             </div>
             <p className="text-sm font-semibold text-emerald-700">{isEdit ? 'Saved' : 'Created'}</p>
           </div>
@@ -2082,8 +2034,8 @@ export function OrderFormPage() {
           <DialogHeader>
             <DialogTitle>Create this order?</DialogTitle>
             <DialogDescription>
-              {items.length} item{items.length === 1 ? '' : 's'} · total ₹{total.toLocaleString('en-IN')} for{' '}
-              {customer.trim() || '—'}. Choose how to finish.
+              {items.length} item{items.length === 1 ? '' : 's'} · total ₹
+              {total.toLocaleString('en-IN')} for {customer.trim() || '—'}. Choose how to finish.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:justify-end">
@@ -2108,7 +2060,8 @@ export function OrderFormPage() {
             <DialogTitle>Leave without saving?</DialogTitle>
             <DialogDescription>
               {items.length} item{items.length === 1 ? '' : 's'}
-              {customer.trim() ? ` for ${customer.trim()}` : ''} {items.length === 1 ? "hasn't" : "haven't"} been saved yet.
+              {customer.trim() ? ` for ${customer.trim()}` : ''}{' '}
+              {items.length === 1 ? "hasn't" : "haven't"} been saved yet.
               {docKind === 'order' ? ' You can save it as a draft and pick it up later.' : ''}
             </DialogDescription>
           </DialogHeader>
@@ -2144,7 +2097,13 @@ export function OrderFormPage() {
       {/* Slim toolbar — the page title already shows in the top bar, so the big
           in-page heading is dropped to avoid a duplicate title and free up space. */}
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => confirmExit(backPath)} aria-label="Back" title="Back">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => confirmExit(backPath)}
+          aria-label="Back"
+          title="Back"
+        >
           <ArrowLeft />
         </Button>
         <div className="ml-auto flex items-center gap-2">
@@ -2168,9 +2127,16 @@ export function OrderFormPage() {
       {restoredDraft && (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
           <span className="flex items-center gap-2">
-            <History className="size-4" /> Restored your unsaved order from last time — keep editing or discard it.
+            <History className="size-4" /> Restored your unsaved order from last time — keep editing
+            or discard it.
           </span>
-          <Button type="button" variant="ghost" size="sm" className="h-7 text-amber-800 hover:bg-amber-100 hover:text-amber-900" onClick={discardDraft}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 text-amber-800 hover:bg-amber-100 hover:text-amber-900"
+            onClick={discardDraft}
+          >
             Discard
           </Button>
         </div>
@@ -2183,8 +2149,13 @@ export function OrderFormPage() {
           instead of overflowing past it. */}
       <Card className="border-l-4 border-l-primary py-0">
         <CardContent className="grid grid-cols-2 gap-2 px-3 py-2 sm:grid-cols-4 sm:px-4 sm:py-3 lg:grid-cols-8">
-          <div className="col-span-2 min-w-0 space-y-1.5 sm:col-span-2 lg:col-span-2" data-tabfield="customer">
-            <Label className="text-base">Customer <span className="text-rose-500">*</span></Label>
+          <div
+            className="col-span-2 min-w-0 space-y-1.5 sm:col-span-2 lg:col-span-2"
+            data-tabfield="customer"
+          >
+            <Label className="text-base">
+              Customer <span className="text-rose-500">*</span>
+            </Label>
             <NativeSelect
               value={customer}
               onChange={onCustomer}
@@ -2195,18 +2166,34 @@ export function OrderFormPage() {
           </div>
           <div className="min-w-0 space-y-1.5" data-tabfield="poNumber">
             <Label className="text-base whitespace-nowrap">PO Number</Label>
-            <Input value={poNumber} onChange={(e) => setPoNumber(e.target.value)} placeholder="PO number…" />
+            <Input
+              value={poNumber}
+              onChange={(e) => setPoNumber(e.target.value)}
+              placeholder="PO number…"
+            />
           </div>
           <div className="min-w-0 space-y-1.5">
             <Label className="text-base">Agent (auto)</Label>
-            <Input value={agentName} readOnly tabIndex={-1} className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700" />
+            <Input
+              value={agentName}
+              readOnly
+              tabIndex={-1}
+              className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700"
+            />
           </div>
           <div className="min-w-0 space-y-1.5">
             <Label className="text-base whitespace-nowrap">Category (auto)</Label>
-            <Input value={category} readOnly tabIndex={-1} className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700" />
+            <Input
+              value={category}
+              readOnly
+              tabIndex={-1}
+              className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700"
+            />
           </div>
           <div className="min-w-0 space-y-1.5" data-tabfield="orderDate">
-            <Label className="text-base">Order date <span className="text-rose-500">*</span></Label>
+            <Label className="text-base">
+              Order date <span className="text-rose-500">*</span>
+            </Label>
             <DatePicker value={orderDate} onChange={setOrderDate} clearable={false} />
           </div>
           {/* Once anything on this order has shipped, its completion date is the
@@ -2226,7 +2213,9 @@ export function OrderFormPage() {
           >
             <Label className="text-base">
               Com. days <span className="text-rose-500">*</span>
-              {completionLocked && <Lock className="ml-1 inline size-3 align-[-1px] text-slate-400" />}
+              {completionLocked && (
+                <Lock className="ml-1 inline size-3 align-[-1px] text-slate-400" />
+              )}
             </Label>
             <NativeSelect
               value={completionDay}
@@ -2238,7 +2227,12 @@ export function OrderFormPage() {
           </div>
           <div className="min-w-0 space-y-1.5">
             <Label className="text-base whitespace-nowrap">Com. date (auto)</Label>
-            <Input value={niceDate(completionDate)} readOnly tabIndex={-1} className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700" />
+            <Input
+              value={niceDate(completionDate)}
+              readOnly
+              tabIndex={-1}
+              className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700"
+            />
           </div>
         </CardContent>
       </Card>
@@ -2257,19 +2251,40 @@ export function OrderFormPage() {
           <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-3 lg:grid-cols-12">
             {/* Manual Size/Pcs picker — shown only when auto-detect is turned off. */}
             {!autoSizePcs && (
-              <div className="col-span-2 space-y-1 sm:col-span-1 lg:col-span-2" data-tabfield="showBy">
+              <div
+                className="col-span-2 space-y-1 sm:col-span-1 lg:col-span-2"
+                data-tabfield="showBy"
+              >
                 <Label className="text-base">Show item by</Label>
                 <div className="flex h-9 items-center gap-4 text-sm">
                   <label className="flex cursor-pointer items-center gap-1.5">
-                    <input type="radio" className="accent-indigo-600" checked={showBy === 'SIZE'} onChange={() => setShowBy('SIZE')} /> Size
+                    <input
+                      type="radio"
+                      className="accent-indigo-600"
+                      checked={showBy === 'SIZE'}
+                      onChange={() => setShowBy('SIZE')}
+                    />{' '}
+                    Size
                   </label>
                   <label className="flex cursor-pointer items-center gap-1.5">
-                    <input type="radio" className="accent-indigo-600" checked={showBy === 'PCS'} onChange={() => setShowBy('PCS')} /> Pcs
+                    <input
+                      type="radio"
+                      className="accent-indigo-600"
+                      checked={showBy === 'PCS'}
+                      onChange={() => setShowBy('PCS')}
+                    />{' '}
+                    Pcs
                   </label>
                 </div>
               </div>
             )}
-            <div className={cn('col-span-2 space-y-1 sm:col-span-2', autoSizePcs ? 'lg:col-span-7' : 'lg:col-span-5')} data-tabfield="itemName">
+            <div
+              className={cn(
+                'col-span-2 space-y-1 sm:col-span-2',
+                autoSizePcs ? 'lg:col-span-7' : 'lg:col-span-5',
+              )}
+              data-tabfield="itemName"
+            >
               <Label className="text-base">Item name</Label>
               {/* Item labels are "{size|pcs} {product} {design}", so the keyboard
                   opens on digits and hands over to letters — plus the space —
@@ -2306,13 +2321,40 @@ export function OrderFormPage() {
                 `entryRateFocus`. The trigger is spread across all three rather
                 than living on one field because any of them is a fair place to
                 ask "why this number?". */}
-            <div className="space-y-1 lg:col-span-1" data-tabfield="productRate" onPointerEnter={onEntryRateEnter('product')} onPointerLeave={onEntryRateLeave}>
+            <div
+              className="space-y-1 lg:col-span-1"
+              data-tabfield="productRate"
+              onPointerEnter={onEntryRateEnter('product')}
+              onPointerLeave={onEntryRateLeave}
+            >
               <Label className="text-base">Product ₹</Label>
-              <Input type="number" step="any" min={0} className="text-right tabular-nums" value={entry.productRate} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ productRate: e.target.value })} />
+              <Input
+                type="number"
+                step="any"
+                min={0}
+                className="text-right tabular-nums"
+                value={entry.productRate}
+                onKeyDown={onlyNumericKey}
+                onChange={(e) => setEntryField({ productRate: e.target.value })}
+              />
             </div>
-            <div className="space-y-1 lg:col-span-1" data-tabfield="designRate" onPointerEnter={onEntryRateEnter('design')} onPointerLeave={onEntryRateLeave}>
+            <div
+              className="space-y-1 lg:col-span-1"
+              data-tabfield="designRate"
+              onPointerEnter={onEntryRateEnter('design')}
+              onPointerLeave={onEntryRateLeave}
+            >
               <Label className="text-base">Design ₹</Label>
-              <Input type="number" step="any" min={0} className="text-right tabular-nums" value={entry.designRate} disabled={!designRateEditable} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ designRate: e.target.value })} />
+              <Input
+                type="number"
+                step="any"
+                min={0}
+                className="text-right tabular-nums"
+                value={entry.designRate}
+                disabled={!designRateEditable}
+                onKeyDown={onlyNumericKey}
+                onChange={(e) => setEntryField({ designRate: e.target.value })}
+              />
             </div>
             <div className="space-y-1 lg:col-span-1">
               <Label className="text-base">Total ₹</Label>
@@ -2346,8 +2388,10 @@ export function OrderFormPage() {
                     className={cn(
                       'flex h-9 items-center justify-end rounded-md border border-emerald-200 bg-emerald-50 px-2 text-sm font-bold tabular-nums text-emerald-700 outline-none',
                       'dark:border-emerald-400/30 dark:bg-emerald-400/10 dark:text-emerald-300',
-                      entryHasRate && 'cursor-help transition-colors hover:border-sky-300 hover:bg-sky-50 focus-visible:ring-2 focus-visible:ring-sky-400 dark:hover:border-sky-400/40 dark:hover:bg-sky-950/40',
-                      entryRateOpen && 'border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-400/40 dark:bg-sky-950/50 dark:text-sky-200',
+                      entryHasRate &&
+                        'cursor-help transition-colors hover:border-sky-300 hover:bg-sky-50 focus-visible:ring-2 focus-visible:ring-sky-400 dark:hover:border-sky-400/40 dark:hover:bg-sky-950/40',
+                      entryRateOpen &&
+                        'border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-400/40 dark:bg-sky-950/50 dark:text-sky-200',
                     )}
                   >
                     {entryTotal.toLocaleString('en-IN')}
@@ -2370,9 +2414,15 @@ export function OrderFormPage() {
                   <div className="bg-gradient-to-r from-sky-600 via-blue-600 to-indigo-600 px-3 py-2 text-white">
                     <div className="flex items-baseline justify-between gap-2">
                       <p className="text-[10px] font-bold tracking-[0.14em] uppercase opacity-80">
-                        {entryRateFocus === 'product' ? 'Product rate' : entryRateFocus === 'design' ? 'Design rate' : 'Rate breakdown'}
+                        {entryRateFocus === 'product'
+                          ? 'Product rate'
+                          : entryRateFocus === 'design'
+                            ? 'Design rate'
+                            : 'Rate breakdown'}
                       </p>
-                      <p className="text-[9.5px] font-semibold opacity-80">{entry.calField === 'PCS' ? 'per piece' : 'per kg'}</p>
+                      <p className="text-[9.5px] font-semibold opacity-80">
+                        {entry.calField === 'PCS' ? 'per piece' : 'per kg'}
+                      </p>
                     </div>
                     <p className="text-[19px] leading-tight font-bold tabular-nums">
                       ₹{entryRateShown.toLocaleString('en-IN')}
@@ -2381,7 +2431,12 @@ export function OrderFormPage() {
                   <div className="bg-card space-y-2 px-3 py-2.5">
                     {/* Product ₹ on its own: base, then each add-on, then total. */}
                     {entryRateFocus === 'product' && (
-                      <RateBuildUp base={entry.productBase} parts={productParts(entry)} total={n(entry.productRate) ?? 0} accent="blue" />
+                      <RateBuildUp
+                        base={entry.productBase}
+                        parts={productParts(entry)}
+                        total={n(entry.productRate) ?? 0}
+                        accent="blue"
+                      />
                     )}
 
                     {/* Design ₹ on its own. Commission never appears here: it is
@@ -2395,7 +2450,12 @@ export function OrderFormPage() {
                               {entry.designName || entry.designType}
                             </p>
                           )}
-                          <RateBuildUp base={entry.designBase} parts={designParts(entry)} total={n(entry.designRate) ?? 0} accent="violet" />
+                          <RateBuildUp
+                            base={entry.designBase}
+                            parts={designParts(entry)}
+                            total={n(entry.designRate) ?? 0}
+                            accent="violet"
+                          />
                         </>
                       ) : (
                         <p className="text-muted-foreground rounded-[6px] border border-dashed px-2 py-1.5 text-[10.5px] leading-snug">
@@ -2408,49 +2468,57 @@ export function OrderFormPage() {
                         summary instead of trying to be both. */}
                     {entryRateFocus === 'total' && (
                       <>
-                    <RateLine
-                      icon={Package}
-                      label="Product rate"
-                      sub={rateSub(entry.productBase, productParts(entry), n(entry.productRate) ?? 0)}
-                      value={`₹${(n(entry.productRate) ?? 0).toLocaleString('en-IN')}`}
-                      accent="blue"
-                    />
-                    {(n(entry.designRate) ?? 0) !== 0 ? (
-                      <RateLine
-                        icon={Brush}
-                        label="Design rate"
-                        sub={
-                          [
-                            entry.designName || entry.designType || null,
-                            rateSub(entry.designBase, designParts(entry), n(entry.designRate) ?? 0),
-                          ]
-                            .filter(Boolean)
-                            .join(' · ') || null
-                        }
-                        value={`₹${(n(entry.designRate) ?? 0).toLocaleString('en-IN')}`}
-                        accent="violet"
-                      />
-                    ) : (
-                      <p className="text-muted-foreground rounded-[6px] border border-dashed px-2 py-1.5 text-[10.5px] leading-snug">
-                        No design rate — the total is the product rate alone.
-                      </p>
-                    )}
-                    {/* Flags, not repeats — the split is spelled out on the
+                        <RateLine
+                          icon={Package}
+                          label="Product rate"
+                          sub={rateSub(
+                            entry.productBase,
+                            productParts(entry),
+                            n(entry.productRate) ?? 0,
+                          )}
+                          value={`₹${(n(entry.productRate) ?? 0).toLocaleString('en-IN')}`}
+                          accent="blue"
+                        />
+                        {(n(entry.designRate) ?? 0) !== 0 ? (
+                          <RateLine
+                            icon={Brush}
+                            label="Design rate"
+                            sub={
+                              [
+                                entry.designName || entry.designType || null,
+                                rateSub(
+                                  entry.designBase,
+                                  designParts(entry),
+                                  n(entry.designRate) ?? 0,
+                                ),
+                              ]
+                                .filter(Boolean)
+                                .join(' · ') || null
+                            }
+                            value={`₹${(n(entry.designRate) ?? 0).toLocaleString('en-IN')}`}
+                            accent="violet"
+                          />
+                        ) : (
+                          <p className="text-muted-foreground rounded-[6px] border border-dashed px-2 py-1.5 text-[10.5px] leading-snug">
+                            No design rate — the total is the product rate alone.
+                          </p>
+                        )}
+                        {/* Flags, not repeats — the split is spelled out on the
                         lines above, and in full on each field's own card. */}
-                    {(entry.special || !!entry.commissionAddOn) && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {entry.special && (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
-                            <BadgePercent className="size-3" /> Special rate applied
-                          </span>
+                        {(entry.special || !!entry.commissionAddOn) && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {entry.special && (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                                <BadgePercent className="size-3" /> Special rate applied
+                              </span>
+                            )}
+                            {!!entry.commissionAddOn && (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-800 dark:bg-sky-950/60 dark:text-sky-300">
+                                <Receipt className="size-3" /> Commission added to rate
+                              </span>
+                            )}
+                          </div>
                         )}
-                        {!!entry.commissionAddOn && (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-800 dark:bg-sky-950/60 dark:text-sky-300">
-                            <Receipt className="size-3" /> Commission added to rate
-                          </span>
-                        )}
-                      </div>
-                    )}
                       </>
                     )}
                   </div>
@@ -2469,13 +2537,22 @@ export function OrderFormPage() {
           <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-4 lg:grid-cols-24">
             <div className="space-y-1 lg:col-span-4" data-tabfield="ordType">
               <Label className="text-base">Order type</Label>
-              <NativeSelect value={entry.ordType} onChange={(v) => setEntryField({ ordType: v })} options={orderTypeOptions} placeholder="Type…" />
+              <NativeSelect
+                value={entry.ordType}
+                onChange={(v) => setEntryField({ ordType: v })}
+                options={orderTypeOptions}
+                placeholder="Type…"
+              />
             </div>
             {/* 3 units: "NORMAL" / "URGENT" are short, so this is the one field
                 that can stay narrow. */}
             <div className="space-y-1 lg:col-span-3" data-tabfield="priority">
               <Label className="text-base">Priority</Label>
-              <NativeSelect value={entry.priority} onChange={(v) => setEntryField({ priority: v })} options={[...ORDER_PRIORITIES]} />
+              <NativeSelect
+                value={entry.priority}
+                onChange={(v) => setEntryField({ priority: v })}
+                options={[...ORDER_PRIORITIES]}
+              />
             </div>
             {/* Bags / Pcs / Kgs / Box — order is configurable per product category
                 in Settings → Order quantity fields; falls back to the default order. */}
@@ -2484,33 +2561,76 @@ export function OrderFormPage() {
                 return (
                   <div key="bags" className="space-y-1 lg:col-span-2" data-tabfield="bags">
                     <Label className="text-base">Bags</Label>
-                    <Input type="number" step="any" min={0} value={entry.bags} onKeyDown={onlyNumericKey} onChange={(e) => onBags(e.target.value)} />
+                    <Input
+                      type="number"
+                      step="any"
+                      min={0}
+                      value={entry.bags}
+                      onKeyDown={onlyNumericKey}
+                      onChange={(e) => onBags(e.target.value)}
+                    />
                   </div>
                 );
               if (f === 'pcs')
                 return (
                   <div key="pcs" className="space-y-1 lg:col-span-2" data-tabfield="pcs">
-                    <Label className={cn('text-base', showBy === 'PCS' && 'text-primary font-semibold')}>Pcs</Label>
-                    <Input type="number" step="any" min={0} value={entry.pcs} onKeyDown={onlyNumericKey} onChange={(e) => onPcs(e.target.value)} />
+                    <Label
+                      className={cn('text-base', showBy === 'PCS' && 'text-primary font-semibold')}
+                    >
+                      Pcs
+                    </Label>
+                    <Input
+                      type="number"
+                      step="any"
+                      min={0}
+                      value={entry.pcs}
+                      onKeyDown={onlyNumericKey}
+                      onChange={(e) => onPcs(e.target.value)}
+                    />
                   </div>
                 );
               if (f === 'kgs')
                 return (
                   <div key="kgs" className="space-y-1 lg:col-span-2" data-tabfield="gram">
-                    <Label className={cn('text-base', showBy === 'SIZE' && 'text-primary font-semibold')}>Kgs</Label>
-                    <Input type="number" step="any" min={0} value={entry.gram} onKeyDown={onlyNumericKey} onChange={(e) => setEntryField({ gram: e.target.value })} />
+                    <Label
+                      className={cn('text-base', showBy === 'SIZE' && 'text-primary font-semibold')}
+                    >
+                      Kgs
+                    </Label>
+                    <Input
+                      type="number"
+                      step="any"
+                      min={0}
+                      value={entry.gram}
+                      onKeyDown={onlyNumericKey}
+                      onChange={(e) => setEntryField({ gram: e.target.value })}
+                    />
                   </div>
                 );
               return (
                 <div key="box" className="space-y-1 lg:col-span-2" data-tabfield="box">
                   <Label className="text-base">Box</Label>
-                  <Input type="number" step="any" min={0} value={entry.box} onKeyDown={onlyNumericKey} onChange={(e) => onBox(e.target.value)} />
+                  <Input
+                    type="number"
+                    step="any"
+                    min={0}
+                    value={entry.box}
+                    onKeyDown={onlyNumericKey}
+                    onChange={(e) => onBox(e.target.value)}
+                  />
                 </div>
               );
             })}
-            <div className="col-span-2 space-y-1 sm:col-span-3 lg:col-span-5" data-tabfield="comment">
+            <div
+              className="col-span-2 space-y-1 sm:col-span-3 lg:col-span-5"
+              data-tabfield="comment"
+            >
               <Label className="text-base">Remarks</Label>
-              <Input value={entry.comment} onChange={(e) => setEntryField({ comment: e.target.value })} placeholder="Item remark…" />
+              <Input
+                value={entry.comment}
+                onChange={(e) => setEntryField({ comment: e.target.value })}
+                placeholder="Item remark…"
+              />
             </div>
             {/* Actions sit at the RIGHT of the row, camera first then Add — the
                 same order and the same button as each line in the list below, so
@@ -2527,10 +2647,22 @@ export function OrderFormPage() {
                       status={photoStatusFor(editingItemKey)}
                     />
                   )}
-                  <Button onClick={addItem} size="icon" aria-label="Update item" title="Update this item (Alt+A or Ctrl+A)">
+                  <Button
+                    onClick={addItem}
+                    size="icon"
+                    aria-label="Update item"
+                    title="Update this item (Alt+A or Ctrl+A)"
+                  >
                     <Check className="size-4" />
                   </Button>
-                  <Button type="button" variant="outline" size="icon" onClick={cancelItemEdit} aria-label="Cancel item edit" title="Cancel item edit">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={cancelItemEdit}
+                    aria-label="Cancel item edit"
+                    title="Cancel item edit"
+                  >
                     <X className="size-4" />
                   </Button>
                 </div>
@@ -2540,9 +2672,17 @@ export function OrderFormPage() {
                       item key, which this row does not have until it is added.
                       The line picks its status up in the list below. */}
                   {docKind === 'order' && (
-                    <LinePhotoButton photos={entry.photos ?? []} onChange={(photos) => setEntryField({ photos })} />
+                    <LinePhotoButton
+                      photos={entry.photos ?? []}
+                      onChange={(photos) => setEntryField({ photos })}
+                    />
                   )}
-                  <Button onClick={addItem} disabled={noCustomer} aria-label="Add item" title={noCustomer ? 'Select a customer first' : 'Add item (Alt+A or Ctrl+A)'}>
+                  <Button
+                    onClick={addItem}
+                    disabled={noCustomer}
+                    aria-label="Add item"
+                    title={noCustomer ? 'Select a customer first' : 'Add item (Alt+A or Ctrl+A)'}
+                  >
                     <Plus /> Add
                   </Button>
                 </div>
@@ -2554,7 +2694,9 @@ export function OrderFormPage() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-muted-foreground text-xs font-medium">
               Added items{items.length ? ` · ${items.length}` : ''}
-              {items.some((i) => i.bookingId) ? ` · ${items.filter((i) => i.bookingId).length} from a booking` : ''}
+              {items.some((i) => i.bookingId)
+                ? ` · ${items.filter((i) => i.bookingId).length} from a booking`
+                : ''}
             </span>
             <div className="flex items-center gap-2">
               {/* How many item rows stay visible before the panel scrolls — only
@@ -2583,7 +2725,9 @@ export function OrderFormPage() {
                   title="Draw items from this customer’s bag bookings"
                 >
                   <PackageOpen /> Draw from Bag Booking
-                  <span className="ml-1 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] font-bold tabular-nums">{activeBookings.length}</span>
+                  <span className="ml-1 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] font-bold tabular-nums">
+                    {activeBookings.length}
+                  </span>
                 </Button>
               )}
             </div>
@@ -2592,7 +2736,10 @@ export function OrderFormPage() {
           {/* Added items — grid auto-fits to the desktop width; height follows the
               chosen "Show N rows" preference (unbounded when set to All). Desktop/
               tablet only: phones get the card list below instead. */}
-          <div className="hidden overflow-auto rounded-lg border sm:block" style={{ maxHeight: gridMaxHeight }}>
+          <div
+            className="hidden overflow-auto rounded-lg border sm:block"
+            style={{ maxHeight: gridMaxHeight }}
+          >
             {/* Prod ₹ / Dsgn ₹ are saved with the order but hidden from this list. */}
             <table className="w-full text-sm [&_td]:border-r [&_td]:border-border/60 [&_td:last-child]:border-r-0 [&_th]:border-r [&_th]:border-border/40 [&_th:last-child]:border-r-0">
               <thead className="[&_th]:sticky [&_th]:top-0 [&_th]:bg-gradient-to-b [&_th]:from-sky-50 [&_th]:to-indigo-100 [&_th]:px-3 [&_th]:py-2.5 [&_th]:text-left [&_th]:text-[15px] [&_th]:font-semibold [&_th]:text-slate-900">
@@ -2621,7 +2768,13 @@ export function OrderFormPage() {
                   </tr>
                 ) : (
                   items.map((i, idx) => (
-                    <tr key={i.key} className={cn('hover:bg-muted/40', editingItemKey === i.key && 'bg-sky-50 hover:bg-sky-50')}>
+                    <tr
+                      key={i.key}
+                      className={cn(
+                        'hover:bg-muted/40',
+                        editingItemKey === i.key && 'bg-sky-50 hover:bg-sky-50',
+                      )}
+                    >
                       <td className="text-muted-foreground text-center tabular-nums">{idx + 1}</td>
                       <td className="font-medium">
                         {i.itemName || i.product || '—'}
@@ -2644,47 +2797,64 @@ export function OrderFormPage() {
                       </td>
                       <td>{i.designName || '—'}</td>
                       <td>{i.ordType || '—'}</td>
-                      <td>{i.priority === 'URGENT' ? <span className="font-semibold text-rose-600">URGENT</span> : i.priority}</td>
+                      <td>
+                        {i.priority === 'URGENT' ? (
+                          <span className="font-semibold text-rose-600">URGENT</span>
+                        ) : (
+                          i.priority
+                        )}
+                      </td>
                       <td className="text-right tabular-nums">{i.bags || '—'}</td>
                       <td className="text-right tabular-nums">{i.pcs || '—'}</td>
                       <td className="text-right tabular-nums">{i.gram || '—'}</td>
                       <td className="text-right tabular-nums">{i.box || '—'}</td>
                       {/*
-                        * The rate is a SUM of two figures the row does not show
-                        * — the product rate and the design rate — so the number
-                        * on its own cannot be checked. Opening the edit sheet was
-                        * the only way to see the split. The dotted underline is
-                        * what says "there is more here"; without it a tooltip
-                        * nobody hovers is a tooltip nobody has.
-                        */}
+                       * The rate is a SUM of two figures the row does not show
+                       * — the product rate and the design rate — so the number
+                       * on its own cannot be checked. Opening the edit sheet was
+                       * the only way to see the split. The dotted underline is
+                       * what says "there is more here"; without it a tooltip
+                       * nobody hovers is a tooltip nobody has.
+                       */}
                       <td className="text-right tabular-nums">
                         <RateBreakdown item={withBreakdown(i)} />
                       </td>
-                      <td className="text-right text-[15px] font-bold tabular-nums text-emerald-700">{lineAmount(i).toLocaleString('en-IN')}</td>
-                      <td className="max-w-[14rem] truncate" title={i.comment}>{i.comment || '—'}</td>
+                      <td className="text-right text-[15px] font-bold tabular-nums text-emerald-700">
+                        {lineAmount(i).toLocaleString('en-IN')}
+                      </td>
+                      <td className="max-w-[14rem] truncate" title={i.comment}>
+                        {i.comment || '—'}
+                      </td>
                       <td>
                         <div className="flex items-center justify-center gap-0.5">
                           {docKind === 'order' && (
-                            <LinePhotoButton photos={i.photos ?? []} onChange={(photos) => setItemPhotos(i.key, photos)} status={photoStatusFor(i.key)} />
+                            <LinePhotoButton
+                              photos={i.photos ?? []}
+                              onChange={(photos) => setItemPhotos(i.key, photos)}
+                              status={photoStatusFor(i.key)}
+                            />
                           )}
                           {docKind === 'order' && i.id != null ? (
-                          // A saved ORDER line — deleting it belongs on the Order Modify
-                          // page, where the removal (and its dispatch guard) is handled
-                          // properly. Quotation lines never lock: nothing dispatches off
-                          // a quotation, so editing is free until it converts.
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="inline-flex cursor-help text-slate-400">
-                                <span className="inline-flex size-8 items-center justify-center">
-                                  <Lock className="size-4" />
+                            // A saved ORDER line — deleting it belongs on the Order Modify
+                            // page, where the removal (and its dispatch guard) is handled
+                            // properly. Quotation lines never lock: nothing dispatches off
+                            // a quotation, so editing is free until it converts.
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="inline-flex cursor-help text-slate-400">
+                                  <span className="inline-flex size-8 items-center justify-center">
+                                    <Lock className="size-4" />
+                                  </span>
                                 </span>
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent side="left" className="max-w-56">
-                              <p className="font-semibold">Saved order line</p>
-                              <p className="opacity-80">Existing items can’t be removed here — delete them from the Order Modify page.</p>
-                            </TooltipContent>
-                          </Tooltip>
+                              </TooltipTrigger>
+                              <TooltipContent side="left" className="max-w-56">
+                                <p className="font-semibold">Saved order line</p>
+                                <p className="opacity-80">
+                                  Existing items can’t be removed here — delete them from the Order
+                                  Modify page.
+                                </p>
+                              </TooltipContent>
+                            </Tooltip>
                           ) : (
                             <>
                               {i.bookingId == null && (
@@ -2695,12 +2865,24 @@ export function OrderFormPage() {
                                   onClick={() => editItem(i)}
                                   disabled={editingItemKey != null}
                                   aria-label="Edit"
-                                  title={editingItemKey === i.key ? 'Currently editing this item' : editingItemKey ? 'Finish or cancel the current edit first' : 'Edit this item'}
+                                  title={
+                                    editingItemKey === i.key
+                                      ? 'Currently editing this item'
+                                      : editingItemKey
+                                        ? 'Finish or cancel the current edit first'
+                                        : 'Edit this item'
+                                  }
                                 >
                                   <Pencil className="size-4" />
                                 </Button>
                               )}
-                              <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => removeItem(i.key)} aria-label="Remove">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-8 text-destructive hover:text-destructive"
+                                onClick={() => removeItem(i.key)}
+                                aria-label="Remove"
+                              >
                                 <Trash2 className="size-5" />
                               </Button>
                             </>
@@ -2717,14 +2899,24 @@ export function OrderFormPage() {
                     <td colSpan={5} className="text-right">
                       Total
                     </td>
-                    <td className="text-right tabular-nums">{totals.bags.toLocaleString('en-IN')}</td>
-                    <td className="text-right tabular-nums">{totals.pcs.toLocaleString('en-IN')}</td>
-                    <td className="text-right tabular-nums">{totals.gram.toLocaleString('en-IN')}</td>
-                    <td className="text-right tabular-nums">{totals.box.toLocaleString('en-IN')}</td>
+                    <td className="text-right tabular-nums">
+                      {totals.bags.toLocaleString('en-IN')}
+                    </td>
+                    <td className="text-right tabular-nums">
+                      {totals.pcs.toLocaleString('en-IN')}
+                    </td>
+                    <td className="text-right tabular-nums">
+                      {totals.gram.toLocaleString('en-IN')}
+                    </td>
+                    <td className="text-right tabular-nums">
+                      {totals.box.toLocaleString('en-IN')}
+                    </td>
                     {/* Rate column deliberately blank — see `totals`. The cell
                         stays so Amount keeps sitting under its own heading. */}
                     <td />
-                    <td className="text-right text-[15px] tabular-nums text-emerald-700">{totals.amount.toLocaleString('en-IN')}</td>
+                    <td className="text-right text-[15px] tabular-nums text-emerald-700">
+                      {totals.amount.toLocaleString('en-IN')}
+                    </td>
                     <td colSpan={2} />
                   </tr>
                 </tfoot>
@@ -2742,22 +2934,33 @@ export function OrderFormPage() {
               <>
                 <div className="divide-y rounded-lg border">
                   {items.map((i, idx) => (
-                    <div key={i.key} className={cn('px-2.5 py-2', editingItemKey === i.key && 'bg-sky-50')}>
+                    <div
+                      key={i.key}
+                      className={cn('px-2.5 py-2', editingItemKey === i.key && 'bg-sky-50')}
+                    >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-medium">
-                            <span className="text-muted-foreground mr-1 tabular-nums">{idx + 1}.</span>
+                            <span className="text-muted-foreground mr-1 tabular-nums">
+                              {idx + 1}.
+                            </span>
                             {i.itemName || i.product || '—'}
                           </p>
                           {(i.special || i.bookingId) && (
                             <div className="mt-0.5 flex flex-wrap items-center gap-1">
                               {i.special && (
-                                <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700" title={`Special rate applied — ${i.special}`}>
+                                <span
+                                  className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700"
+                                  title={`Special rate applied — ${i.special}`}
+                                >
                                   <BadgePercent className="size-3" /> special
                                 </span>
                               )}
                               {i.bookingId && (
-                                <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700" title={`Drawn from booking ${i.bookingCode ?? ''} — rate frozen to the booking date`}>
+                                <span
+                                  className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700"
+                                  title={`Drawn from booking ${i.bookingCode ?? ''} — rate frozen to the booking date`}
+                                >
                                   <PackageOpen className="size-3" /> {i.bookingCode ?? 'Booking'}
                                 </span>
                               )}
@@ -2765,13 +2968,28 @@ export function OrderFormPage() {
                           )}
                           <p className="text-muted-foreground truncate text-xs">
                             {i.designName || '—'} · {i.ordType || '—'}
-                            {i.priority === 'URGENT' ? <span className="ml-1 font-semibold text-rose-600">· URGENT</span> : i.priority ? ` · ${i.priority}` : ''}
+                            {i.priority === 'URGENT' ? (
+                              <span className="ml-1 font-semibold text-rose-600">· URGENT</span>
+                            ) : i.priority ? (
+                              ` · ${i.priority}`
+                            ) : (
+                              ''
+                            )}
                           </p>
                         </div>
                         <div className="flex shrink-0 items-center gap-0.5">
-                          {docKind === 'order' && <LinePhotoButton photos={i.photos ?? []} onChange={(photos) => setItemPhotos(i.key, photos)} status={photoStatusFor(i.key)} />}
+                          {docKind === 'order' && (
+                            <LinePhotoButton
+                              photos={i.photos ?? []}
+                              onChange={(photos) => setItemPhotos(i.key, photos)}
+                              status={photoStatusFor(i.key)}
+                            />
+                          )}
                           {docKind === 'order' && i.id != null ? (
-                            <span className="text-slate-400 inline-flex size-8 items-center justify-center" title="Existing order line — edit it on the Order Modify page">
+                            <span
+                              className="text-slate-400 inline-flex size-8 items-center justify-center"
+                              title="Existing order line — edit it on the Order Modify page"
+                            >
                               <Lock className="size-4" />
                             </span>
                           ) : (
@@ -2784,12 +3002,24 @@ export function OrderFormPage() {
                                   onClick={() => editItem(i)}
                                   disabled={editingItemKey != null}
                                   aria-label="Edit item"
-                                  title={editingItemKey === i.key ? 'Currently editing this item' : editingItemKey ? 'Finish or cancel the current edit first' : 'Edit this item'}
+                                  title={
+                                    editingItemKey === i.key
+                                      ? 'Currently editing this item'
+                                      : editingItemKey
+                                        ? 'Finish or cancel the current edit first'
+                                        : 'Edit this item'
+                                  }
                                 >
                                   <Pencil className="size-4.5" />
                                 </Button>
                               )}
-                              <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => removeItem(i.key)} aria-label="Remove">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-8 text-destructive hover:text-destructive"
+                                onClick={() => removeItem(i.key)}
+                                aria-label="Remove"
+                              >
                                 <Trash2 className="size-5" />
                               </Button>
                             </>
@@ -2798,23 +3028,48 @@ export function OrderFormPage() {
                       </div>
                       <div className="mt-2 flex items-end justify-between gap-3">
                         <div className="grid grid-cols-4 gap-x-3 gap-y-0.5 text-xs">
-                          <div><p className="text-muted-foreground">Bags</p><p className="font-medium tabular-nums">{i.bags || '—'}</p></div>
-                          <div><p className="text-muted-foreground">Pcs</p><p className="font-medium tabular-nums">{i.pcs || '—'}</p></div>
-                          <div><p className="text-muted-foreground">Kgs</p><p className="font-medium tabular-nums">{i.gram || '—'}</p></div>
-                          <div><p className="text-muted-foreground">Box</p><p className="font-medium tabular-nums">{i.box || '—'}</p></div>
+                          <div>
+                            <p className="text-muted-foreground">Bags</p>
+                            <p className="font-medium tabular-nums">{i.bags || '—'}</p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground">Pcs</p>
+                            <p className="font-medium tabular-nums">{i.pcs || '—'}</p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground">Kgs</p>
+                            <p className="font-medium tabular-nums">{i.gram || '—'}</p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground">Box</p>
+                            <p className="font-medium tabular-nums">{i.box || '—'}</p>
+                          </div>
                         </div>
                         <div className="shrink-0 text-right leading-tight">
-                          <p className="text-muted-foreground text-[11px]">Rate <span className="text-foreground font-medium tabular-nums">₹{itemRate(i).toLocaleString('en-IN')}</span></p>
-                          <p className="text-[15px] font-bold tabular-nums text-emerald-700">₹{lineAmount(i).toLocaleString('en-IN')}</p>
+                          <p className="text-muted-foreground text-[11px]">
+                            Rate{' '}
+                            <span className="text-foreground font-medium tabular-nums">
+                              ₹{itemRate(i).toLocaleString('en-IN')}
+                            </span>
+                          </p>
+                          <p className="text-[15px] font-bold tabular-nums text-emerald-700">
+                            ₹{lineAmount(i).toLocaleString('en-IN')}
+                          </p>
                         </div>
                       </div>
-                      {i.comment && <p className="text-muted-foreground mt-1.5 text-xs">📝 {i.comment}</p>}
+                      {i.comment && (
+                        <p className="text-muted-foreground mt-1.5 text-xs">📝 {i.comment}</p>
+                      )}
                     </div>
                   ))}
                 </div>
                 <div className="bg-muted/60 mt-1 flex items-center justify-between rounded-md border-t-2 px-2.5 py-1.5 text-sm font-semibold">
-                  <span className="text-muted-foreground tracking-wide uppercase">Total · {items.length} item(s)</span>
-                  <span className="text-primary tabular-nums">₹{totals.amount.toLocaleString('en-IN')}</span>
+                  <span className="text-muted-foreground tracking-wide uppercase">
+                    Total · {items.length} item(s)
+                  </span>
+                  <span className="text-primary tabular-nums">
+                    ₹{totals.amount.toLocaleString('en-IN')}
+                  </span>
                 </div>
               </>
             )}
@@ -2832,13 +3087,25 @@ export function OrderFormPage() {
       <div className="-mx-1 mt-1 border-t px-2 py-2.5 sm:mt-2 sm:flex sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-3 sm:gap-y-2 sm:py-3">
         <p className="mb-2.5 text-center text-sm sm:mb-0 sm:text-left">
           {items.length} item(s) · total{' '}
-          <span className="text-lg font-bold tabular-nums text-emerald-600">₹{total.toLocaleString('en-IN')}</span>
+          <span className="text-lg font-bold tabular-nums text-emerald-600">
+            ₹{total.toLocaleString('en-IN')}
+          </span>
         </p>
         <div className="grid grid-cols-2 gap-2 sm:ml-auto sm:flex sm:flex-wrap sm:justify-end">
-          <Button type="button" variant="destructive" onClick={() => confirmExit(backPath)} title="Cancel (Esc)">
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={() => confirmExit(backPath)}
+            title="Cancel (Esc)"
+          >
             Cancel
           </Button>
-          <Button type="button" variant="outline" onClick={resetForm} title={isEdit ? 'Revert unsaved changes' : 'Clear the form'}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={resetForm}
+            title={isEdit ? 'Revert unsaved changes' : 'Clear the form'}
+          >
             <RotateCcw /> Reset
           </Button>
           {/* Save the order with DRAFT status — hidden from Order Modify until confirmed. */}
@@ -2864,7 +3131,11 @@ export function OrderFormPage() {
               onClick={() => (isEdit ? saveDraftAsQuotation() : persist('quotation'))}
               disabled={saving}
               className="border border-red-200 bg-red-100 text-red-700 hover:bg-red-200"
-              title={isEdit ? 'Save changes and create a quotation from this draft (Alt+Q)' : 'Save as a quotation (Alt+Q)'}
+              title={
+                isEdit
+                  ? 'Save changes and create a quotation from this draft (Alt+Q)'
+                  : 'Save as a quotation (Alt+Q)'
+              }
             >
               <FileText /> Create Quotation
               <Kbd className="hidden sm:inline-flex">Alt+Q</Kbd>
@@ -2997,17 +3268,26 @@ function LinePhotoButton({
           viewport so it still fits a phone, and scrolled rather than grown
           past the screen — tiles this size stack up fast on a line with many
           photos, where the old small ones stayed comfortably short. */}
-      <PopoverContent align="end" className="max-h-[70vh] w-[min(34rem,calc(100vw-2rem))] overflow-y-auto">
+      <PopoverContent
+        align="end"
+        className="max-h-[70vh] w-[min(34rem,calc(100vw-2rem))] overflow-y-auto"
+      >
         {required && (
           <p className="mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-400/25 dark:bg-rose-500/10 dark:text-rose-300">
-            This party has never been sent this item and design with a photo on record. Add one before using Create &amp; Dispatch —
-            saving the order on its own is fine without it.
+            This party has never been sent this item and design with a photo on record. Add one
+            before using Create &amp; Dispatch — saving the order on its own is fine without it.
           </p>
         )}
         {onFile && (
           <div className="mb-3 rounded-md border p-2">
-            <p className="text-muted-foreground mb-2 text-xs font-medium">Already on file from an earlier dispatch</p>
-            <img src={onFile} alt="Reference photo on file" className="max-h-40 w-full rounded object-contain" />
+            <p className="text-muted-foreground mb-2 text-xs font-medium">
+              Already on file from an earlier dispatch
+            </p>
+            <img
+              src={onFile}
+              alt="Reference photo on file"
+              className="max-h-40 w-full rounded object-contain"
+            />
           </div>
         )}
         <DraftLinePhotos value={photos} onChange={onChange} gridClassName="grid-cols-2 gap-3" />
@@ -3065,7 +3345,12 @@ function SettingsPanel({
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="outline" size="icon" aria-label="Keyboard & tab settings" title="Keyboard & tab settings">
+        <Button
+          variant="outline"
+          size="icon"
+          aria-label="Keyboard & tab settings"
+          title="Keyboard & tab settings"
+        >
           <Settings2 />
         </Button>
       </PopoverTrigger>
@@ -3076,13 +3361,16 @@ function SettingsPanel({
               <Keyboard className="size-4" /> Keyboard & Tab
             </h4>
             <p className="text-muted-foreground text-xs">
-              Reorder the <Kbd>Tab</Kbd> sequence with the arrows, and toggle which fields it stops on.
+              Reorder the <Kbd>Tab</Kbd> sequence with the arrows, and toggle which fields it stops
+              on.
             </p>
           </div>
 
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <span className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">Tab order</span>
+              <span className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
+                Tab order
+              </span>
               <button
                 type="button"
                 onClick={() => setTabOrder(defaultTabOrder())}
@@ -3096,7 +3384,9 @@ function SettingsPanel({
                 if (t.enabled) pos += 1;
                 return (
                   <div key={t.key} className="hover:bg-muted/50 flex items-center gap-2 px-2 py-1">
-                    <span className="text-muted-foreground w-4 text-right text-xs tabular-nums">{t.enabled ? pos : '·'}</span>
+                    <span className="text-muted-foreground w-4 text-right text-xs tabular-nums">
+                      {t.enabled ? pos : '·'}
+                    </span>
                     <div className="flex flex-col">
                       <button
                         type="button"
@@ -3117,7 +3407,12 @@ function SettingsPanel({
                         <ChevronDown className="size-3.5" />
                       </button>
                     </div>
-                    <span className={cn('flex-1 text-sm', !t.enabled && 'text-muted-foreground/60 line-through')}>
+                    <span
+                      className={cn(
+                        'flex-1 text-sm',
+                        !t.enabled && 'text-muted-foreground/60 line-through',
+                      )}
+                    >
                       {FIELD_LABEL[t.key]}
                     </span>
                     <Switch checked={t.enabled} onCheckedChange={(v) => toggle(t.key, v)} />
@@ -3128,7 +3423,9 @@ function SettingsPanel({
           </div>
 
           <div className="space-y-1.5">
-            <span className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">Shortcuts</span>
+            <span className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
+              Shortcuts
+            </span>
             <div className="space-y-1">
               {SHORTCUTS.map((s) => (
                 <div key={s.label} className="flex items-center justify-between text-sm">
