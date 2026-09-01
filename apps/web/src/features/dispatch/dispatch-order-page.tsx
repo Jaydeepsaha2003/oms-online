@@ -1680,15 +1680,23 @@ function DispatchSheet({
     // Over-dispatch is allowed (packing/weighing variance is normal) but never
     // silently — flag exactly which unit(s) go past what's left and make the
     // user explicitly confirm before it's saved.
+    //
+    // Only units the order line actually ordered count: a line ordered in Kgs
+    // never carries a Pcs quantity, so its remaining Pcs is always 0 — that is
+    // not "pending", it is "not tracked", and typing a pack count in there
+    // (as packers do) shouldn't be treated as blowing past a limit that never
+    // existed for this line.
     const n = (v: number) => v.toLocaleString('en-IN');
     const over = (
       [
-        ['Bags', bags, line.remBags],
-        ['Pcs', pcs, line.remPcs],
-        ['Kgs', gram, line.remKgs],
-        ['Box', box, line.remBox],
+        ['Bags', bags, line.remBags, line.bags],
+        ['Pcs', pcs, line.remPcs, line.pcs],
+        ['Kgs', gram, line.remKgs, line.kgs],
+        ['Box', box, line.remBox, line.box],
       ] as const
-    ).filter(([, v, rem]) => v > (rem ?? 0));
+    )
+      .filter(([, v, rem, ordered]) => (ordered ?? 0) > 0 && v > (rem ?? 0))
+      .map(([label, v, rem]) => [label, v, rem] as const);
 
     let status = form.dispatchStatus;
     if (over.length) {
