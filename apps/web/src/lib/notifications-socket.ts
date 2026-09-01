@@ -53,9 +53,12 @@ export function connectNotificationsSocket(): void {
   // Live refresh: another user's Dispatch line lock was acquired or released, so
   // the Pending Dispatch view (base key ['dispatch','pending'] — see
   // use-dispatch.ts) re-fetches at once and shows/clears "being dispatched by X"
-  // without waiting for the 2s poll. Silent by design — no toast/sound.
+  // without waiting for the 2s poll. Pending Challan shows the same lock on its
+  // own rows (a line can be mid-dispatch and still sit un-challaned), so it
+  // needs the same nudge. Silent by design — no toast/sound.
   socket.on('dispatch:lock-changed', () => {
     void queryClient.invalidateQueries({ queryKey: ['dispatch', 'pending'] });
+    void queryClient.invalidateQueries({ queryKey: ['challans', 'pending'] });
   });
 
   // A notification addressed to this user specifically — currently dispatch

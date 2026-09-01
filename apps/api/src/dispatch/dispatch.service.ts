@@ -165,8 +165,10 @@ export class DispatchService implements OnModuleInit {
   }
 
   /** Live (non-expired) locks right now, keyed by orderItemId — folded into the
-   *  pending pool so other users see a line is taken before they try to open it. */
-  private activeLockNames(): Map<number, string> {
+   *  pending pool so other users see a line is taken before they try to open it.
+   *  Public: ChallansService reads the same map so Pending Challan can warn that
+   *  a dispatch's order line is mid-dispatch elsewhere (see `pending()` there). */
+  activeLockNames(): Map<number, string> {
     const now = Date.now();
     const out = new Map<number, string>();
     for (const [orderItemId, lock] of this.lineLocks) {

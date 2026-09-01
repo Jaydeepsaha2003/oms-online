@@ -20,6 +20,7 @@ import { PdfService } from '../pdf/pdf.service';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
 import { SettingsService } from '../settings/settings.service';
 import { AgentCommissionService } from '../agent-commission/agent-commission.service';
+import { DispatchService } from '../dispatch/dispatch.service';
 import { CreateChallanDto, DraftChallanDto, ItemHistoryQueryDto, PendingChallanQueryDto, ChallanQueryDto } from './dto/challan.dto';
 
 const PREFIX_KEY = 'CHALLAN_PREFIXES';
@@ -49,6 +50,7 @@ export class ChallansService {
     private readonly notifications: NotificationsGateway,
     private readonly settings: SettingsService,
     private readonly commission: AgentCommissionService,
+    private readonly dispatch: DispatchService,
   ) {}
 
   /** Dispatch lines still awaiting a challan (mirrors the legacy PendChallan query:
@@ -127,6 +129,10 @@ export class ChallansService {
     // Resolve the masters for this page so an unpriced line is flagged here,
     // before the operator has spent time building a challan around it.
     const rates = await this.rateMapsMulti(ordered.map((d) => d.customerName));
+    // A dispatch already sitting here un-challaned can still belong to an order
+    // line someone is dispatching MORE of right now (a partial line, further
+    // dispatch in progress) — the same lock the Dispatch Order screen shows.
+    const locks = this.dispatch.activeLockNames();
 
     return {
       items: ordered.map((d) => {
@@ -150,6 +156,7 @@ export class ChallansService {
           gstRate: rates.gstFor(d.customerName, cat),
           freightRate: rates.rateFor(d.customerName, cat, 'FREIGHT'),
           packingRate: rates.rateFor(d.customerName, cat, 'PACKING'),
+          lockedByName: locks.get(d.orderItemId) ?? null,
         };
       }),
       total,

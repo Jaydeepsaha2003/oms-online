@@ -12,7 +12,6 @@ import {
   Flame,
   Hourglass,
   Loader2,
-  Lock,
   Package,
   PackageCheck,
   RotateCcw,
@@ -49,6 +48,7 @@ import { ExportButton, ExportColumnsDialog } from '@/components/common/excel-act
 import { DataTable, type DataColumn } from '@/components/common/data-table';
 import { NativeSelect } from '@/components/common/combo';
 import { RowCheckbox } from '@/components/common/row-checkbox';
+import { LockedBadge } from '@/components/common/locked-badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -111,16 +111,6 @@ const PendingApprovalBadge = () => (
   <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-400/10 dark:text-amber-300 dark:ring-amber-400/30">
     <Hourglass className="size-3" />
     Pending approval
-  </span>
-);
-
-/** Shown when another user currently has this line's dispatch dialog open (see
- *  useLineLock) — lets people see a line is taken before they even try to open
- *  it, instead of only finding out from the "try again in a moment" toast. */
-const LockedBadge = ({ name }: { name: string }) => (
-  <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-600 ring-1 ring-inset ring-slate-200 dark:bg-slate-500/15 dark:text-slate-300 dark:ring-slate-400/25">
-    <Lock className="size-3" />
-    {name}
   </span>
 );
 

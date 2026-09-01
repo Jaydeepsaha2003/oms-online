@@ -39,6 +39,12 @@ export interface PendingChallanLine {
   gstRate: number | null;
   freightRate: number | null;
   packingRate: number | null;
+  /** Name of whoever currently has this line's ORDER LINE open in the Dispatch
+   *  form — a soft lock (see DispatchService.acquireLock). A dispatch already
+   *  sitting here un-challaned can still belong to an order line someone is
+   *  actively dispatching MORE of, so the same lock name that warns the
+   *  Dispatch Order screen also warns here. Null/absent = nobody's on it. */
+  lockedByName?: string | null;
 }
 
 export type PendingChallanQuery = PaginationQuery & {
