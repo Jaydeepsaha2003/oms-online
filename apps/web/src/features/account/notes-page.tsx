@@ -1320,7 +1320,7 @@ export function NotesPage() {
                         <NotePriceBreakdown line={l}>{money(l.price ?? 0)}</NotePriceBreakdown>
                       </td>
                       <td className={cn(TD, NUM, 'font-bold text-slate-900 dark:text-slate-100')}>
-                        <NotePriceBreakdown line={l}>{money(noteItemAmount(l))}</NotePriceBreakdown>
+                        {money(noteItemAmount(l))}
                       </td>
                       <td
                         className={cn(
