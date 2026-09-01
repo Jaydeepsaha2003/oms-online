@@ -114,6 +114,10 @@ export function Combobox({
   const focused = React.useRef(false);
   const blurTimer = React.useRef<ReturnType<typeof setTimeout>>();
   const inputRef = React.useRef<HTMLInputElement>(null);
+  // Set by `commit` so the blur it triggers skips the revert/validate path: the
+  // value is exactly what the user picked, and re-deriving it from `valueRef`
+  // races the parent's re-render — losing that race puts the PREVIOUS label back.
+  const justCommitted = React.useRef(false);
   const anchorRef = React.useRef<HTMLDivElement>(null);
   const listRef = React.useRef<HTMLDivElement>(null);
   const navByKey = React.useRef(false); // last highlight change came from the keyboard
@@ -386,12 +390,31 @@ export function Combobox({
     if (caret != null) el.setSelectionRange(caret, caret);
   }, [wantsDigits, digitsFirst]);
 
-  const commit = (v: string) => {
+  /**
+   * Touch devices only: choosing a value ends the search, so the keyboard that
+   * was up for it should go too. It used to stay, covering half the screen and
+   * hiding the field the user just filled — on a form of them, every pick meant
+   * dismissing it by hand.
+   *
+   * `pointer: coarse` rather than a width breakpoint, because what matters is
+   * whether the keyboard is an on-screen one — a tablet in landscape is wider
+   * than any phone cutoff and still has one.
+   *
+   * `keepFocus` is for Tab, whose whole job is to move focus on to the next
+   * field; blurring there would drop focus to the body and send the following
+   * Tab somewhere else entirely. A desktop mouse or Enter keeps focus too, so
+   * keyboard flow is untouched.
+   */
+  const commit = (v: string, keepFocus = false) => {
     onChange(v);
     setText(labelFor(v));
     setDirty(false);
     setOpen(false);
     setForceText(false);
+    if (!keepFocus && window.matchMedia?.('(pointer: coarse)').matches) {
+      justCommitted.current = true;
+      inputRef.current?.blur();
+    }
   };
 
   // Auto-space right where the number ends. Every one of the 730 dispatch item
@@ -451,6 +474,13 @@ export function Combobox({
       }
       focused.current = false;
       setOpen(false);
+      // Just picked from the list: `setText` in `commit` already holds the right
+      // label, and nothing was typed that needs validating.
+      if (justCommitted.current) {
+        justCommitted.current = false;
+        setDirty(false);
+        return;
+      }
       if (!creatable) {
         const typed = textRef.current.trim();
         // Read through the refs, not the closure: the value may have changed during
@@ -528,7 +558,7 @@ export function Combobox({
       // Only when the user has actually typed (`dirty`) — a bare Tab through an
       // untouched field must leave its existing value alone — and never on the
       // "Create …" row, whose free text is already live via onChange.
-      if (open && dirty && rows[active] && !rows[active].create) commit(rows[active].value);
+      if (open && dirty && rows[active] && !rows[active].create) commit(rows[active].value, true);
     } else if (e.key === 'Escape') {
       setOpen(false);
     } else if (e.key === 'Home' && open) {
