@@ -38,6 +38,7 @@ import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useColumnOrder } from '@/hooks/use-column-order';
 import { usePageSize } from '@/hooks/use-page-size';
 import { settingValues, useOrderQtyLayout, useSettings } from '@/features/settings/use-settings';
+import { useDrawableBookings } from '@/features/bookings/use-bookings';
 import { LiveLinePhotos } from '../orders/line-photos';
 import { useOrderItemPhotos } from '../orders/use-orders';
 import { useConfirm } from '@/components/common/confirm';
@@ -1592,12 +1593,37 @@ function DispatchSheet({
     gram: number;
     box: number;
     over: readonly (readonly [string, number, number | null])[];
+    /** How much of the overage is whole extra bags + their weight — the part a
+     *  bag booking could cover. See `bagOverage` below. */
+    extraBags: number;
+    extraKgs: number;
   } | null>(null);
   const { data: settings } = useSettings();
   const overageReasons = useMemo(
     () => settingValues(settings, 'DISPATCH_OVERAGE_REASON'),
     [settings],
   );
+
+  /*
+   * Is this overage a whole extra BAG, or just weight?
+   *
+   * 1 bag / 80 kgs against 1 bag / 70 kgs pending is a heavier bag — packing
+   * variance, and nobody wants a booking question for it. 2 bags against 1 is
+   * a bag that was never ordered, which is what a bag booking is there to
+   * cover. Only the second is worth interrupting for.
+   *
+   * Gated on the line actually ordering in bags: where Bags is untracked its
+   * remaining is always 0, so any typed bag count would look like an overage.
+   */
+  const bagOverage = (line.bags ?? 0) > 0 && (overagePending?.extraBags ?? 0) >= 1 - 1e-6;
+  const { data: drawable } = useDrawableBookings(
+    line.customerName,
+    line.pCategory,
+    overageOpen && bagOverage,
+  );
+  /** Which booking the extra is being withdrawn from — null = leave bookings
+   *  alone (the default; drawing one down is opt-in, never assumed). */
+  const [drawBookingId, setDrawBookingId] = useState<number | null>(null);
 
   const doCreate = (
     bags: number,
@@ -1606,6 +1632,8 @@ function DispatchSheet({
     box: number,
     status: DispatchStatus,
     extraComment?: string,
+    /** Withdraw the extra from this bag booking — see the overage dialog. */
+    bookingDrawId?: number | null,
   ) => {
     const comment = [form.comment.trim(), extraComment].filter(Boolean).join(' | ') || null;
     create.mutate(
@@ -1618,6 +1646,7 @@ function DispatchSheet({
         dispatchStatus: status,
         comment,
         dispatchDate,
+        bookingDrawId: bookingDrawId ?? null,
       },
       {
         onSuccess: (res) => {
@@ -1692,7 +1721,17 @@ function DispatchSheet({
     if (over.length) {
       // A reason is required (no silent/blind confirm) — opens the dialog below
       // and stops here; doCreate() picks up once a reason is chosen.
-      setOveragePending({ bags, pcs, gram, box, over });
+      const round3 = (v: number) => Math.round(v * 1000) / 1000;
+      setOveragePending({
+        bags,
+        pcs,
+        gram,
+        box,
+        over,
+        extraBags: round3(Math.max(0, bags - (line.remBags ?? 0))),
+        extraKgs: round3(Math.max(0, gram - (line.remKgs ?? 0))),
+      });
+      setDrawBookingId(null);
       setOverageOpen(true);
       return;
     } else {
@@ -1729,12 +1768,21 @@ function DispatchSheet({
     if (!overagePending) return;
     if (!overageReason.trim()) return toast.error('Please choose a reason.');
     const { bags, pcs, gram, box } = overagePending;
-    const tag = `Overage — ${overageReason.trim()}${overageNote.trim() ? `: ${overageNote.trim()}` : ''}`;
-    doCreate(bags, pcs, gram, box, 'FULLY DISPATCH', tag);
+    const drawn = drawable?.find((b) => b.id === drawBookingId);
+    const tag = [
+      `Overage — ${overageReason.trim()}${overageNote.trim() ? `: ${overageNote.trim()}` : ''}`,
+      // Written into the dispatch's own remark as well as the booking's note, so
+      // the link reads from both ends without opening the other screen.
+      drawn ? `Extra withdrawn from bag booking ${drawn.code}` : null,
+    ]
+      .filter(Boolean)
+      .join(' | ');
+    doCreate(bags, pcs, gram, box, 'FULLY DISPATCH', tag, drawBookingId);
     setOverageOpen(false);
     setOverageReason('');
     setOverageNote('');
     setOveragePending(null);
+    setDrawBookingId(null);
   };
 
   // Ctrl/Cmd+S saves the dispatch (bound once; always calls the latest submit).
@@ -2033,6 +2081,78 @@ function DispatchSheet({
               </ul>
               <p className="mt-2">The line will be marked Fully Dispatched.</p>
             </div>
+
+            {/*
+              * Whole extra bags, and this party holds a booking with room for
+              * them — offer to take them off it.
+              *
+              * Opt-in, never pre-selected: drawing a booking down spends
+              * something the party paid for, so it is a decision, not a default
+              * somebody has to notice and undo. Absent entirely when there is
+              * no booking to draw from, which is the common case — the dialog
+              * stays the plain overage confirm it was.
+              */}
+            {bagOverage && !!drawable?.length && (
+              <div className="rounded-md border border-sky-300 bg-sky-50 p-2.5 dark:border-sky-400/40 dark:bg-sky-400/10">
+                <p className="text-[13px] font-semibold text-sky-900 dark:text-sky-100">
+                  Withdraw the extra from a bag booking?
+                </p>
+                <p className="mt-0.5 text-[12px] text-sky-800/90 dark:text-sky-200/90">
+                  {overagePending?.extraBags.toLocaleString('en-IN')} bags
+                  {(overagePending?.extraKgs ?? 0) > 0
+                    ? ` · ${overagePending?.extraKgs.toLocaleString('en-IN')} kgs`
+                    : ''}{' '}
+                  went out beyond this line. It can come off {line.customerName}'s booking, dated{' '}
+                  {formatDate(dispatchDate)}.
+                </p>
+                <div className="mt-2 space-y-1">
+                  {drawable.map((b) => {
+                    const picked = drawBookingId === b.id;
+                    // A booking short of the extra is still listed, just not
+                    // selectable — silently hiding it reads as "no booking
+                    // exists", when the truth is "it hasn't got enough left".
+                    const enough =
+                      b.remainingBags + 1e-6 >= (overagePending?.extraBags ?? 0) &&
+                      b.remainingKgs + 1e-6 >= (overagePending?.extraKgs ?? 0);
+                    return (
+                      <button
+                        key={b.id}
+                        type="button"
+                        disabled={!enough}
+                        onClick={() => setDrawBookingId(picked ? null : b.id)}
+                        className={cn(
+                          'flex w-full items-center gap-2 rounded-[4px] border px-2 py-1.5 text-left text-[12px] transition-colors',
+                          picked
+                            ? 'border-sky-600 bg-sky-600 text-white'
+                            : 'border-sky-200 bg-white text-sky-900 hover:bg-sky-100 dark:border-sky-400/30 dark:bg-transparent dark:text-sky-100',
+                          !enough && 'cursor-not-allowed opacity-50',
+                        )}
+                        title={
+                          enough
+                            ? `Take the extra off ${b.code}`
+                            : `${b.code} has only ${b.remainingBags} bags / ${b.remainingKgs} kgs left under ${b.pCategory}`
+                        }
+                      >
+                        <span className="font-bold">{b.code}</span>
+                        <span className="opacity-80">
+                          {formatDate(b.bookingDate)} · {b.pCategory}
+                        </span>
+                        <span className="ml-auto font-semibold tabular-nums">
+                          {b.remainingBags.toLocaleString('en-IN')} bags ·{' '}
+                          {b.remainingKgs.toLocaleString('en-IN')} kgs left
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-1.5 text-[11px] text-sky-800/80 dark:text-sky-200/80">
+                  {drawBookingId
+                    ? 'The extra will be deducted from this booking and linked to this dispatch.'
+                    : 'Leave unpicked to dispatch the extra without touching any booking.'}
+                </p>
+              </div>
+            )}
+
             <CancelReasonFields
               reasons={overageReasons}
               reason={overageReason}

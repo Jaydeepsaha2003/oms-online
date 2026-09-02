@@ -10,6 +10,7 @@ import {
   BookingQueryDto,
   ConvertBookingDto,
   CreateBookingDto,
+  DrawableBookingsQueryDto,
   LinkableItemsQueryDto,
   LinkBookingItemsDto,
   PrecloseBookingDto,
@@ -36,6 +37,22 @@ export class BookingsController {
   @Permissions(perm(R, ACTIONS.VIEW))
   priceHistory(@Query() query: PriceHistoryQueryDto) {
     return this.bookings.priceHistory(query);
+  }
+
+  /**
+   * Bookings a dispatch overage could be withdrawn from, for this party and the
+   * overage's own product category. Declared ABOVE `:id` — Nest matches in
+   * order, so a literal path registered after it would be swallowed by the
+   * param route and arrive as `findOne('drawable')`.
+   *
+   * Gated on DISPATCH:CREATE, not BOOKING:VIEW: the only caller is the dispatch
+   * sheet asking "is there a booking to offer?", and the packing floor that
+   * dispatches is not necessarily allowed to browse bookings.
+   */
+  @Get('drawable')
+  @Permissions(perm(RESOURCES.DISPATCH, ACTIONS.CREATE))
+  drawable(@Query() query: DrawableBookingsQueryDto) {
+    return this.bookings.drawableFor(query.customerName ?? null, query.pCategory ?? null);
   }
 
   @Get(':id')

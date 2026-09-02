@@ -24,6 +24,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { baseProductName, matchesProductName, productNameWhere } from '../common/product-name';
 import { ApprovalsService } from '../approvals/approvals.service';
 import { AuditService } from '../audit/audit.service';
+import { BookingsService } from '../bookings/bookings.service';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
 import { formatDate } from '../common/date.util';
 import { toNum, toStr, uc } from '../common/coerce';
@@ -111,6 +112,7 @@ export class DispatchService implements OnModuleInit {
     private readonly audit: AuditService,
     private readonly notifier: DispatchNotifier,
     private readonly gateway: NotificationsGateway,
+    private readonly bookings: BookingsService,
   ) {}
 
   /* ── Editing locks: "someone else has this line open" ──────────────────────
@@ -1015,7 +1017,7 @@ export class DispatchService implements OnModuleInit {
     // interleave: the second only reads AFTER the first has committed, so it sees
     // the first's row (both the "already fully dispatched" guard and the duplicate
     // guard below then catch it) instead of silently inserting a copy.
-    const row = await this.prisma.$transaction(async (tx) => {
+    const { row, drawnFromBookingId } = await this.prisma.$transaction(async (tx) => {
       const it = await tx.orderItem.findUnique({
         where: { id: dto.orderItemId },
         include: { order: true, dispatches: true },
@@ -1136,8 +1138,53 @@ export class DispatchService implements OnModuleInit {
           userName: userName ?? null,
         },
       });
-      return created;
+
+      /*
+       * The extra that went out beyond what this line had pending, withdrawn
+       * from a bag booking because the operator said to.
+       *
+       * `rem` is the pending qty as of BEFORE this dispatch, so the extra is
+       * simply what overshoots it. Worked out here rather than taken from the
+       * request: how much comes off a booking is not the client's to declare.
+       *
+       * Inside the transaction on purpose — if the booking cannot cover it, the
+       * dispatch does not get recorded either. The alternative (ship it anyway,
+       * report the draw failed) leaves exactly the unaccounted bag this is for.
+       */
+      let drawnFromBookingId: number | null = null;
+      if (dto.bookingDrawId != null) {
+        const extraBags = round3(Math.max(0, bags - rem.bags));
+        const extraKgs = round3(Math.max(0, gram - rem.gram));
+        if (extraBags > EPS || extraKgs > EPS) {
+          const code = created.code ?? this.codeFor(created.id);
+          await this.bookings.drawOverage(
+            {
+              bookingId: dto.bookingDrawId,
+              dispatchId: created.id,
+              bags: extraBags,
+              kgs: extraKgs,
+              pCategory: it.pCategory,
+              productName: it.productName,
+              designType: dispatchDesign(it),
+              at: created.dispatchDate,
+              note:
+                `Dispatch overage withdrawn — ${code} sent ${qtyText({ bags, gram })} of ` +
+                `${it.productName ?? it.product ?? 'this item'}` +
+                `${it.order.code ? ` on order ${it.order.code}` : ''} against ` +
+                `${qtyText({ bags: rem.bags, gram: rem.gram })} pending, so ` +
+                `${qtyText({ bags: extraBags, gram: extraKgs })} came off this booking.`,
+              userName: userName ?? actor?.name ?? null,
+            },
+            tx,
+          );
+          drawnFromBookingId = dto.bookingDrawId;
+        }
+      }
+      return { row: created, drawnFromBookingId };
     });
+
+    // Roll the booking up now the withdrawal has committed — see drawOverage.
+    if (drawnFromBookingId != null) await this.bookings.recompute(drawnFromBookingId);
 
     const dispatch = await this.ensureCode(row);
     if (!opts?.skipAudit) {
@@ -1386,6 +1433,16 @@ export class DispatchService implements OnModuleInit {
       },
     });
 
+    // Keep any booking withdrawal in step with the edited quantity — a dispatch
+    // corrected from 2 bags back to 1 must hand the borrowed bag back. No-ops
+    // unless this dispatch already had a withdrawal (see resyncOverageDraw).
+    await this.bookings.resyncOverageDraw(id, {
+      bags: round3(Math.max(0, bags - rem.bags)),
+      kgs: round3(Math.max(0, gram - rem.gram)),
+      at: row.dispatchDate,
+      userName: actor?.name ?? null,
+    });
+
     // Spell out WHAT actually changed, field by field, so the history answers
     // "what was edited" instead of just "edited".
     const changes: string[] = [];
@@ -1446,6 +1503,10 @@ export class DispatchService implements OnModuleInit {
     if (!row) throw new NotFoundException('Dispatch not found.');
     await this.assertNotBilled(id);
     await this.prisma.dispatch.delete({ where: { id } });
+    // Whatever this dispatch withdrew from a bag booking goes back: the shipment
+    // it paid for no longer exists, and leaving the bag drawn would quietly eat
+    // a booking the party still holds.
+    await this.bookings.releaseOverageDraw(id, 'DISPATCH_DELETED', actor?.name ?? null);
     this.invalidatePendingCache(); // a deleted dispatch puts its qty back in the pool
     this.notifier.dispatchDeleted({
       actorId: actor?.id ?? null,

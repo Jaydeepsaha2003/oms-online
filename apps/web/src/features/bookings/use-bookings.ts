@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
+  BookingDrawOptionDto,
   BookingDto,
   BookingList,
   BookingQuery,
@@ -39,6 +40,30 @@ export function useActiveCustomerBookings(customerName: string) {
         (b) => (b.status === 'OPEN' || b.status === 'PARTIALLY_CONVERTED') && (b.remainingBags > 0 || b.remainingKgs > 0),
       ),
     staleTime: 30_000,
+  });
+}
+
+/**
+ * Bookings a dispatch overage could be withdrawn from — this party, and the
+ * category the extra bags actually are.
+ *
+ * Separate from {@link useActiveCustomerBookings} because the question is
+ * narrower: remaining is measured on the booking's line for THIS category, so
+ * a party's spare bag of CUP is not offered to cover an extra bag of GLASS.
+ * The server decides that (see BookingsService.drawableFor) rather than the
+ * screen filtering a list it would have to keep in step.
+ */
+export function useDrawableBookings(customerName: string | null, pCategory: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: [...KEY, 'drawable', customerName, pCategory],
+    queryFn: () =>
+      http.get<BookingDrawOptionDto[]>('/bookings/drawable', {
+        params: { customerName: customerName ?? '', pCategory: pCategory ?? '' },
+      }),
+    enabled: enabled && !!customerName && !!pCategory,
+    // The answer decides whether the operator is asked a question mid-dispatch,
+    // so it is re-read per line rather than served from a long-lived cache.
+    staleTime: 5_000,
   });
 }
 

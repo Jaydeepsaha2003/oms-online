@@ -64,3 +64,12 @@ export class LinkBookingItemsDto {
   @IsArray() @ArrayNotEmpty() @ArrayMaxSize(200) @Type(() => Number) @IsInt({ each: true })
   orderItemIds!: number[];
 }
+
+/** Query for "which bookings could this dispatch overage come out of?" — the
+ *  party, and the category the extra bags actually are. Both optional so a
+ *  line with no category simply gets an empty list back rather than a 400;
+ *  "nothing to draw from" is a normal answer here. */
+export class DrawableBookingsQueryDto {
+  @IsOptional() @IsString() customerName?: string;
+  @IsOptional() @IsString() pCategory?: string;
+}

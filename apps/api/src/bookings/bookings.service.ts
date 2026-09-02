@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import {
   type BookingConversionDto,
+  type BookingDrawOptionDto,
   type BookingDto,
   type BookingItemDto,
   type BookingQuoteLine,
@@ -36,6 +37,15 @@ import {
 
 const INCLUDE = { conversions: { orderBy: { convertedAt: 'asc' } }, items: { orderBy: { id: 'asc' } } } as const;
 type Row = Prisma.BookingGetPayload<{ include: typeof INCLUDE }>;
+
+/** {@link BookingConversion.kind} — see the schema for what separates the two. */
+const ORDER_LINE_KIND = 'ORDER_LINE';
+const OVERAGE_KIND = 'DISPATCH_OVERAGE';
+/** Statuses a booking can still be drawn from. CONVERTED is full, and
+ *  CANCELLED/PRECLOSED are closed for good. */
+const DRAWABLE_STATUSES = ['OPEN', 'PARTIALLY_CONVERTED'];
+/** Float slack — bags/kgs are Floats, so an exact `>=` on a difference lies. */
+const EPS = 0.0001;
 
 /** The customer special-rate rows snapshotted onto a booking at creation. */
 interface RateSnapshot {
@@ -329,6 +339,47 @@ export class BookingsService {
         removedByName: c.removedByName,
       });
     }
+    /*
+     * Dispatch-overage withdrawals, as their own block.
+     *
+     * These belong to no order — they are extra bags that went out against a
+     * line that had already run out, taken off this booking instead (see
+     * DispatchService.create). They still count toward what the booking has
+     * been drawn down by, so a booking whose remaining had dropped with no
+     * order to explain it would otherwise look like an arithmetic error.
+     */
+    const overageDraws = conversions.filter((c) => c.kind === 'DISPATCH_OVERAGE');
+    const overageGroups: BookingPdfOrderGroup[] = overageDraws.length
+      ? [
+          {
+            heading: 'Withdrawn at dispatch   ·   not against any order line',
+            orderCode: '—',
+            orderDate: booking.bookingDate,
+            orderStatus: 'OVERAGE',
+            lines: overageDraws.map((c) => ({
+              productName: c.productName,
+              designType: c.designType && c.designType.toUpperCase() !== 'NA' ? c.designType : null,
+              bags: c.bags,
+              kgs: c.kgs,
+              pcs: c.pcs,
+              rate: c.frozenRate,
+              amount: round2(c.amount ?? 0),
+              status: 'CONFIRMED',
+              // It shipped — that is the whole reason this draw exists.
+              dispatchStatus: 'FULL' as const,
+              dispatchedBags: c.bags ?? 0,
+              dispatchedKgs: c.kgs ?? 0,
+              dispatchedPcs: c.pcs ?? 0,
+              challanCodes: [],
+              caption: c.note ?? null,
+              removedAt: c.removedAt,
+              removedReason: c.removedReason,
+              removedByName: c.removedByName,
+            })),
+          },
+        ]
+      : [];
+
     const buffer = await this.pdf.render(
       buildBookingPdfDoc({
         code: booking.code ?? this.codeFor(booking.id),
@@ -349,7 +400,7 @@ export class BookingsService {
         precloseComment: booking.precloseComment,
         precloseByName: booking.precloseByName,
         precloseAt: booking.precloseAt,
-        groups: [...groups.values()],
+        groups: [...groups.values(), ...overageGroups],
       }),
     );
     const stamp = booking.code ?? this.codeFor(booking.id);
@@ -604,12 +655,28 @@ export class BookingsService {
     });
     const live = linked.filter((it) => it.status !== 'CANCELLED' && it.order.status !== 'CANCELLED');
 
+    /*
+     * Dispatch-overage withdrawals also draw this booking down.
+     *
+     * These have no OrderItem to sum — the extra bags went out against the
+     * booking itself, not against an ordered line (see DispatchService.create).
+     * They are counted here so the booking's remaining reflects everything that
+     * has actually been taken out of it, whichever door the stock left by.
+     */
+    const draws = await this.prisma.bookingConversion.findMany({
+      where: { bookingId, kind: OVERAGE_KIND, removedAt: null },
+    });
+
     // Link the booking to the (first) order its live lines live on — this is the
     // order the standalone-convert path created, or the order it was drawn into
     // via the order form. Falls back to null once every drawn line is gone.
     const orderId = live[0]?.orderId ?? null;
-    const convertedBags = round2(live.reduce((s, it) => s + (it.bags ?? 0), 0));
-    const convertedKgs = round2(live.reduce((s, it) => s + (it.gram ?? 0), 0));
+    const convertedBags = round2(
+      live.reduce((s, it) => s + (it.bags ?? 0), 0) + draws.reduce((s, d) => s + (d.bags ?? 0), 0),
+    );
+    const convertedKgs = round2(
+      live.reduce((s, it) => s + (it.gram ?? 0), 0) + draws.reduce((s, d) => s + (d.kgs ?? 0), 0),
+    );
     // CANCELLED and PRECLOSED are manual, terminal calls — a booking's own qty
     // math must never silently promote it back to OPEN/PARTIAL/CONVERTED just
     // because an order tied to it changed. (Linking an item to a PRECLOSED
@@ -625,8 +692,15 @@ export class BookingsService {
     // independently of the others (e.g. GLASS's 1 bag vs CUP's 1 bag).
     for (const bookingItem of booking.items) {
       const matching = live.filter((it) => (uc(it.pCategory) ?? '') === bookingItem.pCategory);
-      const itemConvertedBags = round2(matching.reduce((s, it) => s + (it.bags ?? 0), 0));
-      const itemConvertedKgs = round2(matching.reduce((s, it) => s + (it.gram ?? 0), 0));
+      // An overage draw carries its own pCategory (it has no OrderItem to read
+      // one off), so the extra bag comes out of the category it actually was.
+      const matchingDraws = draws.filter((d) => (uc(d.pCategory) ?? '') === bookingItem.pCategory);
+      const itemConvertedBags = round2(
+        matching.reduce((s, it) => s + (it.bags ?? 0), 0) + matchingDraws.reduce((s, d) => s + (d.bags ?? 0), 0),
+      );
+      const itemConvertedKgs = round2(
+        matching.reduce((s, it) => s + (it.gram ?? 0), 0) + matchingDraws.reduce((s, d) => s + (d.kgs ?? 0), 0),
+      );
       if (itemConvertedBags !== bookingItem.convertedBags || itemConvertedKgs !== bookingItem.convertedKgs) {
         await this.prisma.bookingItem.update({ where: { id: bookingItem.id }, data: { convertedBags: itemConvertedBags, convertedKgs: itemConvertedKgs } });
       }
@@ -635,7 +709,10 @@ export class BookingsService {
     // Fetch existing rows first so a removal already frozen at some earlier
     // moment is never pushed forward by this (possibly unrelated) recompute.
     const existingByItemId = new Map(
-      (await this.prisma.bookingConversion.findMany({ where: { bookingId } })).map((c) => [c.orderItemId, c]),
+      (await this.prisma.bookingConversion.findMany({ where: { bookingId, kind: ORDER_LINE_KIND } })).map((c) => [
+        c.orderItemId,
+        c,
+      ]),
     );
     for (const it of linked) {
       const isLive = it.status !== 'CANCELLED' && it.order.status !== 'CANCELLED';
@@ -661,7 +738,7 @@ export class BookingsService {
       };
       await this.prisma.bookingConversion.upsert({
         where: { orderItemId: it.id },
-        create: { bookingId, orderItemId: it.id, convertedAt: it.createdAt, ...data },
+        create: { bookingId, orderItemId: it.id, convertedAt: it.createdAt, kind: ORDER_LINE_KIND, ...data },
         update: data,
       });
     }
@@ -669,13 +746,221 @@ export class BookingsService {
     // row itself was hard-deleted) keep their previously-captured snapshot —
     // this sweep is what flips them to removed, since the loop above can only
     // see rows that still exist.
+    //
+    // Scoped to ORDER_LINE draws, and that scope is load-bearing: an overage
+    // draw has no orderItemId, so with `linkedIds` empty the where collapsed to
+    // "every live row on this booking" and a routine recompute would have
+    // written off every overage withdrawal the booking had.
     const linkedIds = linked.map((it) => it.id);
     await this.prisma.bookingConversion.updateMany({
-      where: { bookingId, removedAt: null, ...(linkedIds.length ? { orderItemId: { notIn: linkedIds } } : {}) },
+      where: {
+        bookingId,
+        kind: ORDER_LINE_KIND,
+        removedAt: null,
+        ...(linkedIds.length ? { orderItemId: { notIn: linkedIds } } : {}),
+      },
       data: { removedAt: new Date(), removedReason: 'LINE_DELETED', removedByName: actorName ?? null },
     });
 
     await this.prisma.booking.update({ where: { id: bookingId }, data: { convertedBags, convertedKgs, status, orderId } });
+  }
+
+  /* ── Dispatch-overage withdrawals ────────────────────────────────────────── */
+
+  /**
+   * This party's bookings that a dispatch overage could be withdrawn from,
+   * most-recent first.
+   *
+   * `pCategory` is the category the extra bags actually are. A booking is only
+   * offered when it has room in THAT category: a party holding 1 bag of CUP
+   * cannot cover an extra bag of GLASS, and offering it would let the operator
+   * draw a bag the party never booked. Bookings with no line for the category
+   * at all are therefore left out, as are ones whose category line is used up.
+   *
+   * Returns [] rather than throwing for an unknown party or no category — "no
+   * booking to draw from" is a normal answer, and the caller's next move (just
+   * dispatch it, don't ask) is the same either way.
+   */
+  async drawableFor(customerName: string | null, pCategory: string | null): Promise<BookingDrawOptionDto[]> {
+    const party = uc(customerName);
+    const category = uc(pCategory);
+    if (!party || !category) return [];
+
+    const rows = await this.prisma.booking.findMany({
+      where: { customerName: party, status: { in: DRAWABLE_STATUSES } },
+      include: INCLUDE,
+      orderBy: [{ bookingDate: 'desc' }, { id: 'desc' }],
+    });
+
+    const out: BookingDrawOptionDto[] = [];
+    for (const b of rows) {
+      const item = b.items.find((i) => uc(i.pCategory) === category);
+      if (!item) continue; // nothing of this category booked here
+      const catBags = round2(item.bags - item.convertedBags);
+      const catKgs = round2(item.kgs - item.convertedKgs);
+      if (catBags <= EPS && catKgs <= EPS) continue; // that category is used up
+      out.push({
+        id: b.id,
+        code: b.code ?? this.codeFor(b.id),
+        bookingDate: b.bookingDate.toISOString(),
+        pCategory: item.pCategory,
+        remainingBags: Math.max(0, catBags),
+        remainingKgs: Math.max(0, catKgs),
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Withdraw a dispatch's extra qty from a booking, or re-sync an existing
+   * withdrawal after the dispatch is edited.
+   *
+   * Upserted by `dispatchId` rather than inserted, because a dispatch can be
+   * edited: saving it again must move the existing draw to the new extra, not
+   * stack a second withdrawal on top of the first. Passing 0/negative extra
+   * releases the draw instead — that is the dispatch having been corrected back
+   * to within its line, at which point the booking should get its bag back.
+   *
+   * The category is checked, not just the total: see {@link drawableFor}.
+   * Over-drawing is refused outright — a booking cannot go below zero, and
+   * silently clamping would tell the operator a bag was covered when it wasn't.
+   */
+  async drawOverage(
+    input: {
+      bookingId: number;
+      dispatchId: number;
+      bags: number;
+      kgs: number;
+      pCategory: string | null;
+      productName: string | null;
+      designType: string | null;
+      at: Date;
+      note: string;
+      userName?: string | null;
+    },
+    /**
+     * Run the check + write on a caller's transaction, so the withdrawal and
+     * whatever it pays for (the dispatch) commit or fail together — a dispatch
+     * recorded with its booking untouched is the unaccounted bag this feature
+     * exists to prevent. The caller then calls {@link recompute} itself once
+     * the transaction has committed (rollup reads must not see uncommitted
+     * rows, and recompute is a long chain of its own queries).
+     */
+    tx?: Prisma.TransactionClient,
+  ): Promise<void> {
+    const db = tx ?? this.prisma;
+    const { bookingId, dispatchId, bags, kgs, pCategory } = input;
+    if (bags <= EPS && kgs <= EPS) return this.releaseOverageDraw(dispatchId, 'OVERAGE_GONE', input.userName, tx);
+
+    const booking = await db.booking.findUnique({ where: { id: bookingId }, include: { items: true } });
+    if (!booking) throw new NotFoundException('Bag booking not found.');
+    if (!DRAWABLE_STATUSES.includes(booking.status)) {
+      throw new BadRequestException(`Booking ${booking.code ?? bookingId} is ${booking.status} and cannot be drawn from.`);
+    }
+
+    const category = uc(pCategory);
+    const item = booking.items.find((i) => uc(i.pCategory) === category);
+    if (!item) {
+      throw new BadRequestException(
+        `Booking ${booking.code ?? bookingId} has nothing booked under ${category ?? 'this category'}.`,
+      );
+    }
+
+    // What this dispatch's own existing draw already accounts for — excluded
+    // from the used-up total, or re-saving an unchanged dispatch would look
+    // like a second withdrawal and refuse itself.
+    const mine = await db.bookingConversion.findUnique({ where: { dispatchId } });
+    const minesBags = mine && mine.removedAt == null && mine.bookingId === bookingId ? (mine.bags ?? 0) : 0;
+    const minesKgs = mine && mine.removedAt == null && mine.bookingId === bookingId ? (mine.kgs ?? 0) : 0;
+    const freeBags = round2(item.bags - item.convertedBags + minesBags);
+    const freeKgs = round2(item.kgs - item.convertedKgs + minesKgs);
+    if (bags - freeBags > EPS || kgs - freeKgs > EPS) {
+      throw new BadRequestException(
+        `Booking ${booking.code ?? bookingId} has only ${freeBags} bags / ${freeKgs} kgs left under ${item.pCategory} — ` +
+          `not enough to cover the extra ${bags} bags / ${kgs} kgs.`,
+      );
+    }
+
+    const data = {
+      bookingId,
+      kind: OVERAGE_KIND,
+      pCategory: item.pCategory,
+      productName: input.productName,
+      designType: input.designType,
+      bags,
+      kgs,
+      note: input.note,
+      convertedByName: input.userName ?? null,
+      // "Booked on this date" — the draw is dated by the DISPATCH, not by the
+      // clock, so a backdated shipment draws the booking down on the day the
+      // stock actually left.
+      convertedAt: input.at,
+      // A re-draw after a release must clear the removal, or the row would stay
+      // written off and the qty would silently stop counting.
+      removedAt: null,
+      removedReason: null,
+      removedByName: null,
+    };
+    await db.bookingConversion.upsert({ where: { dispatchId }, create: { dispatchId, ...data }, update: data });
+    // On a caller's transaction the rollup is theirs to trigger after commit.
+    if (!tx) await this.recompute(bookingId);
+  }
+
+  /**
+   * Move an EXISTING withdrawal to a dispatch's new extra, after that dispatch
+   * was edited.
+   *
+   * A no-op when the dispatch never had a draw: nobody was asked to withdraw
+   * anything for it, and quietly starting to eat a booking because a quantity
+   * was corrected upward is not this method's call to make. Where a draw does
+   * exist it is kept honest — down to the smaller extra, or released entirely
+   * once the dispatch no longer overshoots its line.
+   */
+  async resyncOverageDraw(
+    dispatchId: number,
+    next: { bags: number; kgs: number; at: Date; userName?: string | null },
+  ): Promise<void> {
+    const existing = await this.prisma.bookingConversion.findUnique({ where: { dispatchId } });
+    if (!existing || existing.kind !== OVERAGE_KIND || existing.removedAt != null) return;
+    if (next.bags <= EPS && next.kgs <= EPS) {
+      return this.releaseOverageDraw(dispatchId, 'OVERAGE_GONE', next.userName);
+    }
+    await this.drawOverage({
+      bookingId: existing.bookingId,
+      dispatchId,
+      bags: next.bags,
+      kgs: next.kgs,
+      pCategory: existing.pCategory,
+      productName: existing.productName,
+      designType: existing.designType,
+      at: next.at,
+      note: existing.note ?? '',
+      userName: next.userName ?? existing.convertedByName,
+    });
+  }
+
+  /**
+   * Stop an overage draw counting — the dispatch was deleted, or edited back to
+   * within its line.
+   *
+   * Marked removed rather than deleted, for the same reason a cancelled order
+   * line's draw is: the booking PDF has to be able to show that this qty was
+   * once taken out and why it stopped counting. A no-op when there is no draw.
+   */
+  async releaseOverageDraw(
+    dispatchId: number,
+    reason: string,
+    userName?: string | null,
+    tx?: Prisma.TransactionClient,
+  ): Promise<void> {
+    const db = tx ?? this.prisma;
+    const existing = await db.bookingConversion.findUnique({ where: { dispatchId } });
+    if (!existing || existing.removedAt != null) return;
+    await db.bookingConversion.update({
+      where: { dispatchId },
+      data: { removedAt: new Date(), removedReason: reason, removedByName: userName ?? null },
+    });
+    if (!tx) await this.recompute(existing.bookingId);
   }
 
   /** Remaining bags/kgs on a booking, optionally excluding one order's draw
@@ -691,8 +976,18 @@ export class BookingsService {
       },
       select: { bags: true, gram: true },
     });
-    const drawnBags = round2(items.reduce((s, it) => s + (it.bags ?? 0), 0));
-    const drawnKgs = round2(items.reduce((s, it) => s + (it.gram ?? 0), 0));
+    // Overage withdrawals are drawn too — qty already taken out of the booking
+    // at a dispatch cannot also be available for an order to draw.
+    const draws = await this.prisma.bookingConversion.findMany({
+      where: { bookingId, kind: OVERAGE_KIND, removedAt: null },
+      select: { bags: true, kgs: true },
+    });
+    const drawnBags = round2(
+      items.reduce((s, it) => s + (it.bags ?? 0), 0) + draws.reduce((s, d) => s + (d.bags ?? 0), 0),
+    );
+    const drawnKgs = round2(
+      items.reduce((s, it) => s + (it.gram ?? 0), 0) + draws.reduce((s, d) => s + (d.kgs ?? 0), 0),
+    );
     // Written-off qty (if preclosed) counts against remaining too — belt-and-
     // braces alongside assertBookingCapacity's own PRECLOSED check, since this is
     // also called for the on-screen remainingBags/Kgs display.
@@ -1095,6 +1390,10 @@ interface BookingPdfLine {
    *  cancelled, its order cancelled, or (for a ghost line) hard-deleted
    *  outright. Null for a still-live line. */
   removedAt: Date | null;
+  /** Extra detail to print under the product name on a LIVE line — carries the
+   *  "why" on a dispatch-overage withdrawal, which has no order to explain it.
+   *  A removed line prints its removal caption instead. */
+  caption?: string | null;
   removedReason: string | null;
   removedByName: string | null;
 }
@@ -1102,6 +1401,9 @@ interface BookingPdfLine {
 interface BookingPdfOrderGroup {
   orderCode: string;
   orderDate: Date;
+  /** Replaces the whole "Order X · date · status" block heading. Used by the
+   *  dispatch-overage group, which is not an order at all. */
+  heading?: string;
   /** 'DELETED' for a ghost group whose order no longer exists at all — not a
    *  real Order.status value. */
   orderStatus: string;
@@ -1212,7 +1514,7 @@ function buildBookingPdfDoc(b: BookingPdfData): TDocumentDefinitions {
     // there's no need to cross-reference anything else to see it.
     const caption = removed
       ? [label, l.removedByName ? `by ${l.removedByName}` : null, l.removedAt ? pdfDate(l.removedAt) : null].filter(Boolean).join(' · ')
-      : null;
+      : (l.caption ?? null);
     const productCell: Cell = caption
       ? { stack: [{ text: `${l.productName ?? '—'}${suffix}`, fontSize: BODY, lineHeight: 1.12, color: BLACK, ...style }, { text: caption, fontSize: BODY - 2.5, italics: true, color: '#555555' }] }
       : txt(`${l.productName ?? '—'}${suffix}`, style);
@@ -1257,7 +1559,7 @@ function buildBookingPdfDoc(b: BookingPdfData): TDocumentDefinitions {
     const totalsAt = rows.length - 1;
     return {
       stack: [
-        { text: `Order ${g.orderCode}   ·   ${pdfDate(g.orderDate)}   ·   ${g.orderStatus}`, bold: true, fontSize: BODY + 0.5, margin: [1, 0, 0, 3] },
+        { text: g.heading ?? `Order ${g.orderCode}   ·   ${pdfDate(g.orderDate)}   ·   ${g.orderStatus}`, bold: true, fontSize: BODY + 0.5, margin: [1, 0, 0, 3] },
         {
           table: { headerRows: 1, dontBreakRows: true, widths: COL_WIDTHS, body: rows },
           layout: {

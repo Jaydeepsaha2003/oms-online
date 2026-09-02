@@ -260,3 +260,22 @@ export type PriceHistoryQuery = PaginationQuery & {
   kind?: RateHistoryKind;
 };
 export type PriceHistoryList = Paginated<RateChangeEntry>;
+
+/**
+ * One bag booking a dispatch overage could be withdrawn from.
+ *
+ * The remaining figures are that booking's own line for the OVERAGE'S product
+ * category, not the booking total — a party holding a bag of CUP cannot cover
+ * an extra bag of GLASS, so the total would offer capacity that isn't really
+ * there. See BookingsService.drawableFor.
+ */
+export interface BookingDrawOptionDto {
+  id: number;
+  code: string;
+  /** The rate-basis date the booking was taken on. */
+  bookingDate: string;
+  /** The product category these remaining figures belong to. */
+  pCategory: string;
+  remainingBags: number;
+  remainingKgs: number;
+}

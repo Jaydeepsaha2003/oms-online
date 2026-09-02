@@ -1302,9 +1302,30 @@ model BookingConversion {
   // forward on a later, unrelated call) so the PDF can show exactly how this
   // qty was used before it stopped counting.
   removedAt       DateTime?
-  // LINE_CANCELLED | ORDER_CANCELLED | LINE_DELETED
+  // LINE_CANCELLED | ORDER_CANCELLED | LINE_DELETED | DISPATCH_DELETED |
+  // OVERAGE_GONE (the dispatch was edited back down to within its line)
   removedReason   String?
   removedByName   String?
+  /// What this draw is.
+  ///
+  /// ORDER_LINE — the normal path: a booking converted into an order line, and
+  /// the line's own qty is the draw (`orderItemId` identifies it).
+  ///
+  /// DISPATCH_OVERAGE — extra bags that physically went out beyond what the
+  /// order line had pending, withdrawn from this booking instead of appearing
+  /// out of nowhere (see DispatchService.create). Keyed by `dispatchId`, has no
+  /// `orderItemId`, and is NEVER touched by recompute()'s order-line sweep.
+  kind            String    @default("ORDER_LINE")
+  /// The dispatch this overage draw belongs to. Unique — one draw per dispatch,
+  /// so re-syncing after an edit upserts rather than piling rows up. Null on an
+  /// ORDER_LINE draw.
+  dispatchId      Int?      @unique
+  /// Product category this qty drew from, so an overage draws down the right
+  /// BookingItem. An ORDER_LINE draw reads this off its OrderItem instead.
+  pCategory       String?
+  /// Why this draw exists, in words — the operator-facing comment stored with
+  /// an overage withdrawal ("1 bag over on DSP-04431 …").
+  note            String?
 
   booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 

@@ -17,6 +17,16 @@ export class CreateDispatchDto {
   @IsOptional() @IsString() @MaxLength(255) comment?: string;
   @IsOptional() @IsString() @MaxLength(255) supItem?: string;
   @IsOptional() @IsString() dispatchDate?: string;
+
+  /**
+   * Withdraw this dispatch's EXTRA qty from this bag booking.
+   *
+   * Set only when the operator answered yes to "dispatching more than the line
+   * has pending — take the extra off booking X?". The extra itself is NOT sent:
+   * the server works it out from the line's own remaining, so a stale or
+   * tampered client can't decide how much comes off a booking.
+   */
+  @IsOptional() @IsInt() bookingDrawId?: number;
 }
 
 export class UpdateDispatchDto extends PartialType(CreateDispatchDto) {}

@@ -237,6 +237,10 @@ export interface CreateDispatchInput {
   comment?: string | null;
   supItem?: string | null;
   dispatchDate?: string | null;
+  /** Withdraw this dispatch's EXTRA qty (whatever overshoots the line's pending)
+   *  from this bag booking. Set only when the operator agreed to it; the extra
+   *  itself is worked out server-side. See DispatchService.create. */
+  bookingDrawId?: number | null;
 }
 
 export interface UpdateDispatchInput {
