@@ -7,7 +7,7 @@ import { isUncommittedOrder, ORDER_LINE_EXPORT_COLUMNS, ORDER_PRIORITIES, qtyOrd
 import { getApiErrorMessage } from '@/lib/api';
 import { cn, shortOrderCode } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
-import { useAutoSizePcs } from '@/lib/auto-size-pcs';
+import { detectSizeOrPcs, useAutoSizePcs } from '@/lib/auto-size-pcs';
 import { useColumnOrder } from '@/hooks/use-column-order';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { usePageSize } from '@/hooks/use-page-size';
@@ -1115,30 +1115,8 @@ function LineEditor({
   // Use the same product-aware Size/Pcs auto-detection as New Order.
   const detectShowBy = (text: string) => {
     if (!autoSizePcs) return;
-    const t = text.trim();
-    const lead = t.match(/^(\d+(?:\.\d+)?)/)?.[1];
-    if (!lead) return;
-    const separator = /[\s(),+/-]+/;
-    const list = lookups?.items ?? [];
-    const nameTerms = t.slice(lead.length).trim().toLowerCase().split(separator).filter(Boolean);
-    const named = nameTerms.length
-      ? list.filter((it) => {
-          const words = `${it.product} ${it.designType ?? ''}`.toLowerCase().split(separator).filter(Boolean);
-          return nameTerms.every((term) => words.some((word) => word.startsWith(term)));
-        })
-      : list;
-    const pool = named.length ? named : list;
-    const some = (key: 'size' | 'pcs', test: (value: string) => boolean) =>
-      pool.some((it) => it[key] != null && test(String(it[key])));
-    const sizeExact = some('size', (value) => value === lead);
-    const pcsExact = some('pcs', (value) => value === lead);
-    if (pcsExact && !sizeExact) return setShowBy('PCS');
-    if (sizeExact && !pcsExact) return setShowBy('SIZE');
-    if (sizeExact || pcsExact) return setShowBy('SIZE');
-    const sizePrefix = some('size', (value) => value.startsWith(lead));
-    const pcsPrefix = some('pcs', (value) => value.startsWith(lead));
-    if (pcsPrefix && !sizePrefix) return setShowBy('PCS');
-    if (sizePrefix) setShowBy('SIZE');
+    const mode = detectSizeOrPcs(text, lookups?.items ?? []);
+    if (mode) setShowBy(mode);
   };
 
   const designNameOptions = useMemo(
@@ -1492,6 +1470,23 @@ function LineEditor({
       set(identityBefore);
       return;
     }
+
+    /*
+     * Re-picking the SAME catalogue row is a relabel, not a repricing.
+     *
+     * "7.5 RDX" and "8 RDX" are one row — 7.5in RDX comes 8 to the box — so
+     * flipping the picker between Size and Pcs re-selects the item the line
+     * already had. Nothing about what is being sold moved, and a rate someone
+     * negotiated for this order (₹365 against a ₹345 chart) is not the
+     * catalogue's to take back. The Keep/Use/Custom block above is what
+     * normally protects that figure, and it only runs when the item actually
+     * changed — so without this the fall-through below quietly wrote today's
+     * chart rate over the agreed one.
+     *
+     * A line with no rate yet still gets filled in, matching that block's own
+     * `existingRate > 0` guard.
+     */
+    if (!itemChanged && existingRate > 0) return;
 
     // Only the rate is left to apply — the identity went in before the question.
     set({

@@ -55,7 +55,7 @@ import {
 } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { useAutoSizePcs } from '@/lib/auto-size-pcs';
+import { detectSizeOrPcs, useAutoSizePcs } from '@/lib/auto-size-pcs';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/common/confirm';
 import { RecordHistory } from '@/components/common/record-history';
@@ -1161,38 +1161,8 @@ export function OrderFormPage() {
   // auto-detect preference is on (otherwise the user picks Size/Pcs manually).
   const detectShowBy = (text: string) => {
     if (!autoSizePcs) return;
-    const t = text.trim();
-    const lead = t.match(/^(\d+(?:\.\d+)?)/)?.[1];
-    if (!lead) return;
-    const SEP = /[\s(),+/-]+/;
-    const list = lookups?.items ?? [];
-    // Judge the leading number against ONLY the products whose name matches what's
-    // typed after it — so "15 RAJWADI" is decided by RAJWADI's own sizes
-    // (5.5/6.5/7) and pcs (15/12/10), NOT by the unrelated products that happen to
-    // be a 15-inch size. That's what makes it flip to Pcs and show "15 RAJWADI".
-    const nameTerms = t.slice(lead.length).trim().toLowerCase().split(SEP).filter(Boolean);
-    const named = nameTerms.length
-      ? list.filter((it) => {
-          const words = `${it.product} ${it.designType ?? ''}`
-            .toLowerCase()
-            .split(SEP)
-            .filter(Boolean);
-          return nameTerms.every((q) => words.some((w) => w.startsWith(q)));
-        })
-      : list;
-    const pool = named.length ? named : list;
-    const some = (key: 'size' | 'pcs', test: (v: string) => boolean) =>
-      pool.some((it) => it[key] != null && test(String(it[key])));
-    const sizeExact = some('size', (v) => v === lead);
-    const pcsExact = some('pcs', (v) => v === lead);
-    if (pcsExact && !sizeExact) return setShowBy('PCS');
-    if (sizeExact && !pcsExact) return setShowBy('SIZE');
-    if (sizeExact || pcsExact) return setShowBy('SIZE'); // both/ambiguous → Size
-    // Mid-number: prefix match within the name-narrowed pool.
-    const sizePre = some('size', (v) => v.startsWith(lead));
-    const pcsPre = some('pcs', (v) => v.startsWith(lead));
-    if (pcsPre && !sizePre) return setShowBy('PCS');
-    if (sizePre) return setShowBy('SIZE');
+    const mode = detectSizeOrPcs(text, lookups?.items ?? []);
+    if (mode) setShowBy(mode);
   };
 
   // Keep the qty-field Tab order live with the picked category's layout, so Tab

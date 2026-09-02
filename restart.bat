@@ -92,6 +92,14 @@ if /i "%SCOPE%"=="web"  goto webonly
 if /i "%SCOPE%"=="api"  goto apionly
 
 echo [2/3] Stopping the running servers...
+REM Same marker the API-only bounce sets, and for the same reason - it was just
+REM never set on THIS path. From the moment stop.bat runs until start.bat has
+REM the ports listening, the machine looks dead to the watchdog: .oms-stopped is
+REM cleared by start.bat ~30s BEFORE npm actually binds anything, so its 60s tick
+REM would fire run-prod-hidden.vbs alongside ours and one of the two pairs would
+REM die on EADDRINUSE. That is the "servers going ON/OFF" - see the 8s-apart pair
+REM logs\oms-prod-20260831-181807.log (clean) and -181815.log (both ports taken).
+echo restarting>".oms-restarting"
 call "%~dp0stop.bat" nopause
 
 echo.
@@ -180,22 +188,50 @@ exit /b 0
 echo.
 echo [3/3] Launching the freshly built servers...
 echo.
+REM Re-stamp it here so the 180s staleness clock starts at the LAUNCH, not at a
+REM stop that may have been followed by a long build. Reached by both routes in:
+REM the ordinary stop-then-launch above, and the schema-changed one that stopped
+REM early (that one is covered by .oms-stopped while it builds, but start.bat
+REM deletes that marker the moment it is called).
+echo restarting>".oms-restarting"
 REM OMS_PREBUILT tells start.bat the bundles are already current (built in step 1),
 REM so it does the DB sync (safe now the DB is free) and launches - no second build
 REM check. Scoped to this window + the start.bat it calls; a plain double-click of
 REM start.bat never has it set.
 set "OMS_PREBUILT=1"
 call "%~dp0start.bat"
-exit /b
+REM Capture start.bat's result BEFORE the `del` below - deleting a file resets
+REM errorlevel, so reading it afterwards always says 0.
+set "RC=%ERRORLEVEL%"
+REM Hand the watchdog its job back either way: if the servers really did fail to
+REM come up, we WANT it healing them within the minute. By here start.bat has
+REM already waited for both ports, so there is no window left to protect.
+if exist ".oms-restarting" del ".oms-restarting" >nul 2>&1
+exit /b %RC%
 
 :buildfailed
+REM Never leave the marker behind on a failure path: with the servers possibly
+REM down (the schema-changed route stops them before building) the watchdog is
+REM the only thing that will bring them back.
+if exist ".oms-restarting" del ".oms-restarting" >nul 2>&1
+REM ...and clear the STOP marker too, but only when THIS run is what stopped the
+REM servers (the schema-changed route). That marker means "a human stopped this
+REM on purpose, leave it down", so the watchdog obeys it forever - it is only
+REM cleared automatically when it predates the last boot. A build that fails
+REM after we stopped the servers therefore left the machine DOWN with healing
+REM switched off, and it stayed that way until somebody noticed and ran
+REM start.bat by hand; every open page just sat on "Updating the app...".
+REM Clearing it hands the job back to the watchdog, which brings the PREVIOUS
+REM (still perfectly good) build back within a minute. Left alone when we never
+REM stopped anything, so a genuine stop.bat still stays stopped.
+if defined STOPPEDFIRST if exist ".oms-stopped" del ".oms-stopped" >nul 2>&1
 echo.
 echo ============================================================
 if defined STOPPEDFIRST (
-    echo   Build failed - and the servers were already stopped for it,
-    echo   so the app is DOWN. Fix the error above, then run
-    echo   restart.bat again ^(or start.bat to come back up on the
-    echo   previous build^).
+    echo   Build failed - the servers were stopped for it, so the app is
+    echo   DOWN. The watchdog will bring the PREVIOUS build back up within
+    echo   a minute; fix the error above and run restart.bat again to
+    echo   deploy the new one ^(or start.bat now to come back immediately^).
 ) else (
     echo   Build failed - the running servers were LEFT UNTOUCHED.
     echo   Fix the error above and run restart.bat again.

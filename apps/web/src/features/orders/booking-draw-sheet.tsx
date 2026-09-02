@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { ORDER_PRIORITIES, qtyOrderForCategory, type BookingDto, type BookingQuoteLine, type ConvertBookingLineInput, type CustomerBagWeightDto, type CustomerLogoDto, type OrderLookups, type QtyField } from '@oms/shared';
 import { formatDate } from '@/lib/date-format';
 import { cn } from '@/lib/utils';
-import { useAutoSizePcs } from '@/lib/auto-size-pcs';
+import { detectSizeOrPcs, useAutoSizePcs } from '@/lib/auto-size-pcs';
 import { useConfirm } from '@/components/common/confirm';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -62,9 +62,6 @@ export interface DrawnBookingLine {
 }
 
 const fmtNum = (v: number | null) => (v == null ? '' : String(v));
-/** Word/punctuation splitter for matching a typed item name against catalogue
- *  words — same separator the order form's own detector uses. */
-const NAME_SEP = /[\s(),+/-]+/;
 const n = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? null : Number(s));
 const money = (v: number) => v.toLocaleString('en-IN');
 const round2 = (x: number) => Math.round((x + Number.EPSILON) * 100) / 100;
@@ -235,31 +232,8 @@ export function BookingDrawSheet({
   // list. Only runs when the auto-detect preference is on.
   const detectShowBy = (text: string) => {
     if (!autoSizePcs) return;
-    const t = text.trim();
-    const lead = t.match(/^(\d+(?:\.\d+)?)/)?.[1];
-    if (!lead) return;
-    const list = lookups?.items ?? [];
-    // Judge the leading number against ONLY the items whose name matches what's
-    // typed after it, so the decision is based on that product's own sizes/pcs,
-    // not unrelated products that happen to share the number.
-    const nameTerms = t.slice(lead.length).trim().toLowerCase().split(NAME_SEP).filter(Boolean);
-    const named = nameTerms.length
-      ? list.filter((it) => {
-          const words = `${it.product} ${it.designType ?? ''}`.toLowerCase().split(NAME_SEP).filter(Boolean);
-          return nameTerms.every((q) => words.some((w) => w.startsWith(q)));
-        })
-      : list;
-    const pool = named.length ? named : list;
-    const some = (key: 'size' | 'pcs', test: (v: string) => boolean) => pool.some((it) => it[key] != null && test(String(it[key])));
-    const sizeExact = some('size', (v) => v === lead);
-    const pcsExact = some('pcs', (v) => v === lead);
-    if (pcsExact && !sizeExact) return setShowBy('PCS');
-    if (sizeExact && !pcsExact) return setShowBy('SIZE');
-    if (sizeExact || pcsExact) return setShowBy('SIZE'); // both/ambiguous → Size
-    const sizePre = some('size', (v) => v.startsWith(lead));
-    const pcsPre = some('pcs', (v) => v.startsWith(lead));
-    if (pcsPre && !sizePre) return setShowBy('PCS');
-    if (sizePre) return setShowBy('SIZE');
+    const mode = detectSizeOrPcs(text, lookups?.items ?? []);
+    if (mode) setShowBy(mode);
   };
 
   // Auto-fill Kgs (= Bags × the customer's per-category bag weight) as bags are
