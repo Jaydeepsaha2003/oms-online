@@ -358,7 +358,16 @@ export function OrderBillPage() {
     );
   }
 
-  const BORDER = '#C9D2DC';
+  /**
+   * The items-table gridlines.
+   *
+   * A soft black rather than `#000`: the grid has to read as black on a printed
+   * bill (the old blue-grey washed out to nearly nothing once printed), but a
+   * pure-black grid at this line count boxes every figure in and fights the
+   * numbers for attention. A dark neutral grey prints as black to the eye and
+   * still lets the content lead.
+   */
+  const BORDER = '#4F4F4F';
   // wordBreak + whiteSpace let long item names/comments wrap onto extra lines
   // instead of overflowing or stretching the column — the row then grows to fit
   // (verticalAlign: top keeps wrapped text starting at the top of the row).
