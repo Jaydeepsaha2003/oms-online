@@ -247,7 +247,7 @@ function AgentSelector({
 
       {agentName && customers.length > 0 && (
         <div className="mt-3 rounded-lg border">
-          <div className="flex items-center gap-2 border-b bg-slate-50/70 px-3 py-2">
+          <div className="flex flex-wrap items-center gap-2 border-b bg-slate-50/70 px-3 py-2">
             <label className="flex items-center gap-2 text-sm font-medium">
               <input
                 type="checkbox"
@@ -257,7 +257,7 @@ function AgentSelector({
               />
               Select all
             </label>
-            <div className="relative ml-auto w-56">
+            <div className="relative w-full sm:ml-auto sm:w-56">
               <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
               <Input className="h-8 pl-8 text-sm" placeholder="Search customers…" value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
@@ -447,7 +447,47 @@ function RatePanel({
           Bulk mode — existing overrides are listed in “Per customer” mode.
         </p>
       ) : (
-        <DataTable columns={columns} rows={rates} rowKey={(r) => r.id} dense emptyText="No overrides yet." actions={canDelete ? deleteAction(onDelete) : undefined} />
+        <DataTable
+          columns={columns}
+          rows={rates}
+          rowKey={(r) => r.id}
+          dense
+          emptyText="No overrides yet."
+          actions={canDelete ? deleteAction(onDelete) : undefined}
+          // Phones: the desktop table's Level/Category/Sub-cat/Item/Δ columns don't
+          // fit — the Actions column ran off screen entirely, so a delete needed a
+          // horizontal scroll to even find. A card states the same thing in one read.
+          mobileCard={(r) => (
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 space-y-1">
+                <p className={cn('inline-flex rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wide uppercase', accent.chip)}>
+                  {scopeLabel(r.scope)}
+                </p>
+                <p className="truncate text-sm font-semibold">
+                  {r.category}
+                  {r.subCategory ? ` / ${r.subCategory}` : ''}
+                  {r.target ? ` / ${r.target}` : ''}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                <span className={cn('text-sm font-bold tabular-nums', r.rate > 0 ? 'text-emerald-600' : r.rate < 0 ? 'text-rose-600' : '')}>
+                  {signed(r.rate)}
+                </span>
+                {canDelete && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-destructive hover:text-destructive size-8"
+                    onClick={() => onDelete(r)}
+                    aria-label="Remove"
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+        />
       )}
     </Panel>
   );
@@ -570,7 +610,41 @@ function LogoPanel({
           Bulk mode — existing restrictions are listed in “Per customer” mode.
         </p>
       ) : (
-        <DataTable columns={columns} rows={logos} rowKey={(r) => r.id} dense emptyText="No logo restrictions — the logo is allowed everywhere." actions={canDelete ? deleteAction(onDelete) : undefined} />
+        <DataTable
+          columns={columns}
+          rows={logos}
+          rowKey={(r) => r.id}
+          dense
+          emptyText="No logo restrictions — the logo is allowed everywhere."
+          actions={canDelete ? deleteAction(onDelete) : undefined}
+          mobileCard={(r) => (
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 space-y-1">
+                <p className={cn('inline-flex rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wide uppercase', accent.chip)}>
+                  {scopeLabel(r.scope)}
+                </p>
+                <p className="truncate text-sm font-semibold">
+                  {r.category}
+                  {r.subCategory ? ` / ${r.subCategory}` : ''}
+                </p>
+                <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700 ring-1 ring-inset ring-rose-200">
+                  <Ban className="size-3" /> Not allowed
+                </span>
+              </div>
+              {canDelete && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-destructive hover:text-destructive size-8 shrink-0"
+                  onClick={() => onDelete(r)}
+                  aria-label="Remove"
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              )}
+            </div>
+          )}
+        />
       )}
     </Panel>
   );
@@ -706,7 +780,44 @@ function BagWeightPanel({
           Bulk mode — existing bag weights are listed in “Per customer” mode.
         </p>
       ) : (
-        <DataTable columns={columns} rows={bagWeights} rowKey={(r) => r.id} dense emptyText="No bag weights — Kgs is typed manually for this customer." actions={canDelete ? deleteAction(onDelete) : undefined} />
+        <DataTable
+          columns={columns}
+          rows={bagWeights}
+          rowKey={(r) => r.id}
+          dense
+          emptyText="No bag weights — Kgs is typed manually for this customer."
+          actions={canDelete ? deleteAction(onDelete) : undefined}
+          mobileCard={(r) => (
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 space-y-1">
+                <p className="truncate text-sm font-semibold">{r.category}</p>
+                <p className="text-xs">
+                  <span className="font-bold tabular-nums text-amber-700">{r.kgsPerBag.toLocaleString('en-IN')} kg</span>
+                  <span className="text-muted-foreground"> per bag</span>
+                </p>
+                <p className="text-muted-foreground text-xs">
+                  Max bags/dispatch:{' '}
+                  {r.maxBagsPerDispatch ? (
+                    <span className="font-semibold text-rose-700 tabular-nums">{r.maxBagsPerDispatch.toLocaleString('en-IN')}</span>
+                  ) : (
+                    'Default'
+                  )}
+                </p>
+              </div>
+              {canDelete && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-destructive hover:text-destructive size-8 shrink-0"
+                  onClick={() => onDelete(r)}
+                  aria-label="Remove"
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              )}
+            </div>
+          )}
+        />
       )}
     </Panel>
   );
