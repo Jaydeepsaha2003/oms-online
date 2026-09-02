@@ -1,6 +1,23 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Ban, ChevronLeft, ChevronRight, ExternalLink, Filter, Loader2, Pencil, RotateCcw, Save, Trash2, Truck, Undo2 } from 'lucide-react';
+import {
+  ArrowRight,
+  BadgePercent,
+  Ban,
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  Filter,
+  Loader2,
+  Package,
+  Palette,
+  Pencil,
+  RotateCcw,
+  Save,
+  Trash2,
+  Truck,
+  Undo2,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import type { OrderDto, OrderInput, OrderItemDto, QtyField } from '@oms/shared';
 import { isUncommittedOrder, ORDER_LINE_EXPORT_COLUMNS, ORDER_PRIORITIES, qtyOrderForCategory, resolveLineDesignParts, resolveSpecialRates } from '@oms/shared';
@@ -1835,15 +1852,30 @@ function RateChoiceDialog({
     <Dialog open onOpenChange={(o) => !o && onDone({ kind: 'cancel' })}>
       <DialogContent className="w-[calc(100vw-2rem)] overflow-x-hidden sm:max-w-xl [&>*]:min-w-0">
         <DialogHeader>
-          <DialogTitle>This changes the line’s rate</DialogTitle>
+          {/* pr-8 clears the close button — it's a sticky overlay with no
+              reserved layout space (see dialog.tsx), so a title running to the
+              edge collides with it rather than wrapping around it. */}
+          <DialogTitle className="flex items-center gap-2 pr-8">
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300">
+              <BadgePercent className="size-4" />
+            </span>
+            This changes the line’s rate
+          </DialogTitle>
         </DialogHeader>
-        {/* Two sentences at most, in the order the user needs them: what is
-            already decided, then what is left to decide. */}
-        <p className="text-muted-foreground text-sm">
-          <span className="text-foreground font-medium">{label}</span> — this line is saved at{' '}
-          <span className="text-foreground font-semibold">{inr(oldRate)}</span>, and it now comes to{' '}
-          <span className="text-foreground font-semibold">{inr(keepRate ?? newRate)}</span>.
-        </p>
+
+        {/* The old sentence said the same two numbers as prose; a reader
+            scanning for "how much did it move" had to parse a full clause to
+            find them. This says it once, as the figures themselves — struck
+            old rate, arrow, new rate — with the sentence kept underneath for
+            whoever wants the words. */}
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-lg border bg-muted/40 px-3 py-2.5">
+          <p className="min-w-0 flex-1 truncate text-sm font-semibold">{label}</p>
+          <div className="flex shrink-0 items-center gap-2 tabular-nums">
+            <span className="text-muted-foreground text-[13px] line-through decoration-2">{inr(oldRate)}</span>
+            <ArrowRight className="text-muted-foreground size-3.5 shrink-0" />
+            <span className="text-[16px] font-bold text-blue-700 dark:text-blue-300">{inr(keepRate ?? newRate)}</span>
+          </div>
+        </div>
 
         {/* The design half is not a choice. Say so plainly and say why, naming
             both designs — "the design rate changed" leaves the user wondering
@@ -1918,8 +1950,89 @@ function RateChoiceDialog({
           * The design row reads the same in both option columns, which is the
           * clearest possible way to show that half is not a choice.
           */}
-        {productRateMoved && (
-          <div className="overflow-x-auto rounded-md border">
+        {productRateMoved && (() => {
+          const partRows = (
+            [
+              [
+                'Product',
+                oldProductRate ?? 0,
+                keepProductRate ?? 0,
+                newProductRate ?? 0,
+                true,
+                newProductDelta ?? 0,
+                keepAsOf ? 'rate on the day' : 'your choice',
+              ],
+              [
+                'Design',
+                oldDesignRate ?? 0,
+                keepDesignRate ?? 0,
+                newDesignRate ?? 0,
+                hasDesignRate,
+                newDesignDelta ?? 0,
+                Math.abs((keepDesignRate ?? 0) - (newDesignRate ?? 0)) < 0.001 ? 'same either way' : 'moved too',
+              ],
+            ] as const
+          ).filter(([, , , , show]) => show);
+          return (
+        <>
+        {/* Phones: the four-column table (Part/Was/Keep/Use) never fit — it sat
+            behind a horizontal scrollbar with "Keep" cut off mid-word, the exact
+            problem just fixed on the Special Rates lists. A card per part says
+            the same three figures top-to-bottom instead of left-to-right. */}
+        <div className="space-y-2 sm:hidden">
+          {partRows.map(([name, was, keep, use, , delta, badge]) => {
+            const fixed = Math.abs(keep - use) < 0.001;
+            return (
+              <div key={name} className="rounded-lg border p-2.5">
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
+                    {name === 'Product' ? (
+                      <Package className="size-3.5 shrink-0 text-blue-600 dark:text-blue-400" />
+                    ) : (
+                      <Palette className="size-3.5 shrink-0 text-violet-600 dark:text-violet-400" />
+                    )}
+                    {name}
+                  </span>
+                  <span
+                    className={cn(
+                      'text-[10px] font-bold tracking-wide uppercase',
+                      fixed ? 'text-muted-foreground/70' : 'text-amber-700 dark:text-amber-400',
+                    )}
+                  >
+                    {badge}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-1.5 text-center text-[11px]">
+                  <div>
+                    <p className="text-muted-foreground">Was</p>
+                    <p className="text-muted-foreground font-medium tabular-nums">{inr(was)}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground truncate">Keep{keepAsOf ? ` ${formatDate(keepAsOf)}` : ''}</p>
+                    <p className={cn('tabular-nums', !fixed && 'font-semibold')}>{inr(keep)}</p>
+                  </div>
+                  <div className="rounded-md bg-blue-50/70 py-0.5 dark:bg-blue-500/10">
+                    <p className="truncate text-blue-700 dark:text-blue-300">Use {asOf ? formatDate(asOf) : 'today'}</p>
+                    <p className={cn('tabular-nums', !fixed && 'font-semibold text-blue-800 dark:text-blue-200')}>{inr(use)}</p>
+                  </div>
+                </div>
+                {Math.abs(delta) > 0.001 && (
+                  <p className="text-muted-foreground mt-1 text-center text-[10px] font-medium">
+                    incl. {delta > 0 ? '+' : '−'}₹{Math.abs(delta)} special
+                  </p>
+                )}
+              </div>
+            );
+          })}
+          <div className="bg-muted/30 flex items-center justify-between rounded-lg border-2 px-2.5 py-2 text-sm font-bold">
+            <span>Line total</span>
+            <span className="tabular-nums">
+              {inr(oldRate)} <ArrowRight className="mx-1 inline size-3" /> {inr(newRate)}
+            </span>
+          </div>
+        </div>
+
+          <div className="hidden overflow-x-auto rounded-lg border shadow-sm sm:block">
             <table className="w-full min-w-max text-sm">
               <thead>
                 <tr className="text-muted-foreground bg-muted/50 border-b text-[10.5px] font-bold tracking-wide uppercase">
@@ -1938,35 +2051,20 @@ function RateChoiceDialog({
                 </tr>
               </thead>
               <tbody>
-                {(
-                  [
-                    [
-                      'Product',
-                      oldProductRate ?? 0,
-                      keepProductRate ?? 0,
-                      newProductRate ?? 0,
-                      true,
-                      newProductDelta ?? 0,
-                      keepAsOf ? 'rate on the day' : 'your choice',
-                    ],
-                    [
-                      'Design',
-                      oldDesignRate ?? 0,
-                      keepDesignRate ?? 0,
-                      newDesignRate ?? 0,
-                      hasDesignRate,
-                      newDesignDelta ?? 0,
-                      Math.abs((keepDesignRate ?? 0) - (newDesignRate ?? 0)) < 0.001 ? 'same either way' : 'moved too',
-                    ],
-                  ] as const
-                )
-                  .filter(([, , , , show]) => show)
+                {partRows
                   .map(([name, was, keep, use, , delta, badge]) => {
                     const fixed = Math.abs(keep - use) < 0.001;
                     return (
                       <tr key={name} className="border-b last:border-b-0">
                         <td className="px-2.5 py-1.5 sm:px-3">
-                          <span className="text-muted-foreground">{name} ₹</span>
+                          <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                            {name === 'Product' ? (
+                              <Package className="size-3 shrink-0 text-blue-600 dark:text-blue-400" />
+                            ) : (
+                              <Palette className="size-3 shrink-0 text-violet-600 dark:text-violet-400" />
+                            )}
+                            {name} ₹
+                          </span>
                           <span
                             className={cn(
                               'ml-1.5 text-[10px] font-bold tracking-wide uppercase',
@@ -2009,7 +2107,9 @@ function RateChoiceDialog({
               </tbody>
             </table>
           </div>
-        )}
+        </>
+          );
+        })()}
 
         {custom ? (
           <div className="space-y-3">
