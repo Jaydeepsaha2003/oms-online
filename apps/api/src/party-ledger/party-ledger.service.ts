@@ -4,6 +4,9 @@ import ExcelJS from 'exceljs';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import { payBucketOf } from '@oms/shared';
 import type {
+  DueFromBasis,
+  DueFromCalc,
+  DueFromReceipt,
   LedgerBalanceRow,
   LedgerClearedLine,
   LedgerClearedResult,
@@ -459,6 +462,7 @@ export class PartyLedgerService {
       voucherNo: rr.voucherNo,
       challanId: rr.challanId ?? null,
       dueFrom: '',
+      dueFromCalc: null,
       status: '',
       pendingAmount: 0,
       pendingSide: null,
@@ -472,14 +476,25 @@ export class PartyLedgerService {
 
     const info = pending.get(rr.voucherNo);
     const dueDate = rr.dueDate ?? info?.dueDate ?? rr.txnDate;
+    // Which date the clock is actually running from. Named rather than inferred
+    // on the screen, because a voucher with no due date ages from its invoice
+    // date — the same "3 Over" text, a different claim about the party.
+    const basis: DueFromBasis = (rr.dueDate ?? info?.dueDate) ? 'DUE_DATE' : 'INVOICE_DATE';
     const invoiceAmt = mode === 'B' ? rr.bankDr : mode === 'C' ? rr.cashDr : rr.bankDr + rr.cashDr;
+    /** Text AND its workings together, so the hover card can never contradict
+     *  the figure it is explaining. */
+    const open = (pendingAmt: number, partPaid: boolean) => {
+      const { text, calc } = this.dueFromOpen(dueDate, today, basis, pendingAmt, partPaid);
+      base.dueFrom = text;
+      base.dueFromCalc = calc;
+    };
 
     if (!info) {
       // A confirmed invoice without a pending snapshot is treated as wholly due.
       base.status = invoiceAmt > EPS ? 'D' : '';
       base.pendingAmount = r0(Math.max(0, invoiceAmt));
       base.pendingSide = this.pendingSideOf(rr.bankDr, rr.cashDr);
-      base.dueFrom = this.dueFromText(dueDate, today);
+      open(base.pendingAmount, false);
       return base;
     }
     const pend = Math.max(0, mode === 'B' ? info.bankBal : mode === 'C' ? info.cashBal : info.bankBal + info.cashBal);
@@ -488,13 +503,15 @@ export class PartyLedgerService {
     if (pend <= EPS) {
       base.status = 'F';
       const paid = lastRec.get(rr.voucherNo);
-      base.dueFrom = paid?.length ? this.earlyLateText(dueDate, paid) : '';
+      const settled = paid?.length ? this.dueFromSettled(dueDate, paid, basis) : null;
+      base.dueFrom = settled?.text ?? '';
+      base.dueFromCalc = settled?.calc ?? null;
     } else if (pend < invoiceAmt - EPS) {
       base.status = 'P';
-      base.dueFrom = this.dueFromText(dueDate, today);
+      open(base.pendingAmount, true);
     } else {
       base.status = 'D';
-      base.dueFrom = this.dueFromText(dueDate, today);
+      open(base.pendingAmount, false);
     }
     return base;
   }
@@ -508,11 +525,30 @@ export class PartyLedgerService {
     return null;
   }
 
-  private dueFromText(dueDate: Date, today: Date): string {
-    const daysLeft = Math.round((dueDate.getTime() - today.getTime()) / DAY);
-    if (daysLeft < 0) return `${Math.abs(daysLeft)} Over`;
-    if (daysLeft === 0) return 'Due Today';
-    return `${daysLeft} Left`;
+  /**
+   * Ageing for an invoice that is still owed something: basis date vs today.
+   *
+   * Returns the workings alongside the text. They are one function because the
+   * screen has to be able to show how the figure was reached, and a second
+   * implementation of these rules on the client would be a second set of
+   * answers — the ledger's own KPIs and this column already disagreed once for
+   * exactly that reason.
+   */
+  private dueFromOpen(from: Date, today: Date, basis: DueFromBasis, pending: number, partPaid: boolean): { text: string; calc: DueFromCalc } {
+    const days = Math.round((from.getTime() - today.getTime()) / DAY);
+    const text = days < 0 ? `${Math.abs(days)} Over` : days === 0 ? 'Due Today' : `${days} Left`;
+    return {
+      text,
+      calc: {
+        kind: 'OPEN',
+        basis,
+        fromDate: from.toISOString(),
+        days,
+        asOf: today.toISOString(),
+        pending: r0(pending),
+        partPaid,
+      },
+    };
   }
 
   /**
@@ -523,13 +559,18 @@ export class PartyLedgerService {
    * if none of it had arrived until August. Weighting by amount says what the
    * money actually did — (34,897x48 + 25,308x83) / 60,205 -> "63 Late".
    *
-   * Sign follows dueDate - paid, so positive is early, matching `dueFromText`.
+   * Sign follows dueDate - paid, so positive is early, matching `dueFromOpen`.
    * If the receipts carry no amount between them (all zero, so the weights say
-   * nothing), fall back to the latest date rather than dividing by zero.
+   * nothing), fall back to the latest date rather than dividing by zero — the
+   * returned calc flags that, so the card doesn't claim a weighting that never
+   * happened.
+   *
+   * Returns null for an invoice with no receipts at all: there is no Early/Late
+   * to state, and the column stays empty as it always has.
    */
-  private earlyLateText(dueDate: Date, receipts: InvoiceReceipt[]): string {
-    if (!receipts.length) return '';
-    const due = dueDate.getTime();
+  private dueFromSettled(from: Date, receipts: InvoiceReceipt[], basis: DueFromBasis): { text: string; calc: DueFromCalc } | null {
+    if (!receipts.length) return null;
+    const due = from.getTime();
     let weight = 0;
     let weighted = 0;
     for (const r of receipts) {
@@ -538,11 +579,38 @@ export class PartyLedgerService {
       weight += amt;
       weighted += amt * (due - r.date.getTime());
     }
-    const diffMs = weight > EPS ? weighted / weight : due - Math.max(...receipts.map((r) => r.date.getTime()));
-    const diff = Math.round(diffMs / DAY);
-    if (diff > 0) return `${diff} Early`;
-    if (diff === 0) return 'On Time';
-    return `${Math.abs(diff)} Late`;
+    const byAmount = weight > EPS;
+    const diffMs = byAmount ? weighted / weight : due - Math.max(...receipts.map((r) => r.date.getTime()));
+    const exact = diffMs / DAY;
+    const days = Math.round(exact);
+    const text = days > 0 ? `${days} Early` : days === 0 ? 'On Time' : `${Math.abs(days)} Late`;
+    const lines: DueFromReceipt[] = [...receipts]
+      .sort((a, b) => a.date.getTime() - b.date.getTime())
+      .map((r) => ({
+        date: r.date.toISOString(),
+        amount: r0(r.amt),
+        // Whole days for display only. Receipt dates are stored at local
+        // midnight and challan dates at midnight UTC, so the raw difference
+        // carries a 5-and-a-half-hour offset that is an artefact of the storage,
+        // not a fact about the payment. The weighting above still runs on the
+        // exact times — this must present the figure, never move it.
+        days: Math.round((due - r.date.getTime()) / DAY),
+        share: byAmount ? Math.abs(r.amt) / weight : 0,
+      }));
+    return {
+      text,
+      calc: {
+        kind: 'SETTLED',
+        basis,
+        fromDate: from.toISOString(),
+        days,
+        // One decimal is enough to show the rounding at work ("62.7 -> 63")
+        // without implying the arithmetic is precise to the hour.
+        daysExact: Math.round(exact * 10) / 10,
+        receipts: lines,
+        weighted: byAmount,
+      },
+    };
   }
 
   /* ── pending + receipt derivations ──────────────────────────────────────── */

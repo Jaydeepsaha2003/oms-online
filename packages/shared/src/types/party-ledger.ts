@@ -17,6 +17,70 @@ export type LedgerTxnMode = (typeof LEDGER_TXN_MODES)[number];
 /** Per-invoice settlement status shown as a one-letter chip. */
 export type LedgerRowStatus = '' | 'D' | 'P' | 'F'; // Due / Partial / Fully paid
 
+/** Where a row's ageing clock is measured from. Every confirmed invoice carries
+ *  a due date, so INVOICE_DATE is the fallback for a voucher that reaches the
+ *  ledger without one — worth naming, because "3 Over" counted from the invoice
+ *  date is not the same claim as "3 Over" against agreed credit terms. */
+export type DueFromBasis = 'DUE_DATE' | 'INVOICE_DATE';
+
+/** One receipt's contribution to a settled invoice's Early/Late figure. */
+export interface DueFromReceipt {
+  /** ISO date the money arrived. */
+  date: string;
+  amount: number;
+  /** Whole days between the basis date and this receipt: + early, - late. */
+  days: number;
+  /** This receipt's share of everything paid, 0-1 — the weight it carried. */
+  share: number;
+}
+
+/**
+ * The workings behind a row's {@link PartyLedgerRow.dueFrom} text.
+ *
+ * Derived in the same pass as the text, out of the same numbers, so the two can
+ * never disagree. The screen only formats what is here; it does NOT re-derive
+ * the figure, because a second implementation of the ageing rules is a second
+ * set of answers to the same question.
+ */
+export interface DueFromCalc {
+  /** OPEN: money is still owed, so the clock runs to today. SETTLED: the invoice
+   *  is paid off, so it runs to when the money actually arrived. */
+  kind: 'OPEN' | 'SETTLED';
+  basis: DueFromBasis;
+  /** The date the clock runs from (ISO). */
+  fromDate: string;
+  /** Whole days, signed. OPEN: + credit still to run, - past due.
+   *  SETTLED: + paid early, - paid late. */
+  days: number;
+  /** OPEN — the server's "today" the figure was measured against (ISO). A ledger
+   *  left open overnight is quoting yesterday's ageing, and this is what says so. */
+  asOf?: string;
+  /** OPEN — what is still outstanding, in the ledger's Bank/Cash mode. A
+   *  part-paid invoice keeps ageing on its ORIGINAL due date; this is the amount
+   *  actually riding on that date. */
+  pending?: number;
+  /** OPEN — has some of this invoice already been paid? The card explains the
+   *  two cases differently, and telling the holder of a wholly unpaid bill that
+   *  "a part payment does not move the due date" invents a payment that was
+   *  never made. */
+  partPaid?: boolean;
+  /** SETTLED — every receipt that cleared it, oldest first. */
+  receipts?: DueFromReceipt[];
+  /**
+   * SETTLED — the amount-weighted mean before rounding to whole days.
+   *
+   * The card shows "62.7 -> 63" rather than printing the receipts' whole-day
+   * figures with an "=" in front of 63. It cannot claim they average to exactly
+   * 63: the weighting runs on the stored timestamps, which mix midnight-UTC with
+   * midnight-IST, so each receipt's true offset sits a few hours off the whole
+   * day shown beside it.
+   */
+  daysExact?: number;
+  /** SETTLED — false when no receipt carried an amount, so there was nothing to
+   *  weight by and the figure fell back to the latest receipt's date alone. */
+  weighted?: boolean;
+}
+
 export interface PartyLedgerRow {
   txnDate: string; // ISO
   particulars: string;
@@ -28,6 +92,10 @@ export interface PartyLedgerRow {
   challanId?: number | null;
   /** "12 Left" / "3 Over" / "Due Today" / "5 Early" / "On Time" / "2 Late" / "". */
   dueFrom: string;
+  /** How {@link dueFrom} was arrived at, for the hover explanation on the
+   *  ledger. Null wherever there is no ageing to explain: receipts, credit
+   *  notes, and settled invoices with no receipt on record. */
+  dueFromCalc: DueFromCalc | null;
   status: LedgerRowStatus;
   /** Outstanding amount for the selected Bank/Cash print mode. */
   pendingAmount: number;

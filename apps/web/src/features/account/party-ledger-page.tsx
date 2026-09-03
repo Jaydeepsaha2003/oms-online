@@ -8,6 +8,7 @@ import {
   Eye,
   FileSpreadsheet,
   Loader2,
+  Pin,
   Printer,
   X,
 } from 'lucide-react';
@@ -15,6 +16,7 @@ import { toast } from 'sonner';
 import { GlobalWorkerOptions, getDocument, type PDFDocumentProxy } from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import type {
+  DueFromCalc,
   LedgerBalanceRow,
   LedgerClearedResult,
   LedgerReceiptLine,
@@ -33,7 +35,7 @@ import { DateRangeCalendar } from '@/components/common/date-range-calendar';
 import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { fetchLedgerCleared, fetchLedgerReceipts, usePartyLedger, usePartyLedgerLookups } from './use-party-ledger';
@@ -909,7 +911,7 @@ export function PartyLedgerPage() {
                         />
                       </td>
                       <td className={cn(TD, 'whitespace-nowrap')}>
-                        <DueFrom text={r.dueFrom} />
+                        <DueFrom text={r.dueFrom} calc={r.dueFromCalc} />
                       </td>
                       {legs.flatMap((l) => [
                         <td
@@ -1076,7 +1078,7 @@ export function PartyLedgerPage() {
                           status={r.status}
                           side={mode === 'BOTH' ? r.pendingSide : null}
                         />
-                        <DueFrom text={r.dueFrom} />
+                        <DueFrom text={r.dueFrom} calc={r.dueFromCalc} />
                       </div>
                     )}
                     <div className="mt-2 flex items-end justify-between gap-2 border-t pt-2">
@@ -1376,9 +1378,305 @@ const dueTone = (t: string) =>
       ? 'text-emerald-600 dark:text-emerald-400'
       : 'text-slate-600 dark:text-slate-400';
 
-function DueFrom({ text }: { text: string }) {
+/** The card's accent, keyed off the same test `dueTone` uses so a figure and the
+ *  card it opens are never two different colours. */
+const dueAccent = (t: string): 'rose' | 'emerald' | 'slate' =>
+  /Over/i.test(t) ? 'rose' : /Early|On Time|Late/i.test(t) ? 'emerald' : 'slate';
+
+/** A signed day figure with a real minus sign rather than a hyphen. */
+const dayText = (days: number) => (days < 0 ? `−${Math.abs(days)}` : String(days));
+
+/** Signed whole days as a phrase, so no line has to be read as "is −3 good?". */
+const dayPhrase = (days: number, back: string, forward: string, same: string) =>
+  days === 0
+    ? same
+    : `${Math.abs(days)} ${Math.abs(days) === 1 ? 'day' : 'days'} ${days < 0 ? back : forward}`;
+
+/** One labelled line inside the Due From card. */
+function CalcLine({
+  label,
+  value,
+  sub,
+  strong,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  strong?: boolean;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <div className="min-w-0">
+        <p
+          className={cn(
+            'text-[11px] leading-tight',
+            strong ? 'font-bold' : 'text-muted-foreground font-semibold',
+          )}
+        >
+          {label}
+        </p>
+        {sub && <p className="text-muted-foreground text-[10px] leading-tight">{sub}</p>}
+      </div>
+      <span
+        className={cn(
+          'shrink-0 tabular-nums',
+          strong ? 'text-[12.5px] font-bold' : 'text-[11.5px] font-semibold',
+        )}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * "3 Over" / "63 Late", with the arithmetic behind it on hover.
+ *
+ * The column is the most-queried figure on the page and the least explicable:
+ * two different rules produce it, and the one for a settled invoice is an
+ * amount-weighted average nobody could be expected to guess from "63 Late".
+ *
+ * Everything shown comes from the server's `dueFromCalc`, derived in the same
+ * pass as the text itself. The card formats; it never recomputes. A second
+ * implementation of the ageing rules here would be a second set of answers to
+ * the same question, and the card would eventually contradict the badge it is
+ * attached to.
+ *
+ * Hover AND click-to-pin, matching the rate breakdown card: hover is what a
+ * mouse finds, a tap is all a phone can do, and pinning lets the figures be
+ * read without holding the mouse still. Both handlers stop propagation, because
+ * the ledger row underneath opens the receipt dialog on click and on Enter.
+ */
+function DueFrom({ text, calc }: { text: string; calc?: DueFromCalc | null }) {
+  const [hovered, setHovered] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const open = hovered || pinned;
+
   if (!text) return <span className="text-muted-foreground/50">—</span>;
-  return <span className={cn('text-[12px] font-semibold uppercase', dueTone(text))}>{text}</span>;
+  const badge = (
+    <span className={cn('text-[12px] font-semibold uppercase', dueTone(text))}>{text}</span>
+  );
+  // A row with no workings on record — an older cached response — keeps the
+  // plain badge rather than offering a card that would open empty.
+  if (!calc) return badge;
+
+  const accent = dueAccent(text);
+  const head =
+    accent === 'rose'
+      ? 'from-rose-600 to-red-700'
+      : accent === 'emerald'
+        ? 'from-emerald-600 to-teal-700'
+        : 'from-blue-700 to-indigo-800';
+  const ring =
+    accent === 'rose'
+      ? 'bg-rose-50/60 decoration-rose-400 ring-rose-200/70 hover:bg-rose-100/80 focus-visible:ring-rose-400 dark:bg-rose-950/30 dark:ring-rose-900/60'
+      : accent === 'emerald'
+        ? 'bg-emerald-50/60 decoration-emerald-400 ring-emerald-200/70 hover:bg-emerald-100/80 focus-visible:ring-emerald-400 dark:bg-emerald-950/30 dark:ring-emerald-900/60'
+        : 'bg-blue-50/60 decoration-blue-400 ring-blue-200/70 hover:bg-blue-100/80 focus-visible:ring-blue-400 dark:bg-blue-950/30 dark:ring-blue-900/60';
+
+  const basisLabel = calc.basis === 'DUE_DATE' ? 'Due date' : 'Invoice date';
+  const receipts = calc.receipts ?? [];
+  const toggle = () => {
+    // Two plain setStates, not one nested inside the other's updater: an updater
+    // has to be pure and React drops the nested call, which silently kills the
+    // click and leaves the card openable only by hover.
+    if (pinned) setHovered(false);
+    setPinned(!pinned);
+  };
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(o) => {
+        // Escape and outside-click arrive here; both mean "gone", so they have to
+        // clear the hover flag too or the card springs straight back.
+        if (!o) {
+          setPinned(false);
+          setHovered(false);
+        }
+      }}
+    >
+      {/* Anchor, not Trigger — Trigger toggles the popover on click by itself and
+          fights `pinned`, so a click while hovering cancelled itself out. */}
+      <PopoverAnchor asChild>
+        <span
+          role="button"
+          tabIndex={0}
+          aria-expanded={open}
+          aria-label={`Ageing ${text} — show how this is calculated`}
+          onPointerEnter={(e) => e.pointerType === 'mouse' && setHovered(true)}
+          onPointerLeave={(e) => e.pointerType === 'mouse' && setHovered(false)}
+          onClick={(e) => {
+            e.stopPropagation();
+            toggle();
+          }}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            e.preventDefault();
+            e.stopPropagation();
+            toggle();
+          }}
+          onFocus={() => setHovered(true)}
+          onBlur={() => setHovered(false)}
+          className={cn(
+            'cursor-pointer rounded-[3px] px-1 underline decoration-dotted underline-offset-[3px] ring-1 outline-none transition-colors focus-visible:ring-2',
+            ring,
+          )}
+        >
+          {badge}
+        </span>
+      </PopoverAnchor>
+
+      <PopoverContent
+        side="left"
+        align="center"
+        sideOffset={8}
+        collisionPadding={12}
+        // A card opened by hover must not steal focus from the page, and must not
+        // swallow the pointer either — otherwise moving the mouse one pixel would
+        // close it by leaving the badge.
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        onCloseAutoFocus={(e) => e.preventDefault()}
+        onClick={(e) => e.stopPropagation()}
+        className={cn(
+          'w-[17.5rem] overflow-hidden rounded-[10px] border-0 p-0 shadow-xl',
+          'ring-1 ring-slate-900/10 dark:ring-white/10',
+          !pinned && 'pointer-events-none',
+        )}
+      >
+        {/* The answer first, in words. The badge says "63 Late"; this is where it
+            stops being a code and becomes a sentence. */}
+        <div className={cn('bg-gradient-to-r px-3 py-2 text-white', head)}>
+          <p className="text-[9.5px] font-bold tracking-[0.14em] uppercase opacity-80">
+            {calc.kind === 'OPEN' ? 'Ageing — still owed' : 'Ageing — settled'}
+          </p>
+          <p className="text-[17px] leading-tight font-bold">
+            {calc.kind === 'OPEN'
+              ? dayPhrase(calc.days, 'past due', 'of credit left', 'Due today')
+              : dayPhrase(calc.days, 'late', 'early', 'Paid on time')}
+          </p>
+        </div>
+
+        <div className="bg-card space-y-2 px-3 py-2.5">
+          {calc.kind === 'OPEN' ? (
+            <>
+              <div className="space-y-1">
+                <CalcLine label={basisLabel} value={prettyDate(calc.fromDate)} />
+                <CalcLine label="Today" value={prettyDate(calc.asOf ?? null)} />
+              </div>
+              {/* The subtraction, spelled out — the point of the card is that the
+                  figure is checkable against the two dates above it. */}
+              <div className="flex items-baseline justify-between gap-2 border-t border-dashed pt-1.5">
+                <span className="text-muted-foreground text-[10.5px] font-semibold">
+                  {basisLabel} − today
+                </span>
+                <span
+                  className={cn(
+                    'text-[13px] font-bold tabular-nums',
+                    calc.days < 0
+                      ? 'text-rose-600 dark:text-rose-400'
+                      : 'text-slate-800 dark:text-slate-200',
+                  )}
+                >
+                  {/* A real minus, matching the − in the label above it. */}
+                  {calc.days > 0 ? '+' : calc.days < 0 ? '−' : ''}
+                  {Math.abs(calc.days)} {Math.abs(calc.days) === 1 ? 'day' : 'days'}
+                </span>
+              </div>
+              <p className="text-muted-foreground rounded-[6px] border border-dashed px-2 py-1.5 text-[10.5px] leading-snug">
+                {calc.days < 0
+                  ? `“Over” counts the days past the ${basisLabel.toLowerCase()}.`
+                  : calc.days === 0
+                    ? 'Payment falls due today.'
+                    : '“Left” counts the days of credit still to run.'}
+                {calc.basis === 'INVOICE_DATE' &&
+                  ' This voucher carries no due date, so it ages from the day it was raised.'}
+                {/*
+                 * The two cases read differently. On a PART-PAID bill the point
+                 * worth making is that paying some of it did not push the due
+                 * date back — the single most common misreading of this column.
+                 * On a wholly unpaid one that sentence invents a payment that
+                 * was never made, so it says the plain thing instead.
+                 */}
+                {calc.pending != null && calc.pending > 0 && (
+                  <>
+                    {' '}
+                    {calc.partPaid ? (
+                      <>
+                        <span className="font-semibold">₹{inr(calc.pending)}</span> is still
+                        unpaid — a part payment does not move the due date.
+                      </>
+                    ) : (
+                      <>
+                        The full <span className="font-semibold">₹{inr(calc.pending)}</span> is
+                        still outstanding.
+                      </>
+                    )}
+                  </>
+                )}
+              </p>
+            </>
+          ) : (
+            <>
+              <CalcLine label={basisLabel} value={prettyDate(calc.fromDate)} />
+              <div className="space-y-1 border-t border-dashed pt-1.5">
+                <p className="text-muted-foreground text-[9.5px] font-bold tracking-[0.1em] uppercase">
+                  {receipts.length === 1 ? 'Paid by' : `Cleared by ${receipts.length} receipts`}
+                </p>
+                {receipts.map((r, i) => (
+                  <CalcLine
+                    key={`${r.date}-${i}`}
+                    label={prettyDate(r.date)}
+                    sub={
+                      // The share IS the weighting, so it sits next to the money
+                      // rather than being left for the reader to work out.
+                      calc.weighted && receipts.length > 1
+                        ? `${inr(r.amount)} · ${Math.round(r.share * 100)}% of the bill`
+                        : inr(r.amount)
+                    }
+                    value={dayPhrase(r.days, 'late', 'early', 'on time')}
+                  />
+                ))}
+              </div>
+              {/*
+               * Only where there is something to reconcile. With ONE receipt the
+               * average IS that receipt's offset — provably, the weighting has a
+               * single term — so the line repeated the figure already on the row
+               * above and in the header, as a bare unlabelled number.
+               */}
+              {receipts.length > 1 && (
+                <div className="flex items-baseline justify-between gap-2 border-t border-dashed pt-1.5">
+                  <span className="text-muted-foreground text-[10.5px] font-semibold">
+                    {calc.weighted ? 'Weighted average' : 'From the latest receipt'}
+                  </span>
+                  <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                    {/* The unrounded mean, then what it rounded to. The whole-day
+                        figures above do not average to exactly this, so the card
+                        shows the rounding rather than asserting an equals sign. */}
+                    {calc.daysExact != null && calc.daysExact !== calc.days
+                      ? `${dayText(calc.daysExact)} → ${dayText(calc.days)}`
+                      : dayText(calc.days)}
+                  </span>
+                </div>
+              )}
+              {receipts.length > 1 && (
+                <p className="text-muted-foreground rounded-[6px] border border-dashed px-2 py-1.5 text-[10.5px] leading-snug">
+                  {calc.weighted
+                    ? 'Each payment counts in proportion to how much of the bill it cleared, so a large payment on time is not cancelled out by a small one arriving late.'
+                    : 'These receipts carry no amount between them, so there was nothing to weight by — the figure is measured from the latest one alone.'}
+                </p>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="text-muted-foreground flex items-center gap-1 border-t bg-slate-50 px-3 py-1.5 text-[9.5px] dark:bg-slate-900/50">
+          <Pin className={cn('size-2.5', pinned && 'text-blue-600')} />
+          {pinned ? 'Pinned — click the figure again to close' : 'Click the figure to keep this open'}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 type Tone = 'slate' | 'muted' | 'rose' | 'amber' | 'emerald';
