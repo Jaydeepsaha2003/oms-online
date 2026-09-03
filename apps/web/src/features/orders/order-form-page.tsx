@@ -712,6 +712,52 @@ export function OrderFormPage() {
     return m;
   }, [lookups]);
 
+  /** Every value the masters know as a design TYPE, and as a design NAME. */
+  const designVocab = useMemo(() => {
+    const types = new Set<string>();
+    const names = new Set<string>();
+    for (const dn of lookups?.designNames ?? []) {
+      types.add(dn.designType.toUpperCase());
+      names.add(dn.designName.toUpperCase());
+    }
+    for (const d of lookups?.designs ?? []) types.add(d.designType.toUpperCase());
+    return { types, names };
+  }, [lookups]);
+
+  /*
+   * The Design Name to SHOW for a line.
+   *
+   * Imported lines - the majority of this book - store the pair the other way
+   * round: `design` holds the design TYPE and `designType` holds the NAME. It is
+   * a coherent pair, just swapped ("FULL LASER+TOOL" / "CAPSULE" is a real row
+   * in the Design Names master), so reading `design` blindly printed the TYPE in
+   * the Design Name column.
+   *
+   * Decided by what each value IS against the masters rather than which column
+   * it sits in, so both storage conventions read correctly.
+   *
+   * DISPLAY ONLY. The item's own `designName` is left exactly as loaded, because
+   * that is the value the save path writes back to `design` (see the item
+   * mapping below) - resolving it at load would write the name into `design` on
+   * the next save and rub the design type out of every imported order.
+   */
+  const designNameOf = useCallback(
+    (it: { designName?: string | null; designType?: string | null }) => {
+      const name = (it.designName ?? '').trim();
+      const type = (it.designType ?? '').trim();
+      const isName = (v: string) => designVocab.names.has(v.toUpperCase());
+      const isType = (v: string) => designVocab.types.has(v.toUpperCase());
+      // Stored the intended way round.
+      if (name && isName(name) && !isType(name)) return name;
+      // Swapped, as every imported line is.
+      if (type && isName(type) && !isType(type)) return type;
+      // Neither is a known name: fall back to the type's default name, then to
+      // whatever is actually there, so a line is never shown blank.
+      return name || nameByCode.get(type.toUpperCase()) || type || '';
+    },
+    [designVocab, nameByCode],
+  );
+
   // Default the entry's order type once options load.
   useEffect(() => {
     if (!entry.ordType && orderTypeOptions.length)
@@ -2809,7 +2855,7 @@ export function OrderFormPage() {
                           </span>
                         )}
                       </td>
-                      <td>{i.designName || '—'}</td>
+                      <td>{designNameOf(i) || '—'}</td>
                       <td>{i.ordType || '—'}</td>
                       <td>
                         {i.priority === 'URGENT' ? (
@@ -2981,7 +3027,7 @@ export function OrderFormPage() {
                             </div>
                           )}
                           <p className="text-muted-foreground truncate text-xs">
-                            {i.designName || '—'} · {i.ordType || '—'}
+                            {designNameOf(i) || '—'} · {i.ordType || '—'}
                             {i.priority === 'URGENT' ? (
                               <span className="ml-1 font-semibold text-rose-600">· URGENT</span>
                             ) : i.priority ? (
