@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   BarChart3,
@@ -31,6 +31,7 @@ import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useColumnOrder } from '@/hooks/use-column-order';
+import { RowCheckbox } from '@/components/common/row-checkbox';
 import { usePageSize } from '@/hooks/use-page-size';
 import { useConfirm } from '@/components/common/confirm';
 import { ColumnSettings } from '@/components/common/column-settings';
@@ -46,6 +47,7 @@ import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/com
 import { fetchAllChallans, useChallans, useChallanSummary, useDeleteChallan, useUpdateChallanStatus } from './use-challans';
 import { PRESETS, presetRange } from './date-presets';
 import { ChallanAnalyticsDialog } from './challan-analytics-dialog';
+import { ChallanBulkPrint } from './challan-bulk-print';
 import { NativeSelect } from '@/components/common/combo';
 import { downloadFile } from '@/lib/api';
 import { ReportDownloadOverlay, type ReportPhase } from './report-download-overlay';
@@ -240,6 +242,61 @@ export function ChallansListPage() {
   const totalPages = data?.totalPages ?? 1;
   const totalRows = data?.total ?? 0;
 
+  /*
+   * Rows ticked for bulk print, by challan id.
+   *
+   * A Set of ids rather than of rows: the list re-fetches on every filter and
+   * page change, so holding row objects would pin stale copies of challans the
+   * user is about to print. Selection deliberately SURVIVES paging — picking
+   * five on page 1 and three on page 2 and printing all eight is the whole
+   * point; the footer says how many are held so nothing prints unseen.
+   */
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [bulkPrintIds, setBulkPrintIds] = useState<number[] | null>(null);
+
+  const toggleRow = (id: number) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  const allPageSelected = items.length > 0 && items.every((r) => selected.has(r.id));
+  /** Header tick: takes or releases this PAGE's rows, leaving any held on other
+   *  pages alone — the opposite would silently discard a cross-page selection. */
+  const togglePage = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (items.every((r) => next.has(r.id))) items.forEach((r) => next.delete(r.id));
+      else items.forEach((r) => next.add(r.id));
+      return next;
+    });
+  const clearSelection = () => setSelected(new Set());
+
+  /*
+   * Ctrl/Cmd+P prints the ticked challans instead of the screen.
+   *
+   * Only ever hijacked when something IS ticked — with an empty selection the
+   * browser's own print is left alone, which is what a user pressing it on a
+   * list expects. Bound once and reading the latest selection through a ref, so
+   * the handler is not torn down and rebuilt on every tick.
+   */
+  const printableRef = useRef<number[]>([]);
+  printableRef.current = [...selected];
+  const canPrintRef = useRef(false);
+  canPrintRef.current = canPrint;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'p') return;
+      if (!canPrintRef.current || printableRef.current.length === 0) return;
+      const t = e.target as HTMLElement | null;
+      if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+      e.preventDefault();
+      setBulkPrintIds(printableRef.current);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   // "Show KPI" analytics modal + "Get Report by" export animation.
   const [kpiOpen, setKpiOpen] = useState(false);
   const [report, setReport] = useState<{ kind: 'detailed' | 'summary'; phase: ReportPhase; count?: number } | null>(null);
@@ -332,6 +389,34 @@ export function ChallansListPage() {
 
   const columns: DataColumn<ChallanDto>[] = useMemo(
     () => [
+      /*
+       * Tick column. `fixed` + `noSort` keeps it out of the column-order
+       * settings — it is a control, not data, and letting it be hidden or
+       * dragged into the middle of the grid would strand the only way to
+       * select rows.
+       */
+      {
+        id: 'sel',
+        label: '',
+        fixed: true,
+        noSort: true,
+        header: (
+          <RowCheckbox
+            checked={allPageSelected}
+            onChange={togglePage}
+            label={allPageSelected ? 'Clear selection on this page' : 'Select every challan on this page'}
+            title={allPageSelected ? 'Clear selection on this page' : 'Select every challan on this page'}
+          />
+        ),
+        cell: (r) => (
+          <RowCheckbox
+            checked={selected.has(r.id)}
+            onChange={() => toggleRow(r.id)}
+            label={`Select challan ${r.code}`}
+            title={`Select ${r.code} for bulk print`}
+          />
+        ),
+      },
       {
         id: 'date',
         label: 'Date',
@@ -418,7 +503,11 @@ export function ChallansListPage() {
         },
       },
     ],
-    [],
+    // The tick column reads the live selection, so it has to re-render when it
+    // changes — with the empty array this memo shipped with, every checkbox
+    // kept rendering against the selection as it was on first paint (ticking a
+    // row moved the counter but left the box looking empty).
+    [selected, allPageSelected],
   );
 
   // Per-user column order + show/hide (persisted); the sticky Actions column is
@@ -929,6 +1018,36 @@ export function ChallansListPage() {
 
       {/* ── Footer: range + paging ─────────────────────────────────────────────── */}
       <div className="bg-card flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-[4px] border px-3 py-2 shadow-sm">
+        {/* While rows are ticked the range read-out gives way to the selection:
+            what is held (possibly across pages), how to print it, how to drop it. */}
+        {selected.size > 0 ? (
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
+            <span className="text-[13px] font-bold tabular-nums text-sky-800 dark:text-sky-300">
+              {selected.size.toLocaleString('en-IN')} selected
+            </span>
+            {canPrint && (
+              <Button
+                size="sm"
+                className="h-7 rounded-[4px] text-[12px] font-bold"
+                onClick={() => setBulkPrintIds([...selected])}
+                title="Save each selected challan as its own PDF, then print them together from the folder (Ctrl+P)"
+              >
+                <Printer className="size-3.5" /> Print {selected.size}
+              </Button>
+            )}
+            <span className="text-muted-foreground hidden font-medium sm:inline">
+              or press <kbd className="rounded border px-1 font-sans text-[11px] font-semibold">Ctrl</kbd>+
+              <kbd className="rounded border px-1 font-sans text-[11px] font-semibold">P</kbd>
+            </span>
+            <button
+              type="button"
+              onClick={clearSelection}
+              className="text-muted-foreground hover:text-foreground cursor-pointer font-semibold underline decoration-dotted underline-offset-2 transition-colors"
+            >
+              Clear
+            </button>
+          </div>
+        ) : (
         <p className="text-muted-foreground text-[12px] font-medium">
           {totalRows === 0 ? (
             'No challans'
@@ -939,6 +1058,7 @@ export function ChallansListPage() {
             </>
           )}
         </p>
+        )}
         <div className="ml-auto flex items-center gap-3">
           <p className="text-muted-foreground text-[12px] font-medium">
             Page <span className="font-bold tabular-nums text-foreground">{data?.page ?? page}</span> of{' '}
@@ -957,6 +1077,17 @@ export function ChallansListPage() {
       </div>
 
       <ChallanAnalyticsDialog open={kpiOpen} onOpenChange={setKpiOpen} base={{ search, dateFrom, dateTo, status }} />
+      {/* Bulk print. Keyed on the id list so re-printing the same selection
+          after a change starts a genuinely fresh run rather than reusing the
+          finished one's state. */}
+      {bulkPrintIds && (
+        <ChallanBulkPrint
+          key={bulkPrintIds.join(',')}
+          ids={bulkPrintIds}
+          onClose={() => setBulkPrintIds(null)}
+          onPrinted={clearSelection}
+        />
+      )}
       <ReportDownloadOverlay
         open={!!report}
         title={report?.kind === 'summary' ? 'Detailed View' : 'Challan Summary'}
