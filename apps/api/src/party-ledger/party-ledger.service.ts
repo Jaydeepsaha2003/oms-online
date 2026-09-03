@@ -54,6 +54,14 @@ function parseDay(s: string, label: string): Date {
 }
 
 /** One confirmed invoice with what's still owed on it, keyed by voucher code. */
+/** One receipt allocated to an invoice. The Late/Early figure is weighted by
+ *  `amt`, so each payment counts in proportion to how much of the bill it
+ *  cleared rather than by which one happened to land last. */
+interface InvoiceReceipt {
+  date: Date;
+  amt: number;
+}
+
 interface PendingInvoice {
   bankBal: number;
   cashBal: number;
@@ -239,7 +247,7 @@ export class PartyLedgerService {
 
     // ── 2) Per-invoice pending (bank/cash bal + amount) + last receipt date ───
     const pending = await this.invoicePending();
-    const lastRec = await this.latestReceiptDates();
+    const lastRec = await this.receiptsByInvoice();
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -437,7 +445,7 @@ export class PartyLedgerService {
   private decorate(
     rr: RawRow,
     pending: Map<string, { bankBal: number; cashBal: number; bankAmt: number; cashAmt: number; dueDate: Date | null }>,
-    lastRec: Map<string, Date>,
+    lastRec: Map<string, InvoiceReceipt[]>,
     mode: string,
     today: Date,
   ): PartyLedgerRow {
@@ -480,7 +488,7 @@ export class PartyLedgerService {
     if (pend <= EPS) {
       base.status = 'F';
       const paid = lastRec.get(rr.voucherNo);
-      base.dueFrom = paid ? this.earlyLateText(dueDate, paid) : '';
+      base.dueFrom = paid?.length ? this.earlyLateText(dueDate, paid) : '';
     } else if (pend < invoiceAmt - EPS) {
       base.status = 'P';
       base.dueFrom = this.dueFromText(dueDate, today);
@@ -507,8 +515,31 @@ export class PartyLedgerService {
     return `${daysLeft} Left`;
   }
 
-  private earlyLateText(dueDate: Date, lastPay: Date): string {
-    const diff = Math.round((dueDate.getTime() - lastPay.getTime()) / DAY);
+  /**
+   * Early/Late for a settled invoice, weighted by how much each receipt paid.
+   *
+   * Measuring from the LAST receipt judged a bill by its final rupee: one that
+   * was 58% cleared 48 days late and finished 83 days late read "83 Late", as
+   * if none of it had arrived until August. Weighting by amount says what the
+   * money actually did — (34,897x48 + 25,308x83) / 60,205 -> "63 Late".
+   *
+   * Sign follows dueDate - paid, so positive is early, matching `dueFromText`.
+   * If the receipts carry no amount between them (all zero, so the weights say
+   * nothing), fall back to the latest date rather than dividing by zero.
+   */
+  private earlyLateText(dueDate: Date, receipts: InvoiceReceipt[]): string {
+    if (!receipts.length) return '';
+    const due = dueDate.getTime();
+    let weight = 0;
+    let weighted = 0;
+    for (const r of receipts) {
+      const amt = Math.abs(r.amt);
+      if (amt <= EPS) continue;
+      weight += amt;
+      weighted += amt * (due - r.date.getTime());
+    }
+    const diffMs = weight > EPS ? weighted / weight : due - Math.max(...receipts.map((r) => r.date.getTime()));
+    const diff = Math.round(diffMs / DAY);
     if (diff > 0) return `${diff} Early`;
     if (diff === 0) return 'On Time';
     return `${Math.abs(diff)} Late`;
@@ -560,10 +591,18 @@ export class PartyLedgerService {
     return map;
   }
 
-  private async latestReceiptDates(): Promise<Map<string, Date>> {
-    const rows = await this.prisma.acctPaymentReceipt.groupBy({ by: ['invNo'], _max: { recDate: true } });
-    const map = new Map<string, Date>();
-    for (const r of rows) if (r._max.recDate) map.set(r.invNo, r._max.recDate);
+  /** Every receipt allocated to each invoice, not just the last one — the
+   *  Early/Late figure needs each payment's date AND amount to weight them. */
+  private async receiptsByInvoice(): Promise<Map<string, InvoiceReceipt[]>> {
+    const rows = await this.prisma.acctPaymentReceipt.findMany({ select: { invNo: true, recDate: true, recAmt: true } });
+    const map = new Map<string, InvoiceReceipt[]>();
+    for (const r of rows) {
+      if (!r.recDate) continue;
+      const entry = { date: r.recDate, amt: r.recAmt ?? 0 };
+      const list = map.get(r.invNo);
+      if (list) list.push(entry);
+      else map.set(r.invNo, [entry]);
+    }
     return map;
   }
 

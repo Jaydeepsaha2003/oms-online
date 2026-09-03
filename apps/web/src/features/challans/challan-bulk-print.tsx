@@ -2,15 +2,46 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { CheckCircle2, Download, Loader2, Printer, TriangleAlert } from 'lucide-react';
+import { toast } from 'sonner';
 import type { ChallanDto } from '@oms/shared';
 import { http } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
-import { buildBillFilename, captureScale, waitForPaintable } from '@/lib/pdf';
+import { buildBillFilename, captureScale, decodeImage, isIOS, waitForPaintable } from '@/lib/pdf';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useChallanTerms, useCompany } from '@/features/settings/use-settings';
 import { ChallanInvoice, challanTermsFor, pcsLineCount } from './challan-invoice';
+
+/**
+ * Print rules for a whole batch, mirroring the single challan's `PRINT_CSS`
+ * (there it is one `#print-image`; here it is N of them).
+ *
+ * `break-after: page` on every capture but the last is what makes one
+ * `window.print()` produce one challan per sheet. Without the `:last-child`
+ * exception the final break emits a trailing blank page, which on a real
+ * printer is a wasted sheet per batch.
+ */
+const BATCH_PRINT_CSS = `
+@media print {
+  @page { size: A4; margin: 10mm; }
+  body * { visibility: hidden !important; }
+  #print-batch, #print-batch * { visibility: visible !important; }
+  #print-batch { display: block !important; position: absolute; left: 0; top: 0; width: 100%; }
+  #print-batch img { display: block; width: 100%; break-after: page; page-break-after: always; }
+  #print-batch img:last-child { break-after: auto; page-break-after: auto; }
+  .no-print { display: none !important; }
+}`;
+
+/** What the run does with each capture once it has it. */
+type Delivery = 'save' | 'print';
+
+/** A rasterised challan. `ratio` is height/width, which the PDF path needs to
+ *  size the page and the print path does not (CSS scales it to the sheet). */
+interface Shot {
+  dataURL: string;
+  ratio: number;
+}
 
 /** One selected challan, once it has been loaded and its options answered. */
 interface Job {
@@ -31,15 +62,23 @@ interface Job {
  * extracted into a component: the PDF is a raster of that DOM, so any second
  * implementation would quietly produce different-looking invoices.
  *
- * SAVES rather than prints, and that is not a shortcut: `window.print()` always
- * raises the browser's own dialog and no API exists to bypass it, so printing
- * five challans meant clicking through five previews — which is exactly what
- * selecting five was meant to avoid. Writing the files is genuinely unattended,
- * and the folder can then print all five in one action.
+ * Two ways out, because they answer different needs:
+ *
+ * - **Save** writes one PDF per challan, unattended — the batch to archive or
+ *   send on.
+ * - **Print** stacks every capture into ONE hidden document (see
+ *   {@link BATCH_PRINT_CSS}) and calls `window.print()` exactly once, so the
+ *   browser's own preview opens with one challan per page.
+ *
+ * Printing used to be rejected here on the grounds that `window.print()` always
+ * raises a dialog and cannot be bypassed — true, but it only bit because the
+ * old code printed each challan SEPARATELY, so five challans meant five
+ * dialogs. Batching them into a single document costs one dialog no matter how
+ * many were selected, which is the thing selecting five was after.
  *
  * The cup question is asked UP FRONT for every challan that has PCS-sold lines,
- * listed in the order they will be written, rather than interrupting the run
- * ten times. Answer them all, press save once, walk away.
+ * listed in the order they will be handled, rather than interrupting the run
+ * ten times. Answer them all, press one button, walk away.
  */
 export function ChallanBulkPrint({
   ids,
@@ -58,6 +97,20 @@ export function ChallanBulkPrint({
   const [jobs, setJobs] = useState<Job[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [phase, setPhase] = useState<'loading' | 'asking' | 'printing' | 'done'>('loading');
+  /** Which button started the run — drives the wording and what happens to
+   *  each capture. Set before the run so the progress text matches the action. */
+  const [delivery, setDelivery] = useState<Delivery>('save');
+  /** Captures waiting to be printed. Non-empty only between the last capture
+   *  and `afterprint`; on screen the container stays hidden throughout. */
+  const [printImgs, setPrintImgs] = useState<string[]>([]);
+
+  // Drop the captures once the dialog closes — each is a full-page JPEG, and a
+  // ten-challan batch left mounted is several MB held for nothing.
+  useEffect(() => {
+    const clear = () => setPrintImgs([]);
+    window.addEventListener('afterprint', clear);
+    return () => window.removeEventListener('afterprint', clear);
+  }, []);
   const [at, setAt] = useState(0);
   const cancelled = useRef(false);
 
@@ -93,14 +146,19 @@ export function ChallanBulkPrint({
     setJobs((prev) => (prev ?? []).map((j) => (pcsLineCount(j.challan) > 0 ? { ...j, kgsForPcs: value } : j)));
 
   /**
-   * Render one challan off-screen, capture it, and write it out as its own PDF.
+   * Render one challan off-screen and rasterise it.
+   *
+   * Returns the capture rather than delivering it: Save and Print want exactly
+   * the same pixels and differ only in what happens next, and a batch that
+   * printed from a second rendering path would quietly drift from the one the
+   * PDFs use.
    *
    * Mounted into a detached root rather than rendered by this component: the
    * capture has to happen for challan N while the dialog on screen keeps
    * showing progress, and each mount has to be torn down before the next so
    * only one invoice is ever in the DOM under a given id.
    */
-  const printOne = async (job: Job): Promise<void> => {
+  const captureOne = async (job: Job): Promise<Shot> => {
     const holder = document.createElement('div');
     // Off-screen but genuinely laid out — `display:none` has no box, so
     // html2canvas would capture nothing.
@@ -130,36 +188,11 @@ export function ChallanBulkPrint({
       // header — the same reason the single print waits.
       await waitForPaintable(node);
 
-      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
-        import('html2canvas-pro'),
-        import('jspdf'),
-      ]);
+      const { default: html2canvas } = await import('html2canvas-pro');
       const canvas = await html2canvas(node, { scale: captureScale(), backgroundColor: '#ffffff' });
       const dataURL = canvas.toDataURL('image/jpeg', 0.95);
       if (!dataURL.startsWith('data:image/')) throw new Error('Canvas capture failed');
-
-      const pdf = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
-      const margin = 4;
-      const pageW = pdf.internal.pageSize.getWidth();
-      const pageH = pdf.internal.pageSize.getHeight();
-      const imgW = pageW - margin * 2;
-      const imgH = (canvas.height / canvas.width) * imgW;
-      const contentH = pageH - margin * 2;
-      if (imgH <= contentH) {
-        pdf.addImage(dataURL, 'JPEG', margin, margin, imgW, imgH);
-      } else {
-        let y = 0;
-        let first = true;
-        while (y < imgH) {
-          if (!first) pdf.addPage();
-          pdf.addImage(dataURL, 'JPEG', margin, margin - y, imgW, imgH);
-          y += contentH;
-          first = false;
-        }
-      }
-
-      const filename = buildBillFilename('Challan', job.challan.code, `challan-${job.challan.id}`);
-      saveBlobSilently(pdf.output('blob'), filename);
+      return { dataURL, ratio: canvas.height / canvas.width };
     } finally {
       // Unmount on a later tick — React refuses to unmount a root while it is
       // still rendering, which is exactly where flushSync leaves us.
@@ -171,6 +204,48 @@ export function ChallanBulkPrint({
     }
   };
 
+  /** Lay one capture out as an A4 PDF and write it straight to downloads,
+   *  paginating if the challan runs longer than a sheet. */
+  const saveShot = async (job: Job, shot: Shot): Promise<void> => {
+    const { jsPDF } = await import('jspdf');
+    const pdf = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
+    const margin = 4;
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const imgW = pageW - margin * 2;
+    const imgH = shot.ratio * imgW;
+    const contentH = pageH - margin * 2;
+    if (imgH <= contentH) {
+      pdf.addImage(shot.dataURL, 'JPEG', margin, margin, imgW, imgH);
+    } else {
+      let y = 0;
+      let first = true;
+      while (y < imgH) {
+        if (!first) pdf.addPage();
+        pdf.addImage(shot.dataURL, 'JPEG', margin, margin - y, imgW, imgH);
+        y += contentH;
+        first = false;
+      }
+    }
+    const filename = buildBillFilename('Challan', job.challan.code, `challan-${job.challan.id}`);
+    saveBlobSilently(pdf.output('blob'), filename);
+  };
+
+  /**
+   * Hand the whole batch to the browser's print preview in one go.
+   *
+   * The captures are mounted first and DECODED before `print()` is called: an
+   * undecoded image has no pixels when the browser snapshots the print view, so
+   * skipping this prints blank sheets — the same trap the single challan's
+   * print path documents.
+   */
+  const printShots = async (shots: Shot[]): Promise<void> => {
+    flushSync(() => setPrintImgs(shots.map((s) => s.dataURL)));
+    await Promise.all(shots.map((s) => decodeImage(s.dataURL)));
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    window.print();
+  };
+
   /** Abort the rest of the run. The challan being written finishes (it is
    *  already rasterised); nothing after it is started. */
   const stop = () => {
@@ -178,26 +253,43 @@ export function ChallanBulkPrint({
     setPhase('done');
   };
 
-  const run = async () => {
+  const run = async (how: Delivery) => {
     const list = jobs ?? [];
     if (!list.length) return;
+    /*
+     * iOS Safari cannot be printed this way — the hidden-image trick yields a
+     * blank or whole-page print there, which is why the single challan's Print
+     * routes iOS to a PDF too. Saving is the honest fallback: say so rather
+     * than opening a preview that prints nothing.
+     */
+    const mode: Delivery = how === 'print' && isIOS() ? 'save' : how;
+    if (mode !== how) toast.info('iPhone and iPad cannot print a batch directly — saving the PDFs instead.');
     cancelled.current = false;
+    setDelivery(mode);
     setPhase('printing');
+    // Print needs every capture in hand before it can open one preview; save
+    // writes each out as it goes and keeps nothing.
+    const shots: Shot[] = [];
     for (let i = 0; i < list.length; i++) {
       if (cancelled.current) return;
       setAt(i);
       setJobs((prev) => (prev ?? []).map((j, k) => (k === i ? { ...j, status: 'working' } : j)));
       try {
-        await printOne(list[i]);
+        const shot = await captureOne(list[i]);
+        if (mode === 'save') await saveShot(list[i], shot);
+        else shots.push(shot);
         setJobs((prev) => (prev ?? []).map((j, k) => (k === i ? { ...j, status: 'done' } : j)));
       } catch (e) {
-        const msg = e instanceof Error ? e.message : 'Print failed';
+        const msg = e instanceof Error ? e.message : mode === 'print' ? 'Print failed' : 'Save failed';
         setJobs((prev) => (prev ?? []).map((j, k) => (k === i ? { ...j, status: 'failed', error: msg } : j)));
         // Carry on with the rest — one bad challan should not strand the batch.
       }
     }
     if (cancelled.current) return;
     setPhase('done');
+    // Whatever captured cleanly goes to the preview; a challan that failed is
+    // simply absent rather than blocking the ones that worked.
+    if (mode === 'print' && shots.length) await printShots(shots);
     onPrinted?.();
   };
 
@@ -205,6 +297,18 @@ export function ChallanBulkPrint({
   const failed = (jobs ?? []).filter((j) => j.status === 'failed');
 
   return (
+    <>
+      <style>{BATCH_PRINT_CSS}</style>
+      {/* Hidden on screen; the only thing visible when printing. Kept OUTSIDE
+          the Dialog so the overlay's own transform and overflow cannot clip a
+          full-page image out of the printed sheet. */}
+      {printImgs.length > 0 && (
+        <div id="print-batch" style={{ display: 'none' }}>
+          {printImgs.map((src, i) => (
+            <img key={i} src={src} alt={`Challan ${i + 1} of ${printImgs.length}`} />
+          ))}
+        </div>
+      )}
     <Dialog
       open
       // Closing mid-run stops the run — the X used to be inert while printing,
@@ -221,7 +325,7 @@ export function ChallanBulkPrint({
             <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300">
               <Printer className="size-4" />
             </span>
-            Save {ids.length} challan{ids.length === 1 ? '' : 's'}
+            {ids.length} challan{ids.length === 1 ? '' : 's'}
           </DialogTitle>
         </DialogHeader>
 
@@ -239,13 +343,13 @@ export function ChallanBulkPrint({
 
         {phase === 'asking' && jobs && (
           <div className="space-y-3">
-            {/* Says saved, not printed, because that is what happens — and why.
-                A browser cannot send a document to a printer without raising
-                its own dialog, so printing N challans meant N dialogs. */}
+            {/* Both routes described, because the buttons below offer both and
+                they land in very different places. */}
             <p className="text-muted-foreground text-sm">
-              Each challan is saved as its own PDF, in this order — no prompts.
-              Print them together afterwards from your downloads folder (select
-              all → Print).
+              <strong className="text-foreground font-semibold">Print</strong> opens one preview with
+              all {jobs.length} on separate pages.{' '}
+              <strong className="text-foreground font-semibold">Save PDFs</strong> writes each as its
+              own file to your downloads, in this order — no prompts.
             </p>
 
             {/* The cup question, once per challan that has PCS-sold lines. */}
@@ -318,8 +422,8 @@ export function ChallanBulkPrint({
           <div className="space-y-2">
             <p className="text-sm font-semibold">
               {phase === 'done'
-                ? `Saved ${done} of ${jobs.length}${cancelled.current && done < jobs.length ? ' — stopped' : ''}`
-                : `Saving ${at + 1} of ${jobs.length}…`}
+                ? `${delivery === 'print' ? 'Prepared' : 'Saved'} ${done} of ${jobs.length}${cancelled.current && done < jobs.length ? ' — stopped' : ''}`
+                : `${delivery === 'print' ? 'Preparing' : 'Saving'} ${at + 1} of ${jobs.length}…`}
             </p>
             <div className="bg-muted h-1.5 overflow-hidden rounded-full">
               <div
@@ -343,7 +447,7 @@ export function ChallanBulkPrint({
             </div>
             {phase === 'done' && failed.length > 0 && (
               <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] text-amber-900 dark:border-amber-400/40 dark:bg-amber-400/10 dark:text-amber-100">
-                {failed.length} did not print. The rest went through — print those {failed.length === 1 ? 'one' : 'ones'} on their own to see the error.
+                {failed.length} did not go through{delivery === 'print' ? ' and are not in the preview' : ''}. The rest did — open those {failed.length === 1 ? 'one' : 'ones'} on their own to see the error.
               </p>
             )}
           </div>
@@ -353,8 +457,11 @@ export function ChallanBulkPrint({
           {phase === 'asking' && (
             <>
               <Button variant="outline" onClick={onClose}>Cancel</Button>
-              <Button onClick={() => void run()} disabled={!jobs?.length}>
+              <Button variant="outline" onClick={() => void run('save')} disabled={!jobs?.length}>
                 <Download /> Save {jobs?.length ?? 0} PDFs
+              </Button>
+              <Button onClick={() => void run('print')} disabled={!jobs?.length}>
+                <Printer /> Print {jobs?.length ?? 0}
               </Button>
             </>
           )}
@@ -364,7 +471,7 @@ export function ChallanBulkPrint({
             <>
               <Button variant="outline" onClick={stop}>Stop</Button>
               <Button disabled>
-                <Loader2 className="animate-spin" /> Saving…
+                <Loader2 className="animate-spin" /> {delivery === 'print' ? 'Preparing…' : 'Saving…'}
               </Button>
             </>
           )}
@@ -373,6 +480,7 @@ export function ChallanBulkPrint({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    </>
   );
 }
 
@@ -380,15 +488,14 @@ export function ChallanBulkPrint({
  * Write one finished PDF straight to the downloads folder — no dialog, no
  * preview, no interaction.
  *
- * This batch used to call `window.print()` per challan, which is the one thing
- * a browser will not do quietly: `print()` ALWAYS raises the print/preview
- * dialog, and there is no API that sends a document to a printer without one.
- * Five challans therefore meant five dialogs to click through, which defeats
- * the point of selecting five.
+ * This is the Save route only. Printing no longer comes through here: it stacks
+ * every capture into one document and raises a single dialog for the batch (see
+ * {@link BATCH_PRINT_CSS}), which is what the old per-challan `window.print()`
+ * got wrong — `print()` ALWAYS raises a dialog, so calling it five times meant
+ * five of them.
  *
- * So the batch saves instead. Saving genuinely is automatic, and the files can
- * then be printed together from the folder (select all → Print) in one action
- * — one dialog for the batch rather than one per challan.
+ * Saving still earns its place beside that: it is genuinely unattended, and it
+ * leaves files to archive or send on rather than sheets of paper.
  *
  * A bare anchor click rather than `savePdfBlob`: that helper prefers the mobile
  * share sheet, which needs a live tap per file and would throw up a share sheet
