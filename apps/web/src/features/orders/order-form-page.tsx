@@ -578,6 +578,19 @@ export function OrderFormPage() {
   const [items, setItems] = useState<Item[]>([]);
   const [editingItemKey, setEditingItemKey] = useState<string | null>(null);
 
+  /*
+   * Is the figure currently in Pcs one that BOX put there?
+   *
+   * Decides whether a Box edit may still rewrite Pcs — see onBox. A ref, not
+   * state: it is read and written inside the same keystroke that changes the
+   * field, and a re-render's worth of lag would let the second digit of "32"
+   * see a stale answer. Nothing renders from it, so there is nothing to sync.
+   *
+   * Reset (to false) wherever the entry row is replaced wholesale — a fresh row
+   * has no history, and the next line must not inherit the last one's.
+   */
+  const pcsFromBoxRef = useRef(false);
+
   // How many item rows to keep visible in the panel before it scrolls — a saved
   // per-user preference. 0 = show all (the panel grows and the page scrolls);
   // that's also the default until someone picks a smaller number themselves.
@@ -716,6 +729,7 @@ export function OrderFormPage() {
       setOrderDate(o.orderDate.slice(0, 10));
       setCompletionDay(o.completionDay?.toString() ?? '');
       setStatus(o.status);
+      pcsFromBoxRef.current = false;
       setEntry(blankEntry());
       setEditingItemKey(null);
       setItems(
@@ -841,6 +855,7 @@ export function OrderFormPage() {
     setCompletionDay('');
     setStatus('CONFIRMED');
     setItems([]);
+    pcsFromBoxRef.current = false;
     setEntry(blankEntry());
     setEditingItemKey(null);
   };
@@ -1187,9 +1202,13 @@ export function OrderFormPage() {
   };
 
   // Pcs ⇄ Box are linked by the product's pieces-per-box (pcsBox): typing Pcs fills
-  // Box (= Pcs ÷ pcs-per-box) AND Kgs (= Pcs × weight). Fully dynamic — onBox does
-  // the reverse. With no pcs-per-box on the product, Box is left untouched.
+  // Box (= Pcs ÷ pcs-per-box) AND Kgs (= Pcs × weight). onBox does the reverse,
+  // but only while Pcs is Box's to own (see `pcsFromBoxRef`). With no pcs-per-box
+  // on the product, Box is left untouched.
   const onPcs = (value: string) => {
+    // Typed straight into Pcs — from here on Pcs is the user's figure, and a
+    // later Box edit must not rewrite it.
+    pcsFromBoxRef.current = false;
     setEntry((e) => {
       const pcs = n(value) ?? 0;
       const w = n(e.weight);
@@ -1205,24 +1224,45 @@ export function OrderFormPage() {
     });
   };
 
-  // Box ⇄ Pcs reverse: typing Box fills Pcs (= Box × pcs-per-box) and cascades Kgs
-  // (= Pcs × weight). e.g. a cup with 6 pcs-per-box: Box 32 → Pcs 192. With no
-  // pcs-per-box, Box is just a plain number (nothing to derive).
+  /*
+   * Box ⇄ Pcs, with Pcs as the source of truth.
+   *
+   * Box used to back-compute Pcs on EVERY keystroke, which made "this customer
+   * doesn't want boxes" impossible to say: typing 0 read as zero PIECES and
+   * wiped Pcs and Kgs, and backspacing 32 away rewrote Pcs from the half-typed
+   * number on the way (192 → 18) before leaving that behind. The field was
+   * doing two jobs at once — a read-out of Pcs, and an input that overrides it.
+   *
+   * Now it only drives Pcs while the value in Pcs is one BOX put there
+   * (`pcsFromBoxRef`) — which keeps driving a fresh line from Box working, digit
+   * by digit, since "32" arrives as "3" then "32". Once Pcs is the user's own
+   * figure, a Box edit only changes Box: clearing or zeroing it means "no boxes
+   * on this order" and leaves the quantity alone.
+   *
+   * Clearing a Box that DID put the figure in Pcs takes Pcs and Kgs with it —
+   * the derived value goes away with the source it came from, rather than
+   * stranding a stale count nobody typed.
+   */
   const onBox = (value: string) => {
+    const has = value.trim() !== '';
+    const drivesPcs = pcsFromBoxRef.current || entry.pcs.trim() === '';
+    if (has && drivesPcs) pcsFromBoxRef.current = true;
+    if (!has && pcsFromBoxRef.current) pcsFromBoxRef.current = false;
+
     setEntry((e) => {
       const per = n(e.pcsBox);
+      // Nothing to derive from: Box is a plain number on this product.
       if (per == null || per <= 0) return { ...e, box: value };
+      // Pcs is the user's own figure — Box is just a box count now.
+      if (!drivesPcs) return { ...e, box: value };
+      // Box cleared, and Pcs only existed because Box filled it: clear both.
+      if (!has) return { ...e, box: value, pcs: '', gram: '' };
+
       const box = n(value) ?? 0;
       const pcs = box * per;
       const w = n(e.weight);
-      const has = value.trim() !== '';
       const round2 = (x: number) => String(Math.round(x * 100) / 100);
-      return {
-        ...e,
-        box: value,
-        pcs: has ? round2(pcs) : e.pcs,
-        gram: w != null && has ? round2(pcs * w) : e.gram,
-      };
+      return { ...e, box: value, pcs: round2(pcs), gram: w != null ? round2(pcs * w) : e.gram };
     });
   };
 
@@ -1394,6 +1434,7 @@ export function OrderFormPage() {
     );
     setEditingItemKey(null);
     // Reset the item fields but keep order type / priority for the next line.
+    pcsFromBoxRef.current = false;
     setEntry((e) => ({ ...blankEntry(), ordType: e.ordType, priority: e.priority }));
     // Return focus to Item name so the next line can be entered immediately.
     requestAnimationFrame(() => focusField(formRef.current, 'itemName'));
@@ -1402,6 +1443,7 @@ export function OrderFormPage() {
 
   const cancelItemEdit = () => {
     setEditingItemKey(null);
+    pcsFromBoxRef.current = false;
     setEntry((e) => ({ ...blankEntry(), ordType: e.ordType, priority: e.priority }));
   };
 
@@ -1426,6 +1468,8 @@ export function OrderFormPage() {
     }
     const { key, ...rest } = item;
     setEditingItemKey(key);
+    // The saved line's Pcs is its own figure — editing Box must not rewrite it.
+    pcsFromBoxRef.current = false;
     setEntry(rest);
     requestAnimationFrame(() => {
       formRef.current
