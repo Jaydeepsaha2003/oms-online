@@ -63,6 +63,21 @@ export type DispatchExportColumnId = (typeof DISPATCH_EXPORT_COLUMNS)[number]['i
  *  `dispatch:viewrates` — same gate the on-screen rate columns use. */
 export const DISPATCH_RATE_EXPORT_COLUMN_IDS: readonly string[] = ['productRate', 'designRate', 'rate', 'amount'];
 
+/**
+ * A party's dispatch hold, as the dispatch screens receive it.
+ *
+ * Its PRESENCE is the hold — there is no boolean here, because a hold with no
+ * reason typed against it is still a hold, and a `{ onHold: false, reason:
+ * null }` shape invites reading the reason to decide. Null/absent = free.
+ */
+export interface DispatchHoldInfo {
+  /** Why, when somebody gave a reason. */
+  reason: string | null;
+  /** Who placed it, and when (ISO). */
+  by: string | null;
+  at: string | null;
+}
+
 /** An order line with its still-to-dispatch (remaining) quantities. */
 export interface PendingLineDto {
   orderItemId: number;
@@ -117,6 +132,16 @@ export interface PendingLineDto {
    *  DispatchService's in-memory line lock), so other users see it's taken
    *  before they even try to open it. Null/absent = free to open. */
   lockedByName?: string | null;
+  /**
+   * Set when this line's PARTY is on dispatch hold, so the pending list can say
+   * so before anyone opens the line. The server refuses the dispatch either
+   * way — this exists so the refusal isn't the first the user hears of it.
+   *
+   * Resolved per PAGE rather than baked into the cached pending pool, the same
+   * way the line locks are: a hold placed now must bite now, not once the
+   * pool's cache expires.
+   */
+  onHold?: DispatchHoldInfo | null;
   /** How many reference photos this line already has. Counted server-side per
    *  page so a mobile card can offer "view photos" without each card firing its
    *  own request. 0 = nothing attached yet. */

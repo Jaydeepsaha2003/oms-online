@@ -111,6 +111,19 @@ export interface CustomerDto {
   tdsPercent: number | null;
   /** Active parties appear in every picker; inactive ones are hidden from dropdowns. */
   active: boolean;
+  /**
+   * On dispatch hold — no NEW dispatch may be recorded for this party.
+   *
+   * Independent of {@link active}, and needed alongside it: a held party stays
+   * in every picker and keeps taking orders, and what it has already shipped
+   * stays billable and returnable. Only shipping again is blocked.
+   */
+  dispatchHold: boolean;
+  /** Why it was held, shown wherever the hold blocks something. */
+  dispatchHoldReason: string | null;
+  /** Who placed the hold, and when (ISO) — both null on a party never held. */
+  dispatchHoldBy: string | null;
+  dispatchHoldAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -142,7 +155,7 @@ export interface CustomerInput {
   active?: boolean;
 }
 
-export const CUSTOMER_STATUSES = ['ACTIVE', 'INACTIVE', 'ALL'] as const;
+export const CUSTOMER_STATUSES = ['ACTIVE', 'INACTIVE', 'ON_HOLD', 'ALL'] as const;
 export type CustomerStatus = (typeof CUSTOMER_STATUSES)[number];
 
 export interface CustomerQuery extends PaginationQuery {

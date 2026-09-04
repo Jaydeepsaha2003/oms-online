@@ -288,6 +288,23 @@ model Customer {
   // Active parties show in every picker; inactive ones are hidden from dropdowns
   // (but kept for history + visible on the Customers master via a status filter).
   active        Boolean  @default(true)
+  /// Dispatch hold. While true, no NEW dispatch may be recorded for this party
+  /// — see DispatchService.assertNotOnHold, which is the enforcement; the
+  /// screens only report it.
+  ///
+  /// Deliberately NOT `active`. Inactive means "we no longer deal with this
+  /// party at all" and hides it from every picker; a hold is temporary and
+  /// leaves the party fully visible, still taking orders, its shipped goods
+  /// still billable and returnable. Using `active` to stop shipments would
+  /// have hidden the very orders somebody needs to look at while it is on.
+  dispatchHold       Boolean   @default(false)
+  /// Why the hold was placed. Shown to whoever is stopped at the Dispatch Order
+  /// screen — a refusal with no reason leaves them nobody to ask. Optional:
+  /// a hold placed in a hurry is better than no hold.
+  dispatchHoldReason String?
+  /// Who placed it and when, so the person blocked knows who to go to.
+  dispatchHoldBy     String?
+  dispatchHoldAt     DateTime?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -302,6 +319,7 @@ model Customer {
   @@index([agentName])
   @@index([category])
   @@index([transporterId])
+  @@index([dispatchHold])
   @@map("customers")
 }
 

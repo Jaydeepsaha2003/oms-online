@@ -14,6 +14,7 @@ import {
   Loader2,
   Package,
   PackageCheck,
+  PauseCircle,
   RotateCcw,
   TriangleAlert,
   Truck,
@@ -25,6 +26,7 @@ import {
   DISPATCH_EXPORT_COLUMNS,
   DISPATCH_RATE_EXPORT_COLUMN_IDS,
   qtyOrderForCategory,
+  type DispatchHoldInfo,
   type DispatchStatus,
   type DuplicateDispatch,
   type PendingLineDto,
@@ -105,6 +107,39 @@ const DueBadge = ({ t }: { t: string }) => (
   </span>
 );
 
+/**
+ * "This party is on dispatch hold."
+ *
+ * The hold is ENFORCED on the server (DispatchService.assertNotOnHold). This is
+ * only how the screen says so first, so a refusal is never the first anyone
+ * hears of it. The reason rides on the title: it is what tells the user whether
+ * to go and sort it out with accounts or just move to the next line.
+ */
+const HoldBadge = ({ hold }: { hold: DispatchHoldInfo }) => {
+  const why = hold.reason?.trim();
+  const placed = [hold.by ? `by ${hold.by}` : null, hold.at ? `on ${formatDate(hold.at)}` : null]
+    .filter(Boolean)
+    .join(' ');
+  return (
+    <span
+      title={`Dispatch held${placed ? ` ${placed}` : ''}${why ? ` — ${why}` : ' — no reason given'}`}
+      className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-xs font-bold text-amber-900 ring-1 ring-amber-300 ring-inset dark:bg-amber-400/15 dark:text-amber-200 dark:ring-amber-400/30"
+    >
+      <PauseCircle className="size-3" />
+      On hold
+    </span>
+  );
+};
+
+/** What the user is told when they try a held party. One function, so the mobile
+ *  card and the desktop grid cannot drift into saying different things — and so
+ *  both echo the server's own refusal, which is what lands instead if the hold
+ *  is placed while somebody already has the line open. */
+const holdMessage = (customerName: string, hold: DispatchHoldInfo) => {
+  const why = hold.reason?.trim();
+  return `${customerName || 'This party'} is on dispatch hold${why ? ` — ${why}` : ''}. Release it on the Customers page to dispatch again.`;
+};
+
 /** Shown when a line already has an open back-date approval request awaiting a
  *  decision — otherwise the line looks untouched after a non-approver submits
  *  and refreshes, even though a request is already in flight. */
@@ -169,6 +204,9 @@ function DispatchCard({
 }) {
   const urgent = line.priority === 'URGENT';
   const locked = !!line.lockedByName;
+  /** The party is held — this line cannot be dispatched at all (as opposed to
+   *  `locked`, which is somebody else being mid-dispatch and clears itself). */
+  const held = line.onHold ?? null;
   const qtys = (
     [
       ['Bags', line.remBags],
@@ -193,11 +231,17 @@ function DispatchCard({
   const open = () =>
     selectMode
       ? onToggleSelect?.()
-      : locked
-        ? toast.error(
-            `${line.lockedByName} is currently dispatching this line — try again in a moment.`,
-          )
-        : onClick();
+      : // The hold is reported BEFORE the lock: a locked line clears itself in a
+        // moment and the message says so, whereas a held one will not open no
+        // matter how long anyone waits. Telling somebody to "try again in a
+        // moment" for a party that is frozen sends them round in circles.
+        held
+        ? toast.error(holdMessage(line.customerName, held))
+        : locked
+          ? toast.error(
+              `${line.lockedByName} is currently dispatching this line — try again in a moment.`,
+            )
+          : onClick();
   return (
     // A div[role=button], not a <button>: the photo viewer below is a real button
     // and nesting one button inside another is invalid HTML — on phones it makes
@@ -218,7 +262,10 @@ function DispatchCard({
         // the rail — "deep red" should be impossible to miss while scanning.
         urgent &&
           'border-rose-300 bg-rose-50/60 ring-1 ring-rose-200 dark:border-rose-400/30 dark:bg-rose-500/[0.06] dark:ring-rose-400/20',
-        locked && !selectMode && 'opacity-60',
+        (locked || held) && !selectMode && 'opacity-60',
+        // Held reads as a state of the card, not a passing condition, so it also
+        // gets the amber edge — the dimming alone is the same as a locked line.
+        held && !selectMode && 'border-amber-300 dark:border-amber-400/40',
         selected && 'border-primary ring-2 ring-primary bg-primary/5',
       )}
     >
@@ -252,11 +299,20 @@ function DispatchCard({
           <DueBadge t={line.dueType} />
         </div>
 
-        {(line.hasPendingApproval || locked) && (
+        {(line.hasPendingApproval || locked || held) && (
           <div className="flex flex-wrap gap-1.5">
+            {held && <HoldBadge hold={held} />}
             {line.hasPendingApproval && <PendingApprovalBadge />}
             {locked && <LockedBadge name={line.lockedByName!} />}
           </div>
+        )}
+        {/* The reason spelled out on the card, not only in a tooltip: a title
+            attribute is unreachable by touch, and this screen is used on a
+            phone on the shop floor. */}
+        {held?.reason?.trim() && (
+          <p className="rounded-md bg-amber-50 px-2 py-1 text-[12px] leading-snug font-semibold text-amber-900 dark:bg-amber-400/10 dark:text-amber-200">
+            {held.reason}
+          </p>
         )}
 
         <div>
@@ -432,6 +488,7 @@ const COLUMNS: DataColumn<PendingLineDto>[] = [
     cell: (r) => (
       <span className={cn(TEXT_CELL, 'flex items-center gap-1.5 whitespace-nowrap tabular-nums')}>
         {formatDate(r.dueDate)} <DueBadge t={r.dueType} />{' '}
+        {r.onHold && <HoldBadge hold={r.onHold} />}{' '}
         {r.hasPendingApproval && <PendingApprovalBadge />}{' '}
         {r.lockedByName && <LockedBadge name={r.lockedByName} />}
       </span>
@@ -1264,11 +1321,16 @@ export function DispatchOrderPage() {
             fill
             emptyText="No pending order lines — everything is dispatched."
             onRowClick={(r) =>
-              r.lockedByName
-                ? toast.error(
-                    `${r.lockedByName} is currently dispatching this line — try again in a moment.`,
-                  )
-                : setActive(r)
+              // Hold first, then lock — same reasoning as the mobile card's
+              // `open()`: a held line never opens, so saying "try again in a
+              // moment" for it would be false.
+              r.onHold
+                ? toast.error(holdMessage(r.customerName, r.onHold))
+                : r.lockedByName
+                  ? toast.error(
+                      `${r.lockedByName} is currently dispatching this line — try again in a moment.`,
+                    )
+                  : setActive(r)
             }
             className={[
               'font-sans text-[13px]',

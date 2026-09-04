@@ -26,6 +26,7 @@ import { CreateCustomerDto } from './dto/create-customer.dto';
 import { CustomerQueryDto } from './dto/customer-query.dto';
 import { ImportCustomersDto } from './dto/import-customers.dto';
 import { SetCustomerActiveDto } from './dto/set-customer-active.dto';
+import { BulkSetCustomerDispatchHoldDto, SetCustomerDispatchHoldDto } from './dto/set-customer-dispatch-hold.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { CheckCombinationDto, SavePartyRateListConfigDto, SaveRateListConfigDto } from './dto/rate-list-config.dto';
 
@@ -85,6 +86,16 @@ export class CustomersController {
   @Permissions(perm(R, ACTIONS.UPDATE))
   previewBulkUpdate(@Body() dto: BulkUpdateCustomersDto) {
     return this.customers.previewBulkUpdate(dto);
+  }
+
+  /** Hold or release a ticked set of parties in one write. Declared up here with
+   *  the other bulk routes so `dispatch-hold` is matched as a literal segment
+   *  long before `@Patch(':id')` further down could swallow it. */
+  @Patch('dispatch-hold')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Bulk-changed customer dispatch holds' })
+  bulkSetDispatchHold(@Body() dto: BulkSetCustomerDispatchHoldDto, @CurrentUser('name') userName: string) {
+    return this.customers.bulkSetDispatchHold(dto.ids, dto.hold, dto.reason ?? null, userName);
   }
 
   @Patch('bulk-update')
@@ -225,6 +236,19 @@ export class CustomersController {
   @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Changed a customer Active flag' })
   setActive(@Param('id', ParseIntPipe) id: number, @Body() dto: SetCustomerActiveDto) {
     return this.customers.setActive(id, dto.active);
+  }
+
+  /** Place or release one party's dispatch hold. Kept beside its `active`
+   *  sibling — the two narrow flag routes are read together. */
+  @Patch(':id/dispatch-hold')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Placed or released a customer dispatch hold' })
+  setDispatchHold(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SetCustomerDispatchHoldDto,
+    @CurrentUser('name') userName: string,
+  ) {
+    return this.customers.setDispatchHold(id, dto.hold, dto.reason ?? null, userName);
   }
 
   @Delete(':id')

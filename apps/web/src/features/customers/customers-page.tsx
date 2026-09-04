@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, EllipsisVertical, Loader2, Pencil, PencilRuler, Plus, Power, PowerOff, Search, Trash2, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, EllipsisVertical, Loader2, PauseCircle, Pencil, PencilRuler, PlayCircle, Plus, Power, PowerOff, Search, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { type CustomerDto, type CustomerStatus, payByFor } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { parseExcelFile } from '@/lib/excel';
 import { cn } from '@/lib/utils';
+import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useColumnOrder } from '@/hooks/use-column-order';
 import { usePageSize } from '@/hooks/use-page-size';
@@ -27,6 +28,7 @@ import {
   useSetCustomerActive,
 } from './use-customers';
 import { BulkEditDialog } from './bulk-edit-dialog';
+import { DispatchHoldDialog } from './dispatch-hold-dialog';
 
 const num = (n: number | null) => (n == null ? '—' : n.toLocaleString('en-IN'));
 /** Amount prefixed with the rupee symbol; dash when unknown. */
@@ -57,11 +59,52 @@ function StatusPill({ active }: { active: boolean }) {
   );
 }
 
+/**
+ * "On hold", with the reason and who placed it on hover.
+ *
+ * Sits in the Status column beside Active/Inactive rather than in a column of
+ * its own. The two are independent states, but they answer the same question —
+ * "what is going on with this party" — and a column of its own could be
+ * reordered or hidden through Column settings, which is not something a hold
+ * should be able to disappear behind.
+ */
+function HoldPill({ c }: { c: CustomerDto }) {
+  if (!c.dispatchHold) return null;
+  const why = c.dispatchHoldReason?.trim();
+  const placed = [
+    c.dispatchHoldBy ? `by ${c.dispatchHoldBy}` : null,
+    c.dispatchHoldAt ? `on ${formatDate(c.dispatchHoldAt)}` : null,
+  ]
+    .filter(Boolean)
+    .join(' ');
+  return (
+    <span
+      title={`Dispatches held${placed ? ` ${placed}` : ''}${why ? ` — ${why}` : ' — no reason given'}`}
+      className="inline-flex items-center gap-1 rounded-[4px] bg-amber-100 px-1.5 py-0.5 text-[11.5px] font-bold text-amber-900 ring-1 ring-amber-300 ring-inset dark:bg-amber-400/15 dark:text-amber-200 dark:ring-amber-400/30"
+    >
+      <PauseCircle className="size-3 shrink-0" />
+      On hold
+    </span>
+  );
+}
+
 /** Every customer column. The most-used ones come first; Code + Customer name
  * are frozen to the left so identity stays visible while scrolling the wide row. */
 const COLUMNS: DataColumn<CustomerDto>[] = [
   { id: 'name', label: 'Customer name', pin: 'left0', fixed: true, cell: (c) => <span className={cn(TEXT_CELL, 'text-indigo-700 dark:text-indigo-300')}>{txt(c.partyName)}</span> },
-  { id: 'status', label: 'Status', sortValue: (c) => (c.active ? 1 : 0), cell: (c) => <StatusPill active={c.active} /> },
+  {
+    id: 'status',
+    label: 'Status',
+    // Held parties sort to the top of the column: it is the state somebody is
+    // most likely to be sorting this column to find.
+    sortValue: (c) => (c.dispatchHold ? 2 : c.active ? 1 : 0),
+    cell: (c) => (
+      <span className="flex flex-wrap items-center gap-1">
+        <StatusPill active={c.active} />
+        <HoldPill c={c} />
+      </span>
+    ),
+  },
   { id: 'agent', label: 'Agent', cell: (c) => <span className={TEXT_CELL}>{txt(c.agentName)}</span> },
   { id: 'category', label: 'Category', cell: (c) => <span className={TEXT_CELL}>{txt(c.category)}</span> },
   { id: 'city', label: 'City', cell: (c) => <span className={TEXT_CELL}>{txt(c.city)}</span> },
@@ -115,10 +158,13 @@ function CustomerActions({
   c,
   onEdit,
   onDelete,
+  onHold,
 }: {
   c: CustomerDto;
   onEdit: (c: CustomerDto) => void;
   onDelete: (c: CustomerDto) => void;
+  /** Opens the hold dialog — `hold` says which way. */
+  onHold: (c: CustomerDto, hold: boolean) => void;
 }) {
   const { can } = usePermissions();
   const setActive = useSetCustomerActive();
@@ -164,6 +210,20 @@ function CustomerActions({
               ) : (
                 <>
                   <Power className="text-emerald-600" /> Set active
+                </>
+              )}
+            </DropdownMenuItem>
+            {/* Its own item rather than a toggle switch: placing a hold asks for
+                a reason and releasing one shows the reason it was placed for,
+                so both go through a dialog. */}
+            <DropdownMenuItem onSelect={() => onHold(c, !c.dispatchHold)}>
+              {c.dispatchHold ? (
+                <>
+                  <PlayCircle className="text-emerald-600" /> Release dispatch hold
+                </>
+              ) : (
+                <>
+                  <PauseCircle className="text-amber-600" /> Hold dispatches
                 </>
               )}
             </DropdownMenuItem>
@@ -217,6 +277,8 @@ export function CustomersPage() {
   const [selected, setSelected] = useState<Map<number, CustomerDto>>(new Map());
   const [bulkOpen, setBulkOpen] = useState(false);
   const [selectingAll, setSelectingAll] = useState(false);
+  /** Parties the hold dialog is open for, and which way it is going. */
+  const [holdFor, setHoldFor] = useState<{ parties: CustomerDto[]; hold: boolean } | null>(null);
 
   const toggleSelect = (c: CustomerDto) =>
     setSelected((m) => {
@@ -302,8 +364,18 @@ export function CustomersPage() {
             {txt(c.agentName)} · {txt(c.city)}
           </p>
         </div>
-        <StatusPill active={c.active} />
+        <span className="flex shrink-0 flex-col items-end gap-1">
+          <StatusPill active={c.active} />
+          <HoldPill c={c} />
+        </span>
       </div>
+      {/* The reason gets a line of its own on a phone — a title tooltip is not
+          reachable by touch, and the reason is the actionable half of a hold. */}
+      {c.dispatchHold && c.dispatchHoldReason?.trim() && (
+        <p className="rounded-[4px] bg-amber-50 px-2 py-1 text-[11.5px] leading-snug font-medium text-amber-900 dark:bg-amber-400/10 dark:text-amber-200">
+          {c.dispatchHoldReason}
+        </p>
+      )}
       <div className="grid grid-cols-2 gap-2 text-[12px]">
         <div>
           <p className="text-muted-foreground text-[9px] font-bold uppercase tracking-widest">Category</p>
@@ -323,7 +395,12 @@ export function CustomersPage() {
         </div>
       </div>
       <div className="flex items-center justify-end gap-1 border-t pt-2" onClick={(e) => e.stopPropagation()}>
-        <CustomerActions c={c} onEdit={(x) => navigate(`/customers/${x.id}/edit`)} onDelete={handleDelete} />
+        <CustomerActions
+          c={c}
+          onEdit={(x) => navigate(`/customers/${x.id}/edit`)}
+          onDelete={handleDelete}
+          onHold={(x, hold) => setHoldFor({ parties: [x], hold })}
+        />
       </div>
     </div>
   );
@@ -375,7 +452,7 @@ export function CustomersPage() {
             />
           </div>
           <div className="flex items-center gap-1 rounded-[4px] border border-amber-300 bg-amber-50/40 p-0.5 dark:border-amber-400/40">
-            {(['ALL', 'ACTIVE', 'INACTIVE'] as const).map((s) => {
+            {(['ALL', 'ACTIVE', 'INACTIVE', 'ON_HOLD'] as const).map((s) => {
               const on = status === s;
               return (
                 <button
@@ -393,11 +470,15 @@ export function CustomersPage() {
                         ? 'bg-emerald-500 text-white shadow-sm'
                         : s === 'INACTIVE'
                           ? 'bg-rose-500 text-white shadow-sm'
-                          : 'bg-slate-700 text-white shadow-sm'
+                          : s === 'ON_HOLD'
+                            ? 'bg-amber-600 text-white shadow-sm'
+                            : 'bg-slate-700 text-white shadow-sm'
                       : 'text-amber-900/70 hover:bg-amber-100 hover:text-amber-900 dark:text-amber-200/70 dark:hover:bg-amber-400/10',
                   )}
                 >
-                  {s.toLowerCase()}
+                  {/* ON_HOLD reads as "on hold", not "on_hold" — `capitalize`
+                      cannot fix an underscore. */}
+                  {s === 'ON_HOLD' ? 'on hold' : s.toLowerCase()}
                 </button>
               );
             })}
@@ -456,12 +537,49 @@ export function CustomersPage() {
             <X className="mr-0.5 inline size-3 align-[-1px]" />
             Clear
           </button>
-          <div className="ml-auto">
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {/*
+             * Both buttons, always — not one toggle.
+             *
+             * A mixed selection (some held, some not) has no single state to
+             * toggle, and guessing from a majority would silently release holds
+             * somebody meant to keep. Two explicit verbs mean the click says
+             * what it does, whatever is ticked.
+             */}
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 rounded-[4px] border-amber-400 text-[12.5px] font-bold text-amber-800 hover:bg-amber-50 dark:text-amber-300"
+              onClick={() => setHoldFor({ parties: [...selected.values()], hold: true })}
+            >
+              <PauseCircle /> Hold dispatches
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 rounded-[4px] border-emerald-400 text-[12.5px] font-bold text-emerald-800 hover:bg-emerald-50 dark:text-emerald-300"
+              onClick={() => setHoldFor({ parties: [...selected.values()], hold: false })}
+            >
+              <PlayCircle /> Release hold
+            </Button>
             <Button size="sm" className="h-8 rounded-[4px] text-[12.5px] font-bold" onClick={() => setBulkOpen(true)}>
               <PencilRuler /> Bulk edit
             </Button>
           </div>
         </div>
+      )}
+
+      {holdFor && (
+        <DispatchHoldDialog
+          parties={holdFor.parties}
+          hold={holdFor.hold}
+          onClose={() => {
+            setHoldFor(null);
+            // A bulk hold clears the ticks, like Bulk edit does: the set has
+            // been acted on, and leaving it ticked invites acting on it twice.
+            if (holdFor.parties.length > 1) setSelected(new Map());
+          }}
+        />
       )}
 
       {bulkOpen && (
@@ -509,7 +627,12 @@ export function CustomersPage() {
           ].join(' ')}
           actions={(c) => (
             <div className="flex items-center justify-end">
-              <CustomerActions c={c} onEdit={(x) => navigate(`/customers/${x.id}/edit`)} onDelete={handleDelete} />
+              <CustomerActions
+                c={c}
+                onEdit={(x) => navigate(`/customers/${x.id}/edit`)}
+                onDelete={handleDelete}
+                onHold={(x, hold) => setHoldFor({ parties: [x], hold })}
+              />
             </div>
           )}
         />

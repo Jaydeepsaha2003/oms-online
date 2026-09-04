@@ -9,6 +9,7 @@ import {
   type DispatchDateChangePayload,
   type DispatchDto,
   type DispatchFilterOptions,
+  type DispatchHoldInfo,
   type DispatchPhotoCheckDto,
   type DraftPhotoCheckInput,
   type DraftPhotoCheckResult,
@@ -342,6 +343,64 @@ export class DispatchService implements OnModuleInit {
     return this.computePendingLines();
   }
 
+  /**
+   * The hold check from an order-line id, for callers that have not loaded the
+   * line yet — {@link submit}, which has to refuse before its other gates run.
+   *
+   * A missing line is left alone: `submit`/`create` report that themselves, and
+   * a "not found" dressed up as a hold would be a confusing lie.
+   */
+  private async assertLineNotOnHold(orderItemId: number): Promise<void> {
+    const it = await this.prisma.orderItem.findUnique({
+      where: { id: orderItemId },
+      select: { order: { select: { customerId: true, customerName: true } } },
+    });
+    if (!it) return;
+    await this.assertNotOnHold(it.order.customerId, it.order.customerName);
+  }
+
+  /**
+   * Refuse the dispatch when the party is on hold.
+   *
+   * This is the enforcement. Every screen also SHOWS the hold, but a UI that
+   * hides a button is a courtesy, not a control — the API is reachable without
+   * it, a page can be minutes stale, and a hold placed while somebody has the
+   * dispatch sheet open has to bite when they hit save.
+   *
+   * Scoped to CREATING a dispatch. Editing or deleting one recorded before the
+   * hold stays open on purpose: those are corrections, and freezing them would
+   * strand somebody trying to fix a genuine mistake — with the hold on, they
+   * could not even fix it by deleting and re-entering. Note reversals (a return
+   * coming back from a held party) are likewise untouched.
+   *
+   * Takes the transaction client where there is one, so the check happens
+   * inside the same serialized write as the insert it guards.
+   */
+  private async assertNotOnHold(
+    customerId: number | null,
+    customerName: string | null,
+    tx: Prisma.TransactionClient = this.prisma,
+  ): Promise<void> {
+    if (customerId == null) return; // a line with no party to look up
+    const party = await tx.customer.findUnique({
+      where: { id: customerId },
+      select: { dispatchHold: true, dispatchHoldReason: true, dispatchHoldBy: true, dispatchHoldAt: true },
+    });
+    if (!party?.dispatchHold) return;
+    const who = customerName || 'This party';
+    const why = (party.dispatchHoldReason ?? '').trim();
+    const placed = [
+      party.dispatchHoldBy ? `by ${party.dispatchHoldBy}` : null,
+      party.dispatchHoldAt ? `on ${formatDate(party.dispatchHoldAt)}` : null,
+    ]
+      .filter(Boolean)
+      .join(' ');
+    throw new BadRequestException(
+      `${who} is on dispatch hold${why ? ` — ${why}` : ''}.` +
+        `${placed ? ` Held ${placed}.` : ''} Release the hold on the Customers page to dispatch again.`,
+    );
+  }
+
   private async computePendingLines(): Promise<PendingLineDto[]> {
     if (this.pendingCache && Date.now() - this.pendingCache.at < PENDING_CACHE_TTL_MS) {
       return this.pendingCache.lines;
@@ -529,12 +588,35 @@ export class DispatchService implements OnModuleInit {
         }
       }
     }
+    /*
+     * Which of these lines belong to a held party.
+     *
+     * Resolved for the page rather than inside `computePendingLines`, which is
+     * cached for PENDING_CACHE_TTL_MS — a hold has to show the moment it is
+     * placed, not once a cache expires. Same reasoning as the line locks above.
+     */
+    const holds = new Map<number, DispatchHoldInfo>();
+    const custIds = [...new Set(page.map((l) => l.customerId).filter((id): id is number => id != null))];
+    if (custIds.length) {
+      const held = await this.prisma.customer.findMany({
+        where: { id: { in: custIds }, dispatchHold: true },
+        select: { id: true, dispatchHoldReason: true, dispatchHoldBy: true, dispatchHoldAt: true },
+      });
+      for (const h of held) {
+        holds.set(h.id, {
+          reason: h.dispatchHoldReason,
+          by: h.dispatchHoldBy,
+          at: h.dispatchHoldAt ? h.dispatchHoldAt.toISOString() : null,
+        });
+      }
+    }
     const items = page.map((l) => ({
       ...l,
       ...(pendingIds.has(l.orderItemId) ? { hasPendingApproval: true } : {}),
       lockedByName: locks.get(l.orderItemId) ?? null,
       photoCount: photoCounts.get(l.orderItemId) ?? 0,
       billedChallanCode: billedOn.get(l.orderItemId) ?? null,
+      onHold: (l.customerId != null ? holds.get(l.customerId) : undefined) ?? null,
     }));
     return { items, total, page: query.page, pageSize: query.pageSize, totalPages: Math.max(1, Math.ceil(total / query.pageSize)) };
   }
@@ -931,6 +1013,24 @@ export class DispatchService implements OnModuleInit {
     dto: CreateDispatchDto,
     user: { id?: string | null; name?: string | null; canApprove: boolean; canOverrideThreshold: boolean },
   ): Promise<SubmitDispatchResult> {
+    /*
+     * The hold comes FIRST, ahead of every other gate.
+     *
+     * Two reasons, both found by testing rather than by reading:
+     *
+     *  - The photo gate below fired first for a held party, so the user was
+     *    told to go and attach a reference photo — work for a shipment that
+     *    the hold was never going to allow.
+     *  - A back-dated dispatch does not reach `create()` at all: it is parked
+     *    as an approval request further down. Checking only inside `create()`
+     *    meant a held party's back-entry landed in an admin's inbox to be
+     *    decided on, and was only refused after they approved it.
+     *
+     * `create()` keeps its own check regardless — it is also reached by the
+     * approval replay, where a hold placed after the request was parked has to
+     * bite at the moment the row would actually be written.
+     */
+    await this.assertLineNotOnHold(dto.orderItemId);
     if (!user.canOverrideThreshold) await this.assertBagThreshold(dto.orderItemId, toNum(dto.bags) ?? 0);
     await this.assertPhotoDocumented(dto.orderItemId);
 
@@ -1032,6 +1132,10 @@ export class DispatchService implements OnModuleInit {
       if (it.dispatches.some((d) => d.dispatchStatus === 'FULLY DISPATCH')) {
         throw new BadRequestException('This line has already been fully dispatched.');
       }
+      // Inside the transaction, so a hold placed while this request was in
+      // flight is still seen. Before the duplicate/quantity guards because a
+      // held party's dispatch is refused whatever the quantities say.
+      await this.assertNotOnHold(it.order.customerId, it.order.customerName, tx);
 
       // Idempotency guard against duplicate submissions (see DISPATCH_DEDUPE_WINDOW_MS):
       // an identical dispatch on this line recorded moments ago is a duplicate, not a
@@ -1246,6 +1350,11 @@ export class DispatchService implements OnModuleInit {
     if (order.status === 'CANCELLED' || isUncommittedOrder(order.status)) {
       throw new BadRequestException('This order is not available for dispatch.');
     }
+    // Checked here as well as in create(): this path writes its dispatch rows
+    // directly rather than going through create(), so the guard there does not
+    // cover it. Before the reference-photo sweep below, so a held party fails
+    // on the hold rather than on a photo it will never need.
+    await this.assertNotOnHold(order.customerId, order.customerName);
 
     /** Lines this run would actually create a dispatch for. */
     const eligible = order.items.filter((it) => {

@@ -156,6 +156,45 @@ export function useSetCustomerActive() {
   });
 }
 
+/**
+ * Place or release one party's dispatch hold.
+ *
+ * Also invalidates the dispatch queries: the pending list reports the hold per
+ * page, so a hold placed here has to make the Dispatch Order screen refetch —
+ * otherwise the party stays apparently dispatchable until something else
+ * happens to refresh it, and the first the user hears of the hold is the
+ * server refusing the save.
+ */
+export function useSetCustomerHold() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, hold, reason }: { id: number; hold: boolean; reason?: string }) =>
+      http.patch<CustomerDto>(`/customers/${id}/dispatch-hold`, { hold, reason }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEY });
+      qc.invalidateQueries({ queryKey: ['dispatch'] });
+    },
+  });
+}
+
+/** The same hold across a ticked set. Reports what actually moved — a selection
+ *  built up across pages can name parties that are no longer there. */
+export function useBulkSetCustomerHold() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ ids, hold, reason }: { ids: number[]; hold: boolean; reason?: string }) =>
+      http.patch<{ updated: number; skipped: number; names: string[] }>('/customers/dispatch-hold', {
+        ids,
+        hold,
+        reason,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEY });
+      qc.invalidateQueries({ queryKey: ['dispatch'] });
+    },
+  });
+}
+
 export function useDeleteCustomer() {
   const qc = useQueryClient();
   return useMutation({

@@ -163,6 +163,71 @@ export class CustomersService {
     return this.toDto(row);
   }
 
+  /**
+   * Place or release this party's dispatch hold.
+   *
+   * Narrow, for the same reason `setActive` is — see its comment; a PATCH
+   * through `update()` would blank every field the caller never mentioned.
+   *
+   * Releasing CLEARS the reason and the who/when rather than keeping them. A
+   * released hold's reason is not history, it is a stale sentence that would
+   * reappear verbatim on the next hold placed in a hurry with no reason typed
+   * — and it would read as the reason for THAT hold. Who released it and when
+   * is on the audit trail, which is where that belongs.
+   */
+  async setDispatchHold(id: number, hold: boolean, reason: string | null, userName?: string): Promise<CustomerDto> {
+    await this.ensureExists(id);
+    const row = await this.prisma.customer.update({ where: { id }, data: this.holdData(hold, reason, userName) });
+    return this.toDto(row);
+  }
+
+  /**
+   * The same hold across a ticked set, in one write.
+   *
+   * Returns how many rows actually moved, not how many ids were sent: a
+   * selection built up across pages goes stale, and reporting the id count as
+   * the result would claim parties were held that no longer exist.
+   */
+  async bulkSetDispatchHold(
+    ids: number[],
+    hold: boolean,
+    reason: string | null,
+    userName?: string,
+  ): Promise<{ updated: number; skipped: number; names: string[] }> {
+    const unique = [...new Set(ids)];
+    // Read first so the response can name the parties — the confirmation on
+    // screen says "held 3 parties: A, B, C", which is the only way the user can
+    // check the write matched what they ticked.
+    const rows = await this.prisma.customer.findMany({
+      where: { id: { in: unique } },
+      select: { id: true, partyName: true },
+      orderBy: { partyName: 'asc' },
+    });
+    if (!rows.length) return { updated: 0, skipped: unique.length, names: [] };
+    const { count } = await this.prisma.customer.updateMany({
+      where: { id: { in: rows.map((r) => r.id) } },
+      data: this.holdData(hold, reason, userName),
+    });
+    return {
+      updated: count,
+      skipped: unique.length - rows.length,
+      names: rows.map((r) => r.partyName ?? `#${r.id}`),
+    };
+  }
+
+  /** The four columns a hold owns, written the same way by both callers. */
+  private holdData(hold: boolean, reason: string | null, userName?: string) {
+    const clean = (reason ?? '').trim();
+    return hold
+      ? {
+          dispatchHold: true,
+          dispatchHoldReason: clean || null,
+          dispatchHoldBy: userName ?? null,
+          dispatchHoldAt: new Date(),
+        }
+      : { dispatchHold: false, dispatchHoldReason: null, dispatchHoldBy: null, dispatchHoldAt: null };
+  }
+
   async remove(id: number): Promise<void> {
     await this.ensureExists(id);
     await this.prisma.customer.delete({ where: { id } });
@@ -437,7 +502,17 @@ export class CustomersService {
     // Default (no status) = active-only, so every picker that hits /customers shows
     // only active parties. The Customers master passes ALL / INACTIVE explicitly.
     const status = (query.status ?? 'ACTIVE').toUpperCase();
-    const activeFilter = status === 'ALL' ? {} : { active: status !== 'INACTIVE' };
+    /*
+     * ON_HOLD deliberately does NOT also filter on `active`.
+     *
+     * It is the answer to "which parties are held", and a party that was held
+     * and later set inactive is still held — dropping it from the one view
+     * whose job is to list holds would hide exactly the row somebody is
+     * looking for. The two flags are independent (see the schema), so the
+     * filter for one does not imply anything about the other.
+     */
+    const activeFilter =
+      status === 'ALL' ? {} : status === 'ON_HOLD' ? { dispatchHold: true } : { active: status !== 'INACTIVE' };
     return {
       ...activeFilter,
       ...(query.agentName ? { agentName: query.agentName } : {}),
@@ -598,6 +673,10 @@ export class CustomersService {
       tdsApplicable: r.tdsApplicable,
       tdsPercent: r.tdsPercent,
       active: r.active,
+      dispatchHold: r.dispatchHold,
+      dispatchHoldReason: r.dispatchHoldReason,
+      dispatchHoldBy: r.dispatchHoldBy,
+      dispatchHoldAt: r.dispatchHoldAt ? r.dispatchHoldAt.toISOString() : null,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     };
