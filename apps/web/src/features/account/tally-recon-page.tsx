@@ -10,6 +10,7 @@ import {
   History,
   Landmark,
   Link2,
+  Banknote,
   Loader2,
   RotateCcw,
   Scale,
@@ -25,7 +26,8 @@ import { RECON_PROBLEM_STATUSES } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
-import { Combo, NativeSelect } from '@/components/common/combo';
+import { NativeSelect } from '@/components/common/combo';
+import { MultiSelect } from '@/components/common/multi-select';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
@@ -36,6 +38,7 @@ import {
   useReconRun,
   useReconRuns,
   useMarkReconRows,
+  useRerunRecon,
   useSaveTallyAlias,
 } from './use-tally-recon';
 import { useTallyReconRun } from './tally-recon-run-context';
@@ -94,6 +97,11 @@ const STATUS: Record<ReconStatus, StatusMeta> = {
     label: 'Date differs',
     chip: 'border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-400/40 dark:bg-sky-400/10 dark:text-sky-300',
     blurb: 'Found, dates disagree',
+  },
+  BANK_MISMATCH: {
+    label: 'Bank differs',
+    chip: 'border-fuchsia-300 bg-fuchsia-50 text-fuchsia-800 dark:border-fuchsia-400/40 dark:bg-fuchsia-400/10 dark:text-fuchsia-300',
+    blurb: 'Same money, other bank',
   },
   UNMATCHED_PARTY: {
     label: 'Party not mapped',
@@ -445,7 +453,20 @@ export function TallyReconPage() {
   const [view, setView] = useState<'VOUCHERS' | 'BALANCES'>('VOUCHERS');
   const [onlyDiffering, setOnlyDiffering] = useState(true);
   const [vchType, setVchType] = useState('');
-  const [party, setParty] = useState('');
+  /*
+   * Two party filters, because a reconciliation has two sides.
+   *
+   * "Our party" is the OMS customer, "Tally party" the register's own ledger
+   * name — and the whole point of this screen is that those disagree. One
+   * combined filter could only search one of them, which meant the ledger you
+   * could see on the row was not the ledger you could filter by.
+   *
+   * Both take several values: the normal use is a handful of parties being
+   * chased together, and picking them one at a time meant one pass of the whole
+   * report per party.
+   */
+  const [tallyParties, setTallyParties] = useState<string[]>([]);
+  const [omsParties, setOmsParties] = useState<string[]>([]);
   const [picked, setPicked] = useState<Set<number>>(new Set());
 
   const [aliasFor, setAliasFor] = useState<string | null>(null);
@@ -464,6 +485,7 @@ export function TallyReconPage() {
   const recon = useTallyReconRun();
   const removeRun = useDeleteReconRun();
   const saveAlias = useSaveTallyAlias();
+  const rerun = useRerunRecon();
   const createReceipts = useCreateReconReceipts();
   const markRows = useMarkReconRows();
 
@@ -471,7 +493,17 @@ export function TallyReconPage() {
   const customerOptions = useMemo(() => [...custByName.keys()].sort((a, b) => a.localeCompare(b)), [custByName]);
 
   const rows = run?.rows ?? [];
-  const partyOptions = useMemo(() => [...new Set(rows.map((r) => r.ledgerName))].sort((a, b) => a.localeCompare(b)), [rows]);
+  // Sets, not arrays: `visible` tests every row against both, and `includes`
+  // over a 20-party pick across 2,700 rows is 50k string comparisons a render.
+  const tallySet = useMemo(() => new Set(tallyParties), [tallyParties]);
+  const omsSet = useMemo(() => new Set(omsParties), [omsParties]);
+  const tallyPartyOptions = useMemo(() => [...new Set(rows.map((r) => r.ledgerName))].sort((a, b) => a.localeCompare(b)), [rows]);
+  /** Only the parties the register actually mapped — an unmapped ledger has no
+   *  OMS name to offer, and a blank entry in the list is not a choice. */
+  const omsPartyOptions = useMemo(
+    () => [...new Set(rows.map((r) => r.customerName).filter((n): n is string => !!n))].sort((a, b) => a.localeCompare(b)),
+    [rows],
+  );
   const vchOptions = useMemo(() => VCH_ORDER.filter((t) => rows.some((r) => r.vchType === t)), [rows]);
 
   const visible = useMemo(
@@ -481,10 +513,11 @@ export function TallyReconPage() {
         if (status && status !== 'PROBLEMS' && r.status !== status) return false;
         if (review && r.review !== review) return false;
         if (vchType && r.vchType !== vchType) return false;
-        if (party && r.ledgerName !== party) return false;
+        if (tallySet.size && !tallySet.has(r.ledgerName)) return false;
+        if (omsSet.size && !(r.customerName && omsSet.has(r.customerName))) return false;
         return true;
       }),
-    [rows, status, review, vchType, party],
+    [rows, status, review, vchType, tallySet, omsSet],
   );
 
   /** Party blocks, Tally-style: a heading per ledger with its rows beneath. */
@@ -542,7 +575,8 @@ export function TallyReconPage() {
     setStatus('PROBLEMS');
     setReview('');
     setVchType('');
-    setParty('');
+    setTallyParties([]);
+    setOmsParties([]);
   }, [recon.phase, recon.takeFreshRunId]);
 
   const onDeleteRun = async () => {
@@ -558,13 +592,44 @@ export function TallyReconPage() {
   };
 
   const onSaveAlias = async () => {
+    if (!aliasFor) return;
+    /*
+     * Resolve the typed name to a real customer, and SAY SO when it doesn't.
+     *
+     * This used to `return` on a miss, which is how the dialog came to do
+     * nothing at all: the field was a creatable combo, so typing "pn" and
+     * taking its "Create pn" row left a value that matches no customer — and
+     * then Save was enabled, clicked, and silently did nothing. The field is a
+     * fixed-list picker now (see the dialog), and this is the backstop.
+     */
     const customerId = custByName.get(aliasCustomer);
-    if (!aliasFor || !customerId) return;
+    if (!customerId) {
+      toast.error(
+        aliasCustomer.trim()
+          ? `"${aliasCustomer}" is not an OMS customer — pick one from the list.`
+          : 'Pick the OMS customer this ledger belongs to.',
+      );
+      return;
+    }
     try {
       await saveAlias.mutateAsync({ tallyName: aliasFor, customerId });
-      toast.success(`"${aliasFor}" now maps to ${aliasCustomer}. Upload the register again to re-check it.`);
       setAliasFor(null);
       setAliasCustomer('');
+      /*
+       * Re-reconcile straight away rather than telling the user to upload the
+       * same workbook again. Mapping a ledger changes nothing about the
+       * register, only who it belongs to, so the comparison can simply be
+       * replayed against the copy already stored on the run.
+       *
+       * Runs recorded before registers were kept report canRerun false; those
+       * still get the old instruction, because for them it is the truth.
+       */
+      if (activeId != null && run?.canRerun) {
+        await rerun.mutateAsync(activeId);
+        toast.success(`"${aliasFor}" now maps to ${aliasCustomer}. Register re-checked.`);
+      } else {
+        toast.success(`"${aliasFor}" now maps to ${aliasCustomer}. Upload the register again to re-check it.`);
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not save that mapping.');
     }
@@ -604,7 +669,8 @@ export function TallyReconPage() {
   };
 
   const problemCount = run ? run.missingInOms + run.missingInTally + run.mismatchCount + run.unmatchedParty : 0;
-  const hasFilters = !!vchType || !!party || !!review || status !== 'PROBLEMS';
+  const hasFilters =
+    !!vchType || tallyParties.length > 0 || omsParties.length > 0 || !!review || status !== 'PROBLEMS';
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2 p-2.5 font-sans sm:gap-2.5 sm:p-3">
@@ -650,16 +716,30 @@ export function TallyReconPage() {
           )}
 
           <div className="w-full sm:w-52">
-            <Label className="sr-only" htmlFor="recon-party">
-              Party
-            </Label>
-            <NativeSelect
-              id="recon-party"
-              value={party}
-              onChange={setParty}
-              options={['', ...partyOptions]}
-              placeholder="Party"
-              className={cn(CONTROL, 'font-medium', party && CONTROL_ON)}
+            <MultiSelect
+              label="Our party"
+              values={omsParties}
+              onChange={setOmsParties}
+              options={omsPartyOptions}
+              itemLabel="party"
+              pluralLabel="parties"
+              searchPlaceholder="Search our parties…"
+              emptyText="No mapped parties in this run."
+              className={cn(CONTROL, 'font-medium', omsParties.length > 0 && CONTROL_ON)}
+            />
+          </div>
+
+          <div className="w-full sm:w-52">
+            <MultiSelect
+              label="Tally party"
+              values={tallyParties}
+              onChange={setTallyParties}
+              options={tallyPartyOptions}
+              itemLabel="party"
+              pluralLabel="parties"
+              searchPlaceholder="Search Tally ledgers…"
+              emptyText="No ledgers in this run."
+              className={cn(CONTROL, 'font-medium', tallyParties.length > 0 && CONTROL_ON)}
             />
           </div>
 
@@ -705,7 +785,8 @@ export function TallyReconPage() {
                 setStatus('PROBLEMS');
                 setReview('');
                 setVchType('');
-                setParty('');
+                setTallyParties([]);
+                setOmsParties([]);
               }}
             >
               <X className="size-3.5" /> Reset
@@ -775,6 +856,14 @@ export function TallyReconPage() {
               tone={STATUS.AMOUNT_MISMATCH.chip}
               active={status === 'AMOUNT_MISMATCH'}
               onClick={() => setStatus(status === 'AMOUNT_MISMATCH' ? '' : 'AMOUNT_MISMATCH')}
+            />
+            <Tile
+              label={STATUS.BANK_MISMATCH.label}
+              blurb={STATUS.BANK_MISMATCH.blurb}
+              value={run.bankMismatchCount}
+              tone={STATUS.BANK_MISMATCH.chip}
+              active={status === 'BANK_MISMATCH'}
+              onClick={() => setStatus(status === 'BANK_MISMATCH' ? '' : 'BANK_MISMATCH')}
             />
             <Tile
               label={STATUS.UNMATCHED_PARTY.label}
@@ -966,7 +1055,15 @@ export function TallyReconPage() {
             )}
           </div>
         ) : view === 'BALANCES' ? (
-          <BalancesView run={run} onlyDiffering={onlyDiffering} setOnlyDiffering={setOnlyDiffering} onPickParty={(name) => { setParty(name); setView('VOUCHERS'); setStatus(''); }} />
+          <BalancesView run={run} onlyDiffering={onlyDiffering} setOnlyDiffering={setOnlyDiffering} onPickParty={(name) => {
+              // A balance row is keyed by the register's ledger name, so the
+              // jump lands on the Tally-side filter. Replaces whatever was
+              // picked rather than adding to it: this is "show me THIS party".
+              setTallyParties([name]);
+              setOmsParties([]);
+              setView('VOUCHERS');
+              setStatus('');
+            }} />
         ) : (
           <>
             {/* Desktop grid. */}
@@ -1100,7 +1197,19 @@ export function TallyReconPage() {
                                   <span className="text-muted-foreground text-[11px] font-medium">—</span>
                                 ) : null}
                               </td>
-                              <td className={cn(TD, 'text-[12.5px] font-semibold whitespace-nowrap')}>{r.omsRef || '-'}</td>
+                              <td className={cn(TD, 'text-[12.5px] font-semibold whitespace-nowrap')}>
+                                {r.omsRef || '-'}
+                                {/* Only where the banks actually disagree. The
+                                    Particulars column two cells left already
+                                    carries the register's bank, so on every
+                                    other row this would just repeat it. */}
+                                {r.status === 'BANK_MISMATCH' && r.omsBank && (
+                                  <span className="mt-0.5 flex items-center gap-1 text-[11px] font-bold text-fuchsia-700 dark:text-fuchsia-300">
+                                    <Banknote className="size-3 shrink-0" />
+                                    {r.omsBank}
+                                  </span>
+                                )}
+                              </td>
                               <td className={cn(TD, NUM, 'font-semibold')}>{moneyOrDash(r.omsAmount)}</td>
                               <td className={cn(TD, 'text-muted-foreground text-[11.5px] font-medium')}>{r.note || ''}</td>
                             </tr>
@@ -1247,11 +1356,30 @@ export function TallyReconPage() {
                 OMS customer
               </Label>
               <div className="mt-0.5">
-                <Combo value={aliasCustomer} onChange={setAliasCustomer} options={customerOptions} placeholder="Pick a customer" className={CONTROL} />
+                {/*
+                 * NativeSelect, not Combo: Combo is `creatable`, so typing a
+                 * few letters offered a "Create …" row that committed free text
+                 * as the value. That value matches no customer, and saving it
+                 * did nothing at all — the reported bug. This one picks from the
+                 * list only, and says so when what was typed isn't on it.
+                 */}
+                <NativeSelect
+                  id="alias-customer"
+                  value={aliasCustomer}
+                  onChange={setAliasCustomer}
+                  options={customerOptions}
+                  placeholder="Type to search customers"
+                  onInvalidEntry={(typed) =>
+                    toast.error(`No OMS customer matches "${typed}" — pick one from the list.`)
+                  }
+                  className={CONTROL}
+                />
               </div>
             </div>
             <p className="text-muted-foreground text-[11.5px] font-medium">
-              The mapping is remembered for future uploads. Upload the register again to reconcile this party's entries.
+              {run?.canRerun
+                ? 'The mapping is remembered for future uploads, and this register is re-checked straight away.'
+                : "The mapping is remembered for future uploads. Upload the register again to reconcile this party's entries."}
             </p>
           </div>
           <DialogFooter>
@@ -1261,9 +1389,12 @@ export function TallyReconPage() {
             <Button
               className="h-9 rounded-[4px] text-[12.5px] font-bold"
               onClick={() => void onSaveAlias()}
-              disabled={!aliasCustomer || saveAlias.isPending}
+              // Disabled until the picked name is a REAL customer, so the button
+              // can no longer be clicked into doing nothing.
+              disabled={!custByName.has(aliasCustomer) || saveAlias.isPending || rerun.isPending}
             >
-              {saveAlias.isPending && <Loader2 className="size-3.5 animate-spin" />} Save mapping
+              {(saveAlias.isPending || rerun.isPending) && <Loader2 className="size-3.5 animate-spin" />}
+              {rerun.isPending ? 'Re-checking…' : 'Save mapping'}
             </Button>
           </DialogFooter>
         </DialogContent>

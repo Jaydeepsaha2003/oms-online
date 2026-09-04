@@ -76,6 +76,9 @@ export interface MatchRow {
   omsRef: string | null;
   omsAmount: number | null;
   omsDate: Date | null;
+  /** The bank OMS booked the match to — the other half of a BANK_MISMATCH,
+   *  whose Tally side is already in `particulars`. */
+  omsBank: string | null;
   note: string | null;
 }
 
@@ -137,6 +140,38 @@ function pickByAmountDate<T>(
   return best;
 }
 
+/*
+ * Which BANK a name refers to, ignoring how each side happens to spell it.
+ *
+ * The two sides never spell it the same way. Tally names the ledger — "AXIS
+ * BANK LTD", "ICICI BANK" — while OMS names the account — "AXIS BANK-0884",
+ * "AXIS BANK-7DAA", "ICICI BANK-1389". Comparing the raw strings would report
+ * every matched receipt as a bank mismatch, which is worse than not checking
+ * at all.
+ *
+ * So each side is reduced to its identifying word: AXIS, ICICI, PNB. Account
+ * tails go (any token carrying a digit — "0884", "7DAA"), and so do the words
+ * every bank name shares, which therefore identify nothing.
+ *
+ * One cost is accepted deliberately: two different accounts at the SAME bank
+ * read as equal, because Tally's side carries no account number at all and
+ * there is nothing to tell them apart on. Silent beats confidently wrong.
+ */
+const BANK_NOISE = new Set([
+  'BANK', 'LTD', 'LIMITED', 'PVT', 'PRIVATE', 'CO', 'COMPANY', 'THE', 'OF', 'AC', 'ACC',
+  'CURRENT', 'CA', 'CC', 'OD', 'SAVING', 'SAVINGS', 'INDIA', 'BRANCH', 'BR',
+]);
+
+function bankIdentity(name: string | null | undefined): string {
+  return (name ?? '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter((w) => w && !/[0-9]/.test(w) && !BANK_NOISE.has(w))
+    .join(' ');
+}
+
 /** MATCHED unless the dates drifted further than tolerance allows. */
 function dateVerdict(a: Date, b: Date): { status: ReconStatus; note: string | null } {
   const gap = dayGap(a, b);
@@ -173,6 +208,7 @@ export function reconcileParty(ledger: ParsedLedger, oms: OmsParty | null, perio
         vchType: 'OPENING',
         vchNo: 'Opening Balance',
         particulars: 'Opening Balance',
+        omsBank: null,
         dr: ledger.openingNet > 0 ? r2(ledger.openingNet) : 0,
         cr: ledger.openingNet < 0 ? r2(-ledger.openingNet) : 0,
         status: 'UNMATCHED_PARTY',
@@ -187,6 +223,7 @@ export function reconcileParty(ledger: ParsedLedger, oms: OmsParty | null, perio
         ...base,
         source: 'TALLY',
         txnDate: v.txnDate,
+        omsBank: null,
         vchType: reconVchType(v.vchType, v.particulars) as ReconVchType,
         vchNo: v.vchNo,
         particulars: v.particulars,
@@ -218,6 +255,7 @@ export function reconcileParty(ledger: ParsedLedger, oms: OmsParty | null, perio
       vchType: 'OPENING',
       vchNo: 'Opening Balance',
       particulars: 'Opening Balance',
+      omsBank: null,
       dr: t > 0 ? t : 0,
       cr: t < 0 ? -t : 0,
       status: 'MATCHED',
@@ -278,6 +316,7 @@ export function reconcileParty(ledger: ParsedLedger, oms: OmsParty | null, perio
       omsRef: null,
       omsAmount: null,
       omsDate: null,
+      omsBank: null,
       note: 'No matching confirmed sales invoice in OMS.',
     };
     if (idx >= 0) {
@@ -309,6 +348,7 @@ export function reconcileParty(ledger: ParsedLedger, oms: OmsParty | null, perio
       vchType: 'SALES',
       vchNo: inv.code,
       particulars: 'Sales invoice present in OMS only',
+      omsBank: null,
       dr: r2(inv.bank),
       cr: 0,
       status: 'MISSING_IN_TALLY',
@@ -358,6 +398,7 @@ export function reconcileParty(ledger: ParsedLedger, oms: OmsParty | null, perio
       omsRef: null,
       omsAmount: null,
       omsDate: null,
+      omsBank: null,
       note: null,
     };
 
@@ -403,6 +444,32 @@ export function reconcileParty(ledger: ParsedLedger, oms: OmsParty | null, perio
     const verdict = dateVerdict(v.txnDate, m.transDate);
     row.status = verdict.status;
     row.note = cash ? `Matched against the OMS cash leg. ${verdict.note ?? ''}`.trim() : verdict.note;
+
+    /*
+     * Same party, same figures, same date — different bank.
+     *
+     * That reconciles on paper and still leaves two bank books wrong, so it is
+     * reported rather than passed as MATCHED.
+     *
+     * Only where BOTH sides actually name a bank. Skipped for the cash leg (the
+     * register said "Cash", so there is no bank to disagree about) and where the
+     * OMS voucher moved no bank money — its `particulars` is then a cash
+     * narration like "CASH RECEIPT BY BANK / SHADAB", which is not a bank name
+     * and would produce a nonsense mismatch. Skipped too when either side
+     * reduces to nothing identifying, rather than guessing.
+     */
+    if (!cash && bankMag(m) > 0.004) {
+      row.omsBank = m.particulars;
+      const tallyBank = bankIdentity(v.particulars);
+      const omsBankId = bankIdentity(m.particulars);
+      if (tallyBank && omsBankId && tallyBank !== omsBankId) {
+        const remark = `Tally banked this to ${(v.particulars ?? '').trim()}; OMS recorded ${(m.particulars ?? '').trim()}.`;
+        // A wrong amount or a wrong date is the bigger fault and keeps the
+        // status; the bank remark is appended so it is not lost behind it.
+        if (row.status === 'MATCHED') row.status = 'BANK_MISMATCH';
+        row.note = [row.note, remark].filter(Boolean).join(' ');
+      }
+    }
     out.push(row);
   }
 
@@ -427,6 +494,8 @@ export function reconcileParty(ledger: ParsedLedger, oms: OmsParty | null, perio
       omsRef: m.voucherNo,
       omsAmount: mag,
       omsDate: m.transDate,
+      // The bank OMS used, so a MISSING_IN_TALLY line says which book it is in.
+      omsBank: m.particulars,
       note: `Not present in the register for ${fmtDate(m.transDate)}.`,
     });
   });

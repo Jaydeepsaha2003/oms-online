@@ -15,6 +15,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { memoryStorage } from 'multer';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
+import { Audit } from '../common/decorators/audit.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { CreateReceiptsDto, MarkRowsDto, ReconRunsQueryDto, SaveAliasDto } from './dto/tally-recon.dto';
@@ -55,6 +56,19 @@ export class TallyReconController {
   @Permissions(perm(R, ACTIONS.VIEW))
   result(@Param('id', ParseIntPipe) id: number) {
     return this.svc.result(id);
+  }
+
+  /**
+   * Re-reconcile a run from the register already stored on it.
+   *
+   * What makes a newly mapped ledger take effect without the workbook. Counts
+   * as CREATE, not VIEW: it rewrites the run's rows and counters.
+   */
+  @Post('runs/:id/rerun')
+  @Permissions(perm(R, ACTIONS.CREATE))
+  @Audit({ action: ACTIONS.CREATE, resource: R, description: 'Re-reconciled a Tally register in place' })
+  rerun(@Param('id', ParseIntPipe) id: number, @CurrentUser('name') userName?: string) {
+    return this.svc.rerun(id, userName ?? null);
   }
 
   @Delete('runs/:id')

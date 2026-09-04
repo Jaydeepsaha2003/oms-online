@@ -80,6 +80,31 @@ function isDebitNoteChallan(prefix: string | null, transaction: string | null): 
   return (prefix ?? '').toUpperCase().includes('DN') || (transaction ?? '').toUpperCase() === 'DEBIT NOTE';
 }
 
+/**
+ * Turn a stored register back into a ParsedRegister.
+ *
+ * JSON.stringify flattens every Date to an ISO string, and the whole comparison
+ * does arithmetic on those dates (`getTime`, day gaps, period windows) — so they
+ * have to be Dates again before the register is handed back to it. Reviving is
+ * explicit rather than a JSON.parse reviver keyed on field names: the shape is
+ * small, fixed and known, and a name-matching reviver would silently start
+ * converting any future string field that happened to look like a date.
+ */
+function reviveRegister(json: string): ParsedRegister {
+  const raw = JSON.parse(json) as unknown as ParsedRegister;
+  const date = (v: unknown) => new Date(v as string);
+  const orNull = (v: unknown) => (v == null ? null : date(v));
+  return {
+    fromDate: date(raw.fromDate),
+    toDate: date(raw.toDate),
+    ledgers: (raw.ledgers ?? []).map((l) => ({
+      ...l,
+      openingDate: orNull(l.openingDate),
+      vouchers: (l.vouchers ?? []).map((v) => ({ ...v, txnDate: date(v.txnDate) })),
+    })),
+  };
+}
+
 @Injectable()
 export class TallyReconService {
   constructor(
@@ -386,6 +411,80 @@ export class TallyReconService {
   async run(file: { buffer: Buffer; originalname: string }, userName?: string | null): Promise<ReconRunResult> {
     if (!file?.buffer?.length) throw new BadRequestException('No file was uploaded.');
     const register: ParsedRegister = await parseTallyRegister(file.buffer, file.originalname);
+    const built = await this.compare(register, file.originalname, userName ?? null);
+
+    const run = await this.prisma.tallyReconRun.create({
+      data: {
+        ...built.summary,
+        // Kept so mapping a ledger later can replay this same comparison
+        // without the workbook — see rerun().
+        registerJson: JSON.stringify(register),
+        rows: { create: built.rowData },
+        balances: { create: built.balances },
+      },
+      select: { id: true },
+    });
+
+    return this.result(run.id);
+  }
+
+  /**
+   * Re-reconcile a run in place, from the register stored on it.
+   *
+   * This is what makes mapping an unmatched ledger take effect immediately.
+   * Before, the mapping was saved and the report left untouched, so the user
+   * was told to upload the same workbook again just to see the party move out
+   * of "Party not mapped" — for a change that alters nothing about the register.
+   *
+   * IN PLACE, keeping the run's id: the user stays on the report they were
+   * reading, and the history list does not fill up with near-identical runs of
+   * the same file. Marks survive by `issueKey`, exactly as they do across
+   * uploads, so a line already marked solved stays marked.
+   */
+  async rerun(id: number, userName?: string | null): Promise<ReconRunResult> {
+    const run = await this.prisma.tallyReconRun.findUnique({
+      where: { id },
+      select: { id: true, fileName: true, registerJson: true, userName: true },
+    });
+    if (!run) throw new NotFoundException('That reconciliation run no longer exists.');
+    if (!run.registerJson) {
+      throw new BadRequestException(
+        'This reconciliation was recorded before registers were kept, so it cannot be re-checked on its own. Upload the register again.',
+      );
+    }
+    const register = reviveRegister(run.registerJson);
+    const built = await this.compare(register, run.fileName, userName ?? run.userName);
+
+    // One transaction: a half-replaced report — new rows against the old
+    // counters, or no rows at all if the second write failed — would be read as
+    // a reconciliation result.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.tallyReconRow.deleteMany({ where: { runId: id } });
+      await tx.tallyReconBalance.deleteMany({ where: { runId: id } });
+      await tx.tallyReconRun.update({
+        where: { id },
+        data: {
+          ...built.summary,
+          // fileName and uploadedAt stay as they were: this is the same
+          // register being re-read, not a new upload.
+          fileName: run.fileName,
+          rows: { create: built.rowData },
+          balances: { create: built.balances },
+        },
+      });
+    });
+
+    return this.result(id);
+  }
+
+  /**
+   * The comparison itself: register in, rows + balances + counters out.
+   *
+   * Shared by the upload and the replay so the two can never diverge — a second
+   * copy of this for the replay would be a second reconciliation engine, and
+   * the report would eventually depend on which route produced it.
+   */
+  private async compare(register: ParsedRegister, fileName: string, userName: string | null) {
     const from = register.fromDate;
     // The register's own period drives the comparison window, as the user asked.
     const toExclusive = new Date(register.toDate.getTime() + DAY);
@@ -420,10 +519,10 @@ export class TallyReconService {
     const count = (s: ReconStatus) => rows.filter((r) => r.status === s).length;
     const reviewCount = (v: string) => keyed.filter((k) => (marks.get(k.issueKey)?.review ?? 'OPEN') === v).length;
     const summary = {
-      fileName: file.originalname,
+      fileName,
       fromDate: from,
       toDate: register.toDate,
-      userName: userName ?? null,
+      userName,
       ledgerCount: register.ledgers.length,
       voucherCount: register.ledgers.reduce((s, l) => s + l.vouchers.length, 0),
       matchedCount: count('MATCHED'),
@@ -431,55 +530,83 @@ export class TallyReconService {
       missingInTally: count('MISSING_IN_TALLY'),
       mismatchCount: count('AMOUNT_MISMATCH') + count('DATE_MISMATCH'),
       unmatchedParty: count('UNMATCHED_PARTY'),
+      bankMismatchCount: count('BANK_MISMATCH'),
       pendingCount: reviewCount('PENDING'),
       solvedCount: reviewCount('SOLVED'),
       balanceCheckedCount: balances.length,
       balanceMismatchCount: balances.filter((b) => !b.matched).length,
     };
 
-    const run = await this.prisma.tallyReconRun.create({
-      data: {
-        ...summary,
-        rows: {
-          create: keyed.map(({ row: r, issueKey }) => ({
-            issueKey,
-            review: marks.get(issueKey)?.review ?? 'OPEN',
-            reviewNote: marks.get(issueKey)?.note ?? null,
-            reviewedAt: marks.get(issueKey)?.reviewedAt ?? null,
-            reviewedBy: marks.get(issueKey)?.reviewedBy ?? null,
-            source: r.source,
-            ledgerName: r.ledgerName,
-            customerId: r.customerId,
-            customerName: r.customerName,
-            txnDate: r.txnDate,
-            vchType: r.vchType,
-            vchNo: r.vchNo,
-            particulars: r.particulars,
-            dr: r.dr,
-            cr: r.cr,
-            status: r.status,
-            omsRef: r.omsRef,
-            omsAmount: r.omsAmount,
-            omsDate: r.omsDate,
-            note: r.note,
-          })),
-        },
-        balances: { create: balances },
-      },
-      select: { id: true },
-    });
+    const rowData = keyed.map(({ row: r, issueKey }) => ({
+      issueKey,
+      review: marks.get(issueKey)?.review ?? 'OPEN',
+      reviewNote: marks.get(issueKey)?.note ?? null,
+      reviewedAt: marks.get(issueKey)?.reviewedAt ?? null,
+      reviewedBy: marks.get(issueKey)?.reviewedBy ?? null,
+      source: r.source,
+      ledgerName: r.ledgerName,
+      customerId: r.customerId,
+      customerName: r.customerName,
+      txnDate: r.txnDate,
+      vchType: r.vchType,
+      vchNo: r.vchNo,
+      particulars: r.particulars,
+      dr: r.dr,
+      cr: r.cr,
+      status: r.status,
+      omsRef: r.omsRef,
+      omsAmount: r.omsAmount,
+      omsDate: r.omsDate,
+      omsBank: r.omsBank,
+      note: r.note,
+    }));
 
-    return this.result(run.id);
+    return { summary, rowData, balances };
   }
 
   /* ── reads ───────────────────────────────────────────────────────────────── */
 
   async runs(limit = 25): Promise<ReconRunSummary[]> {
+    const take = Math.min(Math.max(limit, 1), 100);
+    /*
+     * Every column EXCEPT registerJson.
+     *
+     * The history list only needs to know WHETHER a register is stored, and a
+     * bare findMany would have pulled up to 100 whole registers — hundreds of
+     * kilobytes each — into memory to answer a boolean. The flags come from the
+     * query below, which tests for null without reading the text.
+     */
     const list = await this.prisma.tallyReconRun.findMany({
       orderBy: { uploadedAt: 'desc' },
-      take: Math.min(Math.max(limit, 1), 100),
+      take,
+      select: {
+        id: true,
+        fileName: true,
+        fromDate: true,
+        toDate: true,
+        uploadedAt: true,
+        userName: true,
+        ledgerCount: true,
+        voucherCount: true,
+        matchedCount: true,
+        missingInOms: true,
+        missingInTally: true,
+        mismatchCount: true,
+        unmatchedParty: true,
+        bankMismatchCount: true,
+        pendingCount: true,
+        solvedCount: true,
+        balanceMismatchCount: true,
+        balanceCheckedCount: true,
+      },
     });
-    return list.map((r) => this.toSummary(r));
+    if (!list.length) return [];
+    const flags = await this.prisma.$queryRaw<{ id: number; hasRegister: number }[]>`
+      SELECT id, CASE WHEN registerJson IS NULL THEN 0 ELSE 1 END AS hasRegister
+      FROM tally_recon_run
+    `;
+    const stored = new Set(flags.filter((f) => Number(f.hasRegister) === 1).map((f) => Number(f.id)));
+    return list.map((r) => this.toSummary({ ...r, registerJson: stored.has(r.id) ? 'stored' : null }));
   }
 
   async result(id: number): Promise<ReconRunResult> {
@@ -545,6 +672,10 @@ export class TallyReconService {
     solvedCount: number;
     balanceMismatchCount: number;
     balanceCheckedCount: number;
+    bankMismatchCount: number;
+    /** Selected, not read: the caller passes whether a register is stored, and
+     *  only its presence matters — the JSON itself is never sent to the client. */
+    registerJson?: string | null;
   }): ReconRunSummary {
     return {
       id: r.id,
@@ -564,6 +695,8 @@ export class TallyReconService {
       solvedCount: r.solvedCount,
       balanceMismatchCount: r.balanceMismatchCount,
       balanceCheckedCount: r.balanceCheckedCount,
+      bankMismatchCount: r.bankMismatchCount,
+      canRerun: !!r.registerJson,
     };
   }
 
@@ -583,6 +716,7 @@ export class TallyReconService {
     omsRef: string | null;
     omsAmount: number | null;
     omsDate: Date | null;
+    omsBank: string | null;
     note: string | null;
     resolvedAt: Date | null;
     resolvedRef: string | null;
@@ -607,6 +741,7 @@ export class TallyReconService {
       omsRef: r.omsRef,
       omsAmount: r.omsAmount,
       omsDate: iso(r.omsDate),
+      omsBank: r.omsBank,
       note: r.note,
       resolvedAt: iso(r.resolvedAt),
       resolvedRef: r.resolvedRef,
@@ -870,6 +1005,7 @@ export class TallyReconService {
         missingInTally: of('MISSING_IN_TALLY'),
         mismatchCount: of('AMOUNT_MISMATCH') + of('DATE_MISMATCH'),
         unmatchedParty: of('UNMATCHED_PARTY'),
+        bankMismatchCount: of('BANK_MISMATCH'),
         pendingCount: reviewed('PENDING'),
         solvedCount: reviewed('SOLVED'),
       },

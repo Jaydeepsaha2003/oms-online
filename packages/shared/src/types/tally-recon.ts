@@ -25,6 +25,17 @@ export const RECON_STATUSES = [
   'AMOUNT_MISMATCH',
   /** Found on both sides, amounts agree, but the dates differ. */
   'DATE_MISMATCH',
+  /**
+   * Found on both sides and the figures agree, but the money went through a
+   * different BANK in each.
+   *
+   * Its own status rather than a note on a MATCHED row, for the same reason
+   * AMOUNT_MISMATCH and DATE_MISMATCH are: those are also "found on both
+   * sides", and a discrepancy filed under Matched is a discrepancy nobody
+   * looks at. A receipt banked to the wrong account reconciles on paper and
+   * still leaves two bank books wrong.
+   */
+  'BANK_MISMATCH',
   /** The register's ledger name maps to no OMS customer — nothing to compare to. */
   'UNMATCHED_PARTY',
   /** A voucher type OMS has no equivalent for (Purchase, TCS Payable…). */
@@ -49,6 +60,7 @@ export const RECON_PROBLEM_STATUSES: ReconStatus[] = [
   'MISSING_IN_TALLY',
   'AMOUNT_MISMATCH',
   'DATE_MISMATCH',
+  'BANK_MISMATCH',
   'UNMATCHED_PARTY',
 ];
 
@@ -69,6 +81,14 @@ export interface ReconRow {
   omsRef: string | null;
   omsAmount: number | null;
   omsDate: string | null;
+  /**
+   * The bank OMS recorded the matched voucher against, when it names one.
+   *
+   * `particulars` already carries the register's own bank, so the two sit side
+   * by side and a BANK_MISMATCH can be read off the row without opening the
+   * note. Null on rows that matched nothing, or where OMS named no bank.
+   */
+  omsBank: string | null;
   note: string | null;
   /** Set once the user has created the missing entry from the report. */
   resolvedAt: string | null;
@@ -104,6 +124,17 @@ export interface ReconRunSummary {
    *  comparable at all (an unmapped ledger can't be). */
   balanceMismatchCount: number;
   balanceCheckedCount: number;
+  /** Receipts that agree on figures but went through different banks. */
+  bankMismatchCount: number;
+  /**
+   * Can this run be re-reconciled in place, without the workbook?
+   *
+   * True once the run has the parsed register stored on it. False for runs
+   * uploaded before that was kept, which can only be re-checked by uploading
+   * the file again — the screen has to be able to say which it is rather than
+   * offering a button that would fail.
+   */
+  canRerun: boolean;
 }
 
 /**

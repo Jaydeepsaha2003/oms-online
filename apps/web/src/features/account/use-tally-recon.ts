@@ -56,6 +56,23 @@ export function useRunRecon() {
   });
 }
 
+/**
+ * Re-reconciles a run in place from the register stored on it.
+ *
+ * The run keeps its id, so the screen stays on the report the user was reading
+ * and simply refetches it. Also invalidates the runs LIST, whose headline
+ * counters for this run have just changed.
+ */
+export function useRerunRecon() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => http.post<ReconRunResult>(`/tally-recon/runs/${id}/rerun`, {}),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: RUNS });
+    },
+  });
+}
+
 export function useDeleteReconRun() {
   const qc = useQueryClient();
   return useMutation({

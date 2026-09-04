@@ -1774,6 +1774,23 @@ model TallyReconRun {
   /// Parties whose closing balance disagrees with the register.
   balanceMismatchCount Int @default(0)
   balanceCheckedCount  Int @default(0)
+  /// Receipts that agree on figures but name a different bank on each side.
+  bankMismatchCount    Int @default(0)
+
+  /// The parsed register (ParsedRegister as JSON), kept so the run can be
+  /// re-reconciled in place after a ledger is mapped to a customer — without
+  /// asking for the workbook again.
+  ///
+  /// The rows cannot stand in for it. An UNMATCHED_PARTY ledger — precisely the
+  /// one being mapped — has no balance row, so the register's own opening and
+  /// closing for that party exist nowhere else and a re-run rebuilt from rows
+  /// would compare its balance against zero.
+  ///
+  /// JSON in TEXT for the reason RateListConfig.payload gives: a small document
+  /// read and written whole, never queried by its innards. Nullable with no
+  /// backfill — runs uploaded before this keep working, and report canRerun
+  /// false so the screen asks for a re-upload instead.
+  registerJson         String?
 
   rows     TallyReconRow[]
   balances TallyReconBalance[]
@@ -1810,6 +1827,9 @@ model TallyReconRow {
   omsRef    String?
   omsAmount Float?
   omsDate   DateTime?
+  /// The bank OMS booked the matched voucher to, when it names one — the other
+  /// half of a BANK_MISMATCH, whose Tally side is already in `particulars`.
+  omsBank   String?
   note      String?
 
   /// Set when the user creates the missing entry straight from the report.
