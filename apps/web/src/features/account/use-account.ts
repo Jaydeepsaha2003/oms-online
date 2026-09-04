@@ -15,6 +15,7 @@ import type {
   DiscountHistoryList,
   DiscountInvoiceList,
   DiscountInvoiceQuery,
+  BulkDeletePaymentResult,
   DeletePaymentResult,
   EditPaymentInput,
   EditPaymentResult,
@@ -271,6 +272,22 @@ export function useDeletePayment() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => http.delete<DeletePaymentResult>(`/payments/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PAYMENT_KEY }),
+  });
+}
+
+/**
+ * Remove several receipts at once.
+ *
+ * One request, not a loop of {@link useDeletePayment}: the server reverses and
+ * replays each party's later-receipt chain, so N separate calls would do that N
+ * times and — the real problem — could fail halfway, leaving some receipts gone
+ * and the party's allocations rebuilt around a half-finished delete.
+ */
+export function useDeletePayments() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: number[]) => http.post<BulkDeletePaymentResult>('/payments/bulk-delete', { ids }),
     onSuccess: () => qc.invalidateQueries({ queryKey: PAYMENT_KEY }),
   });
 }

@@ -211,6 +211,24 @@ export interface DeletePaymentResult {
   replayedCount: number;
 }
 
+/**
+ * Removing SEVERAL receipts at once.
+ *
+ * Not a loop over {@link DeletePaymentResult}. Each single delete reverses and
+ * replays the whole chain of later receipts for that party, so deleting five
+ * one at a time would do that five times over — and, worse, would not be
+ * atomic: a failure on the fourth would leave three receipts gone, the rest
+ * standing, and the party's allocations rebuilt around a state the user never
+ * asked for. One request, one transaction, one replay pass per party.
+ */
+export interface BulkDeletePaymentResult {
+  /** Voucher numbers actually removed, in the order they were deleted. */
+  deleted: string[];
+  /** How many OTHER vouchers were reversed and replayed as a consequence —
+   *  counted once per voucher, however many targets shared its chain. */
+  replayedCount: number;
+}
+
 /* ── Ledger listing (voucher history) ─────────────────────────────────────── */
 
 export interface LedgerEntryDto {

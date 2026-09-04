@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import {
   type ChequeOptionRow,
+  type BulkDeletePaymentResult,
   type DeletePaymentResult,
   type DueType,
   type EditPaymentResult,
@@ -496,6 +497,91 @@ export class PaymentsService {
         await this.replayRow(tx, row);
       }
       return { voucherNo: target.voucherNo, replayedCount: chain.length - 1 };
+    });
+  }
+
+  /**
+   * Remove several receipts in one transaction.
+   *
+   * Deliberately NOT a loop over {@link deleteReceipt}. That would reverse and
+   * replay the party's whole later-receipt chain once per target — five deletes
+   * meaning five full replays of the same rows — and it would not be atomic: a
+   * failure partway leaves some receipts gone, the others standing, and the
+   * party's allocations rebuilt around a state nobody chose.
+   *
+   * Instead the targets are grouped by the chain they belong to (party, or agent
+   * where there is no party), each group's chain is loaded ONCE from its
+   * earliest target, reversed once, and every row replayed except the targets.
+   * Not replaying them IS the delete — the same mechanism as the single case, so
+   * the arithmetic cannot differ between deleting one and deleting five.
+   *
+   * Every target is validated BEFORE anything is written. A set that contains
+   * one undeletable receipt fails whole, with a message naming it, rather than
+   * deleting the four that were fine and leaving the user to work out which
+   * one didn't go.
+   */
+  async deleteReceipts(ids: number[]): Promise<BulkDeletePaymentResult> {
+    const unique = [...new Set(ids)];
+    if (!unique.length) throw new BadRequestException('Pick at least one receipt to delete.');
+
+    const targets = await this.prisma.acctLedger.findMany({ where: { id: { in: unique } } });
+    if (targets.length !== unique.length) {
+      throw new BadRequestException('One of those receipts no longer exists — reload the list and try again.');
+    }
+    for (const t of targets) {
+      if (t.voucherType !== 'RECEIPT') throw new BadRequestException(`${t.voucherNo} is not a receipt, so it cannot be deleted here.`);
+      if (t.adjMode == null) throw new BadRequestException(`${t.voucherNo} predates edit support and cannot be deleted.`);
+    }
+
+    // Same guard as the single delete, asked once for the whole set: a voucher
+    // entered from Tally Reconciliation is stamped on that report's row, and
+    // deleting it would strand the row against a receipt that no longer exists.
+    const reconciled = await this.prisma.tallyReconRow.findFirst({
+      where: { resolvedRef: { in: targets.map((t) => t.voucherNo) } },
+      select: { resolvedRef: true },
+    });
+    if (reconciled) {
+      throw new BadRequestException(
+        `${reconciled.resolvedRef} was entered from Tally Reconciliation. Reset that row in the reconciliation report first, then delete these receipts.`,
+      );
+    }
+
+    /*
+     * Group by the chain each target belongs to.
+     *
+     * `loadReplayChain` keys on custId, falling back to agentName for an
+     * agent-level voucher (custId 0) — so the group key has to be the same
+     * thing, or two targets in one chain would each drag that chain through a
+     * separate reverse-and-replay.
+     */
+    const groups = new Map<string, LedgerRow[]>();
+    for (const t of targets) {
+      const key = t.custId !== 0 ? `c:${t.custId}` : `a:${t.agentName ?? ''}`;
+      const list = groups.get(key);
+      if (list) list.push(t);
+      else groups.set(key, [t]);
+    }
+
+    const targetIds = new Set(targets.map((t) => t.id));
+    return this.prisma.$transaction(async (tx) => {
+      const deleted: string[] = [];
+      let replayedCount = 0;
+      for (const members of groups.values()) {
+        // The EARLIEST target anchors the chain: everything from there on could
+        // depend on it, and everything before it is untouched by the delete.
+        const earliest = members.reduce((a, b) => (a.id <= b.id ? a : b));
+        const chain = await this.loadReplayChain(tx, earliest, 'deleted');
+        await this.reverseChain(tx, chain);
+        for (const row of chain) {
+          if (targetIds.has(row.id)) {
+            deleted.push(row.voucherNo);
+            continue; // not replaying it IS the delete
+          }
+          await this.replayRow(tx, row);
+          replayedCount += 1;
+        }
+      }
+      return { deleted, replayedCount };
     });
   }
 

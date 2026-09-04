@@ -7,7 +7,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { buildPendingInvoicesReport } from './pending-report.builder';
 import { PaymentsService } from './payments.service';
-import { EditPaymentDto, LedgerQueryDto, PaymentContextQueryDto, PendingReportDto, SavePaymentDto } from './dto/payment.dto';
+import { BulkDeletePaymentsDto, EditPaymentDto, LedgerQueryDto, PaymentContextQueryDto, PendingReportDto, SavePaymentDto } from './dto/payment.dto';
 
 const R = RESOURCES.PAYMENT;
 
@@ -98,6 +98,20 @@ export class PaymentsController {
   @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Edited a payment receipt' })
   edit(@Param('id', ParseIntPipe) id: number, @Body() dto: EditPaymentDto, @CurrentUser('name') userName?: string) {
     return this.payments.editReceipt(id, dto, userName);
+  }
+
+  /**
+   * Remove SEVERAL receipts in one transaction.
+   *
+   * A POST, not a DELETE: the ids travel in a body, and DELETE with a body is
+   * inconsistently supported across proxies and clients. Declared ahead of
+   * `@Delete(':id')` so `bulk-delete` is matched as a literal segment.
+   */
+  @Post('bulk-delete')
+  @Permissions(perm(R, ACTIONS.DELETE))
+  @Audit({ action: ACTIONS.DELETE, resource: R, description: 'Deleted several payment receipts' })
+  removeMany(@Body() dto: BulkDeletePaymentsDto) {
+    return this.payments.deleteReceipts(dto.ids);
   }
 
   /** Remove a receipt — reverses this voucher and everything saved after it for

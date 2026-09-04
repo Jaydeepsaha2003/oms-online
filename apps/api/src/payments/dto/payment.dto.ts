@@ -1,4 +1,4 @@
-import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayNotEmpty, IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ADJ_MODES, PAY_MODES, TAKE_ACC_ON } from '@oms/shared';
 import { PaginationDto } from '../../common/dto/pagination.dto';
@@ -45,6 +45,23 @@ export class SavePaymentDto {
 
 /** Correct an already-saved receipt's amount/date/mode/remarks. WHO it was
  *  taken from and HOW it was adjusted stay fixed — see PaymentsService.editReceipt. */
+/**
+ * The receipts to delete together.
+ *
+ * Capped at 50: each id drags its party's later-receipt chain through a reverse
+ * and replay inside one transaction, and an unbounded list would let a stray
+ * request hold a write lock on the whole payments book. Fifty is far more than
+ * anyone ticks by hand on a 25-row page.
+ */
+export class BulkDeletePaymentsDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(50)
+  @Type(() => Number)
+  @IsInt({ each: true })
+  ids!: number[];
+}
+
 export class EditPaymentDto {
   @IsIn(PAY_MODES as unknown as string[]) payMode!: string;
   @IsOptional() @IsString() bankName?: string | null;

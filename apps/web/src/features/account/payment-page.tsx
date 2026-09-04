@@ -12,6 +12,7 @@ import {
   Save,
   ScrollText,
   Trash2,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { LedgerEntryDto, PendingInvoiceRow, SavePaymentResult } from '@oms/shared';
@@ -28,9 +29,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { NativeSelect } from '@/components/common/combo';
 import { useConfirm } from '@/components/common/confirm';
+import { RowCheckbox } from '@/components/common/row-checkbox';
 import { useCustomers } from '@/features/customers/use-customers';
 import { useAgents } from '@/features/agents/use-agents';
-import { useActiveBankAccounts, useChequeOptions, useDeletePayment, useEditPayment, usePaymentContext, usePaymentLedger, useSavePayment } from './use-account';
+import { useActiveBankAccounts, useChequeOptions, useDeletePayment, useDeletePayments, useEditPayment, usePaymentContext, usePaymentLedger, useSavePayment } from './use-account';
 
 const inr = (v: number | null | undefined) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
 const money = (v: number | null | undefined) => `₹ ${inr(v)}`;
@@ -1258,6 +1260,17 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
   const [dateFrom, setDateFrom] = useState(fyStart());
   const [dateTo, setDateTo] = useState(TODAY());
   const del = useDeletePayment();
+  const delMany = useDeletePayments();
+  /*
+   * Ticked receipts, by ledger id.
+   *
+   * CLEARED whenever the query changes (page, dates, side) — deliberately
+   * unlike the Customers master, which keeps a selection across pages. This
+   * button deletes money vouchers, and a set built up out of rows that are no
+   * longer on screen is one nobody can check before confirming. What you can
+   * see is what you can delete.
+   */
+  const [picked, setPicked] = useState<Set<number>>(new Set());
   /** 'BOTH' | 'B' | 'C' — which money side to show. Sent to the server so the
    *  row count and the rows agree; see the control below. */
   const [mode, setMode] = useState<'BOTH' | 'B' | 'C'>('BOTH');
@@ -1268,9 +1281,68 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
   // repeating it on every row cost three wrapped lines per row and told the
   // reader nothing. The column only earns its place on an unscoped ledger.
   const scoped = customerId != null || !!agentName;
-  const cols = (scoped ? 7 : 8) + (showActions ? 1 : 0);
+  // +1 for the tick column, which only appears when deleting is possible.
+  const cols = (scoped ? 7 : 8) + (showActions ? 1 : 0) + (canDelete ? 1 : 0);
   const bankTotal = rows.reduce((s, r) => s + (r.bankCredit ?? 0), 0);
   const cashTotal = rows.reduce((s, r) => s + (r.cashCredit ?? 0), 0);
+
+  /*
+   * Only rows that can ACTUALLY be deleted are tickable.
+   *
+   * A checkbox on a row the server would refuse — a credit note, or a receipt
+   * that predates edit support — is a trap: it ticks, it counts towards the
+   * total, and then the whole delete fails naming a voucher the user could not
+   * have known was the problem. Same test the row's own trash button uses.
+   */
+  const deletable = useMemo(() => rows.filter((r) => r.voucherType === 'RECEIPT' && r.editable), [rows]);
+  const pickedRows = useMemo(() => deletable.filter((r) => picked.has(r.id)), [deletable, picked]);
+  const pickedTotal = pickedRows.reduce((s, r) => s + (r.bankCredit || r.cashCredit || 0), 0);
+  const allPickable = deletable.length > 0 && deletable.every((r) => picked.has(r.id));
+  const busy = del.isPending || delMany.isPending;
+
+  const togglePick = (id: number) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const toggleAllPickable = () =>
+    setPicked(allPickable ? new Set() : new Set(deletable.map((r) => r.id)));
+
+  // Any change of question empties the basket — see the comment on `picked`.
+  useEffect(() => setPicked(new Set()), [page, dateFrom, dateTo, mode]);
+
+  const handleDeleteMany = async () => {
+    if (!pickedRows.length) return;
+    const names = pickedRows.map((r) => r.voucherNo);
+    const ok = await confirm({
+      title: `Delete ${names.length} receipt${names.length === 1 ? '' : 's'}?`,
+      description:
+        `${names.join(', ')} — ${inr(pickedTotal)} in total will be removed. ` +
+        'Every invoice and advance they settled goes back to pending, and any later receipt for these parties is re-applied automatically. This cannot be undone.',
+      confirmText: `Delete ${names.length} receipt${names.length === 1 ? '' : 's'}`,
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      // `pickedRows`, never the raw `picked` set: a refetch between ticking and
+      // confirming can leave an id in the set that is no longer deletable, and
+      // sending it would fail the WHOLE batch over a row the confirmation never
+      // listed. What was named is what gets sent.
+      const res = await delMany.mutateAsync(pickedRows.map((r) => r.id));
+      setPicked(new Set());
+      toast.success(
+        res.replayedCount > 0
+          ? `${res.deleted.length} receipt(s) deleted — ${res.replayedCount} later receipt(s) recomputed`
+          : `${res.deleted.length} receipt(s) deleted`,
+      );
+    } catch (e) {
+      // The server refuses the whole set rather than deleting part of it, so
+      // nothing has changed and the ticks are worth keeping for another go.
+      toast.error(getApiErrorMessage(e, 'Delete failed — nothing was removed'));
+    }
+  };
 
   const handleDelete = async (r: LedgerEntryDto) => {
     const amount = inr(r.bankCredit || r.cashCredit);
@@ -1388,10 +1460,58 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
             </div>
           </div>
         </div>
+        {/* Only present once something is ticked, so the dialog stays quiet the
+            rest of the time — and so a destructive button is never sitting
+            there waiting to be clicked by accident. */}
+        {canDelete && pickedRows.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 rounded-[4px] border border-rose-300 bg-rose-50 px-2.5 py-2 dark:border-rose-400/40 dark:bg-rose-400/10">
+            <p className="text-[12.5px] font-bold text-rose-900 tabular-nums dark:text-rose-200">
+              {pickedRows.length} receipt{pickedRows.length === 1 ? '' : 's'} selected
+              <span className="ml-2 font-extrabold">{inr(pickedTotal)}</span>
+            </p>
+            <button
+              type="button"
+              onClick={() => setPicked(new Set())}
+              className="cursor-pointer text-[12px] font-semibold text-rose-700/80 underline-offset-2 hover:underline dark:text-rose-300/80"
+            >
+              <X className="mr-0.5 inline size-3 align-[-1px]" />
+              Clear
+            </button>
+            <div className="ml-auto">
+              <Button
+                size="sm"
+                variant="destructive"
+                className="h-8 rounded-[4px] text-[12.5px] font-bold"
+                onClick={() => void handleDeleteMany()}
+                disabled={busy}
+              >
+                {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+                Delete {pickedRows.length} receipt{pickedRows.length === 1 ? '' : 's'}
+              </Button>
+            </div>
+          </div>
+        )}
         <div className="min-h-0 flex-1 overflow-auto rounded-[4px] border">
           <table className="w-full border-collapse text-[12.5px]">
             <thead>
               <tr>
+                {canDelete && (
+                  <th scope="col" className={cn(TH, TH_LINE, 'w-8')}>
+                    {/* Covers the deletable rows on THIS page — the only ones a
+                        tick can act on. Absent entirely when none of them are,
+                        rather than offered as a control that does nothing. */}
+                    {deletable.length > 0 && (
+                      <span className="flex items-center justify-center">
+                        <RowCheckbox
+                          checked={allPickable}
+                          onChange={toggleAllPickable}
+                          label={allPickable ? 'Clear selection' : `Select all ${deletable.length} deletable receipts on this page`}
+                          title={allPickable ? 'Clear selection' : `Select all ${deletable.length} deletable receipts on this page`}
+                        />
+                      </span>
+                    )}
+                  </th>
+                )}
                 <th scope="col" className={cn(TH, TH_LINE)}>Voucher</th>
                 <th scope="col" className={cn(TH, TH_LINE)}>Date</th>
                 {!scoped && <th scope="col" className={cn(TH, TH_LINE)}>Customer</th>}
@@ -1410,7 +1530,27 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
                 <tr><td colSpan={cols} className="text-muted-foreground h-20 text-center text-[13px] font-medium">No receipts recorded in this date range.</td></tr>
               ) : (
                 rows.map((r) => (
-                  <tr key={r.id} className="border-b border-amber-200/70 even:bg-amber-50/70 hover:bg-amber-200/70 dark:border-amber-400/10 dark:even:bg-amber-400/[0.05] dark:hover:bg-amber-400/20">
+                  <tr
+                    key={r.id}
+                    className={cn(
+                      'border-b border-amber-200/70 even:bg-amber-50/70 hover:bg-amber-200/70 dark:border-amber-400/10 dark:even:bg-amber-400/[0.05] dark:hover:bg-amber-400/20',
+                      // A ticked row is tinted so a selection spread down a long
+                      // page is visible without reading every checkbox.
+                      picked.has(r.id) && 'bg-rose-50/80 even:bg-rose-50/80 dark:bg-rose-400/[0.10] dark:even:bg-rose-400/[0.10]',
+                    )}
+                  >
+                    {canDelete && (
+                      <td className="px-1 py-[3px] text-center">
+                        {r.voucherType === 'RECEIPT' && r.editable && (
+                          <RowCheckbox
+                            checked={picked.has(r.id)}
+                            onChange={() => togglePick(r.id)}
+                            label={`Select ${r.voucherNo} for deletion`}
+                            title={`Select ${r.voucherNo} for deletion`}
+                          />
+                        )}
+                      </td>
+                    )}
                     <td className={cn(TD, 'font-mono font-bold whitespace-nowrap')}>{r.voucherNo}</td>
                     <td className={cn(TD, 'font-semibold whitespace-nowrap tabular-nums')}>{prettyDate(r.transDate)}</td>
                     {!scoped && <td className={cn(TD, 'font-semibold')}>{r.customerName}</td>}
@@ -1455,7 +1595,7 @@ function LedgerModal({ ownerKind, owner, customerId, agentName, onClose }: { own
                                   <span className="inline-flex">
                                     <button
                                       type="button"
-                                      disabled={!r.editable || del.isPending}
+                                      disabled={!r.editable || busy}
                                       onClick={() => handleDelete(r)}
                                       className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-30 inline-flex size-6 items-center justify-center rounded-[4px]"
                                       aria-label={`Delete ${r.voucherNo}`}
