@@ -43,11 +43,24 @@ export function connectNotificationsSocket(): void {
   });
 
   // Live refresh: another user created/edited/cancelled/deleted a challan, so the
-  // un-challaned pool moved. Invalidate the Pending Challan query (base key
-  // ['challans','pending'] — see use-challans.ts) so an open view re-fetches at
-  // once. Silent by design — no toast/sound.
+  // un-challaned pool moved. Invalidates:
+  //   ['challans','pending'] - the Pending Challan list (see use-challans.ts).
+  //   ['challans','draft']   - the pool Create Challan builds its Add-line picker
+  //     from (useChallanDraft, staleTime: Infinity so it never polls on its own).
+  //     Without this, a party's Create Challan screen had no way to learn that
+  //     someone ELSE dispatched another item for the same party while the screen
+  //     was already open - Pending Challan updated live, Create Challan silently
+  //     didn't, and the second dispatch just sat unmentioned until the first
+  //     challan was saved. Safe to background-refetch while the form is open:
+  //     the one-time init effect (initedRef) only ever seeds `rows` from the
+  //     FIRST settled draft, so a later refetch just refreshes the Add-line pool
+  //     (draft.items -> available -> options) - it can never overwrite anything
+  //     the user has already typed or added.
+  // Silent by design - no toast/sound; the Create Challan screen surfaces this
+  // itself (see the "newly arrived" banner in challan-form-page.tsx).
   socket.on('challans:pending-changed', () => {
     void queryClient.invalidateQueries({ queryKey: ['challans', 'pending'] });
+    void queryClient.invalidateQueries({ queryKey: ['challans', 'draft'] });
   });
 
   // Live refresh: another user's Dispatch line lock was acquired or released, so

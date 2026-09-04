@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowLeftRight,
+  Bell,
   Camera,
   CalendarCheck2,
   CalendarDays,
@@ -418,6 +419,43 @@ export function ChallanFormPage() {
   const optionMap = useMemo(() => new Map(available.map((it) => [itemLabel(it), it])), [available]);
   const options = useMemo(() => [...optionMap.keys()], [optionMap]);
 
+  // Dispatch ids present in this party's pool the moment the form finished its
+  // FIRST load. Anything in `available` afterwards whose id is not in this set
+  // was dispatched by someone else WHILE this screen was already open — the
+  // gap reported for Create Challan: Pending Challan shows a new dispatch the
+  // instant it lands, but this screen's Add-line pool (useChallanDraft,
+  // staleTime: Infinity) used to sit frozen at whatever existed when the form
+  // was opened. notifications-socket.ts now invalidates that cache on the same
+  // live signal Pending Challan already uses, so `available` grows on its own —
+  // this just remembers the starting point so the newcomer can be called out
+  // instead of blending in unannounced.
+  const knownPoolIdsRef = useRef<Set<number> | null>(null);
+  useEffect(() => {
+    if (isEdit || knownPoolIdsRef.current || !draft || draftSettling) return;
+    knownPoolIdsRef.current = new Set(
+      draft.items.map((it) => it.dispatchId).filter((id): id is number => id != null),
+    );
+  }, [draft, draftSettling, isEdit]);
+
+  // Dismissing is per dispatchId, not a blanket "stop telling me": if this exact
+  // item is later added (via the picker, Add All, or the banner's own button) it
+  // leaves `available` and so leaves this list too — no separate bookkeeping
+  // needed to clear a dismissal once it is actually resolved. If a DIFFERENT new
+  // item shows up afterwards, that has its own id and reappears normally.
+  const [dismissedNewIds, setDismissedNewIds] = useState<ReadonlySet<number>>(() => new Set());
+  const newlyArrived = useMemo(
+    () =>
+      isEdit || !knownPoolIdsRef.current
+        ? []
+        : available.filter(
+            (it) =>
+              it.dispatchId != null &&
+              !knownPoolIdsRef.current!.has(it.dispatchId) &&
+              !dismissedNewIds.has(it.dispatchId),
+          ),
+    [available, isEdit, dismissedNewIds],
+  );
+
   const addItem = () => {
     const it = optionMap.get(addSel);
     if (!it) return;
@@ -440,6 +478,21 @@ export function ChallanFormPage() {
     recalc(next);
     toast.success(`Added ${available.length} pending item${available.length === 1 ? '' : 's'}`);
     warnMissingRates(available);
+  };
+
+  // The banner's own action: add ONLY the items flagged as newly arrived, not
+  // the whole `available` pool — some of those may be lines the user already
+  // saw and deliberately chose to leave for a later challan.
+  const addNewlyArrived = () => {
+    if (!newlyArrived.length) return;
+    const next = [
+      ...rows,
+      ...newlyArrived.map((it, i) => ({ ...it, key: `${it.dispatchId ?? 'm'}-${rows.length + i}-${performance.now() | 0}-new${i}` })),
+    ];
+    setRows(next);
+    recalc(next);
+    toast.success(`Added ${newlyArrived.length} newly dispatched item${newlyArrived.length === 1 ? '' : 's'}`);
+    warnMissingRates(newlyArrived);
   };
   // Swipe-to-add-all: a horizontal swipe on the Bill To card loads every pending
   // dispatched item for the selected party straight into the list (mobile shortcut
@@ -1071,6 +1124,44 @@ export function ChallanFormPage() {
 
         {draft && (
           <>
+            {/* Someone else dispatched more of this party's items while this
+                screen was already open — see the tracking note above `newlyArrived`.
+                Shown above the picker it feeds, not as a toast: a toast fires once
+                and is gone, but this can stay true for as long as the form is open,
+                so it needs to still be visible whenever the user next looks up. */}
+            {newlyArrived.length > 0 && (
+              <div className="mx-3 mt-2 flex items-start gap-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900 sm:mx-4 dark:border-sky-400/30 dark:bg-sky-500/10 dark:text-sky-200">
+                <Bell className="mt-0.5 size-4 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold">
+                    {newlyArrived.length} more item{newlyArrived.length === 1 ? '' : 's'} for {draft.customerName} just showed up
+                  </p>
+                  <p className="text-sky-800/90 dark:text-sky-200/80">
+                    Dispatched after you opened this challan —{' '}
+                    {newlyArrived.map((it) => it.productName || 'item').slice(0, 3).join(', ')}
+                    {newlyArrived.length > 3 ? `, +${newlyArrived.length - 3} more` : ''}. Not on this challan unless you add them.
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <Button type="button" size="sm" className="h-7 rounded-[4px] bg-sky-600 text-xs hover:bg-sky-700" onClick={addNewlyArrived}>
+                    Add {newlyArrived.length === 1 ? 'it' : 'them'}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 rounded-[4px] text-sky-800 hover:bg-sky-100 hover:text-sky-900 dark:text-sky-200 dark:hover:bg-sky-500/20"
+                    onClick={() =>
+                      setDismissedNewIds(
+                        (s) => new Set([...s, ...newlyArrived.map((it) => it.dispatchId).filter((id): id is number => id != null)]),
+                      )
+                    }
+                  >
+                    Not now
+                  </Button>
+                </div>
+              </div>
+            )}
             {/* Add-line toolbar */}
             <div className="bg-muted/30 shrink-0 space-y-2 border-y px-3 py-2 sm:px-4 sm:py-2.5">
               <div className="flex flex-wrap items-center gap-2">
