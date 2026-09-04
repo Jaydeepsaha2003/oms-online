@@ -1,4 +1,4 @@
-import type { ReconStatus, ReconVchType } from '@oms/shared';
+import type { ReconStatus, ReconVchType, TallyLedgerCategory } from '@oms/shared';
 import { omsCodeCandidates, reconVchType, type ParsedLedger, type ParsedVoucher } from './tally-register.parser';
 
 /**
@@ -21,6 +21,10 @@ import { omsCodeCandidates, reconVchType, type ParsedLedger, type ParsedVoucher 
  *   DISCOUNT     — amount + date against OMS SALES DISCOUNT.
  *   OPENING      — the party's signed bank opening as of the period start.
  *   OTHER        — Purchase / TCS Payable have no OMS counterpart: NOT_APPLICABLE.
+ *
+ * A ledger with no OMS match at all is UNMATCHED_PARTY, UNLESS the user has
+ * filed it as EXPENSE/OTHER (TallyLedgerCategory) — then it is NOT_APPLICABLE
+ * too, for the same "nothing to compare" reason. See `category` below.
  */
 
 /** Rupee tolerance — Tally and OMS round GST at different points. */
@@ -185,11 +189,34 @@ const fmtDate = (d: Date) => `${String(d.getDate()).padStart(2, '0')}-${d.toLoca
 /* ── the per-party reconciliation ─────────────────────────────────────────── */
 
 /**
- * @param ledger  one party's block from the register
- * @param oms     the same party's OMS books over the register's period, or null
- *                when no OMS customer could be resolved
+ * @param ledger   one party's block from the register
+ * @param oms      the same party's OMS books over the register's period, or null
+ *                 when no OMS customer could be resolved
+ * @param category set only when `oms` is null: the ledger's saved
+ *                 TallyLedgerCategory ('EXPENSE' | 'OTHER'), when the user has
+ *                 filed it as not-a-party. Reported as NOT_APPLICABLE instead of
+ *                 UNMATCHED_PARTY — the same status "Purchase" / "TCS Payable"
+ *                 already get below for the same reason (nothing to compare
+ *                 against), so filing a ledger this way stops it counting
+ *                 toward "needs attention" without inventing a new status.
+ * @param openingCarriedBySibling set only when TWO OR MORE Tally ledger names
+ *                 are aliased to the SAME OMS customer (a party renamed in
+ *                 Tally — e.g. after a GST/address change — keeps both the old
+ *                 and new ledger in one register) AND this specific ledger's
+ *                 own opening is nil: the OTHER aliased ledger's name, the one
+ *                 that actually carries the opening. Without this, EVERY
+ *                 sibling ledger got compared against the customer's ONE OMS
+ *                 opening independently, so the ledger that genuinely never
+ *                 held an opening of its own was flagged MISSING_IN_TALLY —
+ *                 real money nowhere, reported as if it were unaccounted for.
  */
-export function reconcileParty(ledger: ParsedLedger, oms: OmsParty | null, periodFrom: Date): MatchRow[] {
+export function reconcileParty(
+  ledger: ParsedLedger,
+  oms: OmsParty | null,
+  periodFrom: Date,
+  category: TallyLedgerCategory | null = null,
+  openingCarriedBySibling: string | null = null,
+): MatchRow[] {
   const out: MatchRow[] = [];
   const base = {
     ledgerName: ledger.ledgerName,
@@ -198,8 +225,15 @@ export function reconcileParty(ledger: ParsedLedger, oms: OmsParty | null, perio
   };
 
   // ── unresolved party: report the register's rows so the total still ties, but
-  //    there is nothing to compare them against.
+  //    there is nothing to compare them against. A ledger the user has FILED as
+  //    non-party (category set) is reported as NOT_APPLICABLE, not
+  //    UNMATCHED_PARTY — it isn't a problem, it's an account the reconciliation
+  //    was never going to have an OMS counterpart for.
   if (!oms) {
+    const status: ReconStatus = category ? 'NOT_APPLICABLE' : 'UNMATCHED_PARTY';
+    const note = category
+      ? `Filed as ${category === 'EXPENSE' ? 'an Expense' : 'Other'} — not a customer, so nothing to compare.`
+      : 'No OMS customer is mapped to this Tally ledger name.';
     if (ledger.openingNet != null) {
       out.push({
         ...base,
@@ -211,11 +245,11 @@ export function reconcileParty(ledger: ParsedLedger, oms: OmsParty | null, perio
         omsBank: null,
         dr: ledger.openingNet > 0 ? r2(ledger.openingNet) : 0,
         cr: ledger.openingNet < 0 ? r2(-ledger.openingNet) : 0,
-        status: 'UNMATCHED_PARTY',
+        status,
         omsRef: null,
         omsAmount: null,
         omsDate: null,
-        note: 'No OMS customer is mapped to this Tally ledger name.',
+        note,
       });
     }
     for (const v of ledger.vouchers) {
@@ -229,11 +263,11 @@ export function reconcileParty(ledger: ParsedLedger, oms: OmsParty | null, perio
         particulars: v.particulars,
         dr: r2(v.debit),
         cr: r2(v.credit),
-        status: 'UNMATCHED_PARTY',
+        status,
         omsRef: null,
         omsAmount: null,
         omsDate: null,
-        note: 'No OMS customer is mapped to this Tally ledger name.',
+        note,
       });
     }
     return out;
@@ -265,12 +299,24 @@ export function reconcileParty(ledger: ParsedLedger, oms: OmsParty | null, perio
       note: null,
     };
     if (ledger.openingNet == null) {
-      row.status = 'MISSING_IN_TALLY';
-      row.source = 'OMS';
-      row.note = `OMS carries a bank opening of ${o.toFixed(2)}; the register shows none.`;
+      if (openingCarriedBySibling) {
+        // Not a discrepancy — this Tally ledger is one half of a renamed
+        // party, and the other half already accounts for the opening (see
+        // the param doc above). NOT_APPLICABLE: nothing to compare, nothing
+        // wrong, so it must not count toward "needs attention".
+        row.status = 'NOT_APPLICABLE';
+        row.source = 'TALLY';
+        row.note = `This ledger carries no opening of its own — the party's opening is on "${openingCarriedBySibling}" (also mapped to this customer), where it matches.`;
+      } else {
+        row.status = 'MISSING_IN_TALLY';
+        row.source = 'OMS';
+        row.note = `OMS carries a bank opening of ${o.toFixed(2)}; the register shows none.`;
+      }
     } else if (!oms.hasOpening) {
       row.status = 'MISSING_IN_OMS';
-      row.note = 'The register has an opening balance; OMS has no opening row for this party.';
+      // State the Tally figure, not just that one exists — the same clarity
+      // the MISSING_IN_TALLY branch above already gives for the OMS side.
+      row.note = `The register carries a bank opening of ${t.toFixed(2)}; OMS has no opening row for this party.`;
     } else if (!near(t, o)) {
       row.status = 'AMOUNT_MISMATCH';
       row.note = `Tally ${t.toFixed(2)} vs OMS ${o.toFixed(2)} — difference ${r2(t - o).toFixed(2)}.`;
@@ -317,7 +363,10 @@ export function reconcileParty(ledger: ParsedLedger, oms: OmsParty | null, perio
       omsAmount: null,
       omsDate: null,
       omsBank: null,
-      note: 'No matching confirmed sales invoice in OMS.',
+      // Say what's actually in Tally, not just that OMS lacks a match for it —
+      // the amount and date are already in the row's own columns, but the
+      // remark should stand on its own without making the reader cross-check.
+      note: `Sales invoice ${v.vchNo} for ${amt.toFixed(2)} on ${fmtDate(v.txnDate)} has no matching confirmed invoice in OMS.`,
     };
     if (idx >= 0) {
       invUsed.add(idx);

@@ -169,14 +169,67 @@ export interface ReconPartyBalance {
   firstDivergenceOn: string | null;
   /** The divergence begins only after the last recorded receipt. */
   divergedAfterLastReceipt: boolean;
+  /**
+   * Set only when this ONE balance combines two or more Tally ledger names
+   * (a party renamed in Tally — GST/address change — with both the old and
+   * new name in the register, both mapped to the same OMS customer). Null for
+   * the ordinary one-ledger-per-party case. `ledgerName` above is just the
+   * more recently active of the group for display; this is every name that
+   * actually went into `tallyOpening`/`tallyClosing`, so "jump to this
+   * party's rows" can filter the Vouchers tab by all of them at once — those
+   * rows are still filed under their own original ledger names.
+   */
+  sourceLedgerNames: string[] | null;
 }
 
 export interface ReconRunResult extends ReconRunSummary {
   rows: ReconRow[];
-  /** Ledger names in the register with no OMS customer, for the alias screen. */
-  unmatchedLedgers: string[];
+  /**
+   * Ledger names in the register with no OMS customer, split by how the user
+   * has filed them:
+   *   party   — still needs a customer mapping (what "needs attention" counts).
+   *   expense — filed as an expense head (TallyLedgerCategory 'EXPENSE').
+   *   other   — filed as some other non-party head ('OTHER') — a bank account,
+   *             a tax ledger, Suspense, P&L, and the like.
+   * expense/other are never dropped once filed — they stay here (not just
+   * removed from the report) so the filing itself stays visible and reversible,
+   * not a one-way action the user can't see the effect of.
+   */
+  unmatchedLedgers: UnmappedLedgers;
   /** Per-party balance verdicts, worst difference first. */
   balances: ReconPartyBalance[];
+}
+
+/** A Tally ledger classified as NOT a customer — see TallyLedgerCategory. */
+export const TALLY_LEDGER_CATEGORIES = ['EXPENSE', 'OTHER'] as const;
+export type TallyLedgerCategory = (typeof TALLY_LEDGER_CATEGORIES)[number];
+
+/**
+ * What to set a ledger's filing to. 'PARTY' is not a stored category — it's the
+ * instruction to CLEAR one, the same idiom `ReconReview`'s 'OPEN' already uses
+ * to mean "no mark" rather than storing an explicit "unmarked" value.
+ */
+export const TALLY_LEDGER_CATEGORY_INPUTS = ['PARTY', ...TALLY_LEDGER_CATEGORIES] as const;
+export type TallyLedgerCategoryInput = (typeof TALLY_LEDGER_CATEGORY_INPUTS)[number];
+
+export interface UnmappedLedgers {
+  party: string[];
+  expense: string[];
+  other: string[];
+}
+
+/**
+ * Files one or more ledgers at once, so triaging a batch (tick several,
+ * "File as Expense") costs exactly one save — and, separately, exactly one
+ * report recheck — instead of one of each per ledger. Filing itself is a
+ * plain upsert either way (a few ms); it's the RECHECK that's expensive
+ * (a full re-comparison of the register, ~1s on a large one), which is why
+ * the API no longer reruns automatically on every save — see
+ * TallyReconService.setLedgerCategories.
+ */
+export interface SetTallyLedgerCategoryInput {
+  tallyNames: string[];
+  category: TallyLedgerCategoryInput;
 }
 
 /** One saved Tally-name → OMS-customer pin. */

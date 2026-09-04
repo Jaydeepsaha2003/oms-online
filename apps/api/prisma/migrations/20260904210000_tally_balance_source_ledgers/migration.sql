@@ -1,0 +1,11 @@
+-- Lets one Party Balances row represent a customer whose Tally ledger was
+-- renamed (GST/address change): the register then carries both the old and
+-- new ledger name, but OMS tracks ONE running account for that customer.
+-- Comparing each Tally ledger's own PARTIAL position against the SAME full
+-- OMS position independently (the previous behaviour) produced two wrong
+-- balances. sourceLedgerNames (JSON string[]) records which Tally ledger
+-- names were combined into a merged row, so "jump to this party's rows" can
+-- still find every row — those stay filed under their own original ledger
+-- names on the Vouchers tab. Nullable, no backfill: the ordinary one-ledger
+-- case leaves this null and is entirely unaffected.
+ALTER TABLE "tally_recon_balance" ADD COLUMN "sourceLedgerNames" TEXT;

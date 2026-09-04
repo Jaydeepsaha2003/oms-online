@@ -18,7 +18,7 @@ import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
-import { CreateReceiptsDto, MarkRowsDto, ReconRunsQueryDto, SaveAliasDto } from './dto/tally-recon.dto';
+import { CreateReceiptsDto, MarkRowsDto, ReconRunsQueryDto, SaveAliasDto, SetLedgerCategoryDto } from './dto/tally-recon.dto';
 import { TallyReconService } from './tally-recon.service';
 
 const R = RESOURCES.TALLY_RECON;
@@ -94,6 +94,15 @@ export class TallyReconController {
   @Permissions(perm(R, ACTIONS.DELETE))
   async removeAlias(@Param('id', ParseIntPipe) id: number) {
     await this.svc.removeAlias(id);
+    return { ok: true };
+  }
+
+  /** File one or more unmapped ledgers as Party / Expense / Other in one
+   *  request — see setLedgerCategories. */
+  @Post('ledger-category')
+  @Permissions(perm(R, ACTIONS.CREATE))
+  async setLedgerCategory(@Body() dto: SetLedgerCategoryDto, @CurrentUser('name') userName?: string) {
+    await this.svc.setLedgerCategories(dto.tallyNames, dto.category, userName ?? null);
     return { ok: true };
   }
 

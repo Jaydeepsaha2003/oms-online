@@ -7,6 +7,7 @@ import type {
   ReconRunResult,
   ReconRunSummary,
   SaveTallyAliasInput,
+  SetTallyLedgerCategoryInput,
   TallyAliasDto,
 } from '@oms/shared';
 import { api, http } from '@/lib/api';
@@ -97,6 +98,25 @@ export function useSaveTallyAlias() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ALIASES });
     },
+  });
+}
+
+/**
+ * Files one or more unmapped ledgers as Party / Expense / Other in one request
+ * (see SetTallyLedgerCategoryInput) — a whole ticked batch, one save. No cache
+ * to invalidate here: unlike an alias there's no separate "list" query for
+ * categories, and the RUN's Party/Expense/Other buckets are re-derived from
+ * this table fresh on every read regardless, so a plain `refetch()` of the
+ * active run (the caller's job — see onSetCategory in tally-recon-page.tsx) is
+ * all that's needed to show the new filing. The run's stored KPI counters are
+ * a separate snapshot and need an explicit recheck — deliberately NOT done
+ * here or automatically: a recheck re-runs the whole comparison (~1s on a
+ * large register), and doing that after every save is what made filing 100+
+ * ledgers feel slow in the first place.
+ */
+export function useSetLedgerCategory() {
+  return useMutation({
+    mutationFn: (input: SetTallyLedgerCategoryInput) => http.post<{ ok: boolean }>('/tally-recon/ledger-category', input),
   });
 }
 

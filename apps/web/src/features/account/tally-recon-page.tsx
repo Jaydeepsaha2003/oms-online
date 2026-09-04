@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   Check,
   CheckCheck,
+  ChevronRight,
   CircleCheck,
   Clock,
   FileSpreadsheet,
@@ -21,7 +22,7 @@ import {
   UserRoundX,
   X,
 } from 'lucide-react';
-import type { ReconPartyBalance, ReconReview, ReconRow, ReconStatus } from '@oms/shared';
+import type { ReconPartyBalance, ReconReview, ReconRow, ReconStatus, TallyLedgerCategoryInput, UnmappedLedgers } from '@oms/shared';
 import { RECON_PROBLEM_STATUSES } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
@@ -40,6 +41,7 @@ import {
   useMarkReconRows,
   useRerunRecon,
   useSaveTallyAlias,
+  useSetLedgerCategory,
 } from './use-tally-recon';
 import { useTallyReconRun } from './tally-recon-run-context';
 import { ReconProgressBar, phaseLabel } from './tally-recon-dock';
@@ -119,6 +121,9 @@ const VCH_ORDER = ['OPENING', 'SALES', 'RECEIPT', 'CREDIT NOTE', 'DEBIT NOTE', '
 
 /** A line the user could have to do something about — the only kind worth marking. */
 const isFlagged = (r: ReconRow) => r.status !== 'MATCHED' && r.status !== 'NOT_APPLICABLE';
+
+/** Every unmapped ledger name across all three filings, however it's currently split. */
+const ledgerTotal = (u: UnmappedLedgers) => u.party.length + u.expense.length + u.other.length;
 
 /** A missing receipt that can be posted straight from the report. */
 const canEnterAsReceipt = (r: ReconRow) =>
@@ -286,7 +291,10 @@ function BalancesView({
   };
   onlyDiffering: boolean;
   setOnlyDiffering: (v: boolean) => void;
-  onPickParty: (ledgerName: string) => void;
+  // Every Tally ledger name this balance combines (see sourceLedgerNames) —
+  // a merged party's rows on the Vouchers tab are still filed under their own
+  // original names, so the jump has to filter by all of them at once.
+  onPickParty: (ledgerNames: string[]) => void;
 }) {
   const list = onlyDiffering ? run.balances.filter((b) => !b.matched) : run.balances;
   const agreeing = run.balanceCheckedCount - run.balanceMismatchCount;
@@ -347,11 +355,11 @@ function BalancesView({
                     key={b.id}
                     role="button"
                     tabIndex={0}
-                    onClick={() => onPickParty(b.ledgerName)}
+                    onClick={() => onPickParty(b.sourceLedgerNames ?? [b.ledgerName])}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        onPickParty(b.ledgerName);
+                        onPickParty(b.sourceLedgerNames ?? [b.ledgerName]);
                       }
                     }}
                     title="Show this party's vouchers"
@@ -366,6 +374,14 @@ function BalancesView({
                       {b.ledgerName}
                       {b.customerName && b.customerName !== b.ledgerName && (
                         <span className="text-muted-foreground ml-1.5 text-[11.5px] font-semibold">-&gt; {b.customerName}</span>
+                      )}
+                      {b.sourceLedgerNames && b.sourceLedgerNames.length > 1 && (
+                        <span
+                          className="ml-1.5 rounded-[3px] border border-violet-300 px-1 text-[10px] font-bold text-violet-700 uppercase dark:border-violet-400/40 dark:text-violet-300"
+                          title={`This party was renamed in Tally — combined from ${b.sourceLedgerNames.length} ledger names: ${b.sourceLedgerNames.join(', ')}`}
+                        >
+                          combined ({b.sourceLedgerNames.length})
+                        </span>
                       )}
                     </td>
                     <td className={cn(TD, NUM, 'font-semibold')}>{drCr(b.tallyClosing)}</td>
@@ -405,10 +421,17 @@ function BalancesView({
               <button
                 key={b.id}
                 type="button"
-                onClick={() => onPickParty(b.ledgerName)}
+                onClick={() => onPickParty(b.sourceLedgerNames ?? [b.ledgerName])}
                 className="bg-card block w-full overflow-hidden rounded-[4px] border border-amber-200 p-2.5 text-left shadow-sm dark:border-amber-400/20"
               >
-                <p className="truncate text-[13.5px] font-bold">{b.ledgerName}</p>
+                <p className="truncate text-[13.5px] font-bold">
+                  {b.ledgerName}
+                  {b.sourceLedgerNames && b.sourceLedgerNames.length > 1 && (
+                    <span className="text-muted-foreground ml-1.5 text-[10.5px] font-bold uppercase">
+                      combined ({b.sourceLedgerNames.length})
+                    </span>
+                  )}
+                </p>
                 <div className="mt-1 grid grid-cols-3 gap-1 text-[11.5px]">
                   <span>
                     <span className="text-muted-foreground block text-[10px] font-bold uppercase">Tally</span>
@@ -471,13 +494,24 @@ export function TallyReconPage() {
 
   const [aliasFor, setAliasFor] = useState<string | null>(null);
   const [aliasCustomer, setAliasCustomer] = useState('');
+  // The full unmapped-ledgers list lives in its own dialog now (see below) — a
+  // party with 100+ unmapped ledgers used to wrap that many pill buttons right
+  // on the page, several rows tall, and squeeze the report table underneath it
+  // down to almost nothing. This just tracks whether that dialog is open.
+  const [unmappedListOpen, setUnmappedListOpen] = useState(false);
+  const [ledgerTab, setLedgerTab] = useState<'party' | 'expense' | 'other'>('party');
+  // Ticked ledger names in the CURRENT tab, for the bulk action bar. Cleared on
+  // every tab switch and after a successful filing — stale ids left over from
+  // a tab the user isn't looking at any more, or from a batch that just moved
+  // out of this list, would make the next click act on the wrong rows.
+  const [selectedLedgers, setSelectedLedgers] = useState<Set<string>>(new Set());
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [bankOverride, setBankOverride] = useState('');
 
   const { data: runs } = useReconRuns();
   // Default to the newest run so the page is never empty after a reload.
   const activeId = runId ?? runs?.[0]?.id ?? null;
-  const { data: run, isFetching } = useReconRun(activeId);
+  const { data: run, isFetching, refetch: refetchRun } = useReconRun(activeId);
   const { data: lookups } = usePartyLedgerLookups();
 
   // The reconciliation itself lives in the app shell so it survives navigating
@@ -485,6 +519,7 @@ export function TallyReconPage() {
   const recon = useTallyReconRun();
   const removeRun = useDeleteReconRun();
   const saveAlias = useSaveTallyAlias();
+  const setLedgerCategory = useSetLedgerCategory();
   const rerun = useRerunRecon();
   const createReceipts = useCreateReconReceipts();
   const markRows = useMarkReconRows();
@@ -531,6 +566,47 @@ export function TallyReconPage() {
     return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [visible]);
 
+  /**
+   * How many rows actually get mounted in the DOM, not just how many match
+   * the filter. A big register's default "Needs Attention" view is 3,600+
+   * rows — rendered in full, that's tens of thousands of <tr>/<td> nodes, in
+   * BOTH the desktop table AND the phone card list at once (Tailwind's
+   * `hidden sm:block` only hides one with CSS — React still mounts both), and
+   * THAT is what made switching a filter or opening a run feel hangy: the
+   * browser laying out and painting all of it, every time, whether the tab in
+   * front is the one showing it or not.
+   *
+   * Capped here instead of a full virtualized-scroll rewrite (react-virtual
+   * et al.) because this report's columns mix fixed and flexible widths and a
+   * few carry wrapping text — genuinely virtualizing that means moving off
+   * real <table> markup, which needs to be seen to get right, and this screen
+   * can't be logged into to check. A render cap needs none of that: it's the
+   * same rows, same markup, just fewer mounted before the user asks for more.
+   * `RECON_PROBLEM_STATUSES`-sized views (the default) are the common case
+   * this actually fixes; a narrow filter typically lands well under the cap
+   * on its own and this changes nothing for it.
+   */
+  const RENDER_CHUNK = 500;
+  const [renderLimit, setRenderLimit] = useState(RENDER_CHUNK);
+  // A new filter or a different run is a different set of rows — start over
+  // at one chunk rather than carrying forward a limit sized for a bigger (or
+  // smaller) list that no longer applies.
+  useEffect(() => setRenderLimit(RENDER_CHUNK), [blocks]);
+  const { renderedBlocks, shownRowCount, remainingRowCount } = useMemo(() => {
+    let shown = 0;
+    const out: typeof blocks = [];
+    for (const block of blocks) {
+      // Always take at least one block whole, even if it alone exceeds the
+      // limit — a ledger's rows are never split across the cut, and an empty
+      // list never happens just because block #1 is unusually large.
+      if (shown >= renderLimit && out.length > 0) break;
+      out.push(block);
+      shown += block[1].length;
+    }
+    const total = blocks.reduce((s, b) => s + b[1].length, 0);
+    return { renderedBlocks: out, shownRowCount: shown, remainingRowCount: Math.max(0, total - shown) };
+  }, [blocks, renderLimit]);
+
   /** Every flagged line can be selected, so one selection drives every bulk action. */
   const selectable = useMemo(() => visible.filter(isFlagged), [visible]);
   const selectedRows = useMemo(() => selectable.filter((r) => picked.has(r.id)), [selectable, picked]);
@@ -558,6 +634,19 @@ export function TallyReconPage() {
 
   const onFile = (file: File | undefined) => {
     if (!file) return;
+    // Same extension check the server enforces (tally-recon.controller.ts) —
+    // done here FIRST so a wrong file is refused before it's ever uploaded,
+    // not after a full upload + parse round trip. The server check stays as
+    // the real backstop (anyone could call the API directly), this one is
+    // purely to save the user the wait and say so plainly up front.
+    if (!/\.xlsx?$/i.test(file.name)) {
+      toast.error('Wrong file — don’t upload this one.', {
+        description: `"${file.name}" isn’t a Tally register. Only the .xlsx ledger export from Tally can be reconciled — export that from Tally and upload it instead.`,
+        duration: 10_000,
+      });
+      if (fileRef.current) fileRef.current.value = '';
+      return;
+    }
     // Fire and forget: the provider owns the request, and both the toast and the
     // floating card report the outcome even if the user leaves this page.
     void recon.start(file);
@@ -632,6 +721,53 @@ export function TallyReconPage() {
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not save that mapping.');
+    }
+  };
+
+  /**
+   * Files one or more ledgers as Expense / Other, or clears that filing back
+   * to Party — one save for the whole batch, whether it's a single row's
+   * button or every ticked checkbox in the tab.
+   *
+   * Deliberately does NOT rerun the report (measured: ~1s on this run's
+   * 4,500+ rows). It used to, on every single save, which made triaging
+   * 100+ ledgers one at a time cost that long in pure waiting. The dialog
+   * still updates immediately either way — `run.unmatchedLedgers` is
+   * re-derived from the SAME table this just wrote to, fresh on every read
+   * (see bucketLedgers on the server), so a plain refetch (a few ms) is
+   * enough to move these names to their new tab right now. Only the run's
+   * own KPI counters (Needs Attention, etc.) are a snapshot that stays as it
+   * was until `recheckReport` below is used — deliberately a separate,
+   * explicit action, not an automatic side effect of filing.
+   */
+  const onSetCategory = async (tallyNames: string[], category: TallyLedgerCategoryInput) => {
+    if (!tallyNames.length) return;
+    const label = category === 'EXPENSE' ? 'Expense' : category === 'OTHER' ? 'Other' : 'Party';
+    const who = tallyNames.length === 1 ? `"${tallyNames[0]}"` : `${tallyNames.length} ledgers`;
+    try {
+      await setLedgerCategory.mutateAsync({ tallyNames, category });
+      setSelectedLedgers(new Set());
+      await refetchRun();
+      toast.success(category === 'PARTY' ? `${who} moved back to Party.` : `${who} filed as ${label}.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not save that filing.');
+    }
+  };
+
+  /**
+   * The explicit "bring the counters up to date" step filing no longer does
+   * automatically. Same re-check-in-place vs. re-upload distinction as
+   * onSaveAlias — canRerun is false only for runs recorded before the
+   * register itself was kept.
+   */
+  const recheckReport = async () => {
+    if (activeId == null) return;
+    if (!run?.canRerun) return toast.info('Upload the register again to re-check it — this run predates the stored copy.');
+    try {
+      await rerun.mutateAsync(activeId);
+      toast.success('Report re-checked — counters are up to date.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not re-check the report.');
     }
   };
 
@@ -796,7 +932,18 @@ export function TallyReconPage() {
           <div className="ml-auto flex items-center gap-2">
             {run && (
               <p className="text-muted-foreground hidden text-[12px] font-medium lg:block">
-                <span className="text-foreground font-bold tabular-nums">{inr(visible.length)}</span> row{visible.length === 1 ? '' : 's'}
+                {remainingRowCount > 0 ? (
+                  // The render cap is active — say so, rather than silently
+                  // showing fewer rows than the count implies.
+                  <>
+                    <span className="text-foreground font-bold tabular-nums">{inr(shownRowCount)}</span> of{' '}
+                    <span className="text-foreground font-bold tabular-nums">{inr(visible.length)}</span> rows shown
+                  </>
+                ) : (
+                  <>
+                    <span className="text-foreground font-bold tabular-nums">{inr(visible.length)}</span> row{visible.length === 1 ? '' : 's'}
+                  </>
+                )}
                 {isFetching && <Loader2 className="ml-1 inline size-3 animate-spin align-[-2px]" />}
               </p>
             )}
@@ -867,7 +1014,9 @@ export function TallyReconPage() {
             />
             <Tile
               label={STATUS.UNMATCHED_PARTY.label}
-              blurb={`${run.unmatchedLedgers.length} ledger${run.unmatchedLedgers.length === 1 ? '' : 's'}`}
+              // Party only — a ledger filed as Expense/Other isn't a problem
+              // needing attention any more (see UnmappedLedgers).
+              blurb={`${run.unmatchedLedgers.party.length} ledger${run.unmatchedLedgers.party.length === 1 ? '' : 's'}`}
               value={run.unmatchedParty}
               tone={STATUS.UNMATCHED_PARTY.chip}
               active={status === 'UNMATCHED_PARTY'}
@@ -908,26 +1057,43 @@ export function TallyReconPage() {
           </div>
         )}
 
-        {/* ── unmapped ledgers: pin them to a customer, then re-run ────────── */}
-        {run && run.unmatchedLedgers.length > 0 && canRun && (
-          <div className="flex flex-wrap items-center gap-1.5 border-t border-amber-200 px-2.5 py-2 sm:px-3 dark:border-amber-400/20">
-            <span className="flex items-center gap-1 text-[11px] font-bold tracking-wide text-violet-800 uppercase dark:text-violet-300">
+        {/* ── unmapped ledgers: one line + a button that opens the full list ──
+            Used to render every unmatched ledger inline as a wrapping pill —
+            fine for a handful, but a party with 100+ unmapped ledgers (a real
+            case) turned into 15+ rows of pills sitting ABOVE the report table,
+            leaving the table itself a couple of visible rows tall. The full,
+            scrollable list now lives in its own dialog (below), split into
+            Party / Expenses / Others — this stays a single line regardless. */}
+        {run && ledgerTotal(run.unmatchedLedgers) > 0 && canRun && (
+          <div className="flex min-w-0 items-center gap-1.5 border-t border-amber-200 px-2.5 py-2 sm:px-3 dark:border-amber-400/20">
+            <span className="flex shrink-0 items-center gap-1 text-[11px] font-bold tracking-wide text-violet-800 uppercase dark:text-violet-300">
               <UserRoundX className="size-3.5" /> Unmapped ledgers
             </span>
-            {run.unmatchedLedgers.map((name) => (
-              <button
-                key={name}
-                type="button"
-                onClick={() => {
-                  setAliasFor(name);
-                  setAliasCustomer('');
-                }}
-                className="cursor-pointer rounded-[3px] border border-violet-300 bg-violet-50 px-1.5 py-[2px] text-[11px] font-semibold text-violet-800 hover:bg-violet-100 dark:border-violet-400/40 dark:bg-violet-400/10 dark:text-violet-300 dark:hover:bg-violet-400/20"
-              >
-                <Link2 className="mr-1 inline size-3 align-[-2px]" />
-                {name}
-              </button>
-            ))}
+            <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium text-violet-700 dark:text-violet-400">
+              {run.unmatchedLedgers.party.length > 0 ? (
+                <>
+                  {run.unmatchedLedgers.party.slice(0, 4).join(', ')}
+                  {run.unmatchedLedgers.party.length > 4 ? '…' : ''}
+                </>
+              ) : (
+                // Nothing still needs a customer — everything left has been
+                // filed. Said plainly rather than showing an empty line, so it
+                // reads as "done", not as a state nobody explained.
+                <span className="text-emerald-700 dark:text-emerald-400">
+                  All filed — {run.unmatchedLedgers.expense.length} expense, {run.unmatchedLedgers.other.length} other.
+                </span>
+              )}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-6 shrink-0 gap-0.5 rounded-[3px] border-violet-300 px-2 text-[11px] font-bold text-violet-800 hover:bg-violet-100 dark:border-violet-400/40 dark:text-violet-300 dark:hover:bg-violet-400/20"
+              onClick={() => setUnmappedListOpen(true)}
+            >
+              View all ({ledgerTotal(run.unmatchedLedgers)})
+              <ChevronRight className="size-3" />
+            </Button>
           </div>
         )}
       </div>
@@ -1055,11 +1221,13 @@ export function TallyReconPage() {
             )}
           </div>
         ) : view === 'BALANCES' ? (
-          <BalancesView run={run} onlyDiffering={onlyDiffering} setOnlyDiffering={setOnlyDiffering} onPickParty={(name) => {
-              // A balance row is keyed by the register's ledger name, so the
+          <BalancesView run={run} onlyDiffering={onlyDiffering} setOnlyDiffering={setOnlyDiffering} onPickParty={(names) => {
+              // A balance row is keyed by the register's ledger name(s), so the
               // jump lands on the Tally-side filter. Replaces whatever was
               // picked rather than adding to it: this is "show me THIS party".
-              setTallyParties([name]);
+              // A merged (renamed-in-Tally) party hands over every name it
+              // combines, so its rows under BOTH old and new names show up.
+              setTallyParties(names);
               setOmsParties([]);
               setView('VOUCHERS');
               setStatus('');
@@ -1123,16 +1291,29 @@ export function TallyReconPage() {
                       </td>
                     </tr>
                   ) : (
-                    blocks.map(([ledgerName, list]) => (
+                    renderedBlocks.map(([ledgerName, list]) => {
+                      // Debit/Credit subtotal for this party's block, so its
+                      // total shows right on the heading — lined up under the
+                      // same Debit/Credit columns the rows below use, not
+                      // buried in a "go add it up yourself" row count.
+                      let drSubtotal = 0;
+                      let crSubtotal = 0;
+                      for (const r of list) {
+                        drSubtotal += r.dr || 0;
+                        crSubtotal += r.cr || 0;
+                      }
+                      return (
                       <Fragment key={ledgerName}>
                         <tr className="bg-amber-100/90 dark:bg-amber-400/10">
                           <td className={TD} />
-                          <td className={cn(TD, 'text-[12px] font-extrabold tracking-wide text-amber-950 uppercase dark:text-amber-100')} colSpan={6}>
+                          <td className={cn(TD, 'text-[12px] font-extrabold tracking-wide text-amber-950 uppercase dark:text-amber-100')} colSpan={4}>
                             {ledgerName}
                             {list[0].customerName && list[0].customerName !== ledgerName && (
                               <span className="ml-1.5 font-semibold normal-case opacity-70">→ {list[0].customerName}</span>
                             )}
                           </td>
+                          <td className={cn(TD, NUM, 'font-extrabold text-amber-950 dark:text-amber-100')}>{moneyOrDash(drSubtotal)}</td>
+                          <td className={cn(TD, NUM, 'font-extrabold text-amber-950 dark:text-amber-100')}>{moneyOrDash(crSubtotal)}</td>
                           <td className={cn(TD, 'text-[11px] font-bold text-amber-900 dark:text-amber-200')} colSpan={5}>
                             {list.length} row{list.length === 1 ? '' : 's'}
                           </td>
@@ -1216,7 +1397,22 @@ export function TallyReconPage() {
                           );
                         })}
                       </Fragment>
-                    ))
+                      );
+                    })
+                  )}
+                  {remainingRowCount > 0 && (
+                    <tr>
+                      <td colSpan={12} className="p-0">
+                        <button
+                          type="button"
+                          onClick={() => setRenderLimit((l) => l + RENDER_CHUNK)}
+                          className="w-full border-t border-amber-200 bg-amber-50/60 py-2 text-center text-[12px] font-bold text-amber-800 hover:bg-amber-100 dark:border-amber-400/20 dark:bg-amber-400/5 dark:text-amber-300 dark:hover:bg-amber-400/10"
+                        >
+                          Show {Math.min(remainingRowCount, RENDER_CHUNK).toLocaleString('en-IN')} more row
+                          {Math.min(remainingRowCount, RENDER_CHUNK) === 1 ? '' : 's'} ({remainingRowCount.toLocaleString('en-IN')} left)
+                        </button>
+                      </td>
+                    </tr>
                   )}
                 </tbody>
               </table>
@@ -1229,7 +1425,7 @@ export function TallyReconPage() {
                   {status === 'PROBLEMS' ? 'Nothing needs attention.' : 'No rows for these filters.'}
                 </p>
               ) : (
-                blocks.map(([ledgerName, list]) => (
+                renderedBlocks.map(([ledgerName, list]) => (
                   <div key={ledgerName} className="bg-card overflow-hidden rounded-[4px] border border-amber-200 shadow-sm dark:border-amber-400/20">
                     <div className="bg-slate-800 px-3 py-1.5 text-[11.5px] font-bold tracking-wide text-amber-300 uppercase dark:bg-slate-900">
                       {ledgerName}
@@ -1274,6 +1470,16 @@ export function TallyReconPage() {
                     </div>
                   </div>
                 ))
+              )}
+              {remainingRowCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setRenderLimit((l) => l + RENDER_CHUNK)}
+                  className="w-full rounded-[4px] border border-amber-200 bg-amber-50/60 py-2.5 text-center text-[12.5px] font-bold text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/5 dark:text-amber-300"
+                >
+                  Show {Math.min(remainingRowCount, RENDER_CHUNK).toLocaleString('en-IN')} more row
+                  {Math.min(remainingRowCount, RENDER_CHUNK) === 1 ? '' : 's'} ({remainingRowCount.toLocaleString('en-IN')} left)
+                </button>
               )}
             </div>
           </>
@@ -1339,6 +1545,222 @@ export function TallyReconPage() {
       </div>
 
       {/* ── alias dialog ──────────────────────────────────────────────────── */}
+      {/* Full unmapped-ledgers list — the "View all" button above opens this
+          instead of the page growing a wall of pills. Three tabs, one per
+          filing: Party still needs a customer mapping (tap the name); Expense
+          and Other are ledgers filed as not-a-party, each with a way back.
+          Filing (and un-filing) is a plain save — no rerun, so it's instant
+          even ticking through a long list; "Recheck report" below brings the
+          KPI counters up to date in one explicit step once you're done. */}
+      <Dialog
+        open={unmappedListOpen}
+        onOpenChange={(o) => {
+          setUnmappedListOpen(o);
+          if (o) setLedgerTab('party'); // always open on what still needs attention
+          setSelectedLedgers(new Set());
+        }}
+      >
+        <DialogContent className="flex max-h-[80vh] flex-col sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-[15px]">Unmapped ledgers ({run ? ledgerTotal(run.unmatchedLedgers) : 0})</DialogTitle>
+          </DialogHeader>
+          <div className="flex items-center gap-1.5">
+            {(
+              [
+                ['party', 'Party'],
+                ['expense', 'Expenses'],
+                ['other', 'Others'],
+              ] as const
+            ).map(([tab, label]) => {
+              const count = run?.unmatchedLedgers[tab].length ?? 0;
+              return (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => {
+                    setLedgerTab(tab);
+                    setSelectedLedgers(new Set()); // a tick from one tab must not act on another
+                  }}
+                  className={cn(
+                    'rounded-[4px] border px-2.5 py-1 text-[12px] font-bold',
+                    ledgerTab === tab
+                      ? 'border-violet-600 bg-violet-600 text-white'
+                      : 'border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 dark:border-violet-400/30 dark:bg-violet-400/10 dark:text-violet-300',
+                  )}
+                >
+                  {label} ({count})
+                </button>
+              );
+            })}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              title="Filing is already saved — this only refreshes the KPI counters above (Needs Attention etc.), which stay as they were until you ask."
+              className="ml-auto h-7 shrink-0 gap-1 rounded-[4px] text-[11.5px] font-bold"
+              onClick={() => void recheckReport()}
+              disabled={rerun.isPending}
+            >
+              {rerun.isPending ? <Loader2 className="size-3 animate-spin" /> : <RotateCcw className="size-3" />}
+              Recheck report
+            </Button>
+          </div>
+          <p className="text-muted-foreground -mt-1 text-[11.5px] font-medium">
+            {ledgerTab === 'party'
+              ? "These Tally ledger names don't match an OMS customer yet. Tap one to map it, or file it as Expense/Other if it never will."
+              : `Filed as ${ledgerTab === 'expense' ? 'Expense' : 'Other'} — not a customer, so left out of "needs attention". Move one back if that was wrong.`}
+          </p>
+
+          {(() => {
+            const list = run?.unmatchedLedgers[ledgerTab] ?? [];
+            const allSelected = list.length > 0 && list.every((n) => selectedLedgers.has(n));
+            const toggleAll = () => setSelectedLedgers(allSelected ? new Set() : new Set(list));
+            const toggleOne = (name: string) =>
+              setSelectedLedgers((s) => {
+                const next = new Set(s);
+                if (next.has(name)) next.delete(name);
+                else next.add(name);
+                return next;
+              });
+            const CheckBox = ({ checked }: { checked: boolean }) => (
+              <span
+                className={cn(
+                  'flex size-[15px] shrink-0 items-center justify-center rounded-[3px] border-[1.5px] bg-white transition-colors',
+                  checked ? 'border-violet-600 bg-violet-600 text-white' : 'border-slate-400 group-hover:border-violet-500',
+                )}
+              >
+                {checked && <Check className="size-2.5" strokeWidth={3.5} />}
+              </span>
+            );
+
+            return (
+              <>
+                {/* select-all + bulk actions — only worth its own row once there's a
+                    list to act on. */}
+                {list.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={toggleAll}
+                      className="group flex shrink-0 items-center gap-1.5 text-[11px] font-semibold text-slate-600 dark:text-slate-300"
+                    >
+                      <CheckBox checked={allSelected} />
+                      Select all
+                    </button>
+                    {selectedLedgers.size > 0 && (
+                      <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1.5">
+                        <span className="text-[11px] font-bold text-violet-700 dark:text-violet-300">
+                          {selectedLedgers.size} selected
+                        </span>
+                        {ledgerTab !== 'party' && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-6 gap-1 rounded-[3px] px-1.5 text-[10.5px] font-bold"
+                            onClick={() => void onSetCategory([...selectedLedgers], 'PARTY')}
+                          >
+                            <RotateCcw className="size-3" /> Move to Party
+                          </Button>
+                        )}
+                        {ledgerTab !== 'expense' && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-6 rounded-[3px] px-1.5 text-[10.5px] font-bold"
+                            onClick={() => void onSetCategory([...selectedLedgers], 'EXPENSE')}
+                          >
+                            File as Expense
+                          </Button>
+                        )}
+                        {ledgerTab !== 'other' && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-6 rounded-[3px] px-1.5 text-[10.5px] font-bold"
+                            onClick={() => void onSetCategory([...selectedLedgers], 'OTHER')}
+                          >
+                            File as Other
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto rounded-[4px] border border-violet-200 p-1.5 dark:border-violet-400/20">
+                  {list.length === 0 && <p className="text-muted-foreground p-3 text-center text-[12px]">Nothing here.</p>}
+                  {ledgerTab === 'party'
+                    ? list.map((name) => (
+                        <div
+                          key={name}
+                          className="group flex items-center gap-1.5 rounded-[3px] border border-violet-200 bg-violet-50/60 px-1.5 py-1 dark:border-violet-400/25 dark:bg-violet-400/5"
+                        >
+                          <button type="button" onClick={() => toggleOne(name)} className="shrink-0" aria-label={`Select ${name}`}>
+                            <CheckBox checked={selectedLedgers.has(name)} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setUnmappedListOpen(false);
+                              setAliasFor(name);
+                              setAliasCustomer('');
+                            }}
+                            title="Map to an OMS customer"
+                            className="flex min-w-0 flex-1 cursor-pointer items-center text-left text-[11px] font-semibold text-violet-800 hover:underline dark:text-violet-300"
+                          >
+                            <Link2 className="mr-1 inline size-3 shrink-0 align-[-2px]" />
+                            <span className="truncate">{name}</span>
+                          </button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 shrink-0 rounded-[3px] px-1.5 text-[10.5px] font-bold text-slate-600 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-white/10"
+                            onClick={() => void onSetCategory([name], 'EXPENSE')}
+                          >
+                            Expense
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 shrink-0 rounded-[3px] px-1.5 text-[10.5px] font-bold text-slate-600 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-white/10"
+                            onClick={() => void onSetCategory([name], 'OTHER')}
+                          >
+                            Other
+                          </Button>
+                        </div>
+                      ))
+                    : list.map((name) => (
+                        <div
+                          key={name}
+                          className="group flex items-center gap-1.5 rounded-[3px] border border-slate-200 bg-slate-50 px-1.5 py-1 dark:border-white/10 dark:bg-white/[0.03]"
+                        >
+                          <button type="button" onClick={() => toggleOne(name)} className="shrink-0" aria-label={`Select ${name}`}>
+                            <CheckBox checked={selectedLedgers.has(name)} />
+                          </button>
+                          <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-slate-700 dark:text-slate-300">{name}</span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 shrink-0 gap-1 rounded-[3px] px-1.5 text-[10.5px] font-bold text-violet-700 hover:bg-violet-100 dark:text-violet-300 dark:hover:bg-violet-400/20"
+                            onClick={() => void onSetCategory([name], 'PARTY')}
+                          >
+                            <RotateCcw className="size-3" /> Move to Party
+                          </Button>
+                        </div>
+                      ))}
+                </div>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!aliasFor} onOpenChange={(o) => !o && setAliasFor(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>

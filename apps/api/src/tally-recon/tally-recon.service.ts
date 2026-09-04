@@ -10,6 +10,9 @@ import type {
   ReconStatus,
   MarkReconRowsResult,
   TallyAliasDto,
+  TallyLedgerCategory,
+  TallyLedgerCategoryInput,
+  UnmappedLedgers,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaymentsService } from '../payments/payments.service';
@@ -19,6 +22,18 @@ import { exactKey, nameKey, reconcileParty, type MatchRow, type OmsParty } from 
 const DAY = 86_400_000;
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
+/** The reverse of the JSON.stringify done when a merged balance row is
+ *  persisted — see compare()'s balanceData. Malformed/empty stays null rather
+ *  than throwing, same spirit as parseTallyRegister's other defensive reads. */
+function parseSourceLedgerNames(raw: string | null): string[] | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((n): n is string => typeof n === 'string') : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * `yyyy-mm-dd` in local time.
@@ -46,6 +61,10 @@ interface BalanceRow {
   agreedAtLastReceipt: boolean | null;
   firstDivergenceOn: Date | null;
   divergedAfterLastReceipt: boolean;
+  /** Set by the caller (compare()) when this row combines 2+ Tally ledger
+   *  names — see mergeLedgersForBalance. balanceFor itself always leaves this
+   *  null; it only ever sees whatever ledger it was handed. */
+  sourceLedgerNames: string[] | null;
 }
 
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -155,6 +174,27 @@ export class TallyReconService {
       if (fuzzyHit) return { id: fuzzyHit, name: nameById.get(fuzzyHit)! };
       return null;
     };
+  }
+
+  /** Every ledger the user has ever filed as not-a-party, by name. */
+  private async loadLedgerCategories(): Promise<Map<string, TallyLedgerCategory>> {
+    const rows = await this.prisma.tallyLedgerCategory.findMany({ select: { tallyName: true, category: true } });
+    return new Map(rows.map((r) => [r.tallyName, r.category as TallyLedgerCategory]));
+  }
+
+  /** Splits a set of no-OMS-match ledger names into Party / Expense / Other,
+   *  per their CURRENT filing — see {@link UnmappedLedgers}. */
+  private bucketLedgers(names: string[], categories: Map<string, TallyLedgerCategory>): UnmappedLedgers {
+    const party: string[] = [];
+    const expense: string[] = [];
+    const other: string[] = [];
+    for (const name of names) {
+      const cat = categories.get(name);
+      if (cat === 'EXPENSE') expense.push(name);
+      else if (cat === 'OTHER') other.push(name);
+      else party.push(name);
+    }
+    return { party: party.sort(), expense: expense.sort(), other: other.sort() };
   }
 
   /* ── OMS books for the period ────────────────────────────────────────────── */
@@ -330,6 +370,40 @@ export class TallyReconService {
    *
    * Bank leg only, like everything else here — the register has no cash side.
    */
+  /**
+   * For every OMS customer with MORE THAN ONE Tally ledger name aliased to it,
+   * find the one ledger that actually carries the opening — if exactly one
+   * does. Returns, per ledger name WITH NO opening of its own, the sibling
+   * ledger's name that has it. Ambiguous groups (none of them carry an
+   * opening, or more than one does) are left out entirely: with two real,
+   * possibly-conflicting numbers, guessing which is "the" opening would hide a
+   * genuine problem instead of explaining a non-problem.
+   */
+  private findOpeningCarriers(
+    ledgers: ParsedLedger[],
+    resolved: Map<string, { id: number; name: string } | null>,
+  ): Map<string, string> {
+    const byCustomer = new Map<number, ParsedLedger[]>();
+    for (const l of ledgers) {
+      const hit = resolved.get(l.ledgerName);
+      if (!hit) continue;
+      const arr = byCustomer.get(hit.id) ?? [];
+      arr.push(l);
+      byCustomer.set(hit.id, arr);
+    }
+    const carriedBy = new Map<string, string>();
+    for (const group of byCustomer.values()) {
+      if (group.length < 2) continue;
+      const withOpening = group.filter((l) => l.openingNet != null);
+      if (withOpening.length !== 1) continue;
+      const carrier = withOpening[0].ledgerName;
+      for (const l of group) {
+        if (l.openingNet == null) carriedBy.set(l.ledgerName, carrier);
+      }
+    }
+    return carriedBy;
+  }
+
   private balanceFor(
     ledger: ParsedLedger,
     oms: OmsParty,
@@ -403,6 +477,38 @@ export class TallyReconService {
       firstDivergenceOn,
       divergedAfterLastReceipt:
         !!last && !!firstDivergenceOn && agreedAtLastReceipt === true && firstDivergenceOn > last.transDate,
+      sourceLedgerNames: null,
+    };
+  }
+
+  /**
+   * Combines 2+ Tally ledger names for the SAME OMS customer into one
+   * ParsedLedger-shaped position, so balanceFor produces exactly one
+   * (correct) balance for the party instead of one (wrong) balance per name.
+   *
+   * openingNet: summed across whichever ledgers actually carry one — the
+   * usual case is exactly one does (see findOpeningCarriers), but this adds
+   * correctly even if more than one genuinely does.
+   * closingNet: left null on purpose rather than trying to combine each
+   * ledger's own STATED closing — those aren't independently meaningful once
+   * merged. balanceFor already falls back to opening + summed moves when
+   * closingNet is null, which is exactly right for a combined ledger.
+   * ledgerName: the member with the most recent voucher activity — the name
+   * someone looking at Tally today would actually recognise as current.
+   * vouchers: every member's vouchers, concatenated — each already carries
+   * its own date and amount, so there is nothing to reconcile between them.
+   */
+  private mergeLedgersForBalance(ledgers: ParsedLedger[]): ParsedLedger {
+    const openings = ledgers.map((l) => l.openingNet).filter((n): n is number => n != null);
+    const latestVoucherDate = (l: ParsedLedger) =>
+      l.vouchers.reduce((max, v) => (v.txnDate > max ? v.txnDate : max), new Date(0));
+    const mostRecent = [...ledgers].sort((a, b) => latestVoucherDate(b).getTime() - latestVoucherDate(a).getTime())[0];
+    return {
+      ledgerName: mostRecent.ledgerName,
+      openingNet: openings.length ? r2(openings.reduce((s, n) => s + n, 0)) : null,
+      openingDate: mostRecent.openingDate,
+      closingNet: null,
+      vouchers: ledgers.flatMap((l) => l.vouchers),
     };
   }
 
@@ -495,19 +601,47 @@ export class TallyReconService {
 
     const custIds = [...new Set([...resolved.values()].filter(Boolean).map((r) => r!.id))];
     const books = await this.loadOmsBooks(custIds, from, toExclusive);
+    // Only matters for ledgers with no OMS match — fetched once, up front, so
+    // the loop below doesn't hit the DB per ledger.
+    const categories = await this.loadLedgerCategories();
+    // A party renamed in Tally (GST re-registration, address change...) can
+    // have TWO ledger names in one register, both aliased to the same OMS
+    // customer — see reconcileParty's `openingCarriedBySibling` doc. Detect
+    // that here, where every ledger for a customer is visible at once; the
+    // matcher only ever sees one ledger at a time.
+    const openingCarriedBy = this.findOpeningCarriers(register.ledgers, resolved);
 
     const rows: MatchRow[] = [];
     for (const ledger of register.ledgers) {
       const hit = resolved.get(ledger.ledgerName) ?? null;
-      rows.push(...reconcileParty(ledger, hit ? books.get(hit.id) ?? null : null, from));
+      const category = hit ? null : (categories.get(ledger.ledgerName) ?? null);
+      rows.push(...reconcileParty(ledger, hit ? books.get(hit.id) ?? null : null, from, category, openingCarriedBy.get(ledger.ledgerName) ?? null));
     }
 
     // Per-party balance verdicts — only possible where the ledger maps to a customer.
-    const balances = register.ledgers
-      .map((ledger) => {
-        const hit = resolved.get(ledger.ledgerName) ?? null;
-        const book = hit ? books.get(hit.id) : null;
-        return book ? this.balanceFor(ledger, book, from, toExclusive) : null;
+    // One balance ROW per OMS customer, not per Tally ledger name. A party
+    // renamed in Tally can have 2+ ledger names in one register (see
+    // findOpeningCarriers); a balance is fundamentally ONE number per party,
+    // so comparing each Tally ledger's own PARTIAL opening+moves against the
+    // SAME full OMS position independently produced one wrong balance per
+    // ledger instead of one right one. Grouped by customer first so a
+    // multi-ledger party gets its ledgers combined before the verdict —
+    // see mergeLedgersForBalance.
+    const ledgersByCustomer = new Map<number, ParsedLedger[]>();
+    for (const ledger of register.ledgers) {
+      const hit = resolved.get(ledger.ledgerName);
+      if (!hit) continue;
+      const arr = ledgersByCustomer.get(hit.id) ?? [];
+      arr.push(ledger);
+      ledgersByCustomer.set(hit.id, arr);
+    }
+    const balances = [...ledgersByCustomer.entries()]
+      .map(([custId, ledgers]) => {
+        const book = books.get(custId);
+        if (!book) return null;
+        if (ledgers.length === 1) return this.balanceFor(ledgers[0], book, from, toExclusive);
+        const merged = this.mergeLedgersForBalance(ledgers);
+        return { ...this.balanceFor(merged, book, from, toExclusive), sourceLedgerNames: ledgers.map((l) => l.ledgerName) };
       })
       .filter((b): b is Omit<BalanceRow, 'runId'> => b !== null)
       .sort((a, b) => Math.abs(b.difference) - Math.abs(a.difference));
@@ -561,7 +695,14 @@ export class TallyReconService {
       note: r.note,
     }));
 
-    return { summary, rowData, balances };
+    // sourceLedgerNames is a string[] in BalanceRow (structured, for anything
+    // that wants to work with it in memory) but the DB column is TEXT — same
+    // JSON-in-TEXT idiom as registerJson above, encoded here since this is
+    // the one place `balances` turns into something Prisma's `create` will
+    // accept.
+    const balanceData = balances.map((b) => ({ ...b, sourceLedgerNames: b.sourceLedgerNames ? JSON.stringify(b.sourceLedgerNames) : null }));
+
+    return { summary, rowData, balances: balanceData };
   }
 
   /* ── reads ───────────────────────────────────────────────────────────────── */
@@ -619,7 +760,18 @@ export class TallyReconService {
       },
     });
     if (!run) throw new NotFoundException('That reconciliation run no longer exists.');
-    const unmatchedLedgers = [...new Set(run.rows.filter((r) => r.status === 'UNMATCHED_PARTY').map((r) => r.ledgerName))].sort();
+    // customerId is null for exactly the rows with no OMS match — whether that
+    // shows up as UNMATCHED_PARTY (uncategorized) or NOT_APPLICABLE (filed as
+    // Expense/Other). Filtering on status alone would miss the filed ones AND
+    // risk pulling in the OTHER, unrelated reason a MATCHED party's row can be
+    // NOT_APPLICABLE (a "Purchase"/"TCS Payable" voucher type) — those rows
+    // carry a real customerId, so this predicate correctly excludes them.
+    const uncategorizedNames = [...new Set(run.rows.filter((r) => r.customerId == null).map((r) => r.ledgerName))];
+    // Bucketed by CURRENT filing, not by whatever the row's status happened to
+    // be when this run was computed — so filing a ledger updates this list the
+    // moment it's saved, without needing a rerun first (the rerun is still what
+    // makes NOT_APPLICABLE take effect on the "needs attention" counters).
+    const unmatchedLedgers = this.bucketLedgers(uncategorizedNames, await this.loadLedgerCategories());
     return {
       ...this.toSummary(run),
       unmatchedLedgers,
@@ -643,6 +795,7 @@ export class TallyReconService {
           agreedAtLastReceipt: b.agreedAtLastReceipt,
           firstDivergenceOn: iso(b.firstDivergenceOn),
           divergedAfterLastReceipt: b.divergedAfterLastReceipt,
+          sourceLedgerNames: parseSourceLedgerNames(b.sourceLedgerNames),
         }),
       ),
     };
@@ -869,6 +1022,9 @@ export class TallyReconService {
       create: { tallyName: name, customerId, createdBy: userName ?? null },
       update: { customerId, createdBy: userName ?? null },
     });
+    // A ledger just mapped to a customer IS a party — drop any stale
+    // Expense/Other filing so the two tables can't disagree about it.
+    await this.prisma.tallyLedgerCategory.deleteMany({ where: { tallyName: name } });
     return {
       id: saved.id,
       tallyName: saved.tallyName,
@@ -876,6 +1032,45 @@ export class TallyReconService {
       customerName: customer.partyName,
       createdAt: saved.createdAt.toISOString(),
     };
+  }
+
+  /**
+   * Files one or more ledgers as EXPENSE / OTHER (not a customer), or clears
+   * that filing ('PARTY' — see {@link TallyLedgerCategoryInput}) so they go
+   * back to needing a customer mapping. Mutually exclusive with
+   * TallyPartyAlias: filing a ledger here drops any customer mapping it had,
+   * the same way saveAlias drops any filing in the other direction.
+   *
+   * Deliberately does NOT rerun the report. A save here is a plain upsert —
+   * a few ms, whatever the batch size — but a rerun is a full re-comparison
+   * of the register (≈1s measured on a 4,500-row one), and every earlier
+   * design that ran one after each save turned triaging 100+ ledgers into
+   * that many seconds of clicking and waiting. Filing still shows up
+   * immediately regardless: result() re-derives the Party/Expense/Other
+   * buckets from THIS table fresh on every read (see bucketLedgers), so the
+   * dialog is always current. Only the run's stored KPI counters
+   * (unmatchedParty and friends) are a snapshot that needs an explicit
+   * recheck to catch up — the caller decides if/when to pay for that,
+   * once, however many ledgers were just filed.
+   */
+  async setLedgerCategories(tallyNames: string[], categoryInput: string, userName?: string | null): Promise<void> {
+    const names = [...new Set((tallyNames ?? []).map((n) => n?.trim()).filter((n): n is string => !!n))];
+    if (!names.length) throw new BadRequestException('Select at least one ledger.');
+    const category = categoryInput as TallyLedgerCategoryInput;
+    if (category === 'PARTY') {
+      await this.prisma.tallyLedgerCategory.deleteMany({ where: { tallyName: { in: names } } });
+      return;
+    }
+    await this.prisma.$transaction([
+      ...names.map((name) =>
+        this.prisma.tallyLedgerCategory.upsert({
+          where: { tallyName: name },
+          create: { tallyName: name, category, createdBy: userName ?? null },
+          update: { category, createdBy: userName ?? null },
+        }),
+      ),
+      this.prisma.tallyPartyAlias.deleteMany({ where: { tallyName: { in: names } } }),
+    ]);
   }
 
   async removeAlias(id: number): Promise<void> {

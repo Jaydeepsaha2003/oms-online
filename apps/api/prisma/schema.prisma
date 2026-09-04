@@ -1748,6 +1748,26 @@ model TallyPartyAlias {
   @@map("tally_party_alias")
 }
 
+/// A Tally ledger the user has classified as NOT a customer — so it stops being
+/// reported as "needs a party mapping" on every future upload/rerun. Filed
+/// permanently, the same way TallyPartyAlias is: built once, reused forever.
+///
+/// Kept as a SEPARATE table rather than a nullable column on TallyPartyAlias
+/// because the two are mutually exclusive by construction — a ledger is either
+/// mapped to a customer (TallyPartyAlias) or filed as non-party here, never
+/// both. The service enforces that: saving one for a name deletes the other.
+model TallyLedgerCategory {
+  id        Int      @id @default(autoincrement())
+  /// Ledger name exactly as it appears in the register.
+  tallyName String   @unique
+  /// EXPENSE | OTHER.
+  category  String
+  createdAt DateTime @default(now())
+  createdBy String?
+
+  @@map("tally_ledger_category")
+}
+
 /// One upload + its computed result, kept so a reconciliation can be reopened
 /// and used as evidence of what was checked when.
 model TallyReconRun {
@@ -1891,6 +1911,19 @@ model TallyReconBalance {
   firstDivergenceOn        DateTime?
   /// True when the divergence begins only after the last recorded receipt.
   divergedAfterLastReceipt Boolean   @default(false)
+
+  /// JSON string[] of every Tally ledger name folded into this ONE row — null
+  /// for the ordinary case (one ledger, one balance). Set when a party was
+  /// renamed in Tally (GST/address change) and the register carries both the
+  /// old and new ledger name for it: OMS tracks ONE running account for that
+  /// customer, so comparing each Tally ledger's own PARTIAL position against
+  /// the SAME full OMS position independently produced two wrong balances —
+  /// one that ignored the other ledger's opening, one that ignored its
+  /// moves. Combined into one true balance here instead (see
+  /// TallyReconService.mergeLedgersForBalance); this column is what lets
+  /// "jump to this party's rows" on the Vouchers tab still find every row,
+  /// since those rows are still filed under their own original ledger names.
+  sourceLedgerNames String?
 
   @@index([runId])
   @@index([runId, matched])
