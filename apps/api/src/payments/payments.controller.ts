@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { ACTIONS, perm, RESOURCES } from '@oms/shared';
+import { ACTIONS, perm, RESOURCES, type BulkDeletePaymentResult, type DeletePaymentResult } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
@@ -109,7 +109,33 @@ export class PaymentsController {
    */
   @Post('bulk-delete')
   @Permissions(perm(R, ACTIONS.DELETE))
-  @Audit({ action: ACTIONS.DELETE, resource: R, description: 'Deleted several payment receipts' })
+  @Audit({
+    action: ACTIONS.DELETE,
+    resource: R,
+    description: 'Deleted several payment receipts',
+    /*
+     * Name the vouchers. "Deleted several payment receipts" was all this ever
+     * recorded, so when receipts later turned up missing there was nothing to
+     * read — which ones went had to be worked out from what no longer existed.
+     * The single delete has its id in the path; this one had nothing.
+     *
+     * The description is capped so the log stays scannable; `metadata` carries
+     * the complete list either way, so nothing is lost at any size.
+     */
+    describe: (body) => {
+      const deleted = (body as BulkDeletePaymentResult | undefined)?.deleted ?? [];
+      if (!deleted.length) return null;
+      const SHOWN = 12;
+      const shown = deleted.slice(0, SHOWN).join(', ');
+      const rest = deleted.length - SHOWN;
+      return {
+        description:
+          `Deleted ${deleted.length} payment receipt${deleted.length === 1 ? '' : 's'}: ` +
+          `${shown}${rest > 0 ? ` +${rest} more` : ''}`,
+        metadata: { deleted, replayedCount: (body as BulkDeletePaymentResult).replayedCount },
+      };
+    },
+  })
   removeMany(@Body() dto: BulkDeletePaymentsDto) {
     return this.payments.deleteReceipts(dto.ids);
   }
@@ -118,7 +144,22 @@ export class PaymentsController {
    *  the same party/agent, then replays them all except this one. */
   @Delete(':id')
   @Permissions(perm(R, ACTIONS.DELETE))
-  @Audit({ action: ACTIONS.DELETE, resource: R, description: 'Deleted a payment receipt' })
+  @Audit({
+    action: ACTIONS.DELETE,
+    resource: R,
+    description: 'Deleted a payment receipt',
+    // The path carries the ROW id, which stops resolving the moment the row is
+    // gone — so the log said a receipt was deleted without saying which. Name
+    // the voucher, the one identifier that still means something afterwards.
+    describe: (body) => {
+      const res = body as DeletePaymentResult | undefined;
+      if (!res?.voucherNo) return null;
+      return {
+        description: `Deleted payment receipt ${res.voucherNo}`,
+        metadata: { deleted: [res.voucherNo], replayedCount: res.replayedCount },
+      };
+    },
+  })
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.payments.deleteReceipt(id);
   }

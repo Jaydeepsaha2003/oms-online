@@ -12,7 +12,7 @@ import {
   Upload,
   UserPlus,
 } from 'lucide-react';
-import { parseStatementPeriod, statementDateToYmd, trimStatementTrailer, type BankStatementColumnMap, type BankStatementCreateResponse, type BankStatementRowDto, type BankStatementRunResult } from '@oms/shared';
+import { detectStatementDateOrder, parseStatementPeriod, statementDateToDisplay, statementDateToYmd, trimStatementTrailer, type BankStatementColumnMap, type BankStatementCreateResponse, type BankStatementRowDto, type BankStatementRunResult, type BankStatementRecheckResult } from '@oms/shared';
 import { detectBankAccount, statementIdentityText } from './bank-statement-detect';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -23,6 +23,7 @@ import { useConfirm } from '@/components/common/confirm';
 import { NativeSelect } from '@/components/common/combo';
 import { Combobox } from '@/components/ui/combobox';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -38,6 +39,7 @@ import {
   useDeleteBankRun,
   useIgnoreBankRows,
   useProcessBankRun,
+  useRecheckBankRun,
 } from './use-bank-statement';
 
 /* ── House chrome, shared with the other Accounts worksheets ──────────────── */
@@ -173,6 +175,36 @@ export function BankStatementPage() {
   const process = useProcessBankRun(runId);
   const delRun = useDeleteBankRun();
 
+  /*
+   * Opening a run re-checks it against the ledger as it stands now.
+   *
+   * A receipt this run created can be deleted afterwards in Receive Payment,
+   * and nothing here noticed: the line went on saying POSTED, `rematch` skips
+   * posted lines, and the run being processed made it read-only — so the money
+   * was gone from the books with the statement still claiming it was in, and no
+   * way to put it back. Anything reopened is reported in the dialog below
+   * rather than left for someone to spot.
+   */
+  const recheck = useRecheckBankRun(runId);
+  const [reopenedInfo, setReopenedInfo] = useState<BankStatementRecheckResult | null>(null);
+  const recheckedRuns = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    if (runId == null || recheckedRuns.current.has(runId)) return;
+    recheckedRuns.current.add(runId);
+    recheck
+      .mutateAsync()
+      .then((res) => {
+        if (res.reopened.length) setReopenedInfo(res);
+      })
+      .catch(() => {
+        /* A failed re-check must not stop the run opening — the working is
+           still readable, it simply has not been verified this time. */
+      });
+    // `recheck` is a fresh mutation object each render; keying on the run is
+    // what makes this once-per-run rather than once-per-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runId]);
+
   const [selectedParty, setSelectedParty] = useState<number | undefined>(undefined);
   const { data: partyView } = useBankParty(runId, selectedParty);
   const [checked, setChecked] = useState<Set<number>>(new Set());
@@ -219,6 +251,16 @@ export function BankStatementPage() {
 
   const onFile = async (file: File | undefined) => {
     if (!file) return;
+    // The `accept` attribute on the input is only a HINT - every file dialog
+    // lets you switch it to "All files" and pick anything - so the rule is
+    // enforced here as well. Checked before `parsing` is set, so a rejected
+    // file leaves the button exactly as it was.
+    if (!/\.csv$/i.test(file.name)) {
+      toast.error('Only .csv statements can be reconciled', {
+        description: `"${file.name}" is not a CSV. Open the statement in Excel and use File → Save As → CSV, or download the CSV export from your bank, then upload that.`,
+      });
+      return;
+    }
     setParsing(true);
     try {
       // Read the sheet as a grid first: a statement opens with a block of
@@ -280,26 +322,36 @@ export function BankStatementPage() {
   const trimmed = useMemo(() => trimStatementTrailer(sheetRows, map.date), [sheetRows, map.date]);
   const statementRows = trimmed.rows;
 
+  /**
+   * Which way round this file writes its dates, decided once from the whole
+   * date column. The server derives the same thing from the same rows with the
+   * same function, so the range shown here is the range it honours.
+   */
+  const dateOrder = useMemo(
+    () => detectStatementDateOrder(map.date ? statementRows.map((r) => r[map.date!]) : []),
+    [statementRows, map.date],
+  );
+
   const rowScan = useMemo(() => {
     if (!map.date || !statementRows.length) return null;
     let min: string | null = null;
     let max: string | null = null;
     let dated = 0;
     for (const row of statementRows) {
-      const ymd = statementDateToYmd(row[map.date]);
+      const ymd = statementDateToYmd(row[map.date], dateOrder);
       if (!ymd) continue; // a blank separator inside the table
       dated++;
       if (min === null || ymd < min) min = ymd;
       if (max === null || ymd > max) max = ymd;
     }
     return min && max ? { from: min, to: max, dated } : null;
-  }, [statementRows, map.date]);
+  }, [statementRows, map.date, dateOrder]);
 
   /** The period the statement DECLARES, above its column titles — better than
    *  the rows, which cannot know about opening days that had no transactions. */
   const declaredPeriod = useMemo(
-    () => parseStatementPeriod(statementIdentityText(fileName, grid, headerRow)),
-    [fileName, grid, headerRow],
+    () => parseStatementPeriod(statementIdentityText(fileName, grid, headerRow), dateOrder),
+    [fileName, grid, headerRow, dateOrder],
   );
 
   const fileRange = declaredPeriod ?? (rowScan ? { from: rowScan.from, to: rowScan.to } : null);
@@ -539,6 +591,55 @@ export function BankStatementPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 p-2.5 font-sans sm:p-3">
+      {/* Says plainly what changed and why, the moment the run is opened —
+          a reopened line is money the books are missing, not a detail. */}
+      <Dialog open={!!reopenedInfo} onOpenChange={(o) => !o && setReopenedInfo(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <TriangleAlert className="size-5 text-amber-600" />
+              {reopenedInfo?.reopened.length} line{reopenedInfo?.reopened.length === 1 ? '' : 's'} reopened
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-[13px]">
+            <p>
+              The receipt{reopenedInfo?.reopened.length === 1 ? '' : 's'} this statement created for the line
+              {reopenedInfo?.reopened.length === 1 ? '' : 's'} below {reopenedInfo?.reopened.length === 1 ? 'has' : 'have'} since been
+              deleted in Receive Payment, so this money is no longer in the books.
+            </p>
+            <div className="max-h-56 overflow-y-auto rounded-[4px] border border-amber-300 dark:border-amber-400/30">
+              <table className="w-full text-[12.5px]">
+                <tbody>
+                  {(reopenedInfo?.reopened ?? []).map((r) => (
+                    <tr key={r.rowId} className="border-b last:border-b-0 odd:bg-slate-50/70 dark:odd:bg-white/[0.03]">
+                      <td className="px-2 py-1 text-muted-foreground tabular-nums">#{r.rowNo}</td>
+                      <td className="px-2 py-1 font-semibold">{r.customerName || '—'}</td>
+                      <td className="px-2 py-1 text-muted-foreground font-mono text-[11.5px]">{r.postedRef}</td>
+                      <td className="px-2 py-1 text-right font-bold tabular-nums">{money(r.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p>
+              They have been put back so you can post them again — this working is a draft once more, and
+              <strong> Process</strong> will recreate just these.
+              {!!reopenedInfo?.stillPosted && (
+                <>
+                  {' '}
+                  The other {reopenedInfo.stillPosted} posted line{reopenedInfo.stillPosted === 1 ? '' : 's'} still
+                  {reopenedInfo.stillPosted === 1 ? ' has its' : ' have their'} receipt and {reopenedInfo.stillPosted === 1 ? 'was' : 'were'} left
+                  alone, so nothing can be posted twice.
+                </>
+              )}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setReopenedInfo(null)}>Got it</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* ── Step 1 — the file, the range, the columns ─────────────────────── */}
       {!runId && (
         <section className={cn(PANEL, 'p-3')}>
@@ -558,9 +659,16 @@ export function BankStatementPage() {
               <input
                 ref={fileRef}
                 type="file"
-                accept=".xlsx,.xls,.csv"
+                accept=".csv,text/csv"
                 className="hidden"
-                onChange={(e) => void onFile(e.target.files?.[0])}
+                // Cleared after every pick: a file input fires no change event
+                // when the SAME file is chosen again, so without this a
+                // rejected upload could not simply be retried.
+                onChange={(e) => {
+                  const picked = e.target.files?.[0];
+                  e.target.value = '';
+                  void onFile(picked);
+                }}
               />
               <Button
                 type="button"
@@ -570,7 +678,7 @@ export function BankStatementPage() {
                 disabled={parsing}
               >
                 {parsing ? <Loader2 className="animate-spin" /> : <FileSpreadsheet className="size-4" />}
-                <span className="truncate">{fileName || 'Choose Excel / CSV…'}</span>
+                <span className="truncate">{fileName || 'Choose CSV…'}</span>
               </Button>
             </div>
             <div className="space-y-1">
@@ -687,7 +795,10 @@ export function BankStatementPage() {
                         <tr key={i} className="odd:bg-slate-50/70 dark:odd:bg-white/[0.03]">
                           {columns.map((c) => (
                             <td key={c} className="max-w-[220px] truncate border-b px-2 py-1 tabular-nums whitespace-nowrap">
-                              {r[c] ?? ''}
+                              {/* The date column is shown as dd/mm/yy whichever way round the bank
+                                  wrote it — an American export otherwise put "4/3/26" on screen
+                                  meaning April, read here as March. Every other column is raw text. */}
+                              {c === map.date ? statementDateToDisplay(r[c], dateOrder) : (r[c] ?? '')}
                             </td>
                           ))}
                         </tr>

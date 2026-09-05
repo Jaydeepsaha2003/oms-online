@@ -8,6 +8,7 @@ import type {
   BankStatementProcessResult,
   BankStatementRunList,
   BankStatementRunResult,
+  BankStatementRecheckResult,
 } from '@oms/shared';
 import { http } from '@/lib/api';
 
@@ -86,6 +87,26 @@ export function useIgnoreBankRows(runId: number | undefined) {
 }
 
 /** The one call that reaches the ledger. */
+/**
+ * Re-check a run against the ledger as it stands now.
+ *
+ * Fired when a run is opened, not from a button: a line whose receipt was
+ * deleted in Receive Payment sat there claiming POSTED with nothing behind it,
+ * and nobody would think to press a button about a problem the screen was not
+ * showing them. Idempotent — a run with nothing wrong is left untouched.
+ */
+export function useRecheckBankRun(runId: number | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => http.post<BankStatementRecheckResult>(`/bank-statement/runs/${runId}/recheck`, {}),
+    onSuccess: (res) => {
+      // Only churn the caches when something actually moved.
+      if (!res.reopened.length) return;
+      qc.invalidateQueries({ queryKey: KEY });
+    },
+  });
+}
+
 export function useProcessBankRun(runId: number | undefined) {
   const qc = useQueryClient();
   return useMutation({

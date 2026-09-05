@@ -75,6 +75,16 @@ export class BankStatementController {
     return this.svc.process(id, userName);
   }
 
+  /** Re-check a run against the ledger as it stands now, reopening any line
+   *  whose receipt has since been deleted. Idempotent, and a line whose receipt
+   *  is still there is left alone — so this can never cause a double posting. */
+  @Post('runs/:id/recheck')
+  @Permissions(perm(R, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Re-checked a bank statement against the ledger' })
+  recheck(@Param('id', ParseIntPipe) id: number) {
+    return this.svc.recheck(id);
+  }
+
   @Delete('runs/:id')
   @Permissions(perm(R, ACTIONS.DELETE))
   @Audit({ action: ACTIONS.DELETE, resource: R, description: 'Deleted a bank statement working' })

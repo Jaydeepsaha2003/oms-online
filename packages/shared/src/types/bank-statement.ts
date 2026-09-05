@@ -34,20 +34,62 @@ import type { Paginated } from './common';
  */
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
+/** Which way round a file writes numeric dates - see `detectStatementDateOrder`. */
+export type StatementDateOrder = 'dmy' | 'mdy';
+
+/** A numeric d/m/y-shaped cell, in either order. */
+const NUMERIC_DATE = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})/;
+
 /**
- * A date out of a bank-statement cell.
+ * Which way round a statement writes its numeric dates.
  *
- * Statements are exported as text at least as often as dates, and Indian banks
- * write dd/mm/yyyy — which `new Date()` reads as mm/dd, silently turning 06/07
- * into the wrong month. So a d/m/y string is parsed by hand and only anything
- * else falls back to the built-in parser.
+ * Decided ONCE for the whole file, from every date cell in it, because a single
+ * cell usually cannot say: "04/03/26" is a valid date read either way. What
+ * settles it is a row where one part is too big to be a month — "4/21/26" can
+ * only be mm/dd, "21/04/26" can only be dd/mm — so the column is scanned for
+ * those and the majority wins.
+ *
+ * This exists because assuming dd/mm made an ICICI export (mm/dd/yy) parse
+ * INCONSISTENTLY: "4/21/26" was rejected by the dd/mm rule and fell through to
+ * `new Date()`, which reads US order and got it right, while "4/3/26" was
+ * accepted and became 4 March instead of 3 April. Same file, two conventions,
+ * no complaint — and since the server drops rows outside the range, receipts
+ * were being banked into the wrong month.
+ *
+ * Falls back to dd/mm — what Indian banks write — when nothing proves either
+ * way, or when the file contradicts itself.
+ */
+export function detectStatementDateOrder(values: Iterable<unknown>): StatementDateOrder {
+  let dmy = 0;
+  let mdy = 0;
+  for (const v of values) {
+    if (v == null) continue;
+    const m = NUMERIC_DATE.exec(String(v).trim());
+    if (!m) continue;
+    const first = Number(m[1]);
+    const second = Number(m[2]);
+    // Only a part that cannot be a month proves anything.
+    if (first > 12 && second <= 12) dmy += 1;
+    else if (second > 12 && first <= 12) mdy += 1;
+  }
+  return mdy > dmy ? 'mdy' : 'dmy';
+}
+
+/**
+ * A date out of a bank-statement cell, read in the file's own order.
+ *
+ * Statements are exported as text at least as often as dates, and a numeric
+ * d/m/y string is parsed by hand rather than handed to `new Date()`, which
+ * reads mm/dd whatever the bank meant and silently turns 06/07 into the wrong
+ * month. `order` says which way round THIS file writes them; it defaults to
+ * dd/mm, what Indian banks write.
  *
  * Shared deliberately: the server uses it to decide which rows fall inside the
  * range, and the page uses it to WORK OUT that range from the file. Two copies
  * of this rule would mean the dates offered and the dates honoured could differ
  * by a month and nothing would say so.
  */
-export function parseStatementDate(v: unknown): Date | null {
+export function parseStatementDate(v: unknown, order: StatementDateOrder = 'dmy'): Date | null {
   if (v == null) return null;
   if (v instanceof Date && !Number.isNaN(v.getTime())) {
     const d = new Date(v);
@@ -56,17 +98,21 @@ export function parseStatementDate(v: unknown): Date | null {
   }
   const s = String(v).trim();
   if (!s) return null;
-  const dmy = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})/.exec(s);
-  if (dmy) {
-    const day = Number(dmy[1]);
-    const month = Number(dmy[2]);
-    let year = Number(dmy[3]);
+  const numeric = NUMERIC_DATE.exec(s);
+  if (numeric) {
+    const day = Number(order === 'mdy' ? numeric[2] : numeric[1]);
+    const month = Number(order === 'mdy' ? numeric[1] : numeric[2]);
+    let year = Number(numeric[3]);
     if (year < 100) year += year < 70 ? 2000 : 1900;
     if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
       const d = new Date(year, month - 1, day);
       d.setHours(0, 0, 0, 0);
       return d;
     }
+    // Numeric but impossible in this file's order. Deliberately NOT passed to
+    // `new Date()`: that reads mm/dd regardless, which is precisely how one
+    // file ended up parsed both ways. Unreadable is the honest answer.
+    return null;
   }
   // "01-Apr-2026", "1 Apr 2026", "01 APRIL 2026" — Kotak and SBI write the
   // month as a word, and `new Date()` will not take the hyphenated form.
@@ -91,11 +137,25 @@ export function parseStatementDate(v: unknown): Date | null {
 }
 
 /** `parseStatementDate` as the 'YYYY-MM-DD' the date pickers and the API use. */
-export function statementDateToYmd(v: unknown): string | null {
-  const d = parseStatementDate(v);
+export function statementDateToYmd(v: unknown, order: StatementDateOrder = 'dmy'): string | null {
+  const d = parseStatementDate(v, order);
   if (!d) return null;
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
+ * The date to SHOW in the statement grid: always dd/mm/yy, whichever way round
+ * the bank wrote it. Raw cell text was displayed before, so an American export
+ * put "4/3/26" on screen next to an Indian one meaning something else entirely.
+ * Anything unreadable is handed back as-is rather than blanked, so a cell the
+ * parser cannot take is still visible to the person checking the column.
+ */
+export function statementDateToDisplay(v: unknown, order: StatementDateOrder = 'dmy'): string {
+  const d = parseStatementDate(v, order);
+  if (!d) return v == null ? '' : String(v).trim();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${String(d.getFullYear()).slice(-2)}`;
 }
 
 
@@ -122,7 +182,10 @@ const PERIOD_DATE = String.raw`\d{1,2}[-/.\s][A-Za-z0-9]{2,9}[-/.\s]\d{2,4}`;
  * last dates in the rows, which is always available and only slightly weaker:
  * it cannot know about a period whose opening days had no transactions.
  */
-export function parseStatementPeriod(text: string): { from: string; to: string } | null {
+export function parseStatementPeriod(
+  text: string,
+  order: StatementDateOrder = 'dmy',
+): { from: string; to: string } | null {
   if (!text) return null;
   const SEP = String.raw`(?:\bto\b|\btill\b|\buntil\b|[-–—])`;
   const patterns = [
@@ -134,8 +197,8 @@ export function parseStatementPeriod(text: string): { from: string; to: string }
   for (const re of patterns) {
     const m = re.exec(text);
     if (!m) continue;
-    const from = statementDateToYmd(m[1]);
-    const to = statementDateToYmd(m[2]);
+    const from = statementDateToYmd(m[1], order);
+    const to = statementDateToYmd(m[2], order);
     if (!from || !to || from > to) continue; // a backwards pair is a mis-read, not a period
     // A statement covers days or months. Anything spanning years is something
     // else that happened to look like a date pair.
@@ -170,8 +233,13 @@ export function trimStatementTrailer<T extends Record<string, unknown>>(
 ): { rows: T[]; trimmed: number } {
   if (!dateColumn || !rows.length) return { rows, trimmed: 0 };
   let last = -1;
+  // Deliberately order-AGNOSTIC: this only asks "where do the data rows end",
+  // and it runs before the file's order is known. Testing one order would let a
+  // strict miss ("4/21/26" is not a dd/mm date) read as the end of the data and
+  // trim real rows off the bottom of the statement.
+  const isDate = (v: unknown) => parseStatementDate(v, 'dmy') !== null || parseStatementDate(v, 'mdy') !== null;
   for (let i = rows.length - 1; i >= 0; i--) {
-    if (parseStatementDate(rows[i][dateColumn])) {
+    if (isDate(rows[i][dateColumn])) {
       last = i;
       break;
     }
@@ -420,6 +488,29 @@ export interface BankStatementProcessResult {
   runId: number;
   created: { rowId: number; voucherNo: string; amount: number; customerName: string }[];
   failed: { rowId: number; reason: string }[];
+}
+
+/**
+ * What re-checking a run against the CURRENT ledger found.
+ *
+ * A run records the receipt it created for each line, but nothing stopped that
+ * receipt being deleted afterwards in Receive Payment. When that happened the
+ * line sat there saying POSTED for a receipt that no longer existed, and the
+ * run — processed, therefore read-only — could not post it again. The money was
+ * simply missing from the books with the statement still claiming it was in.
+ *
+ * `reopened` lists the lines whose receipt has gone; they are returned to the
+ * pool so Process can create them again. Lines whose receipt still exists are
+ * left POSTED and are NOT re-posted.
+ */
+export interface BankStatementRecheckResult {
+  runId: number;
+  /** Lines that were POSTED but whose receipt has since been deleted. */
+  reopened: { rowId: number; rowNo: number; postedRef: string; amount: number; customerName: string }[];
+  /** POSTED lines whose receipt is still there — left exactly as they are. */
+  stillPosted: number;
+  /** True when the run went back to DRAFT, so Process is available again. */
+  reopenedRun: boolean;
 }
 
 /* ── Helpers shared by both sides ─────────────────────────────────────────── */

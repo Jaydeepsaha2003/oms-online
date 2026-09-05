@@ -16,6 +16,9 @@ import {
   type BankStatementRunList,
   type BankStatementRunResult,
   parseStatementDate,
+  detectStatementDateOrder,
+  type StatementDateOrder,
+  type BankStatementRecheckResult,
   statementRowKey,
   type BankStatementCreateResponse,
   type BankStatementDuplicate,
@@ -93,6 +96,12 @@ export class BankStatementService {
     // Inclusive of the whole `to` day.
     const toEnd = new Date(to.getTime() + DAY);
 
+    // Which way round THIS file writes its dates, decided once from the whole
+    // column. Derived here rather than sent by the client so the rows the page
+    // showed and the rows this honours can never disagree - the same function
+    // over the same rows gives the same answer on both sides.
+    const dateOrder = detectStatementDateOrder((dto.rows ?? []).map((r) => r[map.date]));
+
     const parsed: { rowNo: number; txnDate: Date; narration: string; refNo: string | null; amount: number }[] = [];
     let skippedDebit = 0;
     let skippedRange = 0;
@@ -113,7 +122,7 @@ export class BankStatementService {
         skippedDebit += 1;
         return;
       }
-      const txnDate = this.cellDate(raw[map.date]);
+      const txnDate = this.cellDate(raw[map.date], dateOrder);
       if (!txnDate) {
         skippedUnreadable += 1;
         return;
@@ -853,6 +862,85 @@ export class BankStatementService {
     await this.prisma.bankStatementRun.delete({ where: { id: runId } });
   }
 
+  /**
+   * Check a run's posted lines against the CURRENT ledger and reopen any whose
+   * receipt has been deleted since.
+   *
+   * Process records the receipt it created on each line, but nothing stopped
+   * that receipt being deleted afterwards in Receive Payment. The line went on
+   * saying POSTED for a receipt that no longer existed, `rematch` skips POSTED
+   * rows so it never noticed, and the run being PROCESSED made it read-only —
+   * so the money was missing from the books with the statement still claiming
+   * it was in, and no way back short of deleting the whole working.
+   *
+   * Safe to run at any time, including on a run with nothing wrong: a line
+   * whose receipt is still there is left exactly as it is, so this can never
+   * cause a double posting. `process` only ever posts UNMATCHED lines.
+   */
+  async recheck(runId: number): Promise<BankStatementRecheckResult> {
+    const run = await this.prisma.bankStatementRun.findUnique({ where: { id: runId } });
+    if (!run) throw new NotFoundException('Run not found.');
+    const posted = await this.prisma.bankStatementRow.findMany({
+      where: { runId, status: 'POSTED' },
+      orderBy: [{ txnDate: 'asc' }, { id: 'asc' }],
+    });
+
+    const reopened: BankStatementRecheckResult['reopened'] = [];
+    for (const row of posted) {
+      const ref = (row.postedRef ?? '').trim();
+      // `postedRef` holds the voucher number Receive Payment issued, which lands
+      // in the receipt table as refRecId (and sourceVoucherNo on newer rows) —
+      // NOT refId, which is the REC-xxxx allocation key. Both are checked so a
+      // receipt written either way still counts as present.
+      const alive = ref
+        ? await this.prisma.acctPaymentReceipt.count({
+            where: { OR: [{ refRecId: ref }, { sourceVoucherNo: ref }] },
+          })
+        : 0;
+      if (alive > 0) continue;
+      reopened.push({
+        rowId: row.id,
+        rowNo: row.rowNo,
+        postedRef: ref,
+        amount: row.amount,
+        customerName: row.customerName ?? '',
+      });
+    }
+
+    if (reopened.length) {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.bankStatementRow.updateMany({
+          where: { id: { in: reopened.map((r) => r.rowId) } },
+          // Back to the pool. `rematch` below decides the real verdict; this
+          // only has to stop the row being treated as settled.
+          data: {
+            status: 'NO_PARTY',
+            postedRef: null,
+            postedAt: null,
+            matchedRefs: null,
+            matchedAmount: 0,
+            note: 'The receipt made from this line was deleted, so the line was reopened.',
+          },
+        });
+        // A run with reopened work is a draft again, or Process would refuse it
+        // and the lines could never be posted.
+        await tx.bankStatementRun.update({
+          where: { id: runId },
+          data: { status: 'DRAFT', processedAt: null },
+        });
+      });
+      // Re-score every reopened line against the ledger as it stands now.
+      await this.rematch(runId);
+    }
+
+    return {
+      runId,
+      reopened,
+      stillPosted: posted.length - reopened.length,
+      reopenedRun: reopened.length > 0,
+    };
+  }
+
   /* ── Plumbing ──────────────────────────────────────────────────────────── */
 
   private async mustBeDraft(runId: number) {
@@ -902,8 +990,8 @@ export class BankStatementService {
 
   /** A date from a spreadsheet cell — see `parseStatementDate` in @oms/shared,
    *  which the Bank Statement page uses to derive the range this then honours. */
-  private cellDate(v: unknown): Date | null {
-    return parseStatementDate(v);
+  private cellDate(v: unknown, order: StatementDateOrder = 'dmy'): Date | null {
+    return parseStatementDate(v, order);
   }
 
   private runDto(r: {

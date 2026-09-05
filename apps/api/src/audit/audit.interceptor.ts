@@ -2,6 +2,7 @@ import {
   CallHandler,
   ExecutionContext,
   Injectable,
+  Logger,
   NestInterceptor,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
@@ -23,6 +24,8 @@ const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
  */
 @Injectable()
 export class AuditInterceptor implements NestInterceptor {
+  private readonly logger = new Logger(AuditInterceptor.name);
+
   constructor(
     private readonly reflector: Reflector,
     private readonly audit: AuditService,
@@ -75,7 +78,22 @@ export class AuditInterceptor implements NestInterceptor {
           // queries by that record's real id). Fall back to the id the handler
           // just returned, so "who created this" actually shows up later.
           const resourceId = paramId ?? this.resourceIdFromBody(body);
-          void this.audit.record({ ...base, resourceId, statusCode: res.statusCode });
+          // A route may describe itself from what it returned — see `describe`
+          // on @Audit. Guarded: a throw in there is a logging bug, and it must
+          // not turn a request that already succeeded into a failure.
+          let extra: { description?: string; metadata?: Record<string, unknown> } | null | undefined;
+          try {
+            extra = meta?.describe?.(body);
+          } catch (err) {
+            this.logger.warn(`Audit describe() failed: ${(err as Error).message}`);
+          }
+          void this.audit.record({
+            ...base,
+            resourceId,
+            description: extra?.description ?? base.description,
+            metadata: extra?.metadata,
+            statusCode: res.statusCode,
+          });
         },
         error: (err) => {
           const statusCode = typeof err?.status === 'number' ? err.status : 500;
