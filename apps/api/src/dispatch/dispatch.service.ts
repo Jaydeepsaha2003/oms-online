@@ -9,6 +9,7 @@ import {
   type DispatchDateChangePayload,
   type DispatchDto,
   type DispatchFilterOptions,
+  type DispatchList,
   type DispatchHoldInfo,
   type DispatchPhotoCheckDto,
   type DraftPhotoCheckInput,
@@ -34,6 +35,9 @@ import { DispatchNotifier } from './dispatch-notifier.service';
 import { qtyText } from './qty-text.util';
 
 const EPS = 1e-6;
+/** Bags and kgs are fractional, so a SUM has to be rounded — 0.33 + 0.34 must
+ *  not reach the client as 0.6699999999999999. */
+const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
 /** Who performed an action, for the audit trail. `id` is a User cuid. */
 interface Actor {
@@ -669,7 +673,7 @@ export class DispatchService implements OnModuleInit {
 
   /* ── Dispatch records ───────────────────────────────────────────────────── */
 
-  async findMany(query: DispatchQueryDto): Promise<Paginated<DispatchDto>> {
+  async findMany(query: DispatchQueryDto): Promise<DispatchList> {
     const search = query.search?.trim();
     // Build with AND so the dropdown filters and the search box compose (each can
     // contribute its own OR without clobbering the others).
@@ -687,6 +691,10 @@ export class DispatchService implements OnModuleInit {
     if (query.design) {
       and.push({ OR: [{ orderItem: { design: query.design } }, { designType: query.design }] });
     }
+    // The ORD# column shows the order id, so filter on the id itself — an exact
+    // match, unlike the free-text `search` below which does orderCode LIKE and
+    // would let "903" also pull in ORD-9031.
+    if (query.orderId != null) and.push({ orderId: query.orderId });
     // Both ends are normalised to the LOCAL day, the same way Challans and
     // Cheques already do it. `new Date('2026-09-05')` parses a date-only string
     // as UTC midnight, but dispatchDate is not stored to one convention: most
@@ -720,7 +728,13 @@ export class DispatchService implements OnModuleInit {
       });
     }
     const where: Prisma.DispatchWhereInput = and.length ? { AND: and } : {};
-    const [rows, total] = await this.prisma.$transaction([
+    // Quantity totals are aggregated over the WHOLE filtered set, not the page
+    // being returned. The screen shows one figure under the table, and a
+    // per-page figure is the wrong number for the question it answers ("how
+    // much has this party taken?") — filtering to a customer with 98 lines and
+    // reading a 50-line subtotal is just misleading. Same scope the grouped
+    // Date & Party view already totals over, so the two views now agree.
+    const [rows, total, agg, returnCount] = await this.prisma.$transaction([
       this.prisma.dispatch.findMany({
         where,
         include: { orderItem: { select: { design: true, designType: true, productName: true } } },
@@ -729,6 +743,10 @@ export class DispatchService implements OnModuleInit {
         take: query.pageSize,
       }),
       this.prisma.dispatch.count({ where }),
+      this.prisma.dispatch.aggregate({ where, _sum: { bags: true, pcs: true, gram: true, box: true } }),
+      // Returns carry NEGATIVE quantities, so they subtract from the sums above.
+      // Counted so the UI can say the figure is net of them.
+      this.prisma.dispatch.count({ where: { AND: [...and, { dispatchStatus: RETURNED_DISPATCH_STATUS }] } }),
     ]);
     const challans = await this.challanByDispatch(rows.map((r) => r.id));
     const refs = await this.returnRefs(rows.map((r) => r.id));
@@ -738,6 +756,13 @@ export class DispatchService implements OnModuleInit {
       page: query.page,
       pageSize: query.pageSize,
       totalPages: Math.max(1, Math.ceil(total / query.pageSize)),
+      totals: {
+        bags: r2(agg._sum.bags ?? 0),
+        pcs: r2(agg._sum.pcs ?? 0),
+        kgs: r2(agg._sum.gram ?? 0),
+        box: r2(agg._sum.box ?? 0),
+        returnCount,
+      },
     };
   }
 
@@ -798,6 +823,7 @@ export class DispatchService implements OnModuleInit {
         pCategory: true,
         designType: true,
         dispatchStatus: true,
+        orderId: true,
         orderItem: { select: { design: true, designType: true, productName: true } },
       },
     });
@@ -813,6 +839,7 @@ export class DispatchService implements OnModuleInit {
       if (q.category) out = out.filter((r) => r.pCategory === q.category);
       if (q.product) out = out.filter((r) => matchesProductName(r.productName || r.product, q.product!, !q.all));
       if (q.design) out = out.filter((r) => designNameOf(r) === q.design);
+      if (q.orderId != null) out = out.filter((r) => r.orderId === q.orderId);
       return out;
     };
     const poolFor = (exclude: keyof DispatchQueryDto) => apply(rows, { ...query, [exclude]: undefined } as DispatchQueryDto);
@@ -829,6 +856,11 @@ export class DispatchService implements OnModuleInit {
       products: distinct(productPool, (r) => r.productName || r.product),
       productBases: distinct(productPool, (r) => baseProductName(r.productName || r.product, r.product)),
       designs: distinct(poolFor('design'), designNameOf),
+      // Newest order first — the number people are looking for is nearly always
+      // a recent one, and 1,100+ orders sorted the other way buries it. Cascades
+      // like every other list here: pick a customer and this drops to just that
+      // party's orders.
+      orders: [...new Set(poolFor('orderId').map((r) => r.orderId))].sort((a, b) => b - a),
     };
   }
 

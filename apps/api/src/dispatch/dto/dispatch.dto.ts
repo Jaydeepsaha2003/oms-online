@@ -1,5 +1,5 @@
 import { PartialType } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
@@ -49,6 +49,11 @@ export class DispatchQueryDto extends PaginationDto {
    *  and the Group-by-Date-&-Party view. */
   @IsOptional() @IsString() dateFrom?: string;
   @IsOptional() @IsString() dateTo?: string;
+  /** Order number, as shown in the ORD# column — an exact order id. Matched on
+   *  the id rather than `orderCode LIKE`, so typing 903 cannot also drag in
+   *  ORD-9031; the column shows the id with its ORD- prefix stripped, so what
+   *  the user reads off the row is exactly what they type here. */
+  @IsOptional() @Type(() => Number) @IsInt() orderId?: number;
 }
 
 export class PendingQueryDto extends PaginationDto {

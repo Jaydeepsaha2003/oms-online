@@ -10,6 +10,10 @@ import {
   Filter,
   History,
   Layers,
+  Package,
+  CircleCheck,
+  Truck,
+  Undo2,
   Loader2,
   Lock,
   MoreVertical,
@@ -80,9 +84,6 @@ import { useOrderItemPhotos } from '../orders/use-orders';
 
 const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? 0 : Number(s));
 const qty = (v: number | null) => (v ? v.toLocaleString('en-IN') : '—');
-/** Bags and kgs are fractional, so a column total has to be summed THEN rounded —
- *  0.33 + 0.34 must not surface as 0.6699999999999999. */
-const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
 const STATUS_STYLE: Record<string, string> = {
   'PARTIALLY DISPATCH':
@@ -424,6 +425,51 @@ function buildDateGroups(items: DispatchDto[]): DateGroup[] {
         lineCount: parties.reduce((a, p) => a + p.lines.length, 0),
       };
     });
+}
+
+/* ── Group by Item (subtotal view) ────────────────────────────────────────────
+ * The other side of the same question: "how much of THIS item has gone out?"
+ * The flat table answers it badly — one item dispatched six times over three
+ * months is six rows scattered down the list, and the only way to a total is
+ * adding them up by hand. Here each item appears ONCE with its total, and
+ * opening it shows the individual dispatches with their dates and quantities.
+ *
+ * Client-side over whatever the current filters already fetched, exactly like
+ * the Date & Party view — the query switches to a much larger page size while
+ * either grouping is on (see `grouped` in ModifyDispatchPage), so a subtotal is
+ * never silently short by a page boundary. */
+
+interface ItemGroup {
+  item: string;
+  lines: DispatchDto[];
+  bags: number;
+  pcs: number;
+  kgs: number;
+  box: number;
+}
+
+/** The item name as the PRODUCT column shows it — the same string the user is
+ *  reading off the row, so what merges under one header is exactly what looks
+ *  identical on screen. */
+const itemKeyOf = (d: DispatchDto) => (d.productName || d.product || '—').trim();
+
+function buildItemGroups(items: DispatchDto[]): ItemGroup[] {
+  const byItem = new Map<string, ItemGroup>();
+  for (const d of items) {
+    const key = itemKeyOf(d);
+    if (!byItem.has(key)) byItem.set(key, { item: key, lines: [], bags: 0, pcs: 0, kgs: 0, box: 0 });
+    const g = byItem.get(key)!;
+    // `items` arrives newest-first from the server, so pushing in order keeps
+    // each item's dispatches in date order without re-sorting.
+    g.lines.push(d);
+    g.bags += d.bags ?? 0;
+    g.pcs += d.pcs ?? 0;
+    g.kgs += d.gram ?? 0;
+    g.box += d.box ?? 0;
+  }
+  // Alphabetical: you come here looking for a particular item, and a list that
+  // reorders itself by volume as dispatches land is hard to scan twice.
+  return [...byItem.values()].sort((a, b) => a.item.localeCompare(b.item));
 }
 
 /** Subtotal pills — only the units actually in play, so a Bags-only party
@@ -843,6 +889,272 @@ function GroupedMobileView({
   );
 }
 
+/* ── Group by Item: presentation ──────────────────────────────────────────────
+ * Deliberately speaks the Order journey modal's visual language (see
+ * order-timeline-modal.tsx): soft tinted card with a gradient wash, a round
+ * icon badge, a bold title over a muted summary line, a right-hand expand
+ * affordance, and rows that read as sentences rather than table cells. Those
+ * primitives are file-local there, so the two small ones needed here are
+ * mirrored rather than imported — keep them in step if that file's Chip or
+ * qtyText changes. */
+
+/** Soft pill — mirrors the Order journey's `Chip`. */
+function SoftChip({
+  tone,
+  children,
+}: {
+  tone: 'emerald' | 'sky' | 'violet' | 'amber' | 'rose' | 'slate';
+  children: React.ReactNode;
+}) {
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap ring-1 ring-inset',
+        tone === 'emerald' && 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+        tone === 'sky' && 'bg-sky-50 text-sky-700 ring-sky-200',
+        tone === 'violet' && 'bg-violet-50 text-violet-700 ring-violet-200',
+        tone === 'amber' && 'bg-amber-50 text-amber-700 ring-amber-200',
+        tone === 'rose' && 'bg-rose-50 text-rose-700 ring-rose-200',
+        tone === 'slate' && 'bg-slate-100 text-slate-600 ring-slate-200',
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+/** "2 bags · 972 pcs · 142.1 kg" — mirrors the Order journey's `qtyText`, so a
+ *  quantity reads the same wherever it appears. Units that are zero are left
+ *  out entirely rather than printed as dashes. */
+const qtyPhrase = (q: { bags?: number | null; pcs?: number | null; kgs?: number | null; box?: number | null }) => {
+  const parts: string[] = [];
+  if (q.bags) parts.push(`${q.bags.toLocaleString('en-IN')} bags`);
+  if (q.pcs) parts.push(`${q.pcs.toLocaleString('en-IN')} pcs`);
+  if (q.kgs) parts.push(`${q.kgs.toLocaleString('en-IN')} kg`);
+  if (q.box) parts.push(`${q.box.toLocaleString('en-IN')} box`);
+  return parts.join(' · ') || '—';
+};
+
+/** One dispatch inside an opened item — the date first, because the item is
+ *  already named by the card it sits in. */
+function ItemDispatchRow({
+  d,
+  canEdit,
+  canDelete,
+  showRates,
+  isSuperAdmin,
+  onView,
+  onEdit,
+  onDelete,
+}: {
+  d: DispatchDto;
+  canEdit: boolean;
+  canDelete: boolean;
+  showRates: boolean;
+  isSuperAdmin: boolean;
+  onView: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const locked = !!d.challanCode;
+  const ret = isReturn(d);
+  const full = (d.dispatchStatus ?? '').toUpperCase() === 'FULLY DISPATCH';
+  const amount =
+    d.rate != null
+      ? Math.round(d.rate * ((d.calField ?? '').toUpperCase() === 'PCS' ? (d.pcs ?? 0) : (d.gram ?? 0)))
+      : null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1.5 text-sm [&+&]:border-t [&+&]:border-slate-100 dark:[&+&]:border-white/5">
+      <span className="w-[4.5rem] shrink-0 font-semibold tabular-nums text-slate-800 dark:text-slate-200">
+        {formatDate(d.dispatchDate)}
+      </span>
+      <span className="text-muted-foreground shrink-0 font-mono text-[10px]">
+        {shortDispatchCode(d.code, d.id)}
+      </span>
+      {d.designType && d.designType.toUpperCase() !== 'NA' && (
+        <span className="text-muted-foreground shrink-0 text-xs">{d.designType}</span>
+      )}
+      <span
+        className={cn(
+          'ml-auto text-xs tabular-nums',
+          ret ? 'font-semibold text-rose-600 dark:text-rose-400' : 'text-muted-foreground',
+        )}
+      >
+        {qtyPhrase({ bags: d.bags, pcs: d.pcs, kgs: d.gram, box: d.box })}
+      </span>
+      {ret ? (
+        <SoftChip tone="rose">
+          <Undo2 className="size-3" /> Return
+        </SoftChip>
+      ) : (
+        <SoftChip tone={full ? 'emerald' : 'sky'}>
+          {full ? <CircleCheck className="size-3" /> : <Truck className="size-3" />}
+          {full ? 'Full' : 'Partial'}
+        </SoftChip>
+      )}
+      {d.challanCode && <SoftChip tone="violet">{d.challanCode}</SoftChip>}
+      {showRates && amount != null && (
+        <span className="font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(amount)}</span>
+      )}
+      <div className="flex shrink-0 items-center gap-0.5">
+        <Button variant="ghost" size="icon" className="size-6" onClick={onView} aria-label="View" title="View details">
+          <Eye className="size-3.5" />
+        </Button>
+        <DispatchPhotosButton
+          orderItemId={d.orderItemId}
+          isSuperAdmin={isSuperAdmin}
+          challanCode={d.challanCode}
+          compact
+        />
+        {canEdit && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-6"
+            onClick={onEdit}
+            aria-label={locked ? 'Edit status & photos' : 'Edit'}
+            title={locked ? `Billed on ${d.challanCode} — status & photos only` : 'Edit'}
+          >
+            <Pencil className="size-3.5" />
+          </Button>
+        )}
+        {canDelete && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-destructive hover:text-destructive size-6"
+            onClick={onDelete}
+            disabled={locked}
+            aria-label="Delete"
+            title={locked ? `Billed on ${d.challanCode} — cannot be deleted` : 'Delete'}
+          >
+            <Trash2 className="size-3.5" />
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Group by Item — one card per item, its total on the header, its individual
+ * dispatches (date + quantities) revealed by the chevron.
+ *
+ * One component for both screen sizes rather than the desktop/mobile pair the
+ * Date & Party view needs: there is no second nesting level here (no date
+ * banner above a party card), so the same header-plus-lines card reads
+ * correctly at either width with a couple of responsive sizes.
+ */
+function ItemGroupedView({
+  groups,
+  expanded,
+  onToggle,
+  canEdit,
+  canDelete,
+  showRates,
+  isSuperAdmin,
+  onView,
+  onEdit,
+  onDelete,
+}: {
+  groups: ItemGroup[];
+  expanded: Set<string>;
+  onToggle: (key: string) => void;
+  canEdit: boolean;
+  canDelete: boolean;
+  showRates: boolean;
+  isSuperAdmin: boolean;
+  onView: (d: DispatchDto) => void;
+  onEdit: (d: DispatchDto) => void;
+  onDelete: (d: DispatchDto) => void;
+}) {
+  if (!groups.length) {
+    return (
+      <div className="text-muted-foreground bg-card flex flex-1 items-center justify-center rounded-lg border border-dashed px-4 py-12 text-center text-sm">
+        No dispatch records match these filters.
+      </div>
+    );
+  }
+  return (
+    <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-0.5 pt-0.5 pr-1">
+      {groups.map((g) => {
+        const open = expanded.has(g.item);
+        const dates = g.lines.length;
+        return (
+          <div
+            key={g.item}
+            className={cn(
+              'cursor-pointer overflow-hidden rounded-lg border border-indigo-200/70 transition-shadow',
+              'bg-gradient-to-r from-indigo-50/70 to-transparent hover:shadow-md',
+              'dark:border-indigo-400/25 dark:from-indigo-400/10',
+            )}
+            role="button"
+            aria-expanded={open}
+            onClick={() => onToggle(g.item)}
+          >
+            <div className="flex items-center gap-3 px-3.5 py-2.5">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-indigo-700 shadow-sm ring-2 ring-white dark:bg-indigo-400/20 dark:text-indigo-200 dark:ring-transparent">
+                <Package className="size-4" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="truncate text-[15px] font-bold text-slate-900 dark:text-slate-100">{g.item}</span>
+                  <SoftChip tone="slate">
+                    {dates} dispatch{dates === 1 ? '' : 'es'}
+                  </SoftChip>
+                </div>
+                {/* The whole point of this view: the item's total, stated in
+                    words rather than hidden behind unit pills. */}
+                <div className="mt-0.5 text-sm">
+                  <span className="text-foreground font-semibold tabular-nums">
+                    {qtyPhrase({ bags: g.bags, pcs: g.pcs, kgs: g.kgs, box: g.box })}
+                  </span>
+                  <span className="text-muted-foreground"> dispatched in total</span>
+                </div>
+              </div>
+              <span className="text-muted-foreground flex shrink-0 items-center gap-1 text-xs font-medium">
+                <span className="hidden sm:inline">{open ? 'Hide' : 'Show'} dispatches</span>
+                <ChevronDown className={cn('size-4 transition-transform duration-200', open && 'rotate-180')} />
+              </span>
+            </div>
+
+            {/* Height-animated open/close, same as the Order journey's cards. */}
+            <div
+              className={cn(
+                'grid transition-[grid-template-rows] duration-300 ease-out',
+                open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
+              )}
+            >
+              <div className="min-h-0 overflow-hidden">
+                <div
+                  className="border-t border-black/5 bg-white/70 px-3.5 py-2 dark:border-white/10 dark:bg-white/[0.03]"
+                  // The rows carry their own buttons; a click on one must not
+                  // also collapse the card it sits in.
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {g.lines.map((d) => (
+                    <ItemDispatchRow
+                      key={d.id}
+                      d={d}
+                      canEdit={canEdit && !isReturn(d)}
+                      canDelete={canDelete && !isReturn(d)}
+                      showRates={showRates}
+                      isSuperAdmin={isSuperAdmin}
+                      onView={() => onView(d)}
+                      onEdit={() => onEdit(d)}
+                      onDelete={() => onDelete(d)}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /** Phone card for one dispatch record — the readable, tappable equivalent of a
  *  table row, with inline Edit / Delete actions matching the user's permissions. */
 function ModifyDispatchCard({
@@ -1023,10 +1335,28 @@ export function ModifyDispatchPage() {
   const [categoryFilter, setCategoryFilter] = useState('');
   const [productFilter, setProductFilter] = useState('');
   const [designFilter, setDesignFilter] = useState('');
+  // ORD# as typed by the user — kept as a string so the box can be empty or
+  // mid-typing; only sent once it parses to a number (see `query`).
+  const [orderFilter, setOrderFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [datePreset, setDatePreset] = useState('');
-  const [dateOpen, setDateOpen] = useState(false);
+  // ONE open-state PER date popover, not one shared by both.
+  //
+  // The phone toolbar and the desktop toolbar are both always in the React
+  // tree — only CSS (`sm:hidden` / `hidden sm:flex`) decides which is visible —
+  // and each carries its own <Popover>. Driving both from a single `dateOpen`
+  // meant opening the date filter opened BOTH at once, including the one
+  // anchored to a display:none trigger. Radix gives every open popover a
+  // dismiss layer, so each saw interaction with the other as an outside click
+  // and called onOpenChange(false); sharing the setter then slammed both shut
+  // about a tenth of a second after opening, which made the calendar
+  // impossible to use (you never got to the second click that closes a range).
+  // Separate state keeps only the visible one open, so there is never a second
+  // dismiss layer to fight with. Pending Challan renders just one popover and
+  // never had this.
+  const [dateOpenMobile, setDateOpenMobile] = useState(false);
+  const [dateOpenDesktop, setDateOpenDesktop] = useState(false);
   // Phones: only Search + Customer + Item show up top; Agent/Design/Status live
   // behind this Filter icon (same pattern as Dispatch Order) — Date range and
   // Group already have their own compact, self-contained mobile controls
@@ -1039,7 +1369,13 @@ export function ModifyDispatchPage() {
   // Subtotal view: groups the current filtered set by Date then Party. Off by
   // default (keeps today's flat-table behaviour); switching it on pulls a much
   // larger page so a subtotal is never short by a page boundary (see `query`).
-  const [grouped, setGrouped] = useState(false);
+  // One mode, not two booleans — grouping by Date & Party and by Item are
+  // alternative shapes for the same rows, so a single value makes "both on at
+  // once" unrepresentable rather than something the toggles have to police.
+  const [groupBy, setGroupBy] = useState<'none' | 'date' | 'item'>('none');
+  const grouped = groupBy !== 'none';
+  const groupedByDate = groupBy === 'date';
+  const groupedByItem = groupBy === 'item';
   const [expandedParties, setExpandedParties] = useState<Set<string>>(new Set());
   const toggleParty = (key: string) =>
     setExpandedParties((prev) => {
@@ -1069,6 +1405,9 @@ export function ModifyDispatchPage() {
     category: categoryFilter || undefined,
     product: productFilter || undefined,
     design: designFilter || undefined,
+    // Passed so the OTHER dropdowns narrow to the chosen order too — the same
+    // cascade every filter here takes part in.
+    orderId: /^\d+$/.test(orderFilter.trim()) ? Number(orderFilter.trim()) : undefined,
   });
 
   // Item names WITHOUT their design suffix — "12 MALBORO" stands for itself and
@@ -1102,6 +1441,9 @@ export function ModifyDispatchPage() {
     design: designFilter || undefined,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
+    // Only sent once it is actually a number — a half-typed or cleared box
+    // must not narrow the list to nothing.
+    orderId: /^\d+$/.test(orderFilter.trim()) ? Number(orderFilter.trim()) : undefined,
   };
   // Live refresh every 2s — paused while the edit dialog is open, so a
   // background refetch can never reset a quantity someone is mid-editing.
@@ -1110,34 +1452,26 @@ export function ModifyDispatchPage() {
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
   const dateActive = !!(dateFrom || dateTo || datePreset);
-  const dateGroups = useMemo(() => (grouped ? buildDateGroups(items) : []), [grouped, items]);
+  const dateGroups = useMemo(() => (groupedByDate ? buildDateGroups(items) : []), [groupedByDate, items]);
+  const itemGroups = useMemo(() => (groupedByItem ? buildItemGroups(items) : []), [groupedByItem, items]);
   const partyCount = useMemo(
     () => new Set(items.map((d) => d.customerName?.trim() || '—')).size,
     [items],
   );
 
-  // Quantity totals for the rows actually in view — deliberately the same scope
-  // as the page/line counts in the footer they sit above, so the two can never
-  // disagree. Ungrouped that is this page; grouped, every matching row is
-  // already fetched (see pageSize above), so it is the whole filtered set.
+  // Quantity totals come from the SERVER, aggregated over every row the filters
+  // match — not summed from `items`, which is only the page on screen. Filtering
+  // to a party with 98 lines and reading a 50-line subtotal underneath is the
+  // wrong number for the question being asked, and it disagreed with the
+  // Group by Date & Party view, which has always totalled the full set.
   //
   // RETURN rows carry NEGATIVE quantities — that is what puts stock back in the
-  // pending pool (see QtyCell) — so they SUBTRACT here rather than being
-  // skipped: the figure is what actually went out, net of what came back. That
+  // pending pool (see QtyCell) — so they SUBTRACT from the figure rather than
+  // being skipped: it is what actually went out, net of what came back. That
   // netting is invisible in a single number, so the strip says how many returns
   // are in the mix; without it, re-adding the column by hand gives a different
   // answer and the total looks wrong.
-  const totals = useMemo(() => {
-    let bags = 0, pcs = 0, kgs = 0, box = 0, returns = 0;
-    for (const d of items) {
-      if (isReturn(d)) returns++;
-      bags += d.bags ?? 0;
-      pcs += d.pcs ?? 0;
-      kgs += d.gram ?? 0;
-      box += d.box ?? 0;
-    }
-    return { bags: round2(bags), pcs: round2(pcs), kgs: round2(kgs), box: round2(box), returns };
-  }, [items]);
+  const totals = data?.totals;
 
   const applyDatePreset = (p: string) => {
     if (p === datePreset) {
@@ -1224,7 +1558,12 @@ export function ModifyDispatchPage() {
           <Button
             size="sm"
             className="h-7 shrink-0 px-3 text-[12px] font-semibold"
-            onClick={() => setDateOpen(false)}
+            // datePanel is shared by both toolbars' popovers, so Done closes
+            // whichever one is actually open (see dateOpenMobile/Desktop).
+            onClick={() => {
+              setDateOpenMobile(false);
+              setDateOpenDesktop(false);
+            }}
           >
             Done
           </Button>
@@ -1245,6 +1584,7 @@ export function ModifyDispatchPage() {
     categoryFilter ||
     productFilter ||
     designFilter ||
+    orderFilter.trim() ||
     dateActive
   );
   const resetFilters = () => {
@@ -1255,6 +1595,7 @@ export function ModifyDispatchPage() {
     setCategoryFilter('');
     setProductFilter('');
     setDesignFilter('');
+    setOrderFilter('');
     clearDates();
     setPage(1);
   };
@@ -1382,6 +1723,17 @@ export function ModifyDispatchPage() {
               controls, so they stay visible in the row below rather than
               needing a second "apply" step inside the sheet. */}
           <div className="flex w-full flex-col gap-2 sm:hidden">
+            {/* Order number — see the desktop copy of this control. */}
+            <NativeSelect
+              value={orderFilter}
+              onChange={(v) => {
+                setOrderFilter(v);
+                setPage(1);
+              }}
+              options={['', ...(options?.orders ?? []).map(String)]}
+              placeholder="Order #"
+              className={cn(CONTROL, 'font-medium', orderFilter && CONTROL_ON)}
+            />
             <NativeSelect
               value={customerFilter}
               onChange={(v) => {
@@ -1444,7 +1796,7 @@ export function ModifyDispatchPage() {
                   <X className="size-4" />
                 </Button>
               )}
-              <Popover open={dateOpen} onOpenChange={setDateOpen}>
+              <Popover open={dateOpenMobile} onOpenChange={setDateOpenMobile}>
                 <PopoverTrigger asChild>
                   <Button
                     variant="outline"
@@ -1467,7 +1819,7 @@ export function ModifyDispatchPage() {
             <label
               className={cn(
                 'flex cursor-pointer items-center justify-between gap-2 rounded-[4px] border px-2.5 py-2 text-[12.5px] font-semibold select-none',
-                grouped
+                groupedByDate
                   ? 'border-primary/40 bg-primary/5 text-primary'
                   : 'border-amber-300 text-slate-600 dark:border-amber-400/40',
               )}
@@ -1475,12 +1827,41 @@ export function ModifyDispatchPage() {
               <span className="flex items-center gap-1.5">
                 <Layers className="size-3.5" /> Group by Date &amp; Party
               </span>
-              <Switch checked={grouped} onCheckedChange={setGrouped} />
+              <Switch checked={groupedByDate} onCheckedChange={(v) => setGroupBy(v ? 'date' : 'none')} />
+            </label>
+            <label
+              className={cn(
+                'flex cursor-pointer items-center justify-between gap-2 rounded-[4px] border px-2.5 py-2 text-[12.5px] font-semibold select-none',
+                groupedByItem
+                  ? 'border-primary/40 bg-primary/5 text-primary'
+                  : 'border-amber-300 text-slate-600 dark:border-amber-400/40',
+              )}
+            >
+              <span className="flex items-center gap-1.5">
+                <Package className="size-3.5" /> Group by Item
+              </span>
+              <Switch checked={groupedByItem} onCheckedChange={(v) => setGroupBy(v ? 'item' : 'none')} />
             </label>
           </div>
 
           {/* Desktop: filters inline. */}
           <div className="hidden flex-wrap items-center gap-2 sm:flex">
+            {/* Order number, straight off the ORD# column — picked from the
+                orders that actually have dispatches, not typed blind. Cascades
+                with the rest, so choosing a customer first cuts this to that
+                party's handful of orders. */}
+            <div className="sm:w-32">
+              <NativeSelect
+                value={orderFilter}
+                onChange={(v) => {
+                  setOrderFilter(v);
+                  setPage(1);
+                }}
+                options={['', ...(options?.orders ?? []).map(String)]}
+                placeholder="All orders"
+                className={cn(CONTROL, 'font-medium', orderFilter && CONTROL_ON)}
+              />
+            </div>
             {/* Filter order follows the house pattern: Customer, Item Name, Agent,
                 Category, Sub Category, Design Name (skipping whichever of those this
                 page doesn't have — there's no Category/Sub Category filter here). */}
@@ -1562,7 +1943,7 @@ export function ModifyDispatchPage() {
 
             {/* Dispatch-date range — scopes the Group by Date & Party view (and the
                 flat table too, when set). */}
-            <Popover open={dateOpen} onOpenChange={setDateOpen}>
+            <Popover open={dateOpenDesktop} onOpenChange={setDateOpenDesktop}>
               <PopoverTrigger asChild>
                 <Button
                   variant="outline"
@@ -1582,19 +1963,34 @@ export function ModifyDispatchPage() {
               </PopoverContent>
             </Popover>
 
-            {/* The subtotal view — see GroupedDesktopView / GroupedMobileView below. */}
+            {/* The subtotal views — see GroupedDesktopView / ItemGroupedView below.
+                Turning either on turns the other off: they are two shapes for the
+                same rows, not two independent options. */}
             <label
               className={cn(
                 'flex h-9 shrink-0 cursor-pointer items-center gap-2 rounded-[4px] border px-2.5 text-[12.5px] font-semibold whitespace-nowrap select-none',
-                grouped
+                groupedByDate
                   ? 'border-primary/40 bg-primary/5 text-primary'
                   : 'border-amber-300 text-slate-600 dark:border-amber-400/40',
               )}
               title="Group the current list by Date, then Party — with a running subtotal of Bags/Pcs/Kgs/Box for each"
             >
               <Layers className="size-3.5" />
-              <Switch checked={grouped} onCheckedChange={setGrouped} />
+              <Switch checked={groupedByDate} onCheckedChange={(v) => setGroupBy(v ? 'date' : 'none')} />
               Group by Date &amp; Party
+            </label>
+            <label
+              className={cn(
+                'flex h-9 shrink-0 cursor-pointer items-center gap-2 rounded-[4px] border px-2.5 text-[12.5px] font-semibold whitespace-nowrap select-none',
+                groupedByItem
+                  ? 'border-primary/40 bg-primary/5 text-primary'
+                  : 'border-amber-300 text-slate-600 dark:border-amber-400/40',
+              )}
+              title="Group the current list by Item — each item once, with its total Bags/Pcs/Kgs/Box; open one to see every dispatch of it with its date and quantity"
+            >
+              <Package className="size-3.5" />
+              <Switch checked={groupedByItem} onCheckedChange={(v) => setGroupBy(v ? 'item' : 'none')} />
+              Group by Item
             </label>
 
             {hasFilters && (
@@ -1697,6 +2093,19 @@ export function ModifyDispatchPage() {
               <div className="text-muted-foreground flex flex-1 items-center justify-center gap-2 text-sm">
                 <Loader2 className="size-4 animate-spin" /> Loading…
               </div>
+            ) : groupedByItem ? (
+              <ItemGroupedView
+                groups={itemGroups}
+                expanded={expandedParties}
+                onToggle={toggleParty}
+                canEdit={can('dispatch:update')}
+                canDelete={can('dispatch:delete')}
+                showRates={canViewRates}
+                isSuperAdmin={permissions.includes(ALL_PERMISSIONS)}
+                onView={(d) => setViewing(d)}
+                onEdit={(d) => setEditing(d)}
+                onDelete={(d) => handleDelete(d)}
+              />
             ) : (
               <GroupedDesktopView
                 groups={dateGroups}
@@ -1770,6 +2179,19 @@ export function ModifyDispatchPage() {
             [0, 1, 2, 3].map((i) => (
               <div key={i} className="bg-muted/40 h-44 animate-pulse rounded-2xl border" />
             ))
+          ) : groupedByItem ? (
+            <ItemGroupedView
+              groups={itemGroups}
+              expanded={expandedParties}
+              onToggle={toggleParty}
+              canEdit={can('dispatch:update')}
+              canDelete={can('dispatch:delete')}
+              showRates={canViewRates}
+              isSuperAdmin={permissions.includes(ALL_PERMISSIONS)}
+              onView={(d) => setViewing(d)}
+              onEdit={(d) => setEditing(d)}
+              onDelete={(d) => handleDelete(d)}
+            />
           ) : grouped ? (
             <GroupedMobileView
               groups={dateGroups}
@@ -1806,15 +2228,22 @@ export function ModifyDispatchPage() {
         </div>
       </div>
 
-      {/* ── Quantity totals for the rows in view, above the pager ─────────────── */}
-      {items.length > 0 && (
+      {/* ── Quantity totals for every row the filters match, above the pager ──── */}
+      {items.length > 0 && totals && (
         <div className="bg-card flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-[4px] border px-3 py-2 shadow-sm">
           <span className="text-muted-foreground text-[10px] font-bold tracking-widest uppercase">
-            {grouped ? 'Totals — all matching rows' : 'Totals — this page'}
+            Totals — all matching rows
           </span>
-          {totals.returns > 0 && (
+          {/* Say so explicitly when there is more than one page: the figure is
+              deliberately NOT the page you are looking at. */}
+          {!grouped && totalPages > 1 && (
             <span className="text-muted-foreground text-[11px] font-medium">
-              net of {totals.returns.toLocaleString('en-IN')} return{totals.returns === 1 ? '' : 's'}
+              all {(data?.total ?? 0).toLocaleString('en-IN')} rows, not just this page
+            </span>
+          )}
+          {totals.returnCount > 0 && (
+            <span className="text-muted-foreground text-[11px] font-medium">
+              net of {totals.returnCount.toLocaleString('en-IN')} return{totals.returnCount === 1 ? '' : 's'}
             </span>
           )}
           <div className="ml-auto flex flex-wrap items-center gap-x-5 gap-y-1.5">
@@ -1838,7 +2267,16 @@ export function ModifyDispatchPage() {
       {/* ── Footer: paging, or (grouped) a quick summary — there's no paging to do
           once every matching row has already been fetched for the subtotal. ── */}
       <div className="bg-card flex items-center justify-between rounded-[4px] border px-3 py-2 shadow-sm">
-        {grouped ? (
+        {groupedByItem ? (
+          <p className="text-muted-foreground text-[12px] font-medium">
+            <span className="text-foreground font-bold tabular-nums">{items.length}</span> dispatch
+            {items.length === 1 ? '' : 'es'} ·{' '}
+            <span className="text-foreground font-bold tabular-nums">{itemGroups.length}</span> item
+            {itemGroups.length === 1 ? '' : 's'} ·{' '}
+            <span className="text-foreground font-bold tabular-nums">{partyCount}</span> part
+            {partyCount === 1 ? 'y' : 'ies'}
+          </p>
+        ) : grouped ? (
           <p className="text-muted-foreground text-[12px] font-medium">
             <span className="font-bold tabular-nums text-foreground">{items.length}</span> line
             {items.length === 1 ? '' : 's'} ·{' '}

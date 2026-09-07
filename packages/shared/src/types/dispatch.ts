@@ -293,6 +293,9 @@ export type DispatchQuery = PaginationQuery & {
   /** Dispatch-date range (inclusive), 'YYYY-MM-DD'. */
   dateFrom?: string;
   dateTo?: string;
+  /** Order number as shown in the ORD# column — matched on the id exactly, so
+   *  903 cannot also pull in ORD-9031 the way a free-text search would. */
+  orderId?: number;
 };
 /** Distinct values present in dispatch records, for the Modify Dispatch filters.
  *  `categories` is populated for BOTH the pending pool (Dispatch Order) and the
@@ -314,8 +317,26 @@ export interface DispatchFilterOptions {
   productBases?: string[];
   designs: string[];
   subCategories?: string[];
+  /** Order numbers that actually appear in the dispatch records, newest first —
+   *  the ORD# filter picks from these rather than making the user type a number
+   *  and hope. Only populated for the dispatch records (Modify Dispatch). */
+  orders?: number[];
 }
-export type DispatchList = Paginated<DispatchDto>;
+/** Quantity totals for the WHOLE filtered set — every row the filters match,
+ *  not just the page in `items`. A per-page subtotal answers the wrong question
+ *  when a party's lines span several pages, and it would disagree with the
+ *  Group by Date & Party view, which has always totalled the full set. */
+export interface DispatchTotals {
+  bags: number;
+  pcs: number;
+  kgs: number;
+  box: number;
+  /** Returns carry NEGATIVE quantities, so they subtract from the sums above.
+   *  Surfaced so the UI can say the figure is net of them rather than leaving
+   *  the column looking like it fails to add up. */
+  returnCount: number;
+}
+export type DispatchList = Paginated<DispatchDto> & { totals: DispatchTotals };
 
 /**
  * Response for `POST /dispatch`. A dispatch dated anything other than today needs
