@@ -44,9 +44,21 @@ function dueText(due: string | null | undefined): string {
   return days < 0 ? `${Math.abs(days)} over` : `${days} left`;
 }
 
+/**
+ * Everything a challan weighs, added up off its own lines.
+ *
+ * The challan row itself carries no weight — only the items do — so this is a
+ * sum, not a field. EVERY line counts, including those priced by the piece: the
+ * question is what left the building, and a Pcs line still has a weight. (The
+ * printed bill can hide the Kgs on a Pcs line, which is a decision about that
+ * document, not about the goods.)
+ */
+const totalKgs = (c: ChallanDto): number =>
+  Math.round((c.items ?? []).reduce((s, it) => s + (it.kgs ?? 0), 0) * 100) / 100;
+
 /** The "Challans" sheet — title, the filters it was run with, then the table. */
 function addChallansSheet(wb: ExcelJS.Workbook, rows: ChallanDto[], meta: ChallanReportMeta, title: string): void {
-  const headers = ['Date', 'Challan No', 'Party', 'Category', 'Billing Rate (₹)', 'B (₹)', 'C (₹)', 'GST (₹)', 'TDS (₹)', 'Total (₹)', 'Due', 'Status', 'Remarks'];
+  const headers = ['Date', 'Challan No', 'Party', 'Category', 'Billing Rate (₹)', 'Total Kgs', 'B (₹)', 'C (₹)', 'GST (₹)', 'TDS (₹)', 'Total (₹)', 'Due', 'Status', 'Remarks'];
   const cols = headers.length;
   /*
    * The header row is computed, not counted.
@@ -91,6 +103,7 @@ function addChallansSheet(wb: ExcelJS.Workbook, rows: ChallanDto[], meta: Challa
        * than "not recorded".
        */
       r.billingRate ?? '',
+      totalKgs(r),
       r.b ?? 0,
       r.c ?? 0,
       r.tax ?? 0,
@@ -101,18 +114,38 @@ function addChallansSheet(wb: ExcelJS.Workbook, rows: ChallanDto[], meta: Challa
       r.remarks ?? '',
     ]);
   }
-  // Billing Rate joins the money columns at 5; B/C/GST/TDS/Total shift right one.
-  const money = [5, 6, 7, 8, 9, 10];
+  /*
+   * The two-decimal, right-aligned columns — `styleBody` calls them money, and
+   * Total Kgs is in the list because it wants exactly that format, not because
+   * it is money. Kgs are fractional on most lines (3,408 of 4,246 items here),
+   * and the default whole-number format for a numeric column would round the
+   * weight away.
+   */
+  const money = [5, 6, 7, 8, 9, 10, 11];
   styleBody(ws, headerRow + 1, headerRow + rows.length, cols, money, [1]);
 
-  const sum = (pick: (r: ChallanDto) => number | null | undefined) => rows.reduce((s, r) => s + (pick(r) ?? 0), 0);
+  /*
+   * Rounded to paise/grams, because the raw float sum is not.
+   *
+   * Adding 2,041 weights gave a total row holding 307203.7000000005. Excel's
+   * own format displays that as 307,203.70, so the sheet looked right — but the
+   * value stored in the cell was the noisy one, and it surfaces the moment
+   * anyone widens the decimals or copies the figure out.
+   */
+  const sum = (pick: (r: ChallanDto) => number | null | undefined) =>
+    Math.round(rows.reduce((s, r) => s + (pick(r) ?? 0), 0) * 100) / 100;
   addTotalRow(
     ws,
     cols,
-    // Billing Rate is left blank in the total row on purpose: it is a rate per
-    // Kg, so a column sum would be a meaningless number and an unweighted mean
-    // across different parties would be a misleading one.
-    ['', '', `${rows.length} challan(s)`, 'TOTAL', '', sum((r) => r.b), sum((r) => r.c), sum((r) => r.tax), sum((r) => r.tds), sum((r) => r.total), '', '', ''],
+    /*
+     * Billing Rate is left blank on purpose: it is a rate per Kg, so a column
+     * sum would be a meaningless figure and an unweighted mean across different
+     * parties a misleading one.
+     *
+     * Total Kgs IS summed — weight across a set of challans is a real quantity,
+     * and "how many Kgs went out this month" is the question the column invites.
+     */
+    ['', '', `${rows.length} challan(s)`, 'TOTAL', '', sum(totalKgs), sum((r) => r.b), sum((r) => r.c), sum((r) => r.tax), sum((r) => r.tds), sum((r) => r.total), '', '', ''],
     money,
   );
 
