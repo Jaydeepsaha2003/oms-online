@@ -98,10 +98,19 @@ export class ChallansController {
     @Query('metaAgent') metaAgent: string | undefined,
     @Query('metaDateRange') metaDateRange: string | undefined,
     @Query('metaSearch') metaSearch: string | undefined,
+    /** Add a sheet of debit / credit notes — asked for on screen before the
+     *  download. Strings, because a query parameter always is. */
+    @Query('withDebitNotes') withDebitNotes: string | undefined,
+    @Query('withCreditNotes') withCreditNotes: string | undefined,
     @Res() res: Response,
   ) {
     const itemised = kind === 'summary';
+    const on = (v: string | undefined) => v === '1' || v === 'true';
     const { items } = await this.challans.exportAll(query);
+    const notes = await this.challans.exportNotes(query, items, {
+      debit: on(withDebitNotes),
+      credit: on(withCreditNotes),
+    });
     const buffer = await buildChallanReport(
       items,
       {
@@ -112,6 +121,7 @@ export class ChallansController {
         search: metaSearch || '—',
       },
       itemised ? 'summary' : 'detailed',
+      notes,
     );
     const stamp = new Date().toISOString().slice(0, 10);
     res.set({

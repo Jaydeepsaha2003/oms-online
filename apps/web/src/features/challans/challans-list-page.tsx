@@ -51,6 +51,7 @@ import { ChallanBulkPrint } from './challan-bulk-print';
 import { NativeSelect } from '@/components/common/combo';
 import { downloadFile } from '@/lib/api';
 import { ReportDownloadOverlay, type ReportPhase } from './report-download-overlay';
+import { ReportNotesDialog, type ReportNoteChoice } from './report-notes-dialog';
 
 const money = (v: number | null) => `₹ ${(v ?? 0).toLocaleString('en-IN')}`;
 
@@ -301,7 +302,7 @@ export function ChallansListPage() {
   const [kpiOpen, setKpiOpen] = useState(false);
   const [report, setReport] = useState<{ kind: 'detailed' | 'summary'; phase: ReportPhase; count?: number } | null>(null);
 
-  const runReport = async (kind: 'detailed' | 'summary') => {
+  const runReport = async (kind: 'detailed' | 'summary', notes: ReportNoteChoice) => {
     try {
       setReport({ kind, phase: 'fetching' });
       const res = await fetchAllChallans(query);
@@ -331,6 +332,8 @@ export function ChallansListPage() {
         metaDateRange:
           dateFrom || dateTo ? `${dateFrom ? formatDate(dateFrom) : '…'} to ${dateTo ? formatDate(dateTo) : '…'}` : 'All',
         metaSearch: search || '—',
+        ...(notes.debit ? { withDebitNotes: '1' } : {}),
+        ...(notes.credit ? { withCreditNotes: '1' } : {}),
       });
       // brief pause so the download animation registers before the file save dialog
       await new Promise((r) => setTimeout(r, 650));
@@ -342,6 +345,15 @@ export function ChallansListPage() {
       setReport(null);
     }
   };
+
+  /*
+   * Which report the user asked for while the notes dialog is up.
+   *
+   * The dialog sits BETWEEN the button and the download rather than inside the
+   * progress overlay: the overlay reports on a build already running, and a
+   * question asked there would be a question asked too late.
+   */
+  const [askNotes, setAskNotes] = useState<'detailed' | 'summary' | null>(null);
 
   const applyPreset = (p: string) => {
     setPreset(p);
@@ -888,7 +900,7 @@ export function ChallansListPage() {
               size="sm"
               className="h-9 rounded-[4px] text-[12.5px] font-semibold"
               disabled={!!report}
-              onClick={() => runReport('detailed')}
+              onClick={() => setAskNotes('detailed')}
               title="Export the filtered challan list to Excel — one row per challan"
             >
               <Layers className="text-sky-600" /> <span className="hidden sm:inline">Challan Summary</span>
@@ -899,7 +911,7 @@ export function ChallansListPage() {
               size="sm"
               className="h-9 rounded-[4px] text-[12.5px] font-semibold"
               disabled={!!report}
-              onClick={() => runReport('summary')}
+              onClick={() => setAskNotes('summary')}
               title="Export challans plus every line item to Excel"
             >
               <FileSpreadsheet className="text-emerald-600" /> <span className="hidden sm:inline">Detailed View</span>
@@ -1088,6 +1100,20 @@ export function ChallansListPage() {
           onPrinted={clearSelection}
         />
       )}
+      {askNotes && (
+        <ReportNotesDialog
+          kind={askNotes}
+          onCancel={() => setAskNotes(null)}
+          onConfirm={(choice) => {
+            // Closed BEFORE the download starts, so the progress overlay is not
+            // stacked behind a dialog the user has already answered.
+            const kind = askNotes;
+            setAskNotes(null);
+            void runReport(kind, choice);
+          }}
+        />
+      )}
+
       <ReportDownloadOverlay
         open={!!report}
         title={report?.kind === 'summary' ? 'Detailed View' : 'Challan Summary'}

@@ -22,6 +22,7 @@ import { SettingsService } from '../settings/settings.service';
 import { AgentCommissionService } from '../agent-commission/agent-commission.service';
 import { DispatchService } from '../dispatch/dispatch.service';
 import { CreateChallanDto, DraftChallanDto, ItemHistoryQueryDto, PendingChallanQueryDto, ChallanQueryDto } from './dto/challan.dto';
+import { isDebitNote, type ChallanReportNotes, type NoteReportRow } from './challan-report.builder';
 
 const PREFIX_KEY = 'CHALLAN_PREFIXES';
 const FALLBACK_PREFIX = 'SSS';
@@ -779,6 +780,104 @@ export class ChallansService {
       include: { items: true },
     });
     return { items: rows.map((r) => this.map(r)) };
+  }
+
+  /**
+   * The debit / credit notes belonging to a report, on the SAME filters.
+   *
+   * Filter parity is the whole point. The file prints "Date Range: 01-04-2026
+   * to 09-09-2026" above the table, so a note sheet that ignored the range
+   * would make the header a lie about half the workbook.
+   *
+   * Debit notes are not fetched here: they are already in the challan rows the
+   * report was given (they live in the challan table), so they are filtered out
+   * of that list rather than queried again — one source, no chance of the two
+   * disagreeing. Credit notes have their own table and are queried.
+   */
+  async exportNotes(
+    q: ChallanQueryDto,
+    challans: ChallanDto[],
+    want: { debit: boolean; credit: boolean },
+  ): Promise<ChallanReportNotes> {
+    const kgsOf = (items: { kgs?: number | null }[] | undefined) =>
+      Math.round((items ?? []).reduce((a, it) => a + (it.kgs ?? 0), 0) * 100) / 100;
+
+    const debit = want.debit
+      ? challans.filter(isDebitNote).map(
+          (r): NoteReportRow => ({
+            code: r.code,
+            invDate: r.invDate,
+            customerName: r.customerName,
+            category: r.category,
+            billingRate: r.billingRate,
+            totalKgs: kgsOf(r.items),
+            b: r.b ?? 0,
+            c: r.c ?? 0,
+            tax: r.tax ?? 0,
+            total: r.total ?? 0,
+            refInvNos: '',
+            remarks: r.remarks,
+          }),
+        )
+      : null;
+
+    let credit: NoteReportRow[] | null = null;
+    if (want.credit) {
+      const rows = await this.prisma.creditNote.findMany({
+        where: this.creditNoteWhere(q, await this.agentScope(q)),
+        orderBy: [{ invDate: 'desc' }, { id: 'desc' }],
+        include: { items: true },
+      });
+      credit = rows.map(
+        (r): NoteReportRow => ({
+          code: r.code,
+          invDate: r.invDate.toISOString(),
+          customerName: r.customerName,
+          category: r.category,
+          billingRate: r.billingRate,
+          totalKgs: kgsOf(r.items),
+          b: r.b ?? 0,
+          c: r.c ?? 0,
+          tax: r.tax ?? 0,
+          total: r.total ?? 0,
+          // One note can credit lines from more than one sale, so every distinct
+          // reference is listed rather than just the first.
+          refInvNos: [...new Set(r.items.map((it) => (it.refInvNo ?? '').trim()).filter(Boolean))].join(', '),
+          remarks: r.remarks,
+        }),
+      );
+    }
+    return { debit, credit };
+  }
+
+  /**
+   * {@link listWhere} for the credit-note table.
+   *
+   * A separate builder rather than a cast: the two tables happen to share these
+   * column names today, but a `ChallanWhereInput` handed to `creditNote` would
+   * be a lie the compiler cannot check, and `challanStatus` — which the status
+   * filter uses — does not exist on a credit note at all. The status filter is
+   * therefore dropped here on purpose: a credit note has no CONFIRMED /
+   * CANCELLED state to match, and matching nothing would silently empty the
+   * sheet whenever the list happened to be filtered by status.
+   */
+  private creditNoteWhere(q: ChallanQueryDto, scope: AgentScope = null): Prisma.CreditNoteWhereInput {
+    const and: Prisma.CreditNoteWhereInput[] = [];
+    if (q.category?.trim()) and.push({ category: q.category.trim() });
+    if (scope) and.push({ OR: [{ customerId: { in: scope.ids } }, { customerName: { in: scope.names } }] });
+    if (q.dateFrom) {
+      const from = new Date(q.dateFrom);
+      from.setHours(0, 0, 0, 0);
+      and.push({ invDate: { gte: from } });
+    }
+    if (q.dateTo) {
+      const to = new Date(q.dateTo);
+      to.setHours(23, 59, 59, 999);
+      and.push({ invDate: { lte: to } });
+    }
+    const search = q.search?.trim();
+    if (search) and.push({ OR: [{ code: { contains: search } }, { customerName: { contains: search } }] });
+    return and.length ? { AND: and } : {};
   }
 
   async findOne(id: number): Promise<ChallanDto> {

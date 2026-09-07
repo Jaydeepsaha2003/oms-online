@@ -33,6 +33,11 @@ export interface ChallanReportMeta {
   search: string;
 }
 
+/** Is this challan row actually a debit note? They share the table — see the
+ *  note types in @oms/shared for why. */
+export const isDebitNote = (r: ChallanDto): boolean =>
+  (r.transaction ?? '').trim().toUpperCase() === 'DEBIT NOTE';
+
 /** DUE / OVER DUE text relative to today (mirrors the list's Due column). */
 function dueText(due: string | null | undefined): string {
   if (!due) return '—';
@@ -153,6 +158,105 @@ function addChallansSheet(wb: ExcelJS.Workbook, rows: ChallanDto[], meta: Challa
   fitColumns(ws, headerRow, cols);
 }
 
+/**
+ * One debit or credit note, as its sheet needs it.
+ *
+ * A shape of its own rather than a ChallanDto, even though a debit note IS
+ * stored as a challan: a credit note is not, and the two have to arrive at the
+ * same sheet builder. Everything either kind actually carries, and nothing it
+ * doesn't — a note has no Due or TDS in the sense the challan list means them,
+ * and columns of blanks are worse than columns that aren't there.
+ */
+export interface NoteReportRow {
+  code: string;
+  invDate: string;
+  customerName: string;
+  category: string | null;
+  billingRate: number | null;
+  totalKgs: number;
+  b: number;
+  c: number;
+  tax: number;
+  total: number;
+  /** The sale(s) the note refers to, off its item lines. Credit notes only —
+   *  challan_items has no refInvNo column, so a debit note has none to give. */
+  refInvNos: string;
+  remarks: string | null;
+}
+
+/**
+ * A "Debit Notes" / "Credit Notes" sheet.
+ *
+ * Its own sheet, not extra rows on the Challans one, because the money runs the
+ * other way: a credit note REDUCES what a party owes, and a TOTAL row that
+ * added it to a column of sales would report a figure that is true of nothing.
+ * Each sheet totals only its own kind.
+ */
+function addNotesSheet(wb: ExcelJS.Workbook, rows: NoteReportRow[], title: string, withRef: boolean): void {
+  const headers = [
+    'Date',
+    'Note No',
+    'Party',
+    'Category',
+    'Billing Rate (₹)',
+    'Total Kgs',
+    'B (₹)',
+    'C (₹)',
+    'GST (₹)',
+    'Total (₹)',
+    ...(withRef ? ['Ref Inv'] : []),
+    'Remarks',
+  ];
+  const cols = headers.length;
+  const ws = wb.addWorksheet(title, { views: [{ state: 'frozen', ySplit: 1 }] });
+  ws.addRow(headers);
+  styleHeader(ws, 1, cols);
+
+  for (const r of rows) {
+    ws.addRow([
+      asDate(r.invDate),
+      r.code,
+      r.customerName,
+      r.category ?? '—',
+      r.billingRate ?? '',
+      r.totalKgs,
+      r.b,
+      r.c,
+      r.tax,
+      r.total,
+      ...(withRef ? [r.refInvNos] : []),
+      r.remarks ?? '',
+    ]);
+  }
+  // Same two-decimal columns as the Challans sheet: rate, weight and the money.
+  const money = [5, 6, 7, 8, 9, 10];
+  styleBody(ws, 2, 1 + rows.length, cols, money, [1]);
+
+  const sum = (pick: (r: NoteReportRow) => number) =>
+    Math.round(rows.reduce((a, r) => a + pick(r), 0) * 100) / 100;
+  addTotalRow(
+    ws,
+    cols,
+    [
+      '',
+      '',
+      `${rows.length} note(s)`,
+      'TOTAL',
+      '',
+      sum((r) => r.totalKgs),
+      sum((r) => r.b),
+      sum((r) => r.c),
+      sum((r) => r.tax),
+      sum((r) => r.total),
+      ...(withRef ? [''] : []),
+      '',
+    ],
+    money,
+  );
+  if (rows.length) ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols } };
+  fitColumns(ws, 1, cols);
+}
+
 /** The "Challan Items" sheet — one row per line across every challan. */
 function addItemsSheet(wb: ExcelJS.Workbook, rows: ChallanDto[]): void {
   const headers = ['Inv Date', 'Challan No', 'Party', 'Product Name', 'Design', 'Bags', 'Pcs', 'Kgs', 'Box', 'Unit', 'Price (₹)', 'Amount (₹)', 'P.Category', 'Comment'];
@@ -191,10 +295,19 @@ function addItemsSheet(wb: ExcelJS.Workbook, rows: ChallanDto[]): void {
   fitColumns(ws, 1, cols);
 }
 
+/** The notes to add, and therefore which ones to take OUT of the challan list. */
+export interface ChallanReportNotes {
+  /** Debit notes, when the user asked for them. Null = not asked for, and the
+   *  DN rows then stay in the Challans sheet exactly as they always have. */
+  debit: NoteReportRow[] | null;
+  credit: NoteReportRow[] | null;
+}
+
 export async function buildChallanReport(
   rows: ChallanDto[],
   meta: ChallanReportMeta,
   kind: 'detailed' | 'summary',
+  notes: ChallanReportNotes = { debit: null, credit: null },
 ): Promise<Buffer> {
   const wb = newWorkbook();
   /*
@@ -203,7 +316,16 @@ export async function buildChallanReport(
    * items. The titles say what the file actually contains, matching the buttons.
    */
   const isItemised = kind === 'summary';
-  addChallansSheet(wb, rows, meta, isItemised ? 'SALES CHALLANS — DETAILED VIEW' : 'SALES CHALLANS — CHALLAN SUMMARY');
-  if (isItemised) addItemsSheet(wb, rows);
+  /*
+   * A debit note is stored IN the challan table, so it is already one of these
+   * rows. Once it has a sheet of its own it comes out of this one — the same
+   * document on two sheets, each with its own TOTAL, is how a figure gets
+   * counted twice. Nothing is removed when the user didn't ask for the sheet.
+   */
+  const challans = notes.debit ? rows.filter((r) => !isDebitNote(r)) : rows;
+  addChallansSheet(wb, challans, meta, isItemised ? 'SALES CHALLANS — DETAILED VIEW' : 'SALES CHALLANS — CHALLAN SUMMARY');
+  if (isItemised) addItemsSheet(wb, challans);
+  if (notes.debit) addNotesSheet(wb, notes.debit, 'Debit Notes', false);
+  if (notes.credit) addNotesSheet(wb, notes.credit, 'Credit Notes', true);
   return toBuffer(wb);
 }
