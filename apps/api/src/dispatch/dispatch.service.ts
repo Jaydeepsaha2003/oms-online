@@ -687,7 +687,20 @@ export class DispatchService implements OnModuleInit {
     if (query.design) {
       and.push({ OR: [{ orderItem: { design: query.design } }, { designType: query.design }] });
     }
-    if (query.dateFrom) and.push({ dispatchDate: { gte: new Date(query.dateFrom) } });
+    // Both ends are normalised to the LOCAL day, the same way Challans and
+    // Cheques already do it. `new Date('2026-09-05')` parses a date-only string
+    // as UTC midnight, but dispatchDate is not stored to one convention: most
+    // rows sit at local midnight (18:30Z here), some at UTC midnight, and the
+    // rest carry the wall-clock time they were saved at. Taking the raw UTC
+    // parse as the lower bound put it AFTER every local-midnight row for that
+    // day, so picking a date silently dropped them — most days came back empty
+    // while recent ones looked fine. setHours works in local time and covers
+    // all three conventions.
+    if (query.dateFrom) {
+      const start = new Date(query.dateFrom);
+      start.setHours(0, 0, 0, 0);
+      and.push({ dispatchDate: { gte: start } });
+    }
     if (query.dateTo) {
       const end = new Date(query.dateTo);
       end.setHours(23, 59, 59, 999);

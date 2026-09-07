@@ -80,6 +80,9 @@ import { useOrderItemPhotos } from '../orders/use-orders';
 
 const num = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? 0 : Number(s));
 const qty = (v: number | null) => (v ? v.toLocaleString('en-IN') : '—');
+/** Bags and kgs are fractional, so a column total has to be summed THEN rounded —
+ *  0.33 + 0.34 must not surface as 0.6699999999999999. */
+const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
 const STATUS_STYLE: Record<string, string> = {
   'PARTIALLY DISPATCH':
@@ -1113,6 +1116,29 @@ export function ModifyDispatchPage() {
     [items],
   );
 
+  // Quantity totals for the rows actually in view — deliberately the same scope
+  // as the page/line counts in the footer they sit above, so the two can never
+  // disagree. Ungrouped that is this page; grouped, every matching row is
+  // already fetched (see pageSize above), so it is the whole filtered set.
+  //
+  // RETURN rows carry NEGATIVE quantities — that is what puts stock back in the
+  // pending pool (see QtyCell) — so they SUBTRACT here rather than being
+  // skipped: the figure is what actually went out, net of what came back. That
+  // netting is invisible in a single number, so the strip says how many returns
+  // are in the mix; without it, re-adding the column by hand gives a different
+  // answer and the total looks wrong.
+  const totals = useMemo(() => {
+    let bags = 0, pcs = 0, kgs = 0, box = 0, returns = 0;
+    for (const d of items) {
+      if (isReturn(d)) returns++;
+      bags += d.bags ?? 0;
+      pcs += d.pcs ?? 0;
+      kgs += d.gram ?? 0;
+      box += d.box ?? 0;
+    }
+    return { bags: round2(bags), pcs: round2(pcs), kgs: round2(kgs), box: round2(box), returns };
+  }, [items]);
+
   const applyDatePreset = (p: string) => {
     if (p === datePreset) {
       setDatePreset('');
@@ -1779,6 +1805,35 @@ export function ModifyDispatchPage() {
           )}
         </div>
       </div>
+
+      {/* ── Quantity totals for the rows in view, above the pager ─────────────── */}
+      {items.length > 0 && (
+        <div className="bg-card flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-[4px] border px-3 py-2 shadow-sm">
+          <span className="text-muted-foreground text-[10px] font-bold tracking-widest uppercase">
+            {grouped ? 'Totals — all matching rows' : 'Totals — this page'}
+          </span>
+          {totals.returns > 0 && (
+            <span className="text-muted-foreground text-[11px] font-medium">
+              net of {totals.returns.toLocaleString('en-IN')} return{totals.returns === 1 ? '' : 's'}
+            </span>
+          )}
+          <div className="ml-auto flex flex-wrap items-center gap-x-5 gap-y-1.5">
+            {(
+              [
+                ['Bags', totals.bags],
+                ['Pcs', totals.pcs],
+                ['Kgs', totals.kgs],
+                ['Box', totals.box],
+              ] as const
+            ).map(([label, value]) => (
+              <span key={label} className="flex items-baseline gap-1.5">
+                <span className="text-muted-foreground text-[10px] font-bold tracking-widest uppercase">{label}</span>
+                <span className={cn(TEXT_CELL, 'tabular-nums')}>{qty(value)}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Footer: paging, or (grouped) a quick summary — there's no paging to do
           once every matching row has already been fetched for the subtotal. ── */}

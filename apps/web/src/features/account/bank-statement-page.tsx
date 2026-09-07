@@ -485,6 +485,12 @@ export function BankStatementPage() {
   /** Whether the current selection is already marked not-required, which
    *  decides whether the button offers to mark or to undo. */
   const checkedRows = useMemo(() => rows.filter((r) => checked.has(r.id)), [rows, checked]);
+  /** Ticked lines that Process could actually post. Drives the button's label,
+   *  so it never offers to post a matched line just because it was ticked. */
+  const selectedPostable = useMemo(
+    () => rows.filter((r) => r.status === 'UNMATCHED' && checked.has(r.id)).length,
+    [rows, checked],
+  );
   const allCheckedIgnored = checkedRows.length > 0 && checkedRows.every((r) => r.status === 'IGNORED');
   const run = runResult?.run;
   const isDraft = run?.status === 'DRAFT';
@@ -550,19 +556,46 @@ export function BankStatementPage() {
 
   const doProcess = async () => {
     if (!run) return;
-    const n = run.unmatchedCount;
-    const total = rows.filter((r) => r.status === 'UNMATCHED').reduce((s, r) => s + (r.amount - r.matchedAmount), 0);
+    /*
+     * Ticking lines narrows Process to those; ticking nothing posts every
+     * unmatched line, exactly as before. Only the POSTABLE ticked lines are
+     * counted here so the confirmation promises what will actually happen —
+     * ticking a matched line and a new one must not read as "post 2".
+     */
+    const postable = rows.filter((r) => r.status === 'UNMATCHED');
+    const selected = postable.filter((r) => checked.has(r.id));
+    const targets = selected.length ? selected : postable;
+    const onlySelected = selected.length > 0;
+    const n = targets.length;
+    if (!n) {
+      return toast.error(
+        onlySelected ? 'None of the ticked lines can be posted.' : 'Nothing to post — every line already matches a receipt or has no party.',
+      );
+    }
+    const total = targets.reduce((s, r) => s + (r.amount - r.matchedAmount), 0);
+    const ignoredTicks = checked.size - selected.length;
     const ok = await confirm({
-      title: `Post ${n} receipt${n === 1 ? '' : 's'} to the ledger?`,
+      title: onlySelected
+        ? `Post ${n} selected receipt${n === 1 ? '' : 's'} to the ledger?`
+        : `Post ${n} receipt${n === 1 ? '' : 's'} to the ledger?`,
       description:
         `${money0(total)} across ${n} line${n === 1 ? '' : 's'} the bank received but OMS has no receipt for. ` +
         `Each one is entered as an ordinary Receive Payment against its party${run.bankName ? ` in ${run.bankName}` : ''}, ` +
-        `allocated to invoices the usual way. Matched lines are left alone. This cannot be undone from here.`,
+        `allocated to invoices the usual way. Matched lines are left alone. This cannot be undone from here.` +
+        (onlySelected
+          ? ` The other ${postable.length - n} unposted line${postable.length - n === 1 ? '' : 's'} stay${postable.length - n === 1 ? 's' : ''} as ${postable.length - n === 1 ? 'it is' : 'they are'}, and this working stays open so you can post ${postable.length - n === 1 ? 'it' : 'them'} later.`
+          : '') +
+        (ignoredTicks > 0
+          ? ` ${ignoredTicks} ticked line${ignoredTicks === 1 ? '' : 's'} cannot be posted (already matched, no party, or not required) and ${ignoredTicks === 1 ? 'is' : 'are'} left out.`
+          : ''),
       confirmText: `Post ${n} receipt${n === 1 ? '' : 's'}`,
     });
     if (!ok) return;
-    process.mutate(undefined, {
+    process.mutate(onlySelected ? targets.map((r) => r.id) : undefined, {
       onSuccess: (res) => {
+        // Drop the ticks: those lines are posted now, and a selection left
+        // behind would silently narrow the NEXT Process to lines already done.
+        setChecked(new Set());
         if (res.created.length) toast.success(`${res.created.length} receipt${res.created.length === 1 ? '' : 's'} posted`);
         if (res.failed.length) {
           toast.warning(`${res.failed.length} could not be posted — ${res.failed[0].reason}`, { duration: 12000 });
@@ -939,14 +972,16 @@ export function BankStatementPage() {
                     onClick={() => void doProcess()}
                     disabled={process.isPending || !run?.unmatchedCount}
                     title={
-                      run?.unmatchedCount
-                        ? `Create ${run.unmatchedCount} receipts in the ledger`
-                        : 'Nothing to post — every line already matches a receipt, or has no party'
+                      selectedPostable
+                        ? `Create ${selectedPostable} receipt(s) from the ticked lines — the rest stay for later`
+                        : run?.unmatchedCount
+                          ? `Create ${run.unmatchedCount} receipts in the ledger`
+                          : 'Nothing to post — every line already matches a receipt, or has no party'
                     }
                     className="bg-emerald-600 font-bold text-white hover:bg-emerald-700"
                   >
                     {process.isPending ? <Loader2 className="animate-spin" /> : <ArrowRight className="size-4" />}
-                    Process {run?.unmatchedCount ? `(${run.unmatchedCount})` : ''}
+                    {selectedPostable ? `Process selected (${selectedPostable})` : `Process ${run?.unmatchedCount ? `(${run.unmatchedCount})` : ''}`}
                   </Button>
                 )}
               </div>

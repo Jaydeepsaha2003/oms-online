@@ -348,7 +348,7 @@ export class BankStatementService {
       .filter((c) => c.name.length > 2);
 
     // Receipt vouchers across ALL parties in the range, for rule 3.
-    const receipts = await this.receiptVouchers(null, run.fromDate, run.toDate);
+    const receipts = await this.receiptVouchers(null, run.fromDate, run.toDate, run.bankName);
 
     for (const row of rows) {
       let customerId: number | null = null;
@@ -432,7 +432,7 @@ export class BankStatementService {
     const updates: { id: number; status: BankRowStatus; matchedRefs: string | null; matchedAmount: number }[] = [];
 
     for (const [customerId, partyRows] of byParty) {
-      const vouchers = (await this.receiptVouchers(customerId, run.fromDate, run.toDate)).map((v) => ({ ...v, used: false }));
+      const vouchers = (await this.receiptVouchers(customerId, run.fromDate, run.toDate, run.bankName)).map((v) => ({ ...v, used: false }));
 
       // Pass 1 — line level, nearest date.
       for (const row of partyRows) {
@@ -493,6 +493,7 @@ export class BankStatementService {
     customerId: number | null,
     from: Date,
     to: Date,
+    bankName?: string | null,
   ): Promise<{ refId: string; custId: number; recDate: Date; amount: number }[]> {
     const rows = await this.prisma.acctPaymentReceipt.findMany({
       where: {
@@ -501,12 +502,40 @@ export class BankStatementService {
         payMode: { in: ['BANK', 'CHEQUE'] },
         recDate: { gte: from, lt: new Date(to.getTime() + DAY) },
       },
-      select: { refId: true, custId: true, recDate: true, recAmt: true },
+      select: { refId: true, custId: true, recDate: true, recAmt: true, bankName: true },
     });
+    /*
+     * Only receipts banked into the SAME bank as this statement can account for
+     * its credits.
+     *
+     * Without this a party paying into two of our accounts had its Axis credits
+     * "already accounted for" by its ICICI receipts — the reconciliation
+     * reported money as reconciled against a receipt that never touched that
+     * account, and Process then declined to create the one genuinely missing.
+     *
+     * Compared at INSTITUTION level, not on the literal string. The same
+     * account is written seven different ways in this book ("AXIS BANK",
+     * "AXIS BANK-0884", "AXIS BANK-8254", "AXIS BANK LTD"...), so an exact
+     * comparison drops 112 of 231 real matches on one run and every match on
+     * another. The institution is the part that is recorded reliably, and it is
+     * what separates Axis money from ICICI money — the distinction that was
+     * actually wrong.
+     *
+     * A receipt with no bank recorded is kept: it predates the field, and
+     * dropping it would silently unmatch history.
+     */
+    const institution = (v: string | null | undefined) =>
+      (v ?? '')
+        .toUpperCase()
+        .replace(/[^A-Z ]+.*$/, '')
+        .replace(/\b(LTD|LIMITED)\b/g, '')
+        .trim();
+    const want = institution(bankName);
+    const inScope = want ? rows.filter((r) => !r.bankName?.trim() || institution(r.bankName) === want) : rows;
     // One Receive Payment voucher writes one row PER INVOICE it allocated to,
     // all sharing a refId. The bank saw the voucher, not the allocations.
     const byRef = new Map<string, { refId: string; custId: number; recDate: Date; amount: number }>();
-    for (const r of rows) {
+    for (const r of inScope) {
       const cur = byRef.get(r.refId);
       if (cur) cur.amount = r2(cur.amount + r.recAmt);
       else byRef.set(r.refId, { refId: r.refId, custId: r.custId, recDate: r.recDate, amount: r2(r.recAmt) });
@@ -632,7 +661,7 @@ export class BankStatementService {
     const matchedTotal = r2(live.filter((r) => accounted.includes(r.status)).reduce((s, r) => s + r.amount, 0));
     const shortfall = r2(live.filter((r) => r.status === 'UNMATCHED').reduce((s, r) => s + (r.amount - r.matchedAmount), 0));
 
-    const vouchers = await this.receiptVouchers(customerId, run.fromDate, run.toDate);
+    const vouchers = await this.receiptVouchers(customerId, run.fromDate, run.toDate, run.bankName);
     const omsTotal = r2(vouchers.reduce((s, v) => s + v.amount, 0));
 
     const before = await this.balanceOf(customerId, customer.partyName ?? '', vouchers.length, omsTotal);
@@ -720,14 +749,28 @@ export class BankStatementService {
    * invoices exactly as a hand-entered receipt would — there is no second
    * posting path to keep in step with the first.
    */
-  async process(runId: number, userName?: string | null): Promise<BankStatementProcessResult> {
+  async process(runId: number, userName?: string | null, rowIds?: number[]): Promise<BankStatementProcessResult> {
     const run = await this.mustBeDraft(runId);
+    /*
+     * `rowIds` posts only the lines the user ticked; omitted, every unmatched
+     * line goes, which is the usual case and stays the default.
+     *
+     * The status filter is applied REGARDLESS. A ticked line that is already
+     * matched or posted must not be forced through just because it was
+     * selected — the tick chooses among the postable lines, it does not
+     * override what makes a line postable.
+     */
+    const picked = rowIds?.length ? [...new Set(rowIds)] : null;
     const rows = await this.prisma.bankStatementRow.findMany({
-      where: { runId, status: 'UNMATCHED' },
+      where: { runId, status: 'UNMATCHED', ...(picked ? { id: { in: picked } } : {}) },
       orderBy: [{ txnDate: 'asc' }, { id: 'asc' }],
     });
     if (!rows.length) {
-      throw new BadRequestException('Nothing to post — every line either matches a receipt already or has no party.');
+      throw new BadRequestException(
+        picked
+          ? 'None of the selected lines can be posted — each one either matches a receipt already, has no party, or is marked not required.'
+          : 'Nothing to post — every line either matches a receipt already or has no party.',
+      );
     }
 
     const created: BankStatementProcessResult['created'] = [];
@@ -775,9 +818,19 @@ export class BankStatementService {
       }
     }
 
-    // Processed only when something actually landed — a run that failed
-    // entirely stays a draft so it can be fixed and run again.
-    if (created.length) {
+    /*
+     * Processed only when something landed AND nothing postable is left.
+     *
+     * A run that failed entirely stays a draft so it can be fixed and run
+     * again — and now that a subset can be posted on its own, so does a run
+     * with lines still to go. Marking the whole run PROCESSED after posting
+     * ten of twenty made it read-only and stranded the other ten with no way
+     * to post them at all.
+     */
+    const stillPostable = created.length
+      ? await this.prisma.bankStatementRow.count({ where: { runId, status: 'UNMATCHED' } })
+      : 0;
+    if (created.length && stillPostable === 0) {
       await this.prisma.bankStatementRun.update({
         where: { id: runId },
         data: { status: 'PROCESSED', processedAt: new Date() },
@@ -888,15 +941,23 @@ export class BankStatementService {
     const reopened: BankStatementRecheckResult['reopened'] = [];
     for (const row of posted) {
       const ref = (row.postedRef ?? '').trim();
-      // `postedRef` holds the voucher number Receive Payment issued, which lands
-      // in the receipt table as refRecId (and sourceVoucherNo on newer rows) —
-      // NOT refId, which is the REC-xxxx allocation key. Both are checked so a
-      // receipt written either way still counts as present.
-      const alive = ref
-        ? await this.prisma.acctPaymentReceipt.count({
-            where: { OR: [{ refRecId: ref }, { sourceVoucherNo: ref }] },
-          })
-        : 0;
+      /*
+       * Does the VOUCHER still exist? Asked of the ledger, which is the record
+       * of the voucher itself.
+       *
+       * Emphatically NOT asked of acct_payment_receipt. Those rows are the
+       * per-invoice ALLOCATIONS, and a receipt that was taken entirely to
+       * advance — money in with no invoice to put it against — writes none of
+       * them at all. Four live receipts in this book are exactly that shape
+       * (RN/721, RN/722, RN/734, RN/755: ledger row present, advance row
+       * present, allocation rows correctly absent). Testing the allocations
+       * read all four as deleted, which would have reopened them and had
+       * Process issue a SECOND receipt for money already banked.
+       *
+       * Deleting a receipt removes its ledger voucher, so absence here is the
+       * real signal — and it stays right whichever way the money was applied.
+       */
+      const alive = ref ? await this.prisma.acctLedger.count({ where: { voucherNo: ref } }) : 0;
       if (alive > 0) continue;
       reopened.push({
         rowId: row.id,
@@ -929,9 +990,22 @@ export class BankStatementService {
           data: { status: 'DRAFT', processedAt: null },
         });
       });
-      // Re-score every reopened line against the ledger as it stands now.
-      await this.rematch(runId);
     }
+
+    /*
+     * Re-score against the ledger as it stands NOW — always, not only when a
+     * line was reopened.
+     *
+     * A saved verdict is a snapshot of a moment: receipts move, get deleted,
+     * get banked elsewhere, and the matching rules themselves change. Run #3
+     * had every PNB credit reading "already accounted for" against receipts
+     * that turned out to be in a different bank; with nothing to reopen, a
+     * reopen-only rematch would have left that verdict on screen forever.
+     *
+     * Safe to repeat: `rematch` is idempotent, and it skips IGNORED and POSTED
+     * lines, so nothing settled is disturbed.
+     */
+    await this.rematch(runId);
 
     return {
       runId,

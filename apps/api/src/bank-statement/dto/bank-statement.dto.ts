@@ -56,4 +56,19 @@ export class BankStatementIgnoreDto {
   @IsOptional() @IsBoolean() ignored?: boolean;
 }
 
+/**
+ * Which lines Process should post.
+ *
+ * Omitted (or empty) means every unmatched line, which is the ordinary case and
+ * the behaviour this screen has always had. Supplying ids narrows it to the
+ * ticked ones — the status filter still applies on the server, so a tick can
+ * choose among the postable lines but never make an unpostable one post.
+ */
+export class BankStatementProcessDto {
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  rowIds?: number[];
+}
+
 export class BankStatementRunsQueryDto extends PaginationDto {}

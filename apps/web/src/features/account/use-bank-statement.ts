@@ -110,7 +110,10 @@ export function useRecheckBankRun(runId: number | undefined) {
 export function useProcessBankRun(runId: number | undefined) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => http.post<BankStatementProcessResult>(`/bank-statement/runs/${runId}/process`, {}),
+    // `rowIds` posts only the ticked lines; omitted posts every unmatched one,
+    // which is the default this screen has always had.
+    mutationFn: (rowIds?: number[]) =>
+      http.post<BankStatementProcessResult>(`/bank-statement/runs/${runId}/process`, rowIds?.length ? { rowIds } : {}),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });
       // Receipts were created, so anything that reads the ledger is now stale.

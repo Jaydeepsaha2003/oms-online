@@ -9,6 +9,7 @@ import {
   BankStatementAssignDto,
   BankStatementCreateDto,
   BankStatementIgnoreDto,
+  BankStatementProcessDto,
   BankStatementRunsQueryDto,
 } from './dto/bank-statement.dto';
 
@@ -71,8 +72,12 @@ export class BankStatementController {
   @Post('runs/:id/process')
   @Permissions(perm(R, ACTIONS.UPDATE))
   @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Posted receipts from a bank statement' })
-  process(@Param('id', ParseIntPipe) id: number, @CurrentUser('name') userName?: string) {
-    return this.svc.process(id, userName);
+  process(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: BankStatementProcessDto,
+    @CurrentUser('name') userName?: string,
+  ) {
+    return this.svc.process(id, userName, dto?.rowIds);
   }
 
   /** Re-check a run against the ledger as it stands now, reopening any line
