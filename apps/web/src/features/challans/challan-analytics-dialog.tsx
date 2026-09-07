@@ -22,6 +22,20 @@ function moneyShort(v: number | null | undefined): string {
   return `₹ ${n.toLocaleString('en-IN')}`;
 }
 const count = (v: number | null | undefined) => (v ?? 0).toLocaleString('en-IN');
+/**
+ * One leg's share of the two, bracketed — "(79%)".
+ *
+ * Empty string when there is nothing to divide, rather than "(0%)": with no
+ * challans in the range a 0% share is not a fact about the split, it is the
+ * absence of one. Whole numbers, because a tenth of a percent on a two-way
+ * split is noise at the width of a KPI tile.
+ */
+const legShare = (part: number | null | undefined, other: number | null | undefined): string => {
+  const a = part ?? 0;
+  const total = a + (other ?? 0);
+  if (total <= 0) return '';
+  return `(${Math.round((a / total) * 100)}%)`;
+};
 
 /** Filter-field label: the same quiet, tracked-out caption the KPI figures use,
  *  so the control strip reads as part of the same screen rather than a form
@@ -485,8 +499,23 @@ export function ChallanAnalyticsDialog({ open, onOpenChange, base }: Props) {
               <Fig label="Sales" value={moneyShort(t.totalSales)} hint={money(t.totalSales)} />
               <Fig label="Challans" value={count(t.count)} sub={moneyShort(t.totalSales)} hint={`avg ${money(t.avgValue)}`} />
               <Fig label="Bags" value={count(t.totalBags)} hint="across all lines" />
-              <Fig label="Billed (B)" value={moneyShort(t.totalB)} hint={money(t.totalB)} />
-              <Fig label="Cash (C)" value={moneyShort(t.totalC)} hint={money(t.totalC)} />
+              {/*
+                * Bank and Cash, each with its share of the two in brackets.
+                *
+                * The share is of B + C, NOT of Sales. B and C are the two halves
+                * a challan's value is split into, so against their own sum the
+                * two brackets always add to 100% and the pair reads as a split.
+                * Against Sales they would not quite — a handful of challans
+                * carry TDS, which is in `total` but in neither leg — and two
+                * percentages that fail to reach 100 read as a bug.
+                *
+                * Labelled Bank, not "Billed": every accounting screen in the
+                * app treats `challan.b` as the bank leg (Party Ledger's Bank
+                * Dr/Cr, Receive Payment's Bank Cr, the Tally comparison), and
+                * this was the one place calling it something else.
+                */}
+              <Fig label="Bank (B)" value={`${moneyShort(t.totalB)} ${legShare(t.totalB, t.totalC)}`} hint={`${money(t.totalB)} — bank leg`} />
+              <Fig label="Cash (C)" value={`${moneyShort(t.totalC)} ${legShare(t.totalC, t.totalB)}`} hint={`${money(t.totalC)} — cash leg`} />
               <Fig label="GST" value={moneyShort(t.totalGst)} hint={money(t.totalGst)} />
               <Fig label="Freight" value={money(t.totalFreight)} />
               <Fig label="Packing" value={money(t.totalPacking)} />

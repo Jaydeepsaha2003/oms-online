@@ -46,7 +46,7 @@ function dueText(due: string | null | undefined): string {
 
 /** The "Challans" sheet — title, the filters it was run with, then the table. */
 function addChallansSheet(wb: ExcelJS.Workbook, rows: ChallanDto[], meta: ChallanReportMeta, title: string): void {
-  const headers = ['Date', 'Challan No', 'Party', 'Category', 'B (₹)', 'C (₹)', 'GST (₹)', 'TDS (₹)', 'Total (₹)', 'Due', 'Status', 'Remarks'];
+  const headers = ['Date', 'Challan No', 'Party', 'Category', 'Billing Rate (₹)', 'B (₹)', 'C (₹)', 'GST (₹)', 'TDS (₹)', 'Total (₹)', 'Due', 'Status', 'Remarks'];
   const cols = headers.length;
   /*
    * The header row is computed, not counted.
@@ -81,6 +81,16 @@ function addChallansSheet(wb: ExcelJS.Workbook, rows: ChallanDto[], meta: Challa
       r.code,
       r.customerName,
       r.category ?? '—',
+      /*
+       * The party's billing rate as it stood when this challan was raised —
+       * snapshotted onto the challan, not read back off the customer master, so
+       * an old bill keeps the rate it was actually billed at.
+       *
+       * Blank, never 0, when the challan carries none. Roughly a third of them
+       * don't, and a zero in a money column reads as "billed at nothing" rather
+       * than "not recorded".
+       */
+      r.billingRate ?? '',
       r.b ?? 0,
       r.c ?? 0,
       r.tax ?? 0,
@@ -91,14 +101,18 @@ function addChallansSheet(wb: ExcelJS.Workbook, rows: ChallanDto[], meta: Challa
       r.remarks ?? '',
     ]);
   }
-  const money = [5, 6, 7, 8, 9];
+  // Billing Rate joins the money columns at 5; B/C/GST/TDS/Total shift right one.
+  const money = [5, 6, 7, 8, 9, 10];
   styleBody(ws, headerRow + 1, headerRow + rows.length, cols, money, [1]);
 
   const sum = (pick: (r: ChallanDto) => number | null | undefined) => rows.reduce((s, r) => s + (pick(r) ?? 0), 0);
   addTotalRow(
     ws,
     cols,
-    ['', '', `${rows.length} challan(s)`, 'TOTAL', sum((r) => r.b), sum((r) => r.c), sum((r) => r.tax), sum((r) => r.tds), sum((r) => r.total), '', '', ''],
+    // Billing Rate is left blank in the total row on purpose: it is a rate per
+    // Kg, so a column sum would be a meaningless number and an unweighted mean
+    // across different parties would be a misleading one.
+    ['', '', `${rows.length} challan(s)`, 'TOTAL', '', sum((r) => r.b), sum((r) => r.c), sum((r) => r.tax), sum((r) => r.tds), sum((r) => r.total), '', '', ''],
     money,
   );
 
