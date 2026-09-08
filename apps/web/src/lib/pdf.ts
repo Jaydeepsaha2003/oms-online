@@ -215,6 +215,19 @@ function filenameFromHeaders(headers: unknown): string | undefined {
  *  otherwise it opens the PDF in a tab reserved up-front (synchronously in the tap
  *  gesture) so iOS Safari doesn't block it as a post-await popup. Pass `filename`
  *  for a friendly name; it falls back to the server's Content-Disposition. */
+/**
+ * Fetch a generated PDF and hand back the bytes, WITHOUT navigating anywhere.
+ *
+ * The counterpart to `openPdf` for screens that preview in place: `openPdf`
+ * must reserve its tab inside the click gesture (or the popup blocker eats it),
+ * which makes it useless when the document is going into a dialog on the
+ * current page. This just fetches.
+ */
+export async function fetchPdf(url: string, fallbackName = 'document.pdf'): Promise<{ blob: Blob; filename: string }> {
+  const res = await api.get(url, { responseType: 'blob' });
+  return { blob: res.data as Blob, filename: filenameFromHeaders(res.headers) || fallbackName };
+}
+
 export async function openPdf(url: string, filename?: string): Promise<void> {
   // Reserve a tab now, inside the gesture; filled in (or closed) after the fetch.
   const tab = window.open('', '_blank');

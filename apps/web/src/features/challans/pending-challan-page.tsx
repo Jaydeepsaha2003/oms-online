@@ -12,6 +12,7 @@ import {
   Search,
   Users,
   X,
+  Lock,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { PendingChallanLine } from '@oms/shared';
@@ -232,6 +233,18 @@ export function PendingChallanPage() {
   /** The one customer the in-progress challan is for — null when nothing is ticked
    *  or the selection spans several customers. Drives the row de-emphasis below. */
   const activeParty = selectedParties.length === 1 ? selectedParties[0] : null;
+  /**
+   * Who, if anyone, is mid-dispatch on the party being billed.
+   *
+   * Read off the TICKED rows rather than the page: a lock on some other party
+   * further down the list is none of this challan's business. The server flags
+   * every row of a party whose order is being dispatched — including rows the
+   * holder is not personally on — so any ticked row carrying a name is enough.
+   */
+  const blockedBy = useMemo(
+    () => [...selected.values()].map((r) => r.lockedByName).find(Boolean) ?? null,
+    [selected],
+  );
   // Count the party's complete pending pool, not just rows on the current page or
   // under the active screen filters. This decides whether the selection is partial.
   const { refetch: refetchActivePartyPending } = usePendingChallans(
@@ -739,13 +752,39 @@ export function PendingChallanPage() {
               </span>
             )}
             {canCreate && (
-              <Button onClick={createChallan} disabled={selectedCount === 0} className="h-9 flex-1 rounded-[4px] text-[13px] font-bold sm:flex-none" title="Create a challan from the selected lines — one customer (Ctrl+C)">
+              <Button
+                onClick={createChallan}
+                disabled={selectedCount === 0 || !!blockedBy}
+                className="h-9 flex-1 rounded-[4px] text-[13px] font-bold sm:flex-none"
+                title={
+                  blockedBy
+                    ? `${blockedBy} is dispatching this party right now — the total is still moving. Wait until they finish, then refresh.`
+                    : 'Create a challan from the selected lines — one customer (Ctrl+C)'
+                }
+              >
                 <ClipboardList className="size-4" /> Create Challan
               </Button>
             )}
           </div>
         </div>
       </div>
+
+      {/*
+        Somebody is mid-dispatch on the party being billed.
+
+        Said plainly rather than left to a greyed-out button: the reason is not
+        on this screen — it is another person, on another screen, adding more to
+        this same party — so nothing here would explain the block on its own.
+      */}
+      {blockedBy && (
+        <div className="flex items-center gap-2 rounded-[4px] border border-amber-400 bg-amber-50 px-3 py-2 text-[12.5px] font-medium text-amber-900 dark:border-amber-400/40 dark:bg-amber-400/10 dark:text-amber-200">
+          <Lock className="size-4 shrink-0" />
+          <span>
+            <strong>{blockedBy}</strong> is dispatching this party right now, so more lines may still be coming.
+            Creating a challan would bill a total that is still moving — wait until they finish, then press refresh.
+          </span>
+        </div>
+      )}
 
       {/* ── Summary strip: what's in front of you, at a glance ──────────────────
           Quantities are sums of the rows on this page (the API paginates and sends

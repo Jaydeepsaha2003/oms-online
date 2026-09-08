@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Check, Loader2, PackageOpen, Plus, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { CreateBookingInput } from '@oms/shared';
+import { BOOKING_NO_CATEGORY } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { useConfirm } from '@/components/common/confirm';
 import { Button } from '@/components/ui/button';
@@ -59,12 +60,29 @@ export function BookingFormPage() {
   };
 
   const addLine = () => {
+    /*
+     * The category is OPTIONAL.
+     *
+     * A party often reserves capacity before deciding what to make of it —
+     * "hold me 81 bags" — and forcing a category there made the operator invent
+     * one, so the booking recorded a decision nobody had taken.
+     *
+     * Leaving it blank is safe by the server's own rules: the per-category cap
+     * is only applied to a line whose category MATCHES one actually booked, so
+     * a blank line caps nothing and only the booking TOTAL binds. Rates are
+     * unaffected too — they are snapshotted per customer and priced from the
+     * booking date, never from the category.
+     */
     const cat = lineCategory.trim().toUpperCase();
-    if (!cat) return toast.error('Pick a product category');
     const bagsN = n(lineBags) ?? 0;
     const kgsN = n(lineKgs) ?? 0;
     if (bagsN <= 0 && kgsN <= 0) return toast.error('Enter bags and/or kgs for this line');
-    if (lines.some((l) => l.category === cat)) return toast.error(`${cat} is already added — remove it first to change the quantity`);
+    // One unspecified line only: a second one is the same "not decided yet"
+    // bucket, and two of them just split a number that has no reason to be split.
+    if (!cat && lines.some((l) => !l.category)) {
+      return toast.error('There is already a line with no category — remove it first to change the quantity');
+    }
+    if (cat && lines.some((l) => l.category === cat)) return toast.error(`${cat} is already added — remove it first to change the quantity`);
     setLines((ls) => [...ls, { key: String(keyer.current++), category: cat, bags: lineBags, kgs: lineKgs }]);
     setLineCategory('');
     setLineBags('');
@@ -78,10 +96,10 @@ export function BookingFormPage() {
   const submitRef = useRef<() => void>(() => {});
   const submit = async () => {
     if (!customer.trim()) return toast.error('Please select a customer');
-    if (!lines.length) return toast.error('Add at least one product-category line (bags and/or kgs)');
+    if (!lines.length) return toast.error('Add at least one line (bags and/or kgs)');
     const ok = await confirm({
       title: 'Create this booking?',
-      description: `${lines.length} line(s) — ${lines.map((l) => `${l.bags || 0} bag / ${l.kgs || 0} kg ${l.category}`).join(', ')} — reserved for "${customer.trim()}". Rates are frozen as of ${bookingDate}.`,
+      description: `${lines.length} line(s) — ${lines.map((l) => `${l.bags || 0} bag / ${l.kgs || 0} kg ${l.category || BOOKING_NO_CATEGORY}`).join(', ')} — reserved for "${customer.trim()}". Rates are frozen as of ${bookingDate}.`,
       confirmText: 'Create booking',
     });
     if (!ok) return;
@@ -179,8 +197,8 @@ export function BookingFormPage() {
         <CardContent className="space-y-2 px-4 py-3">
           <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-4">
             <div className="col-span-2 space-y-1 sm:col-span-2">
-              <Label className="text-base">Product category</Label>
-              <NativeSelect value={lineCategory} onChange={setLineCategory} options={productCategories} placeholder="e.g. GLASS" />
+              <Label className="text-base">Product category <span className="text-muted-foreground font-normal">(optional)</span></Label>
+              <NativeSelect value={lineCategory} onChange={setLineCategory} options={productCategories} placeholder="Leave blank if not decided" />
             </div>
             <div className="space-y-1">
               <Label className="text-base">Bags</Label>
@@ -211,7 +229,9 @@ export function BookingFormPage() {
                 <tbody className="[&_td]:border-t [&_td]:px-3 [&_td]:py-2">
                   {lines.map((l) => (
                     <tr key={l.key}>
-                      <td className="font-medium">{l.category}</td>
+                      <td className="font-medium">
+                        {l.category || <span className="text-muted-foreground italic">{BOOKING_NO_CATEGORY}</span>}
+                      </td>
                       <td className="text-right tabular-nums">{l.bags || '—'}</td>
                       <td className="text-right tabular-nums">{l.kgs || '—'}</td>
                       <td className="text-center">

@@ -18,6 +18,7 @@ import {
   type RateChangeEntry,
   type RateHistoryKind,
   resolveSpecialRates,
+  withinBooked,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { PdfService } from '../pdf/pdf.service';
@@ -123,7 +124,10 @@ export class BookingsService {
         comment: toStr(dto.comment),
         rateSnapshot: JSON.stringify(snapshot),
         userName: userName ?? null,
-        items: { create: items.map((it) => ({ pCategory: it.pCategory, bags: it.bags, kgs: it.kgs })) },
+        // `pCategory ?? ''` — the column is non-null, and an omitted category is
+        // stored as the empty string. That is what makes it match nothing in the
+        // per-category conversion check, so only the booking total binds.
+        items: { create: items.map((it) => ({ pCategory: it.pCategory ?? '', bags: it.bags, kgs: it.kgs })) },
       },
       include: INCLUDE,
     });
@@ -161,7 +165,7 @@ export class BookingsService {
       }
       data.bags = round2(items.reduce((s, it) => s + it.bags, 0));
       data.kgs = round2(items.reduce((s, it) => s + it.kgs, 0));
-      data.items = { deleteMany: {}, create: items.map((it) => ({ pCategory: it.pCategory, bags: it.bags, kgs: it.kgs })) };
+      data.items = { deleteMany: {}, create: items.map((it) => ({ pCategory: it.pCategory ?? '', bags: it.bags, kgs: it.kgs })) };
       itemsChanged = true;
     }
 
@@ -690,7 +694,10 @@ export class BookingsService {
     // Per-category draw-down — matched by pCategory against the real order lines
     // that reference this booking, so each booked line's own remaining tracks
     // independently of the others (e.g. GLASS's 1 bag vs CUP's 1 bag).
+    let absorbedBags = 0;
+    let absorbedKgs = 0;
     for (const bookingItem of booking.items) {
+      if (!bookingItem.pCategory) continue; // the unspecified bucket is settled below
       const matching = live.filter((it) => (uc(it.pCategory) ?? '') === bookingItem.pCategory);
       // An overage draw carries its own pCategory (it has no OrderItem to read
       // one off), so the extra bag comes out of the category it actually was.
@@ -701,8 +708,30 @@ export class BookingsService {
       const itemConvertedKgs = round2(
         matching.reduce((s, it) => s + (it.gram ?? 0), 0) + matchingDraws.reduce((s, d) => s + (d.kgs ?? 0), 0),
       );
+      absorbedBags = round2(absorbedBags + itemConvertedBags);
+      absorbedKgs = round2(absorbedKgs + itemConvertedKgs);
       if (itemConvertedBags !== bookingItem.convertedBags || itemConvertedKgs !== bookingItem.convertedKgs) {
         await this.prisma.bookingItem.update({ where: { id: bookingItem.id }, data: { convertedBags: itemConvertedBags, convertedKgs: itemConvertedKgs } });
+      }
+    }
+
+    /*
+     * The line booked WITHOUT a category takes whatever the named ones did not.
+     *
+     * It cannot be matched by name — that is the whole point of it — so the
+     * name-matching above would never draw it down at all: a booking of "81
+     * bags, category not decided", fully converted into GLASS, would show its
+     * header as CONVERTED while the line underneath still read "81 remaining".
+     *
+     * Taking the remainder keeps the two consistent by construction: the item
+     * totals always add up to the booking's own converted figure, whichever
+     * categories the order eventually turned out to be.
+     */
+    const openItem = booking.items.find((it) => !it.pCategory);
+    if (openItem) {
+      const rest = { bags: Math.max(0, round2(convertedBags - absorbedBags)), kgs: Math.max(0, round2(convertedKgs - absorbedKgs)) };
+      if (rest.bags !== openItem.convertedBags || rest.kgs !== openItem.convertedKgs) {
+        await this.prisma.bookingItem.update({ where: { id: openItem.id }, data: { convertedBags: rest.bags, convertedKgs: rest.kgs } });
       }
     }
 
@@ -1309,14 +1338,31 @@ export class BookingsService {
   }
 
   /** Clean + validate the create/update item lines: uppercase category, coerce
-   *  numbers, drop blank rows, require at least one usable line. */
+   *  numbers, drop rows with no quantity, require at least one usable line. */
   private normalizeItems(items: CreateBookingItemDto[]): { pCategory: string; bags: number; kgs: number }[] {
     const cleaned = (items ?? [])
       .map((it) => ({ pCategory: (uc(it.pCategory) ?? '') as string, bags: toNum(it.bags) ?? 0, kgs: toNum(it.kgs) ?? 0 }))
-      .filter((it) => it.pCategory && (it.bags > 0 || it.kgs > 0));
-    if (!cleaned.length) throw new BadRequestException('Add at least one category line with bags and/or kgs.');
+      // A line earns its place by carrying a QUANTITY, not a category. The
+      // category is optional — a party can reserve capacity before deciding what
+      // to make of it — and requiring one here silently discarded exactly those
+      // lines, so a booking of "81 bags, category not decided" arrived at the
+      // server as an empty list and was refused as if nothing had been entered.
+      .filter((it) => it.bags > 0 || it.kgs > 0);
+    if (!cleaned.length) throw new BadRequestException('Add at least one line with bags and/or kgs.');
     const seen = new Set<string>();
+    let blank = 0;
     for (const it of cleaned) {
+      // Blank categories are all the same "not decided yet" bucket, so more than
+      // one just splits a number with no reason to be split — but they must not
+      // be reported as a duplicate of each other by name, which would read as
+      // "' ' is listed more than once".
+      if (!it.pCategory) {
+        blank += 1;
+        if (blank > 1) {
+          throw new BadRequestException('Only one line can be left without a category — combine them into one.');
+        }
+        continue;
+      }
       if (seen.has(it.pCategory)) throw new BadRequestException(`${it.pCategory} is listed more than once — combine it into one line.`);
       seen.add(it.pCategory);
     }
@@ -1350,21 +1396,6 @@ export class BookingsService {
 
 function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
-}
-
-/**
- * Is a draw of `want` allowed against `remaining` of a dimension the booking
- * reserved `booked` of?
- *
- * A booking is denominated in bags, in kgs, or in both. A bags-only booking
- * (kgs = 0) reserves no kgs at all, so the kgs on a drawn line are a derived
- * detail of that line (bags x the party's kgs-per-bag), NOT a draw against the
- * booking — checking them against a remaining of 0 rejected every possible line.
- * So a dimension only constrains the draw when the booking actually books it.
- */
-function withinBooked(want: number, remaining: number, booked: number): boolean {
-  if (booked <= 0) return true;
-  return want - remaining <= 0.001;
 }
 
 /* ── Booking PDF document (Tally-style black & white) ────────────────────── */
@@ -1470,7 +1501,15 @@ function buildBookingPdfDoc(b: BookingPdfData): TDocumentDefinitions {
   const head = (text: string, extra: Cell = {}): Cell => ({ text, fontSize: BODY + 0.5, bold: true, characterSpacing: 0.3, color: BLACK, ...extra });
 
   const COLS = 8; // Product, Design, Bags, Kgs, Pcs, Rate, Amount, Dispatch
-  const COL_WIDTHS = ['*', 52, 32, 32, 26, 40, 52, 88];
+  /*
+   * Fixed widths, in points, for everything except Product (which takes the
+   * slack). Sized to the widest value each column really carries at 9pt: Pcs
+   * was 26pt while printing figures like "1,200.00" (~40pt), so the number ran
+   * out of its cell — and Bags/Kgs were only a little better, with the Order
+   * Total row pushing "4,400.00" through a 32pt column.
+   */
+  //                     Product Design Bags Kgs Pcs Rate Amount Dispatch
+  const COL_WIDTHS = ['*', 48, 38, 46, 46, 38, 62, 92];
   const colRow: Cell[] = [
     head('Product'),
     head('Design'),
@@ -1483,14 +1522,34 @@ function buildBookingPdfDoc(b: BookingPdfData): TDocumentDefinitions {
   ];
   const spanRow = (cell: Cell): Cell[] => [{ ...cell, colSpan: COLS }, ...Array.from({ length: COLS - 1 }, () => ({ text: '' }))];
 
-  const DISPATCH_LABEL: Record<BookingPdfLine['dispatchStatus'], string> = { PENDING: 'Pending', PARTIAL: 'Partial', FULL: 'Full' };
+  const DISPATCH_LABEL: Record<BookingPdfLine['dispatchStatus'], string> = {
+    PENDING: 'Pending',
+    PARTIAL: 'Partial Dispatch',
+    FULL: 'Full Dispatch',
+  };
   const dispatchCell = (l: BookingPdfLine, style: Cell): Cell => {
-    const qtyBits = [l.dispatchedBags ? `${amt2(l.dispatchedBags)}b` : null, l.dispatchedKgs ? `${amt2(l.dispatchedKgs)}k` : null, l.dispatchedPcs ? `${amt2(l.dispatchedPcs)}p` : null].filter(Boolean);
+    // Spelled out rather than "5.00b 354.60k": the single-letter suffixes were
+    // this table's own shorthand, and nothing on the page explained them.
+    const qtyBits = [
+      l.dispatchedBags ? `${amt2(l.dispatchedBags)} Bags` : null,
+      l.dispatchedKgs ? `${amt2(l.dispatchedKgs)} Kgs` : null,
+      l.dispatchedPcs ? `${amt2(l.dispatchedPcs)} Pcs` : null,
+    ].filter(Boolean);
     return {
       stack: [
-        { text: DISPATCH_LABEL[l.dispatchStatus], fontSize: BODY - 0.5, bold: l.dispatchStatus === 'FULL', ...style },
-        ...(qtyBits.length ? [{ text: qtyBits.join(' '), fontSize: BODY - 2, ...style }] : []),
-        ...(l.challanCodes.length ? [{ text: l.challanCodes.join(', '), fontSize: BODY - 2, ...style }] : []),
+        { text: DISPATCH_LABEL[l.dispatchStatus], fontSize: BODY, bold: l.dispatchStatus === 'FULL', ...style },
+        // Raised from BODY-2 (7pt). This column carries the answer to "was it
+        // sent, how much, and on which bill" — it was set two points smaller
+        // than everything around it, which made the one part of the row someone
+        // squints at the hardest part to read.
+        ...(qtyBits.length ? [{ text: qtyBits.join(' / '), fontSize: BODY - 0.5, ...style }] : []),
+        // One challan per LINE, not comma-run. Several bills wrapped mid-code
+        // ("SSS/26-27/564," then "SSS/26-27/568, SSS/26-27/597"), so the break
+        // fell wherever the column ran out rather than between two numbers.
+        // A line each makes them countable at a glance.
+        ...(l.challanCodes.length
+          ? [{ stack: l.challanCodes.map((code) => ({ text: code, fontSize: BODY - 0.5, ...style })) }]
+          : []),
       ],
     };
   };

@@ -4,7 +4,17 @@ import { ArrayMaxSize, ArrayMinSize, ArrayNotEmpty, IsArray, IsIn, IsInt, IsNumb
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 export class CreateBookingItemDto {
-  @IsString() @MaxLength(64) pCategory!: string;
+  /**
+   * OPTIONAL — blank means "not decided yet".
+   *
+   * A party often reserves capacity before choosing what to make of it. A blank
+   * category is safe by the conversion rules in BookingsService: the per-category
+   * remaining check only applies to a line whose category matches one actually
+   * booked, so a blank line caps nothing and only the booking TOTAL binds.
+   * Pricing is unaffected — the rate snapshot is per customer, applied from the
+   * booking date to whatever is really ordered.
+   */
+  @IsOptional() @IsString() @MaxLength(64) pCategory?: string;
   @IsOptional() @IsNumber() @Min(0) bags?: number;
   @IsOptional() @IsNumber() @Min(0) kgs?: number;
 }

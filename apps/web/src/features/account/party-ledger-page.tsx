@@ -294,10 +294,28 @@ export function PartyLedgerPage() {
    *  Null when a voucher-type filter is on: the server withholds opening and
    *  closing there, because a full-ledger opening plus a one-type Current Total
    *  isn't this party's position. */
+  /** True when the filter's TO date is before today, so the closing balance is a
+   *  historical position rather than "where this party stands now". */
+  const windowEndsInPast = to < ymd(new Date());
+
   const closingNet =
     footer && footer.closingBankNet != null && footer.closingCashNet != null
       ? footer.closingBankNet * (mode === 'C' ? 0 : 1) +
         footer.closingCashNet * (mode === 'B' ? 0 : 1)
+      : null;
+
+  /**
+   * How much of the closing balance has been settled since the window closed.
+   *
+   * The closing balance is the position AT the window's end; the ageing cards
+   * count what is still unpaid NOW. The difference is money that was open then
+   * and has been received since — not an error in either figure. Declared after
+   * `closingNet` because it is derived from it. Only meaningful on a DEBIT
+   * balance (money owed to us) in a window that has already closed.
+   */
+  const settledSinceWindow =
+    windowEndsInPast && closingNet != null && closingNet > 0 && kpis
+      ? Math.round(closingNet - (kpis.overDue.amount + kpis.pastDue.amount + kpis.normal.amount))
       : null;
 
   const onReset = () => clear();
@@ -677,7 +695,23 @@ export function PartyLedgerPage() {
               ? `${inr(Math.abs(closingNet))}${closingNet !== 0 ? ` ${closingNet < 0 ? 'Cr' : 'Dr'}` : ''}`
               : '—'
           }
-          note={closingNet == null && footer ? 'clear voucher type' : undefined}
+          /*
+           * Say WHEN this figure is from.
+           *
+           * It is the closing balance — the party's position at the END of the
+           * window — while the three ageing cards beside it count what is still
+           * unpaid TODAY. On a window ending in the past those are different
+           * questions with different answers, and nothing said so: a June
+           * filter showed ₹25,02,518 outstanding next to ₹7,24,518 of due
+           * invoices and read as if one of them was wrong.
+           */
+          note={
+            closingNet == null && footer
+              ? 'clear voucher type'
+              : windowEndsInPast
+                ? `as at ${formatDate(to)}`
+                : undefined
+          }
           tone={
             closingNet == null || closingNet === 0 ? 'slate' : closingNet < 0 ? 'emerald' : 'amber'
           }
@@ -701,6 +735,22 @@ export function PartyLedgerPage() {
           tone="emerald"
         />
       </div>
+
+      {/*
+        Reconcile the two, in words, whenever they differ.
+
+        Both figures are right; they answer different questions. Saying so here
+        is cheaper than every reader working it out — and the amount named is
+        exactly what was settled after the window closed, which is the fact
+        somebody staring at the gap actually wants.
+      */}
+      {settledSinceWindow != null && settledSinceWindow > 0 && (
+        <div className="rounded-[4px] border border-sky-300 bg-sky-50/70 px-3 py-2 text-[12.5px] text-sky-900 dark:border-sky-400/30 dark:bg-sky-400/10 dark:text-sky-200">
+          <strong>{inr(settledSinceWindow)}</strong> of the {inr(Math.abs(closingNet ?? 0))} outstanding on{' '}
+          {formatDate(to)} has been paid since. The three cards above count only what is still unpaid
+          today, which is why they come to less than the closing balance.
+        </div>
+      )}
 
       {/* ── The ledger ──────────────────────────────────────────────────────── */}
       <div

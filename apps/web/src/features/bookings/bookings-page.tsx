@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Ban, ChevronLeft, ChevronRight, EllipsisVertical, FileSearch, Filter, Link2, Plus, Printer, RotateCcw, Search, Split, TriangleAlert, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { BookingDto, BookingStatus } from '@oms/shared';
+import { BOOKING_NO_CATEGORY } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
-import { downloadPdf, openPdf } from '@/lib/pdf';
+import { PdfPreviewDialog } from '@/components/common/pdf-preview-dialog';
+import { downloadPdf, fetchPdf } from '@/lib/pdf';
 import { cn, shortOrderCode } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -39,9 +41,25 @@ const STATUS_LABEL: Record<BookingStatus, string> = {
 
 const num = (v: number) => v.toLocaleString('en-IN');
 
-/** Bags + Kgs progress bar (converted vs booked). */
-function Progress({ done, total }: { done: number; total: number }) {
-  const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+/**
+ * How far a booking has been converted.
+ *
+ * Measured PER DIMENSION and reported as the least-complete one, because that
+ * is what finishes the booking: `statusFor` on the server calls it CONVERTED
+ * only once every dimension it actually booked is done. Taking the minimum
+ * makes the bar agree with the status — 100% exactly when it says CONVERTED.
+ *
+ * A dimension the booking never reserved is skipped entirely. This used to add
+ * bags to kgs and divide by their sum — arithmetic on two different units that
+ * only looked right while both moved together. On a bags-only booking it read
+ * (57 bags + 4,400 kgs) / (81 bags + 0 kgs) = 5,502%, clamped to a confident
+ * "100%" on a booking with 24 bags still to draw.
+ */
+function Progress({ booking }: { booking: Pick<BookingDto, 'bags' | 'kgs' | 'convertedBags' | 'convertedKgs'> }) {
+  const parts: number[] = [];
+  if (booking.bags > 0) parts.push(booking.convertedBags / booking.bags);
+  if (booking.kgs > 0) parts.push(booking.convertedKgs / booking.kgs);
+  const pct = parts.length ? Math.min(100, Math.round(Math.min(...parts) * 100)) : 0;
   return (
     <div className="flex items-center gap-2">
       <div className="bg-muted h-1.5 w-16 overflow-hidden rounded-full">
@@ -65,7 +83,7 @@ const COLUMNS: DataColumn<BookingDto>[] = [
         <div className="flex flex-wrap gap-1">
           {b.items.map((it) => (
             <span key={it.id} className="bg-sky-50 text-sky-700 ring-sky-200 rounded px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-inset whitespace-nowrap">
-              {it.pCategory} {it.bags || it.kgs ? `· ${it.bags || 0}b/${it.kgs || 0}k` : ''}
+              {it.pCategory || BOOKING_NO_CATEGORY} {it.bags || it.kgs ? `· ${it.bags || 0}b/${it.kgs || 0}k` : ''}
             </span>
           ))}
         </div>
@@ -76,7 +94,7 @@ const COLUMNS: DataColumn<BookingDto>[] = [
   { id: 'bookingDate', label: 'Booking date', cell: (b) => <span className="whitespace-nowrap">{formatDate(b.bookingDate)}</span> },
   { id: 'bags', label: 'Bags', align: 'right', cell: (b) => <span className="tabular-nums">{num(b.convertedBags)} / {num(b.bags)}</span> },
   { id: 'kgs', label: 'Kgs', align: 'right', cell: (b) => <span className="tabular-nums">{num(b.convertedKgs)} / {num(b.kgs)}</span> },
-  { id: 'progress', label: 'Converted', cell: (b) => <Progress done={b.convertedBags + b.convertedKgs} total={b.bags + b.kgs} /> },
+  { id: 'progress', label: 'Converted', cell: (b) => <Progress booking={b} /> },
   { id: 'order', label: 'Order', cell: (b) => (b.orderCode ? <span className="font-mono text-xs text-sky-700">{shortOrderCode(b.orderCode)}</span> : <span className="text-muted-foreground">—</span>) },
   {
     id: 'status',
@@ -138,11 +156,37 @@ export function BookingsPage() {
     void downloadPdf(`/bookings/${b.id}/pdf`, `${b.code}.pdf`).catch((e) => toast.error(getApiErrorMessage(e, 'PDF failed')));
   };
 
-  /** Same statement as Print PDF, opened in a new tab instead of saved as a
-   *  file — for a quick look at the bags' journey (booked → converted →
-   *  dispatched → billed) without a download hitting the user's device. */
+  /**
+   * Same statement as Print PDF, shown IN PLACE rather than saved or thrown
+   * into another tab — for a quick look at the bags' journey (booked →
+   * converted → dispatched → billed) without leaving the bookings list.
+   *
+   * It used to `window.open`, which cost the user the app around the document:
+   * a separate tab titled with the blob's UUID, and no way back except the
+   * browser's own controls.
+   */
+  const [preview, setPreview] = useState<{ url: string; blob: Blob; filename: string; code: string } | null>(null);
+  // A preview blob is a few MB — release it when the dialog closes, and again
+  // on unmount so leaving the page mid-preview doesn't strand it.
+  const closePreview = () => {
+    setPreview((p) => {
+      if (p) URL.revokeObjectURL(p.url);
+      return null;
+    });
+  };
+  const previewRef = useRef<string | null>(null);
+  previewRef.current = preview?.url ?? null;
+  useEffect(
+    () => () => {
+      if (previewRef.current) URL.revokeObjectURL(previewRef.current);
+    },
+    [],
+  );
+
   const handlePreview = (b: BookingDto) => {
-    void openPdf(`/bookings/${b.id}/pdf`, `${b.code}.pdf`).catch((e) => toast.error(getApiErrorMessage(e, 'Preview failed')));
+    void fetchPdf(`/bookings/${b.id}/pdf`, `${b.code}.pdf`)
+      .then(({ blob, filename }) => setPreview({ url: URL.createObjectURL(blob), blob, filename, code: b.code ?? '' }))
+      .catch((e) => toast.error(getApiErrorMessage(e, 'Preview failed')));
   };
 
   const handleDelete = async (b: BookingDto) => {
@@ -248,7 +292,7 @@ export function BookingsPage() {
           <div className="flex flex-wrap gap-1">
             {b.items.map((it) => (
               <span key={it.id} className="bg-sky-50 text-sky-700 ring-sky-200 rounded px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-inset">
-                {it.pCategory} · {it.bags || 0}b/{it.kgs || 0}k
+                {it.pCategory || BOOKING_NO_CATEGORY} · {it.bags || 0}b/{it.kgs || 0}k
               </span>
             ))}
           </div>
@@ -264,7 +308,7 @@ export function BookingsPage() {
           </div>
         </div>
         <div className="flex items-center justify-between gap-2">
-          <Progress done={b.convertedBags + b.convertedKgs} total={b.bags + b.kgs} />
+          <Progress booking={b} />
           {b.orderCode && <span className="font-mono text-xs text-sky-700">{shortOrderCode(b.orderCode)}</span>}
         </div>
         <div className="flex items-center justify-end gap-1 border-t pt-2.5" onClick={(e) => e.stopPropagation()}>
@@ -437,6 +481,15 @@ export function BookingsPage() {
 
       {precloseFor && <PrecloseBookingDialog booking={precloseFor} onClose={() => setPrecloseFor(null)} />}
       {assignFor && <AssignOldOrderDialog booking={assignFor} onClose={() => setAssignFor(null)} />}
+      {preview && (
+        <PdfPreviewDialog
+          title={`Booking ${preview.code}`}
+          url={preview.url}
+          blob={preview.blob}
+          filename={preview.filename}
+          onClose={closePreview}
+        />
+      )}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, BadgePercent, Check, Loader2, Plus, Split, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { BookingQuoteLine, ConvertBookingLineInput } from '@oms/shared';
+import { BOOKING_NO_CATEGORY } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { shortOrderCode } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
@@ -235,7 +236,7 @@ export function BookingConvertPage() {
             <div className="flex flex-wrap gap-2">
               {booking.items.map((it) => (
                 <div key={it.id} className="rounded-md border bg-white px-2.5 py-1.5 text-xs">
-                  <span className="font-semibold">{it.pCategory}</span>{' '}
+                  <span className="font-semibold">{it.pCategory || BOOKING_NO_CATEGORY}</span>{' '}
                   <span className="text-muted-foreground">
                     {money(it.remainingBags)} bag / {money(it.remainingKgs)} kg remaining (of {money(it.bags)}/{money(it.kgs)})
                   </span>

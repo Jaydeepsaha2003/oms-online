@@ -324,6 +324,21 @@ export function NotesPage() {
     [lines, packing, freight, pouch, otherCharges, billingRate, noBill, noBillWithoutGst],
   );
 
+  /** Which charge fields actually carry a figure — used to NAME the charges row
+   *  rather than leaving the user to guess which box the money came from. */
+  const chargeParts = useMemo(
+    () =>
+      (
+        [
+          { label: 'Packing', v: numOrU(packing) },
+          { label: 'Freight', v: numOrU(freight) },
+          { label: 'Box / pouch', v: numOrU(pouch) },
+          { label: 'Other charges', v: numOrU(otherCharges) },
+        ] as const
+      ).filter((p) => (p.v ?? 0) !== 0),
+    [packing, freight, pouch, otherCharges],
+  );
+
   /**
    * A credit note whose lines all point at ONE sale is settled straight against
    * that invoice by the API. Predicted here (same shared helper the API uses) so
@@ -927,6 +942,21 @@ export function NotesPage() {
           <div className="shrink-0 border-t border-amber-300 dark:border-amber-400/30">
             <div className="space-y-0.5 bg-amber-50/60 px-2.5 py-2 dark:bg-amber-400/[0.07]">
               <Row2 label="Items total" value={money(breakup.tAmt)} />
+              {/* Charges are part of the total and always were — they just were
+                  not listed, so a note carrying only a ₹200 packing charge read
+                  "Items 0, GST 0, Round off 0, Total 200". Shown only when there
+                  is one, and named in the label so it is obvious WHICH charge
+                  the money is. With this the column adds up on sight. */}
+              {breakup.charges !== 0 && (
+                <Row2
+                  label={
+                    chargeParts.length === 1
+                      ? chargeParts[0].label
+                      : `Charges (${chargeParts.map((p) => p.label.toLowerCase()).join(' + ')})`
+                  }
+                  value={money(breakup.charges)}
+                />
+              )}
               <Row2
                 label={`GST${breakup.gstPercent ? ` @ ${breakup.gstPercent}%` : ''}`}
                 value={money(breakup.tax)}

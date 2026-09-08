@@ -134,6 +134,12 @@ export class ChallansService {
     // line someone is dispatching MORE of right now (a partial line, further
     // dispatch in progress) — the same lock the Dispatch Order screen shows.
     const locks = this.dispatch.activeLockNames();
+    // ...and the same question asked per PARTY. A challan bills a customer, not
+    // a line, so what matters is whether anyone is mid-dispatch on ANY line of
+    // that customer's order — not only on the exact line being billed. Keyed by
+    // customerId; the per-line map above still wins when it has an entry, so a
+    // line the holder is literally on still names them.
+    const partyLocks = await this.dispatch.activeLockOwners();
 
     return {
       items: ordered.map((d) => {
@@ -157,7 +163,8 @@ export class ChallansService {
           gstRate: rates.gstFor(d.customerName, cat),
           freightRate: rates.rateFor(d.customerName, cat, 'FREIGHT'),
           packingRate: rates.rateFor(d.customerName, cat, 'PACKING'),
-          lockedByName: locks.get(d.orderItemId) ?? null,
+          lockedByName:
+            locks.get(d.orderItemId) ?? (d.customerId != null ? (partyLocks.get(d.customerId)?.userName ?? null) : null),
         };
       }),
       total,
@@ -339,7 +346,32 @@ export class ChallansService {
     };
   }
 
-  async create(dto: CreateChallanDto): Promise<ChallanDto> {
+  async create(dto: CreateChallanDto, actorId?: string | null): Promise<ChallanDto> {
+    /*
+     * Refuse while someone else is mid-dispatch on this party.
+     *
+     * A challan is the bill for what has been dispatched, so raising one while
+     * more of the same party's order is actively being dispatched bills a
+     * moving total: whatever lands in the next few seconds is left off, and the
+     * operator has no way to tell, because the line they billed looked complete
+     * when they picked it.
+     *
+     * Enforced HERE and not only in the screen. The button can be worked
+     * around — two tabs, a stale page, a direct call — and this is the point
+     * where the bill actually becomes real.
+     *
+     * The holder is deliberately exempt: they are the one doing the dispatching
+     * and must still be able to bill their own work.
+     */
+    if (dto.customerId != null) {
+      const holder = (await this.dispatch.activeLockOwners()).get(dto.customerId);
+      if (holder && (holder.userId ?? null) !== (actorId ?? null)) {
+        throw new BadRequestException(
+          `${holder.userName} is dispatching ${dto.customerName.trim()} right now. ` +
+            `Creating a challan would bill a total that is still moving — wait until they finish, then refresh.`,
+        );
+      }
+    }
     const scrap = isScrapCategory(dto.category);
     const { tcsPercent } = await this.settings.getTcsPercent();
     const invDate = dto.invDate ? new Date(dto.invDate) : new Date();

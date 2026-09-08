@@ -350,6 +350,18 @@ export interface NoteBreakup {
   tAmt: number;
   /** Weighted-average GST% across the grid. */
   gstPercent: number;
+  /**
+   * Packing + freight + box/pouch + other charges, as one figure.
+   *
+   * Returned so the totals panel can SHOW them. They have always been inside
+   * the total (`challanBase` below adds them to the item amounts), but the
+   * panel listed only items, GST and round-off — so a note carrying nothing but
+   * a ₹200 packing charge read "Items ₹0.00, GST ₹0.00, Round off ₹0.00,
+   * Total ₹200" and the ₹200 appeared from nowhere.
+   *
+   * With this the column adds up exactly: tAmt + charges + tax + roundOff = total.
+   */
+  charges: number;
   /** Effective GST amount applied. */
   tax: number;
   /** Grand total (rounded to whole rupees). */
@@ -459,6 +471,7 @@ export function computeNoteBreakup(input: NoteBreakupInput): NoteBreakup {
     amounts,
     tAmt,
     gstPercent,
+    charges: round2(packing + freight + pouch + otherCharges),
     tax,
     total,
     b,

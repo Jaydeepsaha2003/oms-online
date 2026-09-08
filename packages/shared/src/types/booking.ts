@@ -279,3 +279,33 @@ export interface BookingDrawOptionDto {
   remainingBags: number;
   remainingKgs: number;
 }
+
+/**
+ * How a booking line with no product category is written on screen.
+ *
+ * The category is optional — a party can reserve capacity ("hold me 81 bags")
+ * before deciding what to make of it — and a blank is stored as the empty
+ * string. Every screen shows it through this one constant so the wording cannot
+ * drift between the form, the list and the convert screen.
+ */
+export const BOOKING_NO_CATEGORY = 'Not specified';
+
+/**
+ * Is a draw of `want` allowed against `remaining` of a dimension the booking
+ * reserved `booked` of?
+ *
+ * A booking is denominated in bags, in kgs, or in both. A bags-only booking
+ * (kgs = 0) reserves no kgs at all, so the kgs on a drawn line are a derived
+ * detail of that line (bags x the party's kgs-per-bag), NOT a draw against the
+ * booking — checking them against a remaining of 0 rejects every possible line.
+ * So a dimension only constrains the draw when the booking actually books it.
+ *
+ * SHARED deliberately. The server had this rule and the Assign dialog did not,
+ * so the button greyed itself out on a bags-only booking for kgs the booking
+ * never reserved — refusing, in the browser, a draw the server would have
+ * accepted. One copy, both sides.
+ */
+export function withinBooked(want: number, remaining: number, booked: number): boolean {
+  if (booked <= 0) return true;
+  return want - remaining <= 0.001;
+}

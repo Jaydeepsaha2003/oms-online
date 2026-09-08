@@ -185,6 +185,41 @@ export class DispatchService implements OnModuleInit {
   }
 
   /**
+   * Live locks resolved to the CUSTOMER whose order is being dispatched.
+   *
+   * Pending Challan needs the party, not the line. Matching on `orderItemId`
+   * alone meant a challan could be raised for a party while someone was mid-way
+   * through dispatching more of that same party's order, as long as they
+   * happened to be on a DIFFERENT line of it — which is the ordinary case, not
+   * an edge one: the lines still to bill are precisely the ones nobody is on.
+   * The billing then goes out missing whatever landed seconds later.
+   *
+   * `userId` comes back too so the holder is never blocked by their own lock.
+   */
+  async activeLockOwners(): Promise<Map<number, { userId: string | null; userName: string }>> {
+    const now = Date.now();
+    const live = [...this.lineLocks.entries()].filter(
+      ([, lock]) => now - lock.acquiredAt < DispatchService.LOCK_TTL_MS,
+    );
+    const out = new Map<number, { userId: string | null; userName: string }>();
+    if (!live.length) return out;
+    const items = await this.prisma.orderItem.findMany({
+      where: { id: { in: live.map(([id]) => id) } },
+      select: { id: true, order: { select: { customerId: true } } },
+    });
+    const customerOf = new Map(items.map((i) => [i.id, i.order?.customerId ?? null]));
+    for (const [orderItemId, lock] of live) {
+      const custId = customerOf.get(orderItemId);
+      // First holder wins: naming one person is enough to say "wait", and it
+      // keeps the message stable while several lines of one party are open.
+      if (custId != null && !out.has(custId)) {
+        out.set(custId, { userId: lock.userId ?? null, userName: lock.userName });
+      }
+    }
+    return out;
+  }
+
+  /**
    * Record one entry against a specific dispatch, so it shows up in that
    * dispatch's own Activity History panel (which queries resource=dispatch +
    * resourceId=<that dispatch's id>).

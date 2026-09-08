@@ -458,13 +458,35 @@ export function OrderModifyPage() {
     setEdit(null);
   };
 
+/**
+ * Swap the cancel/restore tag on a line's comment, leaving anything the user
+ * actually typed alone.
+ *
+ * The comment is a ' | '-joined list, and cancelling used to just append to it.
+ * Restoring wrote no tag at all, so the "Cancelled — …" segment survived and a
+ * live line went on claiming it was cancelled. Cancel → restore → cancel would
+ * also have stacked three tags on one line.
+ *
+ * So every status tag is stripped first and exactly one is put back: the
+ * operator's own note is preserved, and the line only ever carries its CURRENT
+ * status.
+ */
+const STATUS_TAG = /^(Cancelled|Restored)/i;
+function withStatusTag(comment: string | null | undefined, tag: string): string {
+  const kept = (comment ?? '')
+    .split('|')
+    .map((part) => part.trim())
+    .filter((part) => part && !STATUS_TAG.test(part));
+  return [...kept, tag].join(' | ');
+}
+
   // Cancel keeps the line on record (status=CANCELLED) instead of removing it —
   // the backend already relies on this for lines that have dispatches (a hard
   // delete is rejected there), and it's the reversible choice either way.
   const cancelLine = (order: OrderDto, line: OrderItemDto, reason: string, note: string) => {
     if (line.status === 'CANCELLED') return; // already cancelled — nothing to do
     const tag = `Cancelled — ${reason}${note.trim() ? `: ${note.trim()}` : ''}`;
-    const updated: OrderItemDto = { ...line, status: 'CANCELLED', comment: [line.comment, tag].filter(Boolean).join(' | ') };
+    const updated: OrderItemDto = { ...line, status: 'CANCELLED', comment: withStatusTag(line.comment, tag) };
     void saveItems(order, (items) => items.map((i) => (i.id === line.id ? updated : i)), 'Item cancelled');
     setEdit(null);
   };
@@ -476,7 +498,12 @@ export function OrderModifyPage() {
       confirmText: 'Restore',
     });
     if (!ok) return;
-    const updated: OrderItemDto = { ...line, status: 'CONFIRMED' };
+    // Restoring must clear the cancellation note too. Changing only the status
+    // left "Cancelled — Others: …" sitting in the Comment column of a line that
+    // is active again and counting toward the order's totals — the row says one
+    // thing and its comment says the opposite, and the comment is the part
+    // anyone reading the list actually believes.
+    const updated: OrderItemDto = { ...line, status: 'CONFIRMED', comment: withStatusTag(line.comment, 'Restored') };
     void saveItems(order, (items) => items.map((i) => (i.id === line.id ? updated : i)), 'Item restored');
     setEdit(null);
   };

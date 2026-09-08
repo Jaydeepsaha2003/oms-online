@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Put, Q
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { Audit } from '../common/decorators/audit.decorator';
 import { buildChallanReport } from './challan-report.builder';
@@ -255,7 +256,9 @@ export class ChallansController {
   @Post()
   @Permissions(perm(R, ACTIONS.CREATE))
   @Audit({ action: ACTIONS.CREATE, resource: R, description: 'Created a challan' })
-  create(@Body() dto: CreateChallanDto) {
-    return this.challans.create(dto);
+  create(@Body() dto: CreateChallanDto, @CurrentUser('id') actorId?: string) {
+    // The actor is passed so the person HOLDING the dispatch lock is not
+    // blocked from billing their own work — see the guard in create().
+    return this.challans.create(dto, actorId ?? null);
   }
 }
