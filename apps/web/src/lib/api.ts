@@ -34,10 +34,36 @@ export const setApiUnreachableHandler = (fn: (() => void) | null) => {
 };
 const reportApiUnreachable = () => onUnreachable?.();
 
+/**
+ * How long a normal API call may take before it is treated as failed.
+ *
+ * Axios defaults to 0 — wait FOREVER — which is a trap on a VPN link. iOS
+ * pauses the tunnel whenever the screen sleeps and OpenVPN fully renegotiates
+ * on wake (~3s), handing the phone a NEW tunnel IP; every TCP connection
+ * opened on the old one is dead but never refused, so packets vanish into a
+ * black hole. With no timeout the request simply hung for ever and the spinner
+ * never resolved — the retry logic below could not even run, because no error
+ * was ever produced. A bounded wait turns that into a normal failure the app
+ * can report and React Query can retry.
+ *
+ * 30s is deliberately generous: it must never cut off a slow-but-working call
+ * on a phone, only catch one that is genuinely never coming back.
+ */
+const REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * Generating and streaming an Excel/PDF export (or the multi-MB database
+ * backup) legitimately takes far longer than a data call, so downloads opt out
+ * of the limit above rather than being cut off mid-file.
+ */
+const DOWNLOAD_TIMEOUT_MS = 5 * 60_000;
+
 /** Shared axios instance. `withCredentials` sends the httpOnly refresh cookie. */
 export const api = axios.create({
   baseURL: API_URL,
   withCredentials: true,
+  // Per-request `timeout` still wins (see the auth calls in use-auth.ts).
+  timeout: REQUEST_TIMEOUT_MS,
 });
 
 // Attach the bearer token to every request.
@@ -173,7 +199,7 @@ export async function downloadFile(
   fallbackName?: string,
   config?: AxiosRequestConfig,
 ): Promise<void> {
-  const res = await api.get(url, { ...config, responseType: 'blob' });
+  const res = await api.get(url, { timeout: DOWNLOAD_TIMEOUT_MS, ...config, responseType: 'blob' });
   const disposition = res.headers['content-disposition'] as string | undefined;
   const match = disposition?.match(/filename="?([^"]+)"?/);
   const filename = match?.[1] ?? fallbackName ?? 'download';
@@ -196,7 +222,7 @@ export async function downloadFile(
  * goes UP and the file comes back, which a GET cannot express.
  */
 export async function downloadFilePost(url: string, body: unknown, fallbackName?: string): Promise<void> {
-  const res = await api.post(url, body, { responseType: 'blob' });
+  const res = await api.post(url, body, { timeout: DOWNLOAD_TIMEOUT_MS, responseType: 'blob' });
   const disposition = res.headers['content-disposition'] as string | undefined;
   const match = disposition?.match(/filename="?([^"]+)"?/);
   const filename = match?.[1] ?? fallbackName ?? 'download';
