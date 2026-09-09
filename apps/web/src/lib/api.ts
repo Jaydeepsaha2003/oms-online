@@ -29,6 +29,39 @@ const NET_RETRY_DELAYS = [400, 900, 1800, 3500, 7000];
 const NET_RETRY_BUDGET_MS = 20_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Reads currently in flight, so a resume can cut short any that are stuck.
+ *
+ * iOS pauses the VPN whenever the screen sleeps; on wake OpenVPN renegotiates
+ * and hands the phone a NEW tunnel IP, which leaves every connection opened on
+ * the old one dead but never refused — the request just waits out its full
+ * timeout for a reply that cannot arrive. Cancelling those the moment the app
+ * comes back turns a 15-30s stall into an immediate re-fetch on a live tunnel.
+ *
+ * READS ONLY, deliberately: a write may already have been applied server-side,
+ * and replaying it would post a second dispatch. Writes keep waiting for their
+ * timeout and are never auto-repeated (same rule as the retry below).
+ */
+const inflightReads = new Set<TrackedConfig>();
+
+type TrackedConfig = AxiosRequestConfig & {
+  _abort?: AbortController;
+  _wakeAborted?: boolean;
+  _wakeRetried?: boolean;
+};
+
+/**
+ * Cancel every stalled read and let the interceptor re-issue it at once.
+ * Called from the app-resume handler (see pwa-update.ts).
+ */
+export function abortStalledReads(): void {
+  for (const cfg of inflightReads) {
+    cfg._wakeAborted = true;
+    cfg._abort?.abort();
+  }
+  inflightReads.clear();
+}
+
 /** Safe to send twice: no server state changes if the first one did land. */
 const isRead = (cfg: AxiosRequestConfig) => (cfg.method ?? 'get').toLowerCase() === 'get';
 
@@ -86,6 +119,15 @@ export const api = axios.create({
 api.interceptors.request.use((config) => {
   const token = useAuthStore.getState().accessToken;
   if (token) config.headers.Authorization = `Bearer ${token}`;
+  // Give every read its own abort handle unless the caller already supplied a
+  // signal, so abortStalledReads() can cut it short on resume.
+  const tracked = config as TrackedConfig;
+  if (isRead(config) && !config.signal) {
+    const controller = new AbortController();
+    tracked._abort = controller;
+    config.signal = controller.signal;
+    inflightReads.add(tracked);
+  }
   return config;
 });
 
@@ -129,6 +171,7 @@ export async function refreshAccessToken(): Promise<string | null> {
 // Unwrap the `{ success, data }` envelope on success; transparently refresh on 401.
 api.interceptors.response.use(
   (response: AxiosResponse) => {
+    inflightReads.delete(response.config as TrackedConfig);
     const contentType = response.headers['content-type'] as string | undefined;
     const isJson = contentType?.includes('application/json');
     const body = response.data;
@@ -139,10 +182,24 @@ api.interceptors.response.use(
   },
   async (error: AxiosError) => {
     const original = error.config as
-      | (AxiosRequestConfig & { _retry?: boolean; _netTries?: number; _netStart?: number })
+      | (TrackedConfig & { _retry?: boolean; _netTries?: number; _netStart?: number })
       | undefined;
     const status = error.response?.status;
     const isAuthCall = original?.url?.includes('/auth/');
+    if (original) inflightReads.delete(original);
+
+    // We cancelled this ourselves on resume because its tunnel had gone stale.
+    // Re-issue immediately (a fresh signal is attached on the way through) —
+    // surfacing it as a cancellation would show an error for a request the user
+    // never abandoned. One replay only, so a tunnel that is still down falls
+    // through to the normal timeout instead of looping.
+    if (original?._wakeAborted && !original._wakeRetried && isRead(original)) {
+      original._wakeRetried = true;
+      original._wakeAborted = false;
+      delete original.signal;
+      delete original._abort;
+      return api(original);
+    }
 
     if (status === 401 && original && !original._retry && !isAuthCall) {
       original._retry = true;

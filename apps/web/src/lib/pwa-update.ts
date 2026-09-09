@@ -1,3 +1,4 @@
+import { abortStalledReads } from './api';
 import { queryClient } from './query';
 
 /**
@@ -224,6 +225,13 @@ export function watchForAppUpdates(): void {
 
   const onForeground = () => {
     if (document.visibilityState !== 'visible') return;
+    // BEFORE the throttle below: anything still waiting was issued on a tunnel
+    // that iOS paused while the screen was off, so it is waiting on a dead
+    // connection and will only ever end in a timeout. Cancel those now and the
+    // interceptor re-fires them on the live tunnel. Cheap and idempotent — the
+    // second and third events of a resume burst find nothing left to cancel.
+    abortStalledReads();
+
     // iOS fires visibilitychange/focus/pageshow several times around a single
     // resume — collapse that burst into one check.
     const now = Date.now();
