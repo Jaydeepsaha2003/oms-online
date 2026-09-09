@@ -17,6 +17,40 @@
       })();
     </script>
 
+    <!-- Boot-failure recorder.
+
+         A blank screen is the least debuggable failure this app has: no React,
+         no logging, no diagnostics screen — nothing to look at and nothing to
+         report beyond "it's blank". These handlers run before the bundle loads
+         so whatever kills the boot is captured, and the panel below turns it
+         into something readable on the phone itself.
+
+         `true` on the listener matters: a 404 on a <script> fires an error
+         event that does NOT bubble, so it is only observable during capture. -->
+    <script>
+      (function () {
+        var boot = (window.__omsBoot = { errors: [] });
+        function note(msg) {
+          if (!msg) return;
+          var text = String(msg).slice(0, 300);
+          if (boot.errors.indexOf(text) === -1) boot.errors.push(text);
+        }
+        window.addEventListener(
+          'error',
+          function (e) {
+            var t = e && e.target;
+            if (t && t !== window && (t.src || t.href)) note('Could not load ' + (t.src || t.href));
+            else note(e && e.message);
+          },
+          true,
+        );
+        window.addEventListener('unhandledrejection', function (e) {
+          var r = e && e.reason;
+          note((r && (r.message || r)) || 'Unhandled rejection');
+        });
+      })();
+    </script>
+
     <!-- PWA: installable on desktop, Android and iPhone -->
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="theme-color" content="#1e40af" />
@@ -76,6 +110,77 @@
           location.reload();
         });
       }, 12000);
+
+      /*
+       * Last resort: say something.
+       *
+       * The recovery above is silent — if it works the user sees a reload, and
+       * if it doesn't they keep staring at a blank screen with no idea why and
+       * no way to act. Diagnosing that has cost days, because the one machine
+       * that knows what went wrong (the phone) had no way to say it.
+       *
+       * 20s is deliberately after the 12s recovery: a genuinely slow start on a
+       * VPN link should paint long before this, and a client that reloaded at
+       * 12s gets a fresh 20s window to succeed in.
+       */
+      window.setTimeout(function () {
+        var root = document.getElementById('root');
+        if (!root || root.childElementCount > 0) return;
+
+        var boot = window.__omsBoot || { errors: [] };
+        var sw = 'serviceWorker' in navigator && navigator.serviceWorker.controller ? 'yes' : 'no';
+        var lines = boot.errors.length ? boot.errors : ['No error was reported — the app simply never started.'];
+
+        var esc = function (t) {
+          return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        };
+
+        root.innerHTML =
+          '<div style="font-family:system-ui,sans-serif;max-width:34rem;margin:0 auto;padding:1.5rem;color:#0f172a">' +
+          '<h1 style="font-size:1.1rem;margin:0 0 .5rem">OMS could not start</h1>' +
+          '<p style="font-size:.85rem;color:#475569;margin:0 0 1rem">' +
+          'The app files loaded but the screen never appeared. Details below — please send them on.' +
+          '</p>' +
+          '<pre style="font-size:.72rem;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px;padding:.75rem;' +
+          'white-space:pre-wrap;word-break:break-word;margin:0 0 1rem">' +
+          esc(lines.join('
+')) +
+          '
+
+service worker controlling: ' + sw +
+          '
+online: ' + navigator.onLine +
+          '
+address: ' + esc(location.href) +
+          '</pre>' +
+          '<button id="oms-retry" style="font:inherit;padding:.55rem 1rem;margin-right:.5rem;border-radius:6px;' +
+          'border:1px solid #cbd5e1;background:#fff">Try again</button>' +
+          '<button id="oms-reset" style="font:inherit;padding:.55rem 1rem;border-radius:6px;border:0;' +
+          'background:#1e40af;color:#fff">Reset app</button>' +
+          '<p style="font-size:.75rem;color:#64748b;margin:1rem 0 0">' +
+          '“Reset app” clears the stored copy and downloads a fresh one. You stay signed in.</p>' +
+          '</div>';
+
+        document.getElementById('oms-retry').onclick = function () {
+          location.reload();
+        };
+        // The reliable unbrick: drop every cache AND the worker, so the next
+        // load can only come from the network.
+        document.getElementById('oms-reset').onclick = function () {
+          var done = function () {
+            sessionStorage.removeItem('oms-sw-recovery-done');
+            location.reload();
+          };
+          var jobs = [];
+          if (window.caches) jobs.push(caches.keys().then(function (k) { return Promise.all(k.map(function (n) { return caches.delete(n); })); }));
+          if ('serviceWorker' in navigator) {
+            jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) {
+              return Promise.all(rs.map(function (r) { return r.unregister(); }));
+            }));
+          }
+          Promise.all(jobs).then(done, done);
+        };
+      }, 20000);
     </script>
 
     <script type="module" src="/src/main.tsx"></script>
