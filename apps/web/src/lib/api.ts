@@ -15,6 +15,18 @@ const API_URL = import.meta.env.VITE_API_URL || '/api';
  * without the user seeing anything; past that the call fails for real.
  */
 const NET_RETRY_DELAYS = [400, 900, 1800, 3500, 7000];
+
+/**
+ * Ceiling on how long the backoff above may keep retrying one request.
+ *
+ * The delays alone total ~14s, which was the whole cost back when a failed
+ * attempt returned instantly (a restarting API refuses the connection). Once
+ * requests can TIME OUT instead — a VPN tunnel swallows packets rather than
+ * refusing them — each attempt can also burn REQUEST_TIMEOUT_MS, turning five
+ * retries into minutes of spinner. Cap the elapsed time so the user gets a
+ * real answer while the retries still cover a routine restart.
+ */
+const NET_RETRY_BUDGET_MS = 20_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Safe to send twice: no server state changes if the first one did land. */
@@ -46,10 +58,14 @@ const reportApiUnreachable = () => onUnreachable?.();
  * was ever produced. A bounded wait turns that into a normal failure the app
  * can report and React Query can retry.
  *
- * 30s is deliberately generous: it must never cut off a slow-but-working call
- * on a phone, only catch one that is genuinely never coming back.
+ * This is a PER-ATTEMPT limit, not a total: the read-retry below and React
+ * Query's own `retry` both re-issue a failed call, so the wait the user
+ * actually sees is a multiple of this. 15s matches the budget the session
+ * bootstrap already gives `/auth/me`, leaving generous headroom over a phone
+ * link (a working call here returns in well under two seconds) while keeping
+ * the worst case tolerable once those retries are counted in.
  */
-const REQUEST_TIMEOUT_MS = 30_000;
+const REQUEST_TIMEOUT_MS = 15_000;
 
 /**
  * Generating and streaming an Excel/PDF export (or the multi-MB database
@@ -122,7 +138,9 @@ api.interceptors.response.use(
     return response;
   },
   async (error: AxiosError) => {
-    const original = error.config as (AxiosRequestConfig & { _retry?: boolean; _netTries?: number }) | undefined;
+    const original = error.config as
+      | (AxiosRequestConfig & { _retry?: boolean; _netTries?: number; _netStart?: number })
+      | undefined;
     const status = error.response?.status;
     const isAuthCall = original?.url?.includes('/auth/');
 
@@ -144,8 +162,10 @@ api.interceptors.response.use(
     // writes fail normally and the user re-submits deliberately.
     if (!error.response && original && isTransient(error) && isRead(original)) {
       const tries = original._netTries ?? 0;
-      if (tries < NET_RETRY_DELAYS.length) {
+      const startedAt = original._netStart ?? Date.now();
+      if (tries < NET_RETRY_DELAYS.length && Date.now() - startedAt < NET_RETRY_BUDGET_MS) {
         original._netTries = tries + 1;
+        original._netStart = startedAt;
         reportApiUnreachable();
         await sleep(NET_RETRY_DELAYS[tries]);
         return api(original);
