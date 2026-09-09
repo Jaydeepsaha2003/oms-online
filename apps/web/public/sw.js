@@ -78,6 +78,46 @@ const NEVER_CACHE = [/^\/api\//, /\/@vite/, /\/@react-refresh/, /\/node_modules\
 // no need to hit the network first on every single app open.
 const IMMUTABLE = [/^\/assets\//];
 
+
+/**
+ * Recover a client that booted from a deleted build.
+ *
+ * Vite content-hashes every bundle and each deploy DELETES the previous ones.
+ * If a phone lost the shell race and rendered a cached shell from an older
+ * build, the bundle that shell names is gone from the server — and gone from
+ * this cache too, because `activate` drops every cache whose key isn't the
+ * current one. The entry <script> then 404s and the page renders BLANK, with
+ * no JS alive to notice or recover: the app is bricked until someone thinks to
+ * reinstall it. It shows up on slow links first, because those are the ones
+ * that lose the race.
+ *
+ * A 404 on a hashed asset is proof of exactly that state, so drop the stale
+ * shell and re-navigate. The next load finds no cached shell and must go to
+ * the network, which returns the current one — so this converges rather than
+ * looping. `client.navigate()` is used deliberately: the page's own scripts
+ * never ran, so nothing there could respond to a message.
+ */
+let healingDeletedBuild = false;
+async function healDeletedBuild() {
+  if (healingDeletedBuild) return;
+  healingDeletedBuild = true;
+  try {
+    const cache = await caches.open(CACHE);
+    await cache.delete('/');
+    const windows = await self.clients.matchAll({ type: 'window' });
+    for (const client of windows) {
+      if ('navigate' in client) client.navigate(client.url).catch(() => {});
+    }
+  } catch {
+    /* nothing better available — the reload below is the only lever */
+  }
+  // One page can fire dozens of asset requests; collapse that burst into a
+  // single reload, while still allowing a later genuine attempt.
+  setTimeout(() => {
+    healingDeletedBuild = false;
+  }, 10000);
+}
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
@@ -167,6 +207,10 @@ self.addEventListener('fetch', (event) => {
           if (res.ok) {
             const copy = res.clone();
             caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+          } else if (res.status === 404) {
+            // This build's assets no longer exist on the server — see
+            // healDeletedBuild(). Without this the page just stays blank.
+            healDeletedBuild();
           }
           return res;
         });
