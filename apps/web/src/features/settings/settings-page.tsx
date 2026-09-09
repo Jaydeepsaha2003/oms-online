@@ -19,6 +19,7 @@ import { Switch } from '@/components/ui/switch';
 import { useAutoSizePcs } from '@/lib/auto-size-pcs';
 import { useOrderLookups } from '@/features/orders/use-orders';
 import { CrmReminderCard } from '@/features/crm/crm-settings-card';
+import { ConnectionDiagnosticsCard } from './connection-diagnostics-card';
 import { MyDevicesCard } from './my-devices-card';
 import { TeamDndCard } from './team-dnd-card';
 import { TestNotificationCard } from './test-notification-card';
@@ -127,6 +128,7 @@ export function SettingsPage() {
           {/* Per-person exceptions. Fetches nothing when it isn't rendered. */}
           {can('user:view') && <TeamDndCard />}
           <TestNotificationCard />
+          <ConnectionDiagnosticsCard />
         </div>
       )}
 

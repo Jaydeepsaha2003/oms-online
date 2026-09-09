@@ -1,4 +1,5 @@
 import { abortStalledReads } from './api';
+import { recordNetEvent } from './net-diagnostics';
 import { queryClient } from './query';
 
 /**
@@ -230,6 +231,7 @@ export function watchForAppUpdates(): void {
     // connection and will only ever end in a timeout. Cancel those now and the
     // interceptor re-fires them on the live tunnel. Cheap and idempotent — the
     // second and third events of a resume burst find nothing left to cancel.
+    recordNetEvent('resume', 'app resumed (screen on / foreground)');
     abortStalledReads();
 
     // iOS fires visibilitychange/focus/pageshow several times around a single
@@ -242,6 +244,11 @@ export function watchForAppUpdates(): void {
     void reloadIfNewBuildDeployed();
     refreshData();
   };
+
+  // The browser's own view of connectivity, so the timeline shows whether iOS
+  // had already declared the link dead or thought it was fine all along.
+  window.addEventListener('online', () => recordNetEvent('online', 'browser reports online'));
+  window.addEventListener('offline', () => recordNetEvent('offline', 'browser reports OFFLINE'));
 
   document.addEventListener('visibilitychange', onForeground);
   // iOS restoring from the back/forward cache doesn't always fire

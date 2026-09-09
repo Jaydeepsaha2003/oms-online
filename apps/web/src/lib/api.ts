@@ -1,5 +1,6 @@
 import axios, { AxiosError, type AxiosRequestConfig, type AxiosResponse } from 'axios';
 import type { AuthResult, DuplicateDispatch, DuplicateMatch, UploadedFileDto } from '@oms/shared';
+import { recordNetEvent, shortUrl } from './net-diagnostics';
 import { useAuthStore } from '@/stores/auth-store';
 
 // Resolve the API base URL. By default we call the same origin the page was
@@ -45,6 +46,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const inflightReads = new Set<TrackedConfig>();
 
 type TrackedConfig = AxiosRequestConfig & {
+  _startedAt?: number;
   _abort?: AbortController;
   _wakeAborted?: boolean;
   _wakeRetried?: boolean;
@@ -122,6 +124,9 @@ api.interceptors.request.use((config) => {
   // Give every read its own abort handle unless the caller already supplied a
   // signal, so abortStalledReads() can cut it short on resume.
   const tracked = config as TrackedConfig;
+  // Stamped on EVERY request (not just reads) so the diagnostics card can
+  // report how long a call actually waited before it succeeded or failed.
+  tracked._startedAt = Date.now();
   if (isRead(config) && !config.signal) {
     const controller = new AbortController();
     tracked._abort = controller;
@@ -171,7 +176,14 @@ export async function refreshAccessToken(): Promise<string | null> {
 // Unwrap the `{ success, data }` envelope on success; transparently refresh on 401.
 api.interceptors.response.use(
   (response: AxiosResponse) => {
-    inflightReads.delete(response.config as TrackedConfig);
+    const okCfg = response.config as TrackedConfig;
+    inflightReads.delete(okCfg);
+    if (okCfg._startedAt) {
+      recordNetEvent('ok', `${(okCfg.method ?? 'get').toUpperCase()} ${shortUrl(okCfg.url)}`, {
+        ms: Date.now() - okCfg._startedAt,
+        detail: String(response.status),
+      });
+    }
     const contentType = response.headers['content-type'] as string | undefined;
     const isJson = contentType?.includes('application/json');
     const body = response.data;
@@ -187,6 +199,15 @@ api.interceptors.response.use(
     const status = error.response?.status;
     const isAuthCall = original?.url?.includes('/auth/');
     if (original) inflightReads.delete(original);
+    if (original?._startedAt) {
+      recordNetEvent('fail', `${(original.method ?? 'get').toUpperCase()} ${shortUrl(original.url)}`, {
+        ms: Date.now() - original._startedAt,
+        // The code is the whole story: ECONNABORTED = our timeout fired,
+        // ERR_CANCELED = we aborted it on resume, ERR_NETWORK = connection
+        // died, a number = the server answered and this is not a network fault.
+        detail: error.response ? String(error.response.status) : (error.code ?? 'no-response'),
+      });
+    }
 
     // We cancelled this ourselves on resume because its tunnel had gone stale.
     // Re-issue immediately (a fresh signal is attached on the way through) —
