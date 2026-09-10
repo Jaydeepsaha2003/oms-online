@@ -152,6 +152,7 @@ interface Item {
   commissionFrom?: string | null;
   itemName: string; // composite display: "{size|pcs} {product} {designType}"
   product: string;
+  psize?: number | null;
   category: string;
   subCategory: string;
   designType: string;
@@ -580,7 +581,7 @@ export function OrderFormPage() {
   const { autoSizePcs } = useAutoSizePcs();
 
   // Item entry (the row being built) + the added items
-  const [entry, setEntry] = useState(blankEntry());
+  const [rawEntry, setEntry] = useState(blankEntry());
   const [items, setItems] = useState<Item[]>([]);
   const [editingItemKey, setEditingItemKey] = useState<string | null>(null);
 
@@ -757,9 +758,9 @@ export function OrderFormPage() {
 
   // Default the entry's order type once options load.
   useEffect(() => {
-    if (!entry.ordType && orderTypeOptions.length)
+    if (!rawEntry.ordType && orderTypeOptions.length)
       setEntry((e) => ({ ...e, ordType: orderTypeOptions[0] }));
-  }, [orderTypeOptions, entry.ordType]);
+  }, [orderTypeOptions, rawEntry.ordType]);
 
   // Populate every field from a saved order (used on load + by the Reset button).
   const loadExisting = useCallback(
@@ -784,6 +785,7 @@ export function OrderFormPage() {
           bookingCode: it.bookingCode ?? null,
           itemName: it.productName ?? [it.product, it.designType].filter(Boolean).join(' '),
           product: it.product ?? '',
+          psize: it.psize ?? null,
           category: it.pCategory ?? '',
           subCategory: it.subCategory ?? '',
           designType: it.designType ?? '',
@@ -826,13 +828,13 @@ export function OrderFormPage() {
   // Skipped when a customer arrived via nav state (Bag Bookings' Convert): that's
   // a deliberate, specific navigation, and silently restoring an unrelated old
   // draft on top of the customer we just set would stomp it back out.
-  const draftEnabled = !isEdit && docKind === 'order' && !navState?.customerName;
+  const draftEnabled = !isEdit && docKind === 'order';
   const draftReady = useRef(false);
   const [restoredDraft, setRestoredDraft] = useState(false);
 
   // Restore once on mount.
   useEffect(() => {
-    if (!draftEnabled) {
+    if (!draftEnabled || navState?.customerName) {
       draftReady.current = true;
       return;
     }
@@ -869,6 +871,7 @@ export function OrderFormPage() {
           completionDay,
           status,
           showBy,
+    bookingSource,
           items,
         });
       } else {
@@ -886,6 +889,7 @@ export function OrderFormPage() {
     completionDay,
     status,
     showBy,
+    bookingSource,
     items,
   ]);
 
@@ -941,6 +945,10 @@ export function OrderFormPage() {
   // Auto-fill agent + category from the chosen customer, and capture the id so we
   // can apply that customer's special rates to each line.
   const onCustomer = (name: string) => {
+    if (name.trim().toUpperCase() !== customer.trim().toUpperCase() && items.some((i) => i.bookingId != null)) {
+      toast.error('Remove the booked items before choosing a different customer.');
+      return;
+    }
     // A booking belongs to one party, so it cannot survive a change of party.
     if (name.trim().toUpperCase() !== customer.trim().toUpperCase()) setBookingSource('');
     setCustomer(name);
@@ -1058,18 +1066,18 @@ export function OrderFormPage() {
   // ── Booking pricing for the entry row ──────────────────────────────────────
   // The picked item, as the booking's pricing sees it. The query key carries this
   // identity, so a slow answer for a PREVIOUS item can never land on this one.
-  const pickedItem = itemOptions.map.get(entry.itemName);
+  const pickedItem = itemOptions.map.get(rawEntry.itemName);
   const bookingEntry = useOrderBookingEntry(
     bookingSource,
     customer,
     {
-      product: entry.product,
-      itemName: entry.itemName,
-      category: entry.category,
-      subCategory: entry.subCategory,
-      designType: entry.designType,
-      designName: entry.designName,
-      psize: pickedItem?.size ?? null,
+      product: rawEntry.product,
+      itemName: rawEntry.itemName,
+      category: rawEntry.category,
+      subCategory: rawEntry.subCategory,
+      designType: rawEntry.designType,
+      designName: rawEntry.designName,
+      psize: rawEntry.psize ?? pickedItem?.size ?? null,
     },
     activeBookings,
   );
@@ -1083,30 +1091,19 @@ export function OrderFormPage() {
    */
   const savedBookingLines = () => bookingLines(items.filter((i) => i.id != null));
 
-  /*
-   * The booking's own rate for the picked item replaces the current-rate cascade
-   * the picker just applied. The breakdown fields go with it: they explain
-   * TODAY's masters, and this line is priced as of the booking date.
-   */
-  const bookingQuoted = bookingEntry.quote.data;
-  useEffect(() => {
-    if (!bookingSource || !bookingQuoted) return;
+  // Keep current prices intact while displaying the selected booking's quote.
+  // Deriving this avoids stale effects when an item or booking is reselected.
+  const bookingQuoted = bookingEntry.ready ? bookingEntry.quote.data : undefined;
     const r2 = (x: number) => String(Math.round(x * 100) / 100);
-    setEntry((e) => ({
-      ...e,
-      productRate: r2(bookingQuoted.productRate + bookingQuoted.productDelta),
-      designRate: e.designType ? r2(bookingQuoted.designRate + bookingQuoted.designDelta) : '',
+  const entry = bookingSource ? {
+    ...rawEntry,
+    productRate: bookingQuoted ? r2(bookingQuoted.productRate + bookingQuoted.productDelta) : '',
+    designRate: bookingQuoted && rawEntry.designType ? r2(bookingQuoted.designRate + bookingQuoted.designDelta) : '',
       special: null,
-      productBase: null,
-      productDelta: null,
-      productFrom: null,
-      designBase: null,
-      designDelta: null,
-      designFrom: null,
-      commissionAddOn: null,
-      commissionFrom: null,
-    }));
-  }, [bookingSource, bookingQuoted]);
+    productBase: null, productDelta: null, productFrom: null,
+    designBase: null, designDelta: null, designFrom: null,
+    commissionAddOn: null, commissionFrom: null,
+  } : rawEntry;
 
   /** Why the SELECTED BOOKING itself can't be drawn — null when it can. A
    *  restored draft (or a tab left open) can point at a booking that has since
@@ -1114,12 +1111,14 @@ export function OrderFormPage() {
    *  save, not only by the server. */
   const bookingSourceProblem = (): string | null => {
     if (!bookingSource) return null;
-    if (!bookingEntry.booking) return 'Loading this booking…';
+    if (!bookingEntry.bookingId) return 'Choose a booking or the current price list.';
+    if (bookingEntry.detail.isError) return 'Could not load this booking. Please try again.';
+    if (!bookingEntry.booking) return 'Loading booking details…';
     if (!bookingEntry.owned) {
-      return `${bookingEntry.booking.code} belongs to ${bookingEntry.booking.customerName} — choose a regular order or another booking.`;
+      return `${bookingEntry.booking.code} belongs to ${bookingEntry.booking.customerName} — choose the current price list or another booking.`;
     }
     if (!DRAWABLE_BOOKING_STATUSES.includes(bookingEntry.booking.status)) {
-      return `${bookingEntry.booking.code} is ${bookingEntry.booking.status.toLowerCase().replace(/_/g, ' ')} and can no longer be drawn. Switch to a regular order, or pick another booking.`;
+      return `${bookingEntry.booking.code} is ${bookingEntry.booking.status.toLowerCase().replace(/_/g, ' ')} and has no bags available for a new order. Choose another booking or the current price list.`;
     }
     return null;
   };
@@ -1131,9 +1130,9 @@ export function OrderFormPage() {
     const problem = bookingSourceProblem();
     if (problem || !bookingSource) return problem;
     if (!entry.product.trim()) return null; // nothing picked yet; the item rules speak first
-    if (bookingEntry.quote.isFetching) return 'Checking this item’s booking rate…';
-    if (bookingEntry.quote.isError) return 'The booking rate could not be checked. Pick the item again to retry.';
-    if (!bookingEntry.quote.data) return 'Pick an item from the list so its booking rate can be checked.';
+    if (bookingEntry.quote.isFetching) return 'Checking this item’s booked price…';
+    if (bookingEntry.quote.isError) return 'Could not load the booked price. Please try again.';
+    if (!bookingEntry.quote.data) return 'Pick an item from the list to see its booked price.';
     return null;
   };
 
@@ -1222,6 +1221,7 @@ export function OrderFormPage() {
         ...e,
         itemName: label,
         product: label,
+        psize: null,
         productBase: null,
         productDelta: null,
         productFrom: null,
@@ -1277,6 +1277,7 @@ export function OrderFormPage() {
       ...e,
       itemName: label,
       product: it.product,
+      psize: it.size ?? null,
       category: it.category,
       subCategory: it.subCategory,
       weight: it.weight != null ? String(it.weight) : '',
@@ -1563,6 +1564,7 @@ export function OrderFormPage() {
     const wasEditing = editingItemKey != null;
     const completed: Item = {
       ...entry,
+      psize: entry.psize ?? pickedItem?.size ?? null,
       key: editingItemKey ?? `i${keyer.current++}`,
       calField,
       designName,
@@ -1797,6 +1799,7 @@ export function OrderFormPage() {
       id: i.id,
       status: i.status,
       bookingId: i.bookingId ?? null,
+      psize: i.psize ?? (i.id == null ? itemOptions.map.get(i.itemName)?.size ?? null : null),
       pCategory: i.category.trim() || null,
       subCategory: i.subCategory.trim() || null,
       product: i.product.trim() || null,
@@ -1826,6 +1829,10 @@ export function OrderFormPage() {
   // Persist the form as either an order or a quotation. On /orders/new the two
   // footer buttons pick the target; when editing, the target follows the route.
   const persist = async (target: 'order' | 'quotation') => {
+    if (target === 'quotation' && items.some((i) => i.bookingId != null)) {
+      toast.error('Booked items need an order. Use Create order or Save as Draft.');
+      return;
+    }
     if (!validate()) return;
     const noun = target === 'quotation' ? 'quotation' : 'order';
     const ok = await confirm({
@@ -2440,6 +2447,9 @@ export function OrderFormPage() {
               saved={savedBookingLines()}
               disabled={editingItemKey != null}
               error={bookingEntryBlocker()}
+              loading={bookingEntry.detail.isFetching || bookingEntry.quote.isFetching}
+              onRetry={bookingEntry.detail.isError ? () => { void bookingEntry.detail.refetch(); }
+                : bookingEntry.quote.isError ? () => { void bookingEntry.quote.refetch(); } : undefined}
             />
           )}
           {/* Row 1 */}
@@ -2850,6 +2860,7 @@ export function OrderFormPage() {
                   <Button
                     onClick={addItem}
                     size="icon"
+                    disabled={!!bookingSource && !bookingEntry.ready}
                     aria-label="Update item"
                     title="Update this item (Alt+A or Ctrl+A)"
                   >
@@ -2879,7 +2890,7 @@ export function OrderFormPage() {
                   )}
                   <Button
                     onClick={addItem}
-                    disabled={noCustomer}
+                    disabled={noCustomer || (!!bookingSource && !!entry.product && !bookingEntry.ready)}
                     aria-label="Add item"
                     title={noCustomer ? 'Select a customer first' : 'Add item (Alt+A or Ctrl+A)'}
                   >
@@ -3043,25 +3054,23 @@ export function OrderFormPage() {
                             </Tooltip>
                           ) : (
                             <>
-                              {i.bookingId == null && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
+                              <Button
+                                variant="ghost"
+                                size="icon"
                                   className="text-primary hover:text-primary size-8"
                                   onClick={() => editItem(i)}
-                                  disabled={editingItemKey != null}
+                                disabled={editingItemKey != null}
                                   aria-label="Edit"
-                                  title={
+                                title={
                                     editingItemKey === i.key
                                       ? 'Currently editing this item'
                                       : editingItemKey
                                         ? 'Finish or cancel the current edit first'
                                         : 'Edit this item'
-                                  }
-                                >
+                                }
+                              >
                                   <Pencil className="size-4" />
-                                </Button>
-                              )}
+                              </Button>
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -3180,25 +3189,23 @@ export function OrderFormPage() {
                             </span>
                           ) : (
                             <>
-                              {i.bookingId == null && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
+                              <Button
+                                variant="ghost"
+                                size="icon"
                                   className="text-primary hover:text-primary size-8"
                                   onClick={() => editItem(i)}
-                                  disabled={editingItemKey != null}
+                                disabled={editingItemKey != null}
                                   aria-label="Edit item"
-                                  title={
+                                title={
                                     editingItemKey === i.key
                                       ? 'Currently editing this item'
                                       : editingItemKey
                                         ? 'Finish or cancel the current edit first'
                                         : 'Edit this item'
-                                  }
-                                >
+                                }
+                              >
                                   <Pencil className="size-4.5" />
-                                </Button>
-                              )}
+                              </Button>
                               <Button
                                 variant="ghost"
                                 size="icon"

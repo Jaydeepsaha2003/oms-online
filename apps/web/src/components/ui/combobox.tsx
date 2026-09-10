@@ -170,19 +170,23 @@ export function Combobox({
   // lands immediately even while the field has the caret, instead of waiting for
   // blur. Mid-typing (dirty) is left alone so the sync can't eat keystrokes.
   //
-  // Deliberately reads `labelFor` through the ref, NOT as a dependency: `options`
-  // is an inline array literal on nearly every call site in this app, so `opts`/
+  // Depends on the resolved LABEL, never on `labelFor` itself: `options` is an
+  // inline array literal on nearly every call site in this app, so `opts`/
   // `labelFor` get a new identity on EVERY render of the parent, whether or not
-  // the actual option list changed. Depending on `labelFor` directly reran this
-  // effect on every such render, and each run's `setText` — landing during a
-  // focus/blur burst — could still be building on a previous render's async blur
-  // timer, which was enough to tip React into "Maximum update depth exceeded".
-  // `value` and `dirty` are real, meaningful dependents; `labelFor`'s IDENTITY is
-  // not, so only those two gate the effect.
+  // the actual option list changed. Depending on the function reran this effect
+  // on every such render, and each run's `setText` — landing during a focus/blur
+  // burst — could still be building on a previous render's async blur timer,
+  // which was enough to tip React into "Maximum update depth exceeded".
+  //
+  // A string compares by value, so it has neither problem AND it catches the
+  // case a `value`-only dependency missed: options that arrive later. Selecting
+  // something the list has not loaded yet — a booking restored from a draft, say
+  // — showed a placeholder label, and once the real one arrived the field went
+  // on displaying the placeholder because `value` had not changed.
+  const currentLabel = labelFor(value);
   React.useEffect(() => {
-    if (!focused.current || !dirty) setText(labelForRef.current(value));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value, dirty]);
+    if (!focused.current || !dirty) setText(currentLabel);
+  }, [currentLabel, dirty]);
 
   const q = text.trim();
   const ql = q.toLowerCase();

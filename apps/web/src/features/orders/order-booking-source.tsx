@@ -1,10 +1,11 @@
 import type { BookingDto } from '@oms/shared';
-import { Lock, PackageOpen } from 'lucide-react';
+import { Lock, PackageOpen, Loader2 } from 'lucide-react';
 import { formatDate } from '@/lib/date-format';
 import { NativeSelect } from '@/components/common/combo';
+import { Button } from '@/components/ui/button';
 import { bookingOrderBalance, type BookingOrderLine } from './order-booking-balance';
 
-export function OrderBookingSource({ source, onChange, bookings, booking, lines, saved, disabled, error }: {
+export function OrderBookingSource({ source, onChange, bookings, booking, lines, saved, disabled, error, loading, onRetry }: {
   source: string;
   onChange: (value: string) => void;
   bookings: BookingDto[];
@@ -13,36 +14,44 @@ export function OrderBookingSource({ source, onChange, bookings, booking, lines,
   saved: BookingOrderLine[];
   disabled?: boolean;
   error?: string | null;
+  loading?: boolean;
+  onRetry?: () => void;
 }) {
   const options = [...bookings];
   if (booking && !options.some((b) => b.id === booking.id)) options.push(booking);
   const balance = booking && bookingOrderBalance(booking, lines, saved);
-  const qty = (bags: number, kgs: number) => [
-    booking && booking.bags > 0 ? `${bags.toLocaleString('en-IN')} bags` : '',
-    booking && booking.kgs > 0 ? `${kgs.toLocaleString('en-IN')} kg` : '',
-  ].filter(Boolean).join(' · ');
+  const qty = (bags: number, kgs: number, basis = booking) => [
+    basis && basis.bags > 0 ? bags.toLocaleString('en-IN') + ' bags' : '',
+    basis && basis.kgs > 0 ? kgs.toLocaleString('en-IN') + ' kg' : '',
+  ].filter(Boolean).join(' / ');
   return (
-    <div className="space-y-2 rounded-md border border-sky-200 bg-sky-50/60 p-3 dark:border-sky-800 dark:bg-sky-950/20" data-testid="order-booking-source">
+    <div className="space-y-3 rounded-lg border border-sky-200 bg-sky-50/60 p-3 dark:border-sky-800 dark:bg-sky-950/20" data-testid="order-booking-source">
       <div className="flex flex-wrap items-center gap-2">
-        <PackageOpen className="size-4 text-sky-700" />
-        <label htmlFor="order-booking" className="text-sm font-semibold">Item source</label>
+        <PackageOpen className="size-4 text-sky-700" aria-hidden="true" />
+        <label htmlFor="order-booking" className="text-sm font-semibold">Price from</label>
         <NativeSelect id="order-booking" value={source} onChange={onChange} disabled={disabled}
-          className="min-w-56 flex-1 sm:max-w-lg"
+          className="w-full min-w-0 sm:w-auto sm:min-w-56 sm:max-w-lg sm:flex-1"
           options={[
-            { value: '', label: 'Regular order — current rates' },
-            { value: 'booking', label: 'Use bag booking — choose a booking' },
-            ...options.map((b) => ({ value: String(b.id), label: `${b.code} · ${formatDate(b.bookingDate)} · ${b.remainingBags.toLocaleString('en-IN')} bags available` })),
-            ...(source && source !== 'booking' && !options.some((b) => String(b.id) === source) ? [{ value: source, label: `Booking #${source} — loading details` }] : []),
+            { value: '', label: 'Current price list' },
+            ...options.map((b) => ({ value: String(b.id), label: `${b.code} · ${formatDate(b.bookingDate)} · ${qty(b.remainingBags, b.remainingKgs, b)} left` })),
+            // The chosen booking before its details arrive (a restored draft, or
+            // the shortcut from Bag Bookings). Replaced by the real row above the
+            // moment it loads.
+            ...(source && !options.some((b) => String(b.id) === source) ? [{ value: source, label: 'Loading booking…' }] : []),
           ]} />
-        {booking && source && <span className="flex items-center gap-1 text-xs font-medium text-sky-800 dark:text-sky-200"><Lock className="size-3" /> Rates locked to {formatDate(booking.bookingDate)}</span>}
+        {booking && source && <span className="flex items-center gap-1 text-xs font-medium text-sky-800 dark:text-sky-200"><Lock className="size-3" /> Prices as booked on {formatDate(booking.bookingDate)}</span>}
       </div>
-      {balance && source && <div className="grid gap-2 text-xs sm:grid-cols-3">
-        <div><span className="text-muted-foreground">Available before this order</span><p className="mt-0.5 font-semibold tabular-nums">{qty(balance.before.bags, balance.before.kgs)}</p></div>
-        <div><span className="text-muted-foreground">Used in this order</span><p className="mt-0.5 font-semibold tabular-nums">{qty(balance.used.bags, balance.used.kgs)}</p></div>
-        <div><span className="text-muted-foreground">Remaining after saving</span><p className="mt-0.5 font-semibold tabular-nums">{qty(balance.after.bags, balance.after.kgs)}</p></div>
+      {balance && source && <div className="grid grid-cols-1 gap-2 rounded-md bg-background/70 p-2.5 text-xs sm:grid-cols-3">
+        <div><span className="text-muted-foreground">Available for this order</span><p className="mt-1 font-semibold tabular-nums">{qty(balance.before.bags, balance.before.kgs)}</p></div>
+        <div><span className="text-muted-foreground">Added to this order</span><p className="mt-1 font-semibold tabular-nums">{qty(balance.used.bags, balance.used.kgs)}</p></div>
+        <div><span className="text-muted-foreground">Left after saving</span><p className="mt-1 font-semibold tabular-nums">{qty(balance.after.bags, balance.after.kgs)}</p></div>
       </div>}
-      {error && <p role="alert" className="text-sm text-rose-700 dark:text-rose-300">{error}</p>}
-      {source && !error && <p className="text-xs text-muted-foreground">Add and edit items below. This creates a separate order using its Order date.</p>}
+      {error && <div className="flex flex-wrap items-center gap-2 text-sm" role={onRetry || !loading ? 'alert' : 'status'}>
+        {loading && <Loader2 className="size-4 animate-spin text-sky-700" aria-hidden="true" />}
+        <p className={loading ? 'text-muted-foreground' : 'text-rose-700 dark:text-rose-300'}>{error}</p>
+        {onRetry && <Button type="button" variant="outline" size="sm" onClick={onRetry} disabled={loading}>Retry</Button>}
+      </div>}
+      {source && !error && <p className="text-xs text-muted-foreground">Use Order date for the day the customer requested these items. Each order stays linked to this booking.</p>}
     </div>
   );
 }

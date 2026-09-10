@@ -38,7 +38,11 @@ export function useOrderBookingEntry(source: string, customer: string, entry: Pr
       return priced;
     },
     staleTime: 30_000,
-    retry: false,
+    // One automatic retry: a dropped request is far more common than a price
+    // that genuinely cannot be worked out, and the operator has no way to tell
+    // the two apart. A second failure is real — that is when Retry appears.
+    retry: 1,
+    retryDelay: 300,
   });
   return { booking, bookingId, owned, detail, quote, ready: owned && !!quote.data && !quote.isFetching && !quote.isError };
 }

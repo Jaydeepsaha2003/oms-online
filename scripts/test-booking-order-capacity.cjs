@@ -67,4 +67,40 @@ test('a booking lists every dated order it was drawn into', async () => {
   assert.notEqual(dto.orders[0].orderDate,dto.orders[1].orderDate,'each order carries its own date');
 });
 test('concurrent last-bag saves admit exactly one order', async () => { const b = await booking([{pCategory:'GLASS',bags:1,kgs:70}]); const results = await Promise.allSettled([orders.create(order([line(b.id)])),orders.create(order([line(b.id)]))]); assert.equal(results.filter(r=>r.status==='fulfilled').length,1); assert.equal(await prisma.orderItem.count({where:{bookingId:b.id}}),1); assert.equal((await bookings.findOne(b.id)).remainingBags,0); });
+test('normal save and conversion cannot both take the last bag', async () => {
+  const b = await booking([{pCategory:'GLASS',bags:1,kgs:70}]);
+  const original = bookings.assertDrawable.bind(bookings);
+  let release;
+  const firstChecked = new Promise(resolve => { release = resolve; });
+  let checked = 0;
+  bookings.assertDrawable = async (...args) => {
+    await original(...args);
+    if (args[0] === b.id && ++checked === 1) {
+      release();
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  };
+  try {
+    const saving = orders.create(order([line(b.id)]));
+    await firstChecked;
+    const converting = bookings.convert(b.id, { lines: [line(b.id)] });
+    const results = await Promise.allSettled([saving, converting]);
+    assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
+    assert.equal(await prisma.orderItem.count({where:{bookingId:b.id}}), 1);
+  } finally { bookings.assertDrawable = original; }
+});
+test('size-specific booking price is preserved through save and later edits', async () => {
+  await prisma.product.create({data:{category:'GLASS',subCategory:'PLAIN',product:'SIZED',size:7,rate:100}});
+  await prisma.product.create({data:{category:'GLASS',subCategory:'PLAIN',product:'SIZED',size:7.5,rate:200}});
+  const b = await booking();
+  const input = line(b.id,1,{product:'SIZED',productName:'7.5 SIZED',psize:7.5});
+  const quote = await bookings.quote(b.id,{lines:[input]});
+  const saved = await orders.create(order([input]));
+  assert.equal(quote.lines[0].rate,200);
+  assert.equal(saved.items[0].rate,quote.lines[0].rate);
+  assert.equal(saved.items[0].psize,7.5);
+  const edited = await orders.update(saved.id,order([{...saved.items[0],bags:2,gram:140}]));
+  assert.equal(edited.items[0].rate,200);
+  assert.equal(edited.items[0].psize,7.5);
+});
 (async () => { let failures=0; try { await prisma.product.create({data:{category:'GLASS',subCategory:'PLAIN',product:'TEST',rate:100}}); for(const [name,fn] of tests) { try { await fn(); console.log(`PASS ${name}`); } catch(e) { failures++; console.error(`FAIL ${name}: ${e.message}`); } } } finally { await prisma.$disconnect(); fs.rmSync(temp,{recursive:true,force:true}); } console.log(`${tests.length-failures}/${tests.length} passed`); process.exitCode=failures?1:0; })().catch(e=>{console.error(e);process.exitCode=1;});

@@ -1,3 +1,4 @@
+import { serializeBookingDraw } from './booking-draw-lock';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
@@ -552,6 +553,10 @@ export class BookingsService {
   /* ── Convert (draw down bags/kgs into real order lines) ──────────────────── */
 
   async convert(id: number, dto: ConvertBookingDto, userName?: string | null): Promise<BookingDto> {
+    return serializeBookingDraw(true, () => this.convertWithinDraw(id, dto, userName));
+  }
+
+  private async convertWithinDraw(id: number, dto: ConvertBookingDto, userName?: string | null): Promise<BookingDto> {
     const booking = await this.prisma.booking.findUnique({ where: { id }, include: { items: true } });
     if (!booking) throw new NotFoundException('Booking not found.');
     if (booking.status === 'CANCELLED') throw new BadRequestException('A cancelled booking cannot be converted.');

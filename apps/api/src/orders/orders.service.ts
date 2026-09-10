@@ -1,3 +1,4 @@
+import { serializeBookingDraw } from '../bookings/booking-draw-lock';
 import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
@@ -29,26 +30,6 @@ import { AddOrderItemPhotoDto, CreateOrderDto, OrderQueryDto, PriceAsOfDto, Upda
 const INCLUDE = { items: { include: { photos: { orderBy: { id: 'asc' } } } } } as const;
 type Row = Prisma.OrderGetPayload<{ include: typeof INCLUDE }>;
 
-/**
- * Run a booking-consuming save one at a time.
- *
- * "Is there room?" and "write the lines" are two round trips, so two operators
- * saving the last bag of the same booking would both read the same remaining
- * quantity and both be allowed through. Queueing the check and the write
- * together makes the second one see the first one's lines and fail properly.
- *
- * ponytail: one global queue, not one per booking — saves that touch no booking
- * skip it entirely, so the contention is limited to booking draws. Key it by
- * booking id if that ever becomes a bottleneck. Single-process only; a second
- * API instance would need a row lock in the database instead.
- */
-let bookingDrawQueue: Promise<unknown> = Promise.resolve();
-function serializeBookingDraw<T>(needed: boolean, run: () => Promise<T>): Promise<T> {
-  if (!needed) return run();
-  const next = bookingDrawQueue.then(run, run);
-  bookingDrawQueue = next.catch(() => undefined);
-  return next;
-}
 const drawsOnBooking = (items: readonly Record<string, unknown>[]) => items.some((it) => toNum(it.bookingId));
 type PhotoRow = Prisma.OrderItemPhotoGetPayload<object>;
 
