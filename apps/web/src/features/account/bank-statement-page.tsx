@@ -159,7 +159,8 @@ export function BankStatementPage() {
 
   const { data: banks } = useActiveBankAccounts();
   const { data: preset } = useColumnPreset(bankName);
-  const { data: customerList } = useCustomers({ page: 1, pageSize: 2000 });
+  // Historical bank credits can belong to parties that are now inactive.
+  const { data: customerList } = useCustomers({ page: 1, pageSize: 2000, status: 'ALL' });
   const customers = useMemo(
     () =>
       (customerList?.items ?? [])
@@ -532,6 +533,7 @@ export function BankStatementPage() {
               (remember ? ' — this narration will be recognised next time' : ' — narration not remembered'),
           );
           setChecked(new Set());
+          setAssignTo('');
           // Show the working straight away: what was just assigned is exactly
           // when someone wants to see whether it matched and what it changes.
           setSelectedParty(id);
@@ -551,6 +553,7 @@ export function BankStatementPage() {
             `${checked.size} line${checked.size === 1 ? '' : 's'} ${ignored ? 'marked not required — left out of the reconciliation' : 'brought back into the reconciliation'}`,
           );
           setChecked(new Set());
+          setAssignTo('');
         },
         onError: (e) => toast.error(getApiErrorMessage(e, 'Could not update')),
       },
