@@ -97,7 +97,9 @@ import {
 import { clearOrderDraft, loadOrderDraft, saveOrderDraft } from './order-draft';
 import { DraftLinePhotos, toPhotoInput, type LinePhoto } from './line-photos';
 import { useActiveCustomerBookings } from '@/features/bookings/use-bookings';
-import { BookingDrawSheet, type DrawnBookingLine } from './booking-draw-sheet';
+import { OrderBookingSource } from './order-booking-source';
+import { bookingCapacityError, type BookingOrderLine } from './order-booking-balance';
+import { useOrderBookingEntry } from './use-order-booking-entry';
 import { DesignNamePicker, resolveDesignNameChoices } from './design-name-picker';
 
 /**
@@ -109,6 +111,9 @@ import { DesignNamePicker, resolveDesignNameChoices } from './design-name-picker
 type NavState = {
   customerName?: string;
   openBookingDraw?: boolean;
+  /** Draw from THIS booking — sent by Bag Bookings so the party's first booking
+   *  can't be silently substituted for the one the user actually clicked. */
+  bookingId?: number | null;
   /**
    * Where Back should go, when it is not the list.
    *
@@ -625,67 +630,48 @@ export function OrderFormPage() {
       ? undefined
       : `${Math.min(rowsToShow, Math.max(items.length, 1)) * 2.5 + 2.9}rem`;
 
-  // Bag-booking draw-down: pull a customer's reserved bags into this order. The
-  // button only shows when the customer actually has a drawable booking.
-  const [bookingSheetOpen, setBookingSheetOpen] = useState(false);
+  /*
+   * Bag-booking draw-down.
+   *
+   * A booking is a SOURCE for the ordinary item entry below, not a second editor:
+   * picking one freezes the rates the added lines are priced at and caps how much
+   * they may draw, while quantities, design names, photos, remarks and every
+   * calculation stay exactly the controls the rest of the form already uses. The
+   * old nested "Draw from Bag Booking" sheet duplicated all of that and drifted
+   * from it — one editor is the whole point of this screen.
+   *
+   * `bookingSource` is '' for a regular order, or the chosen booking's id.
+   */
+  const [bookingSource, setBookingSource] = useState('');
   const { data: activeBookings = [] } = useActiveCustomerBookings(
     docKind === 'order' ? customer.trim() : '',
   );
-  // Arriving from Bag Bookings' "Convert" action: once the pre-filled customer's
-  // bookings have actually loaded, open the sheet automatically instead of making
-  // the user click "Draw from Bag Booking" themselves. Fires at most once — after
-  // that the sheet is the user's own to open/close, e.g. via the button below.
-  const autoOpenedBookingSheet = useRef(false);
+  // Arriving from Bag Bookings: preselect the booking that was actually clicked.
+  // Fires at most once — after that the picker is the user's own.
+  const preselectedBooking = useRef(false);
   useEffect(() => {
-    if (autoOpenedBookingSheet.current || !navState?.openBookingDraw) return;
+    if (preselectedBooking.current || !navState?.openBookingDraw) return;
     if (customer.trim() !== (navState.customerName ?? '').trim()) return; // wait for the pre-fill to land
-    if (activeBookings.length === 0) return; // nothing to draw — leave it closed, no dead-end popup
-    autoOpenedBookingSheet.current = true;
-    setBookingSheetOpen(true);
-  }, [navState?.openBookingDraw, navState?.customerName, customer, activeBookings.length]);
-  // Bags/kgs already queued in THIS order for a given booking (so the sheet can
-  // show the true remaining before the order is even saved).
-  const alreadyQueuedForBooking = (bookingId: number) =>
-    items.reduce(
-      (a, i) =>
-        i.bookingId === bookingId && i.status !== 'CANCELLED'
-          ? { bags: a.bags + (n(i.bags) ?? 0), kgs: a.kgs + (n(i.gram) ?? 0) }
-          : a,
-      { bags: 0, kgs: 0 },
-    );
-  // Append booking-drawn lines (already priced at the frozen rate) to the order.
-  const addBookingLines = (drawn: DrawnBookingLine[]) => {
-    setItems((its) => [
-      ...its,
-      ...drawn.map((d) => ({
-        key: `bkg${keyer.current++}`,
-        bookingId: d.bookingId,
-        bookingCode: d.bookingCode,
-        itemName: d.itemName,
-        product: d.product,
-        category: d.category,
-        subCategory: d.subCategory,
-        designType: d.designType,
-        designName: d.designName || 'NA',
-        productRate: d.productRate,
-        designRate: d.designRate,
-        // Carried from the draw sheet so editing a drawn line here still
-        // cascades Pcs ⇄ Box ⇄ Kgs (editItem reloads the line into the entry row).
-        weight: d.weight,
-        pcsBox: d.pcsBox,
-        ordType: entry.ordType,
-        priority: d.priority || 'NORMAL',
-        bags: d.bags,
-        pcs: d.pcs,
-        gram: d.gram,
-        box: d.box,
-        comment: d.comment,
-        calField: d.calField,
-        photos: [],
-      })),
-    ]);
-    toast.success(`${drawn.length} item${drawn.length === 1 ? '' : 's'} drawn from booking`);
-  };
+    const wanted = navState.bookingId;
+    // With no specific booking named, only a single candidate may be assumed —
+    // silently turning a regular order into a draw on the wrong booking is worse
+    // than making the user choose.
+    const pick = wanted ?? (activeBookings.length === 1 ? activeBookings[0].id : null);
+    if (pick == null) return;
+    preselectedBooking.current = true;
+    setBookingSource(String(pick));
+  }, [navState?.openBookingDraw, navState?.customerName, navState?.bookingId, customer, activeBookings]);
+
+  /** The added lines as the balance/capacity rules read them. */
+  const bookingLines = (list: Item[]): BookingOrderLine[] =>
+    list.map((i) => ({
+      bookingId: i.bookingId,
+      category: i.category,
+      bags: i.bags,
+      gram: i.gram,
+      status: i.status,
+    }));
+
 
   // The selected customer's special rates (deltas), applied when an item is picked.
   const { data: special } = useCustomerSpecialRates(customerId);
@@ -859,6 +845,8 @@ export function OrderFormPage() {
       setCompletionDay(d.completionDay || '');
       if (d.status) setStatus(d.status);
       if (d.showBy) setShowBy(d.showBy);
+      // Optional on older drafts — absent simply means a regular order.
+      if (d.bookingSource) { setBookingSource(d.bookingSource); preselectedBooking.current = true; }
       setItems((d.items as Item[]).map((it, idx) => ({ ...it, key: `d${idx}` })));
       setRestoredDraft(true);
     }
@@ -911,6 +899,7 @@ export function OrderFormPage() {
     setCompletionDay('');
     setStatus('CONFIRMED');
     setItems([]);
+    setBookingSource('');
     pcsBeforeBoxRef.current = null;
     setEntry(blankEntry());
     setEditingItemKey(null);
@@ -951,6 +940,8 @@ export function OrderFormPage() {
   // Auto-fill agent + category from the chosen customer, and capture the id so we
   // can apply that customer's special rates to each line.
   const onCustomer = (name: string) => {
+    // A booking belongs to one party, so it cannot survive a change of party.
+    if (name.trim().toUpperCase() !== customer.trim().toUpperCase()) setBookingSource('');
     setCustomer(name);
     const c = lookups?.customers.find((x) => x.name === name);
     setCustomerId(c?.id);
@@ -1062,6 +1053,75 @@ export function OrderFormPage() {
     return m;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lookups]);
+
+  // ── Booking pricing for the entry row ──────────────────────────────────────
+  // The picked item, as the booking's pricing sees it. The query key carries this
+  // identity, so a slow answer for a PREVIOUS item can never land on this one.
+  const pickedItem = itemOptions.map.get(entry.itemName);
+  const bookingEntry = useOrderBookingEntry(
+    bookingSource,
+    customer,
+    {
+      product: entry.product,
+      itemName: entry.itemName,
+      category: entry.category,
+      subCategory: entry.subCategory,
+      designType: entry.designType,
+      designName: entry.designName,
+      psize: pickedItem?.size ?? null,
+    },
+    activeBookings,
+  );
+  const drawnBooking = bookingSource ? bookingEntry.booking : undefined;
+  /*
+   * When EDITING a saved order, its own lines are already subtracted from the
+   * booking's remaining figure. Handing them over as `saved` adds that back
+   * before the preview, so this order's existing draw isn't counted twice.
+   * Saved order lines can't be edited on this screen (see `lineLocked`), so what
+   * is on the list for them is exactly what was saved.
+   */
+  const savedBookingLines = () => bookingLines(items.filter((i) => i.id != null));
+
+  /*
+   * The booking's own rate for the picked item replaces the current-rate cascade
+   * the picker just applied. The breakdown fields go with it: they explain
+   * TODAY's masters, and this line is priced as of the booking date.
+   */
+  const bookingQuoted = bookingEntry.quote.data;
+  useEffect(() => {
+    if (!bookingSource || !bookingQuoted) return;
+    const r2 = (x: number) => String(Math.round(x * 100) / 100);
+    setEntry((e) => ({
+      ...e,
+      productRate: r2(bookingQuoted.productRate + bookingQuoted.productDelta),
+      designRate: e.designType ? r2(bookingQuoted.designRate + bookingQuoted.designDelta) : '',
+      special: null,
+      productBase: null,
+      productDelta: null,
+      productFrom: null,
+      designBase: null,
+      designDelta: null,
+      designFrom: null,
+      commissionAddOn: null,
+      commissionFrom: null,
+    }));
+  }, [bookingSource, bookingQuoted]);
+
+  /** Why this entry can't go onto the booking yet — null when it can. A line is
+   *  never queued on a rate that is still in flight, failed, or left over from a
+   *  previously picked item. */
+  const bookingEntryBlocker = (): string | null => {
+    if (!bookingSource) return null;
+    if (!bookingEntry.booking) return 'Loading this booking…';
+    if (!bookingEntry.owned) {
+      return `${bookingEntry.booking.code} belongs to ${bookingEntry.booking.customerName} — choose a regular order or another booking.`;
+    }
+    if (!entry.product.trim()) return null; // nothing picked yet; the item rules speak first
+    if (bookingEntry.quote.isFetching) return 'Checking this item’s booking rate…';
+    if (bookingEntry.quote.isError) return 'The booking rate could not be checked. Pick the item again to retry.';
+    if (!bookingEntry.quote.data) return 'Pick an item from the list so its booking rate can be checked.';
+    return null;
+  };
 
   /**
    * The agent commission folded into this line's product rate, and which rule
@@ -1426,6 +1486,9 @@ export function OrderFormPage() {
     if (!entry.product.trim() && !entry.designType.trim()) {
       return toast.error('Pick a product or design type to add');
     }
+    // A booking line's rate must be the booking's own, resolved and current.
+    const bookingBlocked = bookingEntryBlocker();
+    if (bookingBlocked) return toast.error(bookingBlocked);
     // The picked item must come from the catalogue (free text can slip in when
     // the field loses focus without a pick).
     if (entry.itemName.trim() && !entry.category.trim() && !entry.subCategory.trim()) {
@@ -1490,7 +1553,20 @@ export function OrderFormPage() {
       calField,
       designName,
       photos: entry.photos ?? [],
+      // Which booking pays for this line — re-applied on every update so an edit
+      // that switches the source (or drops it) moves the quantity with it.
+      bookingId: drawnBooking?.id ?? null,
+      bookingCode: drawnBooking?.code ?? null,
     };
+    // Nothing goes on the list that the booking can't actually cover. Counted
+    // ONCE when replacing a row: the edited line stands in for its original.
+    if (drawnBooking) {
+      const next = editingItemKey
+        ? items.map((i) => (i.key === editingItemKey ? completed : i))
+        : [...items, completed];
+      const overdrawn = bookingCapacityError(drawnBooking, bookingLines(next), savedBookingLines());
+      if (overdrawn) return toast.error(overdrawn);
+    }
     setItems((its) =>
       editingItemKey
         ? its.map((item) => (item.key === editingItemKey ? completed : item))
@@ -1519,11 +1595,11 @@ export function OrderFormPage() {
   // Keep the original row in the list while its values are edited above. This
   // preserves a safe copy and prevents a second edit from overwriting the first.
   // For an ORDER, saved lines are not editable here (their id carries dispatch
-  // history — Order Modify owns that), and booking-drawn lines are rate-frozen.
-  // A QUOTATION's saved lines have neither concern: the server replaces its
-  // items wholesale on save, so they stay editable right up to conversion.
-  const lineLocked = (item: Item) =>
-    (docKind === 'order' && item.id != null) || item.bookingId != null;
+  // history — Order Modify owns that). A QUOTATION's saved lines have neither
+  // concern: the server replaces its items wholesale on save, so they stay
+  // editable right up to conversion. An unsaved booking line IS editable — its
+  // rate stays the booking's, re-quoted whenever the item itself changes.
+  const lineLocked = (item: Item) => docKind === 'order' && item.id != null;
   const editItem = (item: Item) => {
     if (lineLocked(item)) return;
     if (editingItemKey != null) {
@@ -1532,6 +1608,9 @@ export function OrderFormPage() {
     }
     const { key, ...rest } = item;
     setEditingItemKey(key);
+    // Edit the line against the booking it was added on, so its rate is re-quoted
+    // from that booking rather than whichever one the picker happens to be on.
+    setBookingSource(item.bookingId != null ? String(item.bookingId) : '');
     // A fresh edit run: no Box keystroke has overwritten anything yet, so the
     // line's own Pcs is what an emptied Box would restore to.
     pcsBeforeBoxRef.current = null;
@@ -1659,6 +1738,12 @@ export function OrderFormPage() {
     if (items.length === 0) return !toast.error('There are no items to save.');
     if (editingItemKey != null)
       return !toast.error('Finish or cancel the current item edit before saving.');
+    // Last local word on the booking before the server's own check — the balance
+    // may have moved since the lines were added (a refetch, or another operator).
+    if (drawnBooking) {
+      const overdrawn = bookingCapacityError(drawnBooking, bookingLines(items), savedBookingLines());
+      if (overdrawn) return !toast.error(overdrawn);
+    }
     return true;
   };
 
@@ -2326,6 +2411,20 @@ export function OrderFormPage() {
               Select a customer above to start adding items.
             </div>
           )}
+          {/* Where this order's items are priced from — a bag booking freezes the
+              rates and caps the quantity; everything below stays the same. */}
+          {docKind === 'order' && can('booking:view') && (activeBookings.length > 0 || bookingSource) && (
+            <OrderBookingSource
+              source={bookingSource}
+              onChange={setBookingSource}
+              bookings={activeBookings}
+              booking={drawnBooking}
+              lines={bookingLines(items)}
+              saved={savedBookingLines()}
+              disabled={editingItemKey != null}
+              error={bookingEntryBlocker()}
+            />
+          )}
           {/* Row 1 */}
           <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-3 lg:grid-cols-12">
             {/* Manual Size/Pcs picker — shown only when auto-detect is turned off. */}
@@ -2413,6 +2512,9 @@ export function OrderFormPage() {
                 min={0}
                 className="text-right tabular-nums"
                 value={entry.productRate}
+                // A booking's rate is the agreed one — it is shown, not negotiated here.
+                readOnly={!!bookingSource}
+                title={bookingSource ? 'Fixed by the selected bag booking' : undefined}
                 onKeyDown={onlyNumericKey}
                 onChange={(e) => setEntryField({ productRate: e.target.value })}
               />
@@ -2431,6 +2533,8 @@ export function OrderFormPage() {
                 className="text-right tabular-nums"
                 value={entry.designRate}
                 disabled={!designRateEditable}
+                readOnly={!!bookingSource}
+                title={bookingSource ? 'Fixed by the selected bag booking' : undefined}
                 onKeyDown={onlyNumericKey}
                 onChange={(e) => setEntryField({ designRate: e.target.value })}
               />
@@ -2795,20 +2899,6 @@ export function OrderFormPage() {
                   ))}
                 </select>
               </label>
-              {docKind === 'order' && can('booking:view') && activeBookings.length > 0 && (
-                <Button
-                  type="button"
-                  size="sm"
-                  className="bg-sky-700 font-semibold text-white shadow-md shadow-sky-700/25 hover:bg-sky-800"
-                  onClick={() => setBookingSheetOpen(true)}
-                  title="Draw items from this customer’s bag bookings"
-                >
-                  <PackageOpen /> Draw from Bag Booking
-                  <span className="ml-1 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] font-bold tabular-nums">
-                    {activeBookings.length}
-                  </span>
-                </Button>
-              )}
             </div>
           </div>
 
@@ -3266,20 +3356,6 @@ export function OrderFormPage() {
         </div>
       </div>
 
-      {/* Draw-from-booking slide-over */}
-      {docKind === 'order' && (
-        <BookingDrawSheet
-          open={bookingSheetOpen}
-          onOpenChange={setBookingSheetOpen}
-          customerName={customer}
-          bookings={activeBookings}
-          lookups={lookups}
-          bagWeights={special?.bagWeights ?? []}
-          logos={special?.logos ?? []}
-          alreadyQueued={alreadyQueuedForBooking}
-          onAdd={addBookingLines}
-        />
-      )}
     </div>
   );
 }

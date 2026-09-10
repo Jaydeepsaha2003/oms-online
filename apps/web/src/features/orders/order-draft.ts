@@ -15,6 +15,9 @@ export interface OrderDraftData {
   completionDay: string;
   status: string;
   showBy: 'SIZE' | 'PCS';
+  /** The bag booking the items are being drawn from ('' for a regular order).
+   *  Optional so drafts written before booking entry existed still restore. */
+  bookingSource?: string;
   /** Added line items (the form's Item[] shape). */
   items: unknown[];
   savedAt: number;
