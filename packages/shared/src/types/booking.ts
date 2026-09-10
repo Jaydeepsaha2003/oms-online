@@ -20,6 +20,25 @@ import type { Paginated, PaginationQuery } from './common';
 export const BOOKING_STATUSES = ['OPEN', 'PARTIALLY_CONVERTED', 'CONVERTED', 'CANCELLED', 'PRECLOSED'] as const;
 export type BookingStatus = (typeof BOOKING_STATUSES)[number];
 
+/**
+ * The statuses a NEW draw may be taken from. Shared so the screen that offers a
+ * booking and the server that admits the draw cannot answer this differently.
+ *
+ * CONVERTED is absent on purpose: it means the reservation is used up. Editing
+ * an order that already drew such a booking is still allowed — see
+ * BookingsService.assertDrawable — but that is a correction, not a new draw.
+ */
+export const DRAWABLE_BOOKING_STATUSES: readonly string[] = ['OPEN', 'PARTIALLY_CONVERTED'];
+
+/** One order a booking was drawn into. */
+export interface BookingLinkedOrderDto {
+  id: number;
+  code: string;
+  /** The date the customer asked for THIS list of items — not the booking date. */
+  orderDate: string;
+  status: string;
+}
+
 export interface BookingDto {
   id: number;
   code: string;
@@ -42,8 +61,17 @@ export interface BookingDto {
   status: BookingStatus;
   comment: string | null;
   orderId: number | null;
-  /** Code of the order holding the converted lines, once one exists. */
+  /** Code of the FIRST order the booking was drawn into. Kept for the existing
+   *  callers; use `orders` to show every order — see {@link BookingLinkedOrderDto}. */
   orderCode: string | null;
+  /**
+   * Every order this booking's lines actually landed on, each with its own date.
+   *
+   * A booking is drawn down by however many dated orders the customer asks for,
+   * so `orderId`/`orderCode` — the first one — is a pointer, never the list.
+   * Built from `OrderItem.bookingId`, the same link the history and PDF use.
+   */
+  orders: BookingLinkedOrderDto[];
   userName: string | null;
   /** Set only once PRECLOSED — the bags/kgs written off, by whom, when, and why. */
   precloseBags: number | null;

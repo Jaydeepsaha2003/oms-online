@@ -55,6 +55,29 @@ const num = (v: number) => v.toLocaleString('en-IN');
  * (57 bags + 4,400 kgs) / (81 bags + 0 kgs) = 5,502%, clamped to a confident
  * "100%" on a booking with 24 bags still to draw.
  */
+/**
+ * Every order this booking was drawn into, each with its own date — a booking
+ * is filled by as many dated orders as the customer asks for, so showing only
+ * the first one hid the rest.
+ */
+function LinkedOrders({ booking }: { booking: Pick<BookingDto, 'orders'> }) {
+  const orders = booking.orders ?? [];
+  if (!orders.length) return <span className="text-muted-foreground">—</span>;
+  return (
+    <span className="flex flex-wrap gap-x-1.5 gap-y-0.5">
+      {orders.map((o) => (
+        <span
+          key={o.id}
+          className={`font-mono text-xs whitespace-nowrap ${o.status === 'CANCELLED' ? 'text-muted-foreground line-through' : 'text-sky-700'}`}
+          title={`${o.code} · ${formatDate(o.orderDate)}`}
+        >
+          {shortOrderCode(o.code)}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function Progress({ booking }: { booking: Pick<BookingDto, 'bags' | 'kgs' | 'convertedBags' | 'convertedKgs'> }) {
   const parts: number[] = [];
   if (booking.bags > 0) parts.push(booking.convertedBags / booking.bags);
@@ -95,7 +118,7 @@ const COLUMNS: DataColumn<BookingDto>[] = [
   { id: 'bags', label: 'Bags', align: 'right', cell: (b) => <span className="tabular-nums">{num(b.convertedBags)} / {num(b.bags)}</span> },
   { id: 'kgs', label: 'Kgs', align: 'right', cell: (b) => <span className="tabular-nums">{num(b.convertedKgs)} / {num(b.kgs)}</span> },
   { id: 'progress', label: 'Converted', cell: (b) => <Progress booking={b} /> },
-  { id: 'order', label: 'Order', cell: (b) => (b.orderCode ? <span className="font-mono text-xs text-sky-700">{shortOrderCode(b.orderCode)}</span> : <span className="text-muted-foreground">—</span>) },
+  { id: 'order', label: 'Orders', cell: (b) => <LinkedOrders booking={b} /> },
   {
     id: 'status',
     label: 'Status',
@@ -307,7 +330,7 @@ export function BookingsPage() {
         </div>
         <div className="flex items-center justify-between gap-2">
           <Progress booking={b} />
-          {b.orderCode && <span className="font-mono text-xs text-sky-700">{shortOrderCode(b.orderCode)}</span>}
+          <LinkedOrders booking={b} />
         </div>
         <div className="flex items-center justify-end gap-1 border-t pt-2.5" onClick={(e) => e.stopPropagation()}>
           {can('booking:convert') && (

@@ -42,5 +42,29 @@ test('replacement counts original order once, preserves frozen rate', async () =
 test('dispatched historical identity and rates survive quantity edit', async () => { const b = await booking(); const o = await orders.create(order([line(b.id,2)])); const it = o.items[0]; await prisma.orderItem.update({where:{id:it.id},data:{productRate:91,rate:91}}); const d = await prisma.dispatch.create({data:{orderId:o.id,orderItemId:it.id,customerName:'PARTY',bags:1,gram:70,rate:91}}); const saved = await orders.findOne(o.id); await orders.update(o.id,order([{...saved.items[0],bags:3,gram:210}])); assert.deepEqual(await prisma.dispatch.findUnique({where:{id:d.id}}),d); await assert.rejects(orders.update(o.id,order([{...saved.items[0],bookingId:null}])), /dispatched/i); });
 test('restoring a cancelled order cannot reclaim consumed balance', async () => { const b = await booking([{pCategory:'GLASS',bags:1,kgs:70}]); const o = await orders.create(order([line(b.id)])); await orders.updateStatus(o.id,'CANCELLED'); await orders.create(order([line(b.id)])); await assert.rejects(orders.updateStatus(o.id,'CONFIRMED'), /draw|remaining|left|converted/i); });
 test('two dated orders share booking without changing original order', async () => { const b = await booking([{pCategory:'GLASS',bags:300,kgs:21000}]); const first = await orders.create(order([line(b.id)],{orderDate:'2026-06-18'})); const second = await orders.create(order([line(b.id,3),line(b.id,2)],{orderDate:'2026-09-10'})); assert.notEqual(first.id,second.id); assert.equal((await orders.findOne(first.id)).orderDate,first.orderDate); assert.equal((await bookings.findOne(b.id)).remainingBags,294); });
+test('booking basis survives a later rate change and a later order date', async () => {
+  // The product cost 100 when the booking was made and 500 today.
+  const p = await prisma.product.create({data:{category:'GLASS',subCategory:'PLAIN',product:'RISEN',rate:500}});
+  await prisma.productRateHistory.create({data:{productId:p.id,productName:'RISEN',category:'GLASS',subCategory:'PLAIN',oldRate:100,newRate:500,changedAt:new Date('2026-09-01')}});
+  const b = await booking([{pCategory:'GLASS',bags:10,kgs:700}]);
+  const o = await orders.create(order([line(b.id,1,{product:'RISEN',productName:'RISEN'})],{orderDate:'2026-09-10'}));
+  assert.equal(o.items[0].rate,100,'a booking line is priced as of the booking date, not the order date');
+  // The same item on a REGULAR line of the same order still gets today's rate.
+  const plain = await orders.create(order([{...line(null,1,{product:'RISEN',productName:'RISEN'}),bookingId:null}],{orderDate:'2026-09-10'}));
+  assert.equal(plain.items[0].rate,999,'a regular line keeps the rate the form sent');
+  // A later edit that touches only quantity must not move the frozen figure.
+  const saved = await orders.findOne(o.id);
+  const edited = await orders.update(o.id,order([{...saved.items[0],bags:2,gram:140}],{orderDate:'2026-09-20'}));
+  assert.equal(edited.items[0].rate,100);
+});
+test('a booking lists every dated order it was drawn into', async () => {
+  const b = await booking([{pCategory:'GLASS',bags:10,kgs:700}]);
+  const first = await orders.create(order([line(b.id,1)],{orderDate:'2026-06-18'}));
+  const second = await orders.create(order([line(b.id,2)],{orderDate:'2026-09-10'}));
+  const dto = await bookings.findOne(b.id);
+  assert.equal(dto.orders.length,2,'both dated orders are listed, not just Booking.orderId');
+  assert.deepEqual(dto.orders.map(o=>o.id).sort((x,y)=>x-y),[first.id,second.id]);
+  assert.notEqual(dto.orders[0].orderDate,dto.orders[1].orderDate,'each order carries its own date');
+});
 test('concurrent last-bag saves admit exactly one order', async () => { const b = await booking([{pCategory:'GLASS',bags:1,kgs:70}]); const results = await Promise.allSettled([orders.create(order([line(b.id)])),orders.create(order([line(b.id)]))]); assert.equal(results.filter(r=>r.status==='fulfilled').length,1); assert.equal(await prisma.orderItem.count({where:{bookingId:b.id}}),1); assert.equal((await bookings.findOne(b.id)).remainingBags,0); });
 (async () => { let failures=0; try { await prisma.product.create({data:{category:'GLASS',subCategory:'PLAIN',product:'TEST',rate:100}}); for(const [name,fn] of tests) { try { await fn(); console.log(`PASS ${name}`); } catch(e) { failures++; console.error(`FAIL ${name}: ${e.message}`); } } } finally { await prisma.$disconnect(); fs.rmSync(temp,{recursive:true,force:true}); } console.log(`${tests.length-failures}/${tests.length} passed`); process.exitCode=failures?1:0; })().catch(e=>{console.error(e);process.exitCode=1;});

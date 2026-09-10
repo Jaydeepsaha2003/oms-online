@@ -23,4 +23,19 @@ assert.equal(bookingCapacityError(b, [line('large', 300, 21000)]).includes('299'
 assert.equal(bookingCapacityError({ ...b, kgs: 0, remainingKgs: 0, items: [{...b.items[0], kgs: 0, remainingKgs: 0}] }, added), null, 'bags-only reservations allow derived kg');
 assert.equal(bookingCapacityError(b, [line('cup', 1, 70, { category: 'CUP' })]) !== null, true, 'a GLASS booking cannot supply CUP');
 assert.equal(bookingCapacityError({ ...b, items: [{ ...b.items[0], pCategory: '' }] }, added), null, 'unspecified reservation allows a later category');
+
+// The screen that offers a booking and the server that admits the draw must
+// answer "can this be drawn?" from the SAME list — a second hard-coded copy is
+// how the two drifted apart before.
+const shared = require(path.resolve(__dirname, '../packages/shared/dist/cjs/types/booking.js'));
+assert.deepEqual(shared.DRAWABLE_BOOKING_STATUSES, ['OPEN', 'PARTIALLY_CONVERTED']);
+for (const closed of ['CONVERTED', 'CANCELLED', 'PRECLOSED']) {
+  assert.equal(shared.DRAWABLE_BOOKING_STATUSES.includes(closed), false, `${closed} must not accept a new draw`);
+}
+for (const file of ['../apps/api/src/bookings/bookings.service.ts', '../apps/web/src/features/orders/order-form-page.tsx']) {
+  const src = fs.readFileSync(path.resolve(__dirname, file), 'utf8');
+  assert.ok(/DRAWABLE_BOOKING_STATUSES/.test(src), `${file} must use the shared drawable-status list`);
+  assert.ok(!/=\s*\[\s*'OPEN',\s*'PARTIALLY_CONVERTED'\s*\]/.test(src), `${file} has re-introduced a local copy of the drawable statuses`);
+}
+
 console.log('PASS: booking balance, edits, deletion, saved drafts, status and capacity checks');

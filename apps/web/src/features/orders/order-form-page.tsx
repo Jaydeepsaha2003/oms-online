@@ -96,6 +96,7 @@ import {
 } from '../quotations/use-quotations';
 import { clearOrderDraft, loadOrderDraft, saveOrderDraft } from './order-draft';
 import { DraftLinePhotos, toPhotoInput, type LinePhoto } from './line-photos';
+import { DRAWABLE_BOOKING_STATUSES } from '@oms/shared';
 import { useActiveCustomerBookings } from '@/features/bookings/use-bookings';
 import { OrderBookingSource } from './order-booking-source';
 import { bookingCapacityError, type BookingOrderLine } from './order-booking-balance';
@@ -1107,15 +1108,28 @@ export function OrderFormPage() {
     }));
   }, [bookingSource, bookingQuoted]);
 
-  /** Why this entry can't go onto the booking yet — null when it can. A line is
-   *  never queued on a rate that is still in flight, failed, or left over from a
-   *  previously picked item. */
-  const bookingEntryBlocker = (): string | null => {
+  /** Why the SELECTED BOOKING itself can't be drawn — null when it can. A
+   *  restored draft (or a tab left open) can point at a booking that has since
+   *  been filled, cancelled or closed, so this is checked on screen and again at
+   *  save, not only by the server. */
+  const bookingSourceProblem = (): string | null => {
     if (!bookingSource) return null;
     if (!bookingEntry.booking) return 'Loading this booking…';
     if (!bookingEntry.owned) {
       return `${bookingEntry.booking.code} belongs to ${bookingEntry.booking.customerName} — choose a regular order or another booking.`;
     }
+    if (!DRAWABLE_BOOKING_STATUSES.includes(bookingEntry.booking.status)) {
+      return `${bookingEntry.booking.code} is ${bookingEntry.booking.status.toLowerCase().replace(/_/g, ' ')} and can no longer be drawn. Switch to a regular order, or pick another booking.`;
+    }
+    return null;
+  };
+
+  /** Why this ENTRY can't go onto the booking yet. A line is never queued on a
+   *  rate that is still in flight, failed, or left over from a previously picked
+   *  item — the picker right above the message is the way out of each. */
+  const bookingEntryBlocker = (): string | null => {
+    const problem = bookingSourceProblem();
+    if (problem || !bookingSource) return problem;
     if (!entry.product.trim()) return null; // nothing picked yet; the item rules speak first
     if (bookingEntry.quote.isFetching) return 'Checking this item’s booking rate…';
     if (bookingEntry.quote.isError) return 'The booking rate could not be checked. Pick the item again to retry.';
@@ -1738,8 +1752,11 @@ export function OrderFormPage() {
     if (items.length === 0) return !toast.error('There are no items to save.');
     if (editingItemKey != null)
       return !toast.error('Finish or cancel the current item edit before saving.');
-    // Last local word on the booking before the server's own check — the balance
-    // may have moved since the lines were added (a refetch, or another operator).
+    // Last local word on the booking before the server's own check — it may have
+    // been filled or closed, and the balance may have moved, since the lines were
+    // added (a refetch, or another operator).
+    const sourceProblem = bookingSourceProblem();
+    if (sourceProblem) return !toast.error(sourceProblem);
     if (drawnBooking) {
       const overdrawn = bookingCapacityError(drawnBooking, bookingLines(items), savedBookingLines());
       if (overdrawn) return !toast.error(overdrawn);

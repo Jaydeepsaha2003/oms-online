@@ -11,7 +11,9 @@ import {
   type BookingStatus,
   type CustomerLogoDto,
   type CustomerRateDto,
+  type BookingLinkedOrderDto,
   type LinkableOrderItemDto,
+  DRAWABLE_BOOKING_STATUSES as DRAWABLE_STATUSES,
   ORDER_UNCOMMITTED_STATUSES,
   type Paginated,
   type PriceHistoryList,
@@ -44,7 +46,6 @@ const ORDER_LINE_KIND = 'ORDER_LINE';
 const OVERAGE_KIND = 'DISPATCH_OVERAGE';
 /** Statuses a booking can still be drawn from. CONVERTED is full, and
  *  CANCELLED/PRECLOSED are closed for good. */
-const DRAWABLE_STATUSES = ['OPEN', 'PARTIALLY_CONVERTED'];
 /** Float slack — bags/kgs are Floats, so an exact `>=` on a difference lies. */
 const EPS = 0.0001;
 
@@ -76,9 +77,9 @@ export class BookingsService {
       this.prisma.booking.findMany({ where, include: INCLUDE, orderBy: [{ bookingDate: 'desc' }, { id: 'desc' }], skip: query.skip, take: query.pageSize }),
       this.prisma.booking.count({ where }),
     ]);
-    const orderCodes = await this.orderCodeMap(rows);
+    const linkedOrders = await this.linkedOrderMap(rows);
     return {
-      items: rows.map((r) => this.toDto(r, orderCodes)),
+      items: rows.map((r) => this.toDto(r, linkedOrders)),
       total,
       page: query.page,
       pageSize: query.pageSize,
@@ -89,8 +90,8 @@ export class BookingsService {
   async findOne(id: number): Promise<BookingDto> {
     const row = await this.prisma.booking.findUnique({ where: { id }, include: INCLUDE });
     if (!row) throw new NotFoundException('Booking not found.');
-    const orderCodes = await this.orderCodeMap([row]);
-    return this.toDto(row, orderCodes);
+    const linkedOrders = await this.linkedOrderMap([row]);
+    return this.toDto(row, linkedOrders);
   }
 
   /* ── Create / update ─────────────────────────────────────────────────────── */
@@ -796,7 +797,7 @@ export class BookingsService {
     if (!party || !category) return [];
 
     const rows = await this.prisma.booking.findMany({
-      where: { customerName: party, status: { in: DRAWABLE_STATUSES } },
+      where: { customerName: party, status: { in: [...DRAWABLE_STATUSES] } },
       include: INCLUDE,
       orderBy: [{ bookingDate: 'desc' }, { id: 'desc' }],
     });
@@ -1356,14 +1357,39 @@ export class BookingsService {
   }
 
   /** Map booking.orderId → order code, for the DTO. */
-  private async orderCodeMap(rows: { orderId: number | null }[]): Promise<Map<number, string>> {
-    const ids = rows.map((r) => r.orderId).filter((v): v is number => v != null);
-    if (!ids.length) return new Map();
-    const orders = await this.prisma.order.findMany({ where: { id: { in: ids } }, select: { id: true, code: true } });
-    return new Map(orders.map((o) => [o.id, o.code ?? `ORD-${o.id}`]));
+  /**
+   * Every order each booking's lines landed on, keyed by booking id.
+   *
+   * Read off `OrderItem.bookingId` — the same link the history and the PDF use —
+   * because a booking is drawn down by as many dated orders as the customer
+   * asks for. `Booking.orderId` is only the first of them.
+   */
+  private async linkedOrderMap(rows: { id: number }[]): Promise<Map<number, BookingLinkedOrderDto[]>> {
+    const out = new Map<number, BookingLinkedOrderDto[]>();
+    const ids = rows.map((r) => r.id);
+    if (!ids.length) return out;
+    const items = await this.prisma.orderItem.findMany({
+      where: { bookingId: { in: ids } },
+      select: { bookingId: true, order: { select: { id: true, code: true, orderDate: true, status: true } } },
+      orderBy: [{ orderId: 'asc' }],
+    });
+    for (const it of items) {
+      if (it.bookingId == null) continue;
+      const list = out.get(it.bookingId) ?? [];
+      if (list.some((o) => o.id === it.order.id)) continue; // one entry per order, not per line
+      list.push({
+        id: it.order.id,
+        code: it.order.code ?? `ORD-${it.order.id}`,
+        orderDate: it.order.orderDate.toISOString(),
+        status: it.order.status,
+      });
+      out.set(it.bookingId, list);
+    }
+    return out;
   }
 
-  private toDto(r: Row, orderCodes: Map<number, string>): BookingDto {
+  private toDto(r: Row, linkedOrders: Map<number, BookingLinkedOrderDto[]>): BookingDto {
+    const orders = linkedOrders.get(r.id) ?? [];
     const remainingBags = Math.max(0, round2(r.bags - r.convertedBags - (r.precloseBags ?? 0)));
     const remainingKgs = Math.max(0, round2(r.kgs - r.convertedKgs - (r.precloseKgs ?? 0)));
     return {
@@ -1383,7 +1409,9 @@ export class BookingsService {
       status: r.status as BookingStatus,
       comment: r.comment,
       orderId: r.orderId,
-      orderCode: r.orderId ? orderCodes.get(r.orderId) ?? null : null,
+      // The legacy single pointer, kept in step with the list it came from.
+      orderCode: orders.find((o) => o.id === r.orderId)?.code ?? orders[0]?.code ?? null,
+      orders,
       userName: r.userName,
       precloseBags: r.precloseBags,
       precloseKgs: r.precloseKgs,
