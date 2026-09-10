@@ -28,6 +28,28 @@ import { AddOrderItemPhotoDto, CreateOrderDto, OrderQueryDto, PriceAsOfDto, Upda
 
 const INCLUDE = { items: { include: { photos: { orderBy: { id: 'asc' } } } } } as const;
 type Row = Prisma.OrderGetPayload<{ include: typeof INCLUDE }>;
+
+/**
+ * Run a booking-consuming save one at a time.
+ *
+ * "Is there room?" and "write the lines" are two round trips, so two operators
+ * saving the last bag of the same booking would both read the same remaining
+ * quantity and both be allowed through. Queueing the check and the write
+ * together makes the second one see the first one's lines and fail properly.
+ *
+ * ponytail: one global queue, not one per booking — saves that touch no booking
+ * skip it entirely, so the contention is limited to booking draws. Key it by
+ * booking id if that ever becomes a bottleneck. Single-process only; a second
+ * API instance would need a row lock in the database instead.
+ */
+let bookingDrawQueue: Promise<unknown> = Promise.resolve();
+function serializeBookingDraw<T>(needed: boolean, run: () => Promise<T>): Promise<T> {
+  if (!needed) return run();
+  const next = bookingDrawQueue.then(run, run);
+  bookingDrawQueue = next.catch(() => undefined);
+  return next;
+}
+const drawsOnBooking = (items: readonly Record<string, unknown>[]) => items.some((it) => toNum(it.bookingId));
 type PhotoRow = Prisma.OrderItemPhotoGetPayload<object>;
 
 /** One flattened order-line row for the Order Modify Excel export. */
@@ -270,13 +292,15 @@ export class OrdersService {
     // Booking-sourced lines are re-priced at their booking's frozen date rates and
     // checked against what's left on the booking before anything is written.
     await this.applyBookingPricing(dto.items ?? []);
-    await this.assertBookingCapacity(dto.items ?? []);
-    const row = await this.prisma.order.create({
-      data: {
-        ...data,
-        items: { create: (dto.items ?? []).map((it) => ({ ...this.toItemData(it), ...this.photoCreateNested(it) })) },
-      },
-      include: INCLUDE,
+    const row = await serializeBookingDraw(drawsOnBooking(dto.items ?? []), async () => {
+      await this.assertBookingCapacity(dto.items ?? [], dto.customerName ?? null);
+      return this.prisma.order.create({
+        data: {
+          ...data,
+          items: { create: (dto.items ?? []).map((it) => ({ ...this.toItemData(it), ...this.photoCreateNested(it) })) },
+        },
+        include: INCLUDE,
+      });
     });
     await this.recomputeBookings(this.bookingIdsOf(row.items));
     const created = await this.ensureCode(row);
@@ -322,7 +346,10 @@ export class OrdersService {
     // them any more.
     const bookingsBefore = await this.prisma.orderItem.findMany({
       where: { orderId: id, bookingId: { not: null } },
-      select: { bookingId: true },
+      select: {
+        id: true, bookingId: true, rate: true, productRate: true, designRate: true,
+        pCategory: true, subCategory: true, product: true, productName: true, designType: true, design: true, psize: true,
+      },
     });
 
     if (!dto.items) {
@@ -330,8 +357,9 @@ export class OrdersService {
     } else {
       // Re-price + capacity-check booking-sourced lines before writing (this order's
       // own current draw is excluded so its kept lines don't count against itself).
-      await this.applyBookingPricing(dto.items);
-      await this.assertBookingCapacity(dto.items, id);
+      // The saved rows let an untouched line keep the rate it was agreed at.
+      await this.applyBookingPricing(dto.items, new Map(bookingsBefore.map((b) => [b.id, b as Record<string, unknown>])));
+      await this.assertBookingCapacity(dto.items, dto.customerName ?? null, id);
       // Reconcile line items BY ID so existing lines keep their identity — and
       // therefore their dispatch history. A blanket deleteMany+create would give
       // every line a new id and cascade-delete its dispatches (Dispatch.orderItem
@@ -363,6 +391,7 @@ export class OrdersService {
           comment: true,
           priority: true,
           quotationItemId: true,
+          bookingId: true,
           // The dispatch rows themselves, not just a count: the quantity guard
           // below needs how much has actually shipped, per field.
           dispatches: { select: { bags: true, pcs: true, gram: true, box: true, dispatchStatus: true } },
@@ -399,10 +428,14 @@ export class OrdersService {
               current.productRate !== incoming.productRate ||
               current.designRate !== incoming.designRate ||
               current.rate !== incoming.rate ||
-              current.calField !== incoming.calField;
+              current.calField !== incoming.calField ||
+              // Which booking paid for it is part of that history: detaching or
+              // re-pointing it would move quantity off a booking that a shipped
+              // line already consumed.
+              (current.bookingId ?? null) !== (incoming.bookingId ?? null);
             if (identityChanged) {
               throw new BadRequestException(
-                `"${label}" has already been dispatched — its product, design and rate can't be edited. Add the change as a new line instead.`,
+                `"${label}" has already been dispatched — its product, design, rate and booking can't be edited. Add the change as a new line instead.`,
               );
             }
             // HOW MUCH was ordered may still move on a part-shipped line. Ordering
@@ -590,16 +623,22 @@ export class OrdersService {
         }
       }
       const toDelete = removed.map((e) => e.id);
-      await this.prisma.order.update({
-        where: { id },
-        data: {
-          ...data,
-          items: {
-            ...(toDelete.length ? { deleteMany: { id: { in: toDelete } } } : {}),
-            ...(toUpdate.length ? { update: toUpdate } : {}),
-            ...(toCreate.length ? { create: toCreate } : {}),
+      // Re-check capacity right against the write, and queued, so the balance this
+      // save was allowed on can't have been spent by another save in between (the
+      // check above is the early, better-placed failure; this one closes the gap).
+      await serializeBookingDraw(drawsOnBooking(dto.items), async () => {
+        await this.assertBookingCapacity(dto.items!, dto.customerName ?? null, id);
+        await this.prisma.order.update({
+          where: { id },
+          data: {
+            ...data,
+            items: {
+              ...(toDelete.length ? { deleteMany: { id: { in: toDelete } } } : {}),
+              ...(toUpdate.length ? { update: toUpdate } : {}),
+              ...(toCreate.length ? { create: toCreate } : {}),
+            },
           },
-        },
+        });
       });
 
       if (changesToRecord.length > 0) {
@@ -663,7 +702,20 @@ export class OrdersService {
       status === 'CANCELLED'
         ? { cancelReason: reason?.trim() || null, cancelNote: note?.trim() || null }
         : { cancelReason: null, cancelNote: null };
-    const row = await this.prisma.order.update({ where: { id }, data: { status, ...cancelData }, include: INCLUDE });
+    // Cancelling released this order's booking quantity, and someone else may have
+    // taken it since. Restoring has to claim it back the same way a save does, or
+    // the booking would quietly go over its reservation.
+    const restoring = status === 'CONFIRMED';
+    const row = await serializeBookingDraw(restoring, async () => {
+      if (restoring) {
+        const lines = await this.prisma.orderItem.findMany({
+          where: { orderId: id, bookingId: { not: null }, status: { not: 'CANCELLED' } },
+          select: { bookingId: true, pCategory: true, bags: true, gram: true, order: { select: { customerName: true } } },
+        });
+        await this.assertBookingCapacity(lines as unknown as Record<string, unknown>[], lines[0]?.order.customerName ?? null, id);
+      }
+      return this.prisma.order.update({ where: { id }, data: { status, ...cancelData }, include: INCLUDE });
+    });
     // Cancelling/restoring the order changes whether its booking lines count as
     // drawn — recompute any booking it references.
     await this.recomputeBookings(this.bookingIdsOf(row.items), actorName);
@@ -1531,12 +1583,38 @@ export class OrdersService {
     for (const bid of new Set(ids)) await this.bookings.recompute(bid, actorName);
   }
 
+  /** The identity that decides a booking line's price. Anything else about the
+   *  line (quantity, remarks, the order's own date) must not move its rate. */
+  private static readonly PRICING_IDENTITY = ['pCategory', 'subCategory', 'product', 'productName', 'designType', 'design', 'psize'] as const;
+
   /** Re-price every booking-sourced line at its booking's frozen date rates so the
-   *  stored rate can't drift from (or be tampered against) the booking-date value. */
-  private async applyBookingPricing(items: Record<string, unknown>[]): Promise<void> {
+   *  stored rate can't drift from (or be tampered against) the booking-date value.
+   *
+   *  A line ALREADY SAVED against the same booking with the same pricing identity
+   *  keeps the rate it was saved with: that is the figure the customer agreed to
+   *  and the one shown on the order. Re-deriving it on every unrelated edit would
+   *  let a special rate added later silently reprice an old line — and would trip
+   *  the "a dispatched line's rate can't be edited" guard on a pure quantity
+   *  change. A new line, or one whose item identity changed, is priced fresh. */
+  private async applyBookingPricing(
+    items: Record<string, unknown>[],
+    savedById?: Map<number, Record<string, unknown>>,
+  ): Promise<void> {
     for (const it of items) {
       const bookingId = toNum(it.bookingId);
       if (!bookingId) continue;
+      const saved = savedById?.get(toNum(it.id) ?? -1);
+      if (
+        saved &&
+        toNum(saved.bookingId) === bookingId &&
+        toNum(saved.rate) != null &&
+        OrdersService.PRICING_IDENTITY.every((k) => (uc(saved[k]) ?? null) === (uc(it[k]) ?? null))
+      ) {
+        it.productRate = saved.productRate;
+        it.designRate = saved.designRate;
+        it.rate = saved.rate;
+        continue;
+      }
       const priced = await this.bookings.priceOrderLine(bookingId, {
         pCategory: toStr(it.pCategory),
         subCategory: toStr(it.subCategory),
@@ -1553,27 +1631,27 @@ export class OrdersService {
     }
   }
 
-  /** Reject a save that would draw more bags/kgs than a booking has left. When
-   *  updating, `excludeOrderId` drops this order's own current draw from the tally
-   *  so its kept lines aren't counted against it. */
-  private async assertBookingCapacity(items: Record<string, unknown>[], excludeOrderId?: number): Promise<void> {
-    const byBooking = new Map<number, { bags: number; kgs: number }>();
+  /** Reject a save that would draw more than a booking has left — ownership,
+   *  status, total and per-category limits all come from the one gate in
+   *  {@link BookingsService.assertDrawable}, so this path and the standalone
+   *  convert route can't disagree. When updating, `excludeOrderId` drops this
+   *  order's own current draw from the tally so its kept lines aren't counted
+   *  against it. */
+  private async assertBookingCapacity(
+    items: Record<string, unknown>[],
+    customerName: string | null,
+    excludeOrderId?: number,
+  ): Promise<void> {
+    const byBooking = new Map<number, { pCategory: string | null; bags: number; kgs: number }[]>();
     for (const it of items) {
       const bookingId = toNum(it.bookingId);
       if (!bookingId || uc(it.status) === 'CANCELLED') continue;
-      const acc = byBooking.get(bookingId) ?? { bags: 0, kgs: 0 };
-      acc.bags += toNum(it.bags) ?? 0;
-      acc.kgs += toNum(it.gram) ?? 0;
-      byBooking.set(bookingId, acc);
+      const lines = byBooking.get(bookingId) ?? [];
+      lines.push({ pCategory: toStr(it.pCategory), bags: toNum(it.bags) ?? 0, kgs: toNum(it.gram) ?? 0 });
+      byBooking.set(bookingId, lines);
     }
-    for (const [bookingId, sum] of byBooking) {
-      const info = await this.bookings.remainingFor(bookingId, excludeOrderId);
-      if (!info) throw new BadRequestException('A drawn booking no longer exists.');
-      if (info.booking.status === 'CANCELLED' || info.booking.status === 'PRECLOSED') {
-        throw new BadRequestException(`Booking ${info.booking.code ?? bookingId} is ${info.booking.status.toLowerCase()} and can't be drawn.`);
-      }
-      if (sum.bags - info.remBags > 0.001) throw new BadRequestException(`Drawing ${sum.bags} bags exceeds the ${info.remBags} left on booking ${info.booking.code ?? bookingId}.`);
-      if (sum.kgs - info.remKgs > 0.001) throw new BadRequestException(`Drawing ${sum.kgs} kgs exceeds the ${info.remKgs} left on booking ${info.booking.code ?? bookingId}.`);
+    for (const [bookingId, lines] of byBooking) {
+      await this.bookings.assertDrawable(bookingId, customerName, lines, excludeOrderId);
     }
   }
 

@@ -133,10 +133,8 @@ export function BookingsPage() {
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
 
-  /** Draw down remaining bags/kgs by way of the New Order form's "Draw from Bag
-   *  Booking" sheet, instead of the older standalone Convert page — one place to
-   *  build a real order out of a booking, with the item picker already there. */
-  const goToDrawSheet = (b: BookingDto) => navigate('/orders/new', { state: { customerName: b.customerName, openBookingDraw: true } });
+  /** Open the normal item editor with this specific booking selected. */
+  const goToNewOrder = (b: BookingDto) => navigate('/orders/new', { state: { customerName: b.customerName, bookingId: b.id, openBookingDraw: true } });
 
   const handleCancel = async (b: BookingDto) => {
     const ok = await confirm({
@@ -318,8 +316,8 @@ export function BookingsPage() {
               size="icon"
               className="size-8 text-sky-600 hover:bg-sky-50 hover:text-sky-700 disabled:text-slate-300"
               disabled={!convertible}
-              onClick={() => goToDrawSheet(b)}
-              aria-label="Draw into a new order"
+              onClick={() => goToNewOrder(b)}
+              aria-label="New order using booking"
             >
               <Split className="size-4" />
             </Button>
@@ -428,7 +426,7 @@ export function BookingsPage() {
         rowKey={(b) => b.id}
         isLoading={isLoading}
         emptyText="No bookings yet — create one."
-        onRowClick={can('booking:convert') ? (b) => goToDrawSheet(b) : undefined}
+        onRowClick={can('booking:convert') ? (b) => goToNewOrder(b) : undefined}
         mobileCard={bookingMobileCard}
         actions={(b) => {
           const convertible = b.status === 'OPEN' || b.status === 'PARTIALLY_CONVERTED';
@@ -443,16 +441,16 @@ export function BookingsPage() {
                         size="icon"
                         className="size-8 text-sky-600 hover:bg-sky-50 hover:text-sky-700 disabled:text-slate-300"
                         disabled={!convertible}
-                        onClick={() => goToDrawSheet(b)}
-                        aria-label="Draw into a new order"
+                        onClick={() => goToNewOrder(b)}
+                        aria-label="New order using booking"
                       >
                         <Split className="size-4" />
                       </Button>
                     </span>
                   </TooltipTrigger>
                   <TooltipContent side="top" className="max-w-56">
-                    <p className="font-semibold">Draw into a new order</p>
-                    <p className="opacity-80">Opens New Order for {b.customerName} with "Draw from Bag Booking" ready to go.</p>
+                    <p className="font-semibold">New order using booking</p>
+                    <p className="opacity-80">Opens New Order for {b.customerName} using {b.code}.</p>
                   </TooltipContent>
                 </Tooltip>
               )}

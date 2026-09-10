@@ -558,33 +558,13 @@ export class BookingsService {
     const lines = (dto.lines ?? []).filter((l) => (l.productName || l.product));
     if (!lines.length) throw new BadRequestException('Add at least one item to convert.');
 
-    const addBags = lines.reduce((s, l) => s + (toNum(l.bags) ?? 0), 0);
-    const addKgs = lines.reduce((s, l) => s + (toNum(l.gram) ?? 0), 0);
-    const remBags = round2(booking.bags - booking.convertedBags);
-    const remKgs = round2(booking.kgs - booking.convertedKgs);
-    if (!withinBooked(addBags, remBags, booking.bags)) throw new BadRequestException(`Converting ${addBags} bags exceeds the ${remBags} remaining on this booking.`);
-    if (!withinBooked(addKgs, remKgs, booking.kgs)) throw new BadRequestException(`Converting ${addKgs} kgs exceeds the ${remKgs} remaining on this booking.`);
-
-    // Per-category remaining check — best-effort: only enforced for a line whose
-    // pCategory matches a category actually booked. A line with no match (or no
-    // pCategory) is still bound by the overall remaining check above.
-    const addByCategory = new Map<string, { bags: number; kgs: number }>();
-    for (const l of lines) {
-      const cat = uc(l.pCategory);
-      if (!cat) continue;
-      const acc = addByCategory.get(cat) ?? { bags: 0, kgs: 0 };
-      acc.bags += toNum(l.bags) ?? 0;
-      acc.kgs += toNum(l.gram) ?? 0;
-      addByCategory.set(cat, acc);
-    }
-    for (const [cat, add] of addByCategory) {
-      const item = booking.items.find((it) => it.pCategory === cat);
-      if (!item) continue;
-      const remBagsCat = round2(item.bags - item.convertedBags);
-      const remKgsCat = round2(item.kgs - item.convertedKgs);
-      if (!withinBooked(add.bags, remBagsCat, item.bags)) throw new BadRequestException(`Converting ${add.bags} bags of ${cat} exceeds the ${remBagsCat} remaining booked for ${cat}.`);
-      if (!withinBooked(add.kgs, remKgsCat, item.kgs)) throw new BadRequestException(`Converting ${add.kgs} kgs of ${cat} exceeds the ${remKgsCat} remaining booked for ${cat}.`);
-    }
+    // Ownership, drawable status, total and per-category limits — the same gate
+    // the normal order save goes through, so the two routes can't drift apart.
+    await this.assertDrawable(
+      id,
+      booking.customerName,
+      lines.map((l) => ({ pCategory: l.pCategory, bags: toNum(l.bags), kgs: toNum(l.gram) })),
+    );
 
     const snapshot = this.parseSnapshot(booking.rateSnapshot);
 
@@ -995,7 +975,7 @@ export class BookingsService {
   /** Remaining bags/kgs on a booking, optionally excluding one order's draw
    *  (used when re-saving that order so its own lines don't count twice). */
   async remainingFor(bookingId: number, excludeOrderId?: number) {
-    const booking = await this.prisma.booking.findUnique({ where: { id: bookingId } });
+    const booking = await this.prisma.booking.findUnique({ where: { id: bookingId }, include: { items: true } });
     if (!booking) return null;
     const items = await this.prisma.orderItem.findMany({
       where: {
@@ -1003,20 +983,38 @@ export class BookingsService {
         status: { not: 'CANCELLED' },
         order: { status: { not: 'CANCELLED' }, ...(excludeOrderId ? { id: { not: excludeOrderId } } : {}) },
       },
-      select: { bags: true, gram: true },
+      select: { bags: true, gram: true, pCategory: true },
     });
     // Overage withdrawals are drawn too — qty already taken out of the booking
     // at a dispatch cannot also be available for an order to draw.
     const draws = await this.prisma.bookingConversion.findMany({
       where: { bookingId, kind: OVERAGE_KIND, removedAt: null },
-      select: { bags: true, kgs: true },
+      select: { bags: true, kgs: true, pCategory: true },
     });
-    const drawnBags = round2(
-      items.reduce((s, it) => s + (it.bags ?? 0), 0) + draws.reduce((s, d) => s + (d.bags ?? 0), 0),
-    );
-    const drawnKgs = round2(
-      items.reduce((s, it) => s + (it.gram ?? 0), 0) + draws.reduce((s, d) => s + (d.kgs ?? 0), 0),
-    );
+    const drawn = [
+      ...items.map((it) => ({ pCategory: it.pCategory, bags: it.bags, kgs: it.gram })),
+      ...draws.map((d) => ({ pCategory: d.pCategory, bags: d.bags, kgs: d.kgs })),
+    ];
+    const drawnBags = round2(drawn.reduce((s, d) => s + (d.bags ?? 0), 0));
+    const drawnKgs = round2(drawn.reduce((s, d) => s + (d.kgs ?? 0), 0));
+
+    // Per-category remaining, drawn down the same way recompute() does it: a named
+    // bucket takes what matches its category, and the bucket booked WITHOUT a
+    // category absorbs everything the named ones did not claim. Preclose is a
+    // booking-level write-off and is only applied to the total above.
+    const named = booking.items.filter((i) => i.pCategory);
+    const open = booking.items.find((i) => !i.pCategory) ?? null;
+    const bucketOf = (pCategory: string | null) =>
+      named.find((i) => i.pCategory === (uc(pCategory) ?? '')) ?? open;
+    const buckets = booking.items.map((item) => {
+      const mine = drawn.filter((d) => bucketOf(d.pCategory) === item);
+      return {
+        item,
+        remBags: round2(item.bags - mine.reduce((s, d) => s + (d.bags ?? 0), 0)),
+        remKgs: round2(item.kgs - mine.reduce((s, d) => s + (d.kgs ?? 0), 0)),
+      };
+    });
+
     // Written-off qty (if preclosed) counts against remaining too — belt-and-
     // braces alongside assertBookingCapacity's own PRECLOSED check, since this is
     // also called for the on-screen remainingBags/Kgs display.
@@ -1024,7 +1022,85 @@ export class BookingsService {
       booking,
       remBags: round2(booking.bags - drawnBags - (booking.precloseBags ?? 0)),
       remKgs: round2(booking.kgs - drawnKgs - (booking.precloseKgs ?? 0)),
+      buckets,
+      bucketOf,
     };
+  }
+
+  /**
+   * The single gate for taking order quantity out of a booking: ownership,
+   * drawable status, total capacity and per-category capacity.
+   *
+   * Both the normal order save and the standalone convert route go through this,
+   * so the two can't drift apart again. `withinBooked` is used throughout so a
+   * reservation that named only bags is not rejected for the kg its lines derive
+   * (and vice versa) — an unreserved dimension is simply not a limit.
+   */
+  async assertDrawable(
+    bookingId: number,
+    customerName: string | null,
+    lines: readonly { pCategory?: string | null; bags?: number | null; kgs?: number | null }[],
+    excludeOrderId?: number,
+  ): Promise<void> {
+    const info = await this.remainingFor(bookingId, excludeOrderId);
+    if (!info) throw new BadRequestException('A drawn booking no longer exists.');
+    const { booking } = info;
+    const label = booking.code ?? `#${bookingId}`;
+
+    if (customerName && uc(booking.customerName) !== uc(customerName)) {
+      throw new BadRequestException(`Booking ${label} belongs to ${booking.customerName} — it cannot be drawn for another party.`);
+    }
+    if (!DRAWABLE_STATUSES.includes(booking.status)) {
+      // CONVERTED is derived from quantity, not a manual decision: an order that
+      // already drew this booking must still be editable (that is how you reduce
+      // or correct the draw that filled it). Anything else — including a NEW draw
+      // on a converted booking, and the manual CANCELLED/PRECLOSED calls — stops
+      // here; the quantity checks below still govern the edit itself.
+      const editingOwnDraw =
+        booking.status === 'CONVERTED' &&
+        excludeOrderId != null &&
+        (await this.prisma.orderItem.count({
+          where: { bookingId, orderId: excludeOrderId, status: { not: 'CANCELLED' } },
+        })) > 0;
+      if (!editingOwnDraw) {
+        throw new BadRequestException(`Booking ${label} is ${booking.status.toLowerCase().replace(/_/g, ' ')} and can't be drawn.`);
+      }
+    }
+    for (const l of lines) {
+      if ((l.bags ?? 0) < 0 || (l.kgs ?? 0) < 0) {
+        throw new BadRequestException(`Booking ${label}: negative bags or kgs cannot be drawn.`);
+      }
+    }
+
+    const addBags = round2(lines.reduce((s, l) => s + (l.bags ?? 0), 0));
+    const addKgs = round2(lines.reduce((s, l) => s + (l.kgs ?? 0), 0));
+    if (!withinBooked(addBags, info.remBags, booking.bags)) {
+      throw new BadRequestException(`Drawing ${addBags} bags exceeds the ${info.remBags} left on booking ${label}.`);
+    }
+    if (!withinBooked(addKgs, info.remKgs, booking.kgs)) {
+      throw new BadRequestException(`Drawing ${addKgs} kgs exceeds the ${info.remKgs} left on booking ${label}.`);
+    }
+    if (!booking.items.length) return; // Legacy reservation with no category lines.
+
+    // A line whose category was never reserved — and with no uncategorised bucket
+    // to fall back on — has no quantity to draw at all.
+    const orphan = lines.find((l) => !info.bucketOf(l.pCategory ?? null));
+    if (orphan) {
+      throw new BadRequestException(`Booking ${label} has no reserved quantity for ${uc(orphan.pCategory) || 'this item category'}.`);
+    }
+    for (const bucket of info.buckets) {
+      const mine = lines.filter((l) => info.bucketOf(l.pCategory ?? null) === bucket.item);
+      if (!mine.length) continue;
+      const bags = round2(mine.reduce((s, l) => s + (l.bags ?? 0), 0));
+      const kgs = round2(mine.reduce((s, l) => s + (l.kgs ?? 0), 0));
+      const name = bucket.item.pCategory || 'uncategorised';
+      if (!withinBooked(bags, bucket.remBags, bucket.item.bags)) {
+        throw new BadRequestException(`Only ${bucket.remBags} bags are left booked for ${name} on ${label}.`);
+      }
+      if (!withinBooked(kgs, bucket.remKgs, bucket.item.kgs)) {
+        throw new BadRequestException(`Only ${bucket.remKgs} kgs are left booked for ${name} on ${label}.`);
+      }
+    }
   }
 
   /** Price one order line at a booking's frozen (booking-date) rates. Returns the

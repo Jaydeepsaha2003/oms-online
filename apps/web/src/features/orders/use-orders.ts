@@ -12,6 +12,7 @@ const invalidateOrderAvailability = (qc: ReturnType<typeof useQueryClient>) => {
   qc.invalidateQueries({ queryKey: KEY });
   qc.invalidateQueries({ queryKey: ['dispatch'] });
   qc.invalidateQueries({ queryKey: ['crm'] });
+  qc.invalidateQueries({ queryKey: ['bookings'] });
 };
 const photoKey = (itemId: number) => [...KEY, 'item-photos', itemId] as const;
 

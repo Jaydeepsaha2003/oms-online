@@ -43,6 +43,7 @@ import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/com
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { settingValues, useOrderQtyLayout, useSettings } from '@/features/settings/use-settings';
 import { useCustomerSpecialRates } from '@/features/special-rates/use-special-rates';
+import { useBookingQuote } from '@/features/bookings/use-bookings';
 import { usePermissions } from '@/hooks/use-permissions';
 import { exportOrderLines, fetchOrder, useOrderFilterOptions, useOrderLookups, useOrders, usePriceAsOf, useSaveOrder } from './use-orders';
 import { LiveLinePhotos } from './line-photos';
@@ -154,6 +155,7 @@ function toInput(o: OrderDto, items: OrderItemDto[]): OrderInput {
     comment: o.comment,
     items: items.map((it) => ({
       id: it.id,
+      bookingId: it.bookingId,
       pCategory: it.pCategory,
       subCategory: it.subCategory,
       product: it.product,
@@ -1045,6 +1047,12 @@ function LineEditor({
   const { can } = usePermissions();
   const confirm = useConfirm();
   const priceAsOf = usePriceAsOf();
+  const bookingQuote = useBookingQuote();
+  const bookingQuoteRequest = useRef(0);
+  const bookingQuotePending = useRef(false);
+  const [bookingQuoteError, setBookingQuoteError] = useState<string | null>(null);
+  const [bookingRateDate, setBookingRateDate] = useState<string | null>(null);
+  useEffect(() => () => { bookingQuoteRequest.current += 1; }, []);
   // Blocks Save while onItemPick's rate check is in flight, so a fast
   // double-click can't submit before the confirm dialog even has a chance to appear.
   const [checkingRate, setCheckingRate] = useState(false);
@@ -1196,6 +1204,62 @@ function LineEditor({
   // can't be resolved.)
   const onItemPick = async (label: string) => {
     const it = itemOptions.map.get(label);
+    if (line.bookingId != null) {
+      const request = ++bookingQuoteRequest.current;
+      setBookingQuoteError(null);
+      if (!it) {
+        bookingQuotePending.current = false;
+        setCheckingRate(false);
+        set({ itemName: label, product: label, productRate: '', designRate: '' });
+        setBookingQuoteError('Select an item to check its booking rate.');
+        return;
+      }
+      set({
+        itemName: label,
+        pCategory: it.category,
+        subCategory: it.subCategory,
+        product: it.product,
+        designType: it.designType ?? '',
+        designName: it.designName && it.designName !== it.designType ? it.designName : '',
+        psize: it.size != null ? String(it.size) : '',
+        productRate: '',
+        designRate: '',
+      });
+      bookingQuotePending.current = true;
+      setCheckingRate(true);
+      try {
+        const result = await bookingQuote.mutateAsync({
+          id: line.bookingId,
+          lines: [{
+            pCategory: it.category,
+            subCategory: it.subCategory,
+            product: it.product,
+            productName: label,
+            designType: it.designType,
+            psize: it.size,
+          }],
+        });
+        if (request !== bookingQuoteRequest.current) return;
+        const quoted = result.lines[0];
+        if (!quoted || !Number.isFinite(quoted.rate) || quoted.rate <= 0) {
+          throw new Error('A booking rate could not be found for this item.');
+        }
+        set({
+          productRate: String(round2(quoted.productRate + quoted.productDelta)),
+          designRate: String(round2(quoted.designRate + quoted.designDelta)),
+        });
+        setBookingRateDate(result.bookingDate);
+      } catch (error) {
+        if (request !== bookingQuoteRequest.current) return;
+        setBookingQuoteError(getApiErrorMessage(error, 'Could not check the booking rate. Please retry.'));
+      } finally {
+        if (request === bookingQuoteRequest.current) {
+          bookingQuotePending.current = false;
+          setCheckingRate(false);
+        }
+      }
+      return;
+    }
     if (!it) {
       set({ itemName: label, product: label });
       return;
@@ -1574,6 +1638,8 @@ function LineEditor({
   });
 
   const submit = async () => {
+    if (saving || checkingRate || bookingQuotePending.current) return;
+    if (bookingQuoteError) return toast.error(bookingQuoteError);
     // Already agreed to add-as-new — just do it (this click never auto-fires on
     // its own; the confirm below only pre-fills and waits for this explicit click).
     if (addNewMode) return onAddAsNew(buildUpdated());
@@ -1608,6 +1674,19 @@ function LineEditor({
       </SheetHeader>
 
       <div className="flex-1 space-y-3 overflow-y-auto pr-1">
+        {line.bookingId != null && (
+          <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800 dark:border-sky-400/25 dark:bg-sky-500/10 dark:text-sky-200">
+            Booking rates are fixed{bookingRateDate ? ` as of ${formatDate(bookingRateDate)}` : ' at the booking date'}.
+            {bookingQuoteError && (
+              <div role="alert" className="mt-2">
+                <p>{bookingQuoteError}</p>
+                <Button variant="outline" size="sm" className="mt-2" onClick={() => void onItemPick(form.itemName)} disabled={checkingRate}>
+                  Retry booking rate
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
         {isCancelled && (
           <div className="flex items-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-400/25 dark:bg-rose-500/10 dark:text-rose-300">
             <Ban className="size-4 shrink-0" />
@@ -1669,10 +1748,10 @@ function LineEditor({
             </Field>
           ))}
           <Field label="Prod ₹">
-            <Input type="number" step="any" value={form.productRate} onKeyDown={onlyNum} onChange={(e) => set({ productRate: e.target.value })} />
+            <Input type="number" step="any" value={form.productRate} readOnly={line.bookingId != null} onKeyDown={onlyNum} onChange={(e) => set({ productRate: e.target.value })} />
           </Field>
           <Field label="Dsgn ₹">
-            <Input type="number" step="any" value={form.designRate} onKeyDown={onlyNum} onChange={(e) => set({ designRate: e.target.value })} />
+            <Input type="number" step="any" value={form.designRate} readOnly={line.bookingId != null} onKeyDown={onlyNum} onChange={(e) => set({ designRate: e.target.value })} />
           </Field>
         </div>
         <Field label="Rate ₹">
@@ -1725,7 +1804,7 @@ function LineEditor({
           <Button variant="outline" onClick={addNewMode ? () => setAddNewMode(false) : onClose} disabled={saving}>
             {addNewMode ? 'Back to editing' : 'Close'}
           </Button>
-          <Button onClick={submit} disabled={saving || checkingRate || (!addNewMode && !dirty)}>
+          <Button onClick={submit} disabled={saving || checkingRate || !!bookingQuoteError || (!addNewMode && !dirty)}>
             {saving || checkingRate ? <Loader2 className="animate-spin" /> : <Save />} {checkingRate ? 'Checking rate…' : addNewMode ? 'Add as New Item' : 'Save'}
           </Button>
         </div>
