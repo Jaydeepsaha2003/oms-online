@@ -161,7 +161,10 @@ export function BankStatementPage() {
   const { data: preset } = useColumnPreset(bankName);
   const { data: customerList } = useCustomers({ page: 1, pageSize: 2000 });
   const customers = useMemo(
-    () => (customerList?.items ?? []).map((c) => ({ id: c.id, name: (c.partyName ?? '').trim() })).filter((c) => c.name),
+    () =>
+      (customerList?.items ?? [])
+        .map((c) => ({ id: c.id, name: (c.partyName ?? '').trim(), category: (c.category ?? '').trim().toUpperCase() }))
+        .filter((c) => c.name),
     [customerList],
   );
 
@@ -1033,7 +1036,24 @@ export function BankStatementPage() {
                     <Combobox
                       value={assignTo}
                       onChange={setAssignTo}
-                      options={customers.map((c) => ({ value: c.name, label: c.name }))}
+                      /*
+                       * A non-SALES party is tagged in the label and findable by
+                       * its category.
+                       *
+                       * The list was bare names, so a scrap party looked exactly
+                       * like a sales one — there was no way to tell which of 114
+                       * rows took scrap money, and no way to ask for them. The
+                       * category also rides along as a hidden keyword, so typing
+                       * "scrap" brings up all of them at once.
+                       *
+                       * SALES is left untagged: it is the overwhelming majority,
+                       * and labelling the norm just adds noise to every row.
+                       */
+                      options={customers.map((c) => ({
+                        value: c.name,
+                        label: c.category && c.category !== 'SALES' ? `${c.name} · ${c.category}` : c.name,
+                        keywords: c.category,
+                      }))}
                       placeholder="Assign to customer…"
                       className={cn(CONTROL, 'w-56')}
                     />

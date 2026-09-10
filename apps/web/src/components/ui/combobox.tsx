@@ -55,8 +55,17 @@ export interface ComboboxProps {
 const FIELD =
   'border-input flex h-9 w-full rounded-sm border bg-transparent px-3 py-1 pr-8 text-sm shadow-xs outline-none transition-[color,box-shadow] placeholder:text-placeholder placeholder:font-normal focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50';
 
-// Cap how many rows are mounted at once — huge lists (thousands) would freeze.
-const RENDER_LIMIT = 100;
+/*
+ * Cap how many rows are mounted at once — huge lists (thousands) would freeze.
+ *
+ * 100 was low enough to bite an ordinary list: the customer picker holds 114
+ * active parties, so the last 14 alphabetically simply were not there until you
+ * typed — and nothing said so, which reads as "that party is missing" rather
+ * than "scroll is capped". 300 rows mount without trouble and clear every list
+ * in this app by a wide margin, while still guarding the thousands-of-rows case
+ * this exists for.
+ */
+const RENDER_LIMIT = 300;
 
 interface Row {
   value: string;
