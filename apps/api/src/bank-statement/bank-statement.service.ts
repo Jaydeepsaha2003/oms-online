@@ -540,7 +540,39 @@ export class BankStatementService {
       if (cur) cur.amount = r2(cur.amount + r.recAmt);
       else byRef.set(r.refId, { refId: r.refId, custId: r.custId, recDate: r.recDate, amount: r2(r.recAmt) });
     }
-    return [...byRef.values()].sort((a, b) => +a.recDate - +b.recDate);
+
+    /*
+     * What the bank actually paid in, from the voucher's own ledger entry.
+     *
+     * Summing the allocation rows was a proxy for the voucher total, and it is
+     * wrong in both directions:
+     *
+     *  - TOO HIGH when a voucher settled an invoice out of an older ADVANCE.
+     *    That money reached the bank months earlier under its own receipt; the
+     *    allocation is a reallocation, not a second credit. RAMSON's ₹53,269 on
+     *    12 Aug was posted as ₹36,859 because a ₹16,410 advance re-applied in
+     *    June made the voucher look ₹16,410 bigger than the bank ever saw — real
+     *    money left unrecorded.
+     *  - TOO LOW when a voucher had money left over and parked it as an advance.
+     *    The bank still received the whole amount; the unallocated part was
+     *    reported as a shortfall that did not exist.
+     *
+     * The ledger row IS the voucher — one per receipt, carrying the figure that
+     * hit the account — so it answers the question directly. The allocation sum
+     * stays as the fallback for anything with no ledger entry.
+     */
+    const refIds = [...byRef.keys()];
+    if (refIds.length) {
+      const vouchers = await this.prisma.acctLedger.findMany({
+        where: { voucherType: 'RECEIPT', receiptRefId: { in: refIds } },
+        select: { receiptRefId: true, bankCredit: true },
+      });
+      for (const v of vouchers) {
+        const cur = v.receiptRefId ? byRef.get(v.receiptRefId) : undefined;
+        if (cur) cur.amount = r2(v.bankCredit ?? 0);
+      }
+    }
+    return [...byRef.values()].filter((v) => v.amount > 0).sort((a, b) => +a.recDate - +b.recDate);
   }
 
   /* ── Assignment ────────────────────────────────────────────────────────── */
