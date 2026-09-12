@@ -22,6 +22,7 @@ import {
   statementRowKey,
   type BankStatementCreateResponse,
   type BankStatementDuplicate,
+  payByFor,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaymentsService } from '../payments/payments.service';
@@ -820,11 +821,37 @@ export class BankStatementService {
         failed.push({ rowId: row.id, reason: 'Already accounted for by existing receipts.' });
         continue;
       }
+      /*
+       * Collect it the way Receive Payment would collect it by hand.
+       *
+       * A party whose BANK money comes through an agent cannot be receipted in
+       * Party mode — the engine refuses it outright ("please use the Agent Name
+       * field"). Posting every line as PARTY therefore left those lines
+       * permanently unpostable from this screen: Process reported a failure the
+       * operator could do nothing about, because the screen has no agent field
+       * to switch to. The routing is a property of the party, not of how the
+       * receipt was typed in, so it is read from the customer here exactly as
+       * the Receive Payment screen reads it.
+       */
+      const customer = await this.prisma.customer.findUnique({
+        where: { id: row.customerId },
+        select: { payBy: true, payByModes: true, agentName: true },
+      });
+      const viaAgent = customer ? payByFor(customer, 'bank') === 'AGENT' : false;
+      const agentName = customer?.agentName?.trim() || null;
+      if (viaAgent && !agentName) {
+        failed.push({
+          rowId: row.id,
+          reason: `${row.customerName ?? 'This party'} is set to receive bank payments through an agent, but no agent is named on the customer. Set the agent, or change PAY BY (bank) to PARTY.`,
+        });
+        continue;
+      }
       try {
         const res = await this.payments.save(
           {
-            takeAccOn: 'PARTY',
-            customerId: row.customerId,
+            takeAccOn: viaAgent ? 'AGENT' : 'PARTY',
+            customerId: viaAgent ? undefined : row.customerId,
+            agentName: viaAgent ? agentName! : undefined,
             payMode: 'BANK',
             bankName: run.bankName ?? null,
             adjMode: 'AUTOMATIC',
