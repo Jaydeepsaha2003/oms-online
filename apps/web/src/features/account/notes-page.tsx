@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 import {
   computeNoteBreakup,
   noteClearanceReason,
+  noteClearedAmount,
   noteItemAmount,
   noteRefInvoices,
   type CustomerDto,
@@ -316,6 +317,27 @@ export function NotesPage() {
    * as its value, so the array it offers and the array `pickRecent` indexes
    * into have to be the same one.
    */
+  /*
+   * A credit note can only reduce a bill on its OWN side of the books.
+   *
+   * Billed and no-bill money never net against each other — not here, not in
+   * the payments engine. So a No Bill credit note raised against a GST invoice
+   * settles nothing at all and quietly becomes a party advance; the party's
+   * outstanding does not move and the reason is invisible after the fact.
+   * Caught while it can still be changed, rather than explained afterwards.
+   */
+  const billSideMismatch = useMemo(() => {
+    if (mode !== 'CREDIT' || !lines.length) return null;
+    const sideOf = new Map(soldHistory.map((r: RecentSoldRow) => [r.invNo.trim().toUpperCase(), r.billed]));
+    const refs = [...new Set(lines.map((l) => (l.refInvNo ?? '').trim().toUpperCase()).filter(Boolean))];
+    const wrong = refs.filter((ref) => sideOf.has(ref) && sideOf.get(ref) === noBill);
+    if (!wrong.length) return null;
+    const list = wrong.slice(0, 3).join(', ') + (wrong.length > 3 ? ` +${wrong.length - 3} more` : '');
+    return noBill
+      ? `${list} ${wrong.length === 1 ? 'is a billed invoice' : 'are billed invoices'}, so a No Bill note cannot reduce ${wrong.length === 1 ? 'it' : 'them'} — the amount would be parked as an advance. Turn No Bill off to credit ${wrong.length === 1 ? 'that bill' : 'those bills'}.`
+      : `${list} ${wrong.length === 1 ? 'was sold No Bill' : 'were sold No Bill'}, so a billed note cannot reduce ${wrong.length === 1 ? 'it' : 'them'} — the amount would be parked as an advance. Turn No Bill on to credit ${wrong.length === 1 ? 'that sale' : 'those sales'}.`;
+  }, [mode, lines, soldHistory, noBill]);
+
   const recentSold = useMemo(
     // Compared on the LOCAL calendar day, the same one `formatDate` prints and
     // the date picker writes. Slicing the ISO string instead compares a UTC day,
@@ -615,8 +637,13 @@ export function NotesPage() {
           const cl = res.clearance;
           if (cl) {
             const spill = (cl.spillBank ?? 0) + (cl.spillCash ?? 0);
-            if (cl.invNo) {
-              const applied = (cl.bank ?? 0) + (cl.cash ?? 0);
+            const applied = noteClearedAmount(cl);
+            if (cl.skipped === 'OTHER_SIDE') {
+              // The note settled NOTHING and the reason is not obvious from the
+              // screen: it was raised on the opposite side of the books to the
+              // bill it credits. Held until dismissed — this one needs a decision.
+              toast.warning(noteClearanceReason(cl), { duration: Infinity, closeButton: true });
+            } else if (cl.invNo) {
               if (spill > 0.005) {
                 toast.warning(
                   `${money0(applied)} cleared against ${cl.invNo}; ${money0(spill)} went to older dues / advance.`,
@@ -630,6 +657,13 @@ export function NotesPage() {
             } else if (cl.skipped === 'ALREADY_SETTLED' || cl.skipped === 'NOT_FOUND') {
               // The user aimed at a specific bill and did not get it — say so.
               toast.warning(noteClearanceReason(cl), { duration: 10000 });
+            } else if (applied <= 0.005 && spill > 0.005) {
+              // No targeted bill, nothing taken off anything: it became an advance.
+              // Silence here is how money ends up parked and forgotten.
+              toast.warning(
+                `Nothing was outstanding to clear — ${money0(spill)} is parked as an advance for this party.`,
+                { duration: 10000 },
+              );
             }
           }
 
@@ -943,6 +977,14 @@ export function NotesPage() {
                   </label>
                 )}
               </div>
+              {billSideMismatch && (
+                <p
+                  role="alert"
+                  className="rounded-[4px] border border-rose-300 bg-rose-50 px-2 py-1.5 text-[12px] font-medium text-rose-800 dark:border-rose-400/30 dark:bg-rose-500/10 dark:text-rose-200"
+                >
+                  {billSideMismatch}
+                </p>
+              )}
             </div>
 
             <div className="space-y-1">

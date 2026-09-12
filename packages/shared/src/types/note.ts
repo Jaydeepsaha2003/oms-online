@@ -33,6 +33,15 @@ export interface RecentSoldRow {
   /** Original sale invoice number. */
   invNo: string;
   invDate: string;
+  /**
+   * Was the original sale BILLED (GST invoice) rather than no-bill?
+   *
+   * Decides which side of the books a credit note against it can settle: the
+   * two never net against each other, so a no-bill note cannot reduce a billed
+   * invoice. The entry screen warns on a mismatch rather than letting the value
+   * silently become a party advance.
+   */
+  billed: boolean;
   productName: string;
   design: string;
   bags: number;
@@ -170,7 +179,23 @@ export interface NoteDto {
 }
 
 /** Why a credit note could not be settled straight onto one referenced invoice. */
-export const NOTE_CLEARANCE_SKIPS = ['NO_REF', 'MULTIPLE_REFS', 'ALREADY_SETTLED', 'NOT_FOUND'] as const;
+export const NOTE_CLEARANCE_SKIPS = [
+  'NO_REF',
+  'MULTIPLE_REFS',
+  'ALREADY_SETTLED',
+  'NOT_FOUND',
+  /**
+   * The bill is outstanding, but on the OTHER side of the books.
+   *
+   * Billed and no-bill money are kept apart everywhere in this system — a cash
+   * receipt settles cash dues, a billed receipt settles billed dues. So a
+   * no-bill credit note cannot reduce a GST-billed invoice, and the value has
+   * nowhere to go but a party advance. Worth its own reason because the fix is
+   * specific and nothing else on screen hints at it: raise the note on the same
+   * side as the sale it reverses.
+   */
+  'OTHER_SIDE',
+] as const;
 export type NoteClearanceSkip = (typeof NOTE_CLEARANCE_SKIPS)[number];
 
 /**
@@ -191,10 +216,19 @@ export interface NoteClearance {
   /** Left over after `invNo` was full; went through the normal cascade. */
   spillBank: number;
   spillCash: number;
-  /** Set when `invNo` is null — why the targeted clearance was not possible. */
+  /** Why the targeted clearance was not possible. */
   skipped?: NoteClearanceSkip;
   /** The refs found on the lines (used to explain MULTIPLE_REFS / NOT_FOUND). */
   refs: string[];
+  /** Which side this note's money is on — a no-bill note is all CASH. */
+  side?: 'BANK' | 'CASH';
+  /** What the party still owes on the OTHER side, when that is the whole story. */
+  dueOtherSide?: number;
+}
+
+/** The money a credit note actually took off a bill (0 when it only made an advance). */
+export function noteClearedAmount(c: NoteClearance): number {
+  return round2((c.bank ?? 0) + (c.cash ?? 0));
 }
 
 /** Human-readable reason for a skipped targeted clearance. */
@@ -208,6 +242,16 @@ export function noteClearanceReason(c: NoteClearance): string {
       return `${c.refs[0]} has nothing outstanding, so this went against the oldest dues.`;
     case 'NOT_FOUND':
       return `${c.refs[0]} is not a confirmed pending invoice for this party, so this went against the oldest dues.`;
+    case 'OTHER_SIDE': {
+      const bill = c.side === 'CASH' ? 'no-bill' : 'billed';
+      const other = c.side === 'CASH' ? 'billed' : 'no-bill';
+      const owed = c.dueOtherSide ? ` — ₹${Math.round(c.dueOtherSide).toLocaleString('en-IN')} is outstanding on the ${other} side` : '';
+      return (
+        `This is a ${bill} note, and the party has nothing outstanding on the ${bill} side${owed}. ` +
+        `Nothing could be cleared, so the full amount is parked as an advance. ` +
+        `To reduce ${c.refs[0] ?? 'the bill'}, raise the note on the ${other} side instead.`
+      );
+    }
     default:
       return '';
   }

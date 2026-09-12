@@ -94,6 +94,8 @@ export class NotesService {
           dispatchId: it.dispatchId ?? 0,
           invNo: ch.code,
           invDate: ch.invDate.toISOString(),
+          // Which side of the books this sale sits on — see RecentSoldRow.billed.
+          billed: (ch.b ?? 0) > 0,
           productName: it.productName ?? '',
           design: it.design ?? '',
           bags: it.bags ?? 0,
@@ -739,7 +741,8 @@ export class NotesService {
       //    oldest. Anything left over falls through the normal cascade below.
       const refs = noteRefInvoices(items);
       const pending = await this.invoicePending(tx, custId, custName, cnDate);
-      const clearance: NoteClearance = { invNo: null, bank: 0, cash: 0, spillBank: 0, spillCash: 0, refs };
+      const side: 'BANK' | 'CASH' = bAmt > EPS ? BANK : CASH;
+      const clearance: NoteClearance = { invNo: null, bank: 0, cash: 0, spillBank: 0, spillCash: 0, refs, side };
 
       if (refs.length !== 1) {
         clearance.skipped = refs.length === 0 ? 'NO_REF' : 'MULTIPLE_REFS';
@@ -755,7 +758,6 @@ export class NotesService {
           });
           clearance.skipped = exists ? 'ALREADY_SETTLED' : 'NOT_FOUND';
         } else {
-          clearance.invNo = target.invNo;
           if (bankLeft > EPS && target.bankBal > EPS) {
             const use = r2(Math.min(bankLeft, target.bankBal));
             receiptId ??= await this.nextRefId(tx, 'REC', cnDate);
@@ -777,6 +779,10 @@ export class NotesService {
             target.cashBal = r2(target.cashBal - use);
             clearance.cash = use;
           }
+          // Claimed only when money actually landed on it. Naming the invoice
+          // after applying ₹0 read as "cleared against SSS/…: ₹0", which sounds
+          // like the bill was settled for nothing rather than not touched.
+          if (clearance.bank > EPS || clearance.cash > EPS) clearance.invNo = target.invNo;
         }
       }
       clearance.spillBank = Math.max(0, bankLeft);
@@ -816,6 +822,26 @@ export class NotesService {
             data: { refId: receiptId, recDate: cnDate, invNo: inv.invNo, customerName: custName, custId, recType: 'CREDIT NOTE', recAmt: use, payMode: CASH, refRecId: code },
           });
           cashLeft = r2(cashLeft - use);
+        }
+      }
+
+      /*
+       * Nothing settled at all, anywhere — and the party DOES owe money, just on
+       * the other side of the books.
+       *
+       * Billed and no-bill money never net against each other here (see the
+       * `bankBal`/`cashBal` tests above, and the same rule in the payments
+       * engine), so a no-bill credit note against a GST-billed invoice can only
+       * become an advance. That is correct, but it looks identical to a note
+       * that simply found nothing outstanding — and the two need opposite
+       * action. Name it, or the value sits as an advance nobody goes looking for.
+       */
+      const untouched = r2(bankLeft + cashLeft) >= r2(bAmt + cAmt) - EPS;
+      if (untouched) {
+        const otherSide = r2(pending.reduce((a, p) => a + (side === BANK ? p.cashBal : p.bankBal), 0));
+        if (otherSide > EPS) {
+          clearance.skipped = 'OTHER_SIDE';
+          clearance.dueOtherSide = otherSide;
         }
       }
 

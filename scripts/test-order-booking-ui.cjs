@@ -29,7 +29,7 @@ const bundle = buildSync({ stdin: { contents: `
   import { OrderFormPage } from '@/features/orders/order-form-page';
   import { useAuthStore } from '@/stores/auth-store';
   useAuthStore.setState({user: {id: 'fixture', name: 'Tester', permissions: ['*']}, isBootstrapping: false});
-  const nav = location.search.includes('from-booking') ? {pathname: '/orders/new', state: {customerName:'TEST PARTY',openBookingDraw:true,bookingId:2}} : '/orders/new';
+  const nav = location.search.includes('from-booking') ? {pathname: '/orders/new', key: location.search.includes('fresh') ? 'fresh' : 'default', state: {customerName:'TEST PARTY',openBookingDraw:true,bookingId:2}} : '/orders/new';
   createRoot(document.getElementById('root')).render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false,refetchOnWindowFocus:false}}})}>
     <TooltipProvider><ConfirmProvider><MemoryRouter initialEntries={[nav]}><Routes>
       <Route path="/orders/new" element={<OrderFormPage />} />
@@ -163,6 +163,28 @@ const server = http.createServer(async (req, res) => {
     await page.goto(base+'/?from-booking');
     await page.waitForFunction(() => JSON.parse(localStorage.getItem('oms:order-draft-v1') || '{}').bookingSource === '2');
     assert.match(await page.locator('#order-booking').inputValue(),/BKG-00002/);
+    await pick(field('itemName'),'7.5 TEST GLASS');
+    await expectValue(field('productRate'),'200');
+    await field('bags').fill('2'); await expectValue(field('gram'),'140');
+    await page.getByRole('button',{name:'Add item',exact:true}).click();
+    await field('poNumber').fill('REFRESH-TEST');
+    // A changed price choice must also survive: it is for the next item only.
+    await pick(page.locator('#order-booking'),'Current price list');
+    await page.waitForFunction(() => {
+      const d = JSON.parse(localStorage.getItem('oms:order-draft-v1') || '{}');
+      return d.items?.length === 1 && d.poNumber === 'REFRESH-TEST' && d.bookingSource === '';
+    });
+    await page.reload();
+    await page.getByRole('button',{name:'Edit',exact:true}).waitFor();
+    await expectValue(field('poNumber'),'REFRESH-TEST');
+    await expectValue(page.locator('#order-booking'),'Current price list');
+    await settle(); await settle(); await settle();
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('oms:order-draft-v1')).items.length),1);
+    // A new navigation from Bookings must not restore a previous order's items.
+    await page.goto(base+'/?from-booking&fresh');
+    await page.waitForFunction(() => document.querySelector('#order-booking')?.value.includes('BKG-00002'));
+    await expectValue(field('poNumber'),'');
+    assert.equal(await page.getByRole('button',{name:'Edit',exact:true}).count(),0);
     assert.deepEqual(errors,[]);
     console.log('PASS: actual form prices, cached quotes, size payload, desktop/mobile editing, quantity calculations, draft refresh, retry and booking shortcut');
   } catch(e) {

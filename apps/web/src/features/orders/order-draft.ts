@@ -18,6 +18,8 @@ export interface OrderDraftData {
   /** The bag booking the items are being drawn from ('' for a regular order).
    *  Optional so drafts written before booking entry existed still restore. */
   bookingSource?: string;
+  /** History entry that owns this draft; survives refresh, changes on a new visit. */
+  navigationKey?: string;
   /** Added line items (the form's Item[] shape). */
   items: unknown[];
   savedAt: number;

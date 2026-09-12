@@ -17,6 +17,12 @@ const ALLOWED_RAW_USES = [
   /^soldHistory\.filter\(/, //                   filtered into recentSold
   /^soldHistory, invDate\],/, //                 that filter's dependency
   /^soldHistory\.length && !recentSold\.length/, // "why is this list empty?"
+  // The bill-side warning looks up a line's source invoice by number. It reads
+  // the UNFILTERED history on purpose: moving the note's date backwards can drop
+  // a line's own invoice out of the picker, and the warning about that line must
+  // not disappear with it.
+  /^soldHistory\.map\(\(r: RecentSoldRow\) => \[r\.invNo/,
+  /^soldHistory, noBill\]\);/, // that warning's dependency
 ];
 for (const use of src.match(/\bsoldHistory\b[^\r\n]*/g) ?? []) {
   assert.ok(

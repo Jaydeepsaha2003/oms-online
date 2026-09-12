@@ -825,21 +825,26 @@ export function OrderFormPage() {
 
   // ── Work-in-progress local draft (auto-save / restore) ───────────────────
   // Only for a brand-new order — restores a half-filled order from last time.
-  // Skipped when a customer arrived via nav state (Bag Bookings' Convert): that's
-  // a deliberate, specific navigation, and silently restoring an unrelated old
-  // draft on top of the customer we just set would stomp it back out.
+  // A booking shortcut starts a new order. Refreshing that same history entry
+  // restores its draft, without pulling an unrelated draft into a fresh visit.
   const draftEnabled = !isEdit && docKind === 'order';
   const draftReady = useRef(false);
+  const restoredFromStorage = useRef(false);
   const [restoredDraft, setRestoredDraft] = useState(false);
 
   // Restore once on mount.
   useEffect(() => {
-    if (!draftEnabled || navState?.customerName) {
+    if (!draftEnabled) {
       draftReady.current = true;
       return;
     }
     const d = loadOrderDraft();
-    if (d && (d.customer || (Array.isArray(d.items) && d.items.length > 0))) {
+    const sameBookingDraft = d && d.customer.trim().toUpperCase() === navState?.customerName?.trim().toUpperCase()
+      && (navState?.bookingId == null || d.bookingSource === String(navState.bookingId)
+        || (d.items as Item[]).some((i) => i.bookingId === navState.bookingId));
+    const canRestore = !navState?.customerName || (d?.navigationKey != null
+      ? d.navigationKey === location.key : sameBookingDraft);
+    if (canRestore && d && (d.customer || (Array.isArray(d.items) && d.items.length > 0))) {
       setCustomer(d.customer || '');
       setPoNumber(d.poNumber || '');
       setAgentName(d.agentName || '');
@@ -849,7 +854,9 @@ export function OrderFormPage() {
       if (d.status) setStatus(d.status);
       if (d.showBy) setShowBy(d.showBy);
       // Optional on older drafts — absent simply means a regular order.
-      if (d.bookingSource) { setBookingSource(d.bookingSource); preselectedBooking.current = true; }
+      setBookingSource(d.bookingSource ?? '');
+      preselectedBooking.current = true;
+      restoredFromStorage.current = true;
       setItems((d.items as Item[]).map((it, idx) => ({ ...it, key: `d${idx}` })));
       setRestoredDraft(true);
     }
@@ -871,7 +878,8 @@ export function OrderFormPage() {
           completionDay,
           status,
           showBy,
-    bookingSource,
+          bookingSource,
+          navigationKey: location.key,
           items,
         });
       } else {
@@ -881,6 +889,7 @@ export function OrderFormPage() {
     return () => window.clearTimeout(t);
   }, [
     draftEnabled,
+    location.key,
     customer,
     poNumber,
     agentName,
@@ -965,7 +974,7 @@ export function OrderFormPage() {
   // fill in too). Waits on `lookups` so that lookup actually succeeds; re-running
   // once it resolves is harmless since setting the same name again is a no-op.
   useEffect(() => {
-    if (isEdit || docKind !== 'order' || !navState?.customerName || !lookups) return;
+    if (restoredFromStorage.current || isEdit || docKind !== 'order' || !navState?.customerName || !lookups) return;
     onCustomer(navState.customerName);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEdit, docKind, navState?.customerName, lookups]);
