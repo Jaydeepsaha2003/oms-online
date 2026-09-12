@@ -302,7 +302,28 @@ export function NotesPage() {
   const customerId = party ? custByName.get(party)?.id : undefined;
 
   const { data: nextNo } = useNextNoteNo(mode);
-  const { data: recentSold = [] } = useRecentSold(customerId);
+  const { data: soldHistory = [] } = useRecentSold(customerId);
+  /*
+   * Only sales that had already happened when this note is dated.
+   *
+   * The server returns a year of history up to today, so a note dated in the
+   * past was being offered sales made AFTER it — a credit note dated 20 July
+   * could be raised against an invoice from September, which cannot be what
+   * happened. Filtered here, not in the query, because the note's date is
+   * edited on screen and this list is already loaded for the party.
+   *
+   * Every consumer reads THIS list: the picker below uses an option's position
+   * as its value, so the array it offers and the array `pickRecent` indexes
+   * into have to be the same one.
+   */
+  const recentSold = useMemo(
+    // Compared on the LOCAL calendar day, the same one `formatDate` prints and
+    // the date picker writes. Slicing the ISO string instead compares a UTC day,
+    // which is the day before for anything stored at local midnight — a sale
+    // would then sort onto the wrong side of its own displayed date.
+    () => soldHistory.filter((r: RecentSoldRow) => ymd(new Date(r.invDate)) <= invDate),
+    [soldHistory, invDate],
+  );
   const saveMut = useSaveNote();
   const del = useDeleteNote();
 
@@ -1075,7 +1096,9 @@ export function NotesPage() {
           <div className="shrink-0 space-y-2 border-b border-amber-300 bg-amber-50/40 p-2 dark:border-amber-400/30 dark:bg-amber-400/[0.05]">
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
               <div className="col-span-2 space-y-1 lg:col-span-3">
-                <Label className={FIELD_LABEL}>Pick a past sale (last 12 months)</Label>
+                {/* Naming the cut-off date explains an absence: a sale that is
+                    missing from the list is missing because it came later. */}
+                <Label className={FIELD_LABEL}>Pick a past sale (up to {prettyDate(invDate)})</Label>
                 <div className="flex items-center gap-1.5">
                   {/* flex-1 + min-w-0: the Combobox's own wrapper is a plain block
                       div, so as a bare flex item it shrinks to the input's
@@ -1089,7 +1112,13 @@ export function NotesPage() {
                         value: String(i),
                         label: `${r.invNo} · ${r.productName}${r.design ? ` · ${r.design}` : ''} · ${money(r.price)}`,
                       }))}
-                      placeholder={customerId ? 'Search a past sale…' : 'Select a party first'}
+                      placeholder={
+                        !customerId
+                          ? 'Select a party first'
+                          : soldHistory.length && !recentSold.length
+                            ? `No sales on or before ${prettyDate(invDate)}`
+                            : 'Search a past sale…'
+                      }
                       className={cn(CONTROL, 'w-full')}
                     />
                   </div>
