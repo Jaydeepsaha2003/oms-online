@@ -430,10 +430,36 @@ export class BankStatementService {
       byParty.set(row.customerId, list);
     }
 
+    /*
+     * Receipts this run already created belong to the line that created them.
+     *
+     * Posting a line writes a real receipt, and a POSTED line then drops out of
+     * the matching passes below — but its receipt stayed in the pool and became
+     * "spare" cover for the NEXT line of the same party. RAMSON's ₹53,269 of
+     * 11 Aug, posted as RN/800, was then counted again against the ₹1,29,357 of
+     * 16 Aug, which reported itself ₹76,088 short: the same money answering for
+     * two different credits, with ₹53,269 of real money left unrecorded.
+     *
+     * A posted line has spent its own voucher, so the voucher is retired here.
+     */
+    const postedVoucherNos = rows
+      .filter((r) => r.status === 'POSTED' && r.postedRef)
+      .map((r) => r.postedRef!);
+    const claimedRefIds = new Set<string>();
+    if (postedVoucherNos.length) {
+      const led = await this.prisma.acctLedger.findMany({
+        where: { voucherNo: { in: postedVoucherNos }, voucherType: 'RECEIPT' },
+        select: { receiptRefId: true },
+      });
+      for (const l of led) if (l.receiptRefId) claimedRefIds.add(l.receiptRefId);
+    }
+
     const updates: { id: number; status: BankRowStatus; matchedRefs: string | null; matchedAmount: number }[] = [];
 
     for (const [customerId, partyRows] of byParty) {
-      const vouchers = (await this.receiptVouchers(customerId, run.fromDate, run.toDate, run.bankName)).map((v) => ({ ...v, used: false }));
+      const vouchers = (await this.receiptVouchers(customerId, run.fromDate, run.toDate, run.bankName))
+        .filter((v) => !claimedRefIds.has(v.refId))
+        .map((v) => ({ ...v, used: false }));
 
       // Pass 1 — line level, nearest date.
       for (const row of partyRows) {
