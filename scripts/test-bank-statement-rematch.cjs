@@ -74,9 +74,8 @@ test("a line's own receipt is not offered as cover for the next line", async () 
   assert.equal(posted.created.length, 1, 'the first line posts in full');
   assert.equal(posted.created[0].amount, 53269);
 
-  // Anything that re-runs the matching (assign, ignore, recheck) must not hand
-  // that receipt to the second line.
-  await svc.recheck(r.id);
+  // Posting must leave the run consistent BY ITSELF. Needing to press Recheck
+  // afterwards is how the stale "₹76,088 short" survived on screen.
   const [a, b] = await rowsOf(r.id);
   assert.equal(a.status, 'POSTED');
   assert.equal(b.matchedAmount, 0, 'the second line is not covered by the first line’s own receipt');

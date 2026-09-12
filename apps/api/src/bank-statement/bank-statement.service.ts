@@ -912,6 +912,19 @@ export class BankStatementService {
      * ten of twenty made it read-only and stranded the other ten with no way
      * to post them at all.
      */
+    /*
+     * Posting changes the answer for every OTHER line of the same party.
+     *
+     * Each receipt just written is spoken for by the line that wrote it, so the
+     * cover left over for the rest of the run is not what it was a moment ago.
+     * Without re-running the match here, a line kept the figure worked out
+     * BEFORE its neighbour was posted: RAMSON's 16 Aug credit went on claiming
+     * ₹53,269 of cover from the 11 Aug receipt, and went on reporting itself
+     * ₹76,088 short, until someone happened to press Recheck. Nobody should
+     * have to know that.
+     */
+    if (created.length) await this.rematch(runId);
+
     const stillPostable = created.length
       ? await this.prisma.bankStatementRow.count({ where: { runId, status: 'UNMATCHED' } })
       : 0;
