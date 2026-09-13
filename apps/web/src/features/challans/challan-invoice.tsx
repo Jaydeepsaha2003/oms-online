@@ -338,11 +338,13 @@ export function ChallanInvoice({
         )}
         {challan.remarks && (
           <>
-            {/* `fontFamily: FONT` on both, like the Transporter line above:
-                without it these two fell back to the default face and the
-                remarks visibly didn't match the rest of the bill. */}
-            <div style={{ fontFamily: FONT, color: ORANGE, fontWeight: 700, fontSize: 16, marginTop: 6 }}>Remarks</div>
-            <div style={{ fontFamily: FONT, marginTop: 3, color: '#555555', fontSize: 16 }}>{challan.remarks}</div>
+            {/* Set to the SAME face, size and weight as "Total In Words" and
+                the Transporter line above. These two were a size down and the
+                text was grey rather than ink, so the one line on the bill that
+                explains an oddity ("1 kg less, settled in cash") read as a
+                footnote — the part a reader is most likely to skip. */}
+            <div style={{ fontFamily: FONT, color: ORANGE, fontWeight: 700, fontSize: 19, marginTop: 20 }}>Remarks</div>
+            <div style={{ fontFamily: FONT, marginTop: 3, fontWeight: 700, fontSize: 18 }}>{challan.remarks}</div>
           </>
         )}
       </div>
