@@ -324,13 +324,18 @@ export function ProductPhotosPage() {
               </header>
 
               {/*
-               * Two across on the narrowest phone, then as many ~146px tiles as
+               * Two across on the narrowest phone, then as many ~124px tiles as
                * fit. The old fixed 3/4/6/8 columns made a tile on a phone about
                * 100px — too small to tell two laser designs apart, which is the
                * one thing this page exists for. `auto-fill` also stops a wide
                * monitor stretching six photos across the full width.
+               *
+               * A desktop tile is deliberately a little smaller than the photo
+               * it holds needs to be readable: the caption underneath is what
+               * people scan, so the row fits more of them and the text below
+               * carries the weight.
                */}
-              <div className="grid grid-cols-2 gap-3 p-3 sm:grid-cols-[repeat(auto-fill,minmax(146px,1fr))] sm:gap-3.5 sm:p-[18px]">
+              <div className="grid grid-cols-2 gap-3 p-3 sm:grid-cols-[repeat(auto-fill,minmax(124px,1fr))] sm:gap-3.5 sm:p-[18px]">
                 {g.photos.map((p, i) => (
                   <button
                     key={p.id}
@@ -363,10 +368,10 @@ export function ProductPhotosPage() {
                     {/* Two lines: the other axis (what the heading does NOT
                         already tell you), then when it was taken. */}
                     <div className="flex flex-col gap-0.5">
-                      <span className="text-[11.5px] leading-[1.3] font-semibold break-words text-slate-700 sm:text-[11.5px] dark:text-slate-300">
+                      <span className="text-[13px] leading-[1.3] font-semibold break-words text-slate-700 dark:text-slate-300">
                         {captionFor(p, groupBy)}
                       </span>
-                      <span className="text-muted-foreground font-mono text-[10px]">{formatDate(p.uploadedAt)}</span>
+                      <span className="text-muted-foreground font-mono text-[11.5px]">{formatDate(p.uploadedAt)}</span>
                     </div>
                   </button>
                 ))}
