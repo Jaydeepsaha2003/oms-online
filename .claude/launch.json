@@ -20,7 +20,7 @@
       ],
       "port": 5199,
       "autoPort": false,
-      "url": "http://127.0.0.1:5199"
+      "url": "https://localhost:5199"
     },
     {
       "name": "api",
@@ -51,7 +51,7 @@
       ],
       "port": 5299,
       "autoPort": false,
-      "url": "http://127.0.0.1:5299"
+      "url": "https://localhost:5299"
     }
   ]
 }
