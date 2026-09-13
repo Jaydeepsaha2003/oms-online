@@ -34,6 +34,19 @@ export interface DuplicateDispatch {
   qtyText: string;
   /** ISO timestamp of the dispatch it matched. */
   dispatchedAt: string;
+  /**
+   * Can the user go ahead anyway?
+   *
+   * False for an EXACT collision — every quantity identical on the same day,
+   * which is the same shipment recorded twice and stays refused. True for a
+   * partial one (same bags, and the same Kgs or Pcs), which is only suspicious:
+   * splitting a 30 Kg line into 15 + 15 on one day looks exactly like this and
+   * is perfectly normal, so that case asks rather than blocks.
+   */
+  overridable?: boolean;
+  /** What actually matched, for the partial case — "0.25 bags and 15 kgs". Lets
+   *  the dialog say why it stopped instead of leaving the user to compare rows. */
+  matchedOn?: string;
 }
 
 /** Standard error envelope returned by the API exception filter. */

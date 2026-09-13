@@ -266,6 +266,10 @@ export interface CreateDispatchInput {
    *  from this bag booking. Set only when the operator agreed to it; the extra
    *  itself is worked out server-side. See DispatchService.create. */
   bookingDrawId?: number | null;
+  /** The operator saw the "similar dispatch today" warning and chose to go
+   *  ahead. Lifts the partial same-day check only — an EXACT collision is
+   *  refused whatever this says. See DispatchService.create. */
+  confirmSimilar?: boolean;
 }
 
 export interface UpdateDispatchInput {

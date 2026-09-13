@@ -1569,6 +1569,16 @@ function DispatchSheet({
 }) {
   const create = useCreateDispatch();
   const [duplicate, setDuplicate] = useState<DuplicateDispatch | null>(null);
+  /** The refused attempt, replayed verbatim if the operator says carry on. */
+  const lastAttempt = useRef<{
+    bags: number;
+    pcs: number;
+    gram: number;
+    box: number;
+    status: DispatchStatus;
+    extraComment?: string;
+    bookingDrawId?: number | null;
+  } | null>(null);
   const confirm = useConfirm();
   // Editing lock: someone else with this same line open elsewhere (here or in
   // Modify Dispatch) blocks this sheet outright — closed immediately with who
@@ -1696,6 +1706,9 @@ function DispatchSheet({
     extraComment?: string,
     /** Withdraw the extra from this bag booking — see the overage dialog. */
     bookingDrawId?: number | null,
+    /** Set on the retry after the operator answered "Continue anyway" to the
+     *  similar-dispatch warning. */
+    confirmSimilar?: boolean,
   ) => {
     const comment = [form.comment.trim(), extraComment].filter(Boolean).join(' | ') || null;
     create.mutate(
@@ -1709,6 +1722,7 @@ function DispatchSheet({
         comment,
         dispatchDate,
         bookingDrawId: bookingDrawId ?? null,
+        ...(confirmSimilar ? { confirmSimilar: true } : {}),
       },
       {
         onSuccess: (res) => {
@@ -1727,7 +1741,16 @@ function DispatchSheet({
           // A same-day duplicate gets a modal, not a toast — it is the one
           // refusal that must be read rather than glanced at.
           const dupe = getDuplicateDispatch(e);
-          if (dupe) return setDuplicate(dupe);
+          if (dupe) {
+            // Hold on to the exact attempt. "Continue anyway" has to resend what
+            // was refused, and re-reading the form would pick up whatever the
+            // operator has typed since — a different dispatch to the one they
+            // were warned about.
+            if (dupe.overridable) {
+              lastAttempt.current = { bags, pcs, gram, box, status, extraComment, bookingDrawId };
+            }
+            return setDuplicate(dupe);
+          }
           toast.error(getApiErrorMessage(e, 'Dispatch failed'));
         },
       },
@@ -1869,7 +1892,19 @@ function DispatchSheet({
       {/* Rendered from inside the sheet so it layers ABOVE it — the refusal has
           to interrupt the form the user is still looking at. */}
       {duplicate && (
-        <DuplicateDispatchDialog match={duplicate} onClose={() => setDuplicate(null)} />
+        <DuplicateDispatchDialog
+          match={duplicate}
+          onClose={() => setDuplicate(null)}
+          onContinue={
+            duplicate.overridable
+              ? () => {
+                  const a = lastAttempt.current;
+                  setDuplicate(null);
+                  if (a) doCreate(a.bags, a.pcs, a.gram, a.box, a.status, a.extraComment, a.bookingDrawId, true);
+                }
+              : undefined
+          }
+        />
       )}
 
       {/* Native grabber handle on the phone bottom sheet. */}

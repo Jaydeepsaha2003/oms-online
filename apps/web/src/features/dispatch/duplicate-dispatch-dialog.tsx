@@ -9,16 +9,34 @@ const timeOf = (iso: string) =>
   new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
 
 /**
- * Shown when a dispatch is refused for being the same quantity, on the same
- * order line, on the same day.
+ * Shown when a dispatch collides with one already recorded for the same order
+ * line on the same day.
  *
  * A toast was the wrong vehicle: it auto-dismisses, it competes with whatever
  * else is on screen, and it is easy to miss on a shop floor tablet — yet this is
  * the one message that must be read, because ignoring it means the operator
  * believes goods went out twice. A modal stops everything and requires an
  * acknowledgement.
+ *
+ * Two strengths, and the difference matters:
+ *
+ *  - EXACT (`overridable` false) — every quantity identical. There is no second
+ *    reading of that, so the only way out is OK, and the dispatch is refused.
+ *  - SIMILAR (`overridable` true) — same bags, and the same Kgs or Pcs. Worth
+ *    stopping for, but a 30 Kg line sent as 15 + 15 in one day looks exactly
+ *    like this and is perfectly normal, so the operator gets to say so.
  */
-export function DuplicateDispatchDialog({ match, onClose }: { match: DuplicateDispatch; onClose: () => void }) {
+export function DuplicateDispatchDialog({
+  match,
+  onClose,
+  onContinue,
+}: {
+  match: DuplicateDispatch;
+  onClose: () => void;
+  /** Save it anyway. Only offered when the match is `overridable`. */
+  onContinue?: () => void;
+}) {
+  const similar = !!match.overridable && !!onContinue;
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent
@@ -50,9 +68,19 @@ export function DuplicateDispatchDialog({ match, onClose }: { match: DuplicateDi
           <div>
             {/* A real DialogTitle/Description, not styled headings: Radix needs
                 them to label the dialog for screen readers. */}
-            <DialogTitle className="text-[17px] font-extrabold tracking-tight">Already dispatched today</DialogTitle>
+            <DialogTitle className="text-[17px] font-extrabold tracking-tight">
+              {similar ? 'Similar dispatch already today' : 'Already dispatched today'}
+            </DialogTitle>
             <DialogDescription className="text-muted-foreground mt-1 text-[13px]">
-              This exact quantity has already gone out for this order line today.
+              {similar ? (
+                <>
+                  Something with the same{' '}
+                  <span className="font-bold text-amber-700 dark:text-amber-400">{match.matchedOn}</span> already went
+                  out for this order line today.
+                </>
+              ) : (
+                'This exact quantity has already gone out for this order line today.'
+              )}
             </DialogDescription>
           </div>
 
@@ -67,14 +95,38 @@ export function DuplicateDispatchDialog({ match, onClose }: { match: DuplicateDi
           </div>
 
           <p className="text-[12.5px] font-medium text-amber-700 dark:text-amber-400">
-            If the quantity is wrong, modify that dispatch instead of adding another one.
+            {similar
+              ? 'If this is the rest of the line going out separately, carry on. If it is the same load being entered twice, cancel and check that dispatch.'
+              : 'If the quantity is wrong, modify that dispatch instead of adding another one.'}
           </p>
         </div>
 
-        <DialogFooter className="px-5 pt-2 pb-5">
-          <Button className="h-10 w-full text-[13px] font-bold" onClick={onClose} autoFocus>
-            OK, got it
-          </Button>
+        <DialogFooter className="gap-2 px-5 pt-2 pb-5 sm:flex-row">
+          {similar ? (
+            <>
+              {/* Cancel is the default action and holds the focus: the warning
+                  exists because carrying on is the riskier of the two, so the
+                  Enter key must not be the one that ships the goods twice. */}
+              <Button
+                variant="outline"
+                className="h-10 flex-1 text-[13px] font-bold"
+                onClick={onClose}
+                autoFocus
+              >
+                Cancel
+              </Button>
+              <Button
+                className="h-10 flex-1 bg-amber-600 text-[13px] font-bold text-white hover:bg-amber-700"
+                onClick={onContinue}
+              >
+                Continue anyway
+              </Button>
+            </>
+          ) : (
+            <Button className="h-10 w-full text-[13px] font-bold" onClick={onClose} autoFocus>
+              OK, got it
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

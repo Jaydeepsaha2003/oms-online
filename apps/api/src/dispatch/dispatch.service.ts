@@ -1269,6 +1269,8 @@ export class DispatchService implements OnModuleInit {
         dup;
       if (already) {
         const what = qtyText({ bags: already.bags, pcs: already.pcs, gram: already.gram, box: already.box }) || 'the same quantity';
+        // Not overridable: every quantity identical on the same line and day is
+        // the same shipment entered twice, and there is no second reading of it.
         // 409, not 400: nothing about the request is malformed — it collides with
         // something that already exists. The matched row travels with the error so
         // the screen can name it instead of asking the user to go and look.
@@ -1283,8 +1285,64 @@ export class DispatchService implements OnModuleInit {
             productName: it.productName ?? it.product ?? 'this item',
             qtyText: what,
             dispatchedAt: already.dispatchDate.toISOString(),
+            overridable: false,
           },
         });
+      }
+
+      /*
+       * A SIMILAR dispatch on the same line today — same bags, and the same Kgs
+       * or the same Pcs.
+       *
+       * The exact check above only catches all-four-identical, which misses the
+       * shape a real double-entry usually takes: the same load keyed twice with
+       * one figure typed differently. Matching on bags plus either weight or
+       * count catches that.
+       *
+       * A WARNING, not a refusal, because the same pattern is also completely
+       * legitimate: a 30 Kg line sent as 15 + 15 on one day has identical bags
+       * and identical Kgs on both halves, and blocking it would refuse real
+       * work. So this asks, and `confirmSimilar` carries the answer back.
+       *
+       * Every compared figure must be NON-ZERO. On a Kgs-priced line both
+       * dispatches carry pcs 0, and treating 0 === 0 as evidence of duplication
+       * would fire this on nearly every second dispatch of the day.
+       */
+      if (!dto.confirmSimilar) {
+        const similar = it.dispatches.find(
+          (d) =>
+            d.dispatchStatus !== RETURNED_DISPATCH_STATUS &&
+            sameDay(d.dispatchDate, effectiveDate) &&
+            bags > 0 &&
+            (d.bags ?? 0) === bags &&
+            ((gram > 0 && (d.gram ?? 0) === gram) || (pcs > 0 && (d.pcs ?? 0) === pcs)),
+        );
+        if (similar) {
+          const matched = [
+            `${bags} bags`,
+            (similar.gram ?? 0) === gram && gram > 0 ? `${gram} kgs` : null,
+            (similar.pcs ?? 0) === pcs && pcs > 0 ? `${pcs} pcs` : null,
+          ]
+            .filter(Boolean)
+            .join(' and ');
+          throw new ConflictException({
+            error: 'DUPLICATE_DISPATCH',
+            message: `A dispatch with the same ${matched} already went out for this line today (${similar.code ?? `#${similar.id}`}).`,
+            duplicateDispatch: {
+              id: similar.id,
+              code: similar.code ?? `#${similar.id}`,
+              customerName: it.order.customerName,
+              orderCode: it.order.code ?? this.orderCodeFor(it.orderId),
+              productName: it.productName ?? it.product ?? 'this item',
+              qtyText:
+                qtyText({ bags: similar.bags, pcs: similar.pcs, gram: similar.gram, box: similar.box }) ||
+                'the same quantity',
+              dispatchedAt: similar.dispatchDate.toISOString(),
+              overridable: true,
+              matchedOn: matched,
+            },
+          });
+        }
       }
 
       const rem = this.remaining(it, it.dispatches);

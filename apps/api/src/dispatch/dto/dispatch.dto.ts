@@ -27,6 +27,15 @@ export class CreateDispatchDto {
    * tampered client can't decide how much comes off a booking.
    */
   @IsOptional() @IsInt() bookingDrawId?: number;
+
+  /**
+   * The user saw the "similar dispatch today" warning and chose to go ahead.
+   *
+   * Only lifts the PARTIAL check. An exact same-day collision is refused
+   * whatever this says — there is no legitimate reading of the same line, same
+   * day, same every quantity other than the same shipment entered twice.
+   */
+  @IsOptional() @IsBoolean() confirmSimilar?: boolean;
 }
 
 export class UpdateDispatchDto extends PartialType(CreateDispatchDto) {}
