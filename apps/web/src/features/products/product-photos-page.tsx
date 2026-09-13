@@ -1,5 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Building2, ChevronLeft, ChevronRight, Images, Loader2, Package, RotateCcw, Search, TriangleAlert } from 'lucide-react';
+import {
+  Building2,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Image as ImageIcon,
+  ImageOff,
+  Images,
+  Loader2,
+  Lock,
+  Package,
+  RotateCcw,
+  Search,
+  TriangleAlert,
+} from 'lucide-react';
 import type { PhotoGroupBy, ProductPhotoDto, ProductPhotoGroupDto } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { useDateFormat } from '@/lib/date-format';
@@ -106,21 +120,30 @@ export function ProductPhotosPage() {
     <div className="space-y-3 font-sans">
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-2.5">
-        <div className="bg-gradient-brand flex size-9 items-center justify-center rounded-[4px] text-white shadow-md shadow-blue-600/20 ring-1 ring-white/20">
-          <Images className="size-4" />
+        {/* Softer, larger radius than the app's usual 4px chip — the mockup
+            treats this page as a gallery rather than a worksheet, and the
+            rounded tile is what sets that tone from the first element. */}
+        <div className="flex size-[34px] flex-none items-center justify-center rounded-[9px] bg-indigo-600 text-white shadow-[0_4px_12px_rgba(79,70,229,0.28)] ring-1 ring-white/25 ring-inset">
+          <Images className="size-[19px]" />
         </div>
         <div className="min-w-0">
-          <h2 className="truncate text-[17px] leading-tight font-bold tracking-tight">Product Photos</h2>
-          <p className="text-muted-foreground truncate text-[11.5px] font-medium">
+          <h2 className="truncate text-[19px] leading-tight font-semibold tracking-[-0.015em]">Product Photos</h2>
+          <p className="text-muted-foreground truncate text-[12.5px] leading-tight font-medium">
             Everything uploaded on an order line, by party and by item
           </p>
         </div>
-        <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
-          <span className="text-muted-foreground rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold tabular-nums dark:bg-white/10">
-            {data?.totalPhotos ?? 0}
-            <span className="hidden sm:inline"> photos</span>
-          </span>
+        <div className="ml-auto flex items-center gap-2">
           {isFetching && <Loader2 className="text-muted-foreground size-3.5 animate-spin" />}
+          {/* Read-only is a fact about the whole screen, so it is stated once
+              here rather than implied by the absence of buttons. */}
+          <span className="text-muted-foreground hidden items-center gap-1.5 rounded-[8px] border bg-slate-50 px-2.5 py-1.5 text-[11.5px] font-medium sm:flex dark:bg-white/5">
+            <Lock className="size-3.5" /> Read-only
+          </span>
+          <span className="flex items-center gap-1.5 rounded-[8px] border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-indigo-700 dark:border-indigo-400/30 dark:bg-indigo-500/10 dark:text-indigo-300">
+            <ImageIcon className="size-3.5" />
+            <b className="text-[12.5px] font-semibold tabular-nums">{data?.totalPhotos ?? 0}</b>
+            <span className="hidden text-[11.5px] font-medium sm:inline">photos</span>
+          </span>
         </div>
       </div>
 
@@ -251,50 +274,100 @@ export function ProductPhotosPage() {
 
       {/* ── The gallery ─────────────────────────────────────────────────────── */}
       {isLoading ? (
-        <div className="text-muted-foreground flex h-40 items-center justify-center rounded-2xl border">
+        <div className="text-muted-foreground bg-card flex h-40 items-center justify-center rounded-xl border">
           <Loader2 className="size-5 animate-spin" />
         </div>
       ) : !groups.length ? (
-        <div className="text-muted-foreground rounded-2xl border px-4 py-14 text-center text-sm">
-          {hasFilters ? 'No photos match these filters.' : 'No photos have been uploaded against an order line yet.'}
+        <div className="bg-card rounded-xl border border-dashed px-6 py-14 text-center sm:py-16">
+          <ImageOff className="text-muted-foreground/50 mx-auto size-8" />
+          <p className="mt-2.5 text-[13.5px] font-semibold text-slate-700 dark:text-slate-300">
+            {hasFilters ? 'No photos match these filters.' : 'No photos uploaded yet.'}
+          </p>
+          <p className="text-muted-foreground mt-1 text-[12px]">
+            {hasFilters
+              ? 'Clear the search or widen the dates to see more.'
+              : 'Photos attached to an order line show up here.'}
+          </p>
         </div>
       ) : (
         <div className="space-y-3">
           {groups.map((g) => (
-            <section key={g.key} className="bg-card overflow-hidden rounded-2xl border shadow-sm ring-1 ring-black/[0.02]">
-              <header className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b bg-gradient-to-r from-indigo-50 to-white px-3 py-2 dark:from-indigo-500/10 dark:to-transparent">
-                <h3 className="min-w-0 text-[14px] leading-tight font-extrabold break-words text-slate-900 dark:text-slate-100">
-                  {g.label}
-                </h3>
-                {g.subLabel && <span className="text-muted-foreground text-[11px] font-medium">{g.subLabel}</span>}
+            <section
+              key={g.key}
+              className="bg-card overflow-hidden rounded-xl border shadow-[0_1px_2px_rgba(28,26,23,0.04),0_8px_24px_-18px_rgba(28,26,23,0.18)]"
+            >
+              <header className="flex items-center gap-2.5 border-b bg-gradient-to-b from-slate-50/80 to-slate-100/60 px-3.5 py-3 sm:gap-3 sm:px-[18px] dark:from-white/[0.04] dark:to-transparent">
+                {/* Monogram: a fixed anchor at the same spot on every card, so a
+                    long scroll has something to track other than the text. */}
+                <span className="flex size-[30px] flex-none items-center justify-center rounded-[8px] border border-indigo-200 bg-indigo-50 font-mono text-[11px] font-semibold text-indigo-700 dark:border-indigo-400/30 dark:bg-indigo-500/10 dark:text-indigo-300">
+                  {initialsOf(g.label)}
+                </span>
+                {/* Baseline-aligned on desktop so the name and its count read as
+                    one line; stacked on a phone, where the name alone can wrap
+                    to two and a trailing count would strand itself. */}
+                <div className="flex min-w-0 flex-1 flex-col gap-y-0.5 sm:flex-row sm:flex-wrap sm:items-baseline sm:gap-x-2.5">
+                  <h3 className="min-w-0 text-[13.5px] leading-tight font-semibold tracking-[-0.01em] break-words text-slate-900 sm:text-[14.5px] dark:text-slate-100">
+                    {g.label}
+                  </h3>
+                  <span className="text-muted-foreground font-mono text-[10.5px] whitespace-nowrap sm:text-[11px]">
+                    {metaFor(g, groupBy)}
+                  </span>
+                </div>
+                {/* The newest upload in the card. Photos arrive newest-first, so
+                    it is simply the first one — no scan needed. */}
+                {g.photos[0] && (
+                  <span className="text-muted-foreground ml-auto hidden flex-none items-center gap-1.5 font-mono text-[10.5px] whitespace-nowrap sm:flex">
+                    <Clock className="size-3.5" />
+                    {formatDate(g.photos[0].uploadedAt)}
+                  </span>
+                )}
               </header>
 
-              {/* Three across on the narrowest phone: big enough to recognise a
-                  design, small enough that a party's work is one glance. */}
-              <div className="grid grid-cols-3 gap-2 p-2.5 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
+              {/*
+               * Two across on the narrowest phone, then as many ~146px tiles as
+               * fit. The old fixed 3/4/6/8 columns made a tile on a phone about
+               * 100px — too small to tell two laser designs apart, which is the
+               * one thing this page exists for. `auto-fill` also stops a wide
+               * monitor stretching six photos across the full width.
+               */}
+              <div className="grid grid-cols-2 gap-3 p-3 sm:grid-cols-[repeat(auto-fill,minmax(146px,1fr))] sm:gap-3.5 sm:p-[18px]">
                 {g.photos.map((p, i) => (
                   <button
                     key={p.id}
                     type="button"
                     onClick={() => open(g, i)}
-                    className="group focus-visible:ring-ring block text-left focus-visible:ring-2 focus-visible:outline-none"
+                    className="group focus-visible:ring-ring flex flex-col gap-2 rounded-[10px] text-left focus-visible:ring-2 focus-visible:outline-none"
                     title={`${p.customerName} · ${p.productName || p.product || '—'}`}
                   >
-                    <div className="relative aspect-square overflow-hidden rounded-lg border bg-slate-100 dark:bg-white/5">
+                    {/*
+                     * The hatch is the placeholder, and it is on the CONTAINER
+                     * rather than a separate element — it shows through while
+                     * the photo streams in and stays put if the file is missing,
+                     * instead of the flat grey box that reads as a broken page.
+                     */}
+                    <div className="relative aspect-square overflow-hidden rounded-[10px] border bg-[repeating-linear-gradient(135deg,#f1f5f9_0_7px,#e2e8f0_7px_14px)] shadow-sm transition-[transform,box-shadow] duration-200 ease-out group-hover:-translate-y-[3px] group-hover:shadow-[0_10px_22px_-10px_rgba(28,26,23,0.3)] dark:bg-[repeating-linear-gradient(135deg,rgba(255,255,255,0.05)_0_7px,rgba(255,255,255,0.09)_7px_14px)]">
+                      <ImageIcon className="text-muted-foreground/45 absolute top-1/2 left-1/2 size-[22px] -translate-x-1/2 -translate-y-1/2" />
+                      {/* onError hides a missing file rather than letting the
+                          browser paint its broken-image glyph and the alt text
+                          across the tile: the hatch behind then shows through,
+                          so a gap in the uploads folder reads as "not here yet"
+                          instead of as a broken page. */}
                       <img
                         src={p.url}
                         alt={captionFor(p, groupBy)}
                         loading="lazy"
-                        className="size-full object-cover transition-transform duration-200 group-hover:scale-105"
+                        onError={(e) => e.currentTarget.classList.add('invisible')}
+                        className="relative size-full object-cover"
                       />
                     </div>
-                    {/* Two lines, never truncated to nothing: the other axis
-                        (the thing you do NOT already know from the heading),
-                        then when it was taken. */}
-                    <p className="mt-1 text-[10.5px] leading-tight font-semibold break-words text-slate-700 dark:text-slate-300">
-                      {captionFor(p, groupBy)}
-                    </p>
-                    <p className="text-muted-foreground text-[9.5px] font-medium tabular-nums">{formatDate(p.uploadedAt)}</p>
+                    {/* Two lines: the other axis (what the heading does NOT
+                        already tell you), then when it was taken. */}
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[11.5px] leading-[1.3] font-semibold break-words text-slate-700 sm:text-[11.5px] dark:text-slate-300">
+                        {captionFor(p, groupBy)}
+                      </span>
+                      <span className="text-muted-foreground font-mono text-[10px]">{formatDate(p.uploadedAt)}</span>
+                    </div>
                   </button>
                 ))}
               </div>
@@ -305,7 +378,7 @@ export function ProductPhotosPage() {
 
       {/* ── Paging (over sections, so a party is never split in two) ────────── */}
       {groups.length > 0 && (
-        <div className="bg-card flex items-center gap-2 rounded-xl border px-2.5 py-1.5 shadow-sm sm:justify-between">
+        <div className="bg-card flex items-center gap-2 rounded-[10px] border px-3 py-2 shadow-[0_1px_2px_rgba(28,26,23,0.04)] sm:justify-between">
           <span className="text-muted-foreground text-[11.5px] font-medium">
             <span className="text-foreground font-bold tabular-nums">{data?.totalGroups ?? 0}</span>{' '}
             {groupBy === 'PARTY' ? 'parties' : 'items'}
@@ -351,6 +424,45 @@ export function ProductPhotosPage() {
       )}
     </div>
   );
+}
+
+/**
+ * Two-letter monogram for a group's avatar — "SANCHETI STEEL HOUSE" -> "SS".
+ *
+ * Punctuation is stripped first so "MANGAL & MANGAL" reads MM rather than M&.
+ * The avatar exists to give each card a fixed anchor the eye can find while
+ * scrolling a long page; the letters only have to be recognisable next to the
+ * name, not unique on their own.
+ */
+function initialsOf(label: string): string {
+  return (
+    label
+      .replace(/[^A-Za-z0-9 ]/g, ' ')
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((w) => w[0])
+      .join('')
+      .toUpperCase() || '—'
+  );
+}
+
+/**
+ * "6 photos · 4 items" — how much is in this card, and across how many of the
+ * OTHER axis.
+ *
+ * The server's own `subLabel` says only the second half; the count of photos is
+ * what tells you whether a card is worth opening, and it is the first thing
+ * anyone asks of a group heading.
+ */
+function metaFor(group: ProductPhotoGroupDto, groupBy: PhotoGroupBy): string {
+  const n = group.photos.length;
+  const others = new Set(
+    group.photos.map((p) => (groupBy === 'PARTY' ? p.productName || p.product || '—' : p.customerName)),
+  ).size;
+  const noun = groupBy === 'PARTY' ? 'item' : 'party';
+  const plural = groupBy === 'PARTY' ? 'items' : 'parties';
+  return `${n} ${n === 1 ? 'photo' : 'photos'} · ${others} ${others === 1 ? noun : plural}`;
 }
 
 /**
