@@ -96,18 +96,38 @@ async function bootstrap(): Promise<void> {
   // runs, so <img> tags load them without a bearer token. The path sits under
   // `/api` so the Vite dev proxy routes it here unchanged.
   //
-  // Defense in depth: the upload endpoint already validates real image bytes
-  // (see uploads.controller.ts) so nothing except a genuine image should ever
-  // land here, but user-generated content is still the classic stored-XSS
-  // vector — `Content-Security-Policy: sandbox` strips scripting/origin
-  // privileges from anything served under this path (harmless to real images,
-  // neutralises a maliciously uploaded HTML/SVG file even if one slipped
-  // through) and `nosniff` stops the browser from guessing a different type.
+  /*
+   * Defense in depth, WITHOUT `sandbox`.
+   *
+   * This used to send `Content-Security-Policy: sandbox`, and that is why
+   * uploaded photos never appeared on an iPhone while desktop and Android were
+   * fine. The sandbox directive is specified for documents; Blink (Chrome,
+   * Edge, Android) ignores it on an image subresource, WebKit does not — and
+   * every browser on iOS is WebKit, so Safari, Chrome-for-iOS and Firefox-for-
+   * iOS all refused to render the photo. The page itself was unaffected, which
+   * is exactly what it looked like: the layout drew, the pictures did not. This
+   * header was on the uploads path and nowhere else in the app, which is why
+   * nothing else on the page was affected.
+   *
+   * `default-src 'none'` replaces it and is the header GitHub and friends use
+   * for user content. If one of these files were ever loaded AS a document it
+   * could run no script and fetch nothing; unlike `sandbox` it says nothing
+   * about whether a parent page may display it, so images render everywhere.
+   *
+   * What is NOT being given up: the upload endpoint identifies the format from
+   * its magic bytes and stores the file under a server-generated
+   * `<uuid><ext>` — the client's filename and Content-Type never reach the
+   * disk. SVG is not in that list at all, so the one script-capable image
+   * format can never be stored, and an HTML payload declared as image/png is
+   * rejected before it is written. With `nosniff` below pinning the type the
+   * browser is told, there is no path left for a stored file to be parsed as
+   * markup.
+   */
   const uploadsDir = ensureUploadDir();
   app.useStaticAssets(uploadsDir, {
     prefix: UPLOADS_URL_PREFIX,
     setHeaders: (res) => {
-      res.setHeader('Content-Security-Policy', 'sandbox');
+      res.setHeader('Content-Security-Policy', "default-src 'none'");
       res.setHeader('X-Content-Type-Options', 'nosniff');
     },
   });
