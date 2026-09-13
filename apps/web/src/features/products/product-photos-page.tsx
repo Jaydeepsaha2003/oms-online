@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   Building2,
+  CalendarRange,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -14,6 +16,7 @@ import {
   RotateCcw,
   Search,
   TriangleAlert,
+  X,
 } from 'lucide-react';
 import type { PhotoGroupBy, ProductPhotoDto, ProductPhotoGroupDto } from '@oms/shared';
 import { cn } from '@/lib/utils';
@@ -22,6 +25,8 @@ import { usePageSize } from '@/hooks/use-page-size';
 import { PageSizeSelect } from '@/components/common/page-size-select';
 import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { DateRangeCalendar } from '@/components/common/date-range-calendar';
 import { Input } from '@/components/ui/input';
 import { PhotoLightbox, type LinePhoto } from '@/features/orders/line-photos';
 import { productPhotosQuery, useProductPhotoFilterOptions, useProductPhotos } from './use-product-photos';
@@ -44,6 +49,7 @@ import { productPhotosQuery, useProductPhotoFilterOptions, useProductPhotos } fr
  */
 export function ProductPhotosPage() {
   const { formatDate } = useDateFormat();
+  const [dateOpen, setDateOpen] = useState(false);
   const { page, setPage, pageSize, setPageSize } = usePageSize('product-photos');
 
   const [groupBy, setGroupBy] = useState<PhotoGroupBy>('PARTY');
@@ -117,6 +123,12 @@ export function ProductPhotosPage() {
    * so the useful line is the item, and vice versa. Raw upload filenames are
    * mostly UUIDs, which name nothing.
    */
+  const dateActive = !!from || !!to;
+  /* Say the range on the button itself. An arrow between the two dates reads
+     faster than the word "to" at this size, and an ellipsis marks the open end
+     when only one side is set. */
+  const dateLabel = dateActive ? `${from ? formatDate(from) : '…'} → ${to ? formatDate(to) : '…'}` : 'Any date';
+
   const open = (group: ProductPhotoGroupDto, index: number) =>
     setViewing({
       photos: group.photos.map((p) => ({
@@ -132,57 +144,49 @@ export function ProductPhotosPage() {
 
   return (
     <div className="space-y-3 font-sans">
-      {/* ── Header ──────────────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center gap-2.5">
-        {/* Softer, larger radius than the app's usual 4px chip — the mockup
-            treats this page as a gallery rather than a worksheet, and the
-            rounded tile is what sets that tone from the first element. */}
-        <div className="flex size-[34px] flex-none items-center justify-center rounded-[9px] bg-indigo-600 text-white shadow-[0_4px_12px_rgba(79,70,229,0.28)] ring-1 ring-white/25 ring-inset">
-          <Images className="size-[19px]" />
-        </div>
-        <div className="min-w-0">
-          <h2 className="truncate text-[19px] leading-tight font-semibold tracking-[-0.015em]">Product Photos</h2>
-          <p className="text-muted-foreground truncate text-[12.5px] leading-tight font-medium">
-            Everything uploaded on an order line, by party and by item
-          </p>
+      {/* ── Group by, and what the page is showing ──────────────────────────
+          No title or subtitle here: the app's top bar already names the screen,
+          and repeating it cost a whole band of vertical space to say the same
+          two words twice. The chips that DID carry information — how many
+          photos, and that nothing on this screen can be changed — move onto
+          this row, which had empty space to spare.
+
+          Group-by is the one control the screen is really about, so it stays a
+          visible switch rather than another entry in a row of dropdowns. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex h-9 min-w-0 flex-1 items-center gap-1 rounded-[4px] border border-indigo-200 bg-indigo-50/40 p-0.5 sm:flex-none dark:border-indigo-400/30 dark:bg-indigo-500/10">
+          {(
+            [
+              ['PARTY', 'By party', Building2],
+              ['ITEM', 'By item', Package],
+            ] as const
+          ).map(([value, label, Icon]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => changeGroupBy(value)}
+              className={cn(
+                'flex flex-1 items-center justify-center gap-1.5 rounded-[3px] px-3 py-1 text-[12px] font-semibold transition-colors sm:flex-none',
+                groupBy === value ? 'bg-indigo-600 text-white shadow-sm' : 'text-indigo-900/70 hover:bg-indigo-100 dark:text-indigo-200/80 dark:hover:bg-indigo-500/20',
+              )}
+            >
+              <Icon className="size-3.5" /> {label}
+            </button>
+          ))}
         </div>
         <div className="ml-auto flex items-center gap-2">
           {isFetching && <Loader2 className="text-muted-foreground size-3.5 animate-spin" />}
           {/* Read-only is a fact about the whole screen, so it is stated once
-              here rather than implied by the absence of buttons. */}
-          <span className="text-muted-foreground hidden items-center gap-1.5 rounded-[8px] border bg-slate-50 px-2.5 py-1.5 text-[11.5px] font-medium sm:flex dark:bg-white/5">
+              rather than implied by the absence of buttons. */}
+          <span className="text-muted-foreground hidden h-9 items-center gap-1.5 rounded-[4px] border bg-slate-50 px-2.5 text-[11.5px] font-medium sm:flex dark:bg-white/5">
             <Lock className="size-3.5" /> Read-only
           </span>
-          <span className="flex items-center gap-1.5 rounded-[8px] border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-indigo-700 dark:border-indigo-400/30 dark:bg-indigo-500/10 dark:text-indigo-300">
+          <span className="flex h-9 items-center gap-1.5 rounded-[4px] border border-indigo-200 bg-indigo-50 px-2.5 text-indigo-700 dark:border-indigo-400/30 dark:bg-indigo-500/10 dark:text-indigo-300">
             <ImageIcon className="size-3.5" />
             <b className="text-[12.5px] font-semibold tabular-nums">{data?.totalPhotos ?? 0}</b>
             <span className="hidden text-[11.5px] font-medium sm:inline">photos</span>
           </span>
         </div>
-      </div>
-
-      {/* ── Group by ────────────────────────────────────────────────────────
-          The one control the screen is really about, so it is a visible switch
-          rather than another entry in a row of dropdowns. */}
-      <div className="flex h-9 w-full items-center gap-1 rounded-[4px] border border-indigo-200 bg-indigo-50/40 p-0.5 sm:w-auto sm:self-start dark:border-indigo-400/30 dark:bg-indigo-500/10">
-        {(
-          [
-            ['PARTY', 'By party', Building2],
-            ['ITEM', 'By item', Package],
-          ] as const
-        ).map(([value, label, Icon]) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => changeGroupBy(value)}
-            className={cn(
-              'flex flex-1 items-center justify-center gap-1.5 rounded-[3px] px-3 py-1 text-[12px] font-semibold transition-colors sm:flex-none',
-              groupBy === value ? 'bg-indigo-600 text-white shadow-sm' : 'text-indigo-900/70 hover:bg-indigo-100 dark:text-indigo-200/80 dark:hover:bg-indigo-500/20',
-            )}
-          >
-            <Icon className="size-3.5" /> {label}
-          </button>
-        ))}
       </div>
 
       {/* ── Filters ─────────────────────────────────────────────────────────
@@ -231,42 +235,78 @@ export function ProductPhotosPage() {
             placeholder="All designs"
           />
         </div>
-        {/* Uploaded-between, labelled: on a phone there is no column header to
-            say which date box is which. */}
-        <div className="col-span-2 flex w-full flex-wrap items-center gap-1.5 sm:w-auto">
-          <span className="text-muted-foreground shrink-0 text-[11px] font-bold tracking-wide uppercase">Uploaded</span>
-          {/*
-            A native date input has an intrinsic width — the dd-mm-yyyy segments
-            plus the picker button. `flex-1 min-w-0` let it shrink below that, so
-            the segments clipped and collided with the calendar icon, which is
-            what read as a formatting/alignment fault. Give it a width that fits
-            its own content and let the ROW wrap on a narrow screen instead of
-            crushing the fields.
-          */}
-          <Input
-            type="date"
-            aria-label="Uploaded from"
-            className="h-9 w-[8.75rem] shrink-0 px-2 tabular-nums"
-            value={from}
-            max={to || undefined}
-            onChange={(e) => {
-              setFrom(e.target.value);
-              setPage(1);
-            }}
-          />
-          <span className="text-muted-foreground shrink-0 text-[11px]">to</span>
-          <Input
-            type="date"
-            aria-label="Uploaded to"
-            className="h-9 w-[8.75rem] shrink-0 px-2 tabular-nums"
-            value={to}
-            min={from || undefined}
-            onChange={(e) => {
-              setTo(e.target.value);
-              setPage(1);
-            }}
-          />
-        </div>
+        {/*
+          One control for the whole range, matching the dropdowns beside it.
+
+          It was two raw <input type="date"> boxes and a floating "UPLOADED"
+          label: three elements of three different shapes to express one filter,
+          each showing `mm/dd/yyyy` in the browser's own format rather than the
+          dd-mm-yyyy this app displays everywhere else. The shared range
+          calendar is what Challans and the Ledger already use, so the picker
+          now behaves the same way here — and the button states the range in the
+          user's chosen format instead of making them read two empty boxes.
+        */}
+        <Popover open={dateOpen} onOpenChange={setDateOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              title="Filter by upload date"
+              className={cn(
+                'col-span-2 h-9 w-full justify-start gap-1.5 rounded-[4px] px-2.5 text-[12.5px] font-medium sm:w-auto sm:min-w-44 sm:shrink-0',
+                dateActive && 'border-indigo-400 bg-indigo-50 font-semibold text-indigo-900 dark:border-indigo-400/60 dark:bg-indigo-500/10 dark:text-indigo-200',
+              )}
+            >
+              <CalendarRange className="size-3.5 shrink-0" />
+              <span className="truncate">{dateLabel}</span>
+              <ChevronDown className="ml-auto size-3 shrink-0 opacity-60" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-auto max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-lg p-0 shadow-xl">
+            <div className="flex items-center gap-2 border-b bg-slate-50 px-3 py-2.5 dark:bg-white/5">
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-[6px] bg-indigo-100 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300">
+                <CalendarRange className="size-4" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-[12.5px] font-bold">Uploaded between</p>
+                <p className="text-muted-foreground truncate text-[11px] font-medium">
+                  {dateActive
+                    ? `${from ? formatDate(from) : 'Start date'} to ${to ? formatDate(to) : 'End date'}`
+                    : 'Showing photos from all dates'}
+                </p>
+              </div>
+            </div>
+            <div className="p-3">
+              <DateRangeCalendar
+                from={from}
+                to={to}
+                onChange={(f, t) => {
+                  setFrom(f);
+                  setTo(t);
+                  setPage(1);
+                }}
+              />
+            </div>
+            <div className="flex items-center justify-end gap-1.5 border-t bg-slate-50 px-3 py-2 dark:bg-white/5">
+              {dateActive && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 px-2.5 text-[12px] font-semibold"
+                  onClick={() => {
+                    setFrom('');
+                    setTo('');
+                    setPage(1);
+                  }}
+                >
+                  <X className="size-3.5" /> Clear
+                </Button>
+              )}
+              <Button size="sm" className="h-8 shrink-0 bg-indigo-600 px-4 text-[12px] font-semibold hover:bg-indigo-700" onClick={() => setDateOpen(false)}>
+                Done
+              </Button>
+            </div>
+          </PopoverContent>
+        </Popover>
         {hasFilters && (
           <Button variant="ghost" size="sm" className="col-span-2 h-9 w-full sm:w-auto" onClick={reset}>
             <RotateCcw /> Reset
