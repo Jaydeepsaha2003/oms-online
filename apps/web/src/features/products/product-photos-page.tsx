@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Building2, ChevronLeft, ChevronRight, Images, Loader2, Package, RotateCcw, Search, TriangleAlert } from 'lucide-react';
 import type { PhotoGroupBy, ProductPhotoDto, ProductPhotoGroupDto } from '@oms/shared';
 import { cn } from '@/lib/utils';
@@ -9,7 +10,7 @@ import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PhotoLightbox, type LinePhoto } from '@/features/orders/line-photos';
-import { useProductPhotoFilterOptions, useProductPhotos } from './use-product-photos';
+import { productPhotosQuery, useProductPhotoFilterOptions, useProductPhotos } from './use-product-photos';
 
 /**
  * Products → Product Photos
@@ -60,6 +61,19 @@ export function ProductPhotosPage() {
   };
   const { data, isLoading, isFetching } = useProductPhotos({ page, pageSize, groupBy, ...filters });
   const { data: options } = useProductPhotoFilterOptions(filters);
+
+  // Once this view has landed, quietly fetch the OTHER grouping (page 1, same
+  // filters) — exactly the request a By party ⇄ By item switch makes — so the
+  // switch is a cache hit and shows instantly. Thumbnails are already cached by
+  // the browser, so nothing is downloaded twice.
+  const queryClient = useQueryClient();
+  const other: PhotoGroupBy = groupBy === 'PARTY' ? 'ITEM' : 'PARTY';
+  const filterKey = JSON.stringify(filters);
+  useEffect(() => {
+    if (!data) return;
+    void queryClient.prefetchQuery(productPhotosQuery({ page: 1, pageSize, groupBy: other, ...filters }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!data, other, pageSize, filterKey, queryClient]);
 
   const groups = data?.groups ?? [];
   const totalPages = data?.totalPages ?? 1;
@@ -282,9 +296,13 @@ export function ProductPhotosPage() {
                   >
                     <div className="relative aspect-square overflow-hidden rounded-lg border bg-slate-100 dark:bg-white/5">
                       <img
-                        src={p.url}
+                        // A ~40 KB thumbnail, not the phone original (avg 470 KB):
+                        // a screen of originals choked the VPN link. The viewer
+                        // opened on tap still loads full size. See thumbnails.ts.
+                        src={p.url.replace(/^\/api\/uploads\//, '/api/uploads/thumbs/')}
                         alt={captionFor(p, groupBy)}
                         loading="lazy"
+                        decoding="async"
                         className="size-full object-cover transition-transform duration-200 group-hover:scale-105"
                       />
                     </div>

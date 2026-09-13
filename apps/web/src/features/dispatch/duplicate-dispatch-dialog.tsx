@@ -37,6 +37,14 @@ export function DuplicateDispatchDialog({
   onContinue?: () => void;
 }) {
   const similar = !!match.overridable && !!onContinue;
+  // "today" only when it IS today — an edit, a backdated entry or an approved
+  // date move can collide on any day, and saying "today" then is simply wrong.
+  const at = new Date(match.dispatchedAt);
+  const now = new Date();
+  const when =
+    at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate()
+      ? 'today'
+      : `on ${formatDate(match.dispatchedAt)}`;
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent
@@ -69,17 +77,17 @@ export function DuplicateDispatchDialog({
             {/* A real DialogTitle/Description, not styled headings: Radix needs
                 them to label the dialog for screen readers. */}
             <DialogTitle className="text-[17px] font-extrabold tracking-tight">
-              {similar ? 'Similar dispatch already today' : 'Already dispatched today'}
+              {similar ? `Similar dispatch already ${when}` : `Already dispatched ${when}`}
             </DialogTitle>
             <DialogDescription className="text-muted-foreground mt-1 text-[13px]">
               {similar ? (
                 <>
                   Something with the same{' '}
                   <span className="font-bold text-amber-700 dark:text-amber-400">{match.matchedOn}</span> already went
-                  out for this order line today.
+                  out for this order line {when}.
                 </>
               ) : (
-                'This exact quantity has already gone out for this order line today.'
+                `This exact quantity has already gone out for this order line ${when}.`
               )}
             </DialogDescription>
           </div>
@@ -116,7 +124,9 @@ export function DuplicateDispatchDialog({
                 Cancel
               </Button>
               <Button
-                className="h-10 flex-1 bg-amber-600 text-[13px] font-bold text-white hover:bg-amber-700"
+                // Red, not amber: this is the risky choice (it can ship the same
+                // load twice), so it must not look like the safe default.
+                className="h-10 flex-1 bg-red-600 text-[13px] font-bold text-white hover:bg-red-700"
                 onClick={onContinue}
               >
                 Continue anyway

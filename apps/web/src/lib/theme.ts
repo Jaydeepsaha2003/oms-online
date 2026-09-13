@@ -34,10 +34,21 @@ export function isDark(pref: ThemePref): boolean {
 let current = readStored();
 const listeners = new Set<() => void>();
 
+/** The login screen is always light, whatever the saved theme — it is the one
+ *  screen people see before choosing anything, and it is designed for light.
+ *  Mirrored in the boot script in index.html. */
+const isLoginRoute = () => typeof location !== 'undefined' && location.pathname === '/login';
+
 /** Add/remove `.dark` on <html> to match the resolved preference. */
 function apply(pref: ThemePref): void {
   if (typeof document === 'undefined') return;
-  document.documentElement.classList.toggle('dark', isDark(pref));
+  document.documentElement.classList.toggle('dark', isDark(pref) && !isLoginRoute());
+}
+
+/** Re-evaluate the theme for the current route — the login page calls this on
+ *  enter and leave, since a route change alone does not re-run `apply`. */
+export function reapplyTheme(): void {
+  apply(current);
 }
 
 export function getTheme(): ThemePref {

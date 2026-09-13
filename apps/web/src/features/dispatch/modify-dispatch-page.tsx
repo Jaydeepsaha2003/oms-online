@@ -35,9 +35,12 @@ import {
   perm,
   qtyOrderForCategory,
   type DispatchDto,
+  type DuplicateDispatch,
   type QtyField,
+  type UpdateDispatchInput,
 } from '@oms/shared';
-import { getApiErrorMessage } from '@/lib/api';
+import { getApiErrorMessage, getDuplicateDispatch } from '@/lib/api';
+import { DuplicateDispatchDialog } from './duplicate-dispatch-dialog';
 import { cn, shortDispatchCode, shortOrderCode } from '@/lib/utils';
 import { DATE_FORMATS, formatDate, useDateFormat } from '@/lib/date-format';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -2409,7 +2412,9 @@ function DispatchPhotosButton({
               <DialogTitle className="flex items-center gap-2">
                 <Camera className="size-4" /> Line photos
               </DialogTitle>
-              {locked && (
+              {/* Only when there are photos to be "the record" — see the same
+                  guard on the Dispatch sheet. */}
+              {locked && count > 0 && (
                 <p className="text-xs text-amber-700 dark:text-amber-400">
                   Billed on {challanCode} — these photos are the record of what shipped.
                   {isSuperAdmin
@@ -2580,16 +2585,23 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
       return toast.error('Pcs is required — this item is priced by PCS.');
     if (cf === 'KGS' && num(form.gram) <= 0)
       return toast.error('Kgs is required to dispatch this item.');
+    send({
+      bags: num(form.bags),
+      pcs: num(form.pcs),
+      gram: num(form.gram),
+      box: num(form.box),
+      dispatchStatus: form.dispatchStatus,
+      comment: form.comment.trim() || null,
+      dispatchDate: form.dispatchDate,
+    });
+  };
+
+  /** One save attempt. Kept separate so "Continue anyway" on a SIMILAR-dispatch
+   *  warning resends exactly what was refused — not whatever the form holds by
+   *  then — with `confirmSimilar` set. */
+  const send = (input: UpdateDispatchInput) => {
     update.mutate(
-      {
-        bags: num(form.bags),
-        pcs: num(form.pcs),
-        gram: num(form.gram),
-        box: num(form.box),
-        dispatchStatus: form.dispatchStatus,
-        comment: form.comment.trim() || null,
-        dispatchDate: form.dispatchDate,
-      },
+      input,
       {
         onSuccess: (res) => {
           if (res.dateApprovalCode) {
@@ -2603,10 +2615,20 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
           }
           onClose();
         },
-        onError: (e) => toast.error(getApiErrorMessage(e, 'Update failed')),
+        onError: (e) => {
+          // Same modal as creating a dispatch — this edit would make the row a
+          // copy (or near-copy) of another dispatch on this line that day.
+          const dupe = getDuplicateDispatch(e);
+          if (dupe) {
+            setDuplicate({ match: dupe, input });
+            return;
+          }
+          toast.error(getApiErrorMessage(e, 'Update failed'));
+        },
       },
     );
   };
+  const [duplicate, setDuplicate] = useState<{ match: DuplicateDispatch; input: UpdateDispatchInput } | null>(null);
 
   // Ctrl/Cmd+S saves (bound once; always calls the latest closure via the ref).
   const submitRef = useRef(submit);
@@ -2624,6 +2646,21 @@ function EditDispatchDialog({ dispatch, onClose }: { dispatch: DispatchDto; onCl
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
+      {duplicate && (
+        <DuplicateDispatchDialog
+          match={duplicate.match}
+          onClose={() => setDuplicate(null)}
+          onContinue={
+            duplicate.match.overridable
+              ? () => {
+                  const { input } = duplicate;
+                  setDuplicate(null);
+                  send({ ...input, confirmSimilar: true });
+                }
+              : undefined
+          }
+        />
+      )}
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex flex-wrap items-center gap-2">

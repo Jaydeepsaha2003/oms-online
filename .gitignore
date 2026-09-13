@@ -38,6 +38,8 @@ pnpm-debug.log*
 
 # Generated / uploads / temp artifacts
 apps/api/uploads/
+# Grid thumbnails — regenerated on demand from the originals (uploads/thumbnails.ts).
+uploads/.thumbs/
 apps/api/generated/
 data/
 coverage/

@@ -8,6 +8,7 @@ import { isTouchPrimary } from '@/lib/device';
 import { useLogin, usePinLogin } from '@/hooks/use-auth';
 import { useAuthStore } from '@/stores/auth-store';
 import { cn } from '@/lib/utils';
+import { reapplyTheme } from '@/lib/theme';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -26,6 +27,13 @@ export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const user = useAuthStore((s) => s.user);
+
+  // Always light here, whatever the saved theme (see lib/theme.ts). Re-applied on
+  // leave so signing in restores the user's dark mode.
+  useEffect(() => {
+    reapplyTheme();
+    return reapplyTheme;
+  }, []);
 
   const login = useLogin();
   const pinLogin = usePinLogin();

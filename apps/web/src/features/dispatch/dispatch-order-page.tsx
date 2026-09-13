@@ -2096,7 +2096,10 @@ function DispatchSheet({
               {/* Billed lines are frozen here too — see the note in the card's
                   photo dialog for why this cannot assume a pending line is
                   unbilled. */}
-              {line.billedChallanCode && (
+              {/* Only when there ARE photos to be "the record": on a billed line
+                  with none (e.g. a logo-only item, exempt from the photo rule)
+                  this used to claim photos that did not exist. */}
+              {line.billedChallanCode && (existingPhotos?.length ?? 0) > 0 && (
                 <p className="mb-2 text-xs text-amber-700 dark:text-amber-400">
                   Billed on {line.billedChallanCode} — these photos are the record of what shipped.
                   {isSuperAdmin

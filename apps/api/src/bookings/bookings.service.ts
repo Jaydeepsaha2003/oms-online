@@ -599,6 +599,9 @@ export class BookingsService {
           designRate: priced.designRate + priced.designDelta,
           rate: priced.rate,
           calField: uc(line.calField),
+          // The order form always sends a priority; this path had no form, so the
+          // line landed with priority NULL and read as missing data in Order Modify.
+          priority: 'NORMAL',
           status: 'CONFIRMED',
           comment: toStr(line.comment),
         },
@@ -1232,13 +1235,37 @@ export class BookingsService {
     const row = await this.prisma.design.findFirst({
       where: { designType, ...(category ? { category } : {}), ...(subCategory ? { subCategory } : {}) },
     });
-    if (!row) return { asOf: 0, current: 0 };
-    const current = row.rate ?? 0;
-    const hist = await this.prisma.designRateHistory.findFirst({
-      where: { designId: row.id, changedAt: { gt: asOf } },
-      orderBy: { changedAt: 'asc' },
-    });
-    return { asOf: (hist ? hist.oldRate : row.rate) ?? 0, current };
+    // The item picker also offers named combinations (for example WL+LOGO).
+    // Reconstruct each member's booking-date rate, then sum them just as the
+    // current-price catalogue does. A legacy single design still takes priority.
+    let members = row ? [row] : [];
+    if (!row) {
+      const combination = await this.prisma.combination.findFirst({
+        where: {
+          name: designType,
+          designLinks: {
+            some: {},
+            every: { design: {
+              ...(category ? { category } : {}),
+              ...(subCategory ? { subCategory } : {}),
+            } },
+          },
+        },
+        include: { designLinks: { include: { design: true } } },
+      });
+      members = combination?.designLinks.map((link) => link.design) ?? [];
+    }
+    const rates = await Promise.all(members.map(async (design) => {
+      const hist = await this.prisma.designRateHistory.findFirst({
+        where: { designId: design.id, changedAt: { gt: asOf } },
+        orderBy: { changedAt: 'asc' },
+      });
+      return { asOf: (hist ? hist.oldRate : design.rate) ?? 0, current: design.rate ?? 0 };
+    }));
+    return {
+      asOf: round2(rates.reduce((sum, rate) => sum + rate.asOf, 0)),
+      current: round2(rates.reduce((sum, rate) => sum + rate.current, 0)),
+    };
   }
 
   /** Price one line at the booking-date rates + the customer's snapshotted deltas.

@@ -12,6 +12,8 @@
         try {
           var p = localStorage.getItem('oms:theme') || 'system';
           var dark = p === 'dark' || (p === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+          // The login screen is always light (see lib/theme.ts).
+          if (location.pathname === '/login') dark = false;
           document.documentElement.classList.toggle('dark', dark);
         } catch (e) {}
       })();

@@ -11,6 +11,8 @@ import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { buildCorsOrigin } from './common/cors-origin.util';
+import type { NextFunction, Request, Response } from 'express';
+import { THUMBS_URL_PREFIX, serveThumbnail } from './uploads/thumbnails';
 import { UPLOADS_URL_PREFIX, ensureUploadDir } from './uploads/uploads.constants';
 
 async function bootstrap(): Promise<void> {
@@ -124,6 +126,9 @@ async function bootstrap(): Promise<void> {
    * markup.
    */
   const uploadsDir = ensureUploadDir();
+  // Grid thumbnails — before the static handler so `/thumbs/...` is never
+  // looked up as a real file. See uploads/thumbnails.ts.
+  app.use(THUMBS_URL_PREFIX, (req: Request, res: Response, next: NextFunction) => void serveThumbnail(req, res, next));
   app.useStaticAssets(uploadsDir, {
     prefix: UPLOADS_URL_PREFIX,
     setHeaders: (res) => {

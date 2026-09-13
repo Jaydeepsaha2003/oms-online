@@ -190,6 +190,19 @@ const COLUMNS: DataColumn<Row>[] = [
     cell: (r) => (
       <span className={r.line.status === 'CANCELLED' ? 'text-muted-foreground text-[13px] font-semibold line-through' : TEXT_CELL}>
         {r.line.productName || r.line.product || '—'}
+        {/* Drawn from a bag booking: its rate is frozen as of the booking date,
+            not the live price list, so the line needs to say where it came from. */}
+        {r.line.bookingId != null && (
+          <span
+            // Its own line, not beside the name: inline, the longest product name
+            // plus a code set the column's width and pushed every other column
+            // sideways. `w-fit` keeps the border tight around the code.
+            className="mt-0.5 block w-fit rounded-[3px] border border-violet-300 px-1 text-[10px] font-bold whitespace-nowrap text-violet-700 dark:border-violet-400/40 dark:text-violet-300"
+            title={`Drawn from bag booking ${r.line.bookingCode ?? `#${r.line.bookingId}`} — rate frozen at the booking date`}
+          >
+            ({r.line.bookingCode ?? `BKG-${String(r.line.bookingId).padStart(5, '0')}`})
+          </span>
+        )}
       </span>
     ),
   },

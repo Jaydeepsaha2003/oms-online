@@ -281,6 +281,9 @@ export interface UpdateDispatchInput {
   comment?: string | null;
   supItem?: string | null;
   dispatchDate?: string | null;
+  /** Same meaning as on {@link CreateDispatchInput}: an edit runs the same
+   *  same-day duplicate guards, and this lifts the SIMILAR one only. */
+  confirmSimilar?: boolean;
 }
 
 export type DispatchQuery = PaginationQuery & {

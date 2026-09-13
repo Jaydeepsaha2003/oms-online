@@ -664,6 +664,19 @@ export function OrderFormPage() {
     setBookingSource(String(pick));
   }, [navState?.openBookingDraw, navState?.customerName, navState?.bookingId, customer, activeBookings]);
 
+  // A party with bags still on a booking is almost always ordering against it,
+  // so the booking — not the live price list — is the default. Only with exactly
+  // ONE pending booking: several, and picking for them could freeze the wrong
+  // rate. Editing restores its own source (see loadExisting), and a touched picker
+  // means the user chose "Current price list" on purpose and must not be
+  // overridden. Reset per party by onCustomer.
+  const bookingChoiceTouched = useRef(false);
+  useEffect(() => {
+    if (isEdit || docKind !== 'order' || bookingChoiceTouched.current) return;
+    if (bookingSource || activeBookings.length !== 1) return;
+    setBookingSource(String(activeBookings[0].id));
+  }, [isEdit, docKind, bookingSource, activeBookings]);
+
   /** The added lines as the balance/capacity rules read them. */
   const bookingLines = (list: Item[]): BookingOrderLine[] =>
     list.map((i) => ({
@@ -773,6 +786,11 @@ export function OrderFormPage() {
       setOrderDate(o.orderDate.slice(0, 10));
       setCompletionDay(o.completionDay?.toString() ?? '');
       setStatus(o.status);
+      // The lines remember their booking, but the picker did not: reopening a
+      // saved draft showed "Current price list" over booked lines, and the next
+      // edit re-priced them off the live list. One booking per order, so the
+      // first booked line names it.
+      setBookingSource(String(o.items.find((it) => it.bookingId != null)?.bookingId ?? ''));
       pcsBeforeBoxRef.current = null;
       setEntry(blankEntry());
       setEditingItemKey(null);
@@ -959,7 +977,7 @@ export function OrderFormPage() {
       return;
     }
     // A booking belongs to one party, so it cannot survive a change of party.
-    if (name.trim().toUpperCase() !== customer.trim().toUpperCase()) setBookingSource('');
+    if (name.trim().toUpperCase() !== customer.trim().toUpperCase()) { setBookingSource(''); bookingChoiceTouched.current = false; }
     setCustomer(name);
     const c = lookups?.customers.find((x) => x.name === name);
     setCustomerId(c?.id);
@@ -2449,7 +2467,7 @@ export function OrderFormPage() {
           {docKind === 'order' && can('booking:view') && (activeBookings.length > 0 || bookingSource) && (
             <OrderBookingSource
               source={bookingSource}
-              onChange={setBookingSource}
+              onChange={(v) => { bookingChoiceTouched.current = true; setBookingSource(v); }}
               bookings={activeBookings}
               booking={drawnBooking}
               lines={bookingLines(items)}

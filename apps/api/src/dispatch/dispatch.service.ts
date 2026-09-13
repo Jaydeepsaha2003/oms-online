@@ -297,9 +297,26 @@ export class DispatchService implements OnModuleInit {
     // Moving an existing dispatch to another date — same gate, applied in place.
     this.approvals.registerHandler('DISPATCH_DATE_CHANGE', async (payload) => {
       const p = payload as unknown as DispatchDateChangePayload;
-      const exists = await this.prisma.dispatch.count({ where: { id: p.dispatchId } });
-      if (!exists) {
+      const row = await this.prisma.dispatch.findUnique({ where: { id: p.dispatchId } });
+      if (!row) {
         throw new BadRequestException('That dispatch no longer exists, so this date change cannot be applied.');
+      }
+      // Moving it onto a day where the line already has the identical dispatch
+      // is the same double-entry create and edit refuse. EXACT only: approving
+      // the move is the admin's go-ahead, so a merely similar sibling is not
+      // re-asked here (confirmSimilar = true).
+      const line = await this.prisma.orderItem.findUnique({
+        where: { id: row.orderItemId },
+        include: { dispatches: true, order: { select: { customerName: true, code: true } } },
+      });
+      if (line && row.dispatchStatus !== RETURNED_DISPATCH_STATUS) {
+        this.assertNoDuplicateDispatch(
+          line,
+          line.dispatches.filter((d) => d.id !== row.id),
+          { bags: row.bags ?? 0, pcs: row.pcs ?? 0, gram: row.gram ?? 0, box: row.box ?? 0 },
+          new Date(p.dispatchDate),
+          true,
+        );
       }
       await this.prisma.dispatch.update({
         where: { id: p.dispatchId },
@@ -1238,112 +1255,10 @@ export class DispatchService implements OnModuleInit {
           Date.now() - d.createdAt.getTime() < DISPATCH_DEDUPE_WINDOW_MS,
       );
 
-      /*
-       * Same line, same quantities, same DAY — refuse it.
-       *
-       * Past the idempotency window above, a repeat is no longer a double-tap;
-       * it is somebody dispatching a shipment that was already recorded, and
-       * silently accepting it doubles the quantity that has left the building.
-       * The message names the existing row so it can be found and corrected
-       * rather than leaving the user to guess what happened.
-       *
-       * Matched per ORDER LINE, not per order: one order can legitimately carry
-       * two different lines of the same quantity going out the same day, and
-       * blocking that would refuse real work.
-       *
-       * Compared on the DISPATCH date, not the clock — a backdated entry is
-       * checked against the day it claims, which is the day that matters.
-       */
-      const already =
-        it.dispatches.find(
-          (d) =>
-            d.dispatchStatus !== RETURNED_DISPATCH_STATUS &&
-            (d.bags ?? 0) === bags &&
-            (d.pcs ?? 0) === pcs &&
-            (d.gram ?? 0) === gram &&
-            (d.box ?? 0) === box &&
-            sameDay(d.dispatchDate, effectiveDate),
-        ) ??
-        // …or the just-created twin of a double-tap, which the guard above skips
-        // when it is a RETURN. Same refusal either way.
-        dup;
-      if (already) {
-        const what = qtyText({ bags: already.bags, pcs: already.pcs, gram: already.gram, box: already.box }) || 'the same quantity';
-        // Not overridable: every quantity identical on the same line and day is
-        // the same shipment entered twice, and there is no second reading of it.
-        // 409, not 400: nothing about the request is malformed — it collides with
-        // something that already exists. The matched row travels with the error so
-        // the screen can name it instead of asking the user to go and look.
-        throw new ConflictException({
-          error: 'DUPLICATE_DISPATCH',
-          message: `Already dispatched today — ${already.code ?? `#${already.id}`} recorded ${what}.`,
-          duplicateDispatch: {
-            id: already.id,
-            code: already.code ?? `#${already.id}`,
-            customerName: it.order.customerName,
-            orderCode: it.order.code ?? this.orderCodeFor(it.orderId),
-            productName: it.productName ?? it.product ?? 'this item',
-            qtyText: what,
-            dispatchedAt: already.dispatchDate.toISOString(),
-            overridable: false,
-          },
-        });
-      }
-
-      /*
-       * A SIMILAR dispatch on the same line today — same bags, and the same Kgs
-       * or the same Pcs.
-       *
-       * The exact check above only catches all-four-identical, which misses the
-       * shape a real double-entry usually takes: the same load keyed twice with
-       * one figure typed differently. Matching on bags plus either weight or
-       * count catches that.
-       *
-       * A WARNING, not a refusal, because the same pattern is also completely
-       * legitimate: a 30 Kg line sent as 15 + 15 on one day has identical bags
-       * and identical Kgs on both halves, and blocking it would refuse real
-       * work. So this asks, and `confirmSimilar` carries the answer back.
-       *
-       * Every compared figure must be NON-ZERO. On a Kgs-priced line both
-       * dispatches carry pcs 0, and treating 0 === 0 as evidence of duplication
-       * would fire this on nearly every second dispatch of the day.
-       */
-      if (!dto.confirmSimilar) {
-        const similar = it.dispatches.find(
-          (d) =>
-            d.dispatchStatus !== RETURNED_DISPATCH_STATUS &&
-            sameDay(d.dispatchDate, effectiveDate) &&
-            bags > 0 &&
-            (d.bags ?? 0) === bags &&
-            ((gram > 0 && (d.gram ?? 0) === gram) || (pcs > 0 && (d.pcs ?? 0) === pcs)),
-        );
-        if (similar) {
-          const matched = [
-            `${bags} bags`,
-            (similar.gram ?? 0) === gram && gram > 0 ? `${gram} kgs` : null,
-            (similar.pcs ?? 0) === pcs && pcs > 0 ? `${pcs} pcs` : null,
-          ]
-            .filter(Boolean)
-            .join(' and ');
-          throw new ConflictException({
-            error: 'DUPLICATE_DISPATCH',
-            message: `A dispatch with the same ${matched} already went out for this line today (${similar.code ?? `#${similar.id}`}).`,
-            duplicateDispatch: {
-              id: similar.id,
-              code: similar.code ?? `#${similar.id}`,
-              customerName: it.order.customerName,
-              orderCode: it.order.code ?? this.orderCodeFor(it.orderId),
-              productName: it.productName ?? it.product ?? 'this item',
-              qtyText:
-                qtyText({ bags: similar.bags, pcs: similar.pcs, gram: similar.gram, box: similar.box }) ||
-                'the same quantity',
-              dispatchedAt: similar.dispatchDate.toISOString(),
-              overridable: true,
-              matchedOn: matched,
-            },
-          });
-        }
-      }
+      // Same-line, same-day duplicate guards — shared with edit and with an
+      // approved date move, see assertNoDuplicateDispatch. `dup` is the
+      // just-created twin of a double-tap, refused the same way.
+      this.assertNoDuplicateDispatch(it, it.dispatches, { bags, pcs, gram, box }, effectiveDate, dto.confirmSimilar, dup);
 
       const rem = this.remaining(it, it.dispatches);
       this.validateQty({ bags, pcs, gram, box }, rem, dto.dispatchStatus, it.calField);
@@ -1626,6 +1541,91 @@ export class DispatchService implements OnModuleInit {
     return { dispatch, dateApprovalCode: req.code ?? `APR-${req.id}` };
   }
 
+  /**
+   * The same-line, same-day duplicate guards — ONE implementation for every way
+   * a dispatch can land on a (quantity, day): creating it, editing it, and an
+   * approved date move. Edit and the approval used to skip both, so a dispatch
+   * could be edited into an exact copy of another one the create screen would
+   * have refused.
+   *
+   * `siblings` are the line's OTHER dispatches (an edit must not match itself).
+   * `alsoExact` is create's just-created double-tap twin, refused the same way.
+   *
+   * EXACT — same line, same day, every quantity identical: refused, no override.
+   * Past the idempotency window it is somebody recording a shipment that was
+   * already recorded, and accepting it doubles what has left the building.
+   * Matched per ORDER LINE, not per order (two different lines of one order can
+   * legitimately ship the same quantity the same day), and on the DISPATCH date,
+   * not the clock, so a backdated entry is checked against the day it claims.
+   *
+   * SIMILAR — same bags, and the same Kgs or Pcs: a warning `confirmSimilar`
+   * lifts. It catches the usual shape of a double-entry (one figure typed
+   * differently), but a 30 Kg line sent as 15 + 15 looks the same and is real
+   * work. Every compared figure must be NON-ZERO — on a Kgs-priced line both
+   * carry pcs 0, and 0 === 0 would fire on nearly every second dispatch.
+   *
+   * 409, not 400: nothing is malformed, it collides with an existing row, and
+   * that row travels with the error so the screen can name it.
+   */
+  private assertNoDuplicateDispatch(
+    line: { orderId: number; productName: string | null; product: string | null; order: { customerName: string; code: string | null } },
+    siblings: Dispatch[],
+    qty: { bags: number; pcs: number; gram: number; box: number },
+    day: Date,
+    confirmSimilar: boolean | undefined,
+    alsoExact?: Dispatch,
+  ): void {
+    const { bags, pcs, gram, box } = qty;
+    const onDay = (d: Date) =>
+      d.getFullYear() === day.getFullYear() && d.getMonth() === day.getMonth() && d.getDate() === day.getDate();
+    const when = onDay(new Date()) ? 'today' : `on ${formatDate(day.toISOString())}`;
+    const describe = (d: Dispatch) => ({
+      id: d.id,
+      code: d.code ?? `#${d.id}`,
+      customerName: line.order.customerName,
+      orderCode: line.order.code ?? this.orderCodeFor(line.orderId),
+      productName: line.productName ?? line.product ?? 'this item',
+      qtyText: qtyText({ bags: d.bags, pcs: d.pcs, gram: d.gram, box: d.box }) || 'the same quantity',
+      dispatchedAt: d.dispatchDate.toISOString(),
+    });
+    const live = siblings.filter((d) => d.dispatchStatus !== RETURNED_DISPATCH_STATUS && onDay(d.dispatchDate));
+
+    const exact =
+      live.find((d) => (d.bags ?? 0) === bags && (d.pcs ?? 0) === pcs && (d.gram ?? 0) === gram && (d.box ?? 0) === box) ??
+      alsoExact;
+    if (exact) {
+      const match = describe(exact);
+      throw new ConflictException({
+        error: 'DUPLICATE_DISPATCH',
+        message: `Already dispatched ${when} — ${match.code} recorded ${match.qtyText}.`,
+        duplicateDispatch: { ...match, overridable: false },
+      });
+    }
+
+    if (confirmSimilar) return;
+    const similar = live.find(
+      (d) =>
+        bags > 0 &&
+        (d.bags ?? 0) === bags &&
+        ((gram > 0 && (d.gram ?? 0) === gram) || (pcs > 0 && (d.pcs ?? 0) === pcs)),
+    );
+    if (similar) {
+      const matched = [
+        `${bags} bags`,
+        (similar.gram ?? 0) === gram && gram > 0 ? `${gram} kgs` : null,
+        (similar.pcs ?? 0) === pcs && pcs > 0 ? `${pcs} pcs` : null,
+      ]
+        .filter(Boolean)
+        .join(' and ');
+      const match = describe(similar);
+      throw new ConflictException({
+        error: 'DUPLICATE_DISPATCH',
+        message: `A dispatch with the same ${matched} already went out for this line ${when} (${match.code}).`,
+        duplicateDispatch: { ...match, overridable: true, matchedOn: matched },
+      });
+    }
+  }
+
   /** Same calendar day in server-local time? */
   private sameDay(iso: string, other: Date): boolean {
     const d = new Date(iso);
@@ -1653,7 +1653,10 @@ export class DispatchService implements OnModuleInit {
     // For a billed dispatch that sent only a status change, keep all other fields
     // locked to their current values so we never accidentally touch the billed qty.
     const isBilled = await this.isBilledDispatch(id);
-    const it = await this.prisma.orderItem.findUnique({ where: { id: cur.orderItemId }, include: { dispatches: true } });
+    const it = await this.prisma.orderItem.findUnique({
+      where: { id: cur.orderItemId },
+      include: { dispatches: true, order: { select: { customerName: true, code: true } } },
+    });
     if (!it) throw new NotFoundException('Order line not found.');
 
     // Remaining excludes the dispatch being edited (so its own qty can be changed).
@@ -1664,6 +1667,20 @@ export class DispatchService implements OnModuleInit {
     const gram = !isBilled && dto.gram !== undefined ? toNum(dto.gram) ?? 0 : cur.gram ?? 0;
     const box = !isBilled && dto.box !== undefined ? toNum(dto.box) ?? 0 : cur.box ?? 0;
     const status = (dto.dispatchStatus ?? cur.dispatchStatus) as DispatchStatus;
+
+    // The same duplicate guards as create — editing a dispatch into a copy of
+    // another one on the same line and day is the same double-entry. Checked
+    // against the day this row will carry after the save, and only when the
+    // quantity or the day actually changes: a remark or status fix on an old
+    // entry that already sat beside a twin must not be blocked by it.
+    const targetDay = !isBilled && dto.dispatchDate ? new Date(dto.dispatchDate) : cur.dispatchDate;
+    const qtyChanged =
+      (cur.bags ?? 0) !== bags || (cur.pcs ?? 0) !== pcs || (cur.gram ?? 0) !== gram || (cur.box ?? 0) !== box;
+    const dayChanged = !this.sameDay(targetDay.toISOString(), cur.dispatchDate);
+    if (cur.dispatchStatus !== RETURNED_DISPATCH_STATUS && (qtyChanged || dayChanged)) {
+      this.assertNoDuplicateDispatch(it, others, { bags, pcs, gram, box }, targetDay, dto.confirmSimilar);
+    }
+
     this.validateQty({ bags, pcs, gram, box }, rem, status, it.calField);
 
     const row = await this.prisma.dispatch.update({
