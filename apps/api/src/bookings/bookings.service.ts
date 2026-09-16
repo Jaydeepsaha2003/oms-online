@@ -17,6 +17,7 @@ import {
   DRAWABLE_BOOKING_STATUSES as DRAWABLE_STATUSES,
   ORDER_UNCOMMITTED_STATUSES,
   type Paginated,
+  RETURNED_DISPATCH_STATUS,
   type PriceHistoryList,
   type RateChangeEntry,
   type RateHistoryKind,
@@ -245,7 +246,25 @@ export class BookingsService {
     const dispatches = orderItemIds.length
       ? await this.prisma.dispatch.findMany({
           where: { orderItemId: { in: orderItemIds } },
-          select: { id: true, orderItemId: true, bags: true, pcs: true, gram: true, dispatchStatus: true },
+          select: {
+            id: true,
+            orderItemId: true,
+            bags: true,
+            pcs: true,
+            gram: true,
+            box: true,
+            dispatchStatus: true,
+            // For the dispatch register on the last page. The snapshots
+            // (orderCode / productName / designType) are what the dispatch was
+            // actually made against, so they stay right even if the line was
+            // edited afterwards; the order relation supplies the order's date.
+            dispatchDate: true,
+            comment: true,
+            orderCode: true,
+            productName: true,
+            designType: true,
+            order: { select: { code: true, orderDate: true } },
+          },
           orderBy: [{ orderItemId: 'asc' }, { id: 'asc' }],
         })
       : [];
@@ -270,6 +289,41 @@ export class BookingsService {
       list.push(d);
       dispatchesByItem.set(d.orderItemId, list);
     }
+
+    /*
+     * The dispatch register: one row per dispatch made against this booking,
+     * oldest first.
+     *
+     * The statement above answers "what was ordered and how much of it went",
+     * per line. This answers the other question people bring to a booking —
+     * "when did each lot actually leave, and on what". Ordered by dispatch date
+     * rather than by order, because that is the sequence being reconstructed.
+     *
+     * RETURNED rows carry NEGATIVE quantities (see DispatchService — saving a
+     * dispatch as Undispatched writes the reversal as its own row), so they are
+     * listed like any other and the column totals come out net without any
+     * special arithmetic.
+     */
+    const itemById = new Map(orderItems.map((it) => [it.id, it]));
+    const dispatchRows: BookingPdfDispatchRow[] = dispatches
+      .map((d) => {
+        const it = itemById.get(d.orderItemId);
+        const design = d.designType ?? it?.designType ?? null;
+        return {
+          orderCode: d.orderCode ?? d.order?.code ?? (it ? (it.order.code ?? `ORD-${it.order.id}`) : '—'),
+          orderDate: d.order?.orderDate ?? it?.order.orderDate ?? null,
+          dispatchDate: d.dispatchDate,
+          productName: d.productName ?? it?.productName ?? null,
+          designType: design && design.toUpperCase() !== 'NA' ? design : null,
+          bags: d.bags,
+          kgs: d.gram,
+          pcs: d.pcs,
+          box: d.box,
+          returned: d.dispatchStatus === RETURNED_DISPATCH_STATUS,
+          remarks: d.comment,
+        };
+      })
+      .sort((a, b) => a.dispatchDate.getTime() - b.dispatchDate.getTime());
 
     const groups = new Map<number, BookingPdfOrderGroup>();
     for (const it of orderItems) {
@@ -407,6 +461,7 @@ export class BookingsService {
         precloseByName: booking.precloseByName,
         precloseAt: booking.precloseAt,
         groups: [...groups.values(), ...overageGroups],
+        dispatches: dispatchRows,
       }),
     );
     const stamp = booking.code ?? this.codeFor(booking.id);
@@ -1565,6 +1620,22 @@ interface BookingPdfLine {
   removedByName: string | null;
 }
 
+/** One line of the dispatch register printed after the booking statement. */
+interface BookingPdfDispatchRow {
+  orderCode: string;
+  orderDate: Date | null;
+  dispatchDate: Date;
+  productName: string | null;
+  designType: string | null;
+  bags: number | null;
+  kgs: number | null;
+  pcs: number | null;
+  box: number | null;
+  /** A reversal (quantities are negative) rather than an outward movement. */
+  returned: boolean;
+  remarks: string | null;
+}
+
 interface BookingPdfOrderGroup {
   orderCode: string;
   orderDate: Date;
@@ -1597,6 +1668,7 @@ interface BookingPdfData {
   precloseByName: string | null;
   precloseAt: Date | null;
   groups: BookingPdfOrderGroup[];
+  dispatches: BookingPdfDispatchRow[];
 }
 
 const PDF_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
@@ -1799,6 +1871,132 @@ function buildBookingPdfDoc(b: BookingPdfData): TDocumentDefinitions {
     },
   };
 
+  /*
+   * ── Dispatch register ───────────────────────────────────────────────────
+   *
+   * Its own page, in the same grammar as the order blocks above: same rule
+   * weights, same 9pt body, same right-aligned figures — so it reads as the
+   * second half of one document rather than something bolted on.
+   *
+   * Printed ONLY when there is at least one dispatch. A booking that has not
+   * shipped anything yet would otherwise get a whole blank page carrying one
+   * line of apology.
+   */
+  //                    Order   OrdDate DspDate Item Design Bags Kgs Pcs Box Remarks
+  const D_WIDTHS = [50, 54, 54, '*', 44, 34, 44, 40, 30, 76];
+  /*
+   * The two dates are set a point above the rest of the row.
+   *
+   * They are what this page is read FOR — when each lot was ordered and when it
+   * actually left — and at body size they sat level with the codes and figures
+   * around them. `noWrap` because the extra point is enough to break
+   * "18-Aug-26" across two lines, which is what the wider columns above pay for.
+   */
+  const dateCell = (value: Date | null, style: Cell): Cell => ({
+    text: pdfDate(value),
+    fontSize: BODY + 1,
+    noWrap: true,
+    color: BLACK,
+    ...style,
+  });
+  const dispatchHeadRow: Cell[] = [
+    head('Order ID'),
+    head('Order Date'),
+    head('Dispatch Date'),
+    head('Item Name'),
+    head('Design'),
+    head('Bags', { alignment: 'right' }),
+    head('Kgs', { alignment: 'right' }),
+    head('Pcs', { alignment: 'right' }),
+    head('Box', { alignment: 'right' }),
+    head('Remarks'),
+  ];
+  const dispatchRow = (d: BookingPdfDispatchRow): Cell[] => {
+    // A return is set in italics and says so in Remarks. Its figures are
+    // already negative, so it reads as the reversal it is without the reader
+    // having to know that.
+    const style = d.returned ? { italics: true } : {};
+    const remarks = [d.returned ? 'Returned' : null, d.remarks].filter(Boolean).join(' · ');
+    return [
+      txt(d.orderCode, style),
+      dateCell(d.orderDate, style),
+      dateCell(d.dispatchDate, style),
+      txt(d.productName ?? '—', style),
+      txt(d.designType ?? '—', style),
+      num(amt2(d.bags), style),
+      num(amt2(d.kgs), style),
+      num(amt2(d.pcs), style),
+      num(amt2(d.box), style),
+      { ...txt(remarks || '', style), fontSize: BODY - 1 },
+    ];
+  };
+  const dSum = (pick: (d: BookingPdfDispatchRow) => number | null) =>
+    round2(b.dispatches.reduce((acc, d) => acc + (pick(d) ?? 0), 0));
+  const dispatchTotalRow: Cell[] = [
+    txt(''),
+    txt(''),
+    txt(''),
+    txt('Total dispatched', { bold: true }),
+    txt(''),
+    num(amt2z(dSum((d) => d.bags)), { bold: true }),
+    num(amt2z(dSum((d) => d.kgs)), { bold: true }),
+    num(amt2z(dSum((d) => d.pcs)), { bold: true }),
+    num(amt2z(dSum((d) => d.box)), { bold: true }),
+    txt(''),
+  ];
+  const dispatchRows: Cell[][] = [dispatchHeadRow, ...b.dispatches.map(dispatchRow), dispatchTotalRow];
+  const dTotalsAt = dispatchRows.length - 1;
+  const hasReturns = b.dispatches.some((d) => d.returned);
+  const dispatchBlocks: Cell[] = b.dispatches.length
+    ? [
+        {
+          pageBreak: 'before',
+          stack: [
+            { text: 'Dispatch Details', bold: true, fontSize: 13, alignment: 'center' },
+            {
+              text: `${b.customerName.toUpperCase()}   ·   Booking ${b.code}`,
+              fontSize: 9.5,
+              alignment: 'center',
+              margin: [0, 2, 0, 0],
+            },
+            {
+              text: 'Every dispatch made against this booking, oldest first.',
+              fontSize: 8.5,
+              italics: true,
+              alignment: 'center',
+              margin: [0, 2, 0, 0],
+            },
+          ],
+          margin: [0, 0, 0, 5],
+        },
+        { canvas: [{ type: 'line', x1: 0, y1: 0, x2: pageWidth, y2: 0, lineWidth: 1, lineColor: BLACK }], margin: [0, 0, 0, 6] },
+        {
+          // `headerRows: 1` so a long register repeats its own column heads on
+          // each page — the same reason the order blocks do.
+          table: { headerRows: 1, dontBreakRows: true, widths: D_WIDTHS, body: dispatchRows },
+          layout: {
+            hLineWidth: (i: number) => (i === 0 || i === 1 || i === dTotalsAt || i === dispatchRows.length ? 1 : 0.4),
+            vLineWidth: () => 0.8,
+            hLineColor: () => BLACK,
+            vLineColor: () => BLACK,
+            paddingLeft: () => 3,
+            paddingRight: () => 3,
+            paddingTop: () => 4,
+            paddingBottom: () => 4,
+          },
+        },
+        ...(hasReturns
+          ? [
+              {
+                text: 'Returned rows carry negative quantities and are included in the totals above.',
+                fontSize: 8,
+                italics: true,
+                margin: [0, 4, 0, 0],
+              } as Cell,
+            ]
+          : []),
+      ]
+    : [];
   const summaryCell = (label: string, bags: number, kgs: number): Cell => ({
     stack: [
       { text: label, fontSize: 9, bold: true, characterSpacing: 0.4 },
@@ -1874,6 +2072,9 @@ function buildBookingPdfDoc(b: BookingPdfData): TDocumentDefinitions {
         : [{ text: 'Nothing converted from this booking yet.', italics: true, alignment: 'center', margin: [0, 8, 0, 8] }]),
 
       ...(b.comment ? [{ text: `Comment: ${b.comment}`, fontSize: 9, italics: true, margin: [0, 10, 0, 0] }] : []),
+
+      // ── Page 2 onwards: the dispatch register ──────────────────────────────
+      ...dispatchBlocks,
     ],
     footer: (currentPage: number, pageCount: number) => ({
       columns: [
