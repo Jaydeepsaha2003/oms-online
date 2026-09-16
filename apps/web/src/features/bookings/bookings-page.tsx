@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Ban, ChevronLeft, ChevronRight, EllipsisVertical, FileSearch, Filter, Link2, Plus, Printer, RotateCcw, Search, Split, TriangleAlert, Trash2 } from 'lucide-react';
+import { Ban, ChevronLeft, ChevronRight, EllipsisVertical, FileSearch, Filter, Info, Link2, Plus, Printer, RotateCcw, Search, Split, TriangleAlert, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { BookingDto, BookingStatus } from '@oms/shared';
 import { BOOKING_NO_CATEGORY } from '@oms/shared';
@@ -63,12 +63,24 @@ const num = (v: number) => v.toLocaleString('en-IN');
 function LinkedOrders({ booking }: { booking: Pick<BookingDto, 'orders'> }) {
   const orders = booking.orders ?? [];
   if (!orders.length) return <span className="text-muted-foreground">—</span>;
+  // Chips, not bare numbers. Two orders side by side read as one long number
+  // ("1132 1282") when nothing separates them — which is exactly how many
+  // orders a booking gets drawn into.
   return (
-    <span className="flex flex-wrap gap-x-1.5 gap-y-0.5">
+    // No wrapping. The column sizes itself narrow, so a wrapping flex box put
+    // each order on its own line and made EVERY row in the table as tall as the
+    // busiest one. The cell is already `whitespace-nowrap`, so letting the chips
+    // sit in a row lets the column take the width it actually needs.
+    <span className="inline-flex flex-nowrap items-center gap-1 align-middle">
       {orders.map((o) => (
         <span
           key={o.id}
-          className={`font-mono text-xs whitespace-nowrap ${o.status === 'CANCELLED' ? 'text-muted-foreground line-through' : 'text-sky-700'}`}
+          className={cn(
+            'rounded-[3px] px-1.5 py-px font-mono text-[11px] font-semibold whitespace-nowrap ring-1 ring-inset',
+            o.status === 'CANCELLED'
+              ? 'text-muted-foreground line-through ring-border bg-muted'
+              : 'bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-500/10 dark:text-sky-300 dark:ring-sky-400/30',
+          )}
           title={`${o.code} · ${formatDate(o.orderDate)}`}
         >
           {shortOrderCode(o.code)}
@@ -85,18 +97,41 @@ function Progress({ booking }: { booking: Pick<BookingDto, 'bags' | 'kgs' | 'con
   const pct = parts.length ? Math.min(100, Math.round(Math.min(...parts) * 100)) : 0;
   return (
     <div className="flex items-center gap-2">
-      <div className="bg-muted h-1.5 w-16 overflow-hidden rounded-full">
-        <div className="h-full rounded-full bg-sky-500" style={{ width: `${pct}%` }} />
+      <div className="bg-muted h-1.5 w-14 shrink-0 overflow-hidden rounded-full">
+        <div
+          className={cn('h-full rounded-full transition-[width]', pct >= 100 ? 'bg-emerald-500' : 'bg-sky-500')}
+          style={{ width: `${pct}%` }}
+        />
       </div>
-      <span className="text-muted-foreground text-xs tabular-nums">{pct}%</span>
+      {/* Zero is the common case on an open booking, so it is muted; anything
+          actually drawn is worth reading. */}
+      <span className={cn('text-[11.5px] font-semibold tabular-nums', pct > 0 ? 'text-foreground' : 'text-muted-foreground')}>
+        {pct}%
+      </span>
     </div>
   );
 }
 
+/**
+ * "97.5 / 300" — drawn so far against what was reserved.
+ *
+ * The two numbers answer different questions and were set identically, so the
+ * eye had to parse the slash to tell which was which. The drawn figure carries
+ * the weight; the reservation it is measured against steps back.
+ */
+function OfTotal({ done, total }: { done: number; total: number }) {
+  return (
+    <span className="tabular-nums whitespace-nowrap">
+      <span className="font-semibold">{num(done)}</span>
+      <span className="text-muted-foreground font-normal"> / {num(total)}</span>
+    </span>
+  );
+}
+
 const COLUMNS: DataColumn<BookingDto>[] = [
-  { id: 'code', label: 'Booking #', fixed: true, cell: (b) => <span className="font-mono text-xs font-medium">{b.code}</span> },
-  { id: 'customer', label: 'Customer', cell: (b) => <span className="font-medium">{b.customerName}</span> },
-  { id: 'agent', label: 'Agent', cell: (b) => b.agentName ?? '—' },
+  { id: 'code', label: 'Booking #', fixed: true, cell: (b) => <span className="font-mono text-[12px] font-semibold">{b.code}</span> },
+  { id: 'customer', label: 'Customer', cell: (b) => <span className="font-semibold">{b.customerName}</span> },
+  { id: 'agent', label: 'Agent', cell: (b) => b.agentName ?? <span className="text-muted-foreground">—</span> },
   {
     id: 'categories',
     label: 'Categories',
@@ -105,7 +140,7 @@ const COLUMNS: DataColumn<BookingDto>[] = [
       b.items.length ? (
         <div className="flex flex-wrap gap-1">
           {b.items.map((it) => (
-            <span key={it.id} className="bg-sky-50 text-sky-700 ring-sky-200 rounded px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-inset whitespace-nowrap">
+            <span key={it.id} className="rounded-[3px] bg-violet-50 px-1.5 py-px text-[11px] font-semibold whitespace-nowrap text-violet-700 ring-1 ring-violet-200 ring-inset dark:bg-violet-500/10 dark:text-violet-300 dark:ring-violet-400/30">
               {it.pCategory || BOOKING_NO_CATEGORY} {it.bags || it.kgs ? `· ${it.bags || 0}b/${it.kgs || 0}k` : ''}
             </span>
           ))}
@@ -114,16 +149,18 @@ const COLUMNS: DataColumn<BookingDto>[] = [
         <span className="text-muted-foreground">—</span>
       ),
   },
-  { id: 'bookingDate', label: 'Booking date', cell: (b) => <span className="whitespace-nowrap">{formatDate(b.bookingDate)}</span> },
-  { id: 'bags', label: 'Bags', align: 'right', cell: (b) => <span className="tabular-nums">{num(b.convertedBags)} / {num(b.bags)}</span> },
-  { id: 'kgs', label: 'Kgs', align: 'right', cell: (b) => <span className="tabular-nums">{num(b.convertedKgs)} / {num(b.kgs)}</span> },
+  { id: 'bookingDate', label: 'Booking date', cell: (b) => <span className="tabular-nums whitespace-nowrap">{formatDate(b.bookingDate)}</span> },
+  { id: 'bags', label: 'Bags', align: 'right', cell: (b) => <OfTotal done={b.convertedBags} total={b.bags} /> },
+  { id: 'kgs', label: 'Kgs', align: 'right', cell: (b) => <OfTotal done={b.convertedKgs} total={b.kgs} /> },
   { id: 'progress', label: 'Converted', cell: (b) => <Progress booking={b} /> },
   { id: 'order', label: 'Orders', cell: (b) => <LinkedOrders booking={b} /> },
   {
     id: 'status',
     label: 'Status',
     cell: (b) => (
-      <span className={`rounded px-1.5 py-0.5 text-xs font-medium ring-1 ${STATUS_STYLE[b.status]}`}>{STATUS_LABEL[b.status]}</span>
+      <span className={cn('rounded-[3px] px-1.5 py-px text-[11px] font-bold whitespace-nowrap ring-1 ring-inset', STATUS_STYLE[b.status])}>
+        {STATUS_LABEL[b.status]}
+      </span>
     ),
   },
 ];
@@ -303,29 +340,37 @@ export function BookingsPage() {
       <div className="space-y-2.5">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-muted-foreground font-mono text-xs font-semibold">{b.code}</p>
-            <p className="truncate leading-tight font-medium">{b.customerName}</p>
-            <p className="text-muted-foreground truncate text-xs">{b.agentName ?? '—'} · {formatDate(b.bookingDate)}</p>
+            <p className="text-muted-foreground font-mono text-[11.5px] font-semibold">{b.code}</p>
+            <p className="truncate text-[13.5px] leading-tight font-bold">{b.customerName}</p>
+            <p className="text-muted-foreground truncate text-[11.5px] font-medium">
+              {b.agentName ?? '—'} · <span className="tabular-nums">{formatDate(b.bookingDate)}</span>
+            </p>
           </div>
-          <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-xs font-medium ring-1', STATUS_STYLE[b.status])}>{STATUS_LABEL[b.status]}</span>
+          <span className={cn('shrink-0 rounded-[3px] px-1.5 py-px text-[11px] font-bold ring-1 ring-inset', STATUS_STYLE[b.status])}>
+            {STATUS_LABEL[b.status]}
+          </span>
         </div>
         {b.items.length > 0 && (
           <div className="flex flex-wrap gap-1">
             {b.items.map((it) => (
-              <span key={it.id} className="bg-sky-50 text-sky-700 ring-sky-200 rounded px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-inset">
+              <span key={it.id} className="rounded-[3px] bg-violet-50 px-1.5 py-px text-[11px] font-semibold text-violet-700 ring-1 ring-violet-200 ring-inset dark:bg-violet-500/10 dark:text-violet-300 dark:ring-violet-400/30">
                 {it.pCategory || BOOKING_NO_CATEGORY} · {it.bags || 0}b/{it.kgs || 0}k
               </span>
             ))}
           </div>
         )}
-        <div className="grid grid-cols-2 gap-2 text-xs">
+        <div className="bg-muted/40 grid grid-cols-2 gap-2 rounded-[4px] px-2.5 py-2">
           <div>
-            <p className="text-muted-foreground">Bags</p>
-            <p className="font-medium tabular-nums">{num(b.convertedBags)} / {num(b.bags)}</p>
+            <p className="text-muted-foreground text-[10.5px] font-bold tracking-wide uppercase">Bags</p>
+            <p className="text-[13px]">
+              <OfTotal done={b.convertedBags} total={b.bags} />
+            </p>
           </div>
           <div>
-            <p className="text-muted-foreground">Kgs</p>
-            <p className="font-medium tabular-nums">{num(b.convertedKgs)} / {num(b.kgs)}</p>
+            <p className="text-muted-foreground text-[10.5px] font-bold tracking-wide uppercase">Kgs</p>
+            <p className="text-[13px]">
+              <OfTotal done={b.convertedKgs} total={b.kgs} />
+            </p>
           </div>
         </div>
         <div className="flex items-center justify-between gap-2">
@@ -351,58 +396,67 @@ export function BookingsPage() {
     );
   };
 
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="flex items-center gap-3">
-          <div>
-            <p className="text-muted-foreground text-sm">Reserve bags &amp; kgs now, convert to real items later — priced at the booking-date rates.</p>
-          </div>
-        </div>
-        {can('booking:create') && (
-          <Button size="sm" onClick={() => navigate('/bookings/new')}>
-            <Plus /> New booking
-          </Button>
-        )}
-      </div>
+  const totalRows = data?.total ?? 0;
+  const firstRow = totalRows === 0 ? 0 : (page - 1) * pageSize + 1;
+  const lastRow = Math.min(page * pageSize, totalRows);
 
-      <div className="bg-background/85 sticky top-0 z-20 -mx-1 flex flex-wrap items-center gap-2 rounded-md px-1 py-1.5 backdrop-blur">
-        <div className="relative w-full flex-1 sm:w-80 sm:flex-none">
-          <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
-          <Input
-            placeholder="Search booking #, customer or agent…"
-            className="pl-9"
-            value={searchInput}
-            onChange={(e) => {
-              setSearchInput(e.target.value);
-              setSearch(e.target.value.trim());
-              setPage(1);
-            }}
-          />
-        </div>
-        {/* Phones: Status filter moves behind this icon (see the sheet below). */}
-        <Button
-          variant="outline"
-          size="icon"
-          className="relative shrink-0 sm:hidden"
-          onClick={() => setMobileFiltersOpen(true)}
-          aria-label="Filters"
-        >
-          <Filter className="size-4" />
-          {activeFilterCount > 0 && (
-            <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-medium">
-              {activeFilterCount}
-            </span>
+  return (
+    // Fills the viewport, like every other main list in the app: toolbar pinned
+    // on top, footer pinned at the bottom, only the grid scrolls. `/bookings` is
+    // a flush route (app-shell), so the page owns its padding.
+    <div className="flex h-full min-h-0 flex-col gap-2 p-2.5 font-sans sm:gap-2.5 sm:p-3">
+      {/* ── Toolbar: what the page is for, then the filters and the one action ──
+          All in one card, matching Challans. It used to be a bare sticky strip
+          under a near-empty row that held one sentence on the left and one
+          button on the right — a whole band of the screen for two elements. */}
+      <div className="bg-card rounded-[4px] border shadow-sm">
+        <p className="text-muted-foreground flex items-center gap-1.5 border-b px-2.5 py-1.5 text-[11.5px] font-medium sm:px-3">
+          <Info className="size-3.5 shrink-0" />
+          Reserve bags &amp; kgs now, convert to real items later — priced at the booking-date rates.
+        </p>
+        <div className="flex flex-wrap items-center gap-2 p-2.5 sm:p-3">
+          <div className="relative basis-full sm:w-72 sm:basis-auto">
+            <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
+            <Input
+              placeholder="Search booking #, customer or agent…"
+              className="h-9 rounded-[4px] pl-8 text-[12.5px] font-medium"
+              value={searchInput}
+              onChange={(e) => {
+                setSearchInput(e.target.value);
+                setSearch(e.target.value.trim());
+                setPage(1);
+              }}
+            />
+          </div>
+          {/* Phones: Status filter moves behind this icon (see the sheet below). */}
+          <Button
+            variant="outline"
+            size="icon"
+            className="relative size-9 shrink-0 rounded-[4px] sm:hidden"
+            onClick={() => setMobileFiltersOpen(true)}
+            aria-label="Filters"
+          >
+            <Filter className="size-4" />
+            {activeFilterCount > 0 && (
+              <span className="bg-primary text-primary-foreground absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-bold tabular-nums">
+                {activeFilterCount}
+              </span>
+            )}
+          </Button>
+          <div className="hidden w-48 sm:block">
+            <NativeSelect
+              value={status}
+              onChange={(v) => { setStatus(v); setPage(1); }}
+              options={['', 'OPEN', 'PARTIALLY_CONVERTED', 'CONVERTED', 'PRECLOSED', 'CANCELLED']}
+              placeholder="All statuses"
+              renderOption={(v) => (v ? STATUS_LABEL[v as BookingStatus] : 'All statuses')}
+            />
+          </div>
+          {can('booking:create') && (
+            <Button size="sm" className="ml-auto h-9 shrink-0 rounded-[4px] font-semibold" onClick={() => navigate('/bookings/new')}>
+              <Plus className="size-4" /> New booking
+            </Button>
           )}
-        </Button>
-        <div className="hidden w-52 sm:block">
-          <NativeSelect
-            value={status}
-            onChange={(v) => { setStatus(v); setPage(1); }}
-            options={['', 'OPEN', 'PARTIALLY_CONVERTED', 'CONVERTED', 'PRECLOSED', 'CANCELLED']}
-            placeholder="All statuses"
-            renderOption={(v) => (v ? STATUS_LABEL[v as BookingStatus] : 'All statuses')}
-          />
         </div>
       </div>
 
@@ -448,9 +502,27 @@ export function BookingsPage() {
         rows={items}
         rowKey={(b) => b.id}
         isLoading={isLoading}
+        dense
+        fill
         emptyText="No bookings yet — create one."
         onRowClick={can('booking:convert') ? (b) => goToNewOrder(b) : undefined}
         mobileCard={bookingMobileCard}
+        // Same grid as Challans, so the two list screens read as one product:
+        // 13px body, heavy headers, tight rows, a full grey grid and a warm
+        // hover. Comfortable mode put this table at 16px with 20px cell padding,
+        // which is why three rows filled the screen.
+        className={[
+          'font-sans text-[13px]',
+          '[&_thead_th]:text-[13.5px] [&_thead_th]:font-extrabold [&_thead_th]:uppercase [&_thead_th]:tracking-wide [&_thead_th]:py-1.5',
+          '[&_thead_th_button]:cursor-pointer',
+          '[&_thead_th:hover]:from-blue-900 [&_thead_th:hover]:to-indigo-900',
+          '[&_td]:py-1 [&_td]:px-3 [&_th]:px-3',
+          '[&_tbody_button:not([role=switch]):not([role=checkbox])]:size-7',
+          '[&_tbody_tr]:border-b [&_tbody_tr]:border-slate-200 dark:[&_tbody_tr]:border-white/10',
+          '[&_td]:border-r [&_td]:border-slate-200 dark:[&_td]:border-white/10 [&_td:last-child]:border-r-0',
+          '[&_tbody_tr:nth-child(even)_td]:bg-slate-100/80 dark:[&_tbody_tr:nth-child(even)_td]:bg-white/[0.04]',
+          '[&_tbody_tr:hover:hover_td]:bg-amber-100/70 dark:[&_tbody_tr:hover:hover_td]:bg-amber-400/10',
+        ].join(' ')}
         actions={(b) => {
           const convertible = b.status === 'OPEN' || b.status === 'PARTIALLY_CONVERTED';
           return (
@@ -483,17 +555,34 @@ export function BookingsPage() {
         }}
       />
 
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-muted-foreground text-sm">
-          {data?.total ?? 0} booking(s) · page {data?.page ?? page} of {totalPages}
+      {/* ── Footer: range + paging, same bar as the other lists ──────────────── */}
+      <div className="bg-card flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-[4px] border px-3 py-2 shadow-sm">
+        <p className="text-muted-foreground text-[12px] font-medium">
+          {totalRows === 0 ? (
+            'No bookings'
+          ) : (
+            <>
+              Showing{' '}
+              <span className="text-foreground font-bold tabular-nums">
+                {firstRow.toLocaleString('en-IN')}–{lastRow.toLocaleString('en-IN')}
+              </span>{' '}
+              of <span className="text-foreground font-bold tabular-nums">{totalRows.toLocaleString('en-IN')}</span>
+            </>
+          )}
         </p>
-        <div className="flex items-center gap-3">
-          <PageSizeSelect value={pageSize} onChange={setPageSize} />
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+        <div className="flex w-full items-center justify-between gap-3 sm:ml-auto sm:w-auto sm:justify-end">
+          {/* Hidden on a phone: "Showing 1-3 of 3" above already answers it, and
+              at 375px this was breaking "Page 1 of 1" across three lines. */}
+          <p className="text-muted-foreground hidden text-[12px] font-medium sm:block">
+            Page <span className="text-foreground font-bold tabular-nums">{data?.page ?? page}</span> of{' '}
+            <span className="text-foreground font-bold tabular-nums">{totalPages}</span>
+          </p>
+          <div className="flex items-center gap-2">
+            <PageSizeSelect value={pageSize} onChange={setPageSize} />
+            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
               <ChevronLeft /> Prev
             </Button>
-            <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+            <Button variant="outline" size="sm" className="rounded-[4px] font-semibold" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
               Next <ChevronRight />
             </Button>
           </div>
