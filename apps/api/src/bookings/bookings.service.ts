@@ -4,11 +4,13 @@ import { Prisma } from '@prisma/client';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import {
   type BookingConversionDto,
+  type BookingDispatchOptions,
   type BookingDrawOptionDto,
   type BookingDto,
   type BookingItemDto,
   type BookingQuoteLine,
   type BookingQuoteResult,
+  type BookingRateDto,
   type BookingStatus,
   type CustomerLogoDto,
   type CustomerRateDto,
@@ -29,6 +31,7 @@ import { PdfService } from '../pdf/pdf.service';
 import { toNum, toStr, uc } from '../common/coerce';
 import {
   BookingQueryDto,
+  CreateBookingRateDto,
   ConvertBookingDto,
   ConvertBookingLineDto,
   CreateBookingDto,
@@ -40,8 +43,15 @@ import {
   UpdateBookingDto,
 } from './dto/booking.dto';
 
-const INCLUDE = { conversions: { orderBy: { convertedAt: 'asc' } }, items: { orderBy: { id: 'asc' } } } as const;
+const INCLUDE = {
+  conversions: { orderBy: { convertedAt: 'asc' } },
+  items: { orderBy: { id: 'asc' } },
+  rates: { orderBy: { id: 'asc' } },
+} as const;
 type Row = Prisma.BookingGetPayload<{ include: typeof INCLUDE }>;
+
+/** `CATEGORY|SUBCATEGORY` → the rate settled for that size class on a booking. */
+type AgreedRates = Map<string, number>;
 
 /** {@link BookingConversion.kind} — see the schema for what separates the two. */
 const ORDER_LINE_KIND = 'ORDER_LINE';
@@ -131,6 +141,7 @@ export class BookingsService {
         // stored as the empty string. That is what makes it match nothing in the
         // per-category conversion check, so only the booking total binds.
         items: { create: items.map((it) => ({ pCategory: it.pCategory ?? '', bags: it.bags, kgs: it.kgs })) },
+        rates: { create: this.normalizeRates(dto.rates).map((r) => ({ ...r, userName: userName ?? null })) },
       },
       include: INCLUDE,
     });
@@ -170,6 +181,17 @@ export class BookingsService {
       data.kgs = round2(items.reduce((s, it) => s + it.kgs, 0));
       data.items = { deleteMany: {}, create: items.map((it) => ({ pCategory: it.pCategory ?? '', bags: it.bags, kgs: it.kgs })) };
       itemsChanged = true;
+    }
+
+    /*
+     * Settled rates are replaced wholesale when sent, and left alone when not.
+     *
+     * Editing them only changes what is priced FROM NOW ON: lines already drawn
+     * carry their own frozen `rate`, exactly as they do when a chart rate moves
+     * under a booking. Nothing re-prices retroactively.
+     */
+    if (dto.rates !== undefined) {
+      data.rates = { deleteMany: {}, create: this.normalizeRates(dto.rates) };
     }
 
     await this.prisma.booking.update({ where: { id }, data });
@@ -598,9 +620,10 @@ export class BookingsService {
     // rates were added/changed after the booking) — drives the "new price" prompt.
     const customer = await this.prisma.customer.findFirst({ where: { partyName: booking.customerName } });
     const currentSnapshot = customer ? await this.snapshotSpecialRates(customer.id) : snapshot;
+    const agreed = await this.agreedRatesFor(booking.id);
     const lines: BookingQuoteLine[] = [];
     for (const line of dto.lines ?? []) {
-      lines.push(await this.priceLine(line, booking.bookingDate, snapshot, currentSnapshot));
+      lines.push(await this.priceLine(line, booking.bookingDate, snapshot, currentSnapshot, agreed));
     }
     return { bookingDate: booking.bookingDate.toISOString(), lines };
   }
@@ -611,7 +634,97 @@ export class BookingsService {
     return serializeBookingDraw(true, () => this.convertWithinDraw(id, dto, userName));
   }
 
-  private async convertWithinDraw(id: number, dto: ConvertBookingDto, userName?: string | null): Promise<BookingDto> {
+  /**
+   * Convert, and hand back the OrderItem ids that were created.
+   *
+   * The dispatch-from-booking flow has to dispatch the very lines it just made,
+   * and — if a dispatch then fails — delete exactly those and no others. The
+   * public {@link convert} returns the whole booking, which cannot identify
+   * them: a booking may already hold lines for the same product from an earlier
+   * draw, so matching by product afterwards would pick the wrong row.
+   */
+  async convertReturningItems(id: number, dto: ConvertBookingDto, userName?: string | null): Promise<number[]> {
+    const created: number[] = [];
+    await serializeBookingDraw(true, () => this.convertWithinDraw(id, dto, userName, created));
+    return created;
+  }
+
+  /**
+   * Undo a conversion this request made, when a later step in the same request
+   * failed — so a cup dispatch that cannot be written does not leave order
+   * lines drawn off the booking behind it.
+   *
+   * Hard-deletes rather than cancels: these lines existed for a few hundred
+   * milliseconds, were never dispatched, and cancelling would leave the booking
+   * PDF showing a phantom "cancelled" line nobody ever entered. The recompute
+   * puts the booking's drawn figures back where they were.
+   */
+  async rollbackConvertedItems(bookingId: number, orderItemIds: number[]): Promise<void> {
+    if (!orderItemIds.length) return;
+    await this.prisma.orderItem.deleteMany({ where: { id: { in: orderItemIds }, bookingId } });
+    // The audit rows for lines that never really existed would otherwise be
+    // swept into "deleted" history by the recompute below.
+    await this.prisma.bookingConversion.deleteMany({ where: { bookingId, orderItemId: { in: orderItemIds } } });
+    await this.recompute(bookingId);
+  }
+
+  /**
+   * Everything the cup dispatch form needs for one party and category, in one
+   * call: the party's bag weight, their drawable bookings, the rates settled on
+   * those bookings, and the sellable items with the figures the arithmetic
+   * needs.
+   */
+  async dispatchOptions(customerName: string | null, pCategory: string | null): Promise<BookingDispatchOptions> {
+    const name = uc(customerName) ?? '';
+    const category = uc(pCategory) ?? '';
+    if (!name || !category) return { kgsPerBag: null, bookings: [], rates: [], items: [] };
+
+    const customer = await this.prisma.customer.findFirst({ where: { partyName: name } });
+    const bookings = await this.drawableFor(name, category);
+    const [bagWeight, rates, products] = await Promise.all([
+      customer ? this.prisma.customerBagWeight.findFirst({ where: { customerId: customer.id, category } }) : null,
+      bookings.length
+        ? this.prisma.bookingRate.findMany({ where: { bookingId: { in: bookings.map((b) => b.id) } }, orderBy: { id: 'asc' } })
+        : [],
+      this.prisma.product.findMany({
+        where: { category, active: true },
+        select: { product: true, subCategory: true, size: true, pcs: true, weight: true, rate: true },
+        orderBy: [{ size: 'asc' }, { subCategory: 'asc' }, { product: 'asc' }],
+      }),
+    ]);
+
+    return {
+      kgsPerBag: bagWeight?.kgsPerBag ?? null,
+      bookings,
+      rates: rates.map((r) => ({
+        id: r.id,
+        bookingId: r.bookingId,
+        pCategory: r.pCategory,
+        subCategory: r.subCategory,
+        rate: r.rate,
+        userName: r.userName,
+        createdAt: r.createdAt.toISOString(),
+        updatedAt: r.updatedAt.toISOString(),
+      })),
+      items: products.map((p) => ({
+        product: p.product,
+        subCategory: p.subCategory,
+        size: p.size,
+        pcs: p.pcs,
+        weight: p.weight,
+        rate: p.rate,
+      })),
+    };
+  }
+
+  private async convertWithinDraw(
+    id: number,
+    dto: ConvertBookingDto,
+    userName?: string | null,
+    /** Filled with every OrderItem id created, for callers that must be able to
+     *  address exactly these lines afterwards. */
+    createdInto?: number[],
+  ): Promise<BookingDto> {
     const booking = await this.prisma.booking.findUnique({ where: { id }, include: { items: true } });
     if (!booking) throw new NotFoundException('Booking not found.');
     if (booking.status === 'CANCELLED') throw new BadRequestException('A cancelled booking cannot be converted.');
@@ -628,14 +741,15 @@ export class BookingsService {
     );
 
     const snapshot = this.parseSnapshot(booking.rateSnapshot);
+    const agreed = await this.agreedRatesFor(booking.id);
 
     // Ensure the booking's order exists (created lazily on first conversion), then
     // append the priced lines to it. Rates are frozen as of the booking date.
     const orderId = await this.ensureOrder(booking);
 
     for (const line of lines) {
-      const priced = await this.priceLine(line, booking.bookingDate, snapshot);
-      await this.prisma.orderItem.create({
+      const priced = await this.priceLine(line, booking.bookingDate, snapshot, snapshot, agreed);
+      const createdItem = await this.prisma.orderItem.create({
         data: {
           orderId,
           bookingId: booking.id,
@@ -661,6 +775,7 @@ export class BookingsService {
           comment: toStr(line.comment),
         },
       });
+      createdInto?.push(createdItem.id);
     }
 
     // The draw-down (converted bags/kgs + the audit rows) is always derived from
@@ -1172,7 +1287,8 @@ export class BookingsService {
   async priceOrderLine(bookingId: number, line: ConvertBookingLineDto): Promise<BookingQuoteLine | null> {
     const booking = await this.prisma.booking.findUnique({ where: { id: bookingId } });
     if (!booking) return null;
-    return this.priceLine(line, booking.bookingDate, this.parseSnapshot(booking.rateSnapshot));
+    const snapshot = this.parseSnapshot(booking.rateSnapshot);
+    return this.priceLine(line, booking.bookingDate, snapshot, snapshot, await this.agreedRatesFor(booking.id));
   }
 
   /**
@@ -1332,6 +1448,9 @@ export class BookingsService {
     asOf: Date,
     snapshot: RateSnapshot,
     currentSnapshot: RateSnapshot = snapshot,
+    /** This booking's settled size-class rates, keyed `CATEGORY|SUBCATEGORY`.
+     *  Empty for any caller without a booking (e.g. `priceAsOf`). */
+    agreed: AgreedRates = new Map(),
   ): Promise<BookingQuoteLine> {
     const p = await this.productRates(line, asOf);
     const d = await this.designRates(line, asOf);
@@ -1343,25 +1462,55 @@ export class BookingsService {
     };
     const frozen = resolveSpecialRates(snapshot, key);
     const current = resolveSpecialRates(currentSnapshot, key);
-    const rate = round2(p.asOf + d.asOf + frozen.productDelta + frozen.designDelta);
-    const currentRate = round2(p.current + d.current + current.productDelta + current.designDelta);
+
+    /*
+     * A rate settled on the booking REPLACES the product side outright — the
+     * chart rate and the party's own delta both step aside.
+     *
+     * Adding the delta on top would discount a number that was already the
+     * negotiated one, so "6.5 cups at 62" would bill at 65 for a party holding
+     * a standing +3 on that size. The design rate still applies: it prices work
+     * done to the item, which is a separate agreement (and is absent on cups —
+     * 509 of 511 cup lines carry no design).
+     */
+    const settled = agreed.get(`${key.category}|${key.subCategory}`) ?? null;
+    const productBase = settled ?? p.asOf;
+    const productDelta = settled != null ? 0 : frozen.productDelta;
+    const rate = round2(productBase + d.asOf + productDelta + frozen.designDelta);
+    /*
+     * The "current" side deliberately uses the SAME settled rate.
+     *
+     * `priceChanged` exists to warn that the chart moved under a booking. A
+     * settled rate is immune to that by definition, so reporting it as changed
+     * would ask the operator to re-approve a price nothing can alter.
+     */
+    const currentProductBase = settled ?? p.current;
+    const currentProductDelta = settled != null ? 0 : current.productDelta;
+    const currentRate = round2(currentProductBase + d.current + currentProductDelta + current.designDelta);
     return {
       productName: uc(line.productName) ?? uc(line.product) ?? null,
       designType: uc(line.designType) ?? null,
-      productRate: p.asOf,
+      productRate: productBase,
       designRate: d.asOf,
-      productDelta: frozen.productDelta,
+      productDelta,
       designDelta: frozen.designDelta,
       rate,
-      currentProductRate: p.current,
+      bookingRate: settled,
+      currentProductRate: currentProductBase,
       currentDesignRate: d.current,
-      currentProductDelta: current.productDelta,
+      currentProductDelta,
       currentDesignDelta: current.designDelta,
       currentRate,
       priceChanged: Math.abs(currentRate - rate) > 0.001,
       productFrom: frozen.productFrom,
       designFrom: frozen.designFrom,
     };
+  }
+
+  /** `CATEGORY|SUBCATEGORY` → the rate settled for it on this booking. */
+  private async agreedRatesFor(bookingId: number): Promise<AgreedRates> {
+    const rows = await this.prisma.bookingRate.findMany({ where: { bookingId } });
+    return new Map(rows.map((r) => [`${r.pCategory}|${r.subCategory}`, r.rate]));
   }
 
   /** Lazily create (once) the real Order that holds a booking's converted lines. */
@@ -1506,7 +1655,21 @@ export class BookingsService {
       precloseByName: r.precloseByName,
       precloseAt: r.precloseAt ? r.precloseAt.toISOString() : null,
       items: r.items.map((it) => this.toItemDto(it)),
+      rates: r.rates.map((rt) => this.toRateDto(rt)),
       conversions: r.conversions.map((c) => this.toConversionDto(c)),
+      createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
+    };
+  }
+
+  private toRateDto(r: Row['rates'][number]): BookingRateDto {
+    return {
+      id: r.id,
+      bookingId: r.bookingId,
+      pCategory: r.pCategory,
+      subCategory: r.subCategory,
+      rate: r.rate,
+      userName: r.userName,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     };
@@ -1530,6 +1693,26 @@ export class BookingsService {
 
   /** Clean + validate the create/update item lines: uppercase category, coerce
    *  numbers, drop rows with no quantity, require at least one usable line. */
+  /**
+   * Clean the settled rates: upper-cased keys, last-one-wins on a duplicated
+   * size class, and anything without a positive rate dropped.
+   *
+   * A blank rate box is "no deal on this size", not "this size is free" — and
+   * the unique index would reject the duplicate anyway, with a 500 rather than
+   * something the operator could act on.
+   */
+  private normalizeRates(rates: CreateBookingRateDto[] | undefined): { pCategory: string; subCategory: string; rate: number }[] {
+    const out = new Map<string, { pCategory: string; subCategory: string; rate: number }>();
+    for (const r of rates ?? []) {
+      const pCategory = uc(r.pCategory) ?? '';
+      const subCategory = uc(r.subCategory) ?? '';
+      const rate = toNum(r.rate) ?? 0;
+      if (!pCategory || !subCategory || rate <= 0) continue;
+      out.set(`${pCategory}|${subCategory}`, { pCategory, subCategory, rate: round2(rate) });
+    }
+    return [...out.values()];
+  }
+
   private normalizeItems(items: CreateBookingItemDto[]): { pCategory: string; bags: number; kgs: number }[] {
     const cleaned = (items ?? [])
       .map((it) => ({ pCategory: (uc(it.pCategory) ?? '') as string, bags: toNum(it.bags) ?? 0, kgs: toNum(it.kgs) ?? 0 }))

@@ -81,12 +81,34 @@ export interface BookingDto {
   precloseAt: string | null;
   /** The product-category lines reserved on this booking (e.g. 1 bag GLASS, 1 bag CUP). */
   items: BookingItemDto[];
+  /** Size-class rates settled with the customer for this booking. Empty when
+   *  the booking prices purely off the chart. */
+  rates: BookingRateDto[];
   conversions: BookingConversionDto[];
   createdAt: string;
   updatedAt: string;
 }
 
 /** One product-category line reserved on a booking. */
+/**
+ * A rate settled with the customer for one size class, on one booking.
+ *
+ * The sub-category IS the size class — `4-PCS-CUP-FG` says size 6.5 and 4 pcs
+ * to a box — so this needs no separate size field.
+ */
+export interface BookingRateDto {
+  id: number;
+  bookingId: number;
+  pCategory: string;
+  subCategory: string;
+  /** Absolute agreed selling rate — replaces the chart rate AND the customer's
+   *  own delta for a matching line, rather than being added to either. */
+  rate: number;
+  userName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface BookingItemDto {
   id: number;
   bookingId: number;
@@ -147,7 +169,16 @@ export interface CreateBookingInput {
   /** Defaults to today on the server; this is the rate-basis date. */
   bookingDate?: string | null;
   items: CreateBookingItemInput[];
+  /** Optional per-size-class agreed rates. Omitted (or empty) means this
+   *  booking prices off the chart exactly as before. */
+  rates?: CreateBookingRateInput[];
   comment?: string | null;
+}
+
+export interface CreateBookingRateInput {
+  pCategory: string;
+  subCategory: string;
+  rate: number;
 }
 
 export interface UpdateBookingInput {
@@ -219,6 +250,10 @@ export interface LinkBookingItemsInput {
 
 /** A priced preview of one convertible line, using booking-date rates. */
 export interface BookingQuoteLine {
+  /** Set when this line priced off a rate settled on the booking rather than
+   *  off the chart. When present it IS `rate` (before any design rate), and
+   *  `productDelta` is 0 — a negotiated price is not discounted again. */
+  bookingRate?: number | null;
   productName: string | null;
   designType: string | null;
   /** Base product chart rate as of the booking date. */
@@ -336,4 +371,84 @@ export const BOOKING_NO_CATEGORY = 'Not specified';
 export function withinBooked(want: number, remaining: number, booked: number): boolean {
   if (booked <= 0) return true;
   return want - remaining <= 0.001;
+}
+
+/* ── Dispatch straight off a booking ──────────────────────────────────────── */
+
+/**
+ * One item going out against a booking, entered in BOXES.
+ *
+ * Boxes are the unit cups actually move in; everything else is derived from the
+ * product master and the party's bag weight, ON THE SERVER — a client that
+ * understated bags would understate the booking's draw-down, which is the one
+ * figure this whole screen exists to keep honest.
+ */
+export interface BookingDispatchLineInput {
+  /** The size class — `4-PCS-CUP-FG` and friends. */
+  subCategory: string;
+  product: string;
+  /** Boxes going out. Pcs, kgs and bags are computed from this. */
+  box: number;
+  comment?: string | null;
+}
+
+export interface BookingDispatchInput {
+  bookingId: number;
+  /** Defaults to today. A past date routes through the usual approval path. */
+  dispatchDate?: string | null;
+  lines: BookingDispatchLineInput[];
+}
+
+/** What one line actually became once the server did the arithmetic. */
+export interface BookingDispatchLineResult {
+  product: string;
+  subCategory: string;
+  box: number;
+  pcs: number;
+  kgs: number;
+  bags: number;
+  rate: number;
+  /** True when `rate` came from a rate settled on the booking. */
+  fromAgreedRate: boolean;
+  orderItemId: number;
+  dispatchId: number | null;
+  dispatchCode: string | null;
+  /** Set instead of the dispatch fields when the date needed approval. */
+  approvalCode?: string | null;
+}
+
+export interface BookingDispatchResult {
+  bookingId: number;
+  /** The order the lines landed on — created lazily on the booking's first draw. */
+  orderId: number;
+  orderCode: string | null;
+  lines: BookingDispatchLineResult[];
+  totals: { box: number; pcs: number; kgs: number; bags: number };
+}
+
+/** Everything the cup dispatch form needs for one party, in one call. */
+export interface BookingDispatchOptions {
+  /** 1 bag = this many kgs for this party + category. Null means the party has
+   *  no bag weight on file, and nothing can be dispatched until one is set —
+   *  bags could not be derived, so the booking's draw-down would be wrong. */
+  kgsPerBag: number | null;
+  bookings: BookingDrawOptionDto[];
+  /** Agreed rates across those bookings, so the form can price without a
+   *  round trip per line. */
+  rates: BookingRateDto[];
+  /** The sellable items in this category, with the figures the arithmetic
+   *  needs. */
+  items: BookingDispatchItemOption[];
+}
+
+export interface BookingDispatchItemOption {
+  product: string;
+  subCategory: string;
+  size: number | null;
+  /** Pieces in one box. */
+  pcs: number | null;
+  /** Kgs one piece weighs. */
+  weight: number | null;
+  /** Chart rate, used when no rate was settled for this size class. */
+  rate: number | null;
 }

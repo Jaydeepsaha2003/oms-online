@@ -1260,11 +1260,43 @@ model Booking {
 
   conversions BookingConversion[]
   items       BookingItem[]
+  rates       BookingRate[]
 
   @@index([customerId])
   @@index([status])
   @@index([bookingDate])
   @@map("bookings")
+}
+
+/// A rate settled with the customer for one size class, for THIS booking only.
+///
+/// Distinct from CustomerRate, which holds a customer-wide *delta* on the chart
+/// rate and always reads at its current value. This is an absolute agreed price
+/// ("6.5 cups at 62"), fixed to the booking the deal was struck on, so a later
+/// change to the chart rate or to the party's standing discount cannot move it.
+///
+/// Keyed by sub-category because that is already the size class: `4-PCS-CUP-FG`
+/// carries both the size (6.5) and the pcs per box (4), so no second taxonomy
+/// is needed. `pCategory` is part of the key too — two categories could one day
+/// use the same sub-category name, and a rate must never leak across them.
+model BookingRate {
+  id          Int      @id @default(autoincrement())
+  bookingId   Int
+  pCategory   String
+  subCategory String
+  /// The agreed selling rate. Replaces the chart rate and the customer's own
+  /// delta for any line matching this category + sub-category — a negotiated
+  /// price is the whole price, not a base to discount again.
+  rate        Float
+  userName    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@unique([bookingId, pCategory, subCategory])
+  @@index([bookingId])
+  @@map("booking_rates")
 }
 
 /// One product-category line reserved on a booking (e.g. "1 bag GLASS"). A

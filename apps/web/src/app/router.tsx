@@ -34,6 +34,7 @@ const OrderBillPage = lazy(() => import('@/features/orders/order-bill-page').the
 const BookingsPage = lazy(() => import('@/features/bookings/bookings-page').then((m) => ({ default: m.BookingsPage })));
 const BookingFormPage = lazy(() => import('@/features/bookings/booking-form-page').then((m) => ({ default: m.BookingFormPage })));
 const BookingConvertPage = lazy(() => import('@/features/bookings/booking-convert-page').then((m) => ({ default: m.BookingConvertPage })));
+const BookingDispatchPage = lazy(() => import('@/features/bookings/booking-dispatch-page').then((m) => ({ default: m.BookingDispatchPage })));
 const PriceHistoryPage = lazy(() => import('@/features/bookings/price-history-page').then((m) => ({ default: m.PriceHistoryPage })));
 const QuotationsPage = lazy(() => import('@/features/quotations/quotations-page').then((m) => ({ default: m.QuotationsPage })));
 const DispatchOrderPage = lazy(() => import('@/features/dispatch/dispatch-order-page').then((m) => ({ default: m.DispatchOrderPage })));
@@ -313,6 +314,14 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.BOOKING, ACTIONS.VIEW)}>
                 <BookingsPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/bookings/dispatch"
+            element={
+              <RequirePermission permission={perm(RESOURCES.DISPATCH, ACTIONS.CREATE)}>
+                <BookingDispatchPage />
               </RequirePermission>
             }
           />

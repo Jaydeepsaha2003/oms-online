@@ -9,7 +9,7 @@ import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { ExcelService } from '../excel/excel.service';
 import { toExcelDate } from '../common/date.util';
 import { DispatchService } from './dispatch.service';
-import { BulkSetPendingPriorityDto, CreateDispatchDto, DispatchQueryDto, PendingQueryDto, UpdateDispatchDto } from './dto/dispatch.dto';
+import { BulkSetPendingPriorityDto, CreateDispatchDto, DispatchFromBookingDto, DispatchQueryDto, PendingQueryDto, UpdateDispatchDto } from './dto/dispatch.dto';
 
 const R = RESOURCES.DISPATCH;
 
@@ -174,6 +174,26 @@ export class DispatchController {
   @SkipAudit()
   create(@Body() dto: CreateDispatchDto, @CurrentUser() user: AuthenticatedUser) {
     return this.dispatch.submit(dto, {
+      id: user.id ?? null,
+      name: user.name,
+      canApprove: hasPermission(user.permissions, perm(R, ACTIONS.APPROVE)),
+      canOverrideThreshold: hasPermission(user.permissions, perm(R, ACTIONS.OVERRIDE)),
+    });
+  }
+
+  /**
+   * Dispatch straight off a bag booking — the Booking Dispatch form.
+   *
+   * Creates the order line and its dispatch in one action, so an operator
+   * sending cups against a booking never has to raise an order by hand. Same
+   * CREATE permission as a normal dispatch: it is one, with the paperwork done
+   * for you, not a new power.
+   */
+  @Post('from-booking')
+  @Permissions(perm(R, ACTIONS.CREATE))
+  @SkipAudit()
+  fromBooking(@Body() dto: DispatchFromBookingDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.dispatch.dispatchFromBooking(dto, {
       id: user.id ?? null,
       name: user.name,
       canApprove: hasPermission(user.permissions, perm(R, ACTIONS.APPROVE)),

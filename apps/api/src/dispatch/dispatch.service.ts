@@ -5,6 +5,7 @@ import {
   isUncommittedOrder,
   ORDER_UNCOMMITTED_STATUSES,
   lineNeedsReferencePhoto,
+  type BookingDispatchResult,
   type DispatchBackdatePayload,
   type DispatchDateChangePayload,
   type DispatchDto,
@@ -30,7 +31,7 @@ import { BookingsService } from '../bookings/bookings.service';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
 import { formatDate } from '../common/date.util';
 import { toNum, toStr, uc } from '../common/coerce';
-import { CreateDispatchDto, DispatchQueryDto, PendingQueryDto, UpdateDispatchDto } from './dto/dispatch.dto';
+import { CreateDispatchDto, DispatchFromBookingDto, DispatchQueryDto, PendingQueryDto, UpdateDispatchDto } from './dto/dispatch.dto';
 import { DispatchNotifier } from './dispatch-notifier.service';
 import { qtyText } from './qty-text.util';
 
@@ -1189,6 +1190,205 @@ export class DispatchService implements OnModuleInit {
     });
 
     return { status: 'PENDING_APPROVAL', approvalCode: req.code ?? `APR-${req.id}` };
+  }
+
+
+  /* ── Dispatch straight off a booking ────────────────────────────────────── */
+
+  /**
+   * Send items out against a bag booking without anyone having to raise an
+   * order first.
+   *
+   * The order still exists — it has to. `Dispatch.orderItemId` and `orderId`
+   * are both NOT NULL, and every downstream join (Pending Challan, challan
+   * items, the order timeline, reports, commission, the booking draw-down)
+   * hangs off them. A parallel "dispatch with no order" would have to be taught
+   * to every one of those. So this creates the line and dispatches it in one
+   * action: the operator never sees an order, and the rest of the system never
+   * sees anything unusual.
+   *
+   * Quantities are entered in BOXES and everything else is derived HERE, from
+   * the product master and the party's bag weight:
+   *
+   *     boxes x pcs-per-box = pcs,  pcs x weight = kgs,  kgs / kgsPerBag = bags
+   *
+   * Deriving it client-side would let a tampered or merely stale form decide
+   * how much comes off the booking, which is the one number this screen exists
+   * to keep honest.
+   */
+  async dispatchFromBooking(
+    dto: DispatchFromBookingDto,
+    user: { id?: string | null; name?: string | null; canApprove: boolean; canOverrideThreshold: boolean },
+  ): Promise<BookingDispatchResult> {
+    const booking = await this.bookings.findOne(dto.bookingId);
+    const category = uc(booking.items.find((i) => i.pCategory)?.pCategory) ?? uc(booking.category) ?? '';
+    if (!category) {
+      throw new BadRequestException('This booking has no product category, so there is nothing to dispatch against it.');
+    }
+
+    /*
+     * ── Pre-flight ────────────────────────────────────────────────────────
+     *
+     * Everything that can refuse this request is checked BEFORE a single row is
+     * written. Order lines and dispatches are written in separate transactions
+     * (each `create` opens its own, and SQLite has no nested ones), so the only
+     * way to avoid leaving half a dispatch behind is to make the second half
+     * almost impossible to fail — and to be able to undo the first if it does.
+     */
+    await this.assertNotOnHold(booking.customerId, booking.customerName);
+
+    const bagWeight = booking.customerId
+      ? await this.prisma.customerBagWeight.findFirst({ where: { customerId: booking.customerId, category } })
+      : null;
+    if (!bagWeight?.kgsPerBag) {
+      // Without this, bags cannot be derived — and bags are what the booking is
+      // reserved in, so every draw-down would silently record zero.
+      throw new BadRequestException(
+        `No bag weight is set for ${booking.customerName} in ${category}. Set it under Special Rates -> Bag Weight before dispatching against a booking.`,
+      );
+    }
+
+    // Price and size every line up front, so a bad product name fails before
+    // anything is created rather than half way down the list.
+    const priced = await Promise.all(
+      dto.lines.map(async (line) => {
+        const subCategory = uc(line.subCategory) ?? '';
+        const product = uc(line.product) ?? '';
+        const box = toNum(line.box) ?? 0;
+        if (!product || !subCategory) throw new BadRequestException('Every line needs an item and a size.');
+        if (box <= 0) throw new BadRequestException(`${product}: enter the number of boxes.`);
+
+        const row = await this.prisma.product.findFirst({ where: { category, subCategory, product } });
+        if (!row) throw new BadRequestException(`${product} (${subCategory}) is not in the ${category} product list.`);
+        if (!row.pcs) throw new BadRequestException(`${product}: the product master has no pcs-per-box, so boxes cannot be converted.`);
+        if (!row.weight) throw new BadRequestException(`${product}: the product master has no per-piece weight, so kgs cannot be worked out.`);
+
+        const pcs = round3(box * row.pcs);
+        const kgs = round3(pcs * row.weight);
+        /*
+         * 3dp, deliberately FINER than the 2dp the booking itself records.
+         *
+         * A cup bag is a weight equivalent, so a few boxes is a fraction of one
+         * bag — 10 boxes of 6.5s is 0.086. The booking rounds the SUM of its
+         * lines to 2dp, so keeping each line at 3dp lets those fractions add up
+         * before any rounding happens. Rounding here instead would push every
+         * line up to the next paisa of a bag (0.086 -> 0.09) and compound that
+         * against the party on every dispatch; kgs, which is exact, is the
+         * control either way.
+         *
+         * The consequence to expect: one line's `bags` will not always equal
+         * the booking's own delta for that line. The TOTAL is what agrees.
+         */
+        const bags = round3(kgs / bagWeight.kgsPerBag);
+        const agreed = booking.rates.find((r) => r.pCategory === category && r.subCategory === subCategory);
+        return {
+          subCategory,
+          product,
+          box,
+          pcs,
+          kgs,
+          bags,
+          size: row.size,
+          rate: agreed?.rate ?? row.rate ?? 0,
+          fromAgreedRate: !!agreed,
+          comment: line.comment ?? null,
+        };
+      }),
+    );
+
+    // Does the booking actually have this much left? Same gate the order form
+    // goes through, so the two routes cannot drift apart.
+    await this.bookings.assertDrawable(
+      dto.bookingId,
+      booking.customerName,
+      priced.map((l) => ({ pCategory: category, bags: l.bags, kgs: l.kgs })),
+    );
+
+    /*
+     * ── Write ─────────────────────────────────────────────────────────────
+     *
+     * The lines first (one conversion, so the booking's draw-down is recomputed
+     * once), then a dispatch against each. Each line is created at EXACTLY the
+     * quantity being dispatched, so it goes out FULLY DISPATCH and none of
+     * `create`'s remaining-quantity guards can bite.
+     */
+    const orderItemIds = await this.bookings.convertReturningItems(
+      dto.bookingId,
+      {
+        lines: priced.map((l) => ({
+          pCategory: category,
+          subCategory: l.subCategory,
+          product: l.product,
+          productName: l.product,
+          psize: l.size,
+          calField: 'PCS',
+          bags: l.bags,
+          pcs: l.pcs,
+          gram: l.kgs,
+          box: l.box,
+          comment: l.comment,
+        })),
+      },
+      user.name ?? undefined,
+    );
+
+    const lines: BookingDispatchResult['lines'] = [];
+    try {
+      for (let i = 0; i < priced.length; i++) {
+        const l = priced[i];
+        const orderItemId = orderItemIds[i];
+        const res = await this.submit(
+          {
+            orderItemId,
+            bags: l.bags,
+            pcs: l.pcs,
+            gram: l.kgs,
+            box: l.box,
+            dispatchStatus: 'FULLY DISPATCH',
+            comment: l.comment ?? undefined,
+            ...(dto.dispatchDate ? { dispatchDate: dto.dispatchDate } : {}),
+          },
+          user,
+        );
+        lines.push({
+          product: l.product,
+          subCategory: l.subCategory,
+          box: l.box,
+          pcs: l.pcs,
+          kgs: l.kgs,
+          bags: l.bags,
+          rate: l.rate,
+          fromAgreedRate: l.fromAgreedRate,
+          orderItemId,
+          dispatchId: res.status === 'CREATED' ? res.dispatch.id : null,
+          dispatchCode: res.status === 'CREATED' ? (res.dispatch.code ?? null) : null,
+          approvalCode: res.status === 'PENDING_APPROVAL' ? res.approvalCode : null,
+        });
+      }
+    } catch (e) {
+      /*
+       * A dispatch failed after its line was created. Undo every line this
+       * request made — including the ones already dispatched, whose dispatches
+       * cascade away with them — so the booking is left exactly as it was found
+       * rather than drawn down for a shipment that never happened.
+       */
+      await this.bookings.rollbackConvertedItems(dto.bookingId, orderItemIds).catch(() => undefined);
+      throw e;
+    }
+
+    const after = await this.bookings.findOne(dto.bookingId);
+    return {
+      bookingId: dto.bookingId,
+      orderId: after.orderId ?? 0,
+      orderCode: after.orderCode,
+      lines,
+      totals: {
+        box: round3(priced.reduce((t, l) => t + l.box, 0)),
+        pcs: round3(priced.reduce((t, l) => t + l.pcs, 0)),
+        kgs: round3(priced.reduce((t, l) => t + l.kgs, 0)),
+        bags: round3(priced.reduce((t, l) => t + l.bags, 0)),
+      },
+    };
   }
 
   /**

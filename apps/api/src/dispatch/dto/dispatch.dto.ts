@@ -1,6 +1,6 @@
 import { PartialType } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, MaxLength, Min, ValidateNested } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 export class CreateDispatchDto {
@@ -95,4 +95,21 @@ export class BulkSetPendingPriorityDto {
 
   @IsIn(['URGENT', 'NORMAL'])
   priority!: 'URGENT' | 'NORMAL';
+}
+
+/** One cup item going out against a booking — entered in boxes only. */
+export class BookingDispatchLineDto {
+  @IsString() @MaxLength(64) subCategory!: string;
+  @IsString() @MaxLength(255) product!: string;
+  /** Boxes. Everything else is derived server-side from the product master and
+   *  the party's bag weight, so the client cannot decide the draw-down. */
+  @IsNumber() @Min(0.0001) box!: number;
+  @IsOptional() @IsString() @MaxLength(255) comment?: string | null;
+}
+
+export class DispatchFromBookingDto {
+  @IsInt() bookingId!: number;
+  @IsOptional() @IsString() dispatchDate?: string | null;
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(100) @ValidateNested({ each: true }) @Type(() => BookingDispatchLineDto)
+  lines!: BookingDispatchLineDto[];
 }

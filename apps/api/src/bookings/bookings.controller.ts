@@ -55,6 +55,18 @@ export class BookingsController {
     return this.bookings.drawableFor(query.customerName ?? null, query.pCategory ?? null);
   }
 
+  /** Everything the Booking Dispatch form needs for one party + category:
+   *  their bag weight, drawable bookings, the rates settled on them, and the
+   *  sellable items. One call so the form does not fan out per line. */
+  @Get('dispatch-options')
+  // Same gate as `drawable` directly above, and for the same reason: the only
+  // caller is the dispatch floor, who are not necessarily allowed to browse
+  // bookings.
+  @Permissions(perm(RESOURCES.DISPATCH, ACTIONS.CREATE))
+  dispatchOptions(@Query('customerName') customerName?: string, @Query('pCategory') pCategory?: string) {
+    return this.bookings.dispatchOptions(customerName ?? null, pCategory ?? null);
+  }
+
   @Get(':id')
   @Permissions(perm(R, ACTIONS.VIEW))
   get(@Param('id', ParseIntPipe) id: number) {

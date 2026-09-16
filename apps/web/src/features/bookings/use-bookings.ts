@@ -1,5 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
+  BookingDispatchInput,
+  BookingDispatchOptions,
+  BookingDispatchResult,
   BookingDrawOptionDto,
   BookingDto,
   BookingList,
@@ -170,5 +173,35 @@ export function usePriceHistory(query: PriceHistoryQuery) {
     queryKey: [...KEY, 'price-history', query],
     queryFn: () => http.get<PriceHistoryList>('/bookings/price-history', { params: query }),
     placeholderData: (prev) => prev,
+  });
+}
+
+/** Everything the Booking Dispatch form needs for one party + category. */
+export function useBookingDispatchOptions(customerName: string | undefined, pCategory: string) {
+  return useQuery({
+    queryKey: [...KEY, 'dispatch-options', customerName, pCategory],
+    queryFn: () => http.get<BookingDispatchOptions>('/bookings/dispatch-options', { params: { customerName, pCategory } }),
+    enabled: !!customerName,
+    placeholderData: (prev) => prev,
+  });
+}
+
+/**
+ * Dispatch straight off a booking: the server creates the order line and its
+ * dispatch together.
+ *
+ * Invalidates orders and dispatches as well as bookings — this one call touches
+ * all three, and a stale Pending Challan would not show the shipment that was
+ * just made.
+ */
+export function useDispatchFromBooking() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BookingDispatchInput) => http.post<BookingDispatchResult>('/dispatch/from-booking', input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEY });
+      qc.invalidateQueries({ queryKey: ['orders'] });
+      qc.invalidateQueries({ queryKey: ['dispatch'] });
+    },
   });
 }

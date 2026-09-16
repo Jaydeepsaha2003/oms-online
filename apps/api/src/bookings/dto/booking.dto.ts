@@ -19,6 +19,17 @@ export class CreateBookingItemDto {
   @IsOptional() @IsNumber() @Min(0) kgs?: number;
 }
 
+/** One settled size-class rate submitted with a booking. */
+export class CreateBookingRateDto {
+  @IsString() @MaxLength(64) pCategory!: string;
+  @IsString() @MaxLength(64) subCategory!: string;
+  /** Absolute agreed rate. Zero or blank means "no deal on this size" and is
+   *  dropped by the service rather than refused here — one rule, in one place,
+   *  and a caller that sends an empty box gets a saved booking rather than an
+   *  opaque "Validation failed". */
+  @IsNumber() @Min(0) rate!: number;
+}
+
 export class CreateBookingDto {
   @IsString() @MaxLength(255) customerName!: string;
   @IsOptional() @IsString() @MaxLength(255) agentName?: string | null;
@@ -27,6 +38,9 @@ export class CreateBookingDto {
   /** One or more product-category lines — e.g. 1 bag GLASS + 1 bag CUP. */
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(50) @ValidateNested({ each: true }) @Type(() => CreateBookingItemDto)
   items!: CreateBookingItemDto[];
+  /** Optional size-class rates settled for this booking. */
+  @IsOptional() @IsArray() @ArrayMaxSize(100) @ValidateNested({ each: true }) @Type(() => CreateBookingRateDto)
+  rates?: CreateBookingRateDto[];
   @IsOptional() @IsString() @MaxLength(1000) comment?: string | null;
 }
 
