@@ -2393,7 +2393,7 @@ export function OrderFormPage() {
               value={agentName}
               readOnly
               tabIndex={-1}
-              className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700"
+              className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700 dark:border-indigo-400/25 dark:bg-indigo-400/10 dark:text-indigo-200"
             />
           </div>
           <div className="min-w-0 space-y-1.5">
@@ -2402,7 +2402,7 @@ export function OrderFormPage() {
               value={category}
               readOnly
               tabIndex={-1}
-              className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700"
+              className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700 dark:border-indigo-400/25 dark:bg-indigo-400/10 dark:text-indigo-200"
             />
           </div>
           <div className="min-w-0 space-y-1.5" data-tabfield="orderDate">
@@ -2446,18 +2446,18 @@ export function OrderFormPage() {
               value={niceDate(completionDate)}
               readOnly
               tabIndex={-1}
-              className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700"
+              className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700 dark:border-indigo-400/25 dark:bg-indigo-400/10 dark:text-indigo-200"
             />
           </div>
         </CardContent>
       </Card>
 
       {/* Card 2 — item entry (2 rows) + grid */}
-      <Card className="border-border border-l-4 border-l-slate-400 bg-slate-50/70 py-0">
+      <Card className="border-border border-l-4 border-l-slate-400 bg-slate-50/70 py-0 dark:bg-card">
         <CardContent className="space-y-2 px-3 py-2 sm:px-4 sm:py-3" {...itemAreaGuard}>
           {/* Prompt to choose a customer — see showCustomerPrompt. */}
           {showCustomerPrompt && (
-            <div className="animate-in fade-in flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 duration-200">
+            <div className="animate-in fade-in flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 duration-200 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-200">
               <ArrowLeft className="size-4 shrink-0" />
               Select a customer above to start adding items.
             </div>
@@ -2966,7 +2966,7 @@ export function OrderFormPage() {
           >
             {/* Prod ₹ / Dsgn ₹ are saved with the order but hidden from this list. */}
             <table className="w-full text-sm [&_td]:border-r [&_td]:border-border/60 [&_td:last-child]:border-r-0 [&_th]:border-r [&_th]:border-border/40 [&_th:last-child]:border-r-0">
-              <thead className="[&_th]:sticky [&_th]:top-0 [&_th]:bg-gradient-to-b [&_th]:from-sky-50 [&_th]:to-indigo-100 [&_th]:px-3 [&_th]:py-2.5 [&_th]:text-left [&_th]:text-[15px] [&_th]:font-semibold [&_th]:text-slate-900">
+              <thead className="[&_th]:sticky [&_th]:top-0 [&_th]:bg-gradient-to-b [&_th]:from-sky-50 [&_th]:to-indigo-100 [&_th]:px-3 [&_th]:py-2.5 [&_th]:text-left [&_th]:text-[15px] [&_th]:font-semibold [&_th]:text-slate-900 dark:[&_th]:from-slate-800 dark:[&_th]:to-slate-800 dark:[&_th]:text-slate-100">
                 <tr>
                   <th className="w-10 text-center">Sr</th>
                   <th>Item name</th>
@@ -2996,7 +2996,7 @@ export function OrderFormPage() {
                       key={i.key}
                       className={cn(
                         'hover:bg-muted/40',
-                        editingItemKey === i.key && 'bg-sky-50 hover:bg-sky-50',
+                        editingItemKey === i.key && 'bg-sky-50 hover:bg-sky-50 dark:bg-sky-950 dark:hover:bg-sky-950',
                       )}
                     >
                       <td className="text-muted-foreground text-center tabular-nums">{idx + 1}</td>
@@ -3004,7 +3004,7 @@ export function OrderFormPage() {
                         {i.itemName || i.product || '—'}
                         {i.special && (
                           <span
-                            className="ml-2 inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700"
+                            className="ml-2 inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-400/15 dark:text-sky-200"
                             title={`Special rate applied — ${i.special}`}
                           >
                             <BadgePercent className="size-3" /> special
@@ -3012,7 +3012,7 @@ export function OrderFormPage() {
                         )}
                         {i.bookingId && (
                           <span
-                            className="ml-2 inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700"
+                            className="ml-2 inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-400/15 dark:text-sky-200"
                             title={`Drawn from booking ${i.bookingCode ?? ''} — rate frozen to the booking date`}
                           >
                             <PackageOpen className="size-3" /> {i.bookingCode ?? 'Booking'}
@@ -3116,7 +3116,7 @@ export function OrderFormPage() {
                 )}
               </tbody>
               {items.length > 0 && (
-                <tfoot className="[&_td]:sticky [&_td]:bottom-0 [&_td]:border-t-2 [&_td]:bg-slate-100 [&_td]:px-3 [&_td]:py-2 [&_td]:font-semibold">
+                <tfoot className="[&_td]:sticky [&_td]:bottom-0 [&_td]:border-t-2 [&_td]:bg-slate-100 [&_td]:px-3 [&_td]:py-2 [&_td]:font-semibold dark:[&_td]:bg-slate-800">
                   <tr>
                     <td colSpan={5} className="text-right">
                       Total
@@ -3158,7 +3158,7 @@ export function OrderFormPage() {
                   {items.map((i, idx) => (
                     <div
                       key={i.key}
-                      className={cn('px-2.5 py-2', editingItemKey === i.key && 'bg-sky-50')}
+                      className={cn('px-2.5 py-2', editingItemKey === i.key && 'bg-sky-50 dark:bg-sky-950')}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
@@ -3172,7 +3172,7 @@ export function OrderFormPage() {
                             <div className="mt-0.5 flex flex-wrap items-center gap-1">
                               {i.special && (
                                 <span
-                                  className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700"
+                                  className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-400/15 dark:text-sky-200"
                                   title={`Special rate applied — ${i.special}`}
                                 >
                                   <BadgePercent className="size-3" /> special
@@ -3180,7 +3180,7 @@ export function OrderFormPage() {
                               )}
                               {i.bookingId && (
                                 <span
-                                  className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700"
+                                  className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-400/15 dark:text-sky-200"
                                   title={`Drawn from booking ${i.bookingCode ?? ''} — rate frozen to the booking date`}
                                 >
                                   <PackageOpen className="size-3" /> {i.bookingCode ?? 'Booking'}
@@ -3350,7 +3350,7 @@ export function OrderFormPage() {
               type="button"
               onClick={() => (isEdit ? saveDraftAsQuotation() : persist('quotation'))}
               disabled={saving}
-              className="border border-red-200 bg-red-100 text-red-700 hover:bg-red-200"
+              className="border border-red-200 bg-red-100 text-red-700 hover:bg-red-200 dark:border-red-400/30 dark:bg-red-400/10 dark:text-red-200 dark:hover:bg-red-400/20"
               title={
                 isEdit
                   ? 'Save changes and create a quotation from this draft (Alt+Q)'

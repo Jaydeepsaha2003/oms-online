@@ -325,6 +325,7 @@ function DispatchCard({
         <div className="bg-muted/50 rounded-lg px-3 py-1.5">
           <p className="text-[14.5px] leading-snug font-semibold">
             {line.productName || line.product || '—'}
+            <BookingBadge line={line} />
           </p>
           {line.designType && line.designType.toUpperCase() !== 'NA' && (
             <p className="text-muted-foreground text-[12px]">{line.designType}</p>
@@ -511,7 +512,7 @@ const COLUMNS: DataColumn<PendingLineDto>[] = [
   {
     id: 'product',
     label: 'Product',
-    cell: (r) => <span className={TEXT_CELL}>{r.productName || r.product || '—'}</span>,
+    cell: (r) => <span className={TEXT_CELL}>{r.productName || r.product || '—'}<BookingBadge line={r} /></span>,
   },
   {
     id: 'design',
@@ -2288,3 +2289,12 @@ function DispatchSheet({
 }
 
 export default DispatchOrderPage;
+
+function BookingBadge({ line }: { line: PendingLineDto }) {
+  if (line.bookingId == null) return null;
+  return <span
+    className="ml-1.5 inline-flex items-center gap-1 whitespace-nowrap rounded border border-sky-200 bg-sky-50 px-1.5 py-0.5 align-middle text-[10px] font-semibold text-sky-800 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-200"
+    title={'Bag booking ' + (line.bookingCode || ('#' + line.bookingId))}
+    aria-label={'Bag booking ' + (line.bookingCode || ('#' + line.bookingId))}
+  ><Package className="size-3" aria-hidden="true" />Booking</span>;
+}

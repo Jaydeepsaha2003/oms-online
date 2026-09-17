@@ -474,6 +474,11 @@ export class DispatchService implements OnModuleInit {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
+    const bookingIds = [...new Set(items.flatMap((item) => item.bookingId == null ? [] : [item.bookingId]))];
+    const bookings = bookingIds.length ? await this.prisma.booking.findMany({
+      where: { id: { in: bookingIds } }, select: { id: true, code: true },
+    }) : [];
+    const bookingCodes = new Map(bookings.map((booking) => [booking.id, booking.code]));
     const lines: PendingLineDto[] = [];
     for (const it of items) {
       // "FULLY DISPATCH" is a shortcut for "this line is closed". A credit note
@@ -494,6 +499,8 @@ export class DispatchService implements OnModuleInit {
       if (remBags <= EPS && remPcs <= EPS && remKgs <= EPS && remBox <= EPS) continue;
       const due = it.order.completionDate;
       lines.push({
+        bookingId: it.bookingId,
+        bookingCode: it.bookingId == null ? null : bookingCodes.get(it.bookingId) ?? null,
         orderItemId: it.id,
         orderId: it.orderId,
         orderCode: it.order.code ?? this.orderCodeFor(it.orderId),

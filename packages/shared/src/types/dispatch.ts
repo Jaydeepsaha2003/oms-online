@@ -80,6 +80,9 @@ export interface DispatchHoldInfo {
 
 /** An order line with its still-to-dispatch (remaining) quantities. */
 export interface PendingLineDto {
+  /** Source reservation for this order line; absent for regular orders. */
+  bookingId?: number | null;
+  bookingCode?: string | null;
   orderItemId: number;
   /**
    * The challan this line is already billed on, when it is.

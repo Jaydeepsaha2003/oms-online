@@ -330,7 +330,10 @@ export function PhotoLightbox({
           e.stopPropagation();
           onClose();
         }}
-        className="fixed top-4 right-4 z-[10000] flex items-center gap-1.5 rounded-full bg-slate-900/90 px-3.5 py-1.5 text-xs font-bold text-white shadow-2xl ring-1 ring-white/30 transition-all hover:scale-105 hover:bg-rose-600 hover:ring-rose-400 cursor-pointer"
+        // The page is drawn under the status bar (viewport-fit=cover), so a flat
+        // top-4 puts this behind the notch / Dynamic Island on an iPhone — it was
+        // there, just unreachable. Same reason the top bar below is padded.
+        className="fixed top-[max(env(safe-area-inset-top),1rem)] right-4 z-[10000] flex items-center gap-1.5 rounded-full bg-slate-900/90 px-3.5 py-1.5 text-xs font-bold text-white shadow-2xl ring-1 ring-white/30 transition-all hover:scale-105 hover:bg-rose-600 hover:ring-rose-400 cursor-pointer"
         title="Close photo viewer (Esc)"
       >
         <X className="size-4" />
@@ -338,7 +341,10 @@ export function PhotoLightbox({
       </button>
 
       {/* Top bar */}
-      <div className="flex items-center justify-between gap-3 px-4 py-3 pr-28 text-white" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="flex items-center justify-between gap-3 px-4 pt-[max(env(safe-area-inset-top),0.75rem)] pr-28 pb-3 text-white"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold">{photo.title ?? photo.filename ?? `Photo ${index + 1}`}</p>
           <p className="text-xs text-white/60">
@@ -351,10 +357,11 @@ export function PhotoLightbox({
             download={photo.filename ?? true}
             target="_blank"
             rel="noreferrer"
-            className="flex size-9 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20"
+            className="flex h-9 items-center gap-1.5 rounded-full bg-white/10 px-3.5 text-xs font-bold text-white transition-colors hover:bg-white/20"
             title="Download / open"
           >
             <Download className="size-4" />
+            <span>Save</span>
           </a>
         </div>
       </div>
@@ -397,7 +404,10 @@ export function PhotoLightbox({
 
       {/* Filmstrip */}
       {photos.length > 1 && (
-        <div className="flex justify-center gap-2 overflow-x-auto px-4 py-3" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="flex justify-center gap-2 overflow-x-auto px-4 pt-3 pb-[max(env(safe-area-inset-bottom),0.75rem)]"
+          onClick={(e) => e.stopPropagation()}
+        >
           {photos.map((p, i) => (
             <button
               key={photoKeyOf(p)}
