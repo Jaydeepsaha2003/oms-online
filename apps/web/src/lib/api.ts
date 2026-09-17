@@ -1,4 +1,5 @@
 import axios, { AxiosError, type AxiosRequestConfig, type AxiosResponse } from 'axios';
+import { getDeviceId } from './device-id';
 import type { AuthResult, DuplicateDispatch, DuplicateMatch, UploadedFileDto } from '@oms/shared';
 import { recordNetEvent, shortUrl } from './net-diagnostics';
 import { useAuthStore } from '@/stores/auth-store';
@@ -121,6 +122,11 @@ export const api = axios.create({
 api.interceptors.request.use((config) => {
   const token = useAuthStore.getState().accessToken;
   if (token) config.headers.Authorization = `Bearer ${token}`;
+  // Which BROWSER this is. Sent on every call rather than only at sign-in,
+  // because the session row is also written when a token is refreshed — and
+  // that is the moment a long-running device would otherwise lose its identity.
+  const deviceId = getDeviceId();
+  if (deviceId) config.headers['X-Device-Id'] = deviceId;
   // Give every read its own abort handle unless the caller already supplied a
   // signal, so abortStalledReads() can cut it short on resume.
   const tracked = config as TrackedConfig;

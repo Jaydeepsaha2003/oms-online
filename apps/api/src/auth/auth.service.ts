@@ -18,6 +18,8 @@ import { flattenAccess, USER_ACCESS_INCLUDE, type UserWithAccess } from './user-
 export interface RequestMeta {
   ip?: string | null;
   userAgent?: string | null;
+  /** Stable per-browser id from the client (see `X-Device-Id`). */
+  deviceId?: string | null;
 }
 
 export interface IssuedSession {
@@ -232,6 +234,26 @@ export class AuthService {
     // remotely (the guard rejects a revoked sid).
     const refreshToken = randomBytes(48).toString('hex');
     const refreshExpiresAt = new Date(Date.now() + durationToMs(this.jwtCfg.refreshTtl));
+
+    /*
+     * A named device keeps its name across sign-ins.
+     *
+     * The name is stored per session row, and every sign-in mints a new one —
+     * so without this, naming a phone "Shop floor tablet" lasted until the next
+     * login and then read "Chrome on Android" again. Carrying the last name
+     * known for this browser forward is what makes naming a one-off act rather
+     * than a chore after every sign-in.
+     */
+    const inheritedName = meta.deviceId
+      ? (
+          await this.prisma.refreshToken.findFirst({
+            where: { userId: user.id, deviceId: meta.deviceId, deviceName: { not: null } },
+            orderBy: { createdAt: 'desc' },
+            select: { deviceName: true },
+          })
+        )?.deviceName ?? null
+      : null;
+
     const session = await this.prisma.refreshToken.create({
       data: {
         userId: user.id,
@@ -239,6 +261,8 @@ export class AuthService {
         expiresAt: refreshExpiresAt,
         ip: meta.ip ?? null,
         userAgent: meta.userAgent ?? null,
+        deviceId: meta.deviceId ?? null,
+        deviceName: inheritedName,
       },
     });
 

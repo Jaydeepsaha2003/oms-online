@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Post, Req, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Req, Res } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
@@ -10,6 +10,7 @@ import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import type { JwtConfig } from '../config/configuration';
 import { AuthService, type RequestMeta } from './auth.service';
 import { SessionsService } from './sessions.service';
+import { RenameSessionDto } from './dto/rename-session.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { LoginDto } from './dto/login.dto';
 import { PinLoginDto } from './dto/pin-login.dto';
@@ -124,6 +125,17 @@ export class AuthController {
   }
 
   /** Sign one of my devices out. */
+  /** Name THIS device, so My Devices can tell it from an identical one. */
+  @Patch('sessions/:id/name')
+  @ApiOperation({ summary: 'Name one of my devices.' })
+  renameSession(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: RenameSessionDto,
+  ) {
+    return this.sessions.rename(user.id, id, dto.name ?? null);
+  }
+
   @Delete('sessions/:id')
   @ApiBearerAuth()
   @HttpCode(200)
@@ -148,7 +160,15 @@ export class AuthController {
       req.ip ||
       req.socket?.remoteAddress ||
       null;
-    return { ip, userAgent: req.headers['user-agent'] ?? null };
+    // The browser's own stable id (see apps/web/src/lib/device-id.ts). A header
+    // rather than a body field so it rides along with refreshes too, which is
+    // where a long-lived device would otherwise lose its identity.
+    const deviceId = req.headers['x-device-id'];
+    return {
+      ip,
+      userAgent: req.headers['user-agent'] ?? null,
+      deviceId: typeof deviceId === 'string' && deviceId.trim() ? deviceId.trim().slice(0, 64) : null,
+    };
   }
 
   private setRefreshCookie(res: Response, token: string, expires: Date): void {

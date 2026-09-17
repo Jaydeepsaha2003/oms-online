@@ -136,10 +136,27 @@ model RefreshToken {
   createdAt DateTime  @default(now())
   userAgent String?
   ip        String?
+  /// Stable per-browser id, minted by the client and kept in its localStorage.
+  ///
+  /// What makes a device ONE device. Sessions used to be grouped by parsed
+  /// user-agent + IP, and the IP moves — DHCP handing out a new address made
+  /// the same phone appear as a new device every few days, which is what grew
+  /// the list. Null for a browser that cannot store one (private mode), where
+  /// the old browser+IP grouping still applies.
+  deviceId   String?
+  /// What the person calls this device ("Shop floor tablet", "Jaydeep phone").
+  ///
+  /// Nothing in the browser can supply it. A user-agent gives at best the
+  /// browser and the OS — Chrome on Android now reports its model as the literal
+  /// "K", and iOS never reported one — so every Android phone in a shop looked
+  /// identical and the IP address was the only thing telling them apart. A name
+  /// the user sets is the only handle that actually identifies a device.
+  deviceName String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([deviceId])
   @@map("refresh_tokens")
 }
 

@@ -64,7 +64,12 @@ export interface SessionDto {
   /** 'mobile' | 'tablet' | 'desktop' | 'unknown'. */
   deviceType: string;
   /** e.g. "Chrome on Windows". */
+  /** What the derived label should be shown AS: the name the user gave this
+   *  device, falling back to "Chrome on Android" and the like. */
   deviceLabel: string;
+  /** The user-set name alone, or null when this device has never been named —
+   *  lets the UI offer "name this device" rather than a rename of a guess. */
+  deviceName: string | null;
   browser: string;
   os: string;
   /** This session belongs to the request that asked (don't surprise-logout yourself). */

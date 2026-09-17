@@ -72,7 +72,7 @@ export function parseUserAgent(ua: string | null | undefined): {
 
 /** Map a refresh-token row → SessionDto for the UI. */
 export function toSessionDto(
-  row: { id: string; ip: string | null; userAgent: string | null; createdAt: Date; expiresAt: Date },
+  row: { id: string; ip: string | null; userAgent: string | null; deviceName?: string | null; createdAt: Date; expiresAt: Date },
   currentSid?: string,
 ): SessionDto {
   const ip = normaliseIp(row.ip);
@@ -82,7 +82,10 @@ export function toSessionDto(
     ip,
     location: describeLocation(ip),
     deviceType: ua.deviceType,
-    deviceLabel: ua.label,
+    // The name wins when there is one: it is the only thing that actually
+    // distinguishes two phones running the same browser on the same OS.
+    deviceLabel: (row.deviceName ?? '').trim() || ua.label,
+    deviceName: (row.deviceName ?? '').trim() || null,
     browser: ua.browser,
     os: ua.os,
     current: !!currentSid && row.id === currentSid,

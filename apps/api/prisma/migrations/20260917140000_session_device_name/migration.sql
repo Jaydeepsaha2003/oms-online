@@ -1,0 +1,11 @@
+-- Let a device carry a NAME, so My Devices can tell two identical phones apart.
+--
+-- The list could only ever show "Chrome on Android" and an IP address, because
+-- that is all a user-agent offers: Chrome on Android reports its model as the
+-- literal "K", and iOS never reported one at all. Every Android phone in the
+-- shop therefore looked the same, and the IP -- which moves with DHCP -- was
+-- doing the work of identifying the device.
+--
+-- Nullable with no backfill: an unnamed session keeps showing its derived
+-- label, exactly as before.
+ALTER TABLE "refresh_tokens" ADD COLUMN "deviceName" TEXT;

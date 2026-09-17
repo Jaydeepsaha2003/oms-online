@@ -38,7 +38,14 @@ export class SessionsService {
         kept.push(row);
         continue;
       }
-      const key = `${parseUserAgent(row.userAgent).label}|${normaliseIp(row.ip) ?? ''}`;
+      /*
+       * The browser's own id when it has one, and only then the old guess.
+       *
+       * `label|ip` made the same phone a new device every time DHCP moved it,
+       * and made two identical handsets on one address look like one. The id
+       * is stable across both.
+       */
+      const key = row.deviceId ? `id:${row.deviceId}` : `${parseUserAgent(row.userAgent).label}|${normaliseIp(row.ip) ?? ''}`;
       const existingIndex = indexByDevice.get(key);
       if (existingIndex === undefined) {
         indexByDevice.set(key, kept.length);
@@ -51,6 +58,44 @@ export class SessionsService {
   }
 
   /** Revoke a single device's session (immediate logout via sid enforcement). */
+  /**
+   * Name a device.
+   *
+   * Only ever the caller's OWN session, and only one they still hold: a name is
+   * a label on someone's own phone, not something to be set on another person's.
+   *
+   * Applied to every live session that came from the SAME browser + OS + IP, not
+   * just the one row — `list` already collapses those into one line (see
+   * dedupeByDevice), so naming the row behind today's line and leaving its
+   * siblings unnamed would make the name appear to come and go as different
+   * rows won the dedupe.
+   */
+  async rename(userId: string, sessionId: string, name: string | null): Promise<SessionDto[]> {
+    const token = await this.prisma.refreshToken.findUnique({ where: { id: sessionId } });
+    if (!token || token.userId !== userId) throw new NotFoundException('Session not found.');
+    const clean = (name ?? '').trim().slice(0, 60) || null;
+
+    /*
+     * Name every row this device owns, so the name survives a re-login.
+     *
+     * With a device id that is simply "every row carrying it" — which also
+     * means a name given once is inherited by every later sign-in from the same
+     * browser, whatever its address by then. Without one, fall back to the old
+     * browser+IP sibling match, which is the best that can be done.
+     */
+    if (token.deviceId) {
+      await this.prisma.refreshToken.updateMany({ where: { userId, deviceId: token.deviceId }, data: { deviceName: clean } });
+    } else {
+      const ua = parseUserAgent(token.userAgent);
+      const siblings = await this.prisma.refreshToken.findMany({
+        where: { userId, revokedAt: null, expiresAt: { gt: new Date() }, ip: token.ip },
+      });
+      const ids = siblings.filter((r) => parseUserAgent(r.userAgent).label === ua.label).map((r) => r.id);
+      await this.prisma.refreshToken.updateMany({ where: { id: { in: ids.length ? ids : [sessionId] } }, data: { deviceName: clean } });
+    }
+    return this.list(userId, sessionId);
+  }
+
   async revoke(userId: string, sessionId: string): Promise<{ id: string }> {
     const token = await this.prisma.refreshToken.findUnique({ where: { id: sessionId } });
     if (!token || token.userId !== userId) throw new NotFoundException('Session not found.');
