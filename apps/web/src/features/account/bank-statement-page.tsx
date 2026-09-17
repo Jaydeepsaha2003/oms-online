@@ -7,6 +7,9 @@ import {
   FileSpreadsheet,
   Landmark,
   Loader2,
+  PanelRightClose,
+  Pencil,
+  PanelRightOpen,
   Trash2,
   TriangleAlert,
   Upload,
@@ -209,8 +212,44 @@ export function BankStatementPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId]);
 
+  /*
+   * Two different questions, so two pieces of state.
+   *
+   * `selectedParty` is a FILTER the user chose: show me only this party's lines.
+   * `workingParty` is "whose figures is the panel on the right showing".
+   *
+   * They used to be one. Assigning set it so the working appeared straight away
+   * — which also silently filtered the list down to the party just assigned, so
+   * every other line vanished the moment you pressed Assign and you had to
+   * notice the dropdown had changed to get back. Assigning now fills the panel
+   * and leaves the list exactly where it was.
+   */
   const [selectedParty, setSelectedParty] = useState<number | undefined>(undefined);
-  const { data: partyView } = useBankParty(runId, selectedParty);
+  const [workingParty, setWorkingParty] = useState<number | undefined>(undefined);
+  /*
+   * The party working panel is OFF by default, and the choice is remembered.
+   *
+   * The job on this screen is going down the lines and putting a party against
+   * each one; the before/after is a thing you consult occasionally, not while
+   * you work. Kept on, it took 360px from the lines permanently. Off, the lines
+   * have the full width, and it is one click away when a figure needs checking.
+   */
+  const [showWorking, setShowWorking] = useState(() => {
+    try {
+      return localStorage.getItem('oms.bank-recon.working') === '1';
+    } catch {
+      return false; // private mode — the default stands
+    }
+  });
+  const toggleWorking = (next: boolean) => {
+    setShowWorking(next);
+    try {
+      localStorage.setItem('oms.bank-recon.working', next ? '1' : '0');
+    } catch {
+      /* nothing to do — it just will not be remembered */
+    }
+  };
+  const { data: partyView } = useBankParty(runId, workingParty);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [assignTo, setAssignTo] = useState('');
 
@@ -421,21 +460,34 @@ export function BankStatementPage() {
             the same money in the reconciliation
             {anyPosted ? ', and at least one has already been posted to the ledger — importing it would create a second receipt.' : '.'}
           </p>
-          <div className="max-h-52 overflow-auto rounded-[4px] border">
-            <table className="w-full text-[11.5px]">
-              <thead className="bg-muted/60">
+          {/*
+            `table-fixed` with declared widths, and the narration taking the
+            slack. Auto layout let the narration and the "In file / held" header
+            demand their natural width, which pushed the table past the dialog
+            and put a horizontal scrollbar under a list you are supposed to read
+            at a glance — while the header itself wrapped onto three lines.
+          */}
+          <div className="max-h-60 overflow-y-auto rounded-[4px] border">
+            <table className="w-full table-fixed text-[11.5px]">
+              <colgroup>
+                <col className="w-[5.5rem]" />
+                <col />
+                <col className="w-[6rem]" />
+                <col className="w-[7rem]" />
+              </colgroup>
+              <thead className="bg-muted/60 sticky top-0">
                 <tr>
                   <th className="px-2 py-1 text-left font-bold">Date</th>
                   <th className="px-2 py-1 text-left font-bold">Narration</th>
                   <th className="px-2 py-1 text-right font-bold">Amount</th>
-                  <th className="px-2 py-1 text-right font-bold">In file / held</th>
+                  <th className="px-2 py-1 text-right font-bold whitespace-nowrap">In file / held</th>
                 </tr>
               </thead>
               <tbody>
                 {res.duplicates.slice(0, 40).map((d, i) => (
                   <tr key={i} className={cn('border-t', d.posted && 'bg-rose-50 dark:bg-rose-500/10')}>
                     <td className="px-2 py-1 whitespace-nowrap tabular-nums">{formatDate(d.txnDate)}</td>
-                    <td className="max-w-[220px] truncate px-2 py-1" title={d.narration}>
+                    <td className="truncate px-2 py-1" title={d.narration}>
                       {d.narration}
                       {d.posted && <span className="ml-1 font-bold text-rose-700">posted</span>}
                     </td>
@@ -443,7 +495,7 @@ export function BankStatementPage() {
                     <td className="px-2 py-1 text-right tabular-nums">
                       {d.incoming} / {d.onRecord}
                       {d.incoming > d.onRecord && (
-                        <span className="ml-1 font-bold text-emerald-700" title="More copies in this file than are held — the extra is new money">
+                        <span className="ml-1 font-bold whitespace-nowrap text-emerald-700" title="More copies in this file than are held — the extra is new money">
                           +{d.incoming - d.onRecord} new
                         </span>
                       )}
@@ -463,6 +515,8 @@ export function BankStatementPage() {
       ),
       confirmText: 'Skip the ones already held',
       cancelText: 'Cancel the upload',
+      // This one carries a table, not a sentence.
+      wide: true,
     });
     if (ok) submitRun('skip');
   };
@@ -534,13 +588,28 @@ export function BankStatementPage() {
           );
           setChecked(new Set());
           setAssignTo('');
-          // Show the working straight away: what was just assigned is exactly
-          // when someone wants to see whether it matched and what it changes.
-          setSelectedParty(id);
+          // Show the working straight away — what was just assigned is exactly
+          // when someone wants to see whether it matched and what it changes —
+          // WITHOUT touching the list they are working through.
+          setWorkingParty(id);
         },
         onError: (e) => toast.error(getApiErrorMessage(e, 'Could not assign')),
       },
     );
+  };
+
+  /**
+   * Put one line up for review: tick only it, and load its current party into
+   * the assign box so the existing answer can be seen before it is changed.
+   *
+   * It routes through the SAME assign bar rather than writing straight away —
+   * that bar is where "remember this narration" is chosen, and a correction is
+   * precisely when that choice matters most.
+   */
+  const reviewParty = (row: BankStatementRowDto) => {
+    setChecked(new Set([row.id]));
+    setAssignTo(row.customerName ?? '');
+    setWorkingParty(row.customerId ?? undefined);
   };
 
   const doIgnore = (ignored: boolean) => {
@@ -1007,13 +1076,19 @@ export function BankStatementPage() {
             </div>
           </section>
 
-          <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[1fr_360px]">
+          <div className={cn('grid min-h-0 flex-1 gap-3', showWorking && 'lg:grid-cols-[1fr_360px]')}>
             {/* Lines */}
             <section className={cn(PANEL, 'flex min-h-0 flex-col')}>
               <div className="flex flex-wrap items-center gap-2 border-b border-amber-200 p-2.5 dark:border-amber-400/20">
                 <NativeSelect
                   value={selectedParty ? String(selectedParty) : ''}
-                  onChange={(v) => setSelectedParty(v ? Number(v) : undefined)}
+                  onChange={(v) => {
+                    const id = v ? Number(v) : undefined;
+                    setSelectedParty(id);
+                    // Picking a party here means "show me this party", so the
+                    // working follows the filter. Only the reverse was wrong.
+                    setWorkingParty(id);
+                  }}
                   options={[
                     { value: '', label: `All lines (${rows.length})` },
                     ...(runResult?.parties ?? []).map((p) => ({
@@ -1023,6 +1098,16 @@ export function BankStatementPage() {
                   ]}
                   className={cn(CONTROL, 'min-w-[260px] flex-1')}
                 />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="ml-auto h-8 shrink-0 rounded-[4px] text-[12px] font-semibold"
+                  onClick={() => toggleWorking(!showWorking)}
+                  title="The before / after figures for the party you pick"
+                >
+                  {showWorking ? <PanelRightClose className="size-3.5" /> : <PanelRightOpen className="size-3.5" />}
+                  {showWorking ? 'Hide working' : 'Show working'}
+                </Button>
                 {/* Status filter. The one that matters is "Not required": a line
                     left out of the reconciliation is otherwise unfindable in a
                     list this long, and undoing it would be impossible. */}
@@ -1135,16 +1220,27 @@ export function BankStatementPage() {
                         </td>
                       </tr>
                     ) : (
-                      shown.map((r) => <LineRow key={r.id} row={r} checked={checked.has(r.id)} onToggle={() => toggleRow(r.id)} selectable={isDraft && canEdit} vouchers={runResult?.receiptVouchers ?? {}} />)
+                      shown.map((r) => (
+                        <LineRow
+                          key={r.id}
+                          row={r}
+                          checked={checked.has(r.id)}
+                          onToggle={() => toggleRow(r.id)}
+                          selectable={isDraft && canEdit}
+                          vouchers={runResult?.receiptVouchers ?? {}}
+                          onChangeParty={isDraft && canEdit ? reviewParty : undefined}
+                        />
+                      ))
                     )}
                   </tbody>
                 </table>
               </div>
             </section>
 
-            {/* Before / after for the selected party */}
+            {/* Before / after for the selected party — off unless asked for. */}
+            {showWorking && (
             <section className={cn(PANEL, 'min-h-0 overflow-auto p-3')}>
-              {!selectedParty ? (
+              {!workingParty ? (
                 <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-[12.5px]">
                   <Landmark className="size-8 opacity-30" />
                   <p>Pick a customer above to see what Process would do to them.</p>
@@ -1176,8 +1272,17 @@ export function BankStatementPage() {
                     )}
                   </div>
 
-                  {/* The before / after the whole screen exists for. */}
-                  <div className="grid grid-cols-2 gap-2">
+                  {/*
+                    Before and after, stacked.
+                    
+                    Side by side gave each card about 165px in this 360px panel,
+                    which is not enough for "Outstanding (bank)" and a figure like
+                    1,62,934 on one line — so every label broke across two lines
+                    and the pair was harder to compare than one under the other.
+                    Full width, one above the other, each row fits and the two
+                    columns of figures line up vertically for comparison.
+                  */}
+                  <div className="grid gap-2">
                     <BalanceCard title="Before" b={partyView.before} />
                     <BalanceCard title="After Process" b={partyView.after} highlight={partyView.shortfall > 0} />
                   </div>
@@ -1197,6 +1302,7 @@ export function BankStatementPage() {
                 </div>
               )}
             </section>
+            )}
           </div>
         </>
       )}
@@ -1207,10 +1313,10 @@ export function BankStatementPage() {
 function Row({ label, value, tone, strong, hint }: { label: string; value: string; tone?: 'good' | 'bad' | 'warn'; strong?: boolean; hint?: string }) {
   return (
     <div className="flex items-baseline justify-between gap-3 text-[12.5px]" title={hint}>
-      <span className="text-muted-foreground">{label}</span>
+      <span className="text-muted-foreground min-w-0 truncate">{label}</span>
       <span
         className={cn(
-          'tabular-nums',
+          'shrink-0 tabular-nums whitespace-nowrap',
           strong ? 'font-extrabold' : 'font-semibold',
           tone === 'good' && 'text-emerald-700 dark:text-emerald-400',
           tone === 'bad' && 'text-rose-700 dark:text-rose-400',
@@ -1236,7 +1342,7 @@ function BalanceCard({ title, b, highlight }: { title: string; b: { receiptCount
   );
 }
 
-function LineRow({ row, checked, onToggle, selectable, vouchers }: { row: BankStatementRowDto; checked: boolean; onToggle: () => void; selectable: boolean; vouchers: Record<string, string> }) {
+function LineRow({ row, checked, onToggle, selectable, vouchers, onChangeParty }: { row: BankStatementRowDto; checked: boolean; onToggle: () => void; selectable: boolean; vouchers: Record<string, string>; onChangeParty?: (row: BankStatementRowDto) => void }) {
   return (
     <tr
       className={cn(
@@ -1303,8 +1409,39 @@ function LineRow({ row, checked, onToggle, selectable, vouchers }: { row: BankSt
         )}
       </td>
       <td className={cn(TD, NUM, 'font-bold')}>{money0(row.amount)}</td>
-      <td className={TD}>
-        {row.customerName ? (
+      {/*
+        The party is editable in place.
+        
+        Changing one that was already set meant finding it again, ticking it and
+        using the bar at the top — so a party worked out automatically, which is
+        exactly the kind most worth a second look, was the most awkward to
+        correct. Clicking it here arms that same bar for this one line, so the
+        "remember this narration" choice still gets made deliberately rather
+        than being assumed.
+      */}
+      <td className={TD} onClick={(e) => e.stopPropagation()}>
+        {onChangeParty ? (
+          <button
+            type="button"
+            onClick={() => onChangeParty(row)}
+            className="group/party -mx-1 flex max-w-full items-center gap-1 rounded-[3px] px-1 py-0.5 text-left hover:bg-indigo-50 dark:hover:bg-indigo-500/15"
+            title={row.customerName ? 'Change the party on this line' : 'Assign a party to this line'}
+          >
+            {row.customerName ? (
+              <span className="font-semibold">
+                {row.customerName}
+                {row.partySource && row.partySource !== 'MANUAL' && (
+                  <span className="text-muted-foreground ml-1 text-[10.5px] font-medium" title="Worked out automatically — confirm it if unsure">
+                    (auto)
+                  </span>
+                )}
+              </span>
+            ) : (
+              <span className="text-muted-foreground">—</span>
+            )}
+            <Pencil className="text-muted-foreground size-3 shrink-0 opacity-0 transition-opacity group-hover/party:opacity-100" />
+          </button>
+        ) : row.customerName ? (
           <span className="font-semibold">
             {row.customerName}
             {row.partySource && row.partySource !== 'MANUAL' && (

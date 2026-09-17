@@ -18,6 +18,12 @@ export interface ConfirmOptions {
   destructive?: boolean;
   /** Focus the confirm button on open, so Enter proceeds (default focuses Cancel). */
   autoFocusConfirm?: boolean;
+  /**
+   * A roomier dialog, for a confirmation that has to show a TABLE rather than a
+   * sentence. The default `md` is right for prose and squeezes a grid into a
+   * horizontal scrollbar.
+   */
+  wide?: boolean;
 }
 
 type ConfirmFn = (options?: ConfirmOptions) => Promise<boolean>;
@@ -54,7 +60,7 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
       {children}
       <Dialog open={open} onOpenChange={(o) => (o ? setOpen(true) : settle(false))}>
         <DialogContent
-          className="sm:max-w-md"
+          className={options.wide ? "sm:max-w-3xl" : "sm:max-w-md"}
           // Opt-in: land focus on the confirm button so Enter proceeds.
           onOpenAutoFocus={
             options.autoFocusConfirm

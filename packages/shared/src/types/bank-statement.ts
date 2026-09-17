@@ -579,8 +579,21 @@ export function narrationMatch(narration: string, partyName: string): NarrationM
   const party = narrationTokens(partyName);
   if (!words.length || !party.length) return { score: 0, matched: 0, distinctive: false };
 
+  /*
+   * A trailing S is the same word.
+   *
+   * The prefix rule below it only applies when BOTH words are six letters or
+   * more, so "METAL" and "METALS" were different words — and a party called
+   * "MINAL METAL" scored 1 of 2 on a narration reading "MINAL METALS", which is
+   * under the threshold. Every line from them sat unassigned for the sake of one
+   * letter. The stem must be at least four letters, so this cannot quietly pair
+   * up short words that merely end in S.
+   */
+  const samePlural = (w: string, p: string) => p.length >= 4 && (w === `${p}S` || p === `${w}S`);
   const hits = party.filter((p) =>
-    words.some((w) => w === p || (p.length >= 6 && w.length >= 6 && (w.startsWith(p) || p.startsWith(w)))),
+    words.some(
+      (w) => w === p || samePlural(w, p) || (p.length >= 6 && w.length >= 6 && (w.startsWith(p) || p.startsWith(w))),
+    ),
   );
   return {
     score: hits.length / party.length,
