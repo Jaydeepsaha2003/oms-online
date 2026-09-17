@@ -14,11 +14,23 @@ import { http } from '@/lib/api';
 
 const KEY = ['bank-statement'] as const;
 
-/** The column layout last used for this bank account, to pre-fill the mapping. */
-export function useColumnPreset(bankName: string | undefined) {
+/**
+ * The column layout to pre-fill the mapping with: what this bank used last
+ * time, or failing that what any statement with THESE columns used last time.
+ *
+ * The headers are sent raw and pipe-joined; the server decides what counts as
+ * the same layout, so that rule lives in one place next to what stores it.
+ * Disabled until a file has actually been read — asking with no columns could
+ * only ever answer on the bank name, which is the case this exists to cover.
+ */
+export function useColumnPreset(bankName: string | undefined, columns: readonly string[] = []) {
+  const joined = columns.join('|');
   return useQuery({
-    queryKey: [...KEY, 'preset', bankName ?? ''],
-    queryFn: () => http.get<{ map: BankStatementColumnMap | null }>('/bank-statement/column-preset', { params: { bankName: bankName ?? '' } }),
+    queryKey: [...KEY, 'preset', bankName ?? '', joined],
+    queryFn: () =>
+      http.get<{ map: BankStatementColumnMap | null; from: 'bank' | 'columns' | null }>('/bank-statement/column-preset', {
+        params: { bankName: bankName ?? '', columns: joined || undefined },
+      }),
     staleTime: 0,
   });
 }

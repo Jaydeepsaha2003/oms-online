@@ -2447,7 +2447,17 @@ model BankStatementColumnPreset {
   bankName  String   @unique
   /// BankStatementColumnMap as JSON.
   mapJson   String
+  /// Fingerprint of the header row this mapping was made against — the sheet's
+  /// own column names, normalised and sorted.
+  ///
+  /// The bank name alone was a fragile key: it is typed by hand, so "AXIS" and
+  /// "AXIS BANK" are different banks as far as the lookup is concerned, and
+  /// leaving it blank put every bank in one bucket that each upload overwrote.
+  /// The columns are a property of the FILE, so the same export recognises
+  /// itself however the box above it was filled in.
+  columnsKey String?
   updatedAt DateTime @updatedAt
 
+  @@index([columnsKey])
   @@map("bank_statement_column_preset")
 }

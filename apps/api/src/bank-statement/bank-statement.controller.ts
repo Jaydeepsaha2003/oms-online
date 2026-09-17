@@ -24,8 +24,11 @@ export class BankStatementController {
   /** The column layout last used for this bank account, to pre-fill the mapping. */
   @Get('column-preset')
   @Permissions(perm(R, ACTIONS.VIEW))
-  columnPreset(@Query('bankName') bankName?: string) {
-    return this.svc.columnPreset(bankName);
+  columnPreset(@Query('bankName') bankName?: string, @Query('columns') columns?: string) {
+    // `columns` is the sheet's header row, pipe-joined. Sent raw rather than
+    // fingerprinted by the browser so the one algorithm that decides what
+    // counts as "the same layout" lives on the server, next to what stores it.
+    return this.svc.columnPreset(bankName, columns ? columns.split('|') : undefined);
   }
 
   @Get('runs')

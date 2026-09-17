@@ -158,7 +158,7 @@ export function BankStatementPage() {
   const [headerRow, setHeaderRow] = useState(0);
 
   const { data: banks } = useActiveBankAccounts();
-  const { data: preset } = useColumnPreset(bankName);
+  const { data: preset } = useColumnPreset(bankName, columns);
   // Historical bank credits can belong to parties that are now inactive.
   const { data: customerList } = useCustomers({ page: 1, pageSize: 2000, status: 'ALL' });
   const customers = useMemo(
@@ -771,7 +771,11 @@ export function BankStatementPage() {
               <p className="mb-2 text-[12px] font-bold text-indigo-900 dark:text-indigo-200">
                 Which column is which?{' '}
                 <span className="font-medium opacity-80">
-                  {preset?.map ? 'Filled in from the last statement for this bank.' : 'Best guess from the headers — check it.'}
+                  {preset?.from === 'bank'
+                    ? 'Filled in from the last statement for this bank.'
+                    : preset?.from === 'columns'
+                      ? 'Filled in from the last statement that had these same columns.'
+                      : 'Best guess from the headers — check it.'}
                 </span>
               </p>
               <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">

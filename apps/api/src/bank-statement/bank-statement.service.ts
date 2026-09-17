@@ -39,6 +39,20 @@ const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
  *  toISOString() would shift them back a day anywhere east of UTC. */
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
+/**
+ * Every column name present across the sheet's rows.
+ *
+ * The union rather than the first row's keys: a row whose trailing cells are
+ * empty can arrive without those keys at all, and reading the header off that
+ * one row alone would fingerprint the same statement differently depending on
+ * which row happened to be first.
+ */
+function columnsOf(rows: readonly Record<string, unknown>[]): string[] {
+  const seen = new Set<string>();
+  for (const r of rows) for (const k of Object.keys(r ?? {})) seen.add(k);
+  return [...seen];
+}
+
 @Injectable()
 export class BankStatementService {
   private readonly logger = new Logger(BankStatementService.name);
@@ -50,22 +64,76 @@ export class BankStatementService {
 
   /* ── Column mapping memory ─────────────────────────────────────────────── */
 
-  async columnPreset(bankName: string | undefined): Promise<{ map: BankStatementColumnMap | null }> {
-    const row = await this.prisma.bankStatementColumnPreset.findUnique({ where: { bankName: (bankName ?? '').trim() } });
-    if (!row) return { map: null };
-    try {
-      return { map: JSON.parse(row.mapJson) as BankStatementColumnMap };
-    } catch {
-      return { map: null };
-    }
+  /**
+   * A sheet's header row, reduced to something stable to look up by.
+   *
+   * Normalised (case and punctuation dropped) and SORTED, so the same export
+   * matches even if the bank reorders its columns or changes their casing
+   * between downloads. Blank headers are dropped — spreadsheet exports are full
+   * of unnamed trailing columns, and letting those into the key would make two
+   * downloads of the same statement look like different layouts.
+   */
+  private columnsKeyOf(columns: readonly string[]): string | null {
+    const cleaned = [...new Set(columns.map((c) => (c ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')).filter(Boolean))].sort();
+    // One or two columns is not a pattern — it would match half the statements
+    // ever uploaded. Below that, only the bank name is trusted.
+    return cleaned.length >= 3 ? cleaned.join('|') : null;
   }
 
-  private async rememberPreset(bankName: string, map: BankStatementColumnMap): Promise<void> {
-    const key = (bankName ?? '').trim();
+  /**
+   * The mapping to offer for this upload: what this BANK used last time, and
+   * failing that, what any statement with THESE COLUMNS used last time.
+   *
+   * Bank name first because it is the more specific of the two — someone who
+   * names the bank has told us which of several layouts they mean. The column
+   * fingerprint is the fallback that makes the memory work at all when the box
+   * was left blank or filled in differently from last time.
+   */
+  async columnPreset(bankName: string | undefined, columns?: readonly string[]): Promise<{ map: BankStatementColumnMap | null; from: 'bank' | 'columns' | null }> {
+    const name = (bankName ?? '').trim();
+    const parse = (json: string): BankStatementColumnMap | null => {
+      try {
+        return JSON.parse(json) as BankStatementColumnMap;
+      } catch {
+        return null;
+      }
+    };
+
+    if (name) {
+      const byName = await this.prisma.bankStatementColumnPreset.findUnique({ where: { bankName: name } });
+      const map = byName && parse(byName.mapJson);
+      if (map) return { map, from: 'bank' };
+    }
+
+    const key = this.columnsKeyOf(columns ?? []);
+    if (key) {
+      // Most recent wins: two banks CAN share a layout, and the one used last is
+      // the better guess.
+      const byColumns = await this.prisma.bankStatementColumnPreset.findFirst({
+        where: { columnsKey: key },
+        orderBy: { updatedAt: 'desc' },
+      });
+      const map = byColumns && parse(byColumns.mapJson);
+      if (map) return { map, from: 'columns' };
+    }
+
+    return { map: null, from: null };
+  }
+
+  /**
+   * Remember this mapping against both keys.
+   *
+   * With no bank name the row is filed under a synthetic one derived from the
+   * fingerprint, so two unnamed banks no longer overwrite each other in a single
+   * blank-named bucket — which is what the old `''` key did.
+   */
+  private async rememberPreset(bankName: string, map: BankStatementColumnMap, columns: readonly string[]): Promise<void> {
+    const columnsKey = this.columnsKeyOf(columns);
+    const name = (bankName ?? '').trim() || (columnsKey ? `#cols:${columnsKey.slice(0, 80)}` : '');
     await this.prisma.bankStatementColumnPreset.upsert({
-      where: { bankName: key },
-      create: { bankName: key, mapJson: JSON.stringify(map) },
-      update: { mapJson: JSON.stringify(map) },
+      where: { bankName: name },
+      create: { bankName: name, mapJson: JSON.stringify(map), columnsKey },
+      update: { mapJson: JSON.stringify(map), columnsKey },
     });
   }
 
@@ -302,7 +370,10 @@ export class BankStatementService {
       // against it without re-deriving one for every stored row.
       data: fresh.map((p) => ({ ...p, runId: run.id, rowKey: statementRowKey(p.txnDate, p.amount, p.narration) })),
     });
-    await this.rememberPreset(dto.bankName?.trim() ?? '', map);
+    // The header row comes off the sheet itself rather than being sent
+    // separately: the rows are already `{ column: cell }`, so their keys ARE
+    // the columns and a client cannot get them wrong.
+    await this.rememberPreset(dto.bankName?.trim() ?? '', map, columnsOf(dto.rows));
 
     await this.attributeParties(run.id);
     await this.rematch(run.id);
