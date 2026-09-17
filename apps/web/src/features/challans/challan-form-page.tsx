@@ -1051,14 +1051,25 @@ export function ChallanFormPage() {
 
             {/* Keep the 2x2 document panel left of its related series action. */}
             <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-start">
-              <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border bg-border/70 sm:w-[26rem] dark:bg-white/10">
+              {/*
+                Wider than it was (26rem), because one of these four cells has to
+                hold a prefix picker AND the number beside it. At the old width
+                that cell gave the number about seven characters of room, so
+                "SSS/26-27/687" was cut off in the one field people read back to
+                a customer. The four cells stay equal — the grid gives each an
+                even half — so widening the panel widens all of them together.
+              */}
+              <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border bg-border/70 sm:w-[32rem] dark:bg-white/10">
                 <MetaCell label="Invoice No" icon={Hash}>
                   <div className="flex items-center gap-1.5">
                     {!isEdit && (draft?.prefixes.length ?? 0) > 1 && (
                       <select
                         value={prefix}
                         onChange={(e) => setPrefix(e.target.value)}
-                        className="border-input bg-background h-8 rounded-[4px] border px-1.5 text-[13px] font-semibold"
+                        // Fixed and non-shrinking: the prefix is three or four
+                        // characters, and letting it flex took the width from
+                        // the number next to it.
+                        className="border-input bg-background h-8 w-[4.5rem] shrink-0 rounded-[4px] border px-1.5 text-[13px] font-semibold"
                         title="Challan prefix"
                       >
                         {draft?.prefixes.map((p) => (
@@ -1073,7 +1084,7 @@ export function ChallanFormPage() {
                       onChange={(e) => setManualCode(e.target.value.toUpperCase())}
                       placeholder={previewCode}
                       title="Editable — clear to go back to the auto-assigned number"
-                      className="bg-background h-8 w-full rounded-[4px] text-[13px] font-bold"
+                      className="bg-background h-8 w-full min-w-0 flex-1 rounded-[4px] text-[13px] font-bold"
                     />
                   </div>
                 </MetaCell>
