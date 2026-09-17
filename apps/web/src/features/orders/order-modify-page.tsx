@@ -266,6 +266,7 @@ export function OrderModifyPage() {
   const [agent, setAgent] = useState(() => seed('agent'));
   const [product, setProduct] = useState(() => seed('product'));
   const [design, setDesign] = useState(() => seed('design'));
+  const [pCategory, setPCategory] = useState(() => seed('pCategory'));
   const [priority, setPriority] = useState(() => seed('priority'));
   const [orderId, setOrderId] = useState(() => seed('orderId'));
   // Item picker mode. Off (default) → the short BASE-name list, where one pick
@@ -291,6 +292,7 @@ export function OrderModifyPage() {
     put('agent', agent);
     put('product', product);
     put('design', design);
+    put('pCategory', pCategory);
     put('priority', priority);
     put('orderId', orderId);
     if (allVariants) q.set('allVariants', '1');
@@ -308,6 +310,7 @@ export function OrderModifyPage() {
     // in its variants instead of matching only a line named exactly that.
     productBase: allVariants ? undefined : true,
     design: design || undefined,
+    pCategory: pCategory || undefined,
     priority: priority || undefined,
     orderId: orderId ? Number(orderId) : undefined,
   };
@@ -344,15 +347,16 @@ export function OrderModifyPage() {
       setExporting(false);
     }
   };
-  const hasFilters = !!customer || !!agent || !!product || !!design || !!priority || !!orderId || allVariants;
+  const hasFilters = !!customer || !!agent || !!product || !!design || !!pCategory || !!priority || !!orderId || allVariants;
   // Agent/Design/Priority move behind the Filter icon on phones — this
   // count feeds its badge and drives the mobile sheet's own Reset button.
-  const activeFilterCount = (agent ? 1 : 0) + (design ? 1 : 0) + (priority ? 1 : 0);
+  const activeFilterCount = (agent ? 1 : 0) + (design ? 1 : 0) + (pCategory ? 1 : 0) + (priority ? 1 : 0);
   const resetFilters = () => {
     setCustomer('');
     setAgent('');
     setProduct('');
     setDesign('');
+    setPCategory('');
     setPriority('');
     setOrderId('');
     setAllVariants(false);
@@ -611,6 +615,15 @@ function withStatusTag(comment: string | null | undefined, tag: string): string 
               className={cn(CONTROL, 'font-medium', design && CONTROL_ON)}
             />
           </div>
+          <div className="hidden w-36 lg:block">
+            <NativeSelect
+              value={pCategory}
+              onChange={(v) => { setPCategory(v); setPage(1); }}
+              options={['', ...(filterOptions?.categories ?? [])]}
+              placeholder="All categories"
+              className={cn(CONTROL, 'font-medium', pCategory && CONTROL_ON)}
+            />
+          </div>
           <div className="hidden w-32 lg:block">
             <NativeSelect
               value={priority}
@@ -683,6 +696,15 @@ function withStatusTag(comment: string | null | undefined, tag: string): string 
                 onChange={(v) => { setDesign(v); setPage(1); }}
                 options={['', ...(filterOptions?.designs ?? [])]}
                 placeholder="All designs"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">Category</Label>
+              <NativeSelect
+                value={pCategory}
+                onChange={(v) => { setPCategory(v); setPage(1); }}
+                options={['', ...(filterOptions?.categories ?? [])]}
+                placeholder="All categories"
               />
             </div>
             <div className="space-y-1.5">

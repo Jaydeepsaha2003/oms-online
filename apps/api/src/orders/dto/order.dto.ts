@@ -69,6 +69,9 @@ export class OrderQueryDto extends PaginationDto {
   /** Keep orders containing this product / design on any line (exact match). */
   @IsOptional() @IsString() product?: string;
   @IsOptional() @IsString() design?: string;
+  /** Keep only lines in this product category (GLASS, CUP, …) — Order Modify's
+   *  category dropdown. A LINE-level filter: one order can hold both. */
+  @IsOptional() @IsString() pCategory?: string;
   /** Read `product` as a BASE item name, so it also matches that base's design
    *  variants — Order Modify's item picker (mirrors Dispatch Order's ALL-off). */
   @IsOptional() @Transform(({ value }) => value === true || value === 'true' || value === '1') @IsBoolean() productBase?: boolean;

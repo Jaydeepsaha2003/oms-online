@@ -84,6 +84,7 @@ export class OrdersService {
     // (Order Modify, like Dispatch) also matches that base's design variants.
     if (query.product) and.push(productNameWhere(query.product, query.productBase));
     if (query.design) and.push({ designType: query.design });
+    if (query.pCategory) and.push({ pCategory: query.pCategory });
     if (query.priority) and.push({ priority: query.priority });
     return and.length ? { AND: and } : undefined;
   }
@@ -795,6 +796,7 @@ export class OrdersService {
         productName: true,
         product: true,
         designType: true,
+        pCategory: true,
         priority: true,
         order: { select: { id: true, code: true, status: true, customerName: true, agentName: true } },
       },
@@ -809,6 +811,7 @@ export class OrdersService {
       if (q.agent) out = out.filter((l) => l.order.agentName === q.agent);
       if (q.product) out = out.filter((l) => matchesProductName(productOf(l), q.product!, q.productBase));
       if (q.design) out = out.filter((l) => designOf(l) === q.design);
+      if (q.pCategory) out = out.filter((l) => (l.pCategory ?? '') === q.pCategory);
       if (q.priority) out = out.filter((l) => (l.priority ?? '') === q.priority);
       if (q.orderId) out = out.filter((l) => l.order.id === q.orderId);
       return out;
@@ -838,6 +841,7 @@ export class OrdersService {
       products: distinct(poolFor('product'), productOf),
       productBases: distinct(poolFor('product'), (l) => baseProductName(productOf(l), l.product)),
       designs: distinct(poolFor('design'), designOf),
+      categories: distinct(poolFor('pCategory'), (l) => l.pCategory),
       orders: [...byId.values()].sort((a, b) => b.id - a.id),
     };
   }

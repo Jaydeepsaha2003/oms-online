@@ -256,6 +256,9 @@ export interface OrderFilterOptions {
    *  item picker on Order Modify; pair it with {@link OrderQuery.productBase}. */
   productBases: string[];
   designs: string[];
+  /** Product categories present on the lines — GLASS, CUP and so on. Backs Order
+   *  Modify's category filter. */
+  categories: string[];
   /** Every non-draft order's id + code, newest first — backs the Order ID filter
    *  picker on Order Modify. */
   orders: { id: number; code: string | null }[];
