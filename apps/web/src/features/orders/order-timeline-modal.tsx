@@ -26,6 +26,18 @@ const qtyText = (q: { bags?: number | null; pcs?: number | null; kgs?: number | 
   if (q.box) parts.push(`${q.box.toLocaleString('en-IN')} box`);
   return parts.join(' · ') || '—';
 };
+/**
+ * Ordered minus dispatched, for one unit.
+ *
+ * Clamped at zero because an over-dispatch (more went out than the line asked
+ * for, which the dispatch screen allows against a booking) would otherwise
+ * print a negative "left". Rounded to 3dp for the same reason the dispatch
+ * figures are: bags can be a fraction, and float subtraction on them lands on
+ * things like 4.999999999999999.
+ */
+const outstanding = (ordered: number | null | undefined, sent: number) =>
+  Math.max(0, Math.round(((ordered ?? 0) - sent) * 1000) / 1000);
+
 const sumQty = (rows: { bags?: number | null; pcs?: number | null; kgs?: number | null; box?: number | null }[]) => ({
   bags: rows.reduce((a, r) => a + (r.bags ?? 0), 0),
   pcs: rows.reduce((a, r) => a + (r.pcs ?? 0), 0),
@@ -386,15 +398,49 @@ export function OrderTimelineModal({ order, onClose }: { order: OrderDto; onClos
                     expanded={open.has(ev.key)}
                     onToggle={() => toggle(ev.key)}
                   >
-                    {ev.lines.map((l) => (
-                      <div key={l.orderItemId} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 py-1.5 text-sm [&+&]:border-t [&+&]:border-slate-100">
-                        <Clock className="size-3.5 shrink-0 text-amber-400" />
-                        <span className="font-medium">{l.productName || '(item)'}</span>
-                        {l.designType && l.designType !== 'NA' && <span className="text-muted-foreground text-xs">{l.designType}</span>}
-                        <span className="text-muted-foreground ml-auto text-xs tabular-nums">ordered {qtyText(l)}</span>
-                        <Chip tone={l.dispatches.length ? 'sky' : 'amber'}>{l.dispatches.length ? 'Partial' : 'Untouched'}</Chip>
-                      </div>
-                    ))}
+                    {ev.lines.map((l) => {
+                      /*
+                       * What is STILL OUT, not what was ordered.
+                       *
+                       * This card used to print the ordered quantity, which on a
+                       * part-shipped line read as though nothing had gone at all:
+                       * a line ordered 6 bags / 3,000 pcs with 1 bag / 513 pcs
+                       * already dispatched still said "ordered 6 bags · 3,000
+                       * pcs" under a heading that says these are not dispatched
+                       * yet. The ordered figure stays, muted, as the "of" it was
+                       * always meant to be.
+                       *
+                       * Summing every dispatch is what gives the net: a RETURNED
+                       * row carries negative quantities, so a line whose shipment
+                       * came back correctly shows the whole lot outstanding again.
+                       */
+                      const sent = sumQty(l.dispatches);
+                      const left = {
+                        bags: outstanding(l.bags, sent.bags),
+                        pcs: outstanding(l.pcs, sent.pcs),
+                        kgs: outstanding(l.kgs, sent.kgs),
+                        box: outstanding(l.box, sent.box),
+                      };
+                      const started = l.dispatches.length > 0;
+                      return (
+                        <div key={l.orderItemId} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 py-1.5 text-sm [&+&]:border-t [&+&]:border-slate-100">
+                          <Clock className="size-3.5 shrink-0 text-amber-400" />
+                          <span className="font-medium">{l.productName || '(item)'}</span>
+                          {l.designType && l.designType !== 'NA' && <span className="text-muted-foreground text-xs">{l.designType}</span>}
+                          <span className="ml-auto text-xs tabular-nums">
+                            {started ? (
+                              <>
+                                <span className="font-semibold text-amber-700">{qtyText(left)} left</span>
+                                <span className="text-muted-foreground"> of {qtyText(l)}</span>
+                              </>
+                            ) : (
+                              <span className="text-muted-foreground">ordered {qtyText(l)}</span>
+                            )}
+                          </span>
+                          <Chip tone={started ? 'sky' : 'amber'}>{started ? 'Partial' : 'Untouched'}</Chip>
+                        </div>
+                      );
+                    })}
                   </EventCard>
                 </Node>
               );
