@@ -9,7 +9,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { useFollowupBoard, useFollowupSummary, useResolveFollowup, useSnoozeFollowup } from './use-crm';
 import { useNudgeCount } from './followup-nudge';
 import { usePermissions } from '@/hooks/use-permissions';
-import { EnablePushPanel, usePushEnrolment } from '@/features/notifications/enable-notifications';
+import { DeviceNotificationSettings, EnablePushPanel, usePushEnrolment } from '@/features/notifications/enable-notifications';
 import { Chip, FollowupPartyList } from './crm-shared';
 
 /**
@@ -94,8 +94,10 @@ function CrmNotificationsBell() {
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-96 max-w-[calc(100vw-1rem)] overflow-hidden p-0">
-        {/* Renders nothing once this device is enrolled. */}
-        <EnablePushPanel onDone={() => setOpen(false)} />
+        {/* This device's own settings — enrolment AND sound — shown whether or
+            not it is already enrolled, so every device has somewhere to see and
+            change them. */}
+        <DeviceNotificationSettings />
         <div className="flex items-center justify-between border-b px-3 py-2.5">
           <div className="flex items-center gap-2 text-sm font-semibold">
             <Bell className="size-4 text-amber-600" />

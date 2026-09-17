@@ -4,6 +4,8 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { hasActivePushSubscription, subscribeToPush } from '@/lib/push-subscription';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
+import { readDeviceSound, writeDeviceSound, type DeviceSound } from '@/features/crm/followup-nudge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 /** Remembers that this device was offered the prompt, so it opens itself only
@@ -91,7 +93,7 @@ export function usePushEnrolment() {
 
   /** True only when this device COULD be enrolled and isn't. */
   const needsEnrolling = supported && enabled === false;
-  return { needsEnrolling, enabling, problem, enable };
+  return { needsEnrolling, supported, enabling, problem, enable };
 }
 
 /** The enrol offer as a self-contained panel — rendered inside the bell. */
@@ -116,6 +118,63 @@ export function EnablePushPanel({ onDone }: { onDone?: () => void }) {
           {enabling ? <Loader2 className="animate-spin" /> : <BellRing />} Turn on
         </Button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * This device's notification settings, always shown.
+ *
+ * {@link EnablePushPanel} renders nothing once the device is enrolled, which is
+ * right for a one-off pitch and wrong for everything after it: there was then no
+ * way to see whether THIS phone was set up, and no way to silence just this one.
+ * Both belong to the device, so both live here, in the bell that every device
+ * already has.
+ */
+export function DeviceNotificationSettings() {
+  const { needsEnrolling, supported, enabling, problem, enable } = usePushEnrolment();
+  const [sound, setSound] = useState<DeviceSound>(() => readDeviceSound());
+
+  const soundOn = sound !== 'off';
+  const setSoundTo = (on: boolean) => {
+    const next: DeviceSound = on ? 'on' : 'off';
+    writeDeviceSound(next);
+    setSound(next);
+  };
+
+  return (
+    <div className="border-b bg-slate-50/80 px-3 py-2.5 dark:bg-white/5">
+      <p className="text-[12.5px] font-bold">This device</p>
+
+      {/* Alerts when OMS is closed — needs the browser's permission, so it can
+          only ever be offered, never simply switched on from here. */}
+      <div className="mt-1.5 flex items-center justify-between gap-2">
+        <span className="text-[11.5px] font-medium">
+          Alerts when OMS is closed
+          {!supported && <span className="text-muted-foreground"> — not supported by this browser</span>}
+        </span>
+        {supported &&
+          (needsEnrolling ? (
+            <Button type="button" size="sm" className="h-7 shrink-0 text-[11.5px]" disabled={enabling} onClick={() => void enable()}>
+              {enabling ? <Loader2 className="animate-spin" /> : <BellRing className="size-3.5" />} Turn on
+            </Button>
+          ) : (
+            <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-bold text-emerald-700 ring-1 ring-emerald-200 ring-inset dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-400/30">
+              On
+            </span>
+          ))}
+      </div>
+      {problem && <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">{problem}</p>}
+
+      {/* Sound is this device's own call — the shop-wide chime setting silenced
+          or unsilenced every machine at once. */}
+      <label className="mt-2 flex cursor-pointer items-center justify-between gap-2">
+        <span className="text-[11.5px] font-medium">
+          Sound on this device
+          {sound === 'default' && <span className="text-muted-foreground"> — following the shop setting</span>}
+        </span>
+        <Switch checked={soundOn} onCheckedChange={setSoundTo} />
+      </label>
     </div>
   );
 }

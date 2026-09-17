@@ -8,6 +8,7 @@
  * synthesises or ships as an audio file is, by definition, a sound of our
  * choosing rather than the user's.
  */
+import { currentRegistration } from './service-worker';
 
 /**
  * Show one notification. Returns whether it was actually shown, so the caller
@@ -30,7 +31,17 @@ export async function showSystemNotification(
   const opts: NotificationOptions = { silent: false, ...options };
 
   try {
-    const registration = await navigator.serviceWorker?.getRegistration();
+    /*
+     * The worker is looked up with the shared helper, NOT a bare
+     * `getRegistration()`.
+     *
+     * That call answers `undefined` while a worker is still registering, and on
+     * a phone it usually is — main.tsx registers on window 'load'. Treating it
+     * as "no worker" dropped straight through to the constructor below, which
+     * Chrome on Android refuses outright, so no notification was raised and the
+     * PHONE'S OWN SOUND never played. Which is the whole point of coming here.
+     */
+    const registration = await currentRegistration();
     if (registration) {
       await registration.showNotification(title, opts);
       return true;

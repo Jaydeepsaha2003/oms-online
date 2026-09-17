@@ -1,4 +1,5 @@
 import type { PushSubscriptionRequest, VapidPublicKeyResult } from '@oms/shared';
+import { currentRegistration } from './service-worker';
 import { http } from './api';
 
 export type SubscribeResult = { ok: true } | { ok: false; reason: string };
@@ -86,47 +87,6 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
     outputArray[i] = rawData.charCodeAt(i);
   }
   return outputArray;
-}
-
-/**
- * The active service-worker registration, or null — WITHOUT hanging.
- *
- * `navigator.serviceWorker.ready` never settles when no worker is registered,
- * and registration is allowed to fail silently (main.tsx swallows it — plain
- * HTTP over the LAN is the documented case). Anything that awaited `.ready` to
- * decide what to render therefore hung forever on exactly those devices and the
- * control never appeared. Time-boxed so a missing or stuck worker resolves to
- * "no registration" instead of a promise that never returns.
- */
-async function currentRegistration(timeoutMs = 3000): Promise<ServiceWorkerRegistration | null> {
-  if (!('serviceWorker' in navigator)) return null;
-
-  // A registration already in place is the answer, immediately.
-  const existing = await navigator.serviceWorker.getRegistration().catch(() => undefined);
-  if (existing) return existing;
-
-  /*
-   * "Not registered YET" is not "not registered".
-   *
-   * These three used to race each other, and `getRegistration()` settles at
-   * once — to undefined when nothing is registered. On a fresh load that is
-   * almost always the first to settle, because main.tsx registers the worker on
-   * window 'load', which can land after this check on a phone. The undefined
-   * therefore won the race and was read as "no worker", so a device that HAD
-   * enabled notifications was told it had not and asked to enable them again on
-   * every restart.
-   *
-   * Waiting for `.ready` only once getRegistration has come back empty gives the
-   * registration its chance, and the timeout keeps the no-hang guarantee: with
-   * no worker at all (plain HTTP over the LAN, the documented case) `.ready`
-   * never settles, so this resolves to null when the clock runs out rather than
-   * leaving the caller waiting for ever.
-   */
-  const settled = await Promise.race([
-    navigator.serviceWorker.ready.catch(() => undefined),
-    new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), timeoutMs)),
-  ]);
-  return settled ?? null;
 }
 
 /** True if this browser has an active push subscription right now (used to render button state). */
