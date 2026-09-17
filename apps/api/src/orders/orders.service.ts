@@ -442,14 +442,33 @@ export class OrdersService {
                 (a, d) => ({ bags: a.bags + (d.bags ?? 0), pcs: a.pcs + (d.pcs ?? 0), gram: a.gram + (d.gram ?? 0), box: a.box + (d.box ?? 0) }),
                 { bags: 0, pcs: 0, gram: 0, box: 0 },
               );
-              // Dropping below what has already gone out would make the dispatch
-              // exceed the order and show a negative pending quantity.
+              /*
+               * Dropping below what has already gone out would make the dispatch
+               * exceed the order and show a negative pending quantity.
+               *
+               * The unit must actually have been REDUCED by this edit for that to
+               * be true. A line ordered in bags + pcs carries no kgs figure at
+               * all, while its dispatch records the weight that physically went —
+               * so "0 kgs ordered, 75.2 kgs shipped" is the normal resting state
+               * of such a line, not something this edit did. Comparing against
+               * the shipped total alone refused every later edit to those lines:
+               * changing 6 bags / 3,000 pcs to 3 bags / 2,800 pcs, which touches
+               * neither the kgs nor anything already shipped, was rejected with
+               * "already has 75.2 Kgs dispatched ... can't be set to 0".
+               *
+               * Requiring `want < current` as well keeps the real protection --
+               * you still cannot pull a unit down under its own shipments -- and
+               * stops a pre-existing gap in an unrelated unit from freezing the
+               * line.
+               */
               const short = ([
-                ['Bags', incoming.bags, shipped.bags],
-                ['Pcs', incoming.pcs, shipped.pcs],
-                ['Kgs', incoming.gram, shipped.gram],
-                ['Box', incoming.box, shipped.box],
-              ] as const).find(([, want, sent]) => (want ?? 0) + 0.0001 < sent);
+                ['Bags', incoming.bags, shipped.bags, current.bags],
+                ['Pcs', incoming.pcs, shipped.pcs, current.pcs],
+                ['Kgs', incoming.gram, shipped.gram, current.gram],
+                ['Box', incoming.box, shipped.box, current.box],
+              ] as const).find(
+                ([, want, sent, was]) => (want ?? 0) + 0.0001 < sent && (want ?? 0) + 0.0001 < (was ?? 0),
+              );
               if (short) {
                 throw new BadRequestException(
                   `"${label}" already has ${short[2]} ${short[0]} dispatched, so the order line can't be set to ${short[1] ?? 0}. Correct or delete that dispatch first.`,
