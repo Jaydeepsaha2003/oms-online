@@ -21,6 +21,40 @@ import { Chip, itemLine, UrgencyChip } from './crm-shared';
  */
 const NUDGE_LOG_KEY = 'oms.crm.nudged-at';
 
+/**
+ * Whether THIS device plays the chime.
+ *
+ * The CRM's own `sound` setting is shop-wide — it lives on the server, so one
+ * person silencing it silenced the reminder for everybody, and one person
+ * wanting it made every machine in the building chime. Where the sound is
+ * welcome is a property of the device and the room it sits in, not of the
+ * company: the office PC can ring while the shop-floor tablet stays quiet.
+ *
+ * Unset means "follow the shop setting", so nothing changes for a device that
+ * never expresses a preference.
+ */
+const SOUND_KEY = 'oms.crm.sound-device';
+
+export type DeviceSound = 'on' | 'off' | 'default';
+
+export function readDeviceSound(): DeviceSound {
+  try {
+    const v = localStorage.getItem(SOUND_KEY);
+    return v === 'on' || v === 'off' ? v : 'default';
+  } catch {
+    return 'default'; // private mode — fall back to the shop setting
+  }
+}
+
+export function writeDeviceSound(v: DeviceSound): void {
+  try {
+    if (v === 'default') localStorage.removeItem(SOUND_KEY);
+    else localStorage.setItem(SOUND_KEY, v);
+  } catch {
+    /* quota / private mode — the shop setting still applies */
+  }
+}
+
 /** Entries are dropped after a day. Pruning by "no longer due" instead would
  *  lose the cooldown for a follow-up that simply left the window for a while —
  *  overnight, say — and it would chime the moment the work hours reopened. */
@@ -175,7 +209,10 @@ export function FollowupNudge() {
           : false;
         // The OS notification brings its own sound AND its own vibration, so
         // neither is added on top of it.
-        if (chimeCancelled || shown || settings?.sound === false) return;
+        // This device's own choice wins; 'default' defers to the shop setting.
+        const deviceSound = readDeviceSound();
+        const soundOn = deviceSound === 'on' || (deviceSound === 'default' && settings?.sound !== false);
+        if (chimeCancelled || shown || !soundOn) return;
         playChime();
         buzz();
         // A second chime after a short pause so it's impossible to miss.

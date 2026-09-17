@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
+import { readDeviceSound, writeDeviceSound, type DeviceSound } from './followup-nudge';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -54,6 +55,9 @@ function HourTimePicker({ hour, onChange, disabled, allowEndOfDay = false }: { h
 /** Global defaults for the CRM "anti-forget" reminder loop. Per follow-up can override the interval + daily cap. */
 export function CrmReminderCard() {
   const { can } = usePermissions();
+  // This device's own chime choice — read once, kept in state so the label and
+  // the switch update the moment it is changed.
+  const [deviceSound, setDeviceSound] = useState<DeviceSound>(() => readDeviceSound());
   const canEdit = can('crm:update');
   const { data } = useCrmSettings();
   const save = useSaveCrmSettings();
@@ -104,6 +108,48 @@ export function CrmReminderCard() {
         <div className="flex flex-wrap gap-6">
           <label className="flex items-center gap-2 text-sm"><Switch checked={!!form.sound} disabled={!canEdit} onCheckedChange={(v) => set('sound', v)} /> Play a chime</label>
           <label className="flex items-center gap-2 text-sm"><Switch checked={!!form.desktopNotifications} disabled={!canEdit} onCheckedChange={(v) => set('desktopNotifications', v)} /> Desktop notifications</label>
+        </div>
+
+        {/*
+          Sound, for THIS device only.
+          
+          The chime switch above is shop-wide: it lives on the server, so one
+          person silencing it silenced every machine. Whether a chime is welcome
+          depends on the device and the room it sits in — the office PC can ring
+          while the shop-floor tablet stays quiet — so each device gets its own
+          say, and it needs no permission to exercise it.
+
+          Saved in this browser, so it does not travel and does not need Save.
+        */}
+        <div className="rounded-[4px] border bg-slate-50/70 px-3 py-2.5 dark:bg-white/5">
+          <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+            <Switch
+              checked={deviceSound === 'default' ? !!form.sound : deviceSound === 'on'}
+              onCheckedChange={(v) => {
+                const next = v ? 'on' : 'off';
+                writeDeviceSound(next);
+                setDeviceSound(next);
+              }}
+            />
+            Sound on this device
+          </label>
+          <p className="text-muted-foreground mt-1 text-[11.5px]">
+            {deviceSound === 'default'
+              ? 'Following the shop setting above. Changing this affects only this device.'
+              : `Set on this device — it will ${deviceSound === 'on' ? 'always chime' : 'stay silent'} whatever the shop setting says.`}
+            {deviceSound !== 'default' && (
+              <button
+                type="button"
+                className="ml-1.5 cursor-pointer font-semibold underline decoration-dotted underline-offset-2"
+                onClick={() => {
+                  writeDeviceSound('default');
+                  setDeviceSound('default');
+                }}
+              >
+                Follow the shop setting
+              </button>
+            )}
+          </p>
         </div>
         {canEdit && (
           <Button onClick={onSave} disabled={save.isPending}>{save.isPending ? <Loader2 className="animate-spin" /> : null} Save reminder settings</Button>
