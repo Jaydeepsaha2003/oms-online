@@ -145,15 +145,10 @@
           '</p>' +
           '<pre style="font-size:.72rem;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px;padding:.75rem;' +
           'white-space:pre-wrap;word-break:break-word;margin:0 0 1rem">' +
-          esc(lines.join('
-')) +
-          '
-
-service worker controlling: ' + sw +
-          '
-online: ' + navigator.onLine +
-          '
-address: ' + esc(location.href) +
+          esc(lines.join('\n')) +
+          '\n\nservice worker controlling: ' + sw +
+          '\nonline: ' + navigator.onLine +
+          '\naddress: ' + esc(location.href) +
           '</pre>' +
           '<button id="oms-retry" style="font:inherit;padding:.55rem 1rem;margin-right:.5rem;border-radius:6px;' +
           'border:1px solid #cbd5e1;background:#fff">Try again</button>' +
