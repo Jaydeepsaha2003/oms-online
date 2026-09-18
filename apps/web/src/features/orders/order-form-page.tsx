@@ -50,6 +50,7 @@ import {
   resolveSpecialRates,
   qtyOrderForCategory,
   type OrderInput,
+  type OrderItemOption,
   type QtyField,
   type RateScope,
 } from '@oms/shared';
@@ -445,7 +446,8 @@ export function OrderFormPage() {
   const [saved, setSaved] = useState(false); // shows the success-tick overlay
   const [savePrompt, setSavePrompt] = useState(false); // new-order "Save & PDF / Save only" choice
 
-  const { data: lookups } = useOrderLookups();
+  const lookupsQuery = useOrderLookups();
+  const lookups = lookupsQuery.data;
   const { data: settings } = useSettings();
   const { data: qtyLayout } = useOrderQtyLayout();
   const orderQuery = useOrder(docKind === 'order' ? id : undefined);
@@ -689,12 +691,14 @@ export function OrderFormPage() {
 
 
   // The selected customer's special rates (deltas), applied when an item is picked.
-  const { data: special } = useCustomerSpecialRates(customerId);
+  const specialQuery = useCustomerSpecialRates(customerId);
+  const special = specialQuery.data;
   // This customer's agent commission — the special rules AND the base rates,
   // each carrying its own "charge this through" flag. Whichever wins for a line
   // is folded into Product ₹ the same way a customer special rate is, just from
   // a different table. See `addToRate` on Special Commission / the rate master.
-  const { data: commissionAddOns } = useAgentRateAddOns(customerId);
+  const commissionQuery = useAgentRateAddOns(customerId);
+  const commissionAddOns = commissionQuery.data;
 
   // Keep customerId in sync with the customer NAME + the loaded lookups. Without
   // this, a customer set outside onCustomer() — a restored draft or an edit load —
@@ -1238,9 +1242,74 @@ export function OrderFormPage() {
   };
 
   // Picking an item fills product, category/sub, design type, rates + weight/box info.
+  /**
+   * Rates as they stand in the database RIGHT NOW, not as they stood when this
+   * screen was opened.
+   *
+   * The three rate sources are cached (the catalogue for a minute, the agent
+   * add-ons for thirty seconds), which is right for typing but wrong at the
+   * moment of a pick: several people price orders at once here, and a rate
+   * changed by one of them a few seconds ago would otherwise be priced from a
+   * copy this tab happened to be holding, with nothing on screen to say so. The
+   * only way out used to be reloading the page.
+   */
+  const lastRateRefresh = useRef(0);
+  const refreshRates = () => {
+    lastRateRefresh.current = Date.now();
+    return Promise.all([
+      lookupsQuery.refetch(),
+      customerId != null ? specialQuery.refetch() : null,
+      customerId != null ? commissionQuery.refetch() : null,
+    ]);
+  };
+  /** The same refresh, but not once per keystroke. Asked for as the user starts
+   *  typing an item name so the answer is usually already in hand by the time
+   *  they choose one; the pick itself asks again regardless. */
+  const refreshRatesSoon = () => {
+    if (Date.now() - lastRateRefresh.current < 3_000) return;
+    void refreshRates();
+  };
+
+  /** What the last pick actually put on the line, so a rate the USER typed over
+   *  is never quietly overwritten when the fresh figures land. */
+  const pricedRef = useRef<{ label: string; productRate: string; designRate: string } | null>(null);
+  /** A price that moved under us, shown as a note beside the rate so the change
+   *  is never silent — the figure is about to go onto an order. */
+  const [repriced, setRepriced] = useState<{ was: number; now: number } | null>(null);
+
+  /*
+   * Put a rate that changed while this line was being filled in onto the line.
+   *
+   * Runs whenever any of the three rate sources arrives — the refetch fired by
+   * the pick, but equally a background refetch or another tab's save. Three
+   * things hold it back, and each of them is a case where re-pricing would be
+   * wrong rather than merely unnecessary:
+   *
+   *  - a line drawn from a BOOKING is priced by the booking, not the catalogue;
+   *  - a rate the user has typed over is theirs, not ours; and
+   *  - a figure that has not actually moved must not clear whatever else the
+   *    user has been doing on the row.
+   */
+  useEffect(() => {
+    const applied = pricedRef.current;
+    if (!applied || bookingSource) return;
+    if (rawEntry.itemName !== applied.label) return;
+    if (rawEntry.productRate !== applied.productRate || rawEntry.designRate !== applied.designRate) return;
+    const it = itemOptions.map.get(applied.label);
+    if (!it) return;
+    const priced = priceOf(it);
+    if (priced.productRate === applied.productRate && priced.designRate === applied.designRate) return;
+    pricedRef.current = { label: applied.label, productRate: priced.productRate, designRate: priced.designRate };
+    setEntry((e) => ({ ...e, ...priced }));
+    setRepriced({ was: itemRate(applied), now: itemRate(priced) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lookups, special, commissionAddOns, bookingSource, rawEntry.itemName, rawEntry.productRate, rawEntry.designRate]);
+
   const onItemPick = (label: string) => {
+    setRepriced(null);
     const it = itemOptions.map.get(label);
     if (!it) {
+      pricedRef.current = null;
       // A free-typed name has no catalogue rate to break down — drop whatever
       // a PREVIOUS pick left behind, or the rate breakdown card would go on
       // explaining a number that no longer belongs to this line.
@@ -1260,6 +1329,40 @@ export function OrderFormPage() {
       }));
       return;
     }
+    const priced = priceOf(it);
+    pricedRef.current = { label, productRate: priced.productRate, designRate: priced.designRate };
+
+    setEntry((e) => ({
+      ...e,
+      itemName: label,
+      product: it.product,
+      psize: it.size ?? null,
+      category: it.category,
+      subCategory: it.subCategory,
+      weight: it.weight != null ? String(it.weight) : '',
+      pcsBox: it.pcs != null ? String(it.pcs) : '',
+      designType: it.designType ?? '',
+      // Never pre-pick a design name — the user must choose it explicitly
+      // (locked to "NA" only when the design code has no names at all).
+      designName: '',
+      ...priced,
+    }));
+
+    // Someone else may have changed this item's rate seconds ago. Ask for the
+    // current figures now that we know WHICH item is wanted; `repriceOnFreshRates`
+    // below puts the answer on the line when it lands.
+    void refreshRates();
+  };
+
+  /**
+   * What an item costs this customer, from the rate data currently in hand.
+   *
+   * Split out of {@link onItemPick} because the same sum has to run twice: once
+   * the instant the item is picked (from cache, so the form answers at once) and
+   * again when the freshly-fetched rates land. Two copies of it would sooner or
+   * later disagree about money.
+   */
+  const priceOf = (it: OrderItemOption) => {
     // Apply the customer's special-rate cascade (most-specific level wins) on top
     // of the base product/design rate. Falls through to base rates when none set.
     const res = special
@@ -1300,20 +1403,8 @@ export function OrderFormPage() {
             .join(' · ')
         : null;
 
-    setEntry((e) => ({
-      ...e,
-      itemName: label,
-      product: it.product,
-      psize: it.size ?? null,
-      category: it.category,
-      subCategory: it.subCategory,
-      weight: it.weight != null ? String(it.weight) : '',
-      pcsBox: it.pcs != null ? String(it.pcs) : '',
+    return {
       productRate: hasProd ? String(prodRate) : '',
-      designType: it.designType ?? '',
-      // Never pre-pick a design name — the user must choose it explicitly
-      // (locked to "NA" only when the design code has no names at all).
-      designName: '',
       designRate: hasDesign ? String(desRate) : '',
       special: specialTip,
       // The rate breakdown's raw material — see the Item field comments.
@@ -1325,7 +1416,7 @@ export function OrderFormPage() {
       designFrom: res?.designFrom ?? null,
       commissionAddOn: commissionAmount || null,
       commissionFrom: commission.from,
-    }));
+    };
   };
 
   // As the user types the item name, the leading number is either a size or a
@@ -2526,7 +2617,10 @@ export function OrderFormPage() {
               <NativeSelect
                 value={entry.itemName}
                 onChange={onItemPick}
-                onType={detectShowBy}
+                onType={(text) => {
+                  detectShowBy(text);
+                  refreshRatesSoon();
+                }}
                 options={itemOptions.options}
                 placeholder={noCustomer ? 'Select a customer first' : 'Item name'}
                 className="text-left"
@@ -2570,8 +2664,22 @@ export function OrderFormPage() {
                 readOnly={!!bookingSource}
                 title={bookingSource ? 'Fixed by the selected bag booking' : undefined}
                 onKeyDown={onlyNumericKey}
-                onChange={(e) => setEntryField({ productRate: e.target.value })}
+                // Typing here makes the rate the user's own: the note about
+                // someone else's change no longer describes the figure on screen.
+                onChange={(e) => {
+                  setRepriced(null);
+                  setEntryField({ productRate: e.target.value });
+                }}
               />
+              {/* Someone else changed this item's rate while the line was being
+                  filled in. Said out loud, because the new figure is one keystroke
+                  away from being saved onto an order. */}
+              {repriced && (
+                <p className="text-[11.5px] font-semibold text-amber-700 dark:text-amber-400">
+                  Rate just changed to ₹{repriced.now.toLocaleString('en-IN')} (was ₹
+                  {repriced.was.toLocaleString('en-IN')})
+                </p>
+              )}
             </div>
             <div
               className="space-y-1 lg:col-span-1"
@@ -2590,7 +2698,10 @@ export function OrderFormPage() {
                 readOnly={!!bookingSource}
                 title={bookingSource ? 'Fixed by the selected bag booking' : undefined}
                 onKeyDown={onlyNumericKey}
-                onChange={(e) => setEntryField({ designRate: e.target.value })}
+                onChange={(e) => {
+                  setRepriced(null);
+                  setEntryField({ designRate: e.target.value });
+                }}
               />
             </div>
             <div className="space-y-1 lg:col-span-1">
