@@ -14,6 +14,10 @@ export class ColumnMapDto {
 export class BankStatementCreateDto {
   /** 'ask' (default) reports lines already held and creates nothing. */
   @IsOptional() @IsIn(['ask', 'skip', 'import']) onDuplicate?: 'ask' | 'skip' | 'import';
+
+  /** The user has seen the cheques this statement ends too soon to vouch for,
+   *  and said to load them anyway. Absent means ask. */
+  @IsOptional() @IsBoolean() acceptUncleared?: boolean;
   @IsString() @MaxLength(255) fileName!: string;
   @IsOptional() @IsString() @MaxLength(255) bankName?: string | null;
   @IsString() fromDate!: string;
@@ -45,6 +49,23 @@ export class BankStatementAssignDto {
   @IsOptional() @IsInt() customerId?: number | null;
 
   @IsOptional() @IsBoolean() rememberAlias?: boolean;
+}
+
+export class BankStatementReverseDto {
+  /** The POSTED statement line whose receipt is to be reversed. */
+  @IsInt() rowId!: number;
+}
+
+export class BankStatementClearPartyDto {
+  @IsArray()
+  @ArrayNotEmpty({ message: 'Select at least one line.' })
+  @IsInt({ each: true })
+  rowIds!: number[];
+
+  /** Also delete the narration alias these lines taught. Defaults to false —
+   *  forgetting affects every future statement, so it is opted into, never
+   *  assumed from a plain "clear this line". */
+  @IsOptional() @IsBoolean() forgetAlias?: boolean;
 }
 
 export class BankStatementIgnoreDto {

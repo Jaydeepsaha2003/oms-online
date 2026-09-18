@@ -302,9 +302,32 @@ export interface BankStatementPreview {
   guess: Partial<BankStatementColumnMap>;
 }
 
+/**
+ * A cheque the bank credited and then took back.
+ *
+ * `cancelled` false is the case that needs a person: the credit had already
+ * been posted, so a receipt for money that never arrived is sitting in the
+ * ledger and only a human can decide how to reverse it.
+ */
+export interface BankReturnedCheque {
+  chequeNo: string;
+  amount: number;
+  /** The CREDIT row that was taken back — which may live in an earlier run. */
+  rowId: number;
+  runId: number;
+  customerName: string | null;
+  /** The receipt already written from it, when there is one. */
+  postedRef: string | null;
+  /** True when the credit was marked RETURNED; false when it was only flagged. */
+  cancelled: boolean;
+  narration: string;
+  /** The bank's own wording of the return, kept as the evidence. */
+  returnNarration: string;
+}
+
 /* ── Rows ─────────────────────────────────────────────────────────────────── */
 
-export const BANK_ROW_STATUSES = ['MATCHED', 'PARTIAL', 'UNMATCHED', 'NO_PARTY', 'IGNORED', 'POSTED'] as const;
+export const BANK_ROW_STATUSES = ['MATCHED', 'PARTIAL', 'UNMATCHED', 'NO_PARTY', 'IGNORED', 'POSTED', 'RETURNED'] as const;
 export type BankRowStatus = (typeof BANK_ROW_STATUSES)[number];
 
 /** How this line's party was decided — shown so an automatic guess is never
@@ -325,6 +348,11 @@ export interface BankStatementRowDto {
   customerId: number | null;
   customerName: string | null;
   partySource: BankPartySource | null;
+  /** When the party was last decided. Null on a line nobody has touched and the
+   *  matcher could not place. Sortable, so a long reconciliation can be resumed. */
+  partyAt: string | null;
+  /** Who decided it. Null means the matcher did — not "unknown user". */
+  partyBy: string | null;
   status: BankRowStatus;
   /** OMS receipt REF IDs this line was paired with, when it matched. */
   matchedRefs: string[];
@@ -369,8 +397,10 @@ export type DuplicateAction = 'ask' | 'skip' | 'import';
 
 /** The upload either made a working, or is waiting to be told what to do. */
 export type BankStatementCreateResponse =
-  | ({ outcome: 'created' } & BankStatementRunResult)
-  | { outcome: 'duplicates'; duplicates: BankStatementDuplicate[]; totalIncoming: number; totalOnRecord: number };
+  | ({ outcome: 'created'; /** Cheques this file showed as returned, when any. */ returnedCheques?: BankReturnedCheque[] } & BankStatementRunResult)
+  | { outcome: 'duplicates'; duplicates: BankStatementDuplicate[]; totalIncoming: number; totalOnRecord: number }
+  /** Cheque credits this file ends too soon to vouch for — the user decides. */
+  | { outcome: 'uncleared'; cheques: BankUnclearedCheque[]; statementTo: string; days: number };
 
 export interface BankStatementRunDto {
   id: number;
@@ -467,6 +497,8 @@ export interface BankPartyPreview {
 export interface BankStatementCreateInput {
   /** What to do about lines already held — omitted means `ask`. */
   onDuplicate?: DuplicateAction;
+  /** Load cheque credits the statement is too short to vouch for. */
+  acceptUncleared?: boolean;
   fileName: string;
   bankName?: string | null;
   fromDate: string;
@@ -515,6 +547,75 @@ export interface BankStatementRecheckResult {
 
 /* ── Helpers shared by both sides ─────────────────────────────────────────── */
 
+/**
+ * A DEBIT that is the bank taking back a credit it already gave — a cheque
+ * deposited, credited, then returned unpaid.
+ *
+ * This is the one kind of debit the reconciliation must not ignore. A returned
+ * cheque leaves a credit sitting in the statement that looks exactly like money
+ * received, and posting it books a receipt for cash that never arrived. Seen
+ * on a real Axis line as:
+ *
+ *   BRN-OW RTN CLG: REJECT:246737:Funds insufficient
+ *
+ * Matched on the bank's own vocabulary rather than on the amount, because an
+ * ordinary payment out is also a debit and must keep being skipped.
+ */
+const RETURN_WORDS = /\b(RTN|RETURN(ED)?|REJECT(ED)?|DISHONOU?R(ED)?|BOUNCED?|INSUFF|NOT\s*ARRANGED|REFER\s*TO\s*DRAWER|CHQ\s*RET|CTS\s*RTN|IW\s*RTN|OW\s*RTN)\b/i;
+
+export function isReturnNarration(narration: string): boolean {
+  return RETURN_WORDS.test(narration ?? '');
+}
+
+/**
+ * The cheque/instrument number in a narration, as the digits most likely to be
+ * one: 5–8 of them, standing on their own between delimiters.
+ *
+ * It is the only field that ties a return debit to the credit it cancels —
+ * "REJECT:246737:Funds insufficient" and "Clg/246737/Punjab Nat /110826/" share
+ * nothing else, and their dates and wording both differ.
+ *
+ * A date like 110826 is also six digits, so the LAST 5-8 digit run is not safe
+ * to take blindly; callers pair this with the amount, which is what makes the
+ * match trustworthy.
+ */
+export function chequeNoIn(narration: string): string | null {
+  const hit = (narration ?? '').split(/[^0-9]+/).filter((s) => s.length >= 5 && s.length <= 8);
+  return hit.length ? hit[0] : null;
+}
+
+/**
+ * Days a cheque credit must be watched before it can be believed.
+ *
+ * A cheque is credited on presentation and only returned unpaid a few days
+ * later, so a statement that ends the day after a cheque landed cannot show
+ * whether it cleared. Five working days covers the usual CTS return window.
+ */
+export const CHEQUE_CLEAR_DAYS = 5;
+
+/**
+ * Is this credit a cheque, as opposed to a transfer that is final on arrival?
+ *
+ * Only cheques can be taken back. NEFT, RTGS, IMPS and UPI are settled the
+ * moment they appear, so they never need the waiting period below.
+ */
+export function isChequeCredit(narration: string, refNo?: string | null): boolean {
+  if (/\b(NEFT|RTGS|IMPS|UPI)\b/i.test(narration ?? '')) return false;
+  return /\b(CLG|CHQ|CHEQUE|CTS|CLEARING|MICR)\b/i.test(narration ?? '') || !!chequeNoIn(refNo ?? '');
+}
+
+/** A cheque credit the statement stops too soon to vouch for. */
+export interface BankUnclearedCheque {
+  rowNo: number;
+  /** ISO date of the credit. */
+  txnDate: string;
+  narration: string;
+  chequeNo: string | null;
+  amount: number;
+  /** Days of statement left after the credit — always < CHEQUE_CLEAR_DAYS. */
+  daysWatched: number;
+}
+
 /** Rupee tolerance when pairing a credit with a receipt. */
 export const BANK_AMOUNT_TOL = 1;
 /** Days a same-amount receipt may sit either side of the bank date. */
@@ -556,6 +657,53 @@ const GENERIC_PARTY_WORDS = new Set([
   'HOUSE', 'CENTRE', 'CENTER', 'UDYOG', 'KITCHEN', 'KITCHENWARE', 'HARDWARE', 'VESSELS', 'STAINLESS',
 ]);
 
+/**
+ * Levenshtein distance, abandoned as soon as it exceeds `max`.
+ *
+ * Bounded rather than complete because the only question asked of it is "within
+ * one edit?" — computing an exact 9 for two unrelated names is wasted work on
+ * every party for every line.
+ */
+function editDistance(a: string, b: string, max: number): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    let best = i;
+    for (let j = 1; j <= b.length; j++) {
+      const d = a[i - 1] === b[j - 1] ? prev[j - 1] : 1 + Math.min(prev[j - 1], prev[j], cur[j - 1]);
+      cur.push(d);
+      if (d < best) best = d;
+    }
+    if (best > max) return max + 1; // no cell in this row can improve later
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+/**
+ * Two words that are the same name, one of them mistyped or truncated by the
+ * bank.
+ *
+ * Bank narrations mangle names constantly — a real credit here read
+ * "KEETHIKA STAINLES" for the customer KEERTHIKA STAINLESS, dropping an R and
+ * an S. Exact and prefix comparison both miss that, so the line named nobody and
+ * was handed to a different party on an amount coincidence instead.
+ *
+ * Deliberately strict: SIX letters minimum on both sides and ONE edit. At five
+ * letters a single edit already joins genuinely different parties (MINAL/VINAL,
+ * ARUN/VARUN), and this feeds attribution of real money.
+ *
+ * ponytail: one edit only. If truncation past two characters shows up in
+ * practice, scale the budget with length (2 edits at 9+) rather than loosening
+ * the floor — the floor is what keeps short names apart.
+ */
+export function nearlySameWord(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (a.length < 6 || b.length < 6) return false;
+  return editDistance(a, b, 1) <= 1;
+}
+
 /** How well a narration names one party. */
 export interface NarrationMatch {
   /** Share of the party's own words found in the narration, 0–1. */
@@ -592,7 +740,11 @@ export function narrationMatch(narration: string, partyName: string): NarrationM
   const samePlural = (w: string, p: string) => p.length >= 4 && (w === `${p}S` || p === `${w}S`);
   const hits = party.filter((p) =>
     words.some(
-      (w) => w === p || samePlural(w, p) || (p.length >= 6 && w.length >= 6 && (w.startsWith(p) || p.startsWith(w))),
+      (w) =>
+        w === p ||
+        samePlural(w, p) ||
+        (p.length >= 6 && w.length >= 6 && (w.startsWith(p) || p.startsWith(w))) ||
+        nearlySameWord(w, p),
     ),
   );
   return {
@@ -636,6 +788,43 @@ const TXN_WORDS = new Set([
  * ("UJJIVAN SMALL FINANC").
  */
 const BANKISH = /BANK|FINANC|SAHAKARI|CO-?OP|NIDHI|MAHILA/i;
+
+/**
+ * Banks by NAME, for the segments that never say "bank".
+ *
+ * Statements truncate the remitter's bank: "PUNJAB NATIONAL BANK" arrives as
+ * "Punjab Nat", "CANARA BANK" as "Canara Ban", "IDFC FIRST BANK" as
+ * "Idfc First". None of them match {@link BANKISH} once the word "bank" has
+ * been cut off, so the segment survived as if it named the payer — and
+ * "PUNJAB" was learned as an alias for a customer, after which every NEFT that
+ * merely passed through Punjab National Bank was attributed to them. That is
+ * not hypothetical: it took ten correctly-matched WINCHEF INTERNATIONAL lines
+ * and started handing them to a different party.
+ *
+ * Matched per WORD against the segment, so a customer genuinely called
+ * "PUNJAB TRADERS" still reads as itself — only a segment that is nothing but
+ * bank words is dropped.
+ */
+const BANK_NAME_WORDS = new Set([
+  'PUNJAB', 'CANARA', 'KOTAK', 'MAHINDRA', 'AXIS', 'ICICI', 'HDFC', 'IDFC', 'INDUSIND', 'YES',
+  'BARODA', 'UNION', 'FEDERAL', 'KARUR', 'VYSYA', 'TAMILNAD', 'MERCANTILE', 'SARASWAT', 'COSMOS',
+  'INDIAN', 'CENTRAL', 'SYNDICATE', 'CORPORATION', 'ANDHRA', 'DENA', 'VIJAYA', 'ORIENTAL',
+  'ALLAHABAD', 'MAHARASHTRA', 'SINDH', 'OVERSEAS', 'DHANLAXMI', 'KARNATAKA', 'JAMMU', 'KASHMIR',
+  'BANDHAN', 'UJJIVAN', 'EQUITAS', 'ESAF', 'JANA', 'AU', 'RBL', 'IDBI', 'SOUTH', 'CITY', 'CUB',
+  'NAT', 'NATIONAL', 'STATE', 'SBI', 'PNB', 'BOB', 'BOI',
+  // Modifiers that only ever appear beside one of the names above — "Idfc
+  // First", "Ujjivan Small Finance". Safe because isBankSegment needs EVERY
+  // word to be bank vocabulary, so "FIRST CHOICE STEEL" is untouched.
+  'FIRST', 'SMALL', 'FINANCE', 'GRAMIN', 'RURAL', 'URBAN', 'SAHKARI', 'NAGRIK', 'JANATA', 'LTD',
+]);
+
+/** True when every word in the segment is bank vocabulary — "Punjab Nat",
+ *  "Canara Ban", "Idfc First" — so it names a bank, not a payer. */
+function isBankSegment(seg: string): boolean {
+  const words = (seg ?? '').toUpperCase().split(/[^A-Z]+/).filter((w) => w.length >= 2);
+  if (!words.length) return false;
+  return words.every((w) => BANK_NAME_WORDS.has(w) || /^BAN[KC]?$/.test(w) || BANKISH.test(w));
+}
 const BANK_SHORTHAND = new Set([
   'UNIONBAN', 'ICICIBAN', 'KOTAKMAH', 'HDFCBANK', 'AXISBANK', 'CANARABA', 'IDFCFIRS',
   'INDUSIND', 'YESBANK', 'IDBIBANK', 'FEDERALB', 'BANDHANB', 'UJJIVAN', 'KARURVYS',
@@ -666,6 +855,9 @@ export function payerNarration(narration: string): string {
       if (/\d/.test(t)) return false; // UTR, account number, date
       if (BANKISH.test(t)) return false;
       if (BANK_SHORTHAND.has(t.toUpperCase().replace(/[^A-Z]/g, ''))) return false;
+      // Truncated bank names — "Punjab Nat", "Canara Ban" — which carry no
+      // digits and have had the word "bank" cut off them.
+      if (isBankSegment(t)) return false;
       return true;
     })
     .join('/');
@@ -688,7 +880,11 @@ export function aliasFragment(narration: string, partyName?: string): string | n
   // Only the payer part: a bank name or a UTR reference in here is how an alias
   // ends up attributing a whole bank's transfers to one customer.
   const words = narrationTokens(payerNarration(narration)).filter(
-    (w) => w.length >= 5 && !GENERIC_PARTY_WORDS.has(w) && !TXN_WORDS.has(w),
+    // BANK_NAME_WORDS as a second line of defence: payerNarration drops a
+    // segment that is ENTIRELY bank words, but "PNB KITCHENMATE LTD" is a real
+    // payer sitting next to a bank's initials, and learning "PUNJAB" or "PNB"
+    // off a line like that claims every transfer routed through that bank.
+    (w) => w.length >= 5 && !GENERIC_PARTY_WORDS.has(w) && !TXN_WORDS.has(w) && !BANK_NAME_WORDS.has(w),
   );
   if (!words.length) return null;
   if (partyName) {

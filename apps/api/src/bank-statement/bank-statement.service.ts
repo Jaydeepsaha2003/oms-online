@@ -5,6 +5,15 @@ import {
   BANK_DATE_TOL_DAYS,
   aliasFragment,
   bestNarrationParty,
+  chequeNoIn,
+  CHEQUE_CLEAR_DAYS,
+  isChequeCredit,
+  isReturnNarration,
+  type BankUnclearedCheque,
+  narrationMatch,
+  NARRATION_MATCH_MIN,
+  payerNarration,
+  type BankReturnedCheque,
   narrationTokens,
   type BankPartyBalance,
   type BankPartyPreview,
@@ -172,6 +181,8 @@ export class BankStatementService {
     const dateOrder = detectStatementDateOrder((dto.rows ?? []).map((r) => r[map.date]));
 
     const parsed: { rowNo: number; txnDate: Date; narration: string; refNo: string | null; amount: number }[] = [];
+    /** Return/reject DEBITS found in this file — see the branch that fills it. */
+    const returns: { rowNo: number; txnDate: Date | null; narration: string; amount: number }[] = [];
     let skippedDebit = 0;
     let skippedRange = 0;
     let skippedUnreadable = 0;
@@ -184,6 +195,18 @@ export class BankStatementService {
       // debit column with a value in it, and a single signed column where a
       // payment out arrives as a negative.
       if (debit > 0 || credit < 0) {
+        /*
+         * ONE debit matters: the bank taking back a cheque it already credited.
+         * Kept aside (never stored as a row — it is not money in) so the credit
+         * it cancels can be marked RETURNED below. Dropping it, as this did for
+         * every debit, is how a bounced cheque stayed in the reconciliation
+         * looking like cash and got posted as a receipt.
+         */
+        const text = (raw[map.narration] ?? '').toString().trim();
+        if (isReturnNarration(text)) {
+          const d = this.cellDate(raw[map.date], dateOrder);
+          returns.push({ rowNo, txnDate: d, narration: text, amount: r2(Math.abs(debit || credit)) });
+        }
         skippedDebit += 1;
         return;
       }
@@ -236,7 +259,9 @@ export class BankStatementService {
 
     // Nothing to decide — no line is already on record.
     if (duplicates.length === 0) {
-      return this.createRun(dto, map, parsed, userName, 0, from, to);
+      const gate = this.unclearedGate(dto, parsed, returns, to);
+      if (gate) return gate;
+      return this.createRun(dto, map, parsed, userName, 0, from, to, returns);
     }
 
     const action = dto.onDuplicate ?? 'ask';
@@ -273,7 +298,53 @@ export class BankStatementService {
       }
     }
 
-    return this.createRun(dto, map, fresh, userName, parsed.length - fresh.length, from, to);
+    const gate = this.unclearedGate(dto, fresh, returns, to);
+    if (gate) return gate;
+    return this.createRun(dto, map, fresh, userName, parsed.length - fresh.length, from, to, returns);
+  }
+
+  /**
+   * Stop before importing cheque credits the statement ends too soon to vouch
+   * for, unless the user has already said to go ahead.
+   *
+   * A cheque is credited the day it is presented and only bounced a few days
+   * later. So a file that ends on the 13th cannot tell you whether the cheque
+   * credited on the 12th was good — the reject debit, if there is one, is in
+   * next week's statement. Posting it is a bet, and this is where the bet gets
+   * made deliberately instead of silently: exactly the case that put a
+   * ₹2,55,000 receipt in the ledger for a cheque that came back.
+   *
+   * Only CHEQUES, and only ones with no return already in this file. A NEFT is
+   * final on arrival and a cheque already seen to bounce needs no warning.
+   * Returns null when there is nothing to ask about, which is the normal case.
+   */
+  private unclearedGate(
+    dto: BankStatementCreateDto,
+    rows: { rowNo: number; txnDate: Date; narration: string; refNo: string | null; amount: number }[],
+    returns: { narration: string }[],
+    to: Date,
+  ): { outcome: 'uncleared'; cheques: BankUnclearedCheque[]; statementTo: string; days: number } | null {
+    if (dto.acceptUncleared) return null;
+    const bounced = new Set(returns.map((r) => chequeNoIn(r.narration)).filter(Boolean) as string[]);
+
+    const cheques: BankUnclearedCheque[] = [];
+    for (const r of rows) {
+      if (!isChequeCredit(r.narration, r.refNo)) continue;
+      const chq = chequeNoIn(`${r.refNo ?? ''} ${r.narration}`);
+      if (chq && bounced.has(chq)) continue; // already known to have returned
+      const daysWatched = Math.floor((+to - +r.txnDate) / DAY);
+      if (daysWatched >= CHEQUE_CLEAR_DAYS) continue;
+      cheques.push({
+        rowNo: r.rowNo,
+        txnDate: r.txnDate.toISOString(),
+        narration: r.narration,
+        chequeNo: chq,
+        amount: r.amount,
+        daysWatched: Math.max(0, daysWatched),
+      });
+    }
+    if (!cheques.length) return null;
+    return { outcome: 'uncleared' as const, cheques, statementTo: to.toISOString(), days: CHEQUE_CLEAR_DAYS };
   }
 
   /** How many of each incoming line this bank account already holds, and where. */
@@ -352,6 +423,8 @@ export class BankStatementService {
     duplicateSkipped: number,
     from: Date,
     to: Date,
+    /** Return/reject debits found in the same file — see {@link applyReturns}. */
+    returns: { rowNo: number; txnDate: Date | null; narration: string; amount: number }[] = [],
   ): Promise<BankStatementCreateResponse> {
     const run = await this.prisma.bankStatementRun.create({
       data: {
@@ -375,15 +448,89 @@ export class BankStatementService {
     // the columns and a client cannot get them wrong.
     await this.rememberPreset(dto.bankName?.trim() ?? '', map, columnsOf(dto.rows));
 
+    const returned = await this.applyReturns(run.id, dto.bankName?.trim() || null, returns);
+
     await this.attributeParties(run.id);
     await this.rematch(run.id);
     const result = await this.result(run.id);
     if (duplicateSkipped) this.logger.log(`Run ${run.id}: left out ${duplicateSkipped} line(s) already held.`);
+    if (returned.length) {
+      this.logger.log(`Run ${run.id}: ${returned.length} returned cheque(s) cancelled their credit.`);
+    }
     return {
       outcome: 'created' as const,
       ...result,
       run: { ...result.run, ...(duplicateSkipped ? { duplicateSkipped } : {}) },
+      ...(returned.length ? { returnedCheques: returned } : {}),
     };
+  }
+
+  /**
+   * Cancel the credits that returned cheques took back.
+   *
+   * Matched on cheque number AND amount. The cheque number alone is not enough
+   * — a six-digit date in the narration looks just like one — and the amount
+   * alone is not either, since two parties pay round sums on the same day. The
+   * pair is what makes it safe.
+   *
+   * Looks beyond this file on purpose: a cheque credited in August and returned
+   * in September has its credit in the EARLIER run, and that is the case that
+   * actually costs money, because by then the receipt has usually been posted.
+   *
+   * A POSTED credit is never altered here. Its receipt is already in the
+   * ledger, and silently rewriting a posted line would leave the books saying
+   * one thing and this screen another. It is reported instead, for a human to
+   * reverse — which is the only place that reversal can correctly be decided.
+   */
+  private async applyReturns(
+    runId: number,
+    bank: string | null,
+    returns: { rowNo: number; txnDate: Date | null; narration: string; amount: number }[],
+  ): Promise<BankReturnedCheque[]> {
+    if (!returns.length) return [];
+    const out: BankReturnedCheque[] = [];
+
+    for (const ret of returns) {
+      const chq = chequeNoIn(ret.narration);
+      if (!chq) continue;
+
+      // This run first, then older runs of the same bank account — nearest
+      // credit before the return wins when a cheque was presented more than once.
+      const candidates = await this.prisma.bankStatementRow.findMany({
+        where: {
+          amount: { gte: ret.amount - BANK_AMOUNT_TOL, lte: ret.amount + BANK_AMOUNT_TOL },
+          status: { not: 'RETURNED' },
+          ...(bank ? { OR: [{ runId }, { run: { bankName: bank } }] } : { runId }),
+        },
+        select: { id: true, runId: true, txnDate: true, narration: true, refNo: true, amount: true, status: true, postedRef: true, customerName: true },
+      });
+      const hit = candidates
+        .filter((c) => chequeNoIn(`${c.refNo ?? ''} ${c.narration}`) === chq || (c.refNo ?? '').trim() === chq)
+        .filter((c) => !ret.txnDate || c.txnDate <= new Date(+ret.txnDate + DAY))
+        .sort((a, b) => +b.txnDate - +a.txnDate)[0];
+      if (!hit) continue;
+
+      const note = `Cheque ${chq} returned — ${ret.narration}`;
+      if (hit.status === 'POSTED') {
+        // Flag only. See the note above about never rewriting a posted line.
+        out.push({
+          chequeNo: chq, amount: ret.amount, rowId: hit.id, runId: hit.runId,
+          customerName: hit.customerName, postedRef: hit.postedRef, cancelled: false,
+          narration: hit.narration, returnNarration: ret.narration,
+        });
+        continue;
+      }
+      await this.prisma.bankStatementRow.update({
+        where: { id: hit.id },
+        data: { status: 'RETURNED', matchedRefs: null, matchedAmount: 0, note },
+      });
+      out.push({
+        chequeNo: chq, amount: ret.amount, rowId: hit.id, runId: hit.runId,
+        customerName: hit.customerName, postedRef: null, cancelled: true,
+        narration: hit.narration, returnNarration: ret.narration,
+      });
+    }
+    return out;
   }
 
   /* ── Who does each credit belong to? ───────────────────────────────────── */
@@ -426,8 +573,20 @@ export class BankStatementService {
       let customerId: number | null = null;
       let source: string | null = null;
 
-      const tokens = narrationTokens(row.narration);
-      const alias = aliases.find((a) => tokens.includes(a.fragment) || row.narration.toUpperCase().includes(a.fragment));
+      /*
+       * Aliases are matched against the PAYER part only, never the raw
+       * narration.
+       *
+       * The raw substring test was the hole: an alias learned as "PUNJAB" — off
+       * a cheque line whose bank segment read "Punjab Nat" and so escaped the
+       * bank filter — then matched every NEFT that merely ROUTED through Punjab
+       * National Bank. Ten WINCHEF INTERNATIONAL lines had matched correctly for
+       * months; the next two were handed to the party that owned the alias.
+       * Stripping the bank and the UTR first is what payerNarration is for, and
+       * the alias rule was the one place not using it.
+       */
+      const payerTokens = narrationTokens(payerNarration(row.narration));
+      const alias = aliases.find((a) => payerTokens.includes(a.fragment));
       if (alias) {
         customerId = alias.customerId;
         source = 'ALIAS';
@@ -445,33 +604,81 @@ export class BankStatementService {
        * transfers belongs to the second. Process would have posted ₹3.31L to
        * the wrong customer. The receipt says which one it actually was.
        */
+      /*
+       * Returns null when the narration names no one, or names two parties
+       * equally well — an unassigned line costs a click, a wrongly assigned one
+       * puts a customer's money against another customer's name.
+       *
+       * Worked out BEFORE the receipt rule now, not after, purely so the receipt
+       * rule can be asked whether it disagrees with it. Which rule wins is
+       * decided below; this is only the reading.
+       */
+      const narrationHit = bestNarrationParty(row.narration, named);
+
+      /*
+       * An alias that contradicts the narration is not trusted — the line is
+       * left for a person to map instead.
+       *
+       * An alias earns its place when the narration names NOBODY: that is the
+       * whole reason for teaching one. When the narration does name a party and
+       * it is a different party, the two readings disagree and there is no
+       * honest way to pick automatically — the alias may be a good rule meeting
+       * an exception, or a bad rule finally showing itself. Guessing either way
+       * moves real money, so neither is chosen and it surfaces as "No party".
+       */
+      if (customerId && source === 'ALIAS' && narrationHit && narrationHit.id !== customerId) {
+        this.logger.log(
+          `Run ${runId} row ${row.id}: alias points at ${customerId} but the narration names ${narrationHit.name} — left unassigned.`,
+        );
+        customerId = null;
+        source = null;
+      }
+
       if (!customerId) {
         const hits = receipts.filter(
           (v) => Math.abs(v.amount - row.amount) <= BANK_AMOUNT_TOL && Math.abs(+v.recDate - +row.txnDate) <= BANK_DATE_TOL_DAYS * DAY,
         );
         const parties = [...new Set(hits.map((h) => h.custId))];
         if (parties.length === 1) {
-          customerId = parties[0];
-          source = 'RECEIPT';
+          /*
+           * Does the narration name the party the receipt points at?
+           *
+           * This is the question, NOT "did the narration pick the same party" —
+           * and the difference is the whole SRI MURUGAN case. There the
+           * narration names both Murugans, `bestNarrationParty` returns the
+           * wrong one on a tie-break, and only the receipt knows which actually
+           * paid. The receipt's party still scores well on that narration, so it
+           * keeps its say.
+           *
+           * What it no longer survives is naming someone the narration does not
+           * mention at all. A ₹2,00,000 credit narrated KEETHIKA STAINLES was
+           * handed to SHREE VINAYAK SALES because a voucher of theirs — eight
+           * unrelated invoice allocations that happened to total exactly
+           * 2,00,000 — sat seven days away, the very edge of the window. "Same
+           * amount, same-ish week" is a coincidence a round number invites, and
+           * against a narration that plainly names a different customer it is
+           * not evidence.
+           */
+          const receiptName = customers.find((c) => c.id === parties[0])?.partyName ?? '';
+          const receiptIsNamed = narrationMatch(row.narration, receiptName).score >= NARRATION_MATCH_MIN;
+          if (receiptIsNamed || !narrationHit) {
+            customerId = parties[0];
+            source = 'RECEIPT';
+          }
         }
       }
 
-      if (!customerId) {
-        // Returns null when the narration names no one, or names two parties
-        // equally well — an unassigned line costs a click, a wrongly assigned
-        // one puts a customer's money against another customer's name.
-        const hit = bestNarrationParty(row.narration, named);
-        if (hit) {
-          customerId = hit.id;
-          source = 'NARRATION';
-        }
+      if (!customerId && narrationHit) {
+        customerId = narrationHit.id;
+        source = 'NARRATION';
       }
 
       if (!customerId) continue;
       const name = customers.find((c) => c.id === customerId)?.partyName ?? null;
       await this.prisma.bankStatementRow.update({
         where: { id: row.id },
-        data: { customerId, customerName: name, partySource: source },
+        // partyBy stays null — this was the matcher, not a person.
+        data: { customerId, customerName: name, partySource: source, partyAt: new Date(), partyBy: null },
       });
     }
   }
@@ -494,7 +701,9 @@ export class BankStatementService {
 
     const byParty = new Map<number, typeof rows>();
     for (const row of rows) {
-      if (row.status === 'IGNORED' || row.status === 'POSTED') continue;
+      // RETURNED alongside IGNORED: the bank took this credit back, so there is
+      // no money here to pair a receipt with.
+      if (row.status === 'IGNORED' || row.status === 'RETURNED' || row.status === 'POSTED') continue;
       if (row.customerId == null) continue;
       const list = byParty.get(row.customerId) ?? [];
       list.push(row);
@@ -573,7 +782,8 @@ export class BankStatementService {
       // Every row that has a party starts from a clean slate each time, so a
       // reassignment cannot leave last round's verdict behind.
       await tx.bankStatementRow.updateMany({
-        where: { runId, status: { notIn: ['IGNORED', 'POSTED'] } },
+        // A returned cheque must never be postable — that is the whole point.
+        where: { runId, status: { notIn: ['IGNORED', 'RETURNED', 'POSTED'] } },
         data: { status: 'NO_PARTY', matchedRefs: null, matchedAmount: 0 },
       });
       for (const u of updates) {
@@ -693,6 +903,11 @@ export class BankStatementService {
         customerName: customer?.partyName ?? null,
         // MANUAL is sticky: re-running attribution must not undo a human answer.
         partySource: customer ? 'MANUAL' : null,
+        // Stamped on clearing too, not just on setting: "I un-assigned this one
+        // a minute ago" is exactly the thing worth finding again, and blanking
+        // the time would hide the correction in with the untouched lines.
+        partyAt: new Date(),
+        partyBy: userName ?? null,
         status: customer ? 'UNMATCHED' : 'NO_PARTY',
         matchedRefs: null,
         matchedAmount: 0,
@@ -754,6 +969,132 @@ export class BankStatementService {
     return this.result(runId);
   }
 
+  /**
+   * Undo an assignment properly: clear the party AND forget what that line
+   * taught.
+   *
+   * Clearing alone was never a real undo. `Assign` also writes a
+   * BankStatementAlias so the next statement recognises the payer, and that
+   * alias outlives the run — so a line cleared here came back attributed to the
+   * same wrong party on the next upload, with no screen anywhere in the app to
+   * unlearn it. The fragment is derived the same way `assign` derived it, and
+   * only deleted when it still points at the party being removed; a fragment
+   * since re-taught to someone else is left alone rather than silently taken
+   * from them.
+   *
+   * Returns the fragments actually forgotten so the UI can name them — this is
+   * shared state, and "UMIYA is no longer recognised" is worth saying out loud.
+   */
+  async clearParty(runId: number, rowIds: number[], forgetAlias: boolean, userName?: string | null): Promise<{ result: BankStatementRunResult; forgotten: string[] }> {
+    await this.mustBeDraft(runId);
+    const ids = [...new Set(rowIds ?? [])];
+    if (!ids.length) throw new BadRequestException('Select at least one line.');
+
+    // POSTED lines are excluded: a receipt already exists for them, and pulling
+    // the party off the line would orphan it. Those are reversed, not cleared.
+    const rows = await this.prisma.bankStatementRow.findMany({
+      where: { id: { in: ids }, runId, status: { not: 'POSTED' } },
+    });
+    if (!rows.length) throw new BadRequestException('Nothing to clear — those lines are already posted.');
+
+    const forgotten: string[] = [];
+    if (forgetAlias) {
+      for (const row of rows) {
+        if (row.customerId == null) continue;
+        const fragment = aliasFragment(row.narration, row.customerName ?? '');
+        if (!fragment) continue;
+        const existing = await this.prisma.bankStatementAlias.findUnique({ where: { fragment } });
+        if (!existing || existing.customerId !== row.customerId) continue;
+        await this.prisma.bankStatementAlias.delete({ where: { fragment } });
+        forgotten.push(fragment);
+      }
+    }
+
+    await this.prisma.bankStatementRow.updateMany({
+      where: { id: { in: rows.map((r) => r.id) } },
+      data: {
+        customerId: null,
+        customerName: null,
+        partySource: null,
+        partyAt: new Date(),
+        partyBy: userName ?? null,
+        status: 'NO_PARTY',
+        matchedRefs: null,
+        matchedAmount: 0,
+      },
+    });
+
+    await this.rematch(runId);
+    return { result: await this.result(runId), forgotten: [...new Set(forgotten)] };
+  }
+
+  /**
+   * Undo a posted line whose cheque came back: delete the receipt it created,
+   * then mark the line RETURNED.
+   *
+   * The ledger half is `payments.deleteReceipt`, deliberately rather than
+   * anything written here. That method does not merely remove the voucher — it
+   * reverses it and REPLAYS every later receipt for the party, so the ones that
+   * allocated themselves around this money re-point at the invoices they should
+   * have paid. A hand-rolled delete would strip the voucher and leave those
+   * later receipts pointing at allocations that no longer make sense.
+   *
+   * Order matters: the ledger is changed first and the row only after it
+   * succeeds. The reverse order would leave a line reading "returned" beside a
+   * receipt still standing — the exact disagreement this screen exists to catch.
+   */
+  async reverseReturned(runId: number, rowId: number): Promise<{ voucherNo: string; replayedCount: number; row: BankStatementRowDto }> {
+    /*
+     * Looked up by id ALONE, not by id within `runId`.
+     *
+     * The line being reversed usually is NOT in the working the user is looking
+     * at: the return debit arrives in this month's file while the credit it
+     * cancels sits in last month's run, which is the whole reason the banner
+     * searches across runs. Scoping this to the open run made the one case it
+     * was built for — a cheque credited in August, bounced in September —
+     * fail with "that line is not in this working".
+     */
+    const row = await this.prisma.bankStatementRow.findUnique({ where: { id: rowId } });
+    if (!row) throw new NotFoundException('That line no longer exists.');
+    void runId; // the row carries its own run; see above
+    if (row.status !== 'POSTED' || !row.postedRef) {
+      throw new BadRequestException('Only a line that posted a receipt can be reversed here.');
+    }
+
+    const ledger = await this.prisma.acctLedger.findMany({
+      where: { voucherNo: row.postedRef, voucherType: 'RECEIPT' },
+      select: { id: true },
+    });
+    if (ledger.length !== 1) {
+      throw new BadRequestException(
+        ledger.length === 0
+          ? `${row.postedRef} is no longer in the ledger — it may already have been reversed.`
+          : `${row.postedRef} matches ${ledger.length} ledger rows; reverse it from the Payments screen instead.`,
+      );
+    }
+
+    // Refusals from here (a receipt predating edit support, one stamped by Tally
+    // Reconciliation) surface as-is. They name what to do, and swallowing them
+    // would leave the user pressing a button that silently does nothing.
+    const res = await this.payments.deleteReceipt(ledger[0].id);
+
+    const updated = await this.prisma.bankStatementRow.update({
+      where: { id: row.id },
+      data: {
+        status: 'RETURNED',
+        postedRef: null,
+        postedAt: null,
+        matchedRefs: null,
+        matchedAmount: 0,
+        note: `${row.note ? `${row.note} ` : ''}Receipt ${res.voucherNo} reversed — the cheque was returned unpaid.`,
+      },
+    });
+    // The row's OWN run, which is the one whose totals just changed — not the
+    // run the user happens to have open.
+    await this.rematch(row.runId);
+    return { ...res, row: this.rowDto(updated) };
+  }
+
   /** Take a line out of the reconciliation entirely (an interest credit, a
    *  transfer between our own accounts — real money, but not a customer). */
   async setIgnored(runId: number, rowIds: number[], ignored: boolean): Promise<BankStatementRunResult> {
@@ -782,7 +1123,7 @@ export class BankStatementService {
       where: { runId, customerId },
       orderBy: [{ txnDate: 'asc' }, { id: 'asc' }],
     });
-    const live = rows.filter((r) => r.status !== 'IGNORED');
+    const live = rows.filter((r) => r.status !== 'IGNORED' && r.status !== 'RETURNED');
     const statementTotal = r2(live.reduce((s, r) => s + r.amount, 0));
     // POSTED counts as accounted-for: the receipt now exists because this run
     // created it. Leaving it out made a processed run read as though its money
@@ -1036,7 +1377,7 @@ export class BankStatementService {
     });
     const parties = new Map<number, { customerId: number; customerName: string; lines: number; total: number }>();
     for (const r of rows) {
-      if (r.customerId == null || r.status === 'IGNORED') continue;
+      if (r.customerId == null || r.status === 'IGNORED' || r.status === 'RETURNED') continue;
       const cur = parties.get(r.customerId) ?? { customerId: r.customerId, customerName: r.customerName ?? '', lines: 0, total: 0 };
       cur.lines += 1;
       cur.total = r2(cur.total + r.amount);
@@ -1266,6 +1607,7 @@ export class BankStatementService {
   private rowDto(r: {
     id: number; runId: number; rowNo: number; txnDate: Date; narration: string; refNo: string | null; amount: number;
     customerId: number | null; customerName: string | null; partySource: string | null; status: string;
+    partyAt: Date | null; partyBy: string | null;
     matchedRefs: string | null; matchedAmount: number; note: string | null; postedRef: string | null; postedAt: Date | null;
   }): BankStatementRowDto {
     return {
@@ -1279,6 +1621,8 @@ export class BankStatementService {
       customerId: r.customerId,
       customerName: r.customerName,
       partySource: r.partySource as BankStatementRowDto['partySource'],
+      partyAt: iso(r.partyAt),
+      partyBy: r.partyBy,
       status: r.status as BankRowStatus,
       matchedRefs: r.matchedRefs ? r.matchedRefs.split(',').filter(Boolean) : [],
       matchedAmount: r.matchedAmount,

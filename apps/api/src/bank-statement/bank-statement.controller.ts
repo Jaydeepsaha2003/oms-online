@@ -8,8 +8,10 @@ import { BankStatementService } from './bank-statement.service';
 import {
   BankStatementAssignDto,
   BankStatementCreateDto,
+  BankStatementClearPartyDto,
   BankStatementIgnoreDto,
   BankStatementProcessDto,
+  BankStatementReverseDto,
   BankStatementRunsQueryDto,
 } from './dto/bank-statement.dto';
 
@@ -62,6 +64,42 @@ export class BankStatementController {
   @Permissions(perm(R, ACTIONS.CREATE))
   assign(@Param('id', ParseIntPipe) id: number, @Body() dto: BankStatementAssignDto, @CurrentUser('name') userName?: string) {
     return this.svc.assign(id, dto, userName);
+  }
+
+  /** Audited: forgetting an alias changes how FUTURE statements are read, so it
+   *  is not a per-run edit even though it is triggered from one. */
+  @Post('runs/:id/clear-party')
+  @Permissions(perm(R, ACTIONS.CREATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Cleared the party on bank statement lines' })
+  clearParty(@Param('id', ParseIntPipe) id: number, @Body() dto: BankStatementClearPartyDto, @CurrentUser('name') userName?: string) {
+    return this.svc.clearParty(id, dto.rowIds, dto.forgetAlias ?? false, userName);
+  }
+
+  /**
+   * Reverse the receipt a returned cheque created.
+   *
+   * Gated on PAYMENTS DELETE, not on this screen's own permission: it removes a
+   * voucher from the ledger and re-allocates the party's later receipts, which
+   * is a payments power. Whoever may upload a statement must not gain the
+   * ability to delete receipts by coming through this door.
+   */
+  @Post('runs/:id/reverse-returned')
+  @Permissions(perm(RESOURCES.PAYMENT, ACTIONS.DELETE))
+  @Audit({
+    action: ACTIONS.DELETE,
+    resource: RESOURCES.PAYMENT,
+    description: 'Reversed a receipt for a returned cheque',
+    describe: (body) => {
+      const res = body as { voucherNo?: string; replayedCount?: number } | undefined;
+      if (!res?.voucherNo) return null;
+      return {
+        description: `Reversed receipt ${res.voucherNo} — cheque returned unpaid`,
+        metadata: { deleted: [res.voucherNo], replayedCount: res.replayedCount },
+      };
+    },
+  })
+  reverseReturned(@Param('id', ParseIntPipe) id: number, @Body() dto: BankStatementReverseDto) {
+    return this.svc.reverseReturned(id, dto.rowId);
   }
 
   @Post('runs/:id/ignore')

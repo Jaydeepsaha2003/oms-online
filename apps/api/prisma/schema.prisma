@@ -2423,6 +2423,12 @@ model BankStatementRow {
   /// RECEIPT | ALIAS | NARRATION | MANUAL — how the party was decided, so an
   /// automatic guess is never mistaken for something a human confirmed.
   partySource  String?
+  /// When the party was last decided, and by whom. `partyBy` stays NULL for an
+  /// automatic attribution, which is what lets the screen say "auto" instead of
+  /// inventing a user for it. Indexed with runId so a long reconciliation can be
+  /// sorted by it — picking up where it was left, or reviewing only today's work.
+  partyAt      DateTime?
+  partyBy      String?
 
   /// MATCHED | PARTIAL | UNMATCHED | NO_PARTY | IGNORED | POSTED
   status        String  @default("NO_PARTY")
@@ -2437,6 +2443,7 @@ model BankStatementRow {
 
   @@index([runId])
   @@index([runId, status])
+  @@index([runId, partyAt])
   @@index([customerId])
   @@index([rowKey])
   @@map("bank_statement_row")

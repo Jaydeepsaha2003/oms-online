@@ -12,10 +12,11 @@ import {
   PanelRightOpen,
   Trash2,
   TriangleAlert,
+  Undo2,
   Upload,
   UserPlus,
 } from 'lucide-react';
-import { detectStatementDateOrder, parseStatementPeriod, statementDateToDisplay, statementDateToYmd, trimStatementTrailer, type BankStatementColumnMap, type BankStatementCreateResponse, type BankStatementRowDto, type BankStatementRunResult, type BankStatementRecheckResult } from '@oms/shared';
+import { detectStatementDateOrder, parseStatementPeriod, statementDateToDisplay, statementDateToYmd, trimStatementTrailer, type BankReturnedCheque, type BankStatementColumnMap, type BankStatementCreateResponse, type BankStatementRowDto, type BankStatementRunResult, type BankStatementRecheckResult } from '@oms/shared';
 import { detectBankAccount, statementIdentityText } from './bank-statement-detect';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -34,6 +35,8 @@ import { useCustomers } from '@/features/customers/use-customers';
 import { useActiveBankAccounts } from './use-account';
 import {
   useAssignBankRows,
+  useClearBankParty,
+  useReverseReturned,
   useBankParty,
   useBankRun,
   useBankRuns,
@@ -91,6 +94,11 @@ const STATUS_META: Record<string, { label: string; cls: string; hint: string }> 
     label: 'Posted',
     cls: 'bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-500/15 dark:text-violet-300',
     hint: 'A receipt was created from this line.',
+  },
+  RETURNED: {
+    label: 'Cheque returned',
+    cls: 'bg-rose-100 text-rose-800 ring-rose-300 dark:bg-rose-500/20 dark:text-rose-200',
+    hint: 'The bank credited this cheque and then took it back unpaid. It is not money received, so nothing is posted for it.',
   },
 };
 
@@ -179,6 +187,8 @@ export function BankStatementPage() {
   const createRun = useCreateBankRun();
   const assign = useAssignBankRows(runId);
   const ignore = useIgnoreBankRows(runId);
+  const clearParty = useClearBankParty(runId);
+  const reverseReturned = useReverseReturned(runId);
   const process = useProcessBankRun(runId);
   const delRun = useDeleteBankRun();
 
@@ -425,13 +435,17 @@ export function BankStatementPage() {
    * party's second identical payment of the day, importing can post a receipt
    * that already exists.
    */
-  const submitRun = (onDuplicate: 'ask' | 'skip' | 'import') => {
+  const submitRun = (onDuplicate: 'ask' | 'skip' | 'import', acceptUncleared = false) => {
     createRun.mutate(
-      { onDuplicate, fileName, bankName: bankName || null, fromDate, toDate, map, rows: statementRows },
+      { onDuplicate, acceptUncleared, fileName, bankName: bankName || null, fromDate, toDate, map, rows: statementRows },
       {
         onSuccess: (res) => {
           if (res.outcome === 'duplicates') {
             void askAboutDuplicates(res);
+            return;
+          }
+          if (res.outcome === 'uncleared') {
+            void askAboutUnclearedCheques(res, onDuplicate);
             return;
           }
           setRunId(res.run.id);
@@ -442,8 +456,85 @@ export function BankStatementPage() {
             description: dup ? `${dup} line${dup === 1 ? '' : 's'} left out — already on record.` : undefined,
             duration: dup ? 10000 : 4000,
           });
+          /*
+           * Returned cheques are reported separately and never as a passing
+           * toast line: the ones already POSTED mean a receipt exists in the
+           * ledger for money that came back, and that needs a person to reverse.
+           */
+          const returned = res.returnedCheques ?? [];
+          if (returned.length) setReturnedCheques(returned);
         },
         onError: (e) => toast.error(getApiErrorMessage(e, 'Could not load the statement'), { duration: 10000 }),
+      },
+    );
+  };
+
+  /**
+   * A cheque credited near the end of the statement has not been watched long
+   * enough to know it cleared — the reject debit, if it comes, is in the next
+   * file. Ask before loading them.
+   *
+   * Cancel is the safe answer and is offered first in wording: re-export the
+   * statement with a few more days on it and every one of these answers itself.
+   * Going ahead is legitimate too — it is just a decision someone should make
+   * knowingly, which is the whole point of stopping here.
+   */
+  const askAboutUnclearedCheques = async (
+    res: Extract<BankStatementCreateResponse, { outcome: 'uncleared' }>,
+    onDuplicate: 'ask' | 'skip' | 'import',
+  ) => {
+    const n = res.cheques.length;
+    const total = res.cheques.reduce((s, c) => s + c.amount, 0);
+    const lines = res.cheques
+      .slice(0, 6)
+      .map((c) => `• ${formatDate(c.txnDate)} — ${money0(c.amount)}${c.chequeNo ? ` (cheque ${c.chequeNo})` : ''}, watched ${c.daysWatched} day${c.daysWatched === 1 ? '' : 's'}`)
+      .join('\n');
+    const ok = await confirm({
+      title: `${n} cheque${n === 1 ? '' : 's'} not yet known to have cleared`,
+      description:
+        `This statement ends ${formatDate(res.statementTo)}, which is less than ${res.days} days after ${n === 1 ? 'this cheque was' : 'these cheques were'} credited — ` +
+        `so it cannot show whether ${n === 1 ? 'it' : 'they'} bounced. A returned cheque posted as a receipt puts money in the ledger that never arrived.\n\n` +
+        `${lines}${n > 6 ? `\n…and ${n - 6} more.` : ''}\n\nTotal at risk: ${money0(total)}.\n\n` +
+        `Re-export the statement with a few more days on it and this answers itself. Load them anyway?`,
+      confirmText: 'Load them anyway',
+      cancelText: 'Cancel the upload',
+    });
+    if (ok) submitRun(onDuplicate, true);
+  };
+
+  /**
+   * Delete the receipt a bounced cheque created.
+   *
+   * The confirm spells out the two consequences that are easy to miss: the
+   * invoices this receipt cleared go back to unpaid, and the party's LATER
+   * receipts are re-allocated around the hole it leaves. Both are correct, and
+   * both change numbers the user may be looking at elsewhere.
+   */
+  const doReverseReturned = async (c: BankReturnedCheque) => {
+    const ok = await confirm({
+      title: `Reverse receipt ${c.postedRef}?`,
+      description:
+        `Cheque ${c.chequeNo} for ${money0(c.amount)}${c.customerName ? ` from ${c.customerName}` : ''} was returned unpaid, but a receipt was already posted for it.\n\n` +
+        `Reversing deletes ${c.postedRef}, puts the invoices it cleared back to unpaid, and re-allocates any later receipts for this party against the invoices they should have paid.\n\n` +
+        `This changes the ledger and cannot be undone from here.`,
+      confirmText: 'Reverse it',
+      cancelText: 'Leave it',
+    });
+    if (!ok) return;
+    reverseReturned.mutate(
+      { rowId: c.rowId },
+      {
+        onSuccess: (res) => {
+          toast.success(
+            `${res.voucherNo} reversed` +
+              (res.replayedCount ? ` — ${res.replayedCount} later receipt${res.replayedCount === 1 ? '' : 's'} re-allocated` : ''),
+            { duration: 8000 },
+          );
+          setReturnedCheques((list) => list.filter((x) => x.rowId !== c.rowId));
+        },
+        // Shown verbatim: the server refuses for reasons that name what to do
+        // (a receipt predating edit support, one stamped by Tally Reconciliation).
+        onError: (e) => toast.error(getApiErrorMessage(e, 'Could not reverse that receipt'), { duration: 12000 }),
       },
     );
   };
@@ -527,13 +618,31 @@ export function BankStatementPage() {
   /** Narrow the list to one kind of line. Without this a line marked "not
    *  required" fades into a 293-row list and can never be found to undo. */
   const [statusFilter, setStatusFilter] = useState('');
-  const shown = useMemo(
-    () =>
-      rows.filter(
-        (r) => (!selectedParty || r.customerId === selectedParty) && (!statusFilter || r.status === statusFilter),
-      ),
-    [rows, selectedParty, statusFilter],
-  );
+  /**
+   * Statement order, or most-recently-decided first.
+   *
+   * A reconciliation is worked in long sittings, and in statement order there
+   * was no way to see what had just been done — so "where did I stop" and "what
+   * did I assign a moment ago" both meant scrolling 293 rows hunting for a party
+   * name. Newest-first answers both, and is why `partyAt` is stamped on clearing
+   * a line as well as on setting it.
+   */
+  const [recentFirst, setRecentFirst] = useState(false);
+  /** Returned cheques from the last upload, shown until dismissed. */
+  const [returnedCheques, setReturnedCheques] = useState<BankReturnedCheque[]>([]);
+  const shown = useMemo(() => {
+    const list = rows.filter(
+      (r) => (!selectedParty || r.customerId === selectedParty) && (!statusFilter || r.status === statusFilter),
+    );
+    if (!recentFirst) return list;
+    // Untouched lines (no partyAt) sink to the bottom rather than sorting as
+    // epoch-0 — they are not "the oldest work", they are not work at all.
+    return [...list].sort((a, b) => {
+      const at = a.partyAt ? Date.parse(a.partyAt) : -Infinity;
+      const bt = b.partyAt ? Date.parse(b.partyAt) : -Infinity;
+      return bt - at;
+    });
+  }, [rows, selectedParty, statusFilter, recentFirst]);
   /** How many lines sit in each status, for the filter's own labels. */
   const statusCounts = useMemo(() => {
     const m = new Map<string, number>();
@@ -543,6 +652,12 @@ export function BankStatementPage() {
   /** Whether the current selection is already marked not-required, which
    *  decides whether the button offers to mark or to undo. */
   const checkedRows = useMemo(() => rows.filter((r) => checked.has(r.id)), [rows, checked]);
+  /** Ticked lines that actually have a party to remove. POSTED is excluded: a
+   *  receipt already exists for it, so it is reversed, not cleared. */
+  const checkedAssigned = useMemo(
+    () => checkedRows.filter((r) => r.customerId != null && r.status !== 'POSTED').length,
+    [checkedRows],
+  );
   /** Ticked lines that Process could actually post. Drives the button's label,
    *  so it never offers to post a matched line just because it was ticked. */
   const selectedPostable = useMemo(
@@ -594,6 +709,44 @@ export function BankStatementPage() {
           setWorkingParty(id);
         },
         onError: (e) => toast.error(getApiErrorMessage(e, 'Could not assign')),
+      },
+    );
+  };
+
+  /**
+   * Undo the assignment on the ticked lines.
+   *
+   * Two questions, because they have different blast radii. Clearing the lines
+   * only touches this run; forgetting the narration changes how EVERY future
+   * statement is read, and there is no other screen in the app to undo that —
+   * so it is asked separately and defaults to keeping the alias.
+   */
+  const doClearParty = async () => {
+    const targets = checkedRows.filter((r) => r.customerId != null && r.status !== 'POSTED');
+    if (!targets.length) return toast.error('Tick an assigned line first.');
+    const n = targets.length;
+    const forget = await confirm({
+      title: `Clear the party on ${n} line${n === 1 ? '' : 's'}?`,
+      description:
+        'The line goes back to "No party". Choose "Also forget" to stop recognising this narration on future statements too — otherwise the next upload will assign it again.',
+      confirmText: 'Also forget',
+      cancelText: 'Just clear',
+    });
+    clearParty.mutate(
+      { rowIds: targets.map((r) => r.id), forgetAlias: forget },
+      {
+        onSuccess: (res) => {
+          toast.success(
+            `Cleared ${n} line${n === 1 ? '' : 's'}` +
+              (res.forgotten.length
+                ? ` — no longer recognising ${res.forgotten.join(', ')}`
+                : forget
+                  ? ' — there was no remembered narration to forget'
+                  : ' — the narration is still remembered'),
+          );
+          setChecked(new Set());
+        },
+        onError: (e) => toast.error(getApiErrorMessage(e, 'Could not clear the party')),
       },
     );
   };
@@ -1116,7 +1269,7 @@ export function BankStatementPage() {
                   onChange={setStatusFilter}
                   options={[
                     { value: '', label: 'Any status' },
-                    ...(['MATCHED', 'PARTIAL', 'UNMATCHED', 'NO_PARTY', 'IGNORED', 'POSTED'] as const)
+                    ...(['MATCHED', 'PARTIAL', 'UNMATCHED', 'NO_PARTY', 'IGNORED', 'POSTED', 'RETURNED'] as const)
                       .filter((k) => (statusCounts.get(k) ?? 0) > 0)
                       .map((k) => ({ value: k, label: `${STATUS_META[k].label} (${statusCounts.get(k)})` })),
                   ]}
@@ -1171,6 +1324,20 @@ export function BankStatementPage() {
                     >
                       Assign once
                     </Button>
+                    {/* The real undo. Only offered when something is actually
+                        assigned, so it never reads as a third way to assign. */}
+                    {checkedAssigned > 0 && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 text-rose-700 hover:text-rose-800 dark:text-rose-400"
+                        onClick={() => void doClearParty()}
+                        disabled={clearParty.isPending}
+                        title="Take the party off these lines — and optionally stop recognising this narration in future"
+                      >
+                        <Undo2 className="size-3.5" /> Clear party ({checkedAssigned})
+                      </Button>
+                    )}
                     {/* Marking a line not-required is the answer for a credit
                         that is not a customer receipt at all — a sweep reversal,
                         interest, an inter-account transfer. It is excluded from
@@ -1194,6 +1361,48 @@ export function BankStatementPage() {
                 )}
               </div>
 
+              {/* Returned cheques from this upload. Not a toast: the posted ones
+                  mean the ledger holds a receipt for money that came back, and
+                  that has to be read and acted on, not glimpsed. */}
+              {returnedCheques.length > 0 && (
+                <div className="mx-2 mb-2 rounded-[4px] border border-rose-300 bg-rose-50 px-3 py-2 dark:border-rose-400/40 dark:bg-rose-400/10">
+                  <div className="flex items-start gap-2">
+                    <TriangleAlert className="mt-0.5 size-4 shrink-0 text-rose-600" />
+                    <div className="min-w-0 flex-1 space-y-1.5">
+                      <p className="text-[13px] font-bold text-rose-900 dark:text-rose-100">
+                        {returnedCheques.length} cheque{returnedCheques.length === 1 ? '' : 's'} returned unpaid
+                      </p>
+                      {returnedCheques.map((c) => (
+                        <p key={`${c.rowId}-${c.chequeNo}`} className="text-[12px] text-rose-900 dark:text-rose-100">
+                          <span className="font-mono font-bold">{c.chequeNo}</span> · {money0(c.amount)}
+                          {c.customerName ? ` · ${c.customerName}` : ''} —{' '}
+                          {c.cancelled ? (
+                            <span>its credit is marked returned and will not be posted.</span>
+                          ) : (
+                            <>
+                              <span className="font-bold">already posted as {c.postedRef}.</span>{' '}
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="ml-1 h-6 border-rose-400 px-2 text-[11px] text-rose-800 hover:bg-rose-100 dark:text-rose-200"
+                                onClick={() => void doReverseReturned(c)}
+                                disabled={reverseReturned.isPending}
+                                title={`Delete receipt ${c.postedRef} and put its invoices back to unpaid`}
+                              >
+                                <Undo2 className="size-3" /> Reverse {c.postedRef}
+                              </Button>
+                            </>
+                          )}
+                        </p>
+                      ))}
+                    </div>
+                    <Button size="sm" variant="outline" className="h-7 shrink-0" onClick={() => setReturnedCheques([])}>
+                      Dismiss
+                    </Button>
+                  </div>
+                </div>
+              )}
+
               <div className="min-h-0 flex-1 overflow-auto">
                 <table className="w-full border-collapse">
                   <thead>
@@ -1203,19 +1412,29 @@ export function BankStatementPage() {
                       <th className={TH}>Narration</th>
                       <th className={cn(TH, 'w-28 text-right')}>Credit</th>
                       <th className={cn(TH, 'w-48')}>Party</th>
+                      {/* Sort lives on this header because it is the only column
+                          whose order is a question — the rest are the statement's
+                          own facts and read best in statement order. */}
+                      <th
+                        className={cn(TH, 'w-32 cursor-pointer select-none hover:underline')}
+                        onClick={() => setRecentFirst((v) => !v)}
+                        title={recentFirst ? 'Back to statement order' : 'Show the most recently decided lines first'}
+                      >
+                        Assigned {recentFirst ? '↓' : '·'}
+                      </th>
                       <th className={cn(TH, 'w-28 text-center')}>Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {runLoading ? (
                       <tr>
-                        <td colSpan={6} className="text-muted-foreground py-10 text-center">
+                        <td colSpan={7} className="text-muted-foreground py-10 text-center">
                           <Loader2 className="mx-auto size-5 animate-spin" />
                         </td>
                       </tr>
                     ) : shown.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="text-muted-foreground py-10 text-center text-[13px]">
+                        <td colSpan={7} className="text-muted-foreground py-10 text-center text-[13px]">
                           No lines.
                         </td>
                       </tr>
@@ -1342,6 +1561,32 @@ function BalanceCard({ title, b, highlight }: { title: string; b: { receiptCount
   );
 }
 
+/** "2 min ago" / "3 hr ago" / a date once it stops being today's work. Relative
+ *  is what matters here — the question is "did I just do this", not "at what
+ *  o'clock", and the exact stamp is in the cell's tooltip either way. */
+function sinceText(iso: string): string {
+  const mins = Math.floor((Date.now() - Date.parse(iso)) / 60_000);
+  if (!Number.isFinite(mins) || mins < 0) return formatDate(iso);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} hr ago`;
+  const days = Math.floor(hrs / 24);
+  return days < 7 ? `${days} day${days === 1 ? '' : 's'} ago` : formatDate(iso);
+}
+
+/** Statement ref columns carry "-", "NA" and friends on rows that have no
+ *  instrument (NEFT/RTGS). Those are a filler, not a number worth showing. */
+const hasRef = (v: string | null) => {
+  const s = v?.trim() ?? '';
+  return !!s && !/^([-–—.]+|na|n\/a|nil|null)$/i.test(s);
+};
+
+/** CLG / CHQ / CTS narrations are cheque clearings, so their ref IS the cheque
+ *  number. Anything else (NEFT, IMPS, UPI) gets the neutral "Ref" — calling a
+ *  UTR a cheque number would be a different kind of wrong. */
+const isChequeTxn = (n: string) => /\b(clg|chq|cheque|cts|clearing)\b/i.test(n ?? '');
+
 function LineRow({ row, checked, onToggle, selectable, vouchers, onChangeParty }: { row: BankStatementRowDto; checked: boolean; onToggle: () => void; selectable: boolean; vouchers: Record<string, string>; onChangeParty?: (row: BankStatementRowDto) => void }) {
   return (
     <tr
@@ -1350,6 +1595,9 @@ function LineRow({ row, checked, onToggle, selectable, vouchers, onChangeParty }
         row.status === 'UNMATCHED' && 'bg-rose-50/60 dark:bg-rose-500/10',
         row.status === 'NO_PARTY' && 'bg-amber-50/70 dark:bg-amber-400/10',
         row.status === 'IGNORED' && 'opacity-55',
+        // Struck through, not faded: a returned cheque is money that was there
+        // and went away, which reads differently from one deliberately left out.
+        row.status === 'RETURNED' && 'bg-rose-50/70 line-through decoration-rose-400/70 dark:bg-rose-500/10',
         selectable && 'cursor-pointer hover:bg-indigo-50/60',
       )}
       onClick={selectable ? onToggle : undefined}
@@ -1371,7 +1619,19 @@ function LineRow({ row, checked, onToggle, selectable, vouchers, onChangeParty }
         <span className="block truncate font-medium" title={row.narration}>
           {row.narration || '—'}
         </span>
-        {row.refNo && <span className="text-muted-foreground font-mono text-[11px]">{row.refNo}</span>}
+        {/* Labelled, because a bare grey number under the narration read as part
+            of the narration — nobody could tell it was the cheque number. */}
+        {hasRef(row.refNo) && (
+          <span
+            className="mt-0.5 inline-flex items-center gap-1 rounded-[3px] border px-1.5 py-px align-middle text-[10.5px] leading-[1.45]"
+            title={`${isChequeTxn(row.narration) ? 'Cheque no' : 'Reference no'} ${row.refNo} — from the statement's ref column`}
+          >
+            <span className="text-muted-foreground font-semibold tracking-wide uppercase">
+              {isChequeTxn(row.narration) ? 'Cheque' : 'Ref'}
+            </span>
+            <span className="font-mono font-semibold tabular-nums">{row.refNo}</span>
+          </span>
+        )}
         {/* The evidence, not just the verdict. A line says "Matched" because a
             receipt of the same amount sits within a few days of it — naming
             that receipt is what makes the verdict checkable instead of trusted. */}
@@ -1449,6 +1709,19 @@ function LineRow({ row, checked, onToggle, selectable, vouchers, onChangeParty }
                 (auto)
               </span>
             )}
+          </span>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </td>
+      {/* When this line was last decided, and by whom. A row nobody has touched
+          shows nothing rather than a time, so the sort has something honest to
+          put at the bottom. */}
+      <td className={cn(TD, 'whitespace-nowrap')}>
+        {row.partyAt ? (
+          <span title={`${new Date(row.partyAt).toLocaleString()}${row.partyBy ? ` — ${row.partyBy}` : ' — matched automatically'}`}>
+            <span className="text-[12px]">{sinceText(row.partyAt)}</span>
+            <span className="text-muted-foreground block text-[10.5px]">{row.partyBy || 'auto'}</span>
           </span>
         ) : (
           <span className="text-muted-foreground">—</span>

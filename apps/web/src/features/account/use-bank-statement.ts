@@ -86,6 +86,44 @@ export function useAssignBankRows(runId: number | undefined) {
   });
 }
 
+/**
+ * Undo an assignment. Unlike `assign` this also unlearns the narration when
+ * asked, so the party does not simply come back on the next statement — and it
+ * returns which fragments were forgotten, because that is shared state worth
+ * naming to the user rather than doing quietly.
+ */
+export function useClearBankParty(runId: number | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { rowIds: number[]; forgetAlias: boolean }) =>
+      http.post<{ result: BankStatementRunResult; forgotten: string[] }>(`/bank-statement/runs/${runId}/clear-party`, input),
+    onSuccess: (res) => {
+      qc.setQueryData([...KEY, 'run', runId], res.result);
+      qc.invalidateQueries({ queryKey: [...KEY, 'party'] });
+      qc.invalidateQueries({ queryKey: [...KEY, 'runs'] });
+    },
+  });
+}
+
+/**
+ * Reverse the receipt a returned cheque created. Touches the LEDGER, so it is
+ * gated on the payments delete permission server-side — a refusal here is a
+ * real answer, not a glitch, and the caller shows it verbatim.
+ */
+export function useReverseReturned(runId: number | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { rowId: number }) =>
+      http.post<{ voucherNo: string; replayedCount: number }>(`/bank-statement/runs/${runId}/reverse-returned`, input),
+    onSuccess: () => {
+      // The ledger moved underneath several screens, not just this one.
+      qc.invalidateQueries({ queryKey: [...KEY] });
+      qc.invalidateQueries({ queryKey: ['payments'] });
+      qc.invalidateQueries({ queryKey: ['party-ledger'] });
+    },
+  });
+}
+
 export function useIgnoreBankRows(runId: number | undefined) {
   const qc = useQueryClient();
   return useMutation({
