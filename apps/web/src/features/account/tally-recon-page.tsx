@@ -23,6 +23,7 @@ import {
   X,
 } from 'lucide-react';
 import type { ReconPartyBalance, ReconReview, ReconRow, ReconStatus, TallyLedgerCategoryInput, UnmappedLedgers } from '@oms/shared';
+import { suggestCustomers } from '@oms/shared';
 import { RECON_PROBLEM_STATUSES } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
@@ -124,31 +125,6 @@ const VCH_ORDER = ['OPENING', 'SALES', 'RECEIPT', 'CREDIT NOTE', 'DEBIT NOTE', '
 const isFlagged = (r: ReconRow) => r.status !== 'MATCHED' && r.status !== 'NOT_APPLICABLE';
 
 /** Every unmapped ledger name across all three filings, however it's currently split. */
-const nameWords = (s: string) =>
-  s.toUpperCase().replace(/[^A-Z0-9 ]+/g, ' ').split(/\s+/).filter(Boolean);
-/**
- * OMS customers resembling a Tally ledger name, best first (max 3). Scored by
- * the share of the customer's words found in the ledger name (a 4+ letter word
- * may match as a prefix either way: "ENTERPRISE" ~ "ENTERPRISES"), plus a boost
- * when the first words agree. `sure` = every customer word was found and the
- * first word matches.
- */
-function suggestCustomers(ledger: string, customers: string[]) {
-  const t = nameWords(ledger);
-  if (!t.length) return [];
-  const same = (a: string, b: string) => a === b || (Math.min(a.length, b.length) >= 4 && (a.startsWith(b) || b.startsWith(a)));
-  return customers
-    .map((name) => {
-      const c = nameWords(name);
-      const hit = c.filter((w) => t.some((x) => same(x, w))).length;
-      const first = !!c[0] && same(t[0], c[0]);
-      return { name, share: c.length ? hit / c.length : 0, score: c.length ? hit / c.length + (first ? 0.5 : 0) + hit * 0.01 : 0, sure: first && hit === c.length };
-    })
-    .filter((s) => s.share >= 0.5 && s.score >= 0.75)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 3);
-}
-
 const ledgerTotal = (u: UnmappedLedgers) => u.party.length + (u.agent?.length ?? 0) + u.expense.length + u.other.length;
 
 /** A missing receipt that can be posted straight from the report. */

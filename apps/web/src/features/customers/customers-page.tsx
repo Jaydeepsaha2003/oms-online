@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, EllipsisVertical, Loader2, PauseCircle, Pencil, PencilRuler, PlayCircle, Plus, Power, PowerOff, Search, Trash2, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, EllipsisVertical, FileUp, Loader2, PauseCircle, Pencil, PencilRuler, PlayCircle, Plus, Power, PowerOff, Search, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { type CustomerDto, type CustomerStatus, payByFor } from '@oms/shared';
+import { type CustomerDto, type CustomerStatus, type TallyImportPreview, payByFor } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { parseExcelFile } from '@/lib/excel';
 import { cn } from '@/lib/utils';
@@ -29,6 +29,8 @@ import {
   useCustomerLookups,
 } from './use-customers';
 import { BulkEditDialog } from './bulk-edit-dialog';
+import { TallyMasterImportDialog } from './tally-master-import-dialog';
+import { previewTallyMaster } from './use-account-groups';
 import { DispatchHoldDialog } from './dispatch-hold-dialog';
 
 const num = (n: number | null) => (n == null ? '—' : n.toLocaleString('en-IN'));
@@ -426,6 +428,26 @@ export function CustomersPage() {
     });
   };
 
+  const tallyRef = useRef<HTMLInputElement>(null);
+  const [tallyPreview, setTallyPreview] = useState<TallyImportPreview | null>(null);
+  const [tallyLoading, setTallyLoading] = useState(false);
+  const onTallyFile = async (file: File | undefined) => {
+    if (tallyRef.current) tallyRef.current.value = '';
+    if (!file) return;
+    if (!/\.xml$/i.test(file.name)) {
+      toast.error('Upload the Tally master exported as XML (Data Interchange).');
+      return;
+    }
+    setTallyLoading(true);
+    try {
+      setTallyPreview(await previewTallyMaster(file));
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, 'Could not read that file'));
+    } finally {
+      setTallyLoading(false);
+    }
+  };
+
   const handleImport = async (file: File) => {
     try {
       const rows = await parseExcelFile(file);
@@ -520,6 +542,21 @@ export function CustomersPage() {
             {can('customer:import') && (
               <ImportButton onFile={handleImport} pending={importMut.isPending} />
             )}
+            {can('customer:import') && (
+              <>
+                <input ref={tallyRef} type="file" accept=".xml,text/xml,application/xml" className="hidden" onChange={(e) => void onTallyFile(e.target.files?.[0])} />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-9 rounded-[4px] border-indigo-200 bg-indigo-50 text-[12.5px] font-bold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-400/30 dark:bg-indigo-400/10 dark:text-indigo-200"
+                  onClick={() => tallyRef.current?.click()}
+                  disabled={tallyLoading}
+                  title="Upload the Tally master (XML) to review and map ledgers and groups"
+                >
+                  {tallyLoading ? <Loader2 className="animate-spin" /> : <FileUp />} Tally master
+                </Button>
+              </>
+            )}
             {can('customer:create') && (
               <Button size="sm" className="h-9 rounded-[4px] text-[12.5px] font-bold" onClick={() => navigate('/customers/new')}>
                 <Plus /> New customer
@@ -588,6 +625,8 @@ export function CustomersPage() {
           }}
         />
       )}
+
+      {tallyPreview && <TallyMasterImportDialog preview={tallyPreview} onClose={() => setTallyPreview(null)} />}
 
       {bulkOpen && (
         <BulkEditDialog

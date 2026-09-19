@@ -1,6 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { AccountGroupDto, AccountGroupInput, GroupLedgerDto, MoveLedgersInput } from '@oms/shared';
-import { http } from '@/lib/api';
+import type {
+  AccountGroupDto,
+  AccountGroupInput,
+  GroupLedgerDto,
+  MoveLedgersInput,
+  TallyImportApply,
+  TallyImportPreview,
+  TallyImportResult,
+} from '@oms/shared';
+import { api, http } from '@/lib/api';
 
 const KEY = ['account-groups'] as const;
 
@@ -32,6 +40,26 @@ export function useSaveAccountGroup() {
 export function useDeleteAccountGroup() {
   const refresh = useRefresh();
   return useMutation({ mutationFn: (id: number) => http.delete(`/account-groups/${id}`), onSuccess: refresh });
+}
+
+export async function previewTallyMaster(file: File) {
+  const body = new FormData();
+  body.append('file', file);
+  const res = await api.post<TallyImportPreview>('/account-groups/tally-import/preview', body);
+  return res.data;
+}
+
+export function useApplyTallyImport() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: TallyImportApply) => http.post<TallyImportResult>('/account-groups/tally-import/apply', input),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: KEY });
+      void qc.invalidateQueries({ queryKey: ['customers'] });
+      void qc.invalidateQueries({ queryKey: ['tally-recon'] });
+      void qc.invalidateQueries({ queryKey: ['party-ledger'] });
+    },
+  });
 }
 
 export function useMoveLedgers() {

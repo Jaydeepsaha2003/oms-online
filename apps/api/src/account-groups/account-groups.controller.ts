@@ -1,10 +1,13 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { AccountGroupsService } from './account-groups.service';
-import { CreateAccountGroupDto, MoveLedgersDto, UpdateAccountGroupDto } from './account-groups.dto';
+import { CreateAccountGroupDto, MoveLedgersDto, TallyImportApplyDto, UpdateAccountGroupDto } from './account-groups.dto';
 
 const R = RESOURCES.CUSTOMER;
 
@@ -31,6 +34,22 @@ export class AccountGroupsController {
   @Audit({ action: ACTIONS.UPDATE, resource: R, description: 'Moved ledgers to another group' })
   move(@Body() dto: MoveLedgersDto) {
     return this.groups.moveLedgers(dto);
+  }
+
+  @Post('tally-import/preview')
+  @Permissions(perm(R, ACTIONS.IMPORT))
+  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } }))
+  tallyPreview(@UploadedFile() file: Express.Multer.File | undefined) {
+    if (!file) throw new BadRequestException('Choose the Tally master export (.xml).');
+    if (!/\.xml$/i.test(file.originalname)) throw new BadRequestException('Upload the Tally master exported as XML (Data Interchange).');
+    return this.groups.tallyPreview(file.buffer, file.originalname);
+  }
+
+  @Post('tally-import/apply')
+  @Permissions(perm(R, ACTIONS.IMPORT))
+  @Audit({ action: ACTIONS.IMPORT, resource: R, description: 'Imported Tally master (groups and ledgers)' })
+  tallyApply(@Body() dto: TallyImportApplyDto, @CurrentUser('name') userName?: string) {
+    return this.groups.tallyApply(dto, userName ?? null);
   }
 
   @Post()
