@@ -36,10 +36,10 @@ const xml = `<ENVELOPE><BODY><IMPORTDATA><REQUESTDATA>
     const sumti = p.parties.find((x) => x.tallyName === 'SUMTI MARKETING NX');
     assert.equal(sumti.match.how, 'LOOKS_LIKE');
     assert.equal(p.parties.find((x) => x.tallyName === 'ZZ NOBODY & CO').match, null);
-    assert.equal(p.others.find((x) => x.tallyName === 'ZZ Salary').proposed, 'EXPENSE');
-    ok('matches: looks-like, not in OMS, expense proposed');
+    assert.equal(p.others.find((x) => x.tallyName === 'ZZ Salary').tallyGroup, 'Indirect Expenses');
+    ok('matches: looks-like, not in OMS; non-party ledger kept with its Tally group');
 
-    await assert.rejects(svc.tallyApply({ groups: [], parties: [{ tallyName: sumti.tallyName, customerId: sumti.match.customerId, groupName: 'ZZ TEST PARTIES' }], others: [] }), /neither in OMS/);
+    await assert.rejects(svc.tallyApply({ groups: [], parties: [{ tallyName: sumti.tallyName, customerId: sumti.match.customerId, groupName: 'ZZ TEST PARTIES' }], ledgers: [] }), /neither in OMS/);
     ok('party under an unticked new group is refused');
     await assert.rejects(
       svc.tallyApply({
@@ -48,7 +48,7 @@ const xml = `<ENVELOPE><BODY><IMPORTDATA><REQUESTDATA>
           { tallyName: 'A', customerId: sumti.match.customerId, groupName: 'ZZ TEST PARTIES' },
           { tallyName: 'B', customerId: sumti.match.customerId, groupName: 'Sundry Debtors' },
         ],
-        others: [],
+        ledgers: [],
       }),
       /same OMS party/,
     );
@@ -57,14 +57,60 @@ const xml = `<ENVELOPE><BODY><IMPORTDATA><REQUESTDATA>
     const r = await svc.tallyApply({
       groups: [{ name: 'ZZ TEST PARTIES', parent: 'Sundry Debtors' }],
       parties: [{ tallyName: sumti.tallyName, customerId: sumti.match.customerId, groupName: 'ZZ TEST PARTIES' }],
-      others: [{ tallyName: 'ZZ Salary', filing: 'EXPENSE' }],
+      ledgers: [{ name: 'ZZ Salary', group: 'Indirect Expenses' }, { name: 'SUMTI MARKETING NX', group: 'ZZ TEST PARTIES' }],
     });
-    assert.deepEqual(r, { groupsCreated: 1, groupsMoved: 0, partiesUpdated: 1, linksSaved: 1, othersFiled: 1 });
+    assert.deepEqual(r, { groupsCreated: 1, groupsMoved: 0, partiesUpdated: 1, linksSaved: 1, ledgersSaved: 2 });
     const c = await prisma.customer.findUnique({ where: { id: sumti.match.customerId }, include: { group: { include: { parent: true } } } });
     assert.equal(c.group.name, 'ZZ TEST PARTIES');
     assert.equal(c.group.parent.name, 'Sundry Debtors');
     assert.ok(await prisma.tallyPartyAlias.findUnique({ where: { tallyName: 'SUMTI MARKETING NX' } }));
-    ok('upload: group created under Sundry Debtors, party moved, Tally name linked, expense filed');
+    ok('upload: group created under Sundry Debtors, party moved, Tally name linked, ledger groups saved');
+    const { loadLedgerGroups } = require('../apps/api/dist/src/account-groups/ledger-groups.js');
+    const lg = await loadLedgerGroups(prisma);
+    assert.equal(lg.groupOf('ZZ Salary'), 'Indirect Expenses');
+    assert.equal(lg.isParty('Indirect Expenses'), false);
+    assert.equal(lg.isParty('ZZ TEST PARTIES'), true);
+    assert.equal(lg.groupOf('NOT IN MASTER'), null);
+    ok('ledger groups: expenses are not parties; sub-groups of Sundry Debtors are');
+
+    const run = await prisma.tallyReconRun.create({ data: { fileName: 'test.xlsx', fromDate: new Date('2026-04-01'), toDate: new Date('2026-09-04') } });
+    await prisma.tallyReconRow.createMany({
+      data: [
+        { runId: run.id, source: 'TALLY', ledgerName: 'ZZ NOBODY & CO', txnDate: new Date('2026-04-01'), vchType: 'OPENING', vchNo: '', dr: 5000, cr: 0, status: 'UNMATCHED_PARTY', issueKey: 'zz1' },
+        { runId: run.id, source: 'TALLY', ledgerName: 'ZZ NOBODY & CO', txnDate: new Date('2026-05-01'), vchType: 'SALES', vchNo: '1', dr: 12000, cr: 0, status: 'UNMATCHED_PARTY', issueKey: 'zz2' },
+        { runId: run.id, source: 'TALLY', ledgerName: 'ZZ NOBODY & CO', txnDate: new Date('2026-06-01'), vchType: 'RECEIPT', vchNo: '2', dr: 0, cr: 4000, status: 'UNMATCHED_PARTY', issueKey: 'zz3' },
+      ],
+    });
+    const p2 = await svc.tallyPreview(utf16, 'Master.xml');
+    const nobody = p2.parties.find((x) => x.tallyName === 'ZZ NOBODY & CO');
+    assert.equal(nobody.tallyOpening, 5000);
+    assert.equal(nobody.tallyClosing, 13000);
+    ok('Tally opening 5,000 Dr / closing 13,000 Dr read from the latest reconciliation');
+
+    const list = await svc.addToList({ items: [{ tallyName: nobody.tallyName, groupName: 'Sundry Debtors', details: { creditPeriod: 45, state: 'Tamil Nadu' } }] }, 'test');
+    const add = list.find((a) => a.tallyName === 'ZZ NOBODY & CO');
+    assert.equal(add.tallyClosing, 13000);
+    assert.equal(add.details.creditPeriod, 45);
+    assert.ok((await svc.tallyPreview(utf16, 'Master.xml')).parties.find((x) => x.tallyName === 'ZZ NOBODY & CO').inList);
+    ok('added to the addition list with balance and credit period');
+
+    const cust = await prisma.customer.create({ data: { partyName: 'ZZ NOBODY AND CO', groupId: (await svc.defaultGroupId()) } });
+    await svc.markAdded(add.id, { customerId: cust.id }, 'test');
+    assert.equal((await prisma.customerAddition.findUnique({ where: { id: add.id } })).status, 'ADDED');
+    assert.equal((await prisma.tallyPartyAlias.findUnique({ where: { tallyName: 'ZZ NOBODY & CO' } })).customerId, cust.id);
+    assert.equal((await svc.additions('PENDING')).some((a) => a.id === add.id), false);
+    ok('saved customer ticks it off the list and links the Tally name');
+
+    const { OpeningBalancesService } = require('../apps/api/dist/src/opening-balances/opening-balances.service.js');
+    const ob = Object.create(OpeningBalancesService.prototype);
+    ob.prisma = prisma;
+    const np = (await ob.newParties()).find((x) => x.customerId === cust.id);
+    assert.equal(np.source, 'TALLY');
+    assert.equal(np.tallyOpening, 5000);
+    ok('shows on Opening Balance as "From Tally" with Tally opening 5,000 Dr');
+    await ob.create({ customerId: cust.id, transDate: '2026-04-01', bankAmt: 5000, cashAmt: 0, drCr: 'DEBIT' }, 'test');
+    assert.equal((await ob.newParties()).some((x) => x.customerId === cust.id), false);
+    ok('drops off the panel once its opening is saved');
     console.log(`${n} passed`);
   } finally {
     await prisma.$disconnect();

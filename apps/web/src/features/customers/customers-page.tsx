@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, EllipsisVertical, FileUp, Loader2, PauseCircle, Pencil, PencilRuler, PlayCircle, Plus, Power, PowerOff, Search, Trash2, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, EllipsisVertical, FileUp, ListPlus, Loader2, PauseCircle, Pencil, PencilRuler, PlayCircle, Plus, Power, PowerOff, Search, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { type CustomerDto, type CustomerStatus, type TallyImportPreview, payByFor } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
@@ -30,7 +30,8 @@ import {
 } from './use-customers';
 import { BulkEditDialog } from './bulk-edit-dialog';
 import { TallyMasterImportDialog } from './tally-master-import-dialog';
-import { previewTallyMaster } from './use-account-groups';
+import { previewTallyMaster, useAdditions } from './use-account-groups';
+import { AdditionListDialog } from './addition-list-dialog';
 import { DispatchHoldDialog } from './dispatch-hold-dialog';
 
 const num = (n: number | null) => (n == null ? '—' : n.toLocaleString('en-IN'));
@@ -431,6 +432,8 @@ export function CustomersPage() {
   const tallyRef = useRef<HTMLInputElement>(null);
   const [tallyPreview, setTallyPreview] = useState<TallyImportPreview | null>(null);
   const [tallyLoading, setTallyLoading] = useState(false);
+  const [additionsOpen, setAdditionsOpen] = useState(false);
+  const { data: additions = [] } = useAdditions();
   const onTallyFile = async (file: File | undefined) => {
     if (tallyRef.current) tallyRef.current.value = '';
     if (!file) return;
@@ -557,6 +560,18 @@ export function CustomersPage() {
                 </Button>
               </>
             )}
+            {additions.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 gap-1.5 rounded-[4px] border-emerald-200 bg-emerald-50 text-[12.5px] font-bold text-emerald-800 hover:bg-emerald-100 dark:border-emerald-400/30 dark:bg-emerald-400/10 dark:text-emerald-200"
+                onClick={() => setAdditionsOpen(true)}
+                title="Tally parties waiting to be added to OMS"
+              >
+                <ListPlus /> Addition list
+                <span className="rounded-full bg-emerald-600 px-1.5 text-[11px] text-white tabular-nums">{additions.length}</span>
+              </Button>
+            )}
             {can('customer:create') && (
               <Button size="sm" className="h-9 rounded-[4px] text-[12.5px] font-bold" onClick={() => navigate('/customers/new')}>
                 <Plus /> New customer
@@ -627,6 +642,7 @@ export function CustomersPage() {
       )}
 
       {tallyPreview && <TallyMasterImportDialog preview={tallyPreview} onClose={() => setTallyPreview(null)} />}
+      {additionsOpen && <AdditionListDialog canAdd={can('customer:create')} onClose={() => setAdditionsOpen(false)} />}
 
       {bulkOpen && (
         <BulkEditDialog

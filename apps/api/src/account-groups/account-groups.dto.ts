@@ -77,14 +77,16 @@ class TallyImportPartyDto {
   groupName!: string;
 }
 
-class TallyImportOtherDto {
+class TallyImportLedgerDto {
   @IsString()
   @MinLength(1)
   @MaxLength(255)
-  tallyName!: string;
+  name!: string;
 
-  @IsIn(['AGENT', 'EXPENSE', 'OTHER'])
-  filing!: 'AGENT' | 'EXPENSE' | 'OTHER';
+  @IsString()
+  @MinLength(1)
+  @MaxLength(100)
+  group!: string;
 }
 
 export class TallyImportApplyDto {
@@ -100,6 +102,46 @@ export class TallyImportApplyDto {
 
   @IsArray()
   @ValidateNested({ each: true })
-  @Type(() => TallyImportOtherDto)
-  others!: TallyImportOtherDto[];
+  @Type(() => TallyImportLedgerDto)
+  ledgers!: TallyImportLedgerDto[];
+}
+
+class TallyLedgerDetailsDto {
+  @IsOptional() @Type(() => Number) @IsInt() creditPeriod?: number | null;
+  @IsOptional() @IsString() @MaxLength(100) state?: string | null;
+  @IsOptional() @IsString() @MaxLength(100) city?: string | null;
+  @IsOptional() @IsString() @MaxLength(50) mobile?: string | null;
+  @IsOptional() @IsString() @MaxLength(255) email?: string | null;
+  @IsOptional() @IsString() @MaxLength(20) gstin?: string | null;
+}
+
+class AddToListItemDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(255)
+  tallyName!: string;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(100)
+  groupName!: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => TallyLedgerDetailsDto)
+  details?: TallyLedgerDetailsDto;
+}
+
+export class AddToListDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => AddToListItemDto)
+  items!: AddToListItemDto[];
+}
+
+export class MarkAddedDto {
+  @Type(() => Number)
+  @IsInt()
+  customerId!: number;
 }

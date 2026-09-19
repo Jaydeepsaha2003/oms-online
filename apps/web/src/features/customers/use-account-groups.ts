@@ -2,6 +2,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   AccountGroupDto,
   AccountGroupInput,
+  CustomerAdditionDto,
+  NewPartyOpeningDto,
+  TallyLedgerDetails,
   GroupLedgerDto,
   MoveLedgersInput,
   TallyImportApply,
@@ -67,5 +70,58 @@ export function useMoveLedgers() {
   return useMutation({
     mutationFn: (input: MoveLedgersInput) => http.post<{ updated: number }>('/account-groups/ledgers/move', input),
     onSuccess: refresh,
+  });
+}
+
+const ADDITIONS = [...KEY, 'additions'] as const;
+
+export function useAdditions() {
+  return useQuery({ queryKey: ADDITIONS, queryFn: () => http.get<CustomerAdditionDto[]>('/account-groups/additions', { params: { status: 'PENDING' } }) });
+}
+
+export function useAddition(id: number | null) {
+  return useQuery({ queryKey: [...ADDITIONS, id], queryFn: () => http.get<CustomerAdditionDto>(`/account-groups/additions/${id}`), enabled: id != null });
+}
+
+export function useAddToList() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (items: { tallyName: string; groupName: string; details?: TallyLedgerDetails }[]) =>
+      http.post<CustomerAdditionDto[]>('/account-groups/additions', { items }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ADDITIONS }),
+  });
+}
+
+export function useRemoveFromList() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => http.delete(`/account-groups/additions/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ADDITIONS }),
+  });
+}
+
+export function useMarkAdded() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, customerId }: { id: number; customerId: number }) =>
+      http.post<CustomerAdditionDto>(`/account-groups/additions/${id}/added`, { customerId }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ADDITIONS });
+      void qc.invalidateQueries({ queryKey: NEW_PARTIES });
+    },
+  });
+}
+
+const NEW_PARTIES = ['opening-balances', 'new-parties'] as const;
+
+export function useNewParties() {
+  return useQuery({ queryKey: NEW_PARTIES, queryFn: () => http.get<NewPartyOpeningDto[]>('/opening-balances/new-parties') });
+}
+
+export function useSettleOpening() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (customerId: number) => http.post(`/opening-balances/new-parties/${customerId}/settle`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: NEW_PARTIES }),
   });
 }

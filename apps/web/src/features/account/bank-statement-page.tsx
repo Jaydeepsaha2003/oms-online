@@ -16,7 +16,7 @@ import {
   Upload,
   UserPlus,
 } from 'lucide-react';
-import { detectStatementDateOrder, parseStatementPeriod, statementDateToDisplay, statementDateToYmd, trimStatementTrailer, type BankReturnedCheque, type BankStatementColumnMap, type BankStatementCreateResponse, type BankStatementRowDto, type BankStatementRunResult, type BankStatementRecheckResult } from '@oms/shared';
+import { DEFAULT_LEDGER_GROUP, detectStatementDateOrder, parseStatementPeriod, statementDateToDisplay, statementDateToYmd, trimStatementTrailer, type BankReturnedCheque, type BankStatementColumnMap, type BankStatementCreateResponse, type BankStatementRowDto, type BankStatementRunResult, type BankStatementRecheckResult } from '@oms/shared';
 import { detectBankAccount, statementIdentityText } from './bank-statement-detect';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -31,7 +31,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { DatePicker } from '@/components/ui/date-picker';
-import { useCustomers } from '@/features/customers/use-customers';
+import { useCustomerLookups, useCustomers } from '@/features/customers/use-customers';
 import { useActiveBankAccounts } from './use-account';
 import {
   useAssignBankRows,
@@ -172,12 +172,18 @@ export function BankStatementPage() {
   const { data: preset } = useColumnPreset(bankName, columns);
   // Historical bank credits can belong to parties that are now inactive.
   const { data: customerList } = useCustomers({ page: 1, pageSize: 2000, status: 'ALL' });
-  const customers = useMemo(
-    () =>
-      (customerList?.items ?? [])
-        .map((c) => ({ id: c.id, name: (c.partyName ?? '').trim(), category: (c.category ?? '').trim().toUpperCase() }))
-        .filter((c) => c.name),
-    [customerList],
+  const { data: customerLookups } = useCustomerLookups();
+  const customers = useMemo(() => {
+    const groupName = new Map((customerLookups?.groups ?? []).map((g) => [g.id, g.name]));
+    return (customerList?.items ?? [])
+      .map((c) => ({
+        id: c.id,
+        name: (c.partyName ?? '').trim(),
+        category: (c.category ?? '').trim().toUpperCase(),
+        group: (c.groupId != null ? groupName.get(c.groupId) : undefined) ?? '',
+      }))
+      .filter((c) => c.name);
+  }, [customerList, customerLookups],
   );
 
   /* ── The working ──────────────────────────────────────────────────────── */
@@ -1330,8 +1336,8 @@ export function BankStatementPage() {
                        */
                       options={customers.map((c) => ({
                         value: c.name,
-                        label: c.category && c.category !== 'SALES' ? `${c.name} · ${c.category}` : c.name,
-                        keywords: c.category,
+                        label: c.group && c.group !== DEFAULT_LEDGER_GROUP ? `${c.name} · ${c.group}` : c.name,
+                        keywords: `${c.group} ${c.category}`,
                       }))}
                       placeholder="Assign to customer…"
                       className={cn(CONTROL, 'w-56')}

@@ -21,6 +21,19 @@ export class OpeningBalancesController {
     return this.opening.findMany(query);
   }
 
+  @Get('new-parties')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  newParties() {
+    return this.opening.newParties();
+  }
+
+  @Post('new-parties/:customerId/settle')
+  @Permissions(perm(R, ACTIONS.CREATE))
+  async settle(@Param('customerId', ParseIntPipe) customerId: number, @CurrentUser('name') userName: string) {
+    await this.opening.settle(customerId, userName);
+    return { ok: true };
+  }
+
   @Get(':id')
   @Permissions(perm(R, ACTIONS.VIEW))
   get(@Param('id', ParseIntPipe) id: number) {

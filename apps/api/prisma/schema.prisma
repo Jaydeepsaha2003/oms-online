@@ -262,6 +262,30 @@ model AccountGroup {
   @@map("account_groups")
 }
 
+/// Tally ledgers queued (from the Tally master review) to be added as OMS customers.
+model CustomerAddition {
+  id             Int       @id @default(autoincrement())
+  tallyName      String    @unique
+  groupName      String
+  /// JSON: { creditPeriod, state, mobile, email, gstin } as read from Tally.
+  details        String?
+  /// Signed, Dr positive — from the latest Tally Reconciliation register.
+  tallyOpening   Float?
+  tallyClosing   Float?
+  balanceFrom    DateTime?
+  balanceTo      DateTime?
+  /// PENDING | ADDED
+  status         String    @default("PENDING")
+  customerId     Int?
+  /// Opening balance entered, or marked not needed.
+  openingSettled Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+  createdBy      String?
+  addedAt        DateTime?
+
+  @@map("customer_additions")
+}
+
 // Sales agents (used when partySource = AGENT). Maintained as its own master so
 // agents can be added on the fly from the customer form and tracked with timestamps.
 model Agent {
@@ -1831,24 +1855,15 @@ model TallyPartyAlias {
   @@map("tally_party_alias")
 }
 
-/// A Tally ledger the user has classified as NOT a customer — so it stops being
-/// reported as "needs a party mapping" on every future upload/rerun. Filed
-/// permanently, the same way TallyPartyAlias is: built once, reused forever.
-///
-/// Kept as a SEPARATE table rather than a nullable column on TallyPartyAlias
-/// because the two are mutually exclusive by construction — a ledger is either
-/// mapped to a customer (TallyPartyAlias) or filed as non-party here, never
-/// both. The service enforces that: saving one for a name deletes the other.
-model TallyLedgerCategory {
+/// Every Tally ledger with its Tally group, saved by the Tally master upload.
+/// Decides whether a ledger is a party (under Sundry Debtors) or not.
+model TallyLedger {
   id        Int      @id @default(autoincrement())
-  /// Ledger name exactly as it appears in the register.
-  tallyName String   @unique
-  /// AGENT | EXPENSE | OTHER.
-  category  String
-  createdAt DateTime @default(now())
-  createdBy String?
+  name      String   @unique
+  groupName String
+  updatedAt DateTime @updatedAt
 
-  @@map("tally_ledger_category")
+  @@map("tally_ledgers")
 }
 
 /// One upload + its computed result, kept so a reconciliation can be reopened

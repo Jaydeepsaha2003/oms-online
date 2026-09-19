@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Loader2, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, FileUp, Loader2, Pencil, Plus, Search, Sparkles, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
-import type { OpeningBalanceDto } from '@oms/shared';
+import type { NewPartyOpeningDto, OpeningBalanceDto } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
@@ -18,6 +18,7 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useCustomers } from '@/features/customers/use-customers';
 import { useCreateOpeningBalance, useDeleteOpeningBalance, useOpeningBalances, useUpdateOpeningBalance } from './use-account';
+import { useNewParties, useSettleOpening } from '@/features/customers/use-account-groups';
 
 /** Matches the Pending Challan / Challans / Orders grids: Inter, semibold, near-black. */
 const TEXT_CELL = 'text-[13px] font-semibold text-slate-800 dark:text-slate-200';
@@ -41,6 +42,7 @@ export function OpeningBalancePage() {
   const { page, setPage, pageSize, setPageSize } = usePageSize('opening-balance');
   const [editing, setEditing] = useState<OpeningBalanceDto | null>(null);
   const [creating, setCreating] = useState(false);
+  const [prefill, setPrefill] = useState<OpeningPrefill | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -157,6 +159,22 @@ export function OpeningBalancePage() {
     // the grid scrolls. `/account/opening-balance` is a flush route (app-shell), so
     // the page owns its own padding.
     <div className="flex h-full min-h-0 flex-col gap-2 p-2.5 font-sans sm:gap-2.5 sm:p-3">
+      {can('openingbalance:view') && (
+        <NewPartiesPanel
+          canCreate={can('openingbalance:create')}
+          onSet={(p) => {
+            setPrefill({
+              party: p.name,
+              amount: p.tallyOpening != null ? Math.abs(p.tallyOpening) : null,
+              drCr: (p.tallyOpening ?? 0) < 0 ? 'CREDIT' : 'DEBIT',
+              date: p.openingDate ? p.openingDate.slice(0, 10) : null,
+              remarks: p.tallyOpening != null ? 'Opening as per Tally' : '',
+            });
+            setCreating(true);
+          }}
+        />
+      )}
+
       <div className="bg-card font-poppins rounded-[4px] border shadow-sm">
         <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
           <div className="relative w-full sm:w-64">
@@ -262,9 +280,11 @@ export function OpeningBalancePage() {
       {(creating || editing) && (
         <OpeningDialog
           entry={editing}
+          prefill={editing ? null : prefill}
           onClose={() => {
             setCreating(false);
             setEditing(null);
+            setPrefill(null);
           }}
         />
       )}
@@ -272,7 +292,83 @@ export function OpeningBalancePage() {
   );
 }
 
-function OpeningDialog({ entry, onClose }: { entry: OpeningBalanceDto | null; onClose: () => void }) {
+interface OpeningPrefill {
+  party: string;
+  amount: number | null;
+  drCr: 'DEBIT' | 'CREDIT';
+  date: string | null;
+  remarks: string;
+}
+
+const inr0 = (v: number) => Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+
+function NewPartiesPanel({ canCreate, onSet }: { canCreate: boolean; onSet: (p: NewPartyOpeningDto) => void }) {
+  const { data: parties = [] } = useNewParties();
+  const settle = useSettleOpening();
+  const [open, setOpen] = useState(true);
+  if (!parties.length) return null;
+  return (
+    <div className="shrink-0 overflow-hidden rounded-[4px] border border-indigo-300 bg-gradient-to-r from-indigo-50 to-sky-50 shadow-sm dark:border-indigo-400/30 dark:from-indigo-400/10 dark:to-sky-400/5">
+      <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left">
+        <Sparkles className="size-4 shrink-0 text-indigo-600 dark:text-indigo-300" />
+        <span className="min-w-0 flex-1 text-[13px] font-bold text-indigo-950 dark:text-indigo-100">
+          {parties.length} new {parties.length === 1 ? 'party needs' : 'parties need'} an opening balance
+        </span>
+        <ChevronDown className={cn('size-4 shrink-0 text-indigo-700 transition-transform dark:text-indigo-300', open && 'rotate-180')} />
+      </button>
+      {open && (
+        <div className="max-h-56 space-y-1 overflow-y-auto border-t border-indigo-200 p-2 dark:border-indigo-400/20">
+          {parties.map((p) => (
+            <div key={p.customerId} className="bg-card flex flex-col gap-1.5 rounded-[4px] border px-2.5 py-1.5 sm:flex-row sm:items-center">
+              <div className="min-w-0 flex-1">
+                <p className="flex items-center gap-1.5 truncate text-[13px] font-bold text-slate-900 dark:text-slate-100">
+                  <span className="truncate">{p.name}</span>
+                  <span
+                    className={cn(
+                      'inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-px text-[10px] font-bold',
+                      p.source === 'TALLY' ? 'bg-indigo-600 text-white' : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200',
+                    )}
+                  >
+                    {p.source === 'TALLY' && <FileUp className="size-2.5" />}
+                    {p.source === 'TALLY' ? 'From Tally' : 'New in OMS'}
+                  </span>
+                </p>
+                <p className="text-muted-foreground text-[11px] font-medium">
+                  Added {prettyDate(p.createdAt)}
+                  {p.tallyOpening != null && (
+                    <>
+                      {' · '}Tally opening <b className="text-foreground tabular-nums">₹{inr0(p.tallyOpening)} {p.tallyOpening < 0 ? 'Cr' : 'Dr'}</b>
+                      {p.openingDate && ` on ${prettyDate(p.openingDate)}`}
+                    </>
+                  )}
+                </p>
+              </div>
+              {canCreate && (
+                <div className="flex shrink-0 items-center gap-1.5 self-end sm:self-auto">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-muted-foreground h-7 rounded-[4px] px-2 text-[11.5px] font-semibold"
+                    disabled={settle.isPending}
+                    onClick={() => settle.mutate(p.customerId, { onError: (e) => toast.error(getApiErrorMessage(e, 'Could not update')) })}
+                    title="This party has no opening balance"
+                  >
+                    Not needed
+                  </Button>
+                  <Button size="sm" className="h-7 rounded-[4px] px-2.5 text-[11.5px] font-bold" onClick={() => onSet(p)}>
+                    <Plus className="size-3.5" /> Set opening
+                  </Button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OpeningDialog({ entry, prefill, onClose }: { entry: OpeningBalanceDto | null; prefill?: OpeningPrefill | null; onClose: () => void }) {
   const isEdit = !!entry;
   const create = useCreateOpeningBalance();
   const update = useUpdateOpeningBalance(entry?.id ?? 0);
@@ -286,12 +382,12 @@ function OpeningDialog({ entry, onClose }: { entry: OpeningBalanceDto | null; on
   }, [customerData]);
   const options = useMemo(() => [...byLabel.keys()].sort((a, b) => a.localeCompare(b)), [byLabel]);
 
-  const [party, setParty] = useState(entry?.customerName ?? '');
-  const [transDate, setTransDate] = useState(entry ? entry.transDate.slice(0, 10) : ymd(new Date()));
-  const [bankAmt, setBankAmt] = useState(entry ? String(entry.bankAmt) : '');
+  const [party, setParty] = useState(entry?.customerName ?? prefill?.party ?? '');
+  const [transDate, setTransDate] = useState(entry ? entry.transDate.slice(0, 10) : (prefill?.date ?? ymd(new Date())));
+  const [bankAmt, setBankAmt] = useState(entry ? String(entry.bankAmt) : prefill?.amount ? String(prefill.amount) : '');
   const [cashAmt, setCashAmt] = useState(entry ? String(entry.cashAmt) : '');
-  const [drCr, setDrCr] = useState<'DEBIT' | 'CREDIT'>(entry?.drCr ?? 'DEBIT');
-  const [remarks, setRemarks] = useState(entry?.remarks ?? '');
+  const [drCr, setDrCr] = useState<'DEBIT' | 'CREDIT'>(entry?.drCr ?? prefill?.drCr ?? 'DEBIT');
+  const [remarks, setRemarks] = useState(entry?.remarks ?? prefill?.remarks ?? '');
 
   const customerId = byLabel.get(party) ?? entry?.customerId;
 

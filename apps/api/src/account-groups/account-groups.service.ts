@@ -5,9 +5,10 @@ import {
   ledgerNameKey,
   suggestCustomers,
   type AccountGroupDto,
+  type CustomerAdditionDto,
+  type TallyLedgerDetails,
   type GroupAllocMethod,
   type GroupLedgerDto,
-  type TallyImportFiling,
   type TallyImportGroup,
   type TallyImportOther,
   type TallyImportParty,
@@ -15,7 +16,7 @@ import {
   type TallyImportResult,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateAccountGroupDto, MoveLedgersDto, TallyImportApplyDto, UpdateAccountGroupDto } from './account-groups.dto';
+import { AddToListDto, CreateAccountGroupDto, MarkAddedDto, MoveLedgersDto, TallyImportApplyDto, UpdateAccountGroupDto } from './account-groups.dto';
 import { parseTallyMaster, type TallyMaster } from './tally-master.parser';
 
 const INCLUDE = {
@@ -116,14 +117,16 @@ export class AccountGroupsService {
     } catch (e) {
       throw new BadRequestException((e as Error).message);
     }
-    const [omsGroups, customers, aliases, filings] = await Promise.all([
+    const [omsGroups, customers, aliases, balances, queued] = await Promise.all([
       this.prisma.accountGroup.findMany({ select: { id: true, name: true, parentId: true } }),
       this.prisma.customer.findMany({ where: { partyName: { not: null } }, select: { id: true, partyName: true, active: true, groupId: true }, orderBy: { partyName: 'asc' } }),
       this.prisma.tallyPartyAlias.findMany({ select: { tallyName: true, customerId: true } }),
-      this.prisma.tallyLedgerCategory.findMany({ select: { tallyName: true, category: true } }),
+      this.tallyBalances(),
+      this.prisma.customerAddition.findMany({ where: { status: 'PENDING' }, select: { tallyName: true } }),
     ]);
 
     const key = (s: string) => s.trim().toUpperCase();
+    const inList = new Set(queued.map((q) => key(q.tallyName)));
     const omsById = new Map(omsGroups.map((g) => [g.id, g]));
     const omsByName = new Map(omsGroups.map((g) => [key(g.name), g]));
     const parentName = new Map<string, string | null>();
@@ -144,12 +147,19 @@ export class AccountGroupsService {
 
     const custIds = new Set(customers.map((c) => c.id));
     const aliasOf = new Map(aliases.filter((a) => custIds.has(a.customerId)).map((a) => [key(a.tallyName), a.customerId]));
-    const filedOf = new Map(filings.map((f) => [key(f.tallyName), f.category as TallyImportFiling]));
     const byNameKey = new Map(customers.map((c) => [ledgerNameKey(c.partyName!), c.id]));
     const idByName = new Map(customers.map((c) => [c.partyName!, c.id]));
     const names = customers.map((c) => c.partyName!);
     const DEBTORS = key(DEFAULT_LEDGER_GROUP);
-    const EXPENSE = new Set(['DIRECT EXPENSES', 'INDIRECT EXPENSES', 'PURCHASE ACCOUNTS']);
+
+    // OMS parties that already have their own Tally ledger (same name or linked):
+    // never auto-picked for a different ledger — only offered as a suggestion.
+    const claimed = new Set<number>();
+    for (const l of master.ledgers) {
+      if (!chain(l.parent ?? 'Primary').includes(DEBTORS)) continue;
+      const id = aliasOf.get(key(l.name)) ?? byNameKey.get(ledgerNameKey(l.name));
+      if (id != null) claimed.add(id);
+    }
 
     const parties: TallyImportParty[] = [];
     const others: TallyImportOther[] = [];
@@ -160,23 +170,36 @@ export class AccountGroupsService {
       if (up.includes(DEBTORS)) {
         const similar = suggestCustomers(l.name, names);
         const exact = byNameKey.get(ledgerNameKey(l.name));
+        const guess = similar.find((s) => s.sure && !claimed.has(idByName.get(s.name)!));
         const match = linkedTo
           ? { customerId: linkedTo, how: 'LINKED' as const }
           : exact
             ? { customerId: exact, how: 'SAME_NAME' as const }
-            : similar[0]?.sure
-              ? { customerId: idByName.get(similar[0].name)!, how: 'LOOKS_LIKE' as const }
+            : guess
+              ? { customerId: idByName.get(guess.name)!, how: 'LOOKS_LIKE' as const }
               : null;
         const suggestions = similar.map((s) => idByName.get(s.name)!).filter((id) => id !== match?.customerId);
-        parties.push({ tallyName: l.name, tallyGroup, match, suggestions, linkedTo });
+        const bal = balances?.map.get(key(l.name));
+        parties.push({
+          tallyName: l.name,
+          tallyGroup,
+          match,
+          suggestions,
+          linkedTo,
+          tallyOpening: bal?.opening ?? null,
+          tallyClosing: bal?.closing ?? null,
+          inList: inList.has(key(l.name)),
+          details: l.details,
+        });
       } else {
-        const proposed: TallyImportFiling = up.some((g) => EXPENSE.has(g)) ? 'EXPENSE' : 'OTHER';
-        others.push({ tallyName: l.name, tallyGroup, proposed, filed: filedOf.get(key(l.name)) ?? null, linkedTo });
+        others.push({ tallyName: l.name, tallyGroup });
       }
     }
 
     return {
       fileName,
+      balanceFrom: balances?.from.toISOString() ?? null,
+      balanceTo: balances?.to.toISOString() ?? null,
       groups,
       parties,
       others,
@@ -224,7 +247,7 @@ export class AccountGroupsService {
     const custName = new Map(customers.map((c) => [c.id, c.partyName ?? '']));
 
     return this.prisma.$transaction(async (tx) => {
-      const res: TallyImportResult = { groupsCreated: 0, groupsMoved: 0, partiesUpdated: 0, linksSaved: 0, othersFiled: 0 };
+      const res: TallyImportResult = { groupsCreated: 0, groupsMoved: 0, partiesUpdated: 0, linksSaved: 0, ledgersSaved: 0 };
       for (const g of order) {
         const parentId = g.parent ? known.get(key(g.parent))!.id : null;
         const existing = known.get(key(g.name));
@@ -264,20 +287,129 @@ export class AccountGroupsService {
           });
           res.linksSaved++;
         }
-        await tx.tallyLedgerCategory.deleteMany({ where: { tallyName: name } });
       }
-      for (const o of dto.others) {
-        const name = o.tallyName.trim();
-        await tx.tallyLedgerCategory.upsert({
-          where: { tallyName: name },
-          create: { tallyName: name, category: o.filing, createdBy: userName ?? null },
-          update: { category: o.filing, createdBy: userName ?? null },
-        });
-        await tx.tallyPartyAlias.deleteMany({ where: { tallyName: name } });
-        res.othersFiled++;
+      for (const o of dto.ledgers) {
+        const name = o.name.trim();
+        const groupName = o.group.trim();
+        await tx.tallyLedger.upsert({ where: { name }, create: { name, groupName }, update: { groupName } });
+        res.ledgersSaved++;
       }
       return res;
     });
+  }
+
+  /* ── Addition list ───────────────────────────────────────────────────── */
+
+  async additions(status?: string): Promise<CustomerAdditionDto[]> {
+    const rows = await this.prisma.customerAddition.findMany({
+      where: status ? { status } : {},
+      orderBy: [{ status: 'desc' }, { tallyName: 'asc' }],
+    });
+    return rows.map((r) => this.additionDto(r));
+  }
+
+  async addition(id: number): Promise<CustomerAdditionDto> {
+    const r = await this.prisma.customerAddition.findUnique({ where: { id } });
+    if (!r) throw new NotFoundException('That party is no longer in the addition list.');
+    return this.additionDto(r);
+  }
+
+  async addToList(dto: AddToListDto, userName?: string | null): Promise<CustomerAdditionDto[]> {
+    const balances = await this.tallyBalances();
+    const key = (s: string) => s.trim().toUpperCase();
+    for (const item of dto.items) {
+      const tallyName = item.tallyName.trim();
+      const bal = balances?.map.get(key(tallyName));
+      const data = {
+        groupName: item.groupName.trim(),
+        details: JSON.stringify(item.details ?? {}),
+        tallyOpening: bal?.opening ?? null,
+        tallyClosing: bal?.closing ?? null,
+        balanceFrom: balances?.from ?? null,
+        balanceTo: balances?.to ?? null,
+      };
+      const existing = await this.prisma.customerAddition.findUnique({ where: { tallyName } });
+      if (existing?.status === 'ADDED') continue;
+      await this.prisma.customerAddition.upsert({
+        where: { tallyName },
+        create: { tallyName, ...data, createdBy: userName ?? null },
+        update: data,
+      });
+    }
+    return this.additions('PENDING');
+  }
+
+  async removeFromList(id: number): Promise<void> {
+    const r = await this.prisma.customerAddition.findUnique({ where: { id } });
+    if (!r) return;
+    if (r.status === 'ADDED') throw new BadRequestException('This party is already added to OMS.');
+    await this.prisma.customerAddition.delete({ where: { id } });
+  }
+
+  /** Called after the New Customer form saves a party from the list. */
+  async markAdded(id: number, dto: MarkAddedDto, userName?: string | null): Promise<CustomerAdditionDto> {
+    const r = await this.prisma.customerAddition.findUnique({ where: { id } });
+    if (!r) throw new NotFoundException('That party is no longer in the addition list.');
+    const c = await this.prisma.customer.findUnique({ where: { id: dto.customerId }, select: { id: true, partyName: true } });
+    if (!c) throw new BadRequestException('Customer not found.');
+    const updated = await this.prisma.$transaction(async (tx) => {
+      if (ledgerNameKey(r.tallyName) !== ledgerNameKey(c.partyName ?? '')) {
+        await tx.tallyPartyAlias.upsert({
+          where: { tallyName: r.tallyName },
+          create: { tallyName: r.tallyName, customerId: c.id, createdBy: userName ?? null },
+          update: { customerId: c.id, createdBy: userName ?? null },
+        });
+      }
+      return tx.customerAddition.update({ where: { id }, data: { status: 'ADDED', customerId: c.id, addedAt: new Date() } });
+    });
+    return this.additionDto(updated);
+  }
+
+  /** Opening and closing per Tally ledger, from the newest Tally Reconciliation register. */
+  private async tallyBalances(): Promise<{ map: Map<string, { opening: number; closing: number }>; from: Date; to: Date } | null> {
+    const run = await this.prisma.tallyReconRun.findFirst({ orderBy: { uploadedAt: 'desc' }, select: { id: true, fromDate: true, toDate: true } });
+    if (!run) return null;
+    const sums = await this.prisma.tallyReconRow.groupBy({
+      by: ['ledgerName', 'vchType'],
+      where: { runId: run.id, source: 'TALLY' },
+      _sum: { dr: true, cr: true },
+    });
+    const map = new Map<string, { opening: number; closing: number }>();
+    for (const s of sums) {
+      const k = s.ledgerName.trim().toUpperCase();
+      const net = (s._sum.dr ?? 0) - (s._sum.cr ?? 0);
+      const cur = map.get(k) ?? { opening: 0, closing: 0 };
+      if (s.vchType === 'OPENING') cur.opening += net;
+      cur.closing += net;
+      map.set(k, cur);
+    }
+    for (const v of map.values()) {
+      v.opening = Math.round(v.opening * 100) / 100;
+      v.closing = Math.round(v.closing * 100) / 100;
+    }
+    return { map, from: run.fromDate, to: run.toDate };
+  }
+
+  private additionDto(r: Prisma.CustomerAdditionGetPayload<object>): CustomerAdditionDto {
+    let details: TallyLedgerDetails = {};
+    try {
+      details = r.details ? (JSON.parse(r.details) as TallyLedgerDetails) : {};
+    } catch {
+      details = {};
+    }
+    return {
+      id: r.id,
+      tallyName: r.tallyName,
+      groupName: r.groupName,
+      details,
+      tallyOpening: r.tallyOpening,
+      tallyClosing: r.tallyClosing,
+      balanceFrom: r.balanceFrom?.toISOString() ?? null,
+      balanceTo: r.balanceTo?.toISOString() ?? null,
+      status: r.status as CustomerAdditionDto['status'],
+      customerId: r.customerId,
+      createdAt: r.createdAt.toISOString(),
+    };
   }
 
   /** Id of the group new customers go under by default. */

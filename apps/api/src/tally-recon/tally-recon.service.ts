@@ -10,11 +10,11 @@ import type {
   ReconStatus,
   MarkReconRowsResult,
   TallyAliasDto,
-  TallyLedgerCategory,
-  TallyLedgerCategoryInput,
+  UnmappedLedger,
   UnmappedLedgers,
 } from '@oms/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { loadLedgerGroups, type LedgerGroups } from '../account-groups/ledger-groups';
 import { PaymentsService } from '../payments/payments.service';
 import { parseTallyRegister, type ParsedLedger, type ParsedRegister } from './tally-register.parser';
 import { exactKey, nameKey, reconcileParty, type MatchRow, type OmsParty } from './tally-recon.matcher';
@@ -176,27 +176,16 @@ export class TallyReconService {
     };
   }
 
-  /** Every ledger the user has ever filed as not-a-party, by name. */
-  private async loadLedgerCategories(): Promise<Map<string, TallyLedgerCategory>> {
-    const rows = await this.prisma.tallyLedgerCategory.findMany({ select: { tallyName: true, category: true } });
-    return new Map(rows.map((r) => [r.tallyName, r.category as TallyLedgerCategory]));
-  }
-
-  /** Splits a set of no-OMS-match ledger names into Party / Agent / Expense / Other,
-   *  per their CURRENT filing — see {@link UnmappedLedgers}. */
-  private bucketLedgers(names: string[], categories: Map<string, TallyLedgerCategory>): UnmappedLedgers {
-    const party: string[] = [];
-    const agent: string[] = [];
-    const expense: string[] = [];
-    const other: string[] = [];
-    for (const name of names) {
-      const cat = categories.get(name);
-      if (cat === 'AGENT') agent.push(name);
-      else if (cat === 'EXPENSE') expense.push(name);
-      else if (cat === 'OTHER') other.push(name);
-      else party.push(name);
+  /** Splits no-OMS-match ledger names by their Tally group: parties (under
+   *  Sundry Debtors, or group unknown) still need a mapping; the rest are not parties. */
+  private bucketLedgers(names: string[], groups: LedgerGroups): UnmappedLedgers {
+    const party: UnmappedLedger[] = [];
+    const other: UnmappedLedger[] = [];
+    for (const name of [...names].sort()) {
+      const group = groups.groupOf(name);
+      (group && !groups.isParty(group) ? other : party).push({ name, group });
     }
-    return { party: party.sort(), agent: agent.sort(), expense: expense.sort(), other: other.sort() };
+    return { party, other };
   }
 
   /* ── OMS books for the period ────────────────────────────────────────────── */
@@ -603,9 +592,7 @@ export class TallyReconService {
 
     const custIds = [...new Set([...resolved.values()].filter(Boolean).map((r) => r!.id))];
     const books = await this.loadOmsBooks(custIds, from, toExclusive);
-    // Only matters for ledgers with no OMS match — fetched once, up front, so
-    // the loop below doesn't hit the DB per ledger.
-    const categories = await this.loadLedgerCategories();
+    const groups = await loadLedgerGroups(this.prisma);
     // A party renamed in Tally (GST re-registration, address change...) can
     // have TWO ledger names in one register, both aliased to the same OMS
     // customer — see reconcileParty's `openingCarriedBySibling` doc. Detect
@@ -616,8 +603,9 @@ export class TallyReconService {
     const rows: MatchRow[] = [];
     for (const ledger of register.ledgers) {
       const hit = resolved.get(ledger.ledgerName) ?? null;
-      const category = hit ? null : (categories.get(ledger.ledgerName) ?? null);
-      rows.push(...reconcileParty(ledger, hit ? books.get(hit.id) ?? null : null, from, category, openingCarriedBy.get(ledger.ledgerName) ?? null));
+      const group = hit ? null : groups.groupOf(ledger.ledgerName);
+      const notParty = group && !groups.isParty(group) ? group : null;
+      rows.push(...reconcileParty(ledger, hit ? books.get(hit.id) ?? null : null, from, notParty, openingCarriedBy.get(ledger.ledgerName) ?? null));
     }
 
     // Per-party balance verdicts — only possible where the ledger maps to a customer.
@@ -762,18 +750,9 @@ export class TallyReconService {
       },
     });
     if (!run) throw new NotFoundException('That reconciliation run no longer exists.');
-    // customerId is null for exactly the rows with no OMS match — whether that
-    // shows up as UNMATCHED_PARTY (uncategorized) or NOT_APPLICABLE (filed as
-    // Expense/Other). Filtering on status alone would miss the filed ones AND
-    // risk pulling in the OTHER, unrelated reason a MATCHED party's row can be
-    // NOT_APPLICABLE (a "Purchase"/"TCS Payable" voucher type) — those rows
-    // carry a real customerId, so this predicate correctly excludes them.
+    // customerId is null for exactly the rows with no OMS match.
     const uncategorizedNames = [...new Set(run.rows.filter((r) => r.customerId == null).map((r) => r.ledgerName))];
-    // Bucketed by CURRENT filing, not by whatever the row's status happened to
-    // be when this run was computed — so filing a ledger updates this list the
-    // moment it's saved, without needing a rerun first (the rerun is still what
-    // makes NOT_APPLICABLE take effect on the "needs attention" counters).
-    const unmatchedLedgers = this.bucketLedgers(uncategorizedNames, await this.loadLedgerCategories());
+    const unmatchedLedgers = this.bucketLedgers(uncategorizedNames, await loadLedgerGroups(this.prisma));
     return {
       ...this.toSummary(run),
       unmatchedLedgers,
@@ -1024,9 +1003,6 @@ export class TallyReconService {
       create: { tallyName: name, customerId, createdBy: userName ?? null },
       update: { customerId, createdBy: userName ?? null },
     });
-    // A ledger just mapped to a customer IS a party — drop any stale
-    // Expense/Other filing so the two tables can't disagree about it.
-    await this.prisma.tallyLedgerCategory.deleteMany({ where: { tallyName: name } });
     return {
       id: saved.id,
       tallyName: saved.tallyName,
@@ -1034,45 +1010,6 @@ export class TallyReconService {
       customerName: customer.partyName,
       createdAt: saved.createdAt.toISOString(),
     };
-  }
-
-  /**
-   * Files one or more ledgers as EXPENSE / OTHER (not a customer), or clears
-   * that filing ('PARTY' — see {@link TallyLedgerCategoryInput}) so they go
-   * back to needing a customer mapping. Mutually exclusive with
-   * TallyPartyAlias: filing a ledger here drops any customer mapping it had,
-   * the same way saveAlias drops any filing in the other direction.
-   *
-   * Deliberately does NOT rerun the report. A save here is a plain upsert —
-   * a few ms, whatever the batch size — but a rerun is a full re-comparison
-   * of the register (≈1s measured on a 4,500-row one), and every earlier
-   * design that ran one after each save turned triaging 100+ ledgers into
-   * that many seconds of clicking and waiting. Filing still shows up
-   * immediately regardless: result() re-derives the Party/Expense/Other
-   * buckets from THIS table fresh on every read (see bucketLedgers), so the
-   * dialog is always current. Only the run's stored KPI counters
-   * (unmatchedParty and friends) are a snapshot that needs an explicit
-   * recheck to catch up — the caller decides if/when to pay for that,
-   * once, however many ledgers were just filed.
-   */
-  async setLedgerCategories(tallyNames: string[], categoryInput: string, userName?: string | null): Promise<void> {
-    const names = [...new Set((tallyNames ?? []).map((n) => n?.trim()).filter((n): n is string => !!n))];
-    if (!names.length) throw new BadRequestException('Select at least one ledger.');
-    const category = categoryInput as TallyLedgerCategoryInput;
-    if (category === 'PARTY') {
-      await this.prisma.tallyLedgerCategory.deleteMany({ where: { tallyName: { in: names } } });
-      return;
-    }
-    await this.prisma.$transaction([
-      ...names.map((name) =>
-        this.prisma.tallyLedgerCategory.upsert({
-          where: { tallyName: name },
-          create: { tallyName: name, category, createdBy: userName ?? null },
-          update: { category, createdBy: userName ?? null },
-        }),
-      ),
-      this.prisma.tallyPartyAlias.deleteMany({ where: { tallyName: { in: names } } }),
-    ]);
   }
 
   async removeAlias(id: number): Promise<void> {

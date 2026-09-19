@@ -1,8 +1,9 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
   Contact,
+  FileUp,
   IndianRupee,
   Loader2,
   MapPin,
@@ -14,7 +15,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { type CustomerInput, DEFAULT_LEDGER_GROUP, parsePayByModes } from '@oms/shared';
+import { type CustomerDto, type CustomerInput, DEFAULT_LEDGER_GROUP, parsePayByModes } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { cn } from '@/lib/utils';
@@ -32,6 +33,7 @@ import {
   useCustomerLookups,
   useUpdateCustomer,
 } from './use-customers';
+import { useAddition, useMarkAdded } from './use-account-groups';
 
 const EMPTY = {
   partySource: '',
@@ -134,6 +136,28 @@ export function CustomerFormPage() {
     setBaseline(loaded);
   }, [existing]);
 
+  const [searchParams] = useSearchParams();
+  const additionId = !isEdit && searchParams.get('addition') ? Number(searchParams.get('addition')) : null;
+  const { data: addition } = useAddition(additionId);
+  const markAdded = useMarkAdded();
+  const prefilled = useRef(false);
+  const additionGroup = addition && lookups ? lookups.groups.find((g) => g.name.trim().toUpperCase() === addition.groupName.trim().toUpperCase()) : undefined;
+  useEffect(() => {
+    if (!addition || !lookups || prefilled.current) return;
+    prefilled.current = true;
+    const d = addition.details;
+    setForm((f) => ({
+      ...f,
+      partyName: addition.tallyName,
+      ...(additionGroup ? { groupId: String(additionGroup.id) } : {}),
+      ...(d.creditPeriod ? { creditPeriod: String(d.creditPeriod) } : {}),
+      ...(d.state ? { state: d.state.toUpperCase() } : {}),
+      ...(d.city ? { city: d.city.toUpperCase() } : {}),
+      ...(d.mobile ? { mobile: d.mobile } : {}),
+      ...(d.email ? { email: d.email } : {}),
+    }));
+  }, [addition, lookups, additionGroup]);
+
   // New party: Under defaults to Sundry Debtors.
   useEffect(() => {
     if (isEdit || !lookups) return;
@@ -232,8 +256,14 @@ export function CustomerFormPage() {
     };
 
     const opts = {
-      onSuccess: () => {
+      onSuccess: (saved: CustomerDto) => {
         toast.success(isEdit ? 'Customer updated' : 'Customer created');
+        if (additionId && !isEdit) {
+          markAdded.mutate(
+            { id: additionId, customerId: saved.id },
+            { onError: (e) => toast.error(getApiErrorMessage(e, 'Saved, but it could not be ticked off the addition list')) },
+          );
+        }
         navigate('/customers');
       },
       onError: (e: unknown) => toast.error(getApiErrorMessage(e, 'Save failed')),
@@ -278,6 +308,22 @@ export function CustomerFormPage() {
           </span>
         )}
       </div>
+
+      {addition && (
+        <div className="flex items-start gap-2.5 rounded-[4px] border border-indigo-200 bg-indigo-50/80 px-3 py-2 dark:border-indigo-400/30 dark:bg-indigo-400/10">
+          <FileUp className="mt-0.5 size-4 shrink-0 text-indigo-600 dark:text-indigo-300" />
+          <div className="min-w-0 text-[12.5px] text-indigo-950 dark:text-indigo-100">
+            <p className="font-bold">Adding from Tally: {addition.tallyName}</p>
+            <p className="text-[12px] font-medium">
+              Under {addition.groupName}
+              {!additionGroup && lookups && ` (not in OMS yet — pick a group)`}
+              {addition.tallyClosing != null &&
+                ` · Tally closing ₹${Math.abs(addition.tallyClosing).toLocaleString('en-IN', { maximumFractionDigits: 0 })} ${addition.tallyClosing < 0 ? 'Cr' : 'Dr'}`}
+              {addition.details.gstin && ` · GSTIN ${addition.details.gstin}`} — fill in the remaining fields and Save.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Tabs — manage the customer's details, GST rates and transport rates in one place. */}
       {isEdit && existing?.partyName && (

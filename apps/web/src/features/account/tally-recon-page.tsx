@@ -22,7 +22,7 @@ import {
   UserRoundX,
   X,
 } from 'lucide-react';
-import type { ReconPartyBalance, ReconReview, ReconRow, ReconStatus, TallyLedgerCategoryInput, UnmappedLedgers } from '@oms/shared';
+import type { ReconPartyBalance, ReconReview, ReconRow, ReconStatus, UnmappedLedger, UnmappedLedgers } from '@oms/shared';
 import { suggestCustomers } from '@oms/shared';
 import { RECON_PROBLEM_STATUSES } from '@oms/shared';
 import { cn } from '@/lib/utils';
@@ -42,7 +42,6 @@ import {
   useMarkReconRows,
   useRerunRecon,
   useSaveTallyAlias,
-  useSetLedgerCategory,
 } from './use-tally-recon';
 import { TallyExportGuide } from './tally-export-guide';
 import { useTallyReconRun } from './tally-recon-run-context';
@@ -125,7 +124,12 @@ const VCH_ORDER = ['OPENING', 'SALES', 'RECEIPT', 'CREDIT NOTE', 'DEBIT NOTE', '
 const isFlagged = (r: ReconRow) => r.status !== 'MATCHED' && r.status !== 'NOT_APPLICABLE';
 
 /** Every unmapped ledger name across all three filings, however it's currently split. */
-const ledgerTotal = (u: UnmappedLedgers) => u.party.length + (u.agent?.length ?? 0) + u.expense.length + u.other.length;
+const ledgerTotal = (u: UnmappedLedgers) => u.party.length + u.other.length;
+const byGroup = (list: UnmappedLedger[]) => {
+  const m = new Map<string, UnmappedLedger[]>();
+  for (const l of list) m.set(l.group ?? '', [...(m.get(l.group ?? '') ?? []), l]);
+  return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+};
 
 /** A missing receipt that can be posted straight from the report. */
 const canEnterAsReceipt = (r: ReconRow) =>
@@ -503,12 +507,7 @@ export function TallyReconPage() {
   const [unmappedListOpen, setUnmappedListOpen] = useState(false);
   /** The export-format guide shown before every upload — see `onPickFile`. */
   const [formatGuideOpen, setFormatGuideOpen] = useState(false);
-  const [ledgerTab, setLedgerTab] = useState<'party' | 'agent' | 'expense' | 'other'>('party');
-  // Ticked ledger names in the CURRENT tab, for the bulk action bar. Cleared on
-  // every tab switch and after a successful filing — stale ids left over from
-  // a tab the user isn't looking at any more, or from a batch that just moved
-  // out of this list, would make the next click act on the wrong rows.
-  const [selectedLedgers, setSelectedLedgers] = useState<Set<string>>(new Set());
+  const [ledgerTab, setLedgerTab] = useState<'party' | 'other'>('party');
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [bankOverride, setBankOverride] = useState('');
 
@@ -523,7 +522,6 @@ export function TallyReconPage() {
   const recon = useTallyReconRun();
   const removeRun = useDeleteReconRun();
   const saveAlias = useSaveTallyAlias();
-  const setLedgerCategory = useSetLedgerCategory();
   const rerun = useRerunRecon();
   const createReceipts = useCreateReconReceipts();
   const markRows = useMarkReconRows();
@@ -742,36 +740,6 @@ export function TallyReconPage() {
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not save that mapping.');
-    }
-  };
-
-  /**
-   * Files one or more ledgers as Expense / Other, or clears that filing back
-   * to Party — one save for the whole batch, whether it's a single row's
-   * button or every ticked checkbox in the tab.
-   *
-   * Deliberately does NOT rerun the report (measured: ~1s on this run's
-   * 4,500+ rows). It used to, on every single save, which made triaging
-   * 100+ ledgers one at a time cost that long in pure waiting. The dialog
-   * still updates immediately either way — `run.unmatchedLedgers` is
-   * re-derived from the SAME table this just wrote to, fresh on every read
-   * (see bucketLedgers on the server), so a plain refetch (a few ms) is
-   * enough to move these names to their new tab right now. Only the run's
-   * own KPI counters (Needs Attention, etc.) are a snapshot that stays as it
-   * was until `recheckReport` below is used — deliberately a separate,
-   * explicit action, not an automatic side effect of filing.
-   */
-  const onSetCategory = async (tallyNames: string[], category: TallyLedgerCategoryInput) => {
-    if (!tallyNames.length) return;
-    const label = category === 'AGENT' ? 'Agent' : category === 'EXPENSE' ? 'Expense' : category === 'OTHER' ? 'Other' : 'Party';
-    const who = tallyNames.length === 1 ? `"${tallyNames[0]}"` : `${tallyNames.length} ledgers`;
-    try {
-      await setLedgerCategory.mutateAsync({ tallyNames, category });
-      setSelectedLedgers(new Set());
-      await refetchRun();
-      toast.success(category === 'PARTY' ? `${who} moved back to Party.` : `${who} filed as ${label}.`);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not save that filing.');
     }
   };
 
@@ -1135,15 +1103,12 @@ export function TallyReconPage() {
             <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium text-violet-700 dark:text-violet-400">
               {run.unmatchedLedgers.party.length > 0 ? (
                 <>
-                  {run.unmatchedLedgers.party.slice(0, 4).join(', ')}
+                  {run.unmatchedLedgers.party.slice(0, 4).map((l) => l.name).join(', ')}
                   {run.unmatchedLedgers.party.length > 4 ? '…' : ''}
                 </>
               ) : (
-                // Nothing still needs a customer — everything left has been
-                // filed. Said plainly rather than showing an empty line, so it
-                // reads as "done", not as a state nobody explained.
                 <span className="text-emerald-700 dark:text-emerald-400">
-                  All filed — {run.unmatchedLedgers.agent?.length ?? 0} agent, {run.unmatchedLedgers.expense.length} expense, {run.unmatchedLedgers.other.length} other.
+                  All parties mapped — {run.unmatchedLedgers.other.length} other ledger{run.unmatchedLedgers.other.length === 1 ? '' : 's'} are outside Sundry Debtors.
                 </span>
               )}
             </span>
@@ -1624,8 +1589,7 @@ export function TallyReconPage() {
         open={unmappedListOpen}
         onOpenChange={(o) => {
           setUnmappedListOpen(o);
-          if (o) setLedgerTab('party'); // always open on what still needs attention
-          setSelectedLedgers(new Set());
+          if (o) setLedgerTab('party');
         }}
       >
         <DialogContent className="flex max-h-[80vh] flex-col sm:max-w-lg">
@@ -1635,37 +1599,29 @@ export function TallyReconPage() {
           <div className="flex flex-wrap items-center gap-1.5">
             {(
               [
-                ['party', 'Party'],
-                ['agent', 'Agents'],
-                ['expense', 'Expenses'],
-                ['other', 'Others'],
+                ['party', 'Parties'],
+                ['other', 'Other ledgers'],
               ] as const
-            ).map(([tab, label]) => {
-              const count = run?.unmatchedLedgers[tab]?.length ?? 0;
-              return (
-                <button
-                  key={tab}
-                  type="button"
-                  onClick={() => {
-                    setLedgerTab(tab);
-                    setSelectedLedgers(new Set()); // a tick from one tab must not act on another
-                  }}
-                  className={cn(
-                    'rounded-[4px] border px-2 py-1 text-[12px] font-bold whitespace-nowrap',
-                    ledgerTab === tab
-                      ? 'border-violet-600 bg-violet-600 text-white'
-                      : 'border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 dark:border-violet-400/30 dark:bg-violet-400/10 dark:text-violet-300',
-                  )}
-                >
-                  {label} ({count})
-                </button>
-              );
-            })}
+            ).map(([tab, label]) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setLedgerTab(tab)}
+                className={cn(
+                  'rounded-[4px] border px-2 py-1 text-[12px] font-bold whitespace-nowrap',
+                  ledgerTab === tab
+                    ? 'border-violet-600 bg-violet-600 text-white'
+                    : 'border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 dark:border-violet-400/30 dark:bg-violet-400/10 dark:text-violet-300',
+                )}
+              >
+                {label} ({run?.unmatchedLedgers[tab].length ?? 0})
+              </button>
+            ))}
             <Button
               type="button"
               variant="outline"
               size="sm"
-              title="Filing is already saved — this only refreshes the KPI counters above (Needs Attention etc.), which stay as they were until you ask."
+              title="Re-compare the register with OMS so the counters above are current."
               className="ml-auto h-7 shrink-0 gap-1 rounded-[4px] text-[11.5px] font-bold"
               onClick={() => void recheckReport()}
               disabled={rerun.isPending}
@@ -1676,192 +1632,62 @@ export function TallyReconPage() {
           </div>
           <p className="text-muted-foreground -mt-1 text-[11.5px] font-medium">
             {ledgerTab === 'party'
-              ? "These Tally ledger names don't match an OMS customer yet. Press Map to link one to our party, or file it as Agent/Expense/Other if it never will."
-              : `Filed as ${ledgerTab === 'agent' ? 'Agent' : ledgerTab === 'expense' ? 'Expense' : 'Other'} — not a customer, so left out of "needs attention". Move one back if that was wrong.`}
+              ? "Ledgers under Sundry Debtors that don't match an OMS party yet. Press Map to link one to our party."
+              : 'Ledgers under other Tally groups — not parties, so not counted in "needs attention". The group comes from the Tally master upload.'}
           </p>
 
-          {(() => {
-            const list = run?.unmatchedLedgers[ledgerTab] ?? [];
-            const allSelected = list.length > 0 && list.every((n) => selectedLedgers.has(n));
-            const toggleAll = () => setSelectedLedgers(allSelected ? new Set() : new Set(list));
-            const toggleOne = (name: string) =>
-              setSelectedLedgers((s) => {
-                const next = new Set(s);
-                if (next.has(name)) next.delete(name);
-                else next.add(name);
-                return next;
-              });
-            const CheckBox = ({ checked }: { checked: boolean }) => (
-              <span
-                className={cn(
-                  'flex size-[15px] shrink-0 items-center justify-center rounded-[3px] border-[1.5px] bg-white transition-colors',
-                  checked ? 'border-violet-600 bg-violet-600 text-white' : 'border-slate-400 group-hover:border-violet-500',
-                )}
-              >
-                {checked && <Check className="size-2.5" strokeWidth={3.5} />}
-              </span>
-            );
-
-            return (
-              <>
-                {/* select-all + bulk actions — only worth its own row once there's a
-                    list to act on. */}
-                {list.length > 0 && (
-                  <div className="flex items-center gap-2">
+          <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto rounded-[4px] border border-violet-200 p-1.5 dark:border-violet-400/20">
+            {(run?.unmatchedLedgers[ledgerTab].length ?? 0) === 0 && <p className="text-muted-foreground p-3 text-center text-[12px]">Nothing here.</p>}
+            {ledgerTab === 'party'
+              ? (run?.unmatchedLedgers.party ?? []).map((l: UnmappedLedger) => (
+                  <div
+                    key={l.name}
+                    className="flex items-center gap-1.5 rounded-[3px] border border-violet-200 bg-violet-50/60 px-1.5 py-1 dark:border-violet-400/25 dark:bg-violet-400/5"
+                  >
                     <button
                       type="button"
-                      onClick={toggleAll}
-                      className="group flex shrink-0 items-center gap-1.5 text-[11px] font-semibold text-slate-600 dark:text-slate-300"
+                      onClick={() => ((name: string) => {
+    setUnmappedListOpen(false);
+    setAliasFor(name);
+    setAliasCustomer('');
+  })(l.name)}
+                      title="Map to an OMS customer"
+                      className="flex min-w-0 flex-1 cursor-pointer flex-col items-start text-left"
                     >
-                      <CheckBox checked={allSelected} />
-                      Select all
+                      <span className="w-full truncate text-[11.5px] font-semibold text-violet-800 hover:underline dark:text-violet-300">{l.name}</span>
+                      <span className={cn('text-[10px] font-medium', l.group ? 'text-muted-foreground' : 'text-amber-700 dark:text-amber-300')}>
+                        {l.group ? `Under ${l.group}` : 'Group unknown — upload the Tally master'}
+                      </span>
                     </button>
-                    {selectedLedgers.size > 0 && (
-                      <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1.5">
-                        <span className="text-[11px] font-bold text-violet-700 dark:text-violet-300">
-                          {selectedLedgers.size} selected
-                        </span>
-                        {ledgerTab !== 'party' && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="h-6 gap-1 rounded-[3px] px-1.5 text-[10.5px] font-bold"
-                            onClick={() => void onSetCategory([...selectedLedgers], 'PARTY')}
-                          >
-                            <RotateCcw className="size-3" /> Move to Party
-                          </Button>
-                        )}
-                        {ledgerTab !== 'agent' && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="h-6 rounded-[3px] px-1.5 text-[10.5px] font-bold"
-                            onClick={() => void onSetCategory([...selectedLedgers], 'AGENT')}
-                          >
-                            File as Agent
-                          </Button>
-                        )}
-                        {ledgerTab !== 'expense' && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="h-6 rounded-[3px] px-1.5 text-[10.5px] font-bold"
-                            onClick={() => void onSetCategory([...selectedLedgers], 'EXPENSE')}
-                          >
-                            File as Expense
-                          </Button>
-                        )}
-                        {ledgerTab !== 'other' && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="h-6 rounded-[3px] px-1.5 text-[10.5px] font-bold"
-                            onClick={() => void onSetCategory([...selectedLedgers], 'OTHER')}
-                          >
-                            File as Other
-                          </Button>
-                        )}
-                      </div>
-                    )}
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-6 shrink-0 gap-1 rounded-[3px] bg-violet-600 px-2 text-[10.5px] font-bold text-white hover:bg-violet-700"
+                      onClick={() => ((name: string) => {
+    setUnmappedListOpen(false);
+    setAliasFor(name);
+    setAliasCustomer('');
+  })(l.name)}
+                      title="Map to an OMS customer"
+                    >
+                      <Link2 className="size-3" /> Map
+                    </Button>
                   </div>
-                )}
-
-                <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto rounded-[4px] border border-violet-200 p-1.5 dark:border-violet-400/20">
-                  {list.length === 0 && <p className="text-muted-foreground p-3 text-center text-[12px]">Nothing here.</p>}
-                  {ledgerTab === 'party'
-                    ? list.map((name) => (
-                        <div
-                          key={name}
-                          className="group flex items-center gap-1.5 rounded-[3px] border border-violet-200 bg-violet-50/60 px-1.5 py-1 dark:border-violet-400/25 dark:bg-violet-400/5"
-                        >
-                          <button type="button" onClick={() => toggleOne(name)} className="shrink-0" aria-label={`Select ${name}`}>
-                            <CheckBox checked={selectedLedgers.has(name)} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setUnmappedListOpen(false);
-                              setAliasFor(name);
-                              setAliasCustomer('');
-                            }}
-                            title="Map to an OMS customer"
-                            className="flex min-w-0 flex-1 cursor-pointer items-center text-left text-[11px] font-semibold text-violet-800 hover:underline dark:text-violet-300"
-                          >
-                            <Link2 className="mr-1 inline size-3 shrink-0 align-[-2px]" />
-                            <span className="truncate">{name}</span>
-                          </button>
-                          {/* The name itself maps too, but that read as plain text —
-                              so the primary action gets a real button. */}
-                          <Button
-                            type="button"
-                            size="sm"
-                            className="h-6 shrink-0 gap-1 rounded-[3px] bg-violet-600 px-2 text-[10.5px] font-bold text-white hover:bg-violet-700"
-                            onClick={() => {
-                              setUnmappedListOpen(false);
-                              setAliasFor(name);
-                              setAliasCustomer('');
-                            }}
-                            title="Map to an OMS customer"
-                          >
-                            <Link2 className="size-3" /> Map
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 shrink-0 rounded-[3px] px-1.5 text-[10.5px] font-bold text-slate-600 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-white/10"
-                            onClick={() => void onSetCategory([name], 'AGENT')}
-                          >
-                            Agent
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 shrink-0 rounded-[3px] px-1.5 text-[10.5px] font-bold text-slate-600 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-white/10"
-                            onClick={() => void onSetCategory([name], 'EXPENSE')}
-                          >
-                            Expense
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 shrink-0 rounded-[3px] px-1.5 text-[10.5px] font-bold text-slate-600 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-white/10"
-                            onClick={() => void onSetCategory([name], 'OTHER')}
-                          >
-                            Other
-                          </Button>
-                        </div>
-                      ))
-                    : list.map((name) => (
-                        <div
-                          key={name}
-                          className="group flex items-center gap-1.5 rounded-[3px] border border-slate-200 bg-slate-50 px-1.5 py-1 dark:border-white/10 dark:bg-white/[0.03]"
-                        >
-                          <button type="button" onClick={() => toggleOne(name)} className="shrink-0" aria-label={`Select ${name}`}>
-                            <CheckBox checked={selectedLedgers.has(name)} />
-                          </button>
-                          <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-slate-700 dark:text-slate-300">{name}</span>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 shrink-0 gap-1 rounded-[3px] px-1.5 text-[10.5px] font-bold text-violet-700 hover:bg-violet-100 dark:text-violet-300 dark:hover:bg-violet-400/20"
-                            onClick={() => void onSetCategory([name], 'PARTY')}
-                          >
-                            <RotateCcw className="size-3" /> Move to Party
-                          </Button>
-                        </div>
+                ))
+              : byGroup(run?.unmatchedLedgers.other ?? []).map(([group, list]) => (
+                    <div key={group} className="overflow-hidden rounded-[3px] border border-slate-200 dark:border-white/10">
+                      <div className="flex items-center justify-between gap-2 bg-slate-100 px-2 py-1 dark:bg-white/[0.05]">
+                        <span className="truncate text-[11.5px] font-bold">{group}</span>
+                        <span className="shrink-0 text-[10.5px] font-bold tabular-nums text-slate-500">{list.length}</span>
+                      </div>
+                      {list.map((l) => (
+                        <p key={l.name} className="truncate border-t border-slate-100 px-2 py-1 text-[11px] font-medium text-slate-700 dark:border-white/5 dark:text-slate-300">
+                          {l.name}
+                        </p>
                       ))}
-                </div>
-              </>
-            );
-          })()}
+                    </div>
+                  ))}
+          </div>
         </DialogContent>
       </Dialog>
 

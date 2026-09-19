@@ -1,4 +1,4 @@
-import type { ReconStatus, ReconVchType, TallyLedgerCategory } from '@oms/shared';
+import type { ReconStatus, ReconVchType } from '@oms/shared';
 import { omsCodeCandidates, reconVchType, type ParsedLedger, type ParsedVoucher } from './tally-register.parser';
 
 /**
@@ -22,9 +22,8 @@ import { omsCodeCandidates, reconVchType, type ParsedLedger, type ParsedVoucher 
  *   OPENING      — the party's signed bank opening as of the period start.
  *   OTHER        — Purchase / TCS Payable have no OMS counterpart: NOT_APPLICABLE.
  *
- * A ledger with no OMS match at all is UNMATCHED_PARTY, UNLESS the user has
- * filed it as EXPENSE/OTHER (TallyLedgerCategory) — then it is NOT_APPLICABLE
- * too, for the same "nothing to compare" reason. See `category` below.
+ * A ledger with no OMS match at all is UNMATCHED_PARTY, UNLESS its Tally group
+ * is outside Sundry Debtors — then it is NOT_APPLICABLE ("nothing to compare").
  */
 
 /** Rupee tolerance — Tally and OMS round GST at different points. */
@@ -192,13 +191,9 @@ const fmtDate = (d: Date) => `${String(d.getDate()).padStart(2, '0')}-${d.toLoca
  * @param ledger   one party's block from the register
  * @param oms      the same party's OMS books over the register's period, or null
  *                 when no OMS customer could be resolved
- * @param category set only when `oms` is null: the ledger's saved
- *                 TallyLedgerCategory ('AGENT' | 'EXPENSE' | 'OTHER'), when the user has
- *                 filed it as not-a-party. Reported as NOT_APPLICABLE instead of
- *                 UNMATCHED_PARTY — the same status "Purchase" / "TCS Payable"
- *                 already get below for the same reason (nothing to compare
- *                 against), so filing a ledger this way stops it counting
- *                 toward "needs attention" without inventing a new status.
+ * @param notPartyGroup set only when `oms` is null and the ledger's Tally group
+ *                 is outside Sundry Debtors: that group's name. Reported as
+ *                 NOT_APPLICABLE instead of UNMATCHED_PARTY.
  * @param openingCarriedBySibling set only when TWO OR MORE Tally ledger names
  *                 are aliased to the SAME OMS customer (a party renamed in
  *                 Tally — e.g. after a GST/address change — keeps both the old
@@ -214,7 +209,7 @@ export function reconcileParty(
   ledger: ParsedLedger,
   oms: OmsParty | null,
   periodFrom: Date,
-  category: TallyLedgerCategory | null = null,
+  notPartyGroup: string | null = null,
   openingCarriedBySibling: string | null = null,
 ): MatchRow[] {
   const out: MatchRow[] = [];
@@ -225,14 +220,11 @@ export function reconcileParty(
   };
 
   // ── unresolved party: report the register's rows so the total still ties, but
-  //    there is nothing to compare them against. A ledger the user has FILED as
-  //    non-party (category set) is reported as NOT_APPLICABLE, not
-  //    UNMATCHED_PARTY — it isn't a problem, it's an account the reconciliation
-  //    was never going to have an OMS counterpart for.
+  //    there is nothing to compare them against.
   if (!oms) {
-    const status: ReconStatus = category ? 'NOT_APPLICABLE' : 'UNMATCHED_PARTY';
-    const note = category
-      ? `Filed as ${category === 'AGENT' ? 'an Agent' : category === 'EXPENSE' ? 'an Expense' : 'Other'} — not a customer, so nothing to compare.`
+    const status: ReconStatus = notPartyGroup ? 'NOT_APPLICABLE' : 'UNMATCHED_PARTY';
+    const note = notPartyGroup
+      ? `Under ${notPartyGroup} in Tally — not a party, so nothing to compare.`
       : 'No OMS customer is mapped to this Tally ledger name.';
     if (ledger.openingNet != null) {
       out.push({

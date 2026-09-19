@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
@@ -7,7 +7,7 @@ import { Audit } from '../common/decorators/audit.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { AccountGroupsService } from './account-groups.service';
-import { CreateAccountGroupDto, MoveLedgersDto, TallyImportApplyDto, UpdateAccountGroupDto } from './account-groups.dto';
+import { AddToListDto, CreateAccountGroupDto, MarkAddedDto, MoveLedgersDto, TallyImportApplyDto, UpdateAccountGroupDto } from './account-groups.dto';
 
 const R = RESOURCES.CUSTOMER;
 
@@ -50,6 +50,37 @@ export class AccountGroupsController {
   @Audit({ action: ACTIONS.IMPORT, resource: R, description: 'Imported Tally master (groups and ledgers)' })
   tallyApply(@Body() dto: TallyImportApplyDto, @CurrentUser('name') userName?: string) {
     return this.groups.tallyApply(dto, userName ?? null);
+  }
+
+  @Get('additions')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  additions(@Query('status') status?: string) {
+    return this.groups.additions(status === 'PENDING' || status === 'ADDED' ? status : undefined);
+  }
+
+  @Get('additions/:id')
+  @Permissions(perm(R, ACTIONS.VIEW))
+  addition(@Param('id', ParseIntPipe) id: number) {
+    return this.groups.addition(id);
+  }
+
+  @Post('additions')
+  @Permissions(perm(R, ACTIONS.CREATE))
+  addToList(@Body() dto: AddToListDto, @CurrentUser('name') userName?: string) {
+    return this.groups.addToList(dto, userName ?? null);
+  }
+
+  @Post('additions/:id/added')
+  @Permissions(perm(R, ACTIONS.CREATE))
+  markAdded(@Param('id', ParseIntPipe) id: number, @Body() dto: MarkAddedDto, @CurrentUser('name') userName?: string) {
+    return this.groups.markAdded(id, dto, userName ?? null);
+  }
+
+  @Delete('additions/:id')
+  @Permissions(perm(R, ACTIONS.CREATE))
+  async removeFromList(@Param('id', ParseIntPipe) id: number) {
+    await this.groups.removeFromList(id);
+    return { ok: true };
   }
 
   @Post()
