@@ -583,6 +583,11 @@ export function OrderFormPage() {
   // must never cross over (a quotation showing "CONFIRMED" is meaningless).
   const [status, setStatus] = useState(docKind === 'quotation' ? 'DRAFT' : 'CONFIRMED');
   const [showBy, setShowBy] = useState<'PCS' | 'SIZE'>('SIZE');
+  // What is currently typed into the Item name field. Drives the item list's
+  // number-aware labelling: a leading number labels each matching row by the
+  // measure it matched (size OR pcs), so "8" lists an 8-size item and an 8-pcs
+  // item together, each shown under its 8 — see itemOptions.
+  const [itemQuery, setItemQuery] = useState('');
   const { autoSizePcs } = useAutoSizePcs();
 
   // Item entry (the row being built) + the added items
@@ -1039,11 +1044,28 @@ export function OrderFormPage() {
             norm(l.category) === norm(category) &&
             norm(l.subCategory) === norm(subCategory)),
       );
+    // A leading number in the query — e.g. the "8" in "8 borosil". When present,
+    // each row is labelled by whichever of its measures that number matches, so a
+    // number that is a SIZE for one item and a PCS for another still lists both
+    // under it: "8" → "8 BOROSIL CUP" (size 8) AND "8 BOROSIL SPECIAL" (pcs 8),
+    // and never a 7.5. With no leading number, rows read in the current Size/Pcs
+    // view exactly as before.
+    const lead = itemQuery.trim().match(/^(\d+(?:\.\d+)?)/)?.[1] ?? '';
     const map = new Map<string, (typeof list)[number]>();
     const options: { value: string; label: string; keywords: string }[] = [];
     for (const it of list) {
       if (isLogoDesign(it.designType) && logoBlocked(it.category, it.subCategory)) continue;
-      const prefix = showBy === 'PCS' ? fmtNum(it.pcs) : fmtNum(it.size);
+      const sizeStr = fmtNum(it.size);
+      const pcsStr = fmtNum(it.pcs);
+      let prefix = showBy === 'PCS' ? pcsStr : sizeStr;
+      if (lead) {
+        // Prefer an exact hit; while still mid-number, a prefix hit. Size wins a
+        // tie so a plain "8" on an 8-size / 8-pcs item reads as its size.
+        if (sizeStr === lead) prefix = sizeStr;
+        else if (pcsStr === lead) prefix = pcsStr;
+        else if (sizeStr.startsWith(lead)) prefix = sizeStr;
+        else if (pcsStr.startsWith(lead)) prefix = pcsStr;
+      }
       const label = [prefix, it.product, it.designType ?? ''].filter(Boolean).join(' ');
       if (!label || map.has(label)) continue; // first wins on duplicate labels
       map.set(label, it);
@@ -1058,7 +1080,7 @@ export function OrderFormPage() {
       options.push({ value: label, label, keywords });
     }
     return { options, map };
-  }, [lookups, showBy, special]);
+  }, [lookups, showBy, special, itemQuery]);
 
   /**
    * A line's design type, or null when it has none.
@@ -2670,6 +2692,7 @@ export function OrderFormPage() {
                 value={entry.itemName}
                 onChange={onItemPick}
                 onType={(text) => {
+                  setItemQuery(text);
                   detectShowBy(text);
                   refreshRatesSoon();
                 }}

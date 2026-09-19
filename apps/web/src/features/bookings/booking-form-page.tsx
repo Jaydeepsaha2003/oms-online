@@ -29,6 +29,16 @@ interface BookingLine {
   kgs: string;
 }
 
+/** A line's quantity as one compact phrase for the summary, e.g. "50 bags · 1200 kgs". */
+const lineQtyText = (l: BookingLine): string => {
+  const b = n(l.bags) ?? 0;
+  const k = n(l.kgs) ?? 0;
+  const parts: string[] = [];
+  if (b) parts.push(`${b} ${b === 1 ? 'bag' : 'bags'}`);
+  if (k) parts.push(`${k} ${k === 1 ? 'kg' : 'kgs'}`);
+  return parts.join(' · ') || '—';
+};
+
 // Shared field styling — the mockup's soft off-white input on a hairline border.
 const FIELD =
   'h-10 rounded-[10px] border-[0.8px] border-[var(--bb-line)] bg-[var(--bb-input-bg)] text-[13.5px] text-[var(--bb-ink)] shadow-none focus-visible:border-[var(--bb-blue)] focus-visible:ring-[3px] focus-visible:ring-[var(--bb-blue)]/15';
@@ -479,6 +489,25 @@ export function BookingFormPage() {
                   <SummaryRow label="Booking date" value={ddmmyyyy(bookingDate)} />
                   <SummaryRow label="Lines" value={<span key={lines.length} className="bb-pop inline-block">{lines.length}</span>} />
                 </dl>
+
+                {/* Per-category breakdown — so a booking that reserves several
+                    product categories shows each one and its share, not just the
+                    grand totals above. */}
+                {hasLines && (
+                  <div className="mt-4 border-t border-[var(--bb-line)] pt-3">
+                    <p className="text-[10.5px] font-black uppercase tracking-[0.1em] text-[var(--bb-muted)]">Reserved by category</p>
+                    <ul className="mt-2 space-y-1.5">
+                      {lines.map((l) => (
+                        <li key={l.key} className="bb-rowin flex items-center justify-between gap-3 text-[12.5px]">
+                          <span className="min-w-0 truncate font-bold text-[var(--bb-ink)]">
+                            {l.category || <span className="font-semibold italic text-[var(--bb-muted)]">No category</span>}
+                          </span>
+                          <span className="shrink-0 tabular-nums text-[var(--bb-muted)]">{lineQtyText(l)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
                 <button
                   type="button"
