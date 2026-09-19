@@ -1265,6 +1265,7 @@ export function BankStatementPage() {
               longest unbreakable narration and the cards run off a phone screen. */}
           <div className={cn('grid grid-cols-1 gap-3 sm:min-h-0 sm:flex-1', showWorking && 'lg:grid-cols-[1fr_360px]')}>
             {/* Lines */}
+            <section className={cn(PANEL, 'flex min-w-0 flex-col sm:min-h-0')}>
               <div className="flex flex-wrap items-center gap-2 border-b border-amber-200 p-2.5 dark:border-amber-400/20">
                 <NativeSelect
                   value={selectedParty ? String(selectedParty) : ''}
