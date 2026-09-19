@@ -31,6 +31,16 @@ const inr = (v: number) => (v ?? 0).toLocaleString('en-IN', { maximumFractionDig
  *  detail rows like a per-party ledger has), so this applies throughout. */
 const moneyOrDash = (v: number) => (v ? inr(v) : '-');
 const prettyDate = (iso: string) => formatDate(iso);
+/** "Mon, 1 Sep" for the date picker's header; '…' while an end is still unpicked. */
+const prettyDay = (iso: string) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return '…';
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString('en-IN', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  });
+};
 
 /** Compact, amber-bordered filter controls — the same language as every other list page. */
 const CONTROL =
@@ -54,6 +64,14 @@ function fyStart(d: Date): Date {
 }
 const RANGE_PRESETS = ['This Year', 'This Quarter', 'This Month', 'Yesterday', 'Today'] as const;
 type Preset = (typeof RANGE_PRESETS)[number];
+/** Picker order (shortest span first) with labels short enough for one row. */
+const RANGE_PRESETS_UI: [Preset, string][] = [
+  ['Today', 'Today'],
+  ['Yesterday', 'Yesterday'],
+  ['This Month', 'Month'],
+  ['This Quarter', 'Quarter'],
+  ['This Year', 'Year'],
+];
 function presetRange(p: Preset): { from: Date; to: Date } {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -182,7 +200,9 @@ function useDaybookFilters() {
     // The date range above still lets you pick any From → To span.
     from: get('from', ymd(new Date())),
     to: get('to', ymd(new Date())),
-    preset: get('preset', 'Today'),
+    // 'Today' only on a fresh visit — once a custom range is in the URL, an absent
+    // preset means "custom", not "Today" (else a picked range is labelled Today).
+    preset: get('preset', params.has('from') ? '' : 'Today'),
     party: get('party', ''),
     voucherType: get('vtype', ''),
     mode: get('mode', 'BOTH') as LedgerTxnMode,
@@ -220,6 +240,7 @@ export function DaybookPage() {
 
   const { from, to, preset, party, voucherType, mode, patch } = useDaybookFilters();
   const [dateOpen, setDateOpen] = useState(false);
+  const [dateSnapshot, setDateSnapshot] = useState<{ from: string; to: string; preset: string } | null>(null);
   const [subtotals, setSubtotals] = useState(loadSubtotals);
 
   useEffect(() => {
@@ -259,7 +280,14 @@ export function DaybookPage() {
     <div className="flex h-full min-h-0 flex-col gap-2 p-2.5 font-sans sm:gap-2.5 sm:p-3">
       <div className={cn('bg-card font-poppins rounded-[4px] border shadow-sm', PANEL)}>
         <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
-          <Popover open={dateOpen} onOpenChange={setDateOpen}>
+          <Popover
+            open={dateOpen}
+            onOpenChange={(o) => {
+              // Remember the period on open so Cancel can put it back.
+              if (o) setDateSnapshot({ from, to, preset });
+              setDateOpen(o);
+            }}
+          >
             <PopoverTrigger asChild>
               <Button variant="outline" className={cn(CONTROL, 'w-full justify-between gap-2 sm:w-auto', 'font-medium', (preset || from) && CONTROL_ON)}>
                 <div className="flex items-center gap-1.5 min-w-0">
@@ -269,39 +297,67 @@ export function DaybookPage() {
                 <Filter className="size-3.5 shrink-0 ml-1.5 text-amber-800/80 dark:text-amber-200/80" />
               </Button>
             </PopoverTrigger>
-            <PopoverContent align="start" className="w-auto p-2">
-              <div className="w-[15.5rem] space-y-2">
-                <div className="grid grid-cols-2 gap-1">
-                  {RANGE_PRESETS.map((p) => (
+            <PopoverContent
+              align="start"
+              className="w-[min(21rem,calc(100vw-1.5rem))] overflow-hidden rounded-xl border-0 p-0 shadow-2xl"
+            >
+              {/* Header band (Material "Select date"): the chosen period, big. */}
+              <div className="bg-gradient-to-br from-indigo-600 to-blue-600 px-3.5 pt-2.5 pb-3 text-white">
+                <p className="text-[10px] font-semibold tracking-[0.14em] text-white/70 uppercase">Select dates</p>
+                {/* One day reads once, not "Sat, 19 Sep – Sat, 19 Sep". */}
+                <p className="mt-0.5 truncate text-[17px] leading-snug font-semibold tracking-tight">
+                  {from === to ? (
+                    prettyDay(from)
+                  ) : (
+                    <>
+                      {prettyDay(from)} <span className="text-white/55">–</span> {prettyDay(to)}
+                    </>
+                  )}
+                </p>
+                {/* Presets as one segmented row — never wraps. */}
+                <div className="mt-2 grid grid-cols-5 rounded-lg bg-white/15 p-0.5">
+                  {RANGE_PRESETS_UI.map(([p, short]) => (
                     <button
                       key={p}
                       type="button"
                       onClick={() => applyPreset(p)}
                       aria-pressed={preset === p}
+                      title={p}
                       className={cn(
-                        'cursor-pointer rounded-[3px] border px-2 py-1 text-[11.5px] font-semibold transition-colors',
-                        preset === p ? 'border-amber-500 bg-amber-100 text-amber-900 dark:border-amber-400/60 dark:bg-amber-400/15 dark:text-amber-200' : 'hover:bg-accent border-transparent',
+                        'cursor-pointer rounded-md px-0.5 py-1 text-[10.5px] font-semibold whitespace-nowrap transition-all',
+                        preset === p ? 'bg-white text-blue-700 shadow-sm' : 'text-white/90 hover:bg-white/15',
                       )}
                     >
-                      {p}
+                      {short}
                     </button>
                   ))}
                 </div>
-                <div className="border-t pt-2">
-                  <DateRangeCalendar
-                    from={from}
-                    to={to}
-                    onChange={(f, t) => patch({ from: f, ...(t ? { to: t } : {}), preset: '' })}
-                  />
-                </div>
-                <div className="flex items-center justify-between gap-2 border-t pt-2">
-                  <span className="min-w-0 truncate text-[11.5px] font-semibold">
-                    {prettyDate(from)} <span className="text-muted-foreground">→</span> {prettyDate(to)}
-                  </span>
-                  <Button size="sm" className="h-7 shrink-0 px-3 text-[12px] font-semibold" onClick={() => setDateOpen(false)}>
-                    Done
-                  </Button>
-                </div>
+              </div>
+              <div className="px-2.5 pt-2">
+                <DateRangeCalendar
+                  from={from}
+                  to={to}
+                  onChange={(f, t) => patch({ from: f, ...(t ? { to: t } : {}), preset: '' })}
+                />
+              </div>
+              <div className="flex justify-end gap-0.5 px-1.5 pt-0.5 pb-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (dateSnapshot) patch(dateSnapshot);
+                    setDateOpen(false);
+                  }}
+                  className="cursor-pointer rounded-md px-3 py-1.5 text-[12.5px] font-semibold tracking-wider text-blue-700 uppercase transition-colors hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-400/10"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDateOpen(false)}
+                  className="cursor-pointer rounded-md px-3 py-1.5 text-[12.5px] font-bold tracking-wider text-blue-700 uppercase transition-colors hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-400/10"
+                >
+                  Done
+                </button>
               </div>
             </PopoverContent>
           </Popover>

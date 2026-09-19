@@ -284,7 +284,7 @@ export const RESOURCE_DEFINITIONS: ResourceDef[] = [
     // CREATE uploads a statement and edits the working; UPDATE is the one that
     // posts receipts to the ledger, so it can be withheld from whoever does the
     // matching without stopping them doing it.
-    label: 'Bank Statement Recon',
+    label: 'Bank Reconciliation',
     group: 'Accounts',
     actions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE],
   },

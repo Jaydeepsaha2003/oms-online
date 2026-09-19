@@ -1735,13 +1735,17 @@ export function OrderFormPage() {
     // On imported lines this field carries the design TYPE ("WL+TOOL"), and
     // losing it unlinks the line from Design Track and the photo rules.
     const designName = noDesignNames ? entry.designName.trim() || 'NA' : entry.designName;
-    // Duplicate guard: same item + design name already on the list → confirm.
+    // Duplicate guard: same item + design name + remark already on the list →
+    // confirm. A different remark (e.g. "laser, charges extra") is a deliberately
+    // separate line, so it isn't a duplicate.
+    const norm = (s?: string | null) => (s ?? '').trim().replace(/\s+/g, ' ').toUpperCase();
     const dupIdx = items.findIndex(
       (i) =>
         i.key !== editingItemKey &&
         i.status !== 'CANCELLED' &&
-        i.itemName.trim().toUpperCase() === entry.itemName.trim().toUpperCase() &&
-        (i.designName || 'NA').toUpperCase() === designName.toUpperCase(),
+        norm(i.itemName) === norm(entry.itemName) &&
+        (i.designName || 'NA').toUpperCase() === designName.toUpperCase() &&
+        norm(i.comment) === norm(entry.comment),
     );
     if (dupIdx >= 0) {
       const ok = await confirm({

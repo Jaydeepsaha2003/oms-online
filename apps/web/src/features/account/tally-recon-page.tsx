@@ -409,7 +409,7 @@ function BalancesView({
       </div>
 
       {/* Phones */}
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2 sm:hidden">
+      <div className="space-y-2 p-2 sm:hidden">
         {!list.length ? (
           <p className="text-muted-foreground px-4 py-10 text-center text-[13px] font-medium">
             {onlyDiffering ? 'Every balance agrees.' : 'No parties could be compared.'}
@@ -809,7 +809,9 @@ export function TallyReconPage() {
     !!vchType || tallyParties.length > 0 || omsParties.length > 0 || !!review || status !== 'PROBLEMS';
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2 p-2.5 font-sans sm:gap-2.5 sm:p-3">
+    // Phones: the filters + tiles alone fill the screen, so the page itself is the
+    // scroller there and the report flows below them. sm+: fixed-height worksheet.
+    <div className="flex h-full min-h-0 flex-col gap-2 overflow-y-auto overscroll-contain p-2.5 font-sans sm:gap-2.5 sm:overflow-visible sm:p-3">
       <input
         ref={fileRef}
         type="file"
@@ -1170,7 +1172,7 @@ export function TallyReconPage() {
       )}
 
       {/* ── the report ────────────────────────────────────────────────────── */}
-      <div className={cn('bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[4px] border shadow-sm', PANEL)}>
+      <div className={cn('bg-card flex flex-none flex-col overflow-hidden rounded-[4px] border shadow-sm sm:min-h-0 sm:flex-1', PANEL)}>
         <div className="flex items-center justify-between gap-3 bg-slate-800 px-2.5 py-1 dark:bg-slate-900">
           <div className="flex min-w-0 items-center gap-2">
             <span className="truncate text-[12px] font-extrabold tracking-wide text-amber-300 uppercase">
@@ -1422,7 +1424,7 @@ export function TallyReconPage() {
             </div>
 
             {/* Phones: one card per row, tick on the card itself. */}
-            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2 sm:hidden">
+            <div className="space-y-2 p-2 sm:hidden">
               {!blocks.length ? (
                 <p className="text-muted-foreground px-4 py-10 text-center text-[13px] font-medium">
                   {status === 'PROBLEMS' ? 'Nothing needs attention.' : 'No rows for these filters.'}
