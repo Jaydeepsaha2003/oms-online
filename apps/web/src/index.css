@@ -569,6 +569,15 @@
   animation: oms-text-shimmer 4s linear infinite;
 }
 
+.text-gradient-blue-orange-shimmer {
+  background: linear-gradient(90deg, #1d4ed8 0%, #3b82f6 25%, #f97316 50%, #ffaa00 75%, #1d4ed8 100%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: oms-text-shimmer 4s linear infinite;
+}
+
 /* Solid brand gradient fill, e.g. for logo tiles and primary CTAs. */
 .bg-gradient-brand {
   background-image: linear-gradient(135deg, #2563eb 0%, #4f46e5 40%, #f97316 100%);
@@ -580,15 +589,22 @@
   animation: oms-bg-gradient-shift 18s ease infinite;
 }
 
+.bg-animated-blue-orange-mesh {
+  background: linear-gradient(-45deg, #0f172a, #1e3a8a, #1d4ed8, #ea580c, #f97316, #1e1b4b, #2563eb);
+  background-size: 400% 400%;
+  animation: oms-bg-gradient-shift 18s ease infinite;
+}
+
 /* Apple-style Liquid Glass card */
 .apple-liquid-glass {
-  background: rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.48);
   backdrop-filter: blur(40px) saturate(190%);
   -webkit-backdrop-filter: blur(40px) saturate(190%);
-  border: 1px solid rgba(255, 255, 255, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.7);
   box-shadow: 
-    0 25px 80px -15px rgba(234, 88, 12, 0.45),
-    inset 0 1px 2px 0 rgba(255, 255, 255, 0.8),
+    0 25px 80px -15px rgba(37, 99, 235, 0.45),
+    0 15px 40px -10px rgba(234, 88, 12, 0.35),
+    inset 0 1px 2px 0 rgba(255, 255, 255, 0.85),
     inset 0 -1px 2px 0 rgba(0, 0, 0, 0.05);
 }
 
@@ -596,9 +612,10 @@
   background: rgba(15, 23, 42, 0.55);
   backdrop-filter: blur(40px) saturate(190%);
   -webkit-backdrop-filter: blur(40px) saturate(190%);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   box-shadow: 
-    0 25px 80px -15px rgba(234, 88, 12, 0.5),
+    0 25px 80px -15px rgba(37, 99, 235, 0.5),
+    0 15px 40px -10px rgba(234, 88, 12, 0.4),
     inset 0 1px 1px 0 rgba(255, 255, 255, 0.2);
 }
 

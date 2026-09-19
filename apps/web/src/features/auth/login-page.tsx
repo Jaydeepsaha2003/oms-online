@@ -116,69 +116,70 @@ export function LoginPage() {
   if (showIntro) return <IntroVideo onFinish={() => setShowIntro(false)} />;
 
   return (
-    <div className="bg-animated-orange-mesh relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-10">
+    <div className="bg-animated-blue-orange-mesh relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-10">
       {/* Absolute, not in the flex flow: untrusted cert banner */}
       <div className="absolute inset-x-0 top-0 z-20">
         <UntrustedCertBanner />
       </div>
 
-      {/* ── Ultra-premium hyper-animated orange background ── */}
+      {/* ── Ultra-premium hyper-animated Blue & Orange background ── */}
       <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
         {/* Radial dark vignette for depth */}
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-orange-950/20 via-orange-950/60 to-black/85" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-blue-950/30 via-slate-950/75 to-black/90" />
         
         {/* Dotted grid overlay */}
         <div className="bg-dotted absolute inset-0 opacity-30 mix-blend-overlay" />
 
         {/* Dynamic rotating geometric glowing rings */}
         <div
-          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 size-[45rem] rounded-full border border-orange-500/15"
+          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 size-[45rem] rounded-full border border-blue-500/20"
           style={{ animation: 'oms-orbit-spin 45s linear infinite' }}
         >
-          <div className="absolute top-0 left-1/2 size-4 -translate-x-1/2 rounded-full bg-amber-400/40 blur-sm" />
-          <div className="absolute bottom-0 left-1/2 size-5 -translate-x-1/2 rounded-full bg-orange-500/50 blur-sm" />
+          <div className="absolute top-0 left-1/2 size-4 -translate-x-1/2 rounded-full bg-blue-400/50 blur-sm" />
+          <div className="absolute bottom-0 left-1/2 size-5 -translate-x-1/2 rounded-full bg-orange-500/60 blur-sm" />
         </div>
         <div
-          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 size-[65rem] rounded-full border border-amber-400/10"
+          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 size-[65rem] rounded-full border border-orange-500/15"
           style={{ animation: 'oms-orbit-spin 65s linear infinite reverse' }}
         >
-          <div className="absolute top-1/2 right-0 size-6 -translate-y-1/2 rounded-full bg-amber-300/40 blur-md" />
+          <div className="absolute top-1/2 right-0 size-6 -translate-y-1/2 rounded-full bg-amber-400/50 blur-md" />
+          <div className="absolute top-1/2 left-0 size-5 -translate-y-1/2 rounded-full bg-cyan-400/50 blur-md" />
         </div>
 
-        {/* Ambient floating liquid gradient blobs - positioned so mobile screens get full liquid animation behind the glass card */}
+        {/* Ambient floating liquid gradient blobs - vibrant blue/orange contrast motion */}
         <div
-          className="oms-blob absolute left-1/2 top-1/4 -translate-x-1/2 -translate-y-1/2 size-72 sm:-left-16 sm:-top-16 sm:translate-x-0 sm:translate-y-0 sm:size-[28rem] rounded-full bg-gradient-to-tr from-amber-500/55 via-orange-500/50 to-yellow-400/40 blur-3xl"
+          className="oms-blob absolute left-1/2 top-1/4 -translate-x-1/2 -translate-y-1/2 size-72 sm:-left-16 sm:-top-16 sm:translate-x-0 sm:translate-y-0 sm:size-[28rem] rounded-full bg-gradient-to-tr from-blue-600/60 via-indigo-500/50 to-orange-500/45 blur-3xl"
           style={{ animation: 'oms-float 22s ease-in-out infinite' }}
         />
         <div
-          className="oms-blob absolute right-0 top-1/3 size-80 sm:-right-24 sm:top-1/4 sm:size-[32rem] rounded-full bg-gradient-to-bl from-orange-600/60 via-amber-500/45 to-yellow-500/50 blur-3xl"
+          className="oms-blob absolute right-0 top-1/3 size-80 sm:-right-24 sm:top-1/4 sm:size-[32rem] rounded-full bg-gradient-to-bl from-orange-600/60 via-amber-500/50 to-blue-600/45 blur-3xl"
           style={{ animation: 'oms-float-reverse 26s ease-in-out infinite', animationDelay: '-5s' }}
         />
         <div
-          className="oms-blob absolute left-0 bottom-1/4 size-80 sm:-bottom-32 sm:left-1/4 sm:size-[36rem] rounded-full bg-gradient-to-t from-red-600/50 via-orange-500/50 to-amber-400/45 blur-3xl"
+          className="oms-blob absolute left-0 bottom-1/4 size-80 sm:-bottom-32 sm:left-1/4 sm:size-[36rem] rounded-full bg-gradient-to-t from-indigo-700/55 via-blue-500/50 to-orange-500/45 blur-3xl"
           style={{ animation: 'oms-float 30s ease-in-out infinite', animationDelay: '-11s' }}
         />
         <div
-          className="oms-blob absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 size-[24rem] sm:size-[32rem] rounded-full bg-amber-400/40 blur-3xl"
+          className="oms-blob absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 size-[24rem] sm:size-[32rem] rounded-full bg-gradient-to-r from-blue-500/35 via-orange-400/40 to-amber-400/35 blur-3xl"
           style={{ animation: 'oms-pulse-glow 10s ease-in-out infinite' }}
         />
         <div
-          className="oms-blob absolute right-4 bottom-10 size-72 sm:right-10 sm:-bottom-10 sm:size-96 rounded-full bg-gradient-to-l from-orange-600/50 to-amber-500/50 blur-3xl"
+          className="oms-blob absolute right-4 bottom-10 size-72 sm:right-10 sm:-bottom-10 sm:size-96 rounded-full bg-gradient-to-l from-blue-600/50 to-orange-600/50 blur-3xl"
           style={{ animation: 'oms-float-reverse 24s ease-in-out infinite', animationDelay: '-8s' }}
         />
 
-        {/* Rising animated ember sparkles */}
+        {/* Rising animated blue & orange ember sparkles */}
         {[
-          { left: '10%', size: '6px', delay: '0s', duration: '14s' },
-          { left: '25%', size: '8px', delay: '3s', duration: '17s' },
-          { left: '42%', size: '5px', delay: '6s', duration: '13s' },
-          { left: '60%', size: '7px', delay: '1s', duration: '16s' },
-          { left: '78%', size: '6px', delay: '5s', duration: '15s' },
-          { left: '90%', size: '9px', delay: '2s', duration: '18s' },
+          { left: '10%', size: '6px', delay: '0s', duration: '14s', color: 'bg-cyan-300 shadow-[0_0_12px_#3b82f6]' },
+          { left: '25%', size: '8px', delay: '3s', duration: '17s', color: 'bg-amber-200 shadow-[0_0_12px_#f97316]' },
+          { left: '42%', size: '5px', delay: '6s', duration: '13s', color: 'bg-blue-300 shadow-[0_0_12px_#2563eb]' },
+          { left: '60%', size: '7px', delay: '1s', duration: '16s', color: 'bg-orange-300 shadow-[0_0_12px_#ea580c]' },
+          { left: '78%', size: '6px', delay: '5s', duration: '15s', color: 'bg-sky-300 shadow-[0_0_12px_#06b6d4]' },
+          { left: '90%', size: '9px', delay: '2s', duration: '18s', color: 'bg-amber-300 shadow-[0_0_12px_#f59e0b]' },
         ].map((e, idx) => (
           <div
             key={idx}
-            className="absolute rounded-full bg-amber-200 shadow-[0_0_12px_#f97316]"
+            className={cn('absolute rounded-full', e.color)}
             style={{
               left: e.left,
               width: e.size,
@@ -192,20 +193,20 @@ export function LoginPage() {
 
       {/* ── Login Card ── */}
       <div className="relative z-10 w-full max-w-[340px] sm:max-w-md">
-        <div className="apple-liquid-glass relative overflow-hidden rounded-2xl sm:rounded-3xl p-5 sm:p-8 duration-500 animate-in fade-in-0 slide-in-from-bottom-4 shadow-[0_25px_80px_-15px_rgba(234,88,12,0.45)]">
+        <div className="apple-liquid-glass relative overflow-hidden rounded-2xl sm:rounded-3xl p-5 sm:p-8 duration-500 animate-in fade-in-0 slide-in-from-bottom-4 shadow-[0_25px_80px_-15px_rgba(37,99,235,0.4)]">
           {/* Top Glass Highlight */}
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-x-0 top-0 h-20 sm:h-28 bg-gradient-to-b from-white/90 via-orange-50/20 to-transparent opacity-70"
+            className="pointer-events-none absolute inset-x-0 top-0 h-20 sm:h-28 bg-gradient-to-b from-white/90 via-blue-50/20 to-transparent opacity-70"
           />
 
           <div className="relative flex flex-col items-center text-center">
             {/* Logo container with breathing glow ring */}
-            <div className="mb-2 flex size-20 sm:size-28 items-center justify-center overflow-hidden rounded-full bg-white/95 p-1 shadow-xl ring-4 ring-orange-500/30 drop-shadow-md backdrop-blur-md">
+            <div className="mb-2 flex size-20 sm:size-28 items-center justify-center overflow-hidden rounded-full bg-white/95 p-1 shadow-xl ring-4 ring-blue-500/30 drop-shadow-md backdrop-blur-md">
               <img src={company?.logo || kavishLogo} alt={company?.name || APP_NAME} className="size-full object-contain p-1.5 sm:p-2" />
             </div>
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
-              Welcome to <span className="text-gradient-orange-shimmer font-extrabold">{APP_NAME}</span>
+              Welcome to <span className="text-gradient-blue-orange-shimmer font-extrabold">{APP_NAME}</span>
             </h1>
             <p className="mt-0.5 sm:mt-1 text-xs sm:text-sm text-slate-600 font-medium">Sign in to your {APP_NAME} workspace</p>
           </div>
@@ -260,7 +261,7 @@ export function LoginPage() {
                       inputMode="email"
                       autoComplete="username"
                       placeholder="you@company.com"
-                      className="pl-9 bg-white border border-slate-200 text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-orange-500 focus:ring-2 focus:ring-orange-500/30 shadow-sm transition-all duration-200"
+                      className="pl-9 bg-white border border-slate-200 text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 shadow-sm transition-all duration-200"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                     />
@@ -276,7 +277,7 @@ export function LoginPage() {
                       type="password"
                       autoComplete="current-password"
                       placeholder="••••••••"
-                      className="pl-9 bg-white border border-slate-200 text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-orange-500 focus:ring-2 focus:ring-orange-500/30 shadow-sm transition-all duration-200"
+                      className="pl-9 bg-white border border-slate-200 text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 shadow-sm transition-all duration-200"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                     />
@@ -284,7 +285,7 @@ export function LoginPage() {
                 </div>
                 <Button
                   type="submit"
-                  className="h-11 w-full border-none bg-gradient-to-r from-orange-600 via-amber-500 to-orange-600 font-semibold text-white shadow-lg shadow-orange-500/30 transition-all duration-300 hover:brightness-110 active:scale-[0.99]"
+                  className="h-11 w-full border-none bg-gradient-to-r from-blue-600 via-indigo-600 to-orange-500 font-semibold text-white shadow-lg shadow-blue-500/25 transition-all duration-300 hover:brightness-110 active:scale-[0.99]"
                   disabled={pending}
                 >
                   {pending ? <Loader2 className="size-4 animate-spin" /> : null}
