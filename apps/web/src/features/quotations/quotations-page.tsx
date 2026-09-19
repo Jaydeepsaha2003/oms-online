@@ -316,7 +316,40 @@ export function QuotationsPage() {
       ) : q.status === 'SENT' ? (
         <p className="text-xs text-sky-700">Sent {q.sentAt ? formatDate(q.sentAt) : ''}</p>
       ) : null}
-      <div className="flex items-center justify-end gap-1.5 border-t pt-2.5" onClick={(e) => e.stopPropagation()}>
+      {/* The card has room to spare beside the kebab, so the handful of actions
+          every quotation supports — view its PDF, print it, see its history,
+          jump to the order it became — sit here as one-tap buttons instead of
+          costing an extra menu open. Anything that changes the quotation's
+          state (edit, convert, mark sent, cancel, delete) stays behind the
+          kebab, same as desktop, so it isn't one accidental tap away. */}
+      <div className="flex items-center justify-between gap-1 border-t pt-2.5" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-0.5">
+          {can('quotation:view') && (
+            <>
+              <Button variant="ghost" size="icon" className="size-8" onClick={() => handlePreview(q)} aria-label="Preview PDF" title="Preview PDF">
+                <FileSearch className="size-4 text-violet-600" />
+              </Button>
+              <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(`/quotations/${q.id}/bill`)} aria-label="Print / view quotation" title="Print / view quotation">
+                <Printer className="size-4" />
+              </Button>
+              <Button variant="ghost" size="icon" className="size-8" onClick={() => setHistoryQuotation(q)} aria-label="View change history" title="View change history">
+                <History className="size-4 text-indigo-600" />
+              </Button>
+            </>
+          )}
+          {q.status === 'CONVERTED' && q.convertedOrderId != null && can('order:view') && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8"
+              onClick={() => navigate(`/orders/${q.convertedOrderId}/edit`)}
+              aria-label={`View ${q.convertedOrderCode ?? 'the order'}`}
+              title={`View ${q.convertedOrderCode ?? 'the order'}`}
+            >
+              <Eye className="size-4 text-emerald-600" />
+            </Button>
+          )}
+        </div>
         {quotationActionsMenu(q)}
       </div>
     </div>
