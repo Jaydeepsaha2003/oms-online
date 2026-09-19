@@ -1,5 +1,21 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
+/* flowbite-react Datepicker: scan only its own classes. Its Tailwind plugin is
+   deliberately NOT used — it redefines gray/red/… app-wide. */
+@source '../../../node_modules/flowbite-react/dist/components/Datepicker';
+
+/* Range calendar: days of the previous / next month (marked in
+   date-range-calendar.tsx) read as light grey and can't be picked. */
+.oms-days > button[data-out] {
+  color: var(--color-slate-300);
+  background: transparent;
+  box-shadow: none;
+  font-weight: 400;
+  cursor: default;
+}
+.dark .oms-days > button[data-out] {
+  color: var(--color-slate-600);
+}
 
 @custom-variant dark (&:is(.dark *));
 
@@ -235,6 +251,11 @@
   --font-calibri: Calibri, Carlito, 'Segoe UI', var(--font-sans);
   --font-montserrat: 'Montserrat Variable', var(--font-sans);
   --font-poppins: Poppins, var(--font-sans);
+  /* flowbite-react's `primary-*` shades (Datepicker selected day), mapped to blue. */
+  --color-primary-300: var(--color-blue-300);
+  --color-primary-600: var(--color-blue-600);
+  --color-primary-700: var(--color-blue-700);
+  --color-primary-800: var(--color-blue-800);
 }
 
 @layer base {

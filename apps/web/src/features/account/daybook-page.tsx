@@ -96,6 +96,7 @@ function presetRange(p: Preset): { from: Date; to: Date } {
 }
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
+
 function FitSelect({
   label,
   value,
@@ -333,12 +334,8 @@ export function DaybookPage() {
                   ))}
                 </div>
               </div>
-              <div className="px-2.5 pt-2">
-                <DateRangeCalendar
-                  from={from}
-                  to={to}
-                  onChange={(f, t) => patch({ from: f, ...(t ? { to: t } : {}), preset: '' })}
-                />
+              <div className="px-3 pt-2.5">
+                <DateRangeCalendar from={from} to={to} onChange={(f, t) => patch({ from: f, to: t, preset: '' })} />
               </div>
               <div className="flex justify-end gap-0.5 px-1.5 pt-0.5 pb-1.5">
                 <button

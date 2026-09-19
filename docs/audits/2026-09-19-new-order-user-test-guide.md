@@ -99,7 +99,6 @@ Who: user. Previously reproduced.
 **TEST 4B — a selected logo survives a switch to a customer who blocks it**
 
 Who: user. Previously reproduced.
-
 1. Select Party 1, choose Item A **with LOGO**, and enter Pcs **12**. Do not click Add yet.
 2. Switch Customer to Party 2 and allow its details to finish loading.
 3. Without choosing another item, click Add.
