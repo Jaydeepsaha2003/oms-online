@@ -87,35 +87,35 @@ export function PriceHistoryPage() {
     const up = (r.newRate ?? 0) > (r.oldRate ?? 0);
     const down = (r.newRate ?? 0) < (r.oldRate ?? 0);
     return (
-      <div className="space-y-2">
+      <div className="space-y-1.5">
         <div>
-          <span className={cn('rounded px-1.5 py-0.5 text-xs font-medium ring-1', KIND_STYLE[r.kind])}>{KIND_LABEL[r.kind]}</span>
+          <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-semibold ring-1', KIND_STYLE[r.kind])}>{KIND_LABEL[r.kind]}</span>
           {/* No truncation on a phone — the item/scope is the point of the row,
               so it wraps fully rather than being clipped. */}
-          <p className="mt-1 font-medium leading-tight">{r.name}</p>
-          <p className="text-muted-foreground text-xs leading-snug">
+          <p className="mt-1 text-[12.5px] font-semibold leading-tight">{r.name}</p>
+          <p className="text-muted-foreground text-[10.5px] leading-snug">
             {[r.category, r.subCategory].filter(Boolean).join(' · ')}
             {r.kind === 'CUSTOMER' && r.rateKind ? ` · ${r.rateKind}${r.target ? ` · ${r.target}` : ''} (${(r.scope ?? '').toLowerCase()})` : ''}
           </p>
         </div>
         {/* Old → New, each labelled like the desktop's own columns. */}
-        <div className="bg-muted/40 flex items-center gap-3 rounded-md px-2.5 py-1.5">
+        <div className="bg-muted/40 flex items-center gap-2.5 rounded-md px-2 py-1">
           <div className="leading-tight">
-            <span className="text-muted-foreground block text-[10px] font-bold tracking-wide uppercase">Old ₹</span>
-            <span className="text-sm tabular-nums">{rateStr(r.oldRate)}</span>
+            <span className="text-muted-foreground block text-[9px] font-bold tracking-wide uppercase">Old ₹</span>
+            <span className="text-[12.5px] tabular-nums">{rateStr(r.oldRate)}</span>
           </div>
-          <span className="text-muted-foreground">→</span>
+          <span className="text-muted-foreground text-[11px]">→</span>
           <div className="leading-tight">
-            <span className="text-muted-foreground block text-[10px] font-bold tracking-wide uppercase">New ₹</span>
-            <span className={cn('inline-flex items-center gap-1 text-sm font-semibold tabular-nums', up ? 'text-rose-600' : down ? 'text-emerald-600' : '')}>
-              {up && <TrendingUp className="size-3.5" />}
-              {down && <TrendingDown className="size-3.5" />}
+            <span className="text-muted-foreground block text-[9px] font-bold tracking-wide uppercase">New ₹</span>
+            <span className={cn('inline-flex items-center gap-0.5 text-[12.5px] font-bold tabular-nums', up ? 'text-rose-600' : down ? 'text-emerald-600' : '')}>
+              {up && <TrendingUp className="size-3" />}
+              {down && <TrendingDown className="size-3" />}
               {rateStr(r.newRate)}
             </span>
           </div>
         </div>
-        <div className="text-muted-foreground flex items-center justify-between border-t pt-2 text-xs">
-          <span>{r.changedByName ?? '—'}</span>
+        <div className="text-muted-foreground flex items-center justify-between border-t pt-1.5 text-[10px]">
+          <span className="truncate">{r.changedByName ?? '—'}</span>
           <span className="font-mono">{formatDateTime(r.changedAt)}</span>
         </div>
       </div>
@@ -123,8 +123,10 @@ export function PriceHistoryPage() {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
+    <div className="space-y-3 sm:space-y-4">
+      {/* The intro line is desktop-only — a phone's app bar already names the
+          screen, and the space is better spent on the list. */}
+      <div className="hidden items-center gap-3 sm:flex">
         <div>
           <p className="text-muted-foreground text-sm">Every product, design &amp; special-rate change — the audit trail behind booking-date pricing.</p>
         </div>

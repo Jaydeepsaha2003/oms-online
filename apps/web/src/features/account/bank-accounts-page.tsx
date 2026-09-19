@@ -88,6 +88,50 @@ export function BankAccountsPage() {
     });
   };
 
+  const bankMobileCard = (b: BankAccountDto) => (
+    <div className="space-y-2">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate font-bold text-slate-900 dark:text-slate-100">{b.bankName}</p>
+          <p className="font-mono text-xs font-semibold text-slate-600 dark:text-slate-300">A/C: {b.acNo}</p>
+        </div>
+        {b.isActive ? (
+          <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300">Active</span>
+        ) : (
+          <span className="text-muted-foreground rounded bg-slate-100 px-1.5 py-0.5 text-xs dark:bg-white/10">Inactive</span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <div>
+          <span className="text-muted-foreground block text-[10px] font-bold uppercase">IFSC</span>
+          <span className="font-mono font-medium">{b.ifsc || '—'}</span>
+        </div>
+        <div>
+          <span className="text-muted-foreground block text-[10px] font-bold uppercase">Branch</span>
+          <span className="font-medium">{b.branch || '—'}</span>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between border-t pt-2 text-xs" onClick={(e) => e.stopPropagation()}>
+        <span className="text-muted-foreground font-mono text-[11px]">{formatDateShort(b.createdAt)}</span>
+        <div className="flex items-center gap-1">
+          <RecordHistory resource={RESOURCES.BANK_ACCOUNT} resourceId={b.id} label={b.display} />
+          {can('bankaccount:update') && (
+            <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(b)} aria-label="Edit">
+              <Pencil className="size-4" />
+            </Button>
+          )}
+          {can('bankaccount:delete') && (
+            <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => handleDelete(b)} aria-label="Delete">
+              <Trash2 className="size-4" />
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     // Fills the viewport: toolbar pinned on top, footer pinned at the bottom, only
     // the grid scrolls. `/account/bank-accounts` is a flush route (app-shell), so
@@ -143,6 +187,7 @@ export function BankAccountsPage() {
           hideSortIcon
           emptyText="No bank accounts yet — add one so it appears in the cheque deposit-bank picker."
           onRowClick={(b) => can('bankaccount:update') && setEditing(b)}
+          mobileCard={bankMobileCard}
           className={[
             'font-sans text-[13px]',
             '[&_tbody]:select-none',

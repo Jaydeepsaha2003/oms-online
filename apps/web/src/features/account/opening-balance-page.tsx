@@ -97,6 +97,61 @@ export function OpeningBalancePage() {
     });
   };
 
+  const openingMobileCard = (o: OpeningBalanceDto) => (
+    <div className="space-y-2">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate font-bold text-slate-900 dark:text-slate-100">{o.customerName}</p>
+          <p className="font-mono text-xs font-semibold text-muted-foreground">{prettyDate(o.transDate)}</p>
+        </div>
+        <span
+          className={cn(
+            'rounded px-1.5 py-0.5 text-xs font-semibold ring-1 ring-inset',
+            o.drCr === 'DEBIT'
+              ? 'bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/15 dark:text-rose-300'
+              : 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300',
+          )}
+        >
+          {o.drCr}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-3 gap-1 rounded bg-slate-50 p-2 text-xs dark:bg-slate-900/60">
+        <div>
+          <span className="text-muted-foreground block text-[10px] font-bold uppercase">Bank</span>
+          <span className="font-semibold tabular-nums">{money(o.bankAmt)}</span>
+        </div>
+        <div>
+          <span className="text-muted-foreground block text-[10px] font-bold uppercase">Cash</span>
+          <span className="font-semibold tabular-nums">{money(o.cashAmt)}</span>
+        </div>
+        <div>
+          <span className="text-muted-foreground block text-[10px] font-bold uppercase">Total</span>
+          <span className="font-bold tabular-nums text-slate-900 dark:text-slate-100">{money(o.bankAmt + o.cashAmt)}</span>
+        </div>
+      </div>
+
+      {o.remarks && (
+        <p className="text-muted-foreground text-xs italic">
+          <span className="font-semibold not-italic">Remarks:</span> {o.remarks}
+        </p>
+      )}
+
+      <div className="flex items-center justify-end gap-1 border-t pt-2 text-xs" onClick={(e) => e.stopPropagation()}>
+        {can('openingbalance:update') && (
+          <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(o)} aria-label="Edit">
+            <Pencil className="size-4" />
+          </Button>
+        )}
+        {can('openingbalance:delete') && (
+          <Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={() => handleDelete(o)} aria-label="Delete">
+            <Trash2 className="size-4" />
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+
   return (
     // Fills the viewport: toolbar pinned on top, footer pinned at the bottom, only
     // the grid scrolls. `/account/opening-balance` is a flush route (app-shell), so
@@ -113,7 +168,7 @@ export function OpeningBalancePage() {
               onChange={(e) => setSearchInput(e.target.value)}
             />
           </div>
-          <div className="w-40">
+          <div className="w-full sm:w-40">
             <NativeSelect value={drCr} onChange={(v) => { setDrCr(v); setPage(1); }} options={['', 'DEBIT', 'CREDIT']} placeholder="All Dr / Cr" className={cn(CONTROL, 'font-medium', drCr && CONTROL_ON)} />
           </div>
           {hasFilters && (
@@ -155,6 +210,7 @@ export function OpeningBalancePage() {
           hideSortIcon
           emptyText="No opening balances yet — add each customer's opening bank/cash here."
           onRowClick={(o) => can('openingbalance:update') && setEditing(o)}
+          mobileCard={openingMobileCard}
           className={[
             'font-sans text-[13px]',
             '[&_tbody]:select-none',

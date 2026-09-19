@@ -1186,6 +1186,10 @@ export class ChallansService {
         design: r.design,
         qty,
         unit: r.unit,
+        bags: r.bags,
+        pcs: r.pcs,
+        kgs: r.kgs,
+        box: r.box,
         price: r.price,
         amount: r.amount,
       };

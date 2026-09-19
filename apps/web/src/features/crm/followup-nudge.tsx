@@ -102,7 +102,7 @@ function writeNudgeLog(log: NudgeLog, now: number): void {
 export function FollowupNudge() {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
-  const { data: due = [] } = useFollowupDue();
+  const { data: due = [], isFetched: dueFetched } = useFollowupDue();
   const { data: settings } = useCrmSettings();
   const snooze = useSnoozeFollowup();
   // Not `seen` — that name is already the ref below tracking which banners
@@ -113,6 +113,13 @@ export function FollowupNudge() {
   const [activeBanners, setActiveBanners] = useState<{ id: number; followup: FollowupDto }[]>([]);
   const seen = useRef<Set<number>>(new Set());
   const askedPermission = useRef(false);
+  // The first batch of due follow-ups loaded after the app (re)starts is a
+  // SNAPSHOT of what was already pending, not something that just happened — so
+  // it is surfaced silently. Only follow-ups that come due while the app is
+  // already open announce themselves with a chime / notification. This is what
+  // stops a server restart (which is just a reload) from playing the reminder
+  // sound for every still-open follow-up.
+  const started = useRef(false);
 
   // Ask for desktop-notification permission once (best-effort).
   useEffect(() => {
@@ -195,7 +202,10 @@ export function FollowupNudge() {
       // desktop notifications switched off, or a platform that refuses them
       // (iOS Safari). Previously the chime always played, which is why every
       // reminder announced itself with a tune no other app on the machine uses.
-      void (async () => {
+      //
+      // Skipped entirely for the startup snapshot: a (re)start surfaces pending
+      // follow-ups (banners are still added above) but stays silent.
+      if (started.current) void (async () => {
         const shown = settings?.desktopNotifications
           ? await showSystemNotifications(
               fresh.slice(0, 3).map((f) => ({
@@ -233,11 +243,15 @@ export function FollowupNudge() {
       }
     }
 
+    // Once the first real batch has loaded and been recorded silently, later
+    // runs are live and may announce new nudges.
+    if (dueFetched) started.current = true;
+
     return () => {
       chimeCancelled = true;
       clearTimeout(secondChime);
     };
-  }, [due, settings?.sound, settings?.desktopNotifications, settings?.intervalMins]);
+  }, [due, dueFetched, settings?.sound, settings?.desktopNotifications, settings?.intervalMins]);
 
   // Phones get the chime, the buzz and the OS notification — but nothing drawn
   // over the app. See the note on this component for why.

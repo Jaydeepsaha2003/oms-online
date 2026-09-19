@@ -345,6 +345,12 @@ export interface ChallanItemHistoryRow {
   design: string | null;
   qty: number;
   unit: string | null;
+  /** The line's full quantity breakdown, so the item-wise view can show Bags /
+   *  Pcs / Box alongside the priced quantity when the challan recorded them. */
+  bags: number | null;
+  pcs: number | null;
+  kgs: number | null;
+  box: number | null;
   price: number | null;
   amount: number | null;
 }

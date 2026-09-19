@@ -100,7 +100,7 @@ export function UserFormPage() {
     } else {
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) return toast.error('Enter a valid email');
       if (password.length < 8) return toast.error('Password must be at least 8 characters');
-      if (pin.trim() && !/^\d{4,6}$/.test(pin.trim())) return toast.error('PIN must be 4 to 6 digits');
+      if (pin.trim() && !/^\d{4}$/.test(pin.trim())) return toast.error('PIN must be exactly 4 digits');
       create.mutate(
         { email: email.trim(), name: name.trim(), password, pin: pin.trim() || undefined, status, roleIds: [...roleIds] },
         opts,
@@ -182,10 +182,10 @@ export function UserFormPage() {
                 type="text"
                 inputMode="numeric"
                 pattern="[0-9]*"
-                maxLength={6}
+                maxLength={4}
                 value={pin}
-                onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-                placeholder="4–6 digits (e.g. 1234)"
+                onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                placeholder="4 digits (e.g. 1234)"
               />
             </div>
           </>
@@ -249,23 +249,23 @@ export function UserFormPage() {
               </span>
             </div>
             <p className="text-muted-foreground text-[11.5px]">
-              Set or update the 4–6 digit numeric PIN for fast sign-in on remembered devices.
+              Set or update the 4-digit numeric PIN for fast sign-in on remembered devices.
             </p>
             <div className="flex flex-wrap gap-2 pt-1">
               <Input
                 type="text"
                 inputMode="numeric"
                 pattern="[0-9]*"
-                maxLength={6}
+                maxLength={4}
                 value={newPin}
-                onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
-                placeholder="4–6 digits"
+                onChange={(e) => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                placeholder="4 digits"
                 className="max-w-[130px]"
               />
               <Button
                 type="button"
                 variant="outline"
-                disabled={newPin.length < 4 || newPin.length > 6 || setPinMutation.isPending}
+                disabled={newPin.length !== 4 || setPinMutation.isPending}
                 onClick={() =>
                   setPinMutation.mutate(newPin, {
                     onSuccess: () => {

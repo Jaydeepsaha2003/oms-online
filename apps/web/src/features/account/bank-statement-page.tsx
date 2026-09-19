@@ -119,7 +119,7 @@ function Stat({ label, value, tone, hint }: { label: string; value: string; tone
   return (
     <div
       className={cn(
-        'flex-1 rounded-[4px] border px-3 py-2',
+        'min-w-0 rounded-[4px] border px-2.5 py-1.5 sm:px-3 sm:py-2',
         tone === 'good' && 'border-emerald-300 bg-emerald-50/70 dark:border-emerald-400/40 dark:bg-emerald-500/10',
         tone === 'bad' && 'border-rose-300 bg-rose-50/70 dark:border-rose-400/40 dark:bg-rose-500/10',
         tone === 'warn' && 'border-amber-300 bg-amber-50/70 dark:border-amber-400/40 dark:bg-amber-400/10',
@@ -127,8 +127,8 @@ function Stat({ label, value, tone, hint }: { label: string; value: string; tone
       )}
       title={hint}
     >
-      <p className="text-muted-foreground text-[10px] font-bold tracking-widest uppercase">{label}</p>
-      <p className="text-[17px] font-extrabold tabular-nums">{value}</p>
+      <p className="text-muted-foreground truncate text-[10px] font-bold tracking-widest uppercase">{label}</p>
+      <p className="truncate text-[15px] font-extrabold tabular-nums sm:text-[17px]">{value}</p>
     </div>
   );
 }
@@ -1249,7 +1249,7 @@ export function BankStatementPage() {
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
               <Stat label="Credits in range" value={money0(run?.creditTotal ?? 0)} hint="Total money in, for the range." />
               <Stat label="Matched" value={String(run?.matchedCount ?? 0)} tone="good" hint={STATUS_META.MATCHED.hint} />
               <Stat label="In total" value={String(run?.partialCount ?? 0)} hint={STATUS_META.PARTIAL.hint} />
@@ -1434,7 +1434,31 @@ export function BankStatementPage() {
               )}
 
               <div className="min-h-0 flex-1 overflow-auto">
-                <table className="w-full border-collapse">
+                {/* Mobile View: Cards */}
+                <div className="space-y-2 p-2 sm:hidden">
+                  {runLoading ? (
+                    <div className="text-muted-foreground flex justify-center py-10">
+                      <Loader2 className="size-6 animate-spin" />
+                    </div>
+                  ) : shown.length === 0 ? (
+                    <p className="text-muted-foreground py-8 text-center text-xs">No lines.</p>
+                  ) : (
+                    shown.map((r) => (
+                      <LineCard
+                        key={r.id}
+                        row={r}
+                        checked={checked.has(r.id)}
+                        onToggle={() => toggleRow(r.id)}
+                        selectable={isDraft && canEdit}
+                        vouchers={runResult?.receiptVouchers ?? {}}
+                        onChangeParty={isDraft && canEdit ? reviewParty : undefined}
+                      />
+                    ))
+                  )}
+                </div>
+
+                {/* Desktop View: Table */}
+                <table className="hidden w-full border-collapse sm:table">
                   <thead>
                     <tr>
                       <th className={cn(TH, 'w-9')} aria-label="Select" />
@@ -1616,6 +1640,115 @@ const hasRef = (v: string | null) => {
  *  number. Anything else (NEFT, IMPS, UPI) gets the neutral "Ref" — calling a
  *  UTR a cheque number would be a different kind of wrong. */
 const isChequeTxn = (n: string) => /\b(clg|chq|cheque|cts|clearing)\b/i.test(n ?? '');
+
+function LineCard({
+  row,
+  checked,
+  onToggle,
+  selectable,
+  vouchers,
+  onChangeParty,
+}: {
+  row: BankStatementRowDto;
+  checked: boolean;
+  onToggle: () => void;
+  selectable: boolean;
+  vouchers: Record<string, string>;
+  onChangeParty?: (row: BankStatementRowDto) => void;
+}) {
+  return (
+    <div
+      className={cn(
+        'relative rounded-lg border p-3 transition-colors space-y-2',
+        row.status === 'UNMATCHED' && 'border-rose-200 bg-rose-50/60 dark:border-rose-900/30 dark:bg-rose-500/10',
+        row.status === 'NO_PARTY' && 'border-amber-200 bg-amber-50/70 dark:border-amber-900/30 dark:bg-amber-400/10',
+        row.status === 'MATCHED' && 'bg-card',
+        row.status === 'PARTIAL' && 'bg-sky-50/50 dark:bg-sky-500/10',
+        row.status === 'IGNORED' && 'opacity-60 bg-muted/40',
+        row.status === 'RETURNED' && 'border-rose-300 bg-rose-50/70 dark:bg-rose-500/10',
+        checked && 'ring-2 ring-primary/50',
+      )}
+      onClick={selectable ? onToggle : undefined}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          {selectable && (
+            <span
+              className={cn(
+                'inline-flex size-4 shrink-0 items-center justify-center rounded-[3px] border-[1.5px]',
+                checked ? 'border-primary bg-primary text-primary-foreground' : 'border-slate-400 bg-white',
+              )}
+            >
+              {checked && <CheckCircle2 className="size-3" />}
+            </span>
+          )}
+          <span className="font-mono text-xs font-semibold tabular-nums text-muted-foreground">
+            {formatDate(row.txnDate)}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <StatusChip status={row.status} />
+          <span className="text-sm font-extrabold tabular-nums text-foreground">{money0(row.amount)}</span>
+        </div>
+      </div>
+
+      <div className="space-y-1">
+        <p className="text-xs font-medium leading-relaxed text-foreground break-words">{row.narration || '—'}</p>
+
+        {hasRef(row.refNo) && (
+          <div className="inline-flex items-center gap-1 rounded-[3px] border px-1.5 py-0.5 text-[10.5px]">
+            <span className="text-muted-foreground font-semibold uppercase text-[9.5px]">
+              {isChequeTxn(row.narration) ? 'Cheque' : 'Ref'}
+            </span>
+            <span className="font-mono font-semibold tabular-nums">{row.refNo}</span>
+          </div>
+        )}
+
+        {row.matchedRefs.length > 0 && (
+          <p
+            className={cn(
+              'text-[11px] font-semibold break-words',
+              row.status === 'UNMATCHED' ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400',
+            )}
+          >
+            {row.status === 'MATCHED' && 'against '}
+            {row.status === 'PARTIAL' && 'covered by '}
+            {row.status === 'UNMATCHED' && `${money0(row.matchedAmount)} of it against `}
+            <span className="font-mono">{row.matchedRefs.map((r) => vouchers[r] ?? r).join(', ')}</span>
+            {row.status === 'UNMATCHED' && ` · ${money0(row.amount - row.matchedAmount)} short`}
+          </p>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between gap-2 border-t pt-2 text-xs">
+        <div onClick={(e) => e.stopPropagation()} className="min-w-0 flex-1">
+          {onChangeParty ? (
+            <button
+              type="button"
+              onClick={() => onChangeParty(row)}
+              className="flex max-w-full items-center gap-1.5 rounded px-1.5 py-0.5 text-left hover:bg-indigo-50 dark:hover:bg-indigo-500/15"
+            >
+              <span className="truncate font-semibold text-slate-800 dark:text-slate-200">
+                {row.customerName || 'Assign party…'}
+                {row.partySource && row.partySource !== 'MANUAL' && (
+                  <span className="text-muted-foreground ml-1 text-[10.5px] font-normal">(auto)</span>
+                )}
+              </span>
+              <Pencil className="text-muted-foreground size-3 shrink-0" />
+            </button>
+          ) : (
+            <span className="truncate font-semibold">{row.customerName || '—'}</span>
+          )}
+        </div>
+        {row.partyAt && (
+          <span className="text-muted-foreground shrink-0 text-[10.5px]">
+            {sinceText(row.partyAt)} ({row.partyBy || 'auto'})
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function LineRow({ row, checked, onToggle, selectable, vouchers, onChangeParty }: { row: BankStatementRowDto; checked: boolean; onToggle: () => void; selectable: boolean; vouchers: Record<string, string>; onChangeParty?: (row: BankStatementRowDto) => void }) {
   return (

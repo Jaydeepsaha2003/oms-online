@@ -85,7 +85,7 @@ export function LoginPage() {
       setMode('password');
       return;
     }
-    if (pin.length < 4) return toast.error('Enter your 4–6 digit PIN');
+    if (pin.length !== 4) return toast.error('Enter your 4-digit PIN');
     pinLogin.mutate(
       { email: rememberedEmail, pin },
       {
@@ -104,7 +104,7 @@ export function LoginPage() {
     const onKey = (e: KeyboardEvent) => {
       const tag = (document.activeElement?.tagName ?? '').toLowerCase();
       if (tag === 'input' || tag === 'textarea') return;
-      if (e.key >= '0' && e.key <= '9') setPin((p) => (p.length < 6 ? p + e.key : p));
+      if (e.key >= '0' && e.key <= '9') setPin((p) => (p.length < 4 ? p + e.key : p));
       else if (e.key === 'Backspace') setPin((p) => p.slice(0, -1));
       else if (e.key === 'Enter') submitPin();
     };
@@ -116,63 +116,98 @@ export function LoginPage() {
   if (showIntro) return <IntroVideo onFinish={() => setShowIntro(false)} />;
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gradient-to-br from-amber-700 via-orange-600 to-amber-900 px-4 py-10">
-      {/* Absolute, not in the flex flow: the outer div centers the login card with
-          flex, and a normal-flow sibling here would push that card off-centre
-          or sit beside it. This has to be seen before login succeeds — an
-          untrusted phone will not necessarily fail the login POST itself, but
-          it explains the warning screen the person likely already clicked
-          through to get here. */}
+    <div className="bg-animated-orange-mesh relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-10">
+      {/* Absolute, not in the flex flow: untrusted cert banner */}
       <div className="absolute inset-x-0 top-0 z-20">
         <UntrustedCertBanner />
       </div>
-      {/* Animated vibrant orange theme background */}
+
+      {/* ── Ultra-premium hyper-animated orange background ── */}
       <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
         {/* Radial dark vignette for depth */}
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-transparent via-orange-950/40 to-black/70" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-orange-950/20 via-orange-950/60 to-black/85" />
         
-        {/* Animated dotted grid overlay */}
-        <div className="bg-dotted absolute inset-0 opacity-40 mix-blend-overlay" />
+        {/* Dotted grid overlay */}
+        <div className="bg-dotted absolute inset-0 opacity-30 mix-blend-overlay" />
 
-        {/* Ambient floating orange & golden blobs */}
+        {/* Dynamic rotating geometric glowing rings */}
         <div
-          className="oms-blob absolute -left-20 -top-20 size-96 rounded-full bg-gradient-to-tr from-amber-500/50 to-orange-400/60 blur-3xl"
-          style={{ animation: 'oms-float 20s ease-in-out infinite' }}
+          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 size-[45rem] rounded-full border border-orange-500/15"
+          style={{ animation: 'oms-orbit-spin 45s linear infinite' }}
+        >
+          <div className="absolute top-0 left-1/2 size-4 -translate-x-1/2 rounded-full bg-amber-400/40 blur-sm" />
+          <div className="absolute bottom-0 left-1/2 size-5 -translate-x-1/2 rounded-full bg-orange-500/50 blur-sm" />
+        </div>
+        <div
+          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 size-[65rem] rounded-full border border-amber-400/10"
+          style={{ animation: 'oms-orbit-spin 65s linear infinite reverse' }}
+        >
+          <div className="absolute top-1/2 right-0 size-6 -translate-y-1/2 rounded-full bg-amber-300/40 blur-md" />
+        </div>
+
+        {/* Ambient floating liquid gradient blobs */}
+        <div
+          className="oms-blob absolute -left-16 -top-16 size-[28rem] rounded-full bg-gradient-to-tr from-amber-500/55 via-orange-500/50 to-yellow-400/40 blur-3xl"
+          style={{ animation: 'oms-float 22s ease-in-out infinite' }}
         />
         <div
-          className="oms-blob absolute -right-28 top-1/4 size-[30rem] rounded-full bg-gradient-to-bl from-orange-500/55 via-amber-400/40 to-yellow-500/45 blur-3xl"
-          style={{ animation: 'oms-float-reverse 24s ease-in-out infinite', animationDelay: '-4s' }}
+          className="oms-blob absolute -right-24 top-1/4 size-[32rem] rounded-full bg-gradient-to-bl from-orange-600/60 via-amber-500/45 to-yellow-500/50 blur-3xl"
+          style={{ animation: 'oms-float-reverse 26s ease-in-out infinite', animationDelay: '-5s' }}
         />
         <div
-          className="oms-blob absolute -bottom-36 left-1/4 size-[34rem] rounded-full bg-gradient-to-t from-red-600/40 via-orange-600/50 to-amber-500/40 blur-3xl"
-          style={{ animation: 'oms-float 28s ease-in-out infinite', animationDelay: '-10s' }}
+          className="oms-blob absolute -bottom-32 left-1/4 size-[36rem] rounded-full bg-gradient-to-t from-red-600/50 via-orange-500/50 to-amber-400/45 blur-3xl"
+          style={{ animation: 'oms-float 30s ease-in-out infinite', animationDelay: '-11s' }}
         />
         <div
-          className="oms-blob absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 size-[26rem] rounded-full bg-yellow-400/25 blur-3xl"
-          style={{ animation: 'oms-pulse-glow 14s ease-in-out infinite' }}
+          className="oms-blob absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 size-[28rem] rounded-full bg-amber-400/30 blur-3xl"
+          style={{ animation: 'oms-pulse-glow 12s ease-in-out infinite' }}
         />
         <div
-          className="oms-blob absolute right-12 -bottom-16 size-80 rounded-full bg-amber-600/45 blur-3xl"
-          style={{ animation: 'oms-float-reverse 22s ease-in-out infinite', animationDelay: '-7s' }}
+          className="oms-blob absolute right-10 -bottom-10 size-96 rounded-full bg-gradient-to-l from-orange-600/50 to-amber-500/50 blur-3xl"
+          style={{ animation: 'oms-float-reverse 24s ease-in-out infinite', animationDelay: '-8s' }}
         />
+
+        {/* Rising animated ember sparkles */}
+        {[
+          { left: '10%', size: '6px', delay: '0s', duration: '14s' },
+          { left: '25%', size: '8px', delay: '3s', duration: '17s' },
+          { left: '42%', size: '5px', delay: '6s', duration: '13s' },
+          { left: '60%', size: '7px', delay: '1s', duration: '16s' },
+          { left: '78%', size: '6px', delay: '5s', duration: '15s' },
+          { left: '90%', size: '9px', delay: '2s', duration: '18s' },
+        ].map((e, idx) => (
+          <div
+            key={idx}
+            className="absolute rounded-full bg-amber-200 shadow-[0_0_12px_#f97316]"
+            style={{
+              left: e.left,
+              width: e.size,
+              height: e.size,
+              animation: `oms-ember-float ${e.duration} linear infinite`,
+              animationDelay: e.delay,
+            }}
+          />
+        ))}
       </div>
 
+      {/* ── Login Card ── */}
       <div className="relative z-10 w-full max-w-md">
-        <div className="relative overflow-hidden rounded-3xl border border-white/60 bg-white/70 p-6 shadow-2xl shadow-slate-900/10 backdrop-blur-xl duration-500 animate-in fade-in-0 slide-in-from-bottom-4 sm:p-8">
-          {/* Glass highlight */}
+        <div className="relative overflow-hidden rounded-3xl border border-white/80 bg-white/85 p-6 shadow-[0_20px_70px_-15px_rgba(234,88,12,0.4)] backdrop-blur-2xl duration-500 animate-in fade-in-0 slide-in-from-bottom-4 sm:p-8">
+          {/* Top Glass Highlight */}
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-white/70 to-transparent"
+            className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-white/90 via-orange-50/20 to-transparent"
           />
 
           <div className="relative flex flex-col items-center text-center">
-            <div className="mb-1 flex size-28 items-center justify-center overflow-hidden rounded-full bg-white shadow-lg ring-4 ring-white/60 drop-shadow">
-              <img src={company?.logo || kavishLogo} alt={company?.name || APP_NAME} className="size-full object-contain p-3" />
+            {/* Logo container with breathing glow ring */}
+            <div className="mb-2 flex size-28 items-center justify-center overflow-hidden rounded-full bg-white p-1 shadow-xl ring-4 ring-orange-500/30 drop-shadow-md">
+              <img src={company?.logo || kavishLogo} alt={company?.name || APP_NAME} className="size-full object-contain p-2" />
             </div>
-            <h1 className="text-2xl font-bold tracking-tight">
-              Welcome to <span className="text-gradient-brand">{APP_NAME}</span>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+              Welcome to <span className="text-gradient-orange-shimmer font-extrabold">{APP_NAME}</span>
             </h1>
-            <p className="mt-1 text-sm text-muted-foreground">Sign in to your {APP_NAME} workspace</p>
+            <p className="mt-1 text-sm text-slate-600 font-medium">Sign in to your {APP_NAME} workspace</p>
           </div>
 
           {/* Mode toggle */}
@@ -247,7 +282,11 @@ export function LoginPage() {
                     />
                   </div>
                 </div>
-                <Button type="submit" className="w-full" disabled={pending}>
+                <Button
+                  type="submit"
+                  className="h-11 w-full border-none bg-gradient-to-r from-orange-600 via-amber-500 to-orange-600 font-semibold text-white shadow-lg shadow-orange-500/30 transition-all duration-300 hover:brightness-110 active:scale-[0.99]"
+                  disabled={pending}
+                >
                   {pending ? <Loader2 className="size-4 animate-spin" /> : null}
                   {pending ? 'Signing in…' : 'Sign in'}
                 </Button>
@@ -274,7 +313,7 @@ export function LoginPage() {
                   </button>
                 </div>
 
-                <PinPad value={pin} onChange={setPin} onSubmit={submitPin} disabled={pending} />
+                <PinPad value={pin} onChange={setPin} onSubmit={submitPin} disabled={pending} maxLength={4} />
               </div>
             ) : (
               // First time on this device: no remembered account → guide to password.

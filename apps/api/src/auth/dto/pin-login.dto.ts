@@ -5,6 +5,6 @@ export class PinLoginDto {
   email!: string;
 
   @IsString()
-  @Matches(/^\d{4,6}$/, { message: 'PIN must be 4 to 6 digits.' })
+  @Matches(/^\d{4}$/, { message: 'PIN must be exactly 4 digits.' })
   pin!: string;
 }

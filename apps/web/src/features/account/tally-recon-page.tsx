@@ -962,8 +962,11 @@ export function TallyReconPage() {
         </div>
 
         {/* ── headline figures, doubling as the status filter ──────────────── */}
+        {/* Phone: a 2-column grid so each tile is wide enough to read its label
+            and number; from sm up it's the single flex row of shrink-to-fit
+            tiles as before. */}
         {run && (
-          <div className="flex flex-wrap gap-1.5 border-t border-amber-200 px-2.5 py-2 sm:gap-2 sm:px-3 dark:border-amber-400/20">
+          <div className="grid grid-cols-2 gap-1.5 border-t border-amber-200 px-2.5 py-2 sm:flex sm:flex-wrap sm:gap-2 sm:px-3 dark:border-amber-400/20">
             <Tile
               label="Needs attention"
               blurb="Everything flagged"

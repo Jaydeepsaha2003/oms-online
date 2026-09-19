@@ -13,6 +13,20 @@ import { useChallanItemNames, useChallanItemHistory } from './use-challans';
 
 const num = (v: number | null) => (v ? v.toLocaleString('en-IN') : '—');
 const money = (v: number | null) => (v ? `₹ ${v.toLocaleString('en-IN')}` : '—');
+const qtyOf = (v: number | null | undefined) => (v ? v.toLocaleString('en-IN') : null);
+
+/** The line's full quantity as one phrase — every measure the challan recorded
+ *  (Bags · Kgs · Pcs · Box), falling back to the single priced qty when the
+ *  breakdown is empty. */
+const qtyBreakdown = (r: ChallanItemHistoryRow): string => {
+  const parts = [
+    qtyOf(r.bags) && `${qtyOf(r.bags)} Bags`,
+    qtyOf(r.kgs) && `${qtyOf(r.kgs)} Kgs`,
+    qtyOf(r.pcs) && `${qtyOf(r.pcs)} Pcs`,
+    qtyOf(r.box) && `${qtyOf(r.box)} Box`,
+  ].filter(Boolean);
+  return parts.length ? parts.join(' · ') : `${num(r.qty)} ${r.unit || ''}`.trim();
+};
 
 /** Matches the other challan grids: Inter, semibold, near-black. */
 const TEXT_CELL = 'text-[13px] font-semibold text-slate-800 dark:text-slate-200';
@@ -104,8 +118,11 @@ export function ChallanItemsPage() {
           </Button>
         )}
       </div>
-      <div className="flex items-center justify-between text-[12px] font-medium">
-        <span className="text-muted-foreground">{num(r.qty)} {r.unit || ''} @ {money(r.price)}</span>
+      <div className="flex items-center justify-between gap-2 text-[12px] font-medium">
+        <span className="text-slate-900 dark:text-slate-100">
+          <span className="font-semibold tabular-nums">{qtyBreakdown(r)}</span>
+          <span className="text-muted-foreground font-normal"> @ {money(r.price)}</span>
+        </span>
         <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(r.amount)}</span>
       </div>
     </div>
