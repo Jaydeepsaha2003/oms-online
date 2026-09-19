@@ -1,12 +1,7 @@
-import { useMemo, useState } from 'react';
-import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Datepicker } from 'flowbite-react';
 import { cn } from '@/lib/utils';
-
-const MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
-const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+import { formatDate } from '@/lib/date-format';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 /** Local-time YYYY-MM-DD (no timezone shift) — matches the app's DatePicker. */
@@ -20,277 +15,135 @@ function parseISO(v?: string | null): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-/** Midnight-normalised day number, safe to compare with < > =. */
-const dayKey = (d: Date) => d.getFullYear() * 10_000 + (d.getMonth() + 1) * 100 + d.getDate();
-
-const NAV_BTN =
-  'text-muted-foreground hover:bg-accent hover:text-foreground flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors disabled:pointer-events-none disabled:opacity-30';
-// Borderless, reads as "September ▾ 2026 ▾" (Material style) but stays a native
-// select, so month/year jumps keep working with keyboard and on phones.
-const SELECT =
-  'h-7 cursor-pointer appearance-none rounded-md bg-transparent py-0 pr-5 pl-1.5 text-[13px] font-semibold text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-ring/40 focus-visible:ring-2';
-
-function Picker({ className, ...props }: React.ComponentProps<'select'>) {
-  return (
-    <span className="relative inline-flex items-center">
-      <select className={cn(SELECT, className)} {...props} />
-      <ChevronDown className="text-muted-foreground pointer-events-none absolute right-1 size-3.5" />
-    </span>
-  );
-}
+/** flowbite-react Datepicker restyled to the app: round days, compact header. */
+const FLOWBITE_THEME = {
+  popup: {
+    root: { inner: 'inline-block w-full bg-transparent p-0 pt-2 shadow-none dark:bg-transparent' },
+    header: {
+      selectors: {
+        base: 'mb-1 flex items-center justify-between',
+        button: {
+          base: 'cursor-pointer rounded-lg bg-transparent px-3 py-1.5 text-sm font-semibold text-slate-800 hover:bg-slate-100 dark:bg-transparent dark:text-white dark:hover:bg-white/10',
+        },
+      },
+    },
+  },
+  views: {
+    days: {
+      items: {
+        base: 'oms-days grid w-full grid-cols-7 gap-y-0.5',
+        item: {
+          base: 'mx-auto block size-8 cursor-pointer rounded-full border-0 text-center text-[12.5px] font-medium leading-8 text-slate-800 hover:bg-slate-100 dark:text-white dark:hover:bg-white/10',
+          selected: 'bg-blue-600 font-bold text-white shadow-md shadow-blue-600/30 hover:bg-blue-600',
+        },
+      },
+    },
+    months: { items: { base: 'grid w-full grid-cols-4' } },
+    years: { items: { base: 'grid w-full grid-cols-4' } },
+    decades: { items: { base: 'grid w-full grid-cols-4' } },
+  },
+};
 
 /**
- * A two-month range calendar with hover preview — no external date library.
+ * From → To range picker on flowbite-react's (single-date) Datepicker.
  *
- * Picking works the way every range picker does: the first click sets the start
- * and arms the range, the second click closes it (clicking earlier than the start
- * just re-anchors instead of producing a backwards range). While armed, hovering
- * paints the range you'd get, so you can see the span before committing.
+ * A From / To switch picks which end the calendar edits. Picking From hops to
+ * To; a To before From (or a From after To) pulls the other end along, so the
+ * range can never be backwards. Either end may be '' (no bound) — the pages
+ * treat that as "no date filter".
  */
 export function DateRangeCalendar({
   from,
   to,
   onChange,
-  months = 1,
   className,
 }: {
   /** ISO yyyy-mm-dd, or '' when unset. */
   from: string;
   to: string;
-  /** Called with both ends; `to` is '' while only the start has been picked. */
+  /** Called with both ends ('' = unbounded). */
   onChange: (from: string, to: string) => void;
-  /** How many months to show side by side. One keeps the popover compact. */
+  /** Accepted for compatibility; the flowbite picker always shows one month. */
   months?: number;
   className?: string;
 }) {
-  const start = parseISO(from);
-  const end = parseISO(to);
-  const today = new Date();
+  const [end, setEnd] = useState<'from' | 'to'>('from');
 
-  /** Set once the first click lands, cleared when the range completes. */
-  const [anchor, setAnchor] = useState<Date | null>(null);
-  const [hover, setHover] = useState<Date | null>(null);
-  /** Left-hand month; the right-hand one is always the month after. */
-  const [view, setView] = useState<Date>(() => start ?? today);
-
-  // When the range is set from outside (a quick-range preset), jump the calendar to
-  // it — otherwise picking "Last Year" leaves you staring at the current month.
-  // Adjusting state during render rather than in an effect avoids a second paint;
-  // a range being dragged out (anchor armed) is left alone.
-  const [lastFrom, setLastFrom] = useState(from);
-  if (from !== lastFrom) {
-    setLastFrom(from);
-    const d = parseISO(from);
-    if (d && !anchor) setView(new Date(d.getFullYear(), d.getMonth(), 1));
-  }
-
-  const viewYear = view.getFullYear();
-  const viewMonth = view.getMonth();
-  const years = useMemo(() => {
-    const y1 = today.getFullYear() + 5;
-    const out: number[] = [];
-    for (let y = y1; y >= 1970; y--) out.push(y);
-    return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // flowbite always draws 42 days and gives no "other month" flag (and its
+  // filterDate can't see which month is on screen), so days before the first
+  // "1" and from the next "1" on are marked here: greyed via [data-out] in
+  // index.css and disabled. Re-run whenever the grid changes (month flips).
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const mark = () => {
+      const btns = [...root.querySelectorAll<HTMLButtonElement>('.oms-days > button')];
+      const first = btns.findIndex((b) => b.textContent === '1');
+      const next = btns.findIndex((b, i) => i > first && b.textContent === '1');
+      btns.forEach((b, i) => {
+        const out = i < first || (next >= 0 && i >= next);
+        if (out) {
+          b.dataset.out = '';
+          b.disabled = true;
+        } else if (b.dataset.out !== undefined) {
+          delete b.dataset.out;
+          b.disabled = false;
+        }
+      });
+    };
+    mark();
+    // Only childList/text: our own attribute writes don't retrigger it.
+    const mo = new MutationObserver(mark);
+    mo.observe(root, { subtree: true, childList: true, characterData: true });
+    return () => mo.disconnect();
   }, []);
 
-  // The span to paint: the committed range, or the live one being dragged out.
-  const [lo, hi] = (() => {
-    if (anchor) {
-      const other = hover ?? anchor;
-      return dayKey(anchor) <= dayKey(other) ? [anchor, other] : [other, anchor];
+  const pick = (d: Date | null) => {
+    if (!d) return;
+    const v = toISO(d);
+    if (end === 'from') {
+      onChange(v, !to || v > to ? v : to);
+      setEnd('to');
+    } else {
+      onChange(from && v < from ? v : from, v);
     }
-    if (start && end) return [start, end];
-    if (start) return [start, start];
-    return [null, null];
-  })();
-
-  const pick = (d: Date) => {
-    if (!anchor) {
-      setAnchor(d);
-      setHover(d);
-      onChange(toISO(d), '');
-      return;
-    }
-    // A second click before the anchor re-anchors rather than inverting the range.
-    if (dayKey(d) < dayKey(anchor)) {
-      setAnchor(d);
-      onChange(toISO(d), '');
-      return;
-    }
-    setAnchor(null);
-    setHover(null);
-    onChange(toISO(anchor), toISO(d));
   };
 
   return (
-    <div className={cn('select-none', className)} onPointerLeave={() => !anchor && setHover(null)}>
-      {/* Nav — one row driving both months */}
-      <div className="mb-1.5 flex items-center">
-        <Picker
-          aria-label="Month"
-          value={viewMonth}
-          onChange={(e) => setView(new Date(viewYear, Number(e.target.value), 1))}
-        >
-          {MONTHS.map((m, i) => (
-            <option key={m} value={i}>
-              {m}
-            </option>
-          ))}
-        </Picker>
-        <Picker
-          aria-label="Year"
-          value={viewYear}
-          onChange={(e) => setView(new Date(Number(e.target.value), viewMonth, 1))}
-        >
-          {years.map((y) => (
-            <option key={y} value={y}>
-              {y}
-            </option>
-          ))}
-        </Picker>
-        <button
-          type="button"
-          className={cn(NAV_BTN, 'ml-auto')}
-          aria-label="Previous month"
-          onClick={() => setView(new Date(viewYear, viewMonth - 1, 1))}
-        >
-          <ChevronLeft className="size-4" />
-        </button>
-        <button
-          type="button"
-          className={NAV_BTN}
-          aria-label="Next month"
-          onClick={() => setView(new Date(viewYear, viewMonth + 1, 1))}
-        >
-          <ChevronRight className="size-4" />
-        </button>
-      </div>
-
-      <div className="flex gap-3">
-        {Array.from({ length: Math.max(1, months) }, (_, i) => {
-          const abs = viewMonth + i;
+    <div ref={rootRef} className={cn('min-w-[14.5rem] select-none', className)}>
+      <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-0.5 dark:bg-white/5">
+        {(['from', 'to'] as const).map((k) => {
+          const v = k === 'from' ? from : to;
           return (
-            <Month
-              key={i}
-              year={viewYear + Math.floor(abs / 12)}
-              month={((abs % 12) + 12) % 12}
-              lo={lo}
-              hi={hi}
-              today={today}
-              armed={!!anchor}
-              onPick={pick}
-              onHover={setHover}
-              showLabel={months > 1}
-            />
-          );
-        })}
-      </div>
-
-      {anchor && (
-        <p className="text-muted-foreground mt-1.5 text-[10.5px] font-medium">
-          Pick the end date, or a day before {pad(anchor.getDate())}/{pad(anchor.getMonth() + 1)} to restart.
-        </p>
-      )}
-    </div>
-  );
-}
-
-/** One month grid. Days outside the month render as gaps so the range band
- *  never bleeds past the month edges. */
-function Month({
-  year,
-  month,
-  lo,
-  hi,
-  today,
-  armed,
-  onPick,
-  onHover,
-  showLabel,
-  className,
-}: {
-  year: number;
-  month: number;
-  lo: Date | null;
-  hi: Date | null;
-  today: Date;
-  armed: boolean;
-  onPick: (d: Date) => void;
-  onHover: (d: Date | null) => void;
-  /** Only needed with several months on screen — one month is already named in the nav. */
-  showLabel?: boolean;
-  className?: string;
-}) {
-  // From the Sunday on/before the 1st, only as many weeks as the month needs
-  // (4–6) — a fixed 42 cells leaves an empty last row most months.
-  const cells = useMemo(() => {
-    const offset = new Date(year, month, 1).getDay();
-    const days = new Date(year, month + 1, 0).getDate();
-    const first = new Date(year, month, 1 - offset);
-    const n = Math.ceil((offset + days) / 7) * 7;
-    return Array.from({ length: n }, (_, i) => new Date(first.getFullYear(), first.getMonth(), first.getDate() + i));
-  }, [year, month]);
-
-  const loK = lo ? dayKey(lo) : null;
-  const hiK = hi ? dayKey(hi) : null;
-
-  return (
-    <div className={className}>
-      {showLabel && (
-        <p className="mb-1 text-center text-[11.5px] font-bold">
-          {MONTHS[month]} {year}
-        </p>
-      )}
-      <div className="text-muted-foreground mb-1 grid grid-cols-7 text-center text-[11px] font-semibold">
-        {WEEKDAYS.map((w) => (
-          <div key={w} className="py-0.5">
-            {w[0]}
-          </div>
-        ))}
-      </div>
-      {/* Material-style: each day is a circle. The range is a band painted on the
-          CELL behind the circles — full width in the middle, half width at the two
-          ends — so the circles sit on one continuous strip. */}
-      <div className="grid grid-cols-7 gap-y-0.5">
-        {cells.map((d) => {
-          if (d.getMonth() !== month) return <span key={d.toISOString()} className="h-8" />;
-          const k = dayKey(d);
-          const inRange = loK != null && hiK != null && k >= loK && k <= hiK;
-          const isLo = loK === k;
-          const isHi = hiK === k;
-          const isEdge = isLo || isHi;
-          const isToday = dayKey(today) === k;
-          const band = inRange && !(isLo && isHi);
-          return (
-            <div
-              key={d.toISOString()}
+            <button
+              key={k}
+              type="button"
+              onClick={() => setEnd(k)}
+              aria-pressed={end === k}
               className={cn(
-                'flex h-8 items-center justify-center',
-                band && 'bg-primary/12',
-                band && isLo && 'bg-transparent bg-[linear-gradient(to_right,transparent_50%,color-mix(in_oklch,var(--primary)_12%,transparent)_50%)]',
-                band && isHi && 'bg-transparent bg-[linear-gradient(to_left,transparent_50%,color-mix(in_oklch,var(--primary)_12%,transparent)_50%)]',
+                'flex cursor-pointer items-baseline justify-center gap-1.5 rounded-md py-1 text-[11.5px] transition-all',
+                end === k
+                  ? 'bg-white font-semibold text-blue-700 shadow-sm dark:bg-slate-700 dark:text-blue-300'
+                  : 'text-muted-foreground hover:text-foreground',
               )}
             >
-              <button
-                type="button"
-                onClick={() => onPick(d)}
-                onPointerEnter={() => armed && onHover(d)}
-                aria-pressed={inRange}
-                className={cn(
-                  'flex size-8 cursor-pointer items-center justify-center rounded-full text-[12px] font-medium tabular-nums transition-all duration-150',
-                  !inRange && 'hover:bg-accent hover:text-accent-foreground',
-                  isToday && !isEdge && 'ring-foreground/60 font-semibold ring-1 ring-inset',
-                  inRange && !isEdge && 'text-primary font-semibold',
-                  isEdge && 'bg-primary text-primary-foreground scale-105 font-bold shadow-md shadow-primary/30',
-                )}
-              >
-                {d.getDate()}
-              </button>
-            </div>
+              <span className="text-[10px] font-bold tracking-wider uppercase">{k}</span>
+              <span className="tabular-nums">{v ? formatDate(v) : '—'}</span>
+            </button>
           );
         })}
       </div>
+      <Datepicker
+        key={end}
+        inline
+        value={parseISO(end === 'from' ? from : to)}
+        onChange={pick}
+        showClearButton={false}
+        showTodayButton={false}
+        language="en-IN"
+        theme={FLOWBITE_THEME}
+      />
     </div>
   );
 }
