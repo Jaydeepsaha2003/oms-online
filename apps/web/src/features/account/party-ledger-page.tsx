@@ -7,6 +7,7 @@ import {
   Download,
   Eye,
   FileSpreadsheet,
+  Filter,
   Loader2,
   Pin,
   Printer,
@@ -565,13 +566,16 @@ export function PartyLedgerPage() {
                 variant="outline"
                 className={cn(
                   CONTROL,
-                  'w-full max-w-full justify-start font-medium sm:w-auto sm:max-w-56',
+                  'w-full max-w-full justify-between font-medium sm:w-auto sm:max-w-56',
                   CONTROL_ON,
                 )}
                 title="Statement period"
               >
-                <CalendarRange className="size-3.5 shrink-0" />
-                <span className="truncate">{dateLabel}</span>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <CalendarRange className="size-3.5 shrink-0" />
+                  <span className="truncate">{dateLabel}</span>
+                </div>
+                <Filter className="size-3.5 shrink-0 ml-1.5 text-amber-800/80 dark:text-amber-200/80" />
               </Button>
             </PopoverTrigger>
             <PopoverContent align="start" className="w-auto p-2">

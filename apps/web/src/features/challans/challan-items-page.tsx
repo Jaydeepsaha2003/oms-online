@@ -121,7 +121,8 @@ export function ChallanItemsPage() {
       <div className="flex items-center justify-between gap-2 text-[12px] font-medium">
         <span className="text-slate-900 dark:text-slate-100">
           <span className="font-semibold tabular-nums">{qtyBreakdown(r)}</span>
-          <span className="text-muted-foreground font-normal"> @ {money(r.price)}</span>
+          <span className="text-muted-foreground font-normal"> @ </span>
+          <span className="font-semibold tabular-nums">{money(r.price)}</span>
         </span>
         <span className="text-[13px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(r.amount)}</span>
       </div>
