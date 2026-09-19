@@ -192,14 +192,31 @@ export function Combobox({
   const ql = q.toLowerCase();
   // Multi-term prefix search: split BOTH the query and each option into words,
   // and keep an option only when EVERY typed word prefix-matches some word of its
-  // searchable text (visible label + value + hidden keywords). This is what makes
-  // "15 raj" find "5.5 RAJWADI" — "15" matches its pcs (a keyword) and "raj"
-  // matches the product name — while staying prefix-based, not substring ("rap"
-  // still won't match "AMRAPALI"). A single typed word behaves exactly as before.
+  // searchable text (visible label + value + hidden keywords). This is what lets
+  // "roy spe" find "10 ROYAL SPECIAL" — each word prefix-matches in turn — while
+  // staying prefix-based, not substring ("rap" still won't match "AMRAPALI"). A
+  // single typed word behaves exactly as before. A LEADING number is special-
+  // cased just below (it means the visible size/pcs prefix, not a keyword).
   const WORD_SEP = /[\s(),+/-]+/;
+  const firstWordOf = (o: Row) =>
+    `${o.label ?? o.value}`.toLowerCase().split(WORD_SEP).filter(Boolean)[0] ?? '';
   const matches = React.useMemo(() => {
     if (!dirty || ql === '') return opts;
     const terms = ql.split(WORD_SEP).filter(Boolean);
+
+    // A LEADING number is the item's visible prefix — the size in Size view, the
+    // pcs in Pcs view — because the labels read "{size|pcs} {product} …". Matched
+    // against the hidden keywords too, "8 borosil" also surfaced 7.5-size rows
+    // whose *pcs* happens to be 8 (their sub-category is "8-PCS-…"), mixing sizes
+    // in a way that reads as wrong: the number you typed is not the number you
+    // see. So when the query starts with a number AND some option actually shows
+    // that number as its prefix, the leading term is matched against the visible
+    // prefix alone — flip the Size/Pcs view to search by the other number. Only
+    // when the number is nobody's visible prefix does it fall back to the keyword
+    // cross-find (e.g. a gauge like "22" that lives only in a sub-category).
+    const lead = terms[0];
+    const restrictLead =
+      !!lead && /^[\d.]+$/.test(lead) && opts.some((o) => firstWordOf(o).startsWith(lead));
 
     /**
      * How well an option matches, left to right — lower is better. Matching
@@ -229,7 +246,10 @@ export function Combobox({
     const scored: { row: Row; score: number }[] = [];
     for (const o of opts) {
       const words = `${o.label} ${o.value} ${o.keywords ?? ''}`.toLowerCase().split(WORD_SEP).filter(Boolean);
-      if (!terms.every((t) => words.some((w) => w.startsWith(t)))) continue;
+      const ok = terms.every((t, i) =>
+        i === 0 && restrictLead ? firstWordOf(o).startsWith(t) : words.some((w) => w.startsWith(t)),
+      );
+      if (!ok) continue;
       scored.push({ row: o, score: rank(o.label ?? o.value) });
     }
     // Array.prototype.sort is stable, so equally-ranked options keep the
