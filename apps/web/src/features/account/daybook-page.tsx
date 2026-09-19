@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { CalendarRange, Loader2, Sigma, X } from 'lucide-react';
+import { CalendarRange, Filter, Loader2, Sigma, X } from 'lucide-react';
 import type { DaybookDayGroup, DaybookRow, LedgerTxnMode } from '@oms/shared';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
@@ -261,9 +261,12 @@ export function DaybookPage() {
         <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
           <Popover open={dateOpen} onOpenChange={setDateOpen}>
             <PopoverTrigger asChild>
-              <Button variant="outline" className={cn(CONTROL, 'w-full justify-start gap-1.5 sm:w-auto', 'font-medium', (preset || from) && CONTROL_ON)}>
-                <CalendarRange className="size-3.5 shrink-0" />
-                <span className="truncate">{dateLabel}</span>
+              <Button variant="outline" className={cn(CONTROL, 'w-full justify-between gap-2 sm:w-auto', 'font-medium', (preset || from) && CONTROL_ON)}>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <CalendarRange className="size-3.5 shrink-0" />
+                  <span className="truncate">{dateLabel}</span>
+                </div>
+                <Filter className="size-3.5 shrink-0 ml-1.5 text-amber-800/80 dark:text-amber-200/80" />
               </Button>
             </PopoverTrigger>
             <PopoverContent align="start" className="w-auto p-2">
