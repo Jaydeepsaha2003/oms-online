@@ -1374,21 +1374,36 @@ export function OrderFormPage() {
     const priced = priceOf(it);
     pricedRef.current = { label, productRate: priced.productRate, designRate: priced.designRate };
 
-    setEntry((e) => ({
-      ...e,
-      itemName: label,
-      product: it.product,
-      psize: it.size ?? null,
-      category: it.category,
-      subCategory: it.subCategory,
-      weight: it.weight != null ? String(it.weight) : '',
-      pcsBox: it.pcs != null ? String(it.pcs) : '',
-      designType: it.designType ?? '',
-      // Never pre-pick a design name — the user must choose it explicitly
-      // (locked to "NA" only when the design code has no names at all).
-      designName: '',
-      ...priced,
-    }));
+    setEntry((e) => {
+      const round2 = (x: number) => String(Math.round(x * 100) / 100);
+      const pcs = n(e.pcs);
+      const hasPcs = e.pcs.trim() !== '' && pcs != null;
+      return {
+        ...e,
+        itemName: label,
+        product: it.product,
+        psize: it.size ?? null,
+        category: it.category,
+        subCategory: it.subCategory,
+        weight: it.weight != null ? String(it.weight) : '',
+        pcsBox: it.pcs != null ? String(it.pcs) : '',
+        designType: it.designType ?? '',
+        // Never pre-pick a design name — the user must choose it explicitly
+        // (locked to "NA" only when the design code has no names at all).
+        designName: '',
+        // A Pcs figure already on the row belongs to the item just replaced —
+        // its Kgs/Box were derived (see onPcs) from THAT item's per-piece
+        // weight and pieces-per-box. Re-derive both from the newly-picked
+        // item's own numbers so switching items never leaves a quantity
+        // riding over onto a product it was never measured against: 12 pcs
+        // at 3 kg/1 box from a 0.25 kg-per-piece, 12-per-box item must become
+        // 6 kg/2 boxes once the line becomes a 0.5 kg-per-piece, 6-per-box
+        // item — not silently stay at 3 kg/1 box.
+        gram: hasPcs && it.weight != null ? round2(pcs! * it.weight) : e.gram,
+        box: hasPcs && it.pcs != null && it.pcs > 0 ? round2(pcs! / it.pcs) : e.box,
+        ...priced,
+      };
+    });
 
     // Someone else may have changed this item's rate seconds ago. Ask for the
     // current figures now that we know WHICH item is wanted; `repriceOnFreshRates`
