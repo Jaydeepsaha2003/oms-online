@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { KeyRound, Loader2, Lock, Mail } from 'lucide-react';
 import { toast } from 'sonner';
@@ -22,6 +22,8 @@ type Mode = 'password' | 'pin';
 const LAST_EMAIL_KEY = 'oms:last-email';
 const APP_NAME = import.meta.env.VITE_APP_NAME ?? 'OMS';
 const emailValid = (v: string) => /.+@.+\..+/.test(v.trim());
+/** Cycles under the welcome line. */
+const TAGLINE = ['orders', 'dispatch', 'payments', 'accounts'];
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -112,11 +114,47 @@ export function LoginPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [mode, rememberedEmail, submitPin]);
 
+  // Rotating tagline word.
+  const [word, setWord] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setWord((w) => (w + 1) % TAGLINE.length), 2200);
+    return () => window.clearInterval(id);
+  }, []);
+
+  // Cursor spotlight + card tilt. Mouse/trackpad only (a touch "hover" would
+  // just jolt the card), skipped under reduced motion, one write per frame.
+  const stageRef = useRef<HTMLDivElement>(null);
+  const frame = useRef(0);
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (e.pointerType !== 'mouse' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const { clientX, clientY } = e;
+    cancelAnimationFrame(frame.current);
+    frame.current = requestAnimationFrame(() => {
+      const el = stageRef.current;
+      if (!el) return;
+      const x = clientX / window.innerWidth - 0.5;
+      const y = clientY / window.innerHeight - 0.5;
+      el.style.setProperty('--mx', `${clientX}px`);
+      el.style.setProperty('--my', `${clientY}px`);
+      el.style.setProperty('--rx', `${(-y * 7).toFixed(2)}deg`);
+      el.style.setProperty('--ry', `${(x * 9).toFixed(2)}deg`);
+    });
+  };
+  const onPointerLeave = () => {
+    stageRef.current?.style.setProperty('--rx', '0deg');
+    stageRef.current?.style.setProperty('--ry', '0deg');
+  };
+
   if (user) return <Navigate to={from} replace />;
   if (showIntro) return <IntroVideo onFinish={() => setShowIntro(false)} />;
 
   return (
-    <div className="oms-login-blue relative flex min-h-dvh items-center justify-center overflow-hidden px-4 py-10">
+    <div
+      ref={stageRef}
+      onPointerMove={onPointerMove}
+      onPointerLeave={onPointerLeave}
+      className="oms-login-blue relative flex min-h-dvh items-center justify-center overflow-hidden px-4 py-10"
+    >
       {/* Absolute, not in the flex flow: untrusted cert banner */}
       <div className="absolute inset-x-0 top-0 z-20">
         <UntrustedCertBanner />
@@ -136,6 +174,9 @@ export function LoginPage() {
 
         {/* Orange half — its own glows ride along inside it */}
         <div className="oms-login-orange">
+          {/* Light pulses running along the seam */}
+          <div className="oms-seam-streak absolute left-0 h-[22vmax] w-[3px] -translate-x-1/2 bg-gradient-to-b from-transparent via-white to-transparent shadow-[0_0_14px_3px_rgba(255,255,255,0.7)]" />
+          <div className="oms-seam-streak absolute left-0 h-[14vmax] w-[2px] -translate-x-1/2 bg-gradient-to-b from-transparent via-amber-100 to-transparent" style={{ ['--delay' as string]: '-2.2s' }} />
           <div
             className="oms-blob absolute size-[26rem] rounded-full bg-amber-300/55 blur-3xl"
             style={{ left: '6vmax', top: 'calc(50% - 34vmax)', animation: 'oms-float 18s ease-in-out infinite' }}
@@ -146,18 +187,9 @@ export function LoginPage() {
           />
         </div>
 
-        {/* Soft dots + a slow orbit around the card */}
+        {/* Soft dots + cursor spotlight */}
         <div className="bg-dotted absolute inset-0 opacity-25 mix-blend-overlay" />
-        {/* Centred by the wrapper: the spin's transform would override a translate on the same element. */}
-        <div className="absolute top-1/2 left-1/2 size-[34rem] -translate-x-1/2 -translate-y-1/2 sm:size-[44rem]">
-          <div
-            className="oms-blob relative size-full rounded-full border border-white/25"
-            style={{ animation: 'oms-orbit-spin 40s linear infinite' }}
-          >
-            <div className="absolute top-0 left-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_18px_6px_rgba(251,146,60,0.9)]" />
-            <div className="absolute bottom-0 left-1/2 size-3 -translate-x-1/2 translate-y-1/2 rounded-full bg-white shadow-[0_0_18px_6px_rgba(56,189,248,0.9)]" />
-          </div>
-        </div>
+        <div className="oms-login-spotlight absolute inset-0" />
 
         {/* Rising sparks */}
         {[
@@ -184,7 +216,7 @@ export function LoginPage() {
 
       {/* ── Login Card: spinning blue/orange border around a frosted panel ── */}
       <div className="oms-rise relative z-10 w-full max-w-[350px] sm:max-w-md">
-        <div className="oms-login-ring rounded-[1.4rem] p-[2px] shadow-[0_30px_90px_-20px_rgba(15,23,42,0.75)] sm:rounded-[1.9rem]">
+        <div className="oms-login-ring oms-login-tilt rounded-[1.4rem] p-[2px] shadow-[0_30px_90px_-20px_rgba(15,23,42,0.75)] sm:rounded-[1.9rem]">
         <div className="relative overflow-hidden rounded-[1.3rem] bg-white/85 p-5 backdrop-blur-2xl sm:rounded-[1.8rem] sm:p-8">
           {/* Top glass highlight */}
           <div
@@ -198,13 +230,17 @@ export function LoginPage() {
               <div aria-hidden className="oms-login-ring absolute -inset-1.5 rounded-full opacity-90 blur-[3px]" />
               <div className="relative flex size-20 items-center justify-center overflow-hidden rounded-full bg-white p-1 shadow-xl sm:size-24">
                 <img src={company?.logo || kavishLogo} alt={company?.name || APP_NAME} className="size-full object-contain p-1.5 sm:p-2" />
+                <span aria-hidden className="oms-logo-glint pointer-events-none absolute inset-y-0 left-0 w-1/2 bg-gradient-to-r from-transparent via-white/80 to-transparent" />
               </div>
             </div>
             <h1 className="oms-rise text-xl font-bold tracking-tight text-slate-900 sm:text-2xl" style={{ animationDelay: '200ms' }}>
               Welcome to <span className="text-gradient-blue-orange-shimmer font-extrabold">{APP_NAME}</span>
             </h1>
             <p className="oms-rise mt-0.5 text-xs font-medium text-slate-600 sm:mt-1 sm:text-sm" style={{ animationDelay: '260ms' }}>
-              Sign in to your {APP_NAME} workspace
+              Sign in to manage your{' '}
+              <span key={word} className="inline-block font-semibold text-blue-700 duration-500 animate-in fade-in-0 slide-in-from-bottom-2">
+                {TAGLINE[word]}
+              </span>
             </p>
           </div>
 
@@ -212,7 +248,7 @@ export function LoginPage() {
           <div style={{ animationDelay: '320ms' }} className="oms-rise relative mt-4 sm:mt-6 flex rounded-full border border-white/60 bg-slate-900/10 backdrop-blur-md p-1">
             <span
               className={cn(
-                'absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-full bg-white/90 shadow-md transition-transform duration-300',
+                'absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-full bg-white/90 shadow-md transition-transform duration-500 ease-[cubic-bezier(0.34,1.56,0.64,1)]',
                 mode === 'pin' ? 'translate-x-full' : 'translate-x-0',
               )}
             />
@@ -249,8 +285,8 @@ export function LoginPage() {
               >
                 <div className="space-y-2">
                   <Label htmlFor="email" className="font-semibold text-slate-800 drop-shadow-sm">Email</Label>
-                  <div className="relative">
-                    <Mail className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-500" />
+                  <div className="group relative">
+                    <Mail className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-500 transition-all duration-300 group-focus-within:scale-125 group-focus-within:text-blue-600" />
                     <Input
                       id="email"
                       name="email"
@@ -266,8 +302,8 @@ export function LoginPage() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="password" className="font-semibold text-slate-800 drop-shadow-sm">Password</Label>
-                  <div className="relative">
-                    <Lock className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-500" />
+                  <div className="group relative">
+                    <Lock className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-500 transition-all duration-300 group-focus-within:scale-125 group-focus-within:text-blue-600" />
                     <Input
                       id="password"
                       name="password"

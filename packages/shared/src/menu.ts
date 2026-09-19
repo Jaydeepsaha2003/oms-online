@@ -133,6 +133,13 @@ export const MENU: MenuNode[] = [
         permission: perm(RESOURCES.CUSTOMER, ACTIONS.VIEW),
       },
       {
+        id: 'masters',
+        label: 'Masters',
+        to: '/customers/masters',
+        icon: 'Layers',
+        permission: perm(RESOURCES.CUSTOMER, ACTIONS.VIEW),
+      },
+      {
         id: 'transporters',
         label: 'Transporters',
         to: '/transporters',

@@ -193,7 +193,7 @@ const fmtDate = (d: Date) => `${String(d.getDate()).padStart(2, '0')}-${d.toLoca
  * @param oms      the same party's OMS books over the register's period, or null
  *                 when no OMS customer could be resolved
  * @param category set only when `oms` is null: the ledger's saved
- *                 TallyLedgerCategory ('EXPENSE' | 'OTHER'), when the user has
+ *                 TallyLedgerCategory ('AGENT' | 'EXPENSE' | 'OTHER'), when the user has
  *                 filed it as not-a-party. Reported as NOT_APPLICABLE instead of
  *                 UNMATCHED_PARTY — the same status "Purchase" / "TCS Payable"
  *                 already get below for the same reason (nothing to compare
@@ -232,7 +232,7 @@ export function reconcileParty(
   if (!oms) {
     const status: ReconStatus = category ? 'NOT_APPLICABLE' : 'UNMATCHED_PARTY';
     const note = category
-      ? `Filed as ${category === 'EXPENSE' ? 'an Expense' : 'Other'} — not a customer, so nothing to compare.`
+      ? `Filed as ${category === 'AGENT' ? 'an Agent' : category === 'EXPENSE' ? 'an Expense' : 'Other'} — not a customer, so nothing to compare.`
       : 'No OMS customer is mapped to this Tally ledger name.';
     if (ledger.openingNet != null) {
       out.push({

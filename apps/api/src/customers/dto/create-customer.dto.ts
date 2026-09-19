@@ -58,6 +58,11 @@ export class CreateCustomerDto {
   transportName?: string;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  groupId?: number;
+
+  @IsOptional()
   @IsString()
   @MaxLength(255)
   bagName?: string;

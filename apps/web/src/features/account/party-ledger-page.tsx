@@ -225,6 +225,7 @@ function useLedgerFilters() {
   const filters = {
     party: get('party', ''),
     agent: get('agent', ''),
+    group: get('group', ''),
     from: get('from', ymd(fyStart(new Date()))),
     to: get('to', ymd(new Date())),
     mode: get('mode', 'BOTH') as 'BOTH' | 'B' | 'C',
@@ -241,6 +242,7 @@ function useLedgerFilters() {
     const write = (key: string, value: string) => (value ? next.set(key, value) : next.delete(key));
     if (changes.party !== undefined) write('party', changes.party);
     if (changes.agent !== undefined) write('agent', changes.agent);
+    if (changes.group !== undefined) write('group', changes.group);
     if (changes.from !== undefined) write('from', changes.from);
     if (changes.to !== undefined) write('to', changes.to);
     if (changes.mode !== undefined) write('mode', changes.mode === 'BOTH' ? '' : changes.mode);
@@ -261,7 +263,7 @@ export function PartyLedgerPage() {
   // Off by default (`balance=1` in the URL turns it on): the running Balance per
   // transaction is a detail, not something every glance at the ledger needs —
   // Closing Balance (the actual bottom line) always shows regardless.
-  const { party, agent, from, to, mode, voucherType, preset, showBalance, patch, clear } =
+  const { party, agent, group, from, to, mode, voucherType, preset, showBalance, patch, clear } =
     useLedgerFilters();
   const [receiptFor, setReceiptFor] = useState<PartyLedgerRow | null>(null);
   const [dateOpen, setDateOpen] = useState(false);
@@ -272,17 +274,19 @@ export function PartyLedgerPage() {
   );
   const partyOptions = useMemo(() => (lookups?.customers ?? []).map((c) => c.name), [lookups]);
   const agentOptions = useMemo(() => ['All', ...(lookups?.agents ?? [])], [lookups]);
+  const groupByName = useMemo(() => new Map((lookups?.groups ?? []).map((g) => [g.name, g.id])), [lookups]);
 
   const query = useMemo<PartyLedgerQuery>(
     () => ({
       customerId: party ? custByName.get(party) : undefined,
-      agentName: !party && agent && agent !== 'All' ? agent : undefined,
+      groupId: !party && group ? groupByName.get(group) : undefined,
+      agentName: !party && !group && agent && agent !== 'All' ? agent : undefined,
       from,
       to,
       mode,
       voucherType: voucherType || undefined,
     }),
-    [party, agent, from, to, mode, voucherType, custByName],
+    [party, agent, group, from, to, mode, voucherType, custByName, groupByName],
   );
 
   const { data, isFetching } = usePartyLedger(query);
@@ -347,7 +351,7 @@ export function PartyLedgerPage() {
     [pdfPreview],
   );
   const pdfFilename = timestampedPdfName(
-    data?.customerName || (data?.agentName ? `Agent-${data.agentName}` : 'All-Parties'),
+    data?.customerName || data?.groupName || (data?.agentName ? `Agent-${data.agentName}` : 'All-Parties'),
   );
   const onPdf = async () => {
     setPdfLoading(true);
@@ -488,7 +492,9 @@ export function PartyLedgerPage() {
       ? data.customerName
       : data.scope === 'AGENT'
         ? `Agent: ${data.agentName}`
-        : 'All parties'
+        : data.scope === 'GROUP'
+          ? `${data.groupName} (combined)`
+          : 'All parties'
     : '';
 
   /* ── Filter controls, shared by the bar ── */
@@ -539,25 +545,34 @@ export function PartyLedgerPage() {
     // scrolling region, and the Closing Balance stuck to the bottom of the grid.
     // `/account/party-ledger` is a flush route (see app-shell) so the page owns its
     // own padding.
-    <div className="flex h-full min-h-0 flex-col gap-2 p-2.5 font-sans sm:gap-2.5 sm:p-3">
+    // Phones: filters + cards fill the screen, so the page itself scrolls and the
+    // ledger flows below them. sm+: fixed-height worksheet, only the grid scrolls.
+    <div className="flex h-full min-h-0 flex-col gap-2 overflow-y-auto overscroll-contain p-2.5 font-sans sm:gap-2.5 sm:overflow-visible sm:p-3">
       {/* ── Filter bar ─────────────────────────────────────────────────────────
           Poppins, so the controls read as chrome and stay distinct from the
           figures in the ledger below. */}
       <div className={cn('bg-card font-poppins rounded-[4px] border shadow-sm', PANEL)}>
-        <div className="flex flex-wrap items-center gap-2 p-2.5 sm:gap-2.5 sm:p-3">
+        <div className="grid grid-cols-2 items-center gap-2 p-2.5 sm:flex sm:flex-wrap sm:gap-2.5 sm:p-3">
           <FitSelect
             label="Customer"
             value={party}
-            onChange={(v) => patch({ party: v, ...(v ? { agent: '' } : {}) })}
+            onChange={(v) => patch({ party: v, ...(v ? { agent: '', group: '' } : {}) })}
             options={partyOptions}
-            className="w-full sm:w-52"
+            className="order-1 col-span-2 w-full sm:order-none sm:w-52"
           />
           <FitSelect
             label="Agent"
             value={agent === 'All' ? '' : agent}
-            onChange={(v) => patch({ agent: v, ...(v ? { party: '' } : {}) })}
+            onChange={(v) => patch({ agent: v, ...(v ? { party: '', group: '' } : {}) })}
             options={agentOptions.filter((a) => a !== 'All')}
-            className="w-full sm:w-40"
+            className="order-3 min-w-0 w-full sm:order-none sm:w-40"
+          />
+          <FitSelect
+            label="Group"
+            value={group}
+            onChange={(v) => patch({ group: v, ...(v ? { party: '', agent: '' } : {}) })}
+            options={(lookups?.groups ?? []).map((g) => g.name)}
+            className="order-3 min-w-0 w-full sm:order-none sm:w-44"
           />
 
           <Popover open={dateOpen} onOpenChange={setDateOpen}>
@@ -566,7 +581,7 @@ export function PartyLedgerPage() {
                 variant="outline"
                 className={cn(
                   CONTROL,
-                  'w-full max-w-full justify-between font-medium sm:w-auto sm:max-w-56',
+                  'order-2 col-span-2 w-full max-w-full justify-between font-medium sm:order-none sm:w-auto sm:max-w-56',
                   CONTROL_ON,
                 )}
                 title="Statement period"
@@ -588,14 +603,14 @@ export function PartyLedgerPage() {
             value={voucherType}
             onChange={(v) => patch({ voucherType: v })}
             options={data?.voucherTypes ?? []}
-            className="w-full sm:w-40"
+            className="order-4 col-span-2 min-w-0 w-full sm:order-none sm:w-40"
           />
 
           {/* Bank / Cash / Both — the ledger's column groups follow this. */}
           <div
             role="group"
             aria-label="Transaction mode"
-            className="inline-flex items-center gap-0.5 rounded-[4px] border border-amber-300 bg-amber-50/40 p-0.5 dark:border-amber-400/40 dark:bg-transparent"
+            className="order-5 flex items-center gap-0.5 rounded-[4px] border border-amber-300 bg-amber-50/40 p-0.5 sm:order-none sm:inline-flex dark:border-amber-400/40 dark:bg-transparent"
           >
             {(['BOTH', 'B', 'C'] as const).map((m) => (
               <button
@@ -604,7 +619,7 @@ export function PartyLedgerPage() {
                 onClick={() => patch({ mode: m })}
                 aria-pressed={mode === m}
                 className={cn(
-                  'cursor-pointer rounded-[3px] px-2.5 py-1 text-[12px] font-semibold transition-colors duration-150',
+                  'flex-1 cursor-pointer rounded-[3px] px-2.5 py-1 text-[12px] font-semibold transition-colors duration-150 sm:flex-none',
                   mode === m
                     ? 'bg-primary text-primary-foreground shadow-sm'
                     : 'text-amber-900/70 hover:bg-amber-100 hover:text-amber-900 dark:text-amber-200/70 dark:hover:bg-amber-400/10',
@@ -621,7 +636,7 @@ export function PartyLedgerPage() {
               is no running balance to show. */}
           <label
             className={cn(
-              'flex shrink-0 items-center gap-1.5 text-[12.5px] font-semibold text-amber-900/80 select-none dark:text-amber-200/80',
+              'order-6 flex shrink-0 items-center justify-end gap-1.5 text-[12.5px] font-semibold text-amber-900/80 select-none sm:order-none sm:justify-start dark:text-amber-200/80',
               running ? 'cursor-pointer' : 'cursor-not-allowed opacity-50',
             )}
             title={running ? undefined : 'Clear the voucher type filter to see running balances'}
@@ -636,13 +651,13 @@ export function PartyLedgerPage() {
 
           <Button
             variant="outline"
-            className="h-9 rounded-[4px] text-[12.5px] font-semibold"
+            className="order-7 h-9 justify-self-start rounded-[4px] text-[12.5px] font-semibold sm:order-none"
             onClick={onReset}
           >
             <X /> Reset
           </Button>
 
-          <div className="ml-auto flex items-center gap-2">
+          <div className="order-8 ml-auto flex items-center justify-end gap-2 sm:order-none">
             {/* Was `lg:block`. How many rows the statement has is not a desktop
                 luxury — on a phone, where you cannot see the end of the list, it
                 is the only way to know how much there is. */}
@@ -684,7 +699,7 @@ export function PartyLedgerPage() {
       </div>
 
       {/* ── Ageing rail ─────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-6 gap-2 max-sm:*:col-span-2 max-sm:[&>*:nth-child(-n+2)]:col-span-3 sm:grid-cols-3 lg:grid-cols-5">
         <InvDueFromKpi
           text={kpis?.invDueFrom}
           detail={kpis?.invDueFromDetail}
@@ -759,7 +774,7 @@ export function PartyLedgerPage() {
       {/* ── The ledger ──────────────────────────────────────────────────────── */}
       <div
         className={cn(
-          'bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[4px] border shadow-sm',
+          'bg-card flex flex-none flex-col overflow-hidden rounded-[4px] border shadow-sm sm:min-h-0 sm:flex-1',
           PANEL,
         )}
       >
@@ -1077,7 +1092,7 @@ export function PartyLedgerPage() {
         </div>
 
         {/* Phones: one card per voucher — the grid is unusable at this width. */}
-        <div className="min-h-0 flex-1 overflow-y-auto p-2 sm:hidden">
+        <div className="p-2 sm:hidden">
           {isFetching && !data ? (
             <div className="text-muted-foreground flex h-24 items-center justify-center">
               <Loader2 className="size-5 animate-spin" />

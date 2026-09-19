@@ -112,9 +112,15 @@ export class PartyLedgerService {
       distinct: ['agentName'],
       orderBy: { agentName: 'asc' },
     });
+    const groups = await this.prisma.accountGroup.findMany({
+      where: { customers: { some: {} } },
+      select: { id: true, name: true, _count: { select: { customers: true } } },
+      orderBy: { name: 'asc' },
+    });
     return {
       customers: customers.map((c) => ({ id: c.id, name: c.partyName! })),
       agents: agentRows.map((a) => a.agentName!).filter((a) => a && a.trim() !== ''),
+      groups: groups.map((g) => ({ id: g.id, name: g.name, count: g._count.customers })),
     };
   }
 
@@ -222,8 +228,9 @@ export class PartyLedgerService {
     const mode = (q.mode ?? 'BOTH').toUpperCase();
 
     // Resolve scope: a customer wins over an agent.
-    let scope: 'CUSTOMER' | 'AGENT' | 'ALL' = 'ALL';
+    let scope: 'CUSTOMER' | 'AGENT' | 'GROUP' | 'ALL' = 'ALL';
     let customerName: string | null = null;
+    let groupName: string | null = null;
     let customerAddress: string | null = null;
     let custIds: number[] | null = null;
     const agentName = q.agentName?.trim() && q.agentName.trim().toUpperCase() !== 'ALL' ? q.agentName.trim() : null;
@@ -238,6 +245,19 @@ export class PartyLedgerService {
       customerName = c.partyName;
       customerAddress = [c.city, c.state, c.region].map((part) => part?.trim()).filter(Boolean).join(', ') || null;
       custIds = [c.id];
+    } else if (q.groupId) {
+      const groups = await this.prisma.accountGroup.findMany({ select: { id: true, name: true, parentId: true } });
+      const root = groups.find((g) => g.id === q.groupId);
+      if (!root) throw new BadRequestException('Group not found.');
+      const ids = new Set([root.id]);
+      for (let grew = true; grew; ) {
+        grew = false;
+        for (const g of groups) if (g.parentId != null && ids.has(g.parentId) && !ids.has(g.id)) (ids.add(g.id), (grew = true));
+      }
+      scope = 'GROUP';
+      groupName = root.name;
+      const list = await this.prisma.customer.findMany({ where: { groupId: { in: [...ids] } }, select: { id: true } });
+      custIds = list.length ? list.map((x) => x.id) : [-1];
     } else if (agentName) {
       scope = 'AGENT';
       const list = await this.prisma.customer.findMany({ where: { agentName }, select: { id: true } });
@@ -287,7 +307,8 @@ export class PartyLedgerService {
     const [ccDr, ccCr] = split(closingCashNet);
 
     // ── 5) KPIs ───────────────────────────────────────────────────────────────
-    const kpis = await this.computeKpis(pending, custIds, scope, q.customerId ?? null, mode, from, toExclusive);
+    // A group lists several parties, exactly like an agent's view.
+    const kpis = await this.computeKpis(pending, custIds, scope === 'GROUP' ? 'AGENT' : scope, q.customerId ?? null, mode, from, toExclusive);
 
     // Derived BEFORE the voucher-type filter, so picking one type doesn't collapse
     // the dropdown to that single option and strand the user on it.
@@ -309,7 +330,8 @@ export class PartyLedgerService {
       scope,
       customerName,
       customerAddress,
-      agentName,
+      agentName: scope === 'GROUP' ? null : agentName,
+      groupName,
       from: from.toISOString(),
       to: to.toISOString(),
     };
@@ -910,13 +932,13 @@ export class PartyLedgerService {
   /* ── Export ──────────────────────────────────────────────────────────────── */
 
   private baseName(res: PartyLedgerResult): string {
-    const who = res.scope === 'CUSTOMER' ? res.customerName : res.scope === 'AGENT' ? `Agent-${res.agentName}` : 'All-Parties';
+    const who = res.scope === 'CUSTOMER' ? res.customerName : res.scope === 'AGENT' ? `Agent-${res.agentName}` : res.scope === 'GROUP' ? res.groupName : 'All-Parties';
     return `Ledger-${(who ?? 'party').replace(/[\\/:*?"<>|]/g, '-')}`;
   }
 
   /** PartyName_dd_mm_yy_hhmmss, kept filesystem-safe for Content-Disposition. */
   private pdfName(res: PartyLedgerResult): string {
-    const who = res.scope === 'CUSTOMER' ? res.customerName : res.scope === 'AGENT' ? `Agent-${res.agentName}` : 'All-Parties';
+    const who = res.scope === 'CUSTOMER' ? res.customerName : res.scope === 'AGENT' ? `Agent-${res.agentName}` : res.scope === 'GROUP' ? res.groupName : 'All-Parties';
     const safeParty = (who ?? 'party').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-').trim();
     const now = new Date();
     const two = (value: number) => String(value).padStart(2, '0');
@@ -947,7 +969,7 @@ export class PartyLedgerService {
 
 const modeLabel = (m: string) => (m === 'B' ? 'Bank only' : m === 'C' ? 'Cash only' : 'Bank & Cash');
 const partyOf = (res: PartyLedgerResult) =>
-  res.scope === 'CUSTOMER' ? (res.customerName ?? 'Party') : res.scope === 'AGENT' ? `Agent: ${res.agentName}` : 'All Parties';
+  res.scope === 'CUSTOMER' ? (res.customerName ?? 'Party') : res.scope === 'AGENT' ? `Agent: ${res.agentName}` : res.scope === 'GROUP' ? `${res.groupName} (combined)` : 'All Parties';
 const PDF_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
 /** Compact d-MMM-yy date used by both Date columns in the portrait PDF. */
 const pdfDate = (value: string | Date | null): string => {

@@ -91,6 +91,8 @@ export interface CustomerDto {
   billingRate: number | null;
   transporterId: number | null;
   transportName: string | null;
+  /** Tally "Under" account group. */
+  groupId: number | null;
   bagName: string | null;
   packing: number | null;
   freight: number | null;
@@ -136,6 +138,7 @@ export interface CustomerInput {
   partyName: string;
   billingRate?: number | null;
   transportName?: string | null;
+  groupId?: number | null;
   bagName?: string | null;
   packing?: number | null;
   freight?: number | null;
@@ -179,6 +182,7 @@ export interface CustomerLookups {
   states: string[];
   regions: string[];
   transporters: TransporterLite[];
+  groups: { id: number; name: string }[];
 }
 
 /**

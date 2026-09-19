@@ -26,6 +26,7 @@ import {
   useDeleteCustomer,
   useImportCustomers,
   useSetCustomerActive,
+  useCustomerLookups,
 } from './use-customers';
 import { BulkEditDialog } from './bulk-edit-dialog';
 import { DispatchHoldDialog } from './dispatch-hold-dialog';
@@ -90,6 +91,11 @@ function HoldPill({ c }: { c: CustomerDto }) {
 
 /** Every customer column. The most-used ones come first; Code + Customer name
  * are frozen to the left so identity stays visible while scrolling the wide row. */
+function GroupName({ id }: { id: number | null }) {
+  const { data } = useCustomerLookups();
+  return <span className={TEXT_CELL}>{txt(data?.groups.find((g) => g.id === id)?.name ?? null)}</span>;
+}
+
 const COLUMNS: DataColumn<CustomerDto>[] = [
   { id: 'name', label: 'Customer name', pin: 'left0', fixed: true, cell: (c) => <span className={cn(TEXT_CELL, 'text-indigo-700 dark:text-indigo-300')}>{txt(c.partyName)}</span> },
   {
@@ -107,6 +113,7 @@ const COLUMNS: DataColumn<CustomerDto>[] = [
   },
   { id: 'agent', label: 'Agent', cell: (c) => <span className={TEXT_CELL}>{txt(c.agentName)}</span> },
   { id: 'category', label: 'Category', cell: (c) => <span className={TEXT_CELL}>{txt(c.category)}</span> },
+  { id: 'under', label: 'Under', cell: (c) => <GroupName id={c.groupId} /> },
   { id: 'city', label: 'City', cell: (c) => <span className={TEXT_CELL}>{txt(c.city)}</span> },
   { id: 'transport', label: 'Transport', cell: (c) => <span className={TEXT_CELL}>{txt(c.transportName)}</span> },
   { id: 'billingRate', label: 'Billing Rate/KGS', align: 'right', cell: (c) => <span className="text-[14px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{money(c.billingRate)}</span> },

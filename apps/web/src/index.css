@@ -16,6 +16,22 @@
 .dark .oms-days > button[data-out] {
   color: var(--color-slate-600);
 }
+/* Days between From and To: light blue. The two ends: solid blue. */
+.oms-days > button[data-range] {
+  background: var(--color-blue-100);
+  color: var(--color-blue-800);
+  font-weight: 600;
+}
+.oms-days > button[data-edge] {
+  background: var(--color-blue-600);
+  color: #fff;
+  font-weight: 700;
+  box-shadow: 0 4px 10px -2px color-mix(in oklch, var(--color-blue-600) 35%, transparent);
+}
+.dark .oms-days > button[data-range] {
+  background: color-mix(in oklch, var(--color-blue-500) 22%, transparent);
+  color: var(--color-blue-200);
+}
 
 @custom-variant dark (&:is(.dark *));
 
@@ -691,7 +707,135 @@
   animation: oms-sheen 3.2s ease-in-out infinite;
 }
 
+/* ── Tally export guide (tally-export-guide.tsx) ─────────────────────────── */
+/* Springy scale-in for step numbers, tiles and ticks. */
+.oms-pop {
+  animation: oms-pop 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes oms-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* Timeline rail drawing itself top-down. */
+.oms-line-draw {
+  animation: oms-line-draw 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes oms-line-draw {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+/* Data flowing along the Tally → Excel → OMS links. */
+.oms-dash-flow {
+  animation: oms-dash-flow 0.9s linear infinite;
+}
+@keyframes oms-dash-flow {
+  to {
+    stroke-dashoffset: -9;
+  }
+}
+/* Keycaps that get "pressed" every few seconds. */
+.oms-keypress {
+  animation: oms-keypress 2.6s ease-in-out infinite;
+}
+@keyframes oms-keypress {
+  0%,
+  78%,
+  100% {
+    transform: none;
+    border-bottom-width: 3px;
+  }
+  84% {
+    transform: translateY(2px);
+    border-bottom-width: 1px;
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-indigo-500) 30%, transparent);
+  }
+}
+/* Gentle float for the hero tiles + breathing glows behind them. */
+.oms-bob {
+  animation: oms-bob 3.2s ease-in-out infinite;
+}
+@keyframes oms-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+.oms-hero-glow {
+  animation: oms-pulse-glow 7s ease-in-out infinite;
+}
 @media (prefers-reduced-motion: reduce) {
+  .oms-pop,
+  .oms-line-draw {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+  }
+  .oms-dash-flow,
+  .oms-keypress,
+  .oms-bob,
+  .oms-hero-glow {
+    animation: none !important;
+  }
+}
+
+/* Light pulses travelling along the blue/orange seam. They live inside the
+   orange half, so they follow the seam's swing for free. */
+@keyframes oms-seam-streak {
+  from {
+    top: 36%;
+    opacity: 0;
+  }
+  15%,
+  85% {
+    opacity: 1;
+  }
+  to {
+    top: 64%;
+    opacity: 0;
+  }
+}
+.oms-seam-streak {
+  animation: oms-seam-streak 4.5s cubic-bezier(0.45, 0, 0.55, 1) var(--delay, 0s) infinite;
+}
+
+/* Cursor spotlight + card tilt, driven by --mx/--my/--rx/--ry set on pointer move. */
+.oms-login-spotlight {
+  background: radial-gradient(520px circle at var(--mx, 50%) var(--my, 50%), rgba(255, 255, 255, 0.2), transparent 45%);
+}
+.oms-login-tilt {
+  transform: perspective(1100px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+  transition: transform 0.25s ease-out;
+  will-change: transform;
+}
+
+/* Periodic glint across the logo. */
+.oms-logo-glint {
+  animation: oms-sheen 4.5s ease-in-out 1.2s infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oms-seam-streak,
+  .oms-logo-glint {
+    animation: none !important;
+  }
+  .oms-seam-streak {
+    opacity: 0;
+  }
+  .oms-login-tilt {
+    transform: none !important;
+  }
   .oms-login-orange {
     animation: none !important;
     transform: translateY(-50%) rotate(18deg);

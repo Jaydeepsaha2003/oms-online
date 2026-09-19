@@ -23,6 +23,7 @@ import { MenuModule } from './menu/menu.module';
 import { CustomersModule } from './customers/customers.module';
 import { AgentsModule } from './agents/agents.module';
 import { TransportersModule } from './transporters/transporters.module';
+import { AccountGroupsModule } from './account-groups/account-groups.module';
 import { GstRatesModule } from './gst-rates/gst-rates.module';
 import { TransRatesModule } from './trans-rates/trans-rates.module';
 import { ProductsModule } from './products/products.module';
@@ -84,6 +85,7 @@ import { AgentCommissionModule } from './agent-commission/agent-commission.modul
     CustomersModule,
     AgentsModule,
     TransportersModule,
+    AccountGroupsModule,
     GstRatesModule,
     TransRatesModule,
     ProductsModule,

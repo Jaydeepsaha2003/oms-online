@@ -43,6 +43,7 @@ import {
   useSaveTallyAlias,
   useSetLedgerCategory,
 } from './use-tally-recon';
+import { TallyExportGuide } from './tally-export-guide';
 import { useTallyReconRun } from './tally-recon-run-context';
 import { ReconProgressBar, phaseLabel } from './tally-recon-dock';
 
@@ -123,7 +124,32 @@ const VCH_ORDER = ['OPENING', 'SALES', 'RECEIPT', 'CREDIT NOTE', 'DEBIT NOTE', '
 const isFlagged = (r: ReconRow) => r.status !== 'MATCHED' && r.status !== 'NOT_APPLICABLE';
 
 /** Every unmapped ledger name across all three filings, however it's currently split. */
-const ledgerTotal = (u: UnmappedLedgers) => u.party.length + u.expense.length + u.other.length;
+const nameWords = (s: string) =>
+  s.toUpperCase().replace(/[^A-Z0-9 ]+/g, ' ').split(/\s+/).filter(Boolean);
+/**
+ * OMS customers resembling a Tally ledger name, best first (max 3). Scored by
+ * the share of the customer's words found in the ledger name (a 4+ letter word
+ * may match as a prefix either way: "ENTERPRISE" ~ "ENTERPRISES"), plus a boost
+ * when the first words agree. `sure` = every customer word was found and the
+ * first word matches.
+ */
+function suggestCustomers(ledger: string, customers: string[]) {
+  const t = nameWords(ledger);
+  if (!t.length) return [];
+  const same = (a: string, b: string) => a === b || (Math.min(a.length, b.length) >= 4 && (a.startsWith(b) || b.startsWith(a)));
+  return customers
+    .map((name) => {
+      const c = nameWords(name);
+      const hit = c.filter((w) => t.some((x) => same(x, w))).length;
+      const first = !!c[0] && same(t[0], c[0]);
+      return { name, share: c.length ? hit / c.length : 0, score: c.length ? hit / c.length + (first ? 0.5 : 0) + hit * 0.01 : 0, sure: first && hit === c.length };
+    })
+    .filter((s) => s.share >= 0.5 && s.score >= 0.75)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
+}
+
+const ledgerTotal = (u: UnmappedLedgers) => u.party.length + (u.agent?.length ?? 0) + u.expense.length + u.other.length;
 
 /** A missing receipt that can be posted straight from the report. */
 const canEnterAsReceipt = (r: ReconRow) =>
@@ -501,7 +527,7 @@ export function TallyReconPage() {
   const [unmappedListOpen, setUnmappedListOpen] = useState(false);
   /** The export-format guide shown before every upload — see `onPickFile`. */
   const [formatGuideOpen, setFormatGuideOpen] = useState(false);
-  const [ledgerTab, setLedgerTab] = useState<'party' | 'expense' | 'other'>('party');
+  const [ledgerTab, setLedgerTab] = useState<'party' | 'agent' | 'expense' | 'other'>('party');
   // Ticked ledger names in the CURRENT tab, for the bulk action bar. Cleared on
   // every tab switch and after a successful filing — stale ids left over from
   // a tab the user isn't looking at any more, or from a batch that just moved
@@ -528,6 +554,16 @@ export function TallyReconPage() {
 
   const custByName = useMemo(() => new Map((lookups?.customers ?? []).map((c) => [c.name, c.id])), [lookups]);
   const customerOptions = useMemo(() => [...custByName.keys()].sort((a, b) => a.localeCompare(b)), [custByName]);
+
+  // Likely OMS parties for the ledger being mapped. Tally names often carry
+  // extras OMS doesn't ("SUMTI MARKETING NX"), and a word-by-word search for
+  // the full Tally name then finds nothing — so offer the matches instead.
+  const aliasSuggestions = useMemo(() => (aliasFor ? suggestCustomers(aliasFor, customerOptions) : []), [aliasFor, customerOptions]);
+  useEffect(() => {
+    // Pre-pick only a sure match: every word of the OMS name is in the ledger name.
+    const best = aliasSuggestions[0];
+    if (best?.sure) setAliasCustomer((cur) => cur || best.name);
+  }, [aliasSuggestions]);
 
   const rows = run?.rows ?? [];
   // Sets, not arrays: `visible` tests every row against both, and `includes`
@@ -751,7 +787,7 @@ export function TallyReconPage() {
    */
   const onSetCategory = async (tallyNames: string[], category: TallyLedgerCategoryInput) => {
     if (!tallyNames.length) return;
-    const label = category === 'EXPENSE' ? 'Expense' : category === 'OTHER' ? 'Other' : 'Party';
+    const label = category === 'AGENT' ? 'Agent' : category === 'EXPENSE' ? 'Expense' : category === 'OTHER' ? 'Other' : 'Party';
     const who = tallyNames.length === 1 ? `"${tallyNames[0]}"` : `${tallyNames.length} ledgers`;
     try {
       await setLedgerCategory.mutateAsync({ tallyNames, category });
@@ -779,6 +815,43 @@ export function TallyReconPage() {
       toast.error(e instanceof Error ? e.message : 'Could not re-check the report.');
     }
   };
+
+  /*
+   * Keep the report in step with OMS on its own.
+   *
+   * A run is a snapshot taken at upload: fix an opening balance or enter a
+   * receipt in OMS afterwards and the report went on flagging it until someone
+   * pressed "Recheck". Now it quietly re-checks against live OMS data when a
+   * report is opened and whenever the user comes back to this tab (e.g. from
+   * Party Ledger, where the fix was made) — throttled, one at a time. Review
+   * marks survive a re-check (they're keyed by the issue, not the row).
+   */
+  const lastAutoCheck = useRef<{ id: number | null; at: number }>({ id: null, at: 0 });
+  // Latest values for the listeners below, so they don't re-subscribe (and
+  // re-fire) on every render.
+  const autoRecheck = useRef(() => {});
+  autoRecheck.current = () => {
+    if (activeId == null || !run?.canRerun || run.id !== activeId || rerun.isPending) return;
+    const last = lastAutoCheck.current;
+    if (last.id === activeId && Date.now() - last.at < 15_000) return;
+    lastAutoCheck.current = { id: activeId, at: Date.now() };
+    rerun.mutate(activeId);
+  };
+  // On opening a report (once its data is in)…
+  const canAutoCheck = run?.canRerun && run.id === activeId;
+  useEffect(() => {
+    if (canAutoCheck) autoRecheck.current();
+  }, [activeId, canAutoCheck]);
+  // …and on coming back to the tab.
+  useEffect(() => {
+    const onBack = () => document.visibilityState === 'visible' && autoRecheck.current();
+    window.addEventListener('focus', onBack);
+    document.addEventListener('visibilitychange', onBack);
+    return () => {
+      window.removeEventListener('focus', onBack);
+      document.removeEventListener('visibilitychange', onBack);
+    };
+  }, []);
 
   const onMark = async (next: ReconReview) => {
     if (!selectedRows.length) return;
@@ -1094,7 +1167,7 @@ export function TallyReconPage() {
                 // filed. Said plainly rather than showing an empty line, so it
                 // reads as "done", not as a state nobody explained.
                 <span className="text-emerald-700 dark:text-emerald-400">
-                  All filed — {run.unmatchedLedgers.expense.length} expense, {run.unmatchedLedgers.other.length} other.
+                  All filed — {run.unmatchedLedgers.agent?.length ?? 0} agent, {run.unmatchedLedgers.expense.length} expense, {run.unmatchedLedgers.other.length} other.
                 </span>
               )}
             </span>
@@ -1208,6 +1281,11 @@ export function TallyReconPage() {
                     <Icon className="size-3" /> <span className="hidden sm:inline">{label}</span>
                   </button>
                 ))}
+              </span>
+            )}
+            {rerun.isPending && (
+              <span className="flex shrink-0 items-center gap-1 text-[10.5px] font-semibold text-sky-200">
+                <Loader2 className="size-3 animate-spin" /> Updating from OMS…
               </span>
             )}
           </div>
@@ -1578,15 +1656,16 @@ export function TallyReconPage() {
           <DialogHeader>
             <DialogTitle className="text-[15px]">Unmapped ledgers ({run ? ledgerTotal(run.unmatchedLedgers) : 0})</DialogTitle>
           </DialogHeader>
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             {(
               [
                 ['party', 'Party'],
+                ['agent', 'Agents'],
                 ['expense', 'Expenses'],
                 ['other', 'Others'],
               ] as const
             ).map(([tab, label]) => {
-              const count = run?.unmatchedLedgers[tab].length ?? 0;
+              const count = run?.unmatchedLedgers[tab]?.length ?? 0;
               return (
                 <button
                   key={tab}
@@ -1596,7 +1675,7 @@ export function TallyReconPage() {
                     setSelectedLedgers(new Set()); // a tick from one tab must not act on another
                   }}
                   className={cn(
-                    'rounded-[4px] border px-2.5 py-1 text-[12px] font-bold',
+                    'rounded-[4px] border px-2 py-1 text-[12px] font-bold whitespace-nowrap',
                     ledgerTab === tab
                       ? 'border-violet-600 bg-violet-600 text-white'
                       : 'border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 dark:border-violet-400/30 dark:bg-violet-400/10 dark:text-violet-300',
@@ -1621,8 +1700,8 @@ export function TallyReconPage() {
           </div>
           <p className="text-muted-foreground -mt-1 text-[11.5px] font-medium">
             {ledgerTab === 'party'
-              ? "These Tally ledger names don't match an OMS customer yet. Tap one to map it, or file it as Expense/Other if it never will."
-              : `Filed as ${ledgerTab === 'expense' ? 'Expense' : 'Other'} — not a customer, so left out of "needs attention". Move one back if that was wrong.`}
+              ? "These Tally ledger names don't match an OMS customer yet. Press Map to link one to our party, or file it as Agent/Expense/Other if it never will."
+              : `Filed as ${ledgerTab === 'agent' ? 'Agent' : ledgerTab === 'expense' ? 'Expense' : 'Other'} — not a customer, so left out of "needs attention". Move one back if that was wrong.`}
           </p>
 
           {(() => {
@@ -1677,6 +1756,17 @@ export function TallyReconPage() {
                             <RotateCcw className="size-3" /> Move to Party
                           </Button>
                         )}
+                        {ledgerTab !== 'agent' && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-6 rounded-[3px] px-1.5 text-[10.5px] font-bold"
+                            onClick={() => void onSetCategory([...selectedLedgers], 'AGENT')}
+                          >
+                            File as Agent
+                          </Button>
+                        )}
                         {ledgerTab !== 'expense' && (
                           <Button
                             type="button"
@@ -1728,6 +1818,30 @@ export function TallyReconPage() {
                             <Link2 className="mr-1 inline size-3 shrink-0 align-[-2px]" />
                             <span className="truncate">{name}</span>
                           </button>
+                          {/* The name itself maps too, but that read as plain text —
+                              so the primary action gets a real button. */}
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="h-6 shrink-0 gap-1 rounded-[3px] bg-violet-600 px-2 text-[10.5px] font-bold text-white hover:bg-violet-700"
+                            onClick={() => {
+                              setUnmappedListOpen(false);
+                              setAliasFor(name);
+                              setAliasCustomer('');
+                            }}
+                            title="Map to an OMS customer"
+                          >
+                            <Link2 className="size-3" /> Map
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 shrink-0 rounded-[3px] px-1.5 text-[10.5px] font-bold text-slate-600 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-white/10"
+                            onClick={() => void onSetCategory([name], 'AGENT')}
+                          >
+                            Agent
+                          </Button>
                           <Button
                             type="button"
                             variant="ghost"
@@ -1811,6 +1925,26 @@ export function TallyReconPage() {
                   className={CONTROL}
                 />
               </div>
+              {aliasSuggestions.length > 0 && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                  <span className="text-muted-foreground text-[10.5px] font-semibold">Looks like:</span>
+                  {aliasSuggestions.map((s) => (
+                    <button
+                      key={s.name}
+                      type="button"
+                      onClick={() => setAliasCustomer(s.name)}
+                      className={cn(
+                        'cursor-pointer rounded-full border px-2 py-0.5 text-[11px] font-bold transition-colors',
+                        aliasCustomer === s.name
+                          ? 'border-violet-600 bg-violet-600 text-white'
+                          : 'border-violet-200 bg-violet-50 text-violet-800 hover:bg-violet-100 dark:border-violet-400/30 dark:bg-violet-400/10 dark:text-violet-200',
+                      )}
+                    >
+                      {s.name}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <p className="text-muted-foreground text-[11.5px] font-medium">
               {run?.canRerun
@@ -1837,74 +1971,7 @@ export function TallyReconPage() {
       </Dialog>
 
       {/* ── export-format guide, shown before every upload ───────────────── */}
-      <Dialog open={formatGuideOpen} onOpenChange={setFormatGuideOpen}>
-        <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-[15px]">
-              <FileSpreadsheet className="size-4 text-amber-500" /> Export this from Tally first
-            </DialogTitle>
-          </DialogHeader>
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
-            <p className="text-muted-foreground text-[12.5px] font-medium">
-              In Tally: <strong className="text-foreground">Gateway of Tally → Display More Reports → Account
-              Books → Ledger</strong>, pick <strong className="text-foreground">Sundry Debtors</strong> (or the
-              party group you're reconciling), then press <strong className="text-foreground">F12</strong> and
-              match this exact configuration before exporting:
-            </p>
-            <div className="overflow-hidden rounded-[4px] border">
-              <table className="w-full border-collapse text-[12px]">
-                <tbody>
-                  {[
-                    ['Report Type', 'Ledger Accounts'],
-                    ['Period', 'the date range you want to reconcile'],
-                    ['Show Narrations', 'No'],
-                    ['Show Voucher No.', 'Yes'],
-                    ['Format of Report', 'Condensed'],
-                    ['Show Bill-wise details', 'No'],
-                    ['Show Inventory details', 'No'],
-                    ['Show Mode of Payment/Receipt', 'No'],
-                    ['Show Group Name', 'No'],
-                    ['Type of Voucher entries', 'All Vouchers'],
-                    ['Include Opening Balance', 'Yes'],
-                    ['Balancing Method', 'Yearly'],
-                    ['Start each Balancing breakup on a fresh page', 'No'],
-                    ['Start each A/c on a fresh page', 'Yes'],
-                    ['Include/Exclude Groups & Ledgers', 'No'],
-                    ['Set alphabetical range to print', 'No'],
-                    ['Sorting Method', 'Default'],
-                    ['Show Running Balance', 'No'],
-                    ['Show ITC at Risk & Balance Amount', 'No'],
-                    ['Show GST Status', 'No'],
-                  ].map(([label, value], i) => (
-                    <tr key={label} className={i % 2 ? 'bg-muted/30' : undefined}>
-                      <td className="border-t px-2 py-1 font-medium">{label}</td>
-                      <td className="border-t px-2 py-1 text-right font-semibold whitespace-nowrap">{value}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <p className="text-muted-foreground text-[12.5px] font-medium">
-              Then export (<strong className="text-foreground">Ctrl+E</strong>) as{' '}
-              <strong className="text-foreground">Excel (.xlsx)</strong> — that's the file to upload here.
-            </p>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" className="h-9 rounded-[4px] text-[12.5px] font-semibold" onClick={() => setFormatGuideOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              className="h-9 gap-1.5 rounded-[4px] text-[12.5px] font-bold"
-              onClick={() => {
-                setFormatGuideOpen(false);
-                openFilePicker();
-              }}
-            >
-              <Upload className="size-3.5" /> Choose file
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <TallyExportGuide open={formatGuideOpen} onOpenChange={setFormatGuideOpen} onChoose={openFilePicker} />
 
       {/* ── receipt confirmation ──────────────────────────────────────────── */}
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>

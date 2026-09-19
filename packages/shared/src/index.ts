@@ -18,6 +18,7 @@ export * from './types/agent';
 export * from './types/agent-commission';
 export * from './types/agent-special-commission';
 export * from './types/transporter';
+export * from './types/account-group';
 export * from './types/gst-rate';
 export * from './types/trans-rate';
 export * from './types/special-rate';

@@ -182,19 +182,21 @@ export class TallyReconService {
     return new Map(rows.map((r) => [r.tallyName, r.category as TallyLedgerCategory]));
   }
 
-  /** Splits a set of no-OMS-match ledger names into Party / Expense / Other,
+  /** Splits a set of no-OMS-match ledger names into Party / Agent / Expense / Other,
    *  per their CURRENT filing — see {@link UnmappedLedgers}. */
   private bucketLedgers(names: string[], categories: Map<string, TallyLedgerCategory>): UnmappedLedgers {
     const party: string[] = [];
+    const agent: string[] = [];
     const expense: string[] = [];
     const other: string[] = [];
     for (const name of names) {
       const cat = categories.get(name);
-      if (cat === 'EXPENSE') expense.push(name);
+      if (cat === 'AGENT') agent.push(name);
+      else if (cat === 'EXPENSE') expense.push(name);
       else if (cat === 'OTHER') other.push(name);
       else party.push(name);
     }
-    return { party: party.sort(), expense: expense.sort(), other: other.sort() };
+    return { party: party.sort(), agent: agent.sort(), expense: expense.sort(), other: other.sort() };
   }
 
   /* ── OMS books for the period ────────────────────────────────────────────── */

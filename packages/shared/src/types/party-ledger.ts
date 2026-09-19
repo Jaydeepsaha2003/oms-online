@@ -197,11 +197,13 @@ export interface PartyLedgerResult {
   kpis: PartyLedgerKpis;
   /** Distinct voucher types present (for the client-side filter dropdown). */
   voucherTypes: string[];
-  scope: 'CUSTOMER' | 'AGENT' | 'ALL';
+  scope: 'CUSTOMER' | 'AGENT' | 'GROUP' | 'ALL';
   customerName: string | null;
   /** Customer location shown in the PDF ledger heading for single-party reports. */
   customerAddress: string | null;
   agentName: string | null;
+  /** Account group shown combined (scope GROUP). */
+  groupName: string | null;
   from: string;
   to: string;
 }
@@ -209,6 +211,8 @@ export interface PartyLedgerResult {
 export interface PartyLedgerQuery {
   customerId?: number;
   agentName?: string;
+  /** All parties under this account group (and its sub-groups), combined. */
+  groupId?: number;
   /** yyyy-mm-dd. */
   from: string;
   to: string;
@@ -275,4 +279,6 @@ export interface LedgerClearedResult {
 export interface PartyLedgerLookups {
   customers: { id: number; name: string }[];
   agents: string[];
+  /** Account groups holding at least one party — for the combined group view. */
+  groups: { id: number; name: string; count: number }[];
 }

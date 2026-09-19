@@ -188,6 +188,7 @@ export interface ReconRunResult extends ReconRunSummary {
    * Ledger names in the register with no OMS customer, split by how the user
    * has filed them:
    *   party   — still needs a customer mapping (what "needs attention" counts).
+   *   agent   — filed as an agent's ledger (TallyLedgerCategory 'AGENT').
    *   expense — filed as an expense head (TallyLedgerCategory 'EXPENSE').
    *   other   — filed as some other non-party head ('OTHER') — a bank account,
    *             a tax ledger, Suspense, P&L, and the like.
@@ -201,7 +202,7 @@ export interface ReconRunResult extends ReconRunSummary {
 }
 
 /** A Tally ledger classified as NOT a customer — see TallyLedgerCategory. */
-export const TALLY_LEDGER_CATEGORIES = ['EXPENSE', 'OTHER'] as const;
+export const TALLY_LEDGER_CATEGORIES = ['AGENT', 'EXPENSE', 'OTHER'] as const;
 export type TallyLedgerCategory = (typeof TALLY_LEDGER_CATEGORIES)[number];
 
 /**
@@ -214,6 +215,7 @@ export type TallyLedgerCategoryInput = (typeof TALLY_LEDGER_CATEGORY_INPUTS)[num
 
 export interface UnmappedLedgers {
   party: string[];
+  agent: string[];
   expense: string[];
   other: string[];
 }

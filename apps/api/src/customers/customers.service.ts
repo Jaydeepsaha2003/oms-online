@@ -24,6 +24,7 @@ import {
   parsePayByModes,
   payByFor,
   BULK_CUSTOMER_COLUMNS,
+  DEFAULT_LEDGER_GROUP,
   type BulkCustomerColumn,
   type BulkCustomerChange,
   type BulkCustomerBlocker,
@@ -134,7 +135,9 @@ export class CustomersService {
     await this.assertNameOk(dto.partyName, dto.transportName);
     await this.resolveAgent(dto.agentName);
     const transporter = await this.resolveTransporter(dto.transportName, dto.packing, dto.freight);
-    const row = await this.prisma.customer.create({ data: this.toData(dto, transporter) });
+    const data = this.toData(dto, transporter);
+    data.groupId = dto.groupId ?? (await this.defaultGroupId());
+    const row = await this.prisma.customer.create({ data });
     return this.toDto(await this.ensureCode(row));
   }
 
@@ -343,7 +346,7 @@ export class CustomersService {
         .filter((v): v is string => typeof v === 'string' && v.trim() !== '');
     };
 
-    const [agents, categories, brands, cities, states, regions, transporters] = await Promise.all([
+    const [agents, categories, brands, cities, states, regions, transporters, groups] = await Promise.all([
       this.prisma.agent
         .findMany({ orderBy: { name: 'asc' }, select: { name: true } })
         .then((rows) => rows.map((r) => r.name)),
@@ -353,6 +356,7 @@ export class CustomersService {
       distinct('state'),
       distinct('region'),
       this.prisma.transporter.findMany({ orderBy: { name: 'asc' } }),
+      this.prisma.accountGroup.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
     ]);
 
     return {
@@ -370,6 +374,7 @@ export class CustomersService {
         packing: t.packing,
         freight: t.freight,
       })),
+      groups,
     };
   }
 
@@ -479,12 +484,12 @@ export class CustomersService {
             await this.ensureCode(updated);
             result.updated++;
           } else {
-            const createdRow = await this.prisma.customer.create({ data: { id, ...data } });
+            const createdRow = await this.prisma.customer.create({ data: { id, ...data, groupId: await this.defaultGroupId() } });
             await this.ensureCode(createdRow);
             result.created++;
           }
         } else {
-          const createdRow = await this.prisma.customer.create({ data });
+          const createdRow = await this.prisma.customer.create({ data: { ...data, groupId: await this.defaultGroupId() } });
           await this.ensureCode(createdRow);
           result.created++;
         }
@@ -586,6 +591,7 @@ export class CustomersService {
       billingRate: dto.billingRate ?? null,
       transporterId: transporter?.id ?? null,
       transportName: uc(dto.transportName),
+      groupId: dto.groupId,
       bagName: uc(dto.bagName),
       packing: dto.packing ?? transporter?.packing ?? null,
       freight: dto.freight ?? transporter?.freight ?? null,
@@ -605,6 +611,11 @@ export class CustomersService {
       // Pass-through: undefined ⇒ Prisma default (true) on create, unchanged on update.
       active: dto.active,
     };
+  }
+
+  private async defaultGroupId(): Promise<number | null> {
+    const g = await this.prisma.accountGroup.findUnique({ where: { name: DEFAULT_LEDGER_GROUP }, select: { id: true } });
+    return g?.id ?? null;
   }
 
   private async ensureExists(id: number): Promise<void> {
@@ -656,6 +667,7 @@ export class CustomersService {
       billingRate: r.billingRate,
       transporterId: r.transporterId,
       transportName: r.transportName,
+      groupId: r.groupId,
       bagName: r.bagName,
       packing: r.packing,
       freight: r.freight,

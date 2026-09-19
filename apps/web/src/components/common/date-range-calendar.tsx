@@ -15,6 +15,8 @@ function parseISO(v?: string | null): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+const LANG = 'en-IN';
+
 /** flowbite-react Datepicker restyled to the app: round days, compact header. */
 const FLOWBITE_THEME = {
   popup: {
@@ -24,6 +26,7 @@ const FLOWBITE_THEME = {
         base: 'mb-1 flex items-center justify-between',
         button: {
           base: 'cursor-pointer rounded-lg bg-transparent px-3 py-1.5 text-sm font-semibold text-slate-800 hover:bg-slate-100 dark:bg-transparent dark:text-white dark:hover:bg-white/10',
+          view: 'oms-title',
         },
       },
     },
@@ -69,35 +72,56 @@ export function DateRangeCalendar({
 }) {
   const [end, setEnd] = useState<'from' | 'to'>('from');
 
-  // flowbite always draws 42 days and gives no "other month" flag (and its
-  // filterDate can't see which month is on screen), so days before the first
-  // "1" and from the next "1" on are marked here: greyed via [data-out] in
-  // index.css and disabled. Re-run whenever the grid changes (month flips).
+  // flowbite only knows ONE selected date and has no "other month" flag, so the
+  // day grid is annotated here (styled in index.css):
+  //  - data-out:   previous/next-month days (before the first "1", from the next
+  //                "1" on) — grey and disabled;
+  //  - data-range: days strictly between From and To — light blue;
+  //  - data-edge:  the From / To days themselves — solid blue (flowbite only
+  //                paints the end being edited).
+  // The shown month comes from flowbite's title ("September 2026", same en-IN
+  // format). Re-runs when the grid changes (month flips) and when from/to change.
   const rootRef = useRef<HTMLDivElement>(null);
+  const rangeRef = useRef({ from, to });
+  rangeRef.current = { from, to };
+  const markRef = useRef<() => void>(() => {});
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
+    const titleFmt = new Intl.DateTimeFormat(LANG, { month: 'long', year: 'numeric' });
+    const setFlag = (b: HTMLElement, key: 'out' | 'range' | 'edge', on: boolean) => {
+      if (on && b.dataset[key] === undefined) b.dataset[key] = '';
+      else if (!on && b.dataset[key] !== undefined) delete b.dataset[key];
+    };
     const mark = () => {
       const btns = [...root.querySelectorAll<HTMLButtonElement>('.oms-days > button')];
+      if (!btns.length) return;
       const first = btns.findIndex((b) => b.textContent === '1');
       const next = btns.findIndex((b, i) => i > first && b.textContent === '1');
+
+      // Which month is on screen, e.g. "September 2026" → 2026-09.
+      const title = root.querySelector('.oms-title')?.textContent ?? '';
+      const year = Number(/\d{4}/.exec(title)?.[0]);
+      const month = year ? Array.from({ length: 12 }, (_, m) => m).find((m) => titleFmt.format(new Date(year, m, 1)) === title) : undefined;
+      const { from: lo, to: hi } = rangeRef.current;
+
       btns.forEach((b, i) => {
         const out = i < first || (next >= 0 && i >= next);
-        if (out) {
-          b.dataset.out = '';
-          b.disabled = true;
-        } else if (b.dataset.out !== undefined) {
-          delete b.dataset.out;
-          b.disabled = false;
-        }
+        setFlag(b, 'out', out);
+        if (out !== b.disabled) b.disabled = out;
+        const iso = !out && month !== undefined ? toISO(new Date(year, month, Number(b.textContent))) : '';
+        setFlag(b, 'edge', !!iso && (iso === lo || iso === hi));
+        setFlag(b, 'range', !!iso && !!lo && !!hi && iso > lo && iso < hi);
       });
     };
+    markRef.current = mark;
     mark();
     // Only childList/text: our own attribute writes don't retrigger it.
     const mo = new MutationObserver(mark);
     mo.observe(root, { subtree: true, childList: true, characterData: true });
     return () => mo.disconnect();
   }, []);
+  useEffect(() => markRef.current(), [from, to, end]);
 
   const pick = (d: Date | null) => {
     if (!d) return;
@@ -141,7 +165,7 @@ export function DateRangeCalendar({
         onChange={pick}
         showClearButton={false}
         showTodayButton={false}
-        language="en-IN"
+        language={LANG}
         theme={FLOWBITE_THEME}
       />
     </div>

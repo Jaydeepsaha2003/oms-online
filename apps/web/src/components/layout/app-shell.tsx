@@ -44,6 +44,7 @@ const FLUSH_ROUTES = [
   /^\/design-names$/,
   /^\/customers$/,
   /^\/transporters$/,
+  /^\/customers\/masters$/,
   /^\/account\/party-ledger$/,
   /^\/account\/payment$/,
   /^\/account\/notes$/,

@@ -19,6 +19,7 @@ const DashboardPage = lazy(() => import('@/features/dashboard/dashboard-page').t
 const CustomersPage = lazy(() => import('@/features/customers/customers-page').then((m) => ({ default: m.CustomersPage })));
 const CustomerFormPage = lazy(() => import('@/features/customers/customer-form-page').then((m) => ({ default: m.CustomerFormPage })));
 const RateListPage = lazy(() => import('@/features/customers/rate-list-page').then((m) => ({ default: m.RateListPage })));
+const MastersPage = lazy(() => import('@/features/customers/masters-page').then((m) => ({ default: m.MastersPage })));
 const TransportersPage = lazy(() => import('@/features/transporters/transporters-page').then((m) => ({ default: m.TransportersPage })));
 const AgentsPage = lazy(() => import('@/features/agents/agents-page').then((m) => ({ default: m.AgentsPage })));
 const GstRatesPage = lazy(() => import('@/features/gst-rates/gst-rates-page').then((m) => ({ default: m.GstRatesPage })));
@@ -192,6 +193,14 @@ export function AppRoutes() {
             element={
               <RequirePermission permission={perm(RESOURCES.CUSTOMER, ACTIONS.UPDATE)}>
                 <CustomerFormPage />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="/customers/masters"
+            element={
+              <RequirePermission permission={perm(RESOURCES.CUSTOMER, ACTIONS.VIEW)}>
+                <MastersPage />
               </RequirePermission>
             }
           />

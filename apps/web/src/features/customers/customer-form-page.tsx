@@ -14,7 +14,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { type CustomerInput, parsePayByModes } from '@oms/shared';
+import { type CustomerInput, DEFAULT_LEDGER_GROUP, parsePayByModes } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { cn } from '@/lib/utils';
@@ -37,6 +37,7 @@ const EMPTY = {
   partySource: '',
   agentName: '',
   category: '',
+  groupId: '',
   partyName: '',
   billingRate: '',
   transportName: '',
@@ -106,6 +107,7 @@ export function CustomerFormPage() {
       partySource: existing.partySource ?? '',
       agentName: existing.agentName ?? '',
       category: existing.category ?? '',
+      groupId: existing.groupId?.toString() ?? '',
       partyName: existing.partyName ?? '',
       billingRate: existing.billingRate?.toString() ?? '',
       transportName: existing.transportName ?? '',
@@ -131,6 +133,13 @@ export function CustomerFormPage() {
     setForm(loaded);
     setBaseline(loaded);
   }, [existing]);
+
+  // New party: Under defaults to Sundry Debtors.
+  useEffect(() => {
+    if (isEdit || !lookups) return;
+    const def = lookups.groups.find((g) => g.name === DEFAULT_LEDGER_GROUP);
+    if (def) setForm((f) => (f.groupId ? f : { ...f, groupId: String(def.id) }));
+  }, [isEdit, lookups]);
 
   const isSelf = form.partySource === 'SELF';
   // Only allow saving when the form actually differs from what was loaded.
@@ -163,6 +172,7 @@ export function CustomerFormPage() {
       ['Party Source', form.partySource],
       ...(isSelf ? [] : ([['Agent Name', form.agentName]] as [string, string][])),
       ['Category', form.category],
+      ['Under', form.groupId],
       ['Party Name', form.partyName],
       ['Transport Name', form.transportName],
       ['Credit Period', form.creditPeriod],
@@ -193,6 +203,7 @@ export function CustomerFormPage() {
       partySource: form.partySource || null,
       agentName: form.agentName || null,
       category: form.category || null,
+      groupId: form.groupId ? Number(form.groupId) : null,
       partyName: form.partyName.trim(),
       billingRate: numOrNull(form.billingRate),
       transportName: form.transportName || null,
@@ -365,6 +376,14 @@ export function CustomerFormPage() {
           </Field>
           <Field label="Brand">
             <Combo value={form.brand} onChange={(v) => set('brand', v)} options={lookups?.brands ?? []} />
+          </Field>
+          <Field label="Under" required>
+            <NativeSelect
+              value={form.groupId}
+              onChange={(v) => set('groupId', v)}
+              options={(lookups?.groups ?? []).map((g) => ({ value: String(g.id), label: g.name }))}
+              placeholder="Select group"
+            />
           </Field>
         </Section>
 

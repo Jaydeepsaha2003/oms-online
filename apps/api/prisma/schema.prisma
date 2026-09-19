@@ -236,6 +236,32 @@ model Transporter {
   @@map("transporters")
 }
 
+/// Tally-style account group (Masters → Group). parentId null = Primary.
+model AccountGroup {
+  id           Int      @id @default(autoincrement())
+  name         String   @unique
+  alias        String?
+  parentId     Int?
+  /// Group behaves like a sub-ledger.
+  isSubLedger  Boolean  @default(false)
+  /// Nett Debit/Credit Balances for Reporting.
+  nettBalances Boolean  @default(false)
+  /// Used for calculation (taxes, discounts) in sales invoices.
+  usedForCalc  Boolean  @default(false)
+  /// Method to allocate when used in purchase invoice: NOT_APPLICABLE | BY_QTY | BY_VALUE.
+  allocMethod  String   @default("NOT_APPLICABLE")
+  /// Seeded from Tally; cannot be deleted.
+  isSystem     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  parent    AccountGroup?  @relation("GroupTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children  AccountGroup[] @relation("GroupTree")
+  customers Customer[]
+
+  @@map("account_groups")
+}
+
 // Sales agents (used when partySource = AGENT). Maintained as its own master so
 // agents can be added on the fly from the customer form and tracked with timestamps.
 model Agent {
@@ -325,6 +351,9 @@ model Customer {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  /// Tally "Under" — the account group this ledger belongs to.
+  groupId          Int?
+  group            AccountGroup?             @relation(fields: [groupId], references: [id], onDelete: SetNull)
   transporter      Transporter?              @relation(fields: [transporterId], references: [id], onDelete: SetNull)
   gstRates         GstRate[]
   transRates       TransRate[]
@@ -1814,7 +1843,7 @@ model TallyLedgerCategory {
   id        Int      @id @default(autoincrement())
   /// Ledger name exactly as it appears in the register.
   tallyName String   @unique
-  /// EXPENSE | OTHER.
+  /// AGENT | EXPENSE | OTHER.
   category  String
   createdAt DateTime @default(now())
   createdBy String?
