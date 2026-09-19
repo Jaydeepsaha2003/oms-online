@@ -178,9 +178,11 @@ function useDaybookFilters() {
   const [params, setParams] = useSearchParams();
   const get = (key: string, fallback: string) => params.get(key) ?? fallback;
   const filters = {
-    from: get('from', ymd(fyStart(new Date()))),
+    // Default to TODAY's working — the daybook is a "what happened today" view.
+    // The date range above still lets you pick any From → To span.
+    from: get('from', ymd(new Date())),
     to: get('to', ymd(new Date())),
-    preset: get('preset', ''),
+    preset: get('preset', 'Today'),
     party: get('party', ''),
     voucherType: get('vtype', ''),
     mode: get('mode', 'BOTH') as LedgerTxnMode,

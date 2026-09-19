@@ -145,25 +145,25 @@ export function LoginPage() {
           <div className="absolute top-1/2 right-0 size-6 -translate-y-1/2 rounded-full bg-amber-300/40 blur-md" />
         </div>
 
-        {/* Ambient floating liquid gradient blobs */}
+        {/* Ambient floating liquid gradient blobs - positioned so mobile screens get full liquid animation behind the glass card */}
         <div
-          className="oms-blob absolute -left-16 -top-16 size-[28rem] rounded-full bg-gradient-to-tr from-amber-500/55 via-orange-500/50 to-yellow-400/40 blur-3xl"
+          className="oms-blob absolute left-1/2 top-1/4 -translate-x-1/2 -translate-y-1/2 size-72 sm:-left-16 sm:-top-16 sm:translate-x-0 sm:translate-y-0 sm:size-[28rem] rounded-full bg-gradient-to-tr from-amber-500/55 via-orange-500/50 to-yellow-400/40 blur-3xl"
           style={{ animation: 'oms-float 22s ease-in-out infinite' }}
         />
         <div
-          className="oms-blob absolute -right-24 top-1/4 size-[32rem] rounded-full bg-gradient-to-bl from-orange-600/60 via-amber-500/45 to-yellow-500/50 blur-3xl"
+          className="oms-blob absolute right-0 top-1/3 size-80 sm:-right-24 sm:top-1/4 sm:size-[32rem] rounded-full bg-gradient-to-bl from-orange-600/60 via-amber-500/45 to-yellow-500/50 blur-3xl"
           style={{ animation: 'oms-float-reverse 26s ease-in-out infinite', animationDelay: '-5s' }}
         />
         <div
-          className="oms-blob absolute -bottom-32 left-1/4 size-[36rem] rounded-full bg-gradient-to-t from-red-600/50 via-orange-500/50 to-amber-400/45 blur-3xl"
+          className="oms-blob absolute left-0 bottom-1/4 size-80 sm:-bottom-32 sm:left-1/4 sm:size-[36rem] rounded-full bg-gradient-to-t from-red-600/50 via-orange-500/50 to-amber-400/45 blur-3xl"
           style={{ animation: 'oms-float 30s ease-in-out infinite', animationDelay: '-11s' }}
         />
         <div
-          className="oms-blob absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 size-[28rem] rounded-full bg-amber-400/30 blur-3xl"
-          style={{ animation: 'oms-pulse-glow 12s ease-in-out infinite' }}
+          className="oms-blob absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 size-[24rem] sm:size-[32rem] rounded-full bg-amber-400/40 blur-3xl"
+          style={{ animation: 'oms-pulse-glow 10s ease-in-out infinite' }}
         />
         <div
-          className="oms-blob absolute right-10 -bottom-10 size-96 rounded-full bg-gradient-to-l from-orange-600/50 to-amber-500/50 blur-3xl"
+          className="oms-blob absolute right-4 bottom-10 size-72 sm:right-10 sm:-bottom-10 sm:size-96 rounded-full bg-gradient-to-l from-orange-600/50 to-amber-500/50 blur-3xl"
           style={{ animation: 'oms-float-reverse 24s ease-in-out infinite', animationDelay: '-8s' }}
         />
 
@@ -191,30 +191,30 @@ export function LoginPage() {
       </div>
 
       {/* ── Login Card ── */}
-      <div className="relative z-10 w-full max-w-md">
-        <div className="relative overflow-hidden rounded-3xl border border-white/80 bg-white/85 p-6 shadow-[0_20px_70px_-15px_rgba(234,88,12,0.4)] backdrop-blur-2xl duration-500 animate-in fade-in-0 slide-in-from-bottom-4 sm:p-8">
+      <div className="relative z-10 w-full max-w-[340px] sm:max-w-md">
+        <div className="apple-liquid-glass relative overflow-hidden rounded-2xl sm:rounded-3xl p-5 sm:p-8 duration-500 animate-in fade-in-0 slide-in-from-bottom-4 shadow-[0_25px_80px_-15px_rgba(234,88,12,0.45)]">
           {/* Top Glass Highlight */}
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-white/90 via-orange-50/20 to-transparent"
+            className="pointer-events-none absolute inset-x-0 top-0 h-20 sm:h-28 bg-gradient-to-b from-white/90 via-orange-50/20 to-transparent opacity-70"
           />
 
           <div className="relative flex flex-col items-center text-center">
             {/* Logo container with breathing glow ring */}
-            <div className="mb-2 flex size-28 items-center justify-center overflow-hidden rounded-full bg-white p-1 shadow-xl ring-4 ring-orange-500/30 drop-shadow-md">
-              <img src={company?.logo || kavishLogo} alt={company?.name || APP_NAME} className="size-full object-contain p-2" />
+            <div className="mb-2 flex size-20 sm:size-28 items-center justify-center overflow-hidden rounded-full bg-white/95 p-1 shadow-xl ring-4 ring-orange-500/30 drop-shadow-md backdrop-blur-md">
+              <img src={company?.logo || kavishLogo} alt={company?.name || APP_NAME} className="size-full object-contain p-1.5 sm:p-2" />
             </div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
               Welcome to <span className="text-gradient-orange-shimmer font-extrabold">{APP_NAME}</span>
             </h1>
-            <p className="mt-1 text-sm text-slate-600 font-medium">Sign in to your {APP_NAME} workspace</p>
+            <p className="mt-0.5 sm:mt-1 text-xs sm:text-sm text-slate-600 font-medium">Sign in to your {APP_NAME} workspace</p>
           </div>
 
           {/* Mode toggle */}
-          <div className="relative mt-6 flex rounded-full border bg-muted/60 p-1">
+          <div className="relative mt-4 sm:mt-6 flex rounded-full border border-white/60 bg-slate-900/10 backdrop-blur-md p-1">
             <span
               className={cn(
-                'absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-full bg-white shadow-sm transition-transform duration-300',
+                'absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-full bg-white/90 shadow-md transition-transform duration-300',
                 mode === 'pin' ? 'translate-x-full' : 'translate-x-0',
               )}
             />
@@ -224,8 +224,8 @@ export function LoginPage() {
                 type="button"
                 onClick={() => setMode(m)}
                 className={cn(
-                  'relative z-10 flex-1 rounded-full py-2 text-sm font-medium transition-colors',
-                  mode === m ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+                  'relative z-10 flex-1 rounded-full py-1.5 sm:py-2 text-xs sm:text-sm font-semibold transition-colors',
+                  mode === m ? 'text-slate-900' : 'text-slate-700 hover:text-slate-900',
                 )}
               >
                 {m === 'password' ? 'Password' : 'PIN'}
@@ -234,7 +234,7 @@ export function LoginPage() {
           </div>
 
           {/* Panels */}
-          <div key={mode} className="mt-6 duration-300 animate-in fade-in-0">
+          <div key={mode} className="mt-4 sm:mt-6 duration-300 animate-in fade-in-0">
             {mode === 'password' ? (
               /* A REAL form with a real submit button, on purpose. Browser
                  password managers offer to save a login when they observe a form
@@ -250,9 +250,9 @@ export function LoginPage() {
                 }}
               >
                 <div className="space-y-2">
-                  <Label htmlFor="email">Email</Label>
+                  <Label htmlFor="email" className="font-semibold text-slate-800 drop-shadow-sm">Email</Label>
                   <div className="relative">
-                    <Mail className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                    <Mail className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-600" />
                     <Input
                       id="email"
                       name="email"
@@ -260,23 +260,23 @@ export function LoginPage() {
                       inputMode="email"
                       autoComplete="username"
                       placeholder="you@company.com"
-                      className="pl-9"
+                      className="pl-9 bg-white/40 dark:bg-white/10 backdrop-blur-md border border-white/60 text-slate-900 placeholder:text-slate-500 focus:bg-white/70 focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/40 shadow-inner transition-all duration-200"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                     />
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="password">Password</Label>
+                  <Label htmlFor="password" className="font-semibold text-slate-800 drop-shadow-sm">Password</Label>
                   <div className="relative">
-                    <Lock className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                    <Lock className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-600" />
                     <Input
                       id="password"
                       name="password"
                       type="password"
                       autoComplete="current-password"
                       placeholder="••••••••"
-                      className="pl-9"
+                      className="pl-9 bg-white/40 dark:bg-white/10 backdrop-blur-md border border-white/60 text-slate-900 placeholder:text-slate-500 focus:bg-white/70 focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/40 shadow-inner transition-all duration-200"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                     />

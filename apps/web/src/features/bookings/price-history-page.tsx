@@ -123,7 +123,11 @@ export function PriceHistoryPage() {
   };
 
   return (
-    <div className="space-y-3 sm:space-y-4">
+    // -mt-3 lifts this container over <main>'s mobile top padding (py-3) so the
+    // sticky filter bar's containing block reaches main's padding-box top — where
+    // scrolling cards are clipped. Paired with the bar's negative sticky `top`
+    // (below), the bar then pins flush at that clip edge, so no card peeks above it.
+    <div className="-mt-3 space-y-3 sm:mt-0 sm:space-y-4">
       {/* The intro line is desktop-only — a phone's app bar already names the
           screen, and the space is better spent on the list. */}
       <div className="hidden items-center gap-3 sm:flex">
@@ -132,7 +136,9 @@ export function PriceHistoryPage() {
         </div>
       </div>
 
-      <div className="bg-background/85 sticky top-0 z-20 -mx-1 flex flex-wrap items-center gap-2 rounded-md px-1 py-1.5 backdrop-blur">
+      {/* Solid background: a translucent bar let scrolled cards show through it
+          on a phone, where the filters wrap to two rows and the gaps are wide. */}
+      <div className="bg-background sticky top-[-0.75rem] z-20 -mx-1 flex flex-wrap items-center gap-2 border-b px-1 pt-6 pb-2 sm:top-0 sm:pt-2">
         <div className="relative w-full sm:w-80">
           <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
           <Input
