@@ -5,6 +5,7 @@ import {
   BellOff,
   ChevronLeft,
   ChevronRight,
+  KeyRound,
   MonitorSmartphone,
   Pencil,
   Search,
@@ -248,7 +249,17 @@ export function UsersPage() {
             {initials(u.name)}
           </span>
           <div className="min-w-0">
-            <div className="truncate font-medium leading-tight">{u.name}</div>
+            <div className="flex items-center gap-1.5">
+              <span className="truncate font-medium leading-tight">{u.name}</span>
+              {u.hasPin && (
+                <span
+                  title="Quick PIN sign-in enabled"
+                  className="bg-amber-500/10 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300 ring-1 ring-amber-500/20 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.2 text-[10px] font-semibold"
+                >
+                  <KeyRound className="size-2.5" /> PIN
+                </span>
+              )}
+            </div>
             <div className="text-muted-foreground truncate text-xs leading-tight">{u.email}</div>
           </div>
         </div>

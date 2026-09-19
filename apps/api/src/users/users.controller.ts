@@ -22,6 +22,7 @@ import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { ExcelService } from '../excel/excel.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { SetUserPasswordDto } from './dto/set-password.dto';
+import { SetUserPinDto } from './dto/set-pin.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UserQueryDto } from './dto/user-query.dto';
 import { UsersService } from './users.service';
@@ -87,6 +88,21 @@ export class UsersController {
     @CurrentUser() me: AuthenticatedUser,
   ) {
     await this.users.setPassword(id, dto.password, me);
+    return { ok: true };
+  }
+
+  /**
+   * Set or clear a user's quick sign-in PIN.
+   */
+  @Patch(':id/pin')
+  @Permissions(perm(RESOURCES.USER, ACTIONS.UPDATE))
+  @Audit({ action: ACTIONS.UPDATE, resource: RESOURCES.USER, description: "Set or clear a user's PIN" })
+  async setPin(
+    @Param('id') id: string,
+    @Body() dto: SetUserPinDto,
+    @CurrentUser() me: AuthenticatedUser,
+  ) {
+    await this.users.setPin(id, dto.pin, me);
     return { ok: true };
   }
 

@@ -9,7 +9,7 @@ import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useCreateUser, useRoles, useSetUserPassword, useUpdateUser, useUser } from './use-admin';
+import { useCreateUser, useRoles, useSetUserPassword, useSetUserPin, useUpdateUser, useUser } from './use-admin';
 
 const STATUSES: UserStatus[] = ['active', 'disabled', 'invited'];
 const STATUS_SEGMENT_TONE: Record<UserStatus, string> = {
@@ -44,12 +44,15 @@ export function UserFormPage() {
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
+  const [pin, setPin] = useState('');
   const [status, setStatus] = useState<UserStatus>('active');
   const [roleIds, setRoleIds] = useState<Set<string>>(new Set());
   // Kept apart from `password` (which only creates): resetting is its own
   // deliberate action with its own button, not something a name edit carries.
   const [newPassword, setNewPassword] = useState('');
   const setPasswordMutation = useSetUserPassword(id ?? '');
+  const [newPin, setNewPin] = useState('');
+  const setPinMutation = useSetUserPin(id ?? '');
 
   useEffect(() => {
     if (!user) return;
@@ -97,7 +100,11 @@ export function UserFormPage() {
     } else {
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) return toast.error('Enter a valid email');
       if (password.length < 8) return toast.error('Password must be at least 8 characters');
-      create.mutate({ email: email.trim(), name: name.trim(), password, status, roleIds: [...roleIds] }, opts);
+      if (pin.trim() && !/^\d{4,6}$/.test(pin.trim())) return toast.error('PIN must be 4 to 6 digits');
+      create.mutate(
+        { email: email.trim(), name: name.trim(), password, pin: pin.trim() || undefined, status, roleIds: [...roleIds] },
+        opts,
+      );
     }
   };
 
@@ -151,60 +158,146 @@ export function UserFormPage() {
           <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus placeholder="Full name" />
         </div>
         {!isEdit && (
-          <div className="space-y-1.5">
-            <Label className="text-muted-foreground flex items-center gap-1.5 text-[11px] font-semibold tracking-wide uppercase">
-              <KeyRound className="size-3.5" /> Password *
-            </Label>
-            {/* new-password, not current-password: this creates an account, so a
-                manager should offer to generate/save rather than fill the admin's
-                own credentials into it. */}
-            <Input
-              type="password"
-              autoComplete="new-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Min 8 characters"
-            />
-          </div>
+          <>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground flex items-center gap-1.5 text-[11px] font-semibold tracking-wide uppercase">
+                <KeyRound className="size-3.5" /> Password *
+              </Label>
+              {/* new-password, not current-password: this creates an account, so a
+                  manager should offer to generate/save rather than fill the admin's
+                  own credentials into it. */}
+              <Input
+                type="password"
+                autoComplete="new-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Min 8 characters"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground flex items-center gap-1.5 text-[11px] font-semibold tracking-wide uppercase">
+                <KeyRound className="size-3.5" /> Quick Sign-in PIN (Optional)
+              </Label>
+              <Input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={6}
+                value={pin}
+                onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
+                placeholder="4–6 digits (e.g. 1234)"
+              />
+            </div>
+          </>
         )}
       </div>
 
       {/* Reset, not reveal: the existing password is stored only as a one-way
           hash, so it cannot be shown to anyone — it can only be replaced. */}
       {isEdit && (
-        <div className="space-y-1.5 rounded-lg border p-3">
-          <Label className="text-muted-foreground flex items-center gap-1.5 text-[11px] font-semibold tracking-wide uppercase">
-            <KeyRound className="size-3.5" /> Set a new password
-          </Label>
-          <p className="text-muted-foreground text-[11.5px]">
-            The current password can't be displayed — it's stored as a one-way hash, so nobody can read it. Use this when
-            someone has forgotten theirs. Saving signs them out of every device.
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <Input
-              type="password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="Min 8 characters"
-              className="max-w-xs"
-              autoComplete="new-password"
-            />
-            <Button
-              type="button"
-              variant="outline"
-              disabled={newPassword.length < 8 || setPasswordMutation.isPending}
-              onClick={() =>
-                setPasswordMutation.mutate(newPassword, {
-                  onSuccess: () => {
-                    setNewPassword('');
-                    toast.success(`Password updated — ${name || 'this user'} has been signed out everywhere.`);
-                  },
-                  onError: (e) => toast.error(getApiErrorMessage(e, 'Could not set the password')),
-                })
-              }
-            >
-              {setPasswordMutation.isPending ? <Loader2 className="animate-spin" /> : <KeyRound />} Set password
-            </Button>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5 rounded-lg border p-3">
+            <Label className="text-muted-foreground flex items-center gap-1.5 text-[11px] font-semibold tracking-wide uppercase">
+              <KeyRound className="size-3.5" /> Set a new password
+            </Label>
+            <p className="text-muted-foreground text-[11.5px]">
+              The current password can't be displayed — it's stored as a one-way hash. Use this when someone has forgotten theirs.
+            </p>
+            <div className="flex flex-wrap gap-2 pt-1">
+              <Input
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="Min 8 characters"
+                className="max-w-xs"
+                autoComplete="new-password"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                disabled={newPassword.length < 8 || setPasswordMutation.isPending}
+                onClick={() =>
+                  setPasswordMutation.mutate(newPassword, {
+                    onSuccess: () => {
+                      setNewPassword('');
+                      toast.success(`Password updated — ${name || 'this user'} has been signed out everywhere.`);
+                    },
+                    onError: (e) => toast.error(getApiErrorMessage(e, 'Could not set the password')),
+                  })
+                }
+              >
+                {setPasswordMutation.isPending ? <Loader2 className="animate-spin" /> : <KeyRound />} Set password
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-1.5 rounded-lg border p-3">
+            <div className="flex items-center justify-between gap-2">
+              <Label className="text-muted-foreground flex items-center gap-1.5 text-[11px] font-semibold tracking-wide uppercase">
+                <KeyRound className="size-3.5" /> Quick Sign-In PIN
+              </Label>
+              <span
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset',
+                  user?.hasPin
+                    ? 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300'
+                    : 'bg-slate-100 text-slate-600 ring-slate-200 dark:bg-slate-800 dark:text-slate-400',
+                )}
+              >
+                <span className={cn('size-1.5 rounded-full', user?.hasPin ? 'bg-emerald-500' : 'bg-slate-400')} />
+                {user?.hasPin ? 'PIN Enabled' : 'No PIN'}
+              </span>
+            </div>
+            <p className="text-muted-foreground text-[11.5px]">
+              Set or update the 4–6 digit numeric PIN for fast sign-in on remembered devices.
+            </p>
+            <div className="flex flex-wrap gap-2 pt-1">
+              <Input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={6}
+                value={newPin}
+                onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
+                placeholder="4–6 digits"
+                className="max-w-[130px]"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                disabled={newPin.length < 4 || newPin.length > 6 || setPinMutation.isPending}
+                onClick={() =>
+                  setPinMutation.mutate(newPin, {
+                    onSuccess: () => {
+                      setNewPin('');
+                      toast.success(`PIN configured for ${name || 'this user'}.`);
+                    },
+                    onError: (e) => toast.error(getApiErrorMessage(e, 'Could not set PIN')),
+                  })
+                }
+              >
+                {setPinMutation.isPending ? <Loader2 className="animate-spin" /> : <KeyRound />} {user?.hasPin ? 'Update PIN' : 'Set PIN'}
+              </Button>
+              {user?.hasPin && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  disabled={setPinMutation.isPending}
+                  onClick={() =>
+                    setPinMutation.mutate(null, {
+                      onSuccess: () => {
+                        setNewPin('');
+                        toast.success(`PIN removed for ${name || 'this user'}.`);
+                      },
+                      onError: (e) => toast.error(getApiErrorMessage(e, 'Could not remove PIN')),
+                    })
+                  }
+                >
+                  Clear PIN
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       )}

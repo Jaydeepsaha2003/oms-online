@@ -235,31 +235,35 @@ export function BookingFormPage() {
         </div>
       )}
 
-      <div className="mx-auto w-full max-w-[1400px] px-6 py-5 lg:px-[60px]">
-        {/* ── Header ─────────────────────────────────────────────────────────── */}
-        <div className="bb-rise flex items-center gap-3" style={{ animationDelay: '0s' }}>
+      <div className="mx-auto w-full max-w-[1400px] px-4 py-5 sm:px-6 lg:px-[60px]">
+        {/* ── Header — stacks on a phone (back · title · pill each on its own
+            row), collapses to one row from sm up (back · title · pill-right). */}
+        <div className="bb-rise flex flex-col gap-3 sm:flex-row sm:items-center" style={{ animationDelay: '0s' }}>
           <button
             type="button"
             onClick={() => navigate('/bookings')}
             aria-label="Back"
             className={cn(
-              'flex size-9 shrink-0 items-center justify-center rounded-full text-[var(--bb-muted)]',
+              'flex size-9 shrink-0 items-center justify-center self-start rounded-[10px] bg-[var(--bb-card)] text-[var(--bb-muted)] shadow-[0_1px_2px_rgb(16_24_40_/_0.06)]',
               'transition-[transform,color,box-shadow] duration-200 hover:-translate-x-[3px] hover:text-[var(--bb-ink)] hover:shadow-[0_4px_12px_-4px_rgb(16_24_40_/_0.18)]',
               EASE,
             )}
           >
             <ArrowLeft className="size-5" />
           </button>
-          <div className="min-w-0 flex-1">
+          {/* The top app bar already names this screen on a phone, so the in-page
+              title/subtitle only shows from sm up. */}
+          <div className="hidden min-w-0 sm:block sm:flex-1">
             <h1 className="text-[22px] font-black leading-tight tracking-[-0.025em] text-[var(--bb-ink)]">New Bag Booking</h1>
             <p className="text-[12.5px] font-semibold text-[var(--bb-muted)]">
               Reserve bags &amp; kgs by product category — items are picked &amp; priced later at these booking-date rates.
             </p>
           </div>
-          {/* Rates-frozen pill — a live indicator, hence the breathing dot. */}
+          {/* Rates-frozen pill — a live indicator, hence the breathing dot. Its
+              own line on a phone (left-aligned), top-right on wider screens. */}
           <div
             className={cn(
-              'flex items-center gap-2.5 rounded-[12px] bg-[var(--bb-card)] px-3 py-2 shadow-[var(--bb-shadow-pill)]',
+              'flex items-center gap-2.5 self-start rounded-[12px] bg-[var(--bb-card)] px-3 py-2 shadow-[var(--bb-shadow-pill)] sm:self-auto',
               'transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5',
               EASE,
             )}
@@ -329,8 +333,10 @@ export function BookingFormPage() {
                 </span>
               </div>
 
-              <div className="mt-4 grid grid-cols-1 items-end gap-3 sm:grid-cols-[1fr_110px_110px_auto]">
-                <div className="space-y-1.5">
+              {/* Phone: Product category on its own row, then Bags · Kgs · Add
+                  line together beneath it. Desktop: all four in one row. */}
+              <div className="mt-4 grid grid-cols-[1fr_1fr_auto] items-end gap-3 sm:grid-cols-[1fr_110px_110px_auto]">
+                <div className="col-span-3 space-y-1.5 sm:col-span-1">
                   <label className={FLABEL}>
                     Product category <span className="text-[10px] font-semibold lowercase text-[var(--bb-muted)]">optional</span>
                   </label>
@@ -499,10 +505,10 @@ export function BookingFormPage() {
                     <ul className="mt-2 space-y-1.5">
                       {lines.map((l) => (
                         <li key={l.key} className="bb-rowin flex items-center justify-between gap-3 text-[12.5px]">
-                          <span className="min-w-0 truncate font-bold text-[var(--bb-ink)]">
+                          <span className="min-w-0 truncate font-bold text-emerald-600 dark:text-emerald-400">
                             {l.category || <span className="font-semibold italic text-[var(--bb-muted)]">No category</span>}
                           </span>
-                          <span className="shrink-0 tabular-nums text-[var(--bb-muted)]">{lineQtyText(l)}</span>
+                          <span className="shrink-0 font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{lineQtyText(l)}</span>
                         </li>
                       ))}
                     </ul>

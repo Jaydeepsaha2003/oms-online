@@ -60,6 +60,15 @@ export function useSetUserPassword(id: string) {
   });
 }
 
+/** Admin sets or clears another user's quick login PIN. */
+export function useSetUserPin(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (pin: string | null) => http.patch<{ ok: true }>(`/users/${id}/pin`, { pin }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: USERS }),
+  });
+}
+
 export function useDeleteUser() {
   const qc = useQueryClient();
   return useMutation({

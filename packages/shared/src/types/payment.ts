@@ -25,6 +25,30 @@ export const TAKE_ACC_ON = ['PARTY', 'AGENT'] as const;
 export const DUE_TYPES = ['NORMAL', 'PAST DUE', 'OVERDUE'] as const;
 export type DueType = (typeof DUE_TYPES)[number];
 
+const DUE_DAY_MS = 86_400_000;
+
+/**
+ * The one canonical ageing rule, shared by every screen that buckets a bill by
+ * how due it is (Receive Payment's dues bands, the Party Ledger's KPI cards).
+ *
+ * Legacy DUE TYPE: the due date crossed = OVERDUE; otherwise, more than half the
+ * credit term still left = NORMAL, and anything less = PAST DUE. A bill with no
+ * due date, or none of its term recorded, is treated as NORMAL (nothing says it
+ * is late). `asOf` is the day the ageing is measured on — "now" on a dashboard,
+ * or the receipt date when back-dating a payment.
+ *
+ * Kept here, in one place, because two screens drifting apart on this is exactly
+ * what made the same party read a different overdue figure on each.
+ */
+export function classifyDueType(invDate: Date, dueDate: Date | null, asOf: Date): DueType {
+  if (!dueDate) return 'NORMAL';
+  const daysLeft = Math.round((dueDate.getTime() - asOf.getTime()) / DUE_DAY_MS);
+  const termDays = Math.round((dueDate.getTime() - invDate.getTime()) / DUE_DAY_MS);
+  if (daysLeft <= 0) return 'OVERDUE';
+  if (termDays <= 0) return 'NORMAL';
+  return daysLeft / termDays > 0.5 ? 'NORMAL' : 'PAST DUE';
+}
+
 /** One CONFIRMED challan with money still to receive (InvPendingSummary row). */
 export interface PendingInvoiceRow {
   invNo: string;

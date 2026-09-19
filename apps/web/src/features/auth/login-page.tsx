@@ -116,7 +116,7 @@ export function LoginPage() {
   if (showIntro) return <IntroVideo onFinish={() => setShowIntro(false)} />;
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gradient-to-br from-blue-50 via-white to-amber-50 px-4 py-10">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gradient-to-br from-amber-700 via-orange-600 to-amber-900 px-4 py-10">
       {/* Absolute, not in the flex flow: the outer div centers the login card with
           flex, and a normal-flow sibling here would push that card off-centre
           or sit beside it. This has to be seen before login succeeds — an
@@ -126,20 +126,34 @@ export function LoginPage() {
       <div className="absolute inset-x-0 top-0 z-20">
         <UntrustedCertBanner />
       </div>
-      {/* Animated brand background (blue · amber · orange) */}
+      {/* Animated vibrant orange theme background */}
       <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="bg-dotted absolute inset-0 opacity-60" />
+        {/* Radial dark vignette for depth */}
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-transparent via-orange-950/40 to-black/70" />
+        
+        {/* Animated dotted grid overlay */}
+        <div className="bg-dotted absolute inset-0 opacity-40 mix-blend-overlay" />
+
+        {/* Ambient floating orange & golden blobs */}
         <div
-          className="oms-blob absolute -left-24 -top-24 size-72 rounded-full bg-blue-400/35 blur-3xl"
-          style={{ animation: 'oms-float 22s ease-in-out infinite' }}
+          className="oms-blob absolute -left-20 -top-20 size-96 rounded-full bg-gradient-to-tr from-amber-500/50 to-orange-400/60 blur-3xl"
+          style={{ animation: 'oms-float 20s ease-in-out infinite' }}
         />
         <div
-          className="oms-blob absolute -right-24 top-1/4 size-80 rounded-full bg-amber-400/35 blur-3xl"
-          style={{ animation: 'oms-float 26s ease-in-out infinite', animationDelay: '-6s' }}
+          className="oms-blob absolute -right-28 top-1/4 size-[30rem] rounded-full bg-gradient-to-bl from-orange-500/55 via-amber-400/40 to-yellow-500/45 blur-3xl"
+          style={{ animation: 'oms-float-reverse 24s ease-in-out infinite', animationDelay: '-4s' }}
         />
         <div
-          className="oms-blob absolute -bottom-32 left-1/3 size-96 rounded-full bg-orange-300/35 blur-3xl"
-          style={{ animation: 'oms-float 30s ease-in-out infinite', animationDelay: '-12s' }}
+          className="oms-blob absolute -bottom-36 left-1/4 size-[34rem] rounded-full bg-gradient-to-t from-red-600/40 via-orange-600/50 to-amber-500/40 blur-3xl"
+          style={{ animation: 'oms-float 28s ease-in-out infinite', animationDelay: '-10s' }}
+        />
+        <div
+          className="oms-blob absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 size-[26rem] rounded-full bg-yellow-400/25 blur-3xl"
+          style={{ animation: 'oms-pulse-glow 14s ease-in-out infinite' }}
+        />
+        <div
+          className="oms-blob absolute right-12 -bottom-16 size-80 rounded-full bg-amber-600/45 blur-3xl"
+          style={{ animation: 'oms-float-reverse 22s ease-in-out infinite', animationDelay: '-7s' }}
         />
       </div>
 

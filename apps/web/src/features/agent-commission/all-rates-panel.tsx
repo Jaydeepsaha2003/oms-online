@@ -259,7 +259,49 @@ export function AllRatesPanel() {
               {rows.length ? 'No rates match these filters.' : 'No rates have been set yet.'}
             </div>
           ) : (
-            <table className="w-full border-collapse text-[12.5px]">
+            <>
+            {/* Phone: one card per rate. */}
+            <div className="space-y-2 p-2 sm:hidden">
+              {shown.map((r) => {
+                const st = STANDING[r.standing];
+                return (
+                  <div key={`m-${r.key}`} className={cn('rounded-lg border p-2.5', r.standing === 'SUPERSEDED' ? 'bg-slate-50/60 text-muted-foreground dark:bg-white/[0.02]' : 'bg-card')}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {r.kind === 'BASE' ? (
+                            <span className="text-muted-foreground rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold dark:bg-white/10">BASE</span>
+                          ) : (
+                            <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 ring-1 ring-inset ring-indigo-200 dark:bg-indigo-500/15 dark:text-indigo-300">{r.scopeLabel}</span>
+                          )}
+                          <span className="text-[13px] font-bold">{r.agentName}</span>
+                        </div>
+                        <p className="mt-0.5 text-[12px] font-semibold">{r.appliesTo}</p>
+                        <p className="text-[11.5px]">{r.party ?? <span className="text-muted-foreground">All parties</span>}</p>
+                      </div>
+                      <span className="shrink-0 text-[14px] font-bold tabular-nums">
+                        ₹{r.ratePerUnit}
+                        <span className="text-muted-foreground text-[10px] font-normal">/{basisUnit(r.basis)}</span>
+                      </span>
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11.5px]">
+                      <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ring-inset', st.chip)}>
+                        <st.Icon className="size-3" /> {st.label}
+                      </span>
+                      <span className="text-muted-foreground tabular-nums">from {formatDate(r.effectiveFrom)}</span>
+                      {canEdit && (
+                        <Button variant="ghost" size="icon" className="ml-auto size-7" onClick={() => remove(r)} disabled={busy} aria-label="Remove rate">
+                          <Trash2 className="size-3.5 text-rose-600" />
+                        </Button>
+                      )}
+                    </div>
+                    {r.note && <p className="text-muted-foreground mt-1 text-[11px]">{r.note}</p>}
+                  </div>
+                );
+              })}
+            </div>
+
+            <table className="hidden w-full border-collapse text-[12.5px] sm:table">
               <thead>
                 <tr>
                   <th className={cn(TH, 'w-10 text-center')}>#</th>
@@ -325,6 +367,7 @@ export function AllRatesPanel() {
                 })}
               </tbody>
             </table>
+            </>
           )}
         </div>
 

@@ -65,12 +65,14 @@ export class UsersService {
   async create(dto: CreateUserDto, actor: AuthenticatedUser): Promise<UserDto> {
     await this.assertMayGrant(dto.roleIds, actor);
     const passwordHash = await bcrypt.hash(dto.password, 12);
+    const pinHash = dto.pin?.trim() ? await bcrypt.hash(dto.pin.trim(), 12) : null;
     try {
       const user = await this.prisma.user.create({
         data: {
           email: dto.email,
           name: dto.name,
           passwordHash,
+          pinHash,
           status: dto.status ?? 'active',
           roles: { create: dto.roleIds.map((roleId) => ({ roleId })) },
         },
@@ -145,6 +147,18 @@ export class UsersService {
     await this.prisma.user.update({ where: { id }, data: { passwordHash } });
     // Bump tokenVersion + revoke refresh tokens (same effect as "sign out everywhere").
     await this.sessions.revokeAll(id);
+  }
+
+  /**
+   * Set or clear another user's quick sign-in PIN.
+   */
+  async setPin(id: string, pin: string | null | undefined, actor: AuthenticatedUser): Promise<void> {
+    const target = await this.prisma.user.findUnique({ where: { id }, include: USER_INCLUDE });
+    if (!target) throw new NotFoundException('User not found.');
+    await this.assertMayManage(target, actor);
+
+    const pinHash = pin && pin.trim() ? await bcrypt.hash(pin.trim(), 12) : null;
+    await this.prisma.user.update({ where: { id }, data: { pinHash } });
   }
 
   /**
@@ -290,6 +304,7 @@ export class UsersService {
       name: u.name,
       status: u.status as UserStatus,
       roles: u.roles.map((ur) => ({ id: ur.role.id, name: ur.role.name, label: ur.role.label })),
+      hasPin: !!u.pinHash,
       lastLoginAt: u.lastLoginAt?.toISOString() ?? null,
       lastActiveAt: presence?.lastActiveAt?.toISOString() ?? null,
       alertDevices: presence?.alertDevices ?? 0,

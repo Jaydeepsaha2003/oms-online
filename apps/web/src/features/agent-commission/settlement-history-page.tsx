@@ -459,7 +459,36 @@ function DraftActions({
 function SettlementDetail({ s, formatDate }: { s: AgentSettlementDto; formatDate: (v: string) => string }) {
   return (
     <div className="space-y-2">
-      <div className="overflow-x-auto rounded-lg border bg-white dark:bg-transparent">
+      {/* Phone: one card per invoice line. */}
+      <div className="space-y-1.5 sm:hidden">
+        {s.lines.map((l) => {
+          const cut = l.appliedRatePerUnit < l.baseRatePerUnit - 0.0001;
+          return (
+            <div key={l.id} className="rounded-lg border bg-white p-2 text-[12px] dark:bg-transparent">
+              <div className="flex items-start justify-between gap-2">
+                <span className="font-mono text-[12px] font-semibold">
+                  {l.invNo}
+                  {l.isTopUp && (
+                    <span className="ml-1 rounded-full bg-violet-50 px-1.5 text-[9.5px] font-bold text-violet-700 dark:bg-violet-500/15 dark:text-violet-300">balance</span>
+                  )}
+                </span>
+                <span className="font-bold tabular-nums">{inr(l.amount)}</span>
+              </div>
+              <p className="text-[11.5px]">{l.customerName} · {l.pCategory}</p>
+              <p className="text-muted-foreground text-[11px] tabular-nums">
+                {l.qty.toLocaleString('en-IN')} {basisUnit(l.basis)} · ₹{l.appliedRatePerUnit} · {(l.paidRatio * 100).toFixed(0)}% paid
+              </p>
+              {cut && (
+                <p className="text-[10.5px] text-sky-700 dark:text-sky-300">
+                  cut from ₹{l.baseRatePerUnit}{l.reason ? ` — ${l.reason}` : ' — no reason given'}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="hidden overflow-x-auto rounded-lg border bg-white sm:block dark:bg-transparent">
         <table className="w-full border-collapse text-[11.5px]">
           <thead>
             <tr className="[&_th]:bg-slate-100 [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_th]:font-bold [&_th]:uppercase dark:[&_th]:bg-white/[0.06]">

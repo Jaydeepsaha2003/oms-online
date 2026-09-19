@@ -53,6 +53,19 @@ export function AgentCoversPage() {
   const [adding, setAdding] = useState(false);
   const recover = useRecoverCover();
 
+  // Shared by the desktop row button and the phone card, so the confirm + call
+  // is written once.
+  const markReturned = async (c: (typeof rows)[number]) => {
+    const ok = await confirm({
+      title: `Mark ${inr(c.amount)} returned to ${c.agentName}?`,
+      description:
+        `Records that the agent has been repaid for ${c.customerName}${c.invNo ? ` · ${c.invNo}` : ''}. ` +
+        'Use this when you refund him directly — a cover taken off his commission is closed automatically when that settlement is paid.',
+      confirmText: 'Mark returned',
+    });
+    if (ok) recover.mutate({ id: c.id, via: 'Refunded directly' }, { onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) });
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-2.5 p-2.5 font-sans sm:p-3">
       <div className="bg-card font-poppins flex flex-wrap items-center gap-2 rounded-[4px] border p-2.5 shadow-sm">
@@ -75,7 +88,7 @@ export function AgentCoversPage() {
       </div>
 
       <div className="bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[4px] border shadow-sm">
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div className="hidden min-h-0 flex-1 overflow-auto sm:block">
           <table className="w-full border-collapse">
             <thead className="sticky top-0 z-10">
               <tr>
@@ -123,21 +136,7 @@ export function AgentCoversPage() {
                       </td>
                       <td className="px-1">
                         {c.status === 'OPEN' && can('agentcommission:update') && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-7 text-[11px]"
-                            onClick={async () => {
-                              const ok = await confirm({
-                                title: `Mark ${inr(c.amount)} returned to ${c.agentName}?`,
-                                description:
-                                  `Records that the agent has been repaid for ${c.customerName}${c.invNo ? ` · ${c.invNo}` : ''}. ` +
-                                  'Use this when you refund him directly — a cover taken off his commission is closed automatically when that settlement is paid.',
-                                confirmText: 'Mark returned',
-                              });
-                              if (ok) recover.mutate({ id: c.id, via: 'Refunded directly' }, { onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) });
-                            }}
-                          >
+                          <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => markReturned(c)}>
                             <Undo2 className="size-3" /> Returned
                           </Button>
                         )}
@@ -149,6 +148,50 @@ export function AgentCoversPage() {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Phone: one card per cover. */}
+        <div className="min-h-0 flex-1 space-y-2 overflow-auto p-2 sm:hidden">
+          {isLoading ? (
+            <div className="py-10 text-center"><Loader2 className="text-muted-foreground mx-auto size-5 animate-spin" /></div>
+          ) : !rows.length ? (
+            <p className="text-muted-foreground py-10 text-center text-[13px] font-medium">Nothing recorded.</p>
+          ) : (
+            rows.map((c) => {
+              const partyPaid = c.partyStillOwes != null && c.partyStillOwes <= 0.5;
+              return (
+                <div key={c.id} className={cn('rounded-lg border border-amber-200/70 bg-amber-50/40 p-2.5 dark:bg-transparent', c.status !== 'OPEN' && 'opacity-60')}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-semibold">{c.agentName}</p>
+                      <p className="text-[12px]">{c.customerName}</p>
+                      <p className="text-muted-foreground text-[11.5px]">
+                        <span className="font-mono">{c.invNo || '—'}</span> · {formatDate(c.coveredAt)} · {MODE_LABEL[c.mode] ?? c.mode}
+                      </p>
+                    </div>
+                    <span className="shrink-0 text-[15px] font-bold tabular-nums">{inr(c.amount)}</span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px]">
+                    <span className={cn('rounded-full px-1.5 py-0.5 text-[10px] font-bold ring-1 ring-inset',
+                      c.status === 'OPEN' ? 'bg-amber-50 text-amber-700 ring-amber-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200')}>
+                      {c.status}
+                    </span>
+                    <span className="text-muted-foreground">Party still owes:</span>
+                    {c.partyStillOwes == null ? <span className="text-muted-foreground">—</span>
+                      : partyPaid ? <span className="font-bold text-emerald-700">nil</span>
+                      : <span className="font-semibold text-rose-700 tabular-nums">{inr(c.partyStillOwes)}</span>}
+                    {c.status === 'OPEN' && partyPaid && <span className="text-[10px] font-bold text-emerald-700">refund due</span>}
+                  </div>
+                  {c.status === 'OPEN' && can('agentcommission:update') && (
+                    <Button variant="outline" size="sm" className="mt-2 h-8 w-full text-[12px]" onClick={() => markReturned(c)}>
+                      <Undo2 className="size-3.5" /> Mark returned
+                    </Button>
+                  )}
+                  {c.status === 'RECOVERED' && c.recoveredVia && <p className="text-muted-foreground mt-1 text-[10.5px]">{c.recoveredVia}</p>}
+                </div>
+              );
+            })
+          )}
         </div>
       </div>
 

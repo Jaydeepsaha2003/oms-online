@@ -229,7 +229,79 @@ export function CommissionRatesPage() {
               <p>Once invoices exist for parties with an agent, every category they sell appears here to be priced.</p>
             </div>
           ) : (
-            <table className="w-full border-collapse text-[12.5px]">
+            <>
+            {/* Phone: one card per agent × category pairing. */}
+            <div className="space-y-2 p-2 sm:hidden">
+              {shown.map((r, i) => {
+                const unit = r.basis ?? r.suggestedBasis;
+                const open = canEdit
+                  ? () => setEditing({ agentId: r.agentId, agentName: r.agentName, pCategory: r.pCategory, basis: r.basis ?? r.suggestedBasis ?? 'KGS' })
+                  : undefined;
+                return (
+                  <div
+                    key={`m-${r.agentId}|${r.pCategory}`}
+                    onClick={open}
+                    className={cn(
+                      'rounded-lg border p-2.5',
+                      r.gap ? 'border-rose-200 bg-rose-50/70 dark:bg-rose-500/10' : 'bg-card',
+                      open && 'cursor-pointer',
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-[13px] font-bold">{r.agentName}</p>
+                        <p className="text-[12px] font-semibold">{r.pCategory}</p>
+                      </div>
+                      {r.gap ? (
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-700 ring-1 ring-inset ring-rose-300 dark:bg-rose-500/20 dark:text-rose-300">
+                          <TriangleAlert className="size-3" /> NOT SET
+                        </span>
+                      ) : (
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300">
+                          PRICED
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                      {r.ratePerUnit == null ? (
+                        <span className="text-muted-foreground text-[13px]">No rate set</span>
+                      ) : (
+                        <span className="text-[15px] font-bold text-emerald-700 tabular-nums dark:text-emerald-400">
+                          ₹{r.ratePerUnit}
+                          <span className="text-muted-foreground text-[11px] font-normal">/{basisUnit(r.basis ?? 'KGS')}</span>
+                        </span>
+                      )}
+                      {r.addToRate && (
+                        <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                          <Receipt className="size-2.5" /> in rate
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-muted-foreground mt-1 text-[11.5px] tabular-nums">
+                      {num(r.invoiceCount)} invoice{r.invoiceCount === 1 ? '' : 's'}
+                      {unit ? ` · ${num(unit === 'PCS' ? r.pcs : r.kgs)} ${basisUnit(unit)}` : ''}
+                      {r.lastInvoiceDate ? ` · last ${formatDate(r.lastInvoiceDate)}` : ''}
+                    </p>
+                    {canEdit && (
+                      <Button
+                        variant={r.gap ? 'default' : 'outline'}
+                        size="sm"
+                        className="mt-2 h-8 w-full text-[12.5px]"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          open?.();
+                        }}
+                      >
+                        {r.gap ? <Plus className="size-3.5" /> : <Pencil className="size-3.5" />}
+                        {r.gap ? 'Set rate' : 'Edit rate'}
+                      </Button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <table className="hidden w-full border-collapse text-[12.5px] sm:table">
               <thead className="sticky top-0 z-20">
                 <tr>
                   <th className={cn(RTH, 'w-10 text-center')}>#</th>
@@ -358,6 +430,7 @@ export function CommissionRatesPage() {
                 </tr>
               </tfoot>
             </table>
+            </>
           )}
         </div>
 

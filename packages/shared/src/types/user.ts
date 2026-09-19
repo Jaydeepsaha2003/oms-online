@@ -31,6 +31,8 @@ export interface UserDto {
   name: string;
   status: UserStatus;
   roles: { id: string; name: string; label: string }[];
+  /** Whether this user account has a quick sign-in PIN configured. */
+  hasPin?: boolean;
   lastLoginAt?: string | null;
   /**
    * When this user last DID something (their most recent audit entry), as
@@ -64,6 +66,8 @@ export interface CreateUserDto {
   email: string;
   name: string;
   password: string;
+  /** Optional 4-6 digit numeric PIN for quick login. */
+  pin?: string;
   roleIds: string[];
   status?: UserStatus;
 }
@@ -72,6 +76,11 @@ export interface UpdateUserDto {
   name?: string;
   status?: UserStatus;
   roleIds?: string[];
+}
+
+export interface SetUserPinDto {
+  /** 4-6 digit numeric PIN, or null/empty string to remove PIN. */
+  pin?: string | null;
 }
 
 export interface CreateRoleDto {

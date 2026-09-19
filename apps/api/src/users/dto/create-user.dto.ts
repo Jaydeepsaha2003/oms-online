@@ -1,4 +1,4 @@
-import { ArrayNotEmpty, IsArray, IsEmail, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { ArrayNotEmpty, IsArray, IsEmail, IsIn, IsOptional, IsString, Matches, MinLength } from 'class-validator';
 import type { UserStatus } from '@oms/shared';
 
 export class CreateUserDto {
@@ -12,6 +12,10 @@ export class CreateUserDto {
   @IsString()
   @MinLength(8)
   password!: string;
+
+  @IsOptional()
+  @Matches(/^\d{4,6}$/, { message: 'PIN must be 4 to 6 digits.' })
+  pin?: string;
 
   @IsArray()
   @ArrayNotEmpty()

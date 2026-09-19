@@ -253,7 +253,8 @@ export function AgentSettlementPage() {
       <div className="grid min-h-0 flex-1 gap-2.5 lg:grid-cols-[1fr_20rem]">
         {/* ── Eligible invoices ───────────────────────────────────────────── */}
         <div className="bg-card flex min-h-0 flex-col overflow-hidden rounded-[4px] border shadow-sm">
-          <div className="overflow-auto">
+          {/* Desktop: the dense table. Phones get the stacked cards below. */}
+          <div className="hidden overflow-auto sm:block">
             <table className="w-full border-collapse">
               <thead className="sticky top-0 z-10">
                 <tr>
@@ -335,6 +336,78 @@ export function AgentSettlementPage() {
                 )}
               </tbody>
             </table>
+          </div>
+
+          {/* Phone: one card per payable line — no sideways scrolling. */}
+          <div className="space-y-2 overflow-auto p-2 sm:hidden">
+            {!agentId ? (
+              <p className="text-muted-foreground py-10 text-center text-[13px] font-medium">Choose an agent to see what is payable.</p>
+            ) : isLoading ? (
+              <div className="py-10 text-center"><Loader2 className="text-muted-foreground mx-auto size-5 animate-spin" /></div>
+            ) : !lines.length ? (
+              <p className="text-muted-foreground py-10 text-center text-[13px] font-medium">
+                Nothing payable in this period — commission is only earned once the party has actually paid.
+              </p>
+            ) : (
+              lines.map((l) => {
+                const k = keyOf(l.invNo, l.pCategory);
+                const changed = l.appliedRatePerUnit !== l.baseRatePerUnit;
+                const late = (l.overdueDays ?? 0) > 0;
+                return (
+                  <div key={k} className={cn('rounded-lg border border-amber-200/70 p-2.5', changed ? 'bg-sky-50 dark:bg-sky-950/40' : 'bg-amber-50/40 dark:bg-transparent')}>
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="font-mono text-[13px] font-bold">
+                        {l.invNo}
+                        {l.isTopUp && (
+                          <span className="ml-1.5 rounded-full bg-violet-50 px-1.5 py-0.5 font-sans text-[10px] font-bold text-violet-700 ring-1 ring-inset ring-violet-200">balance</span>
+                        )}
+                      </span>
+                      <span className="text-[15px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{inr(l.amount)}</span>
+                    </div>
+                    <p className="mt-0.5 text-[13px] font-semibold">{l.customerName}</p>
+                    <p className="text-muted-foreground text-[12px]">{l.pCategory}</p>
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-[12px]">
+                      <div>
+                        <span className="text-muted-foreground text-[10px] font-bold uppercase tracking-wide">Qty</span>
+                        <p className="tabular-nums">
+                          <span className="font-bold text-slate-800 dark:text-slate-100">{l.qty.toLocaleString('en-IN')}</span>
+                          <span className="text-muted-foreground ml-0.5 text-[10px]">{basisUnit(l.basis)}</span>
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground text-[10px] font-bold uppercase tracking-wide">Collected</span>
+                        <p className="tabular-nums">
+                          <span className={cn('font-semibold', l.paidRatio >= 0.999 ? 'text-emerald-700' : 'text-amber-700')}>{(l.paidRatio * 100).toFixed(0)}%</span>
+                          <span className="ml-1 font-bold text-slate-800 dark:text-slate-100">{inr(l.paidAmount)}</span>
+                          {late && <span className="ml-1 text-[10px] font-bold text-rose-600">{l.overdueDays}d late</span>}
+                        </p>
+                      </div>
+                    </div>
+                    {l.isTopUp && (
+                      <p className="mt-1 text-[10px] font-medium text-violet-700">
+                        a further {(l.paidRatio * 100).toFixed(0)}% — {((l.previouslySettledRatio ?? 0) * 100).toFixed(0)}% already paid
+                        {l.previouslySettledAmount ? ` (${inr(l.previouslySettledAmount)})` : ''}
+                      </p>
+                    )}
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="text-muted-foreground text-[10px] font-bold uppercase tracking-wide">Rate ₹/{basisUnit(l.basis)}</span>
+                      <Input
+                        type="number"
+                        step="any"
+                        min={0}
+                        className="h-8 w-24 text-right text-[13px] font-bold tabular-nums"
+                        value={l.appliedRatePerUnit}
+                        onChange={(e) => {
+                          const rate = Number(e.target.value);
+                          setOverrides((o) => ({ ...o, [k]: { rate: Number.isFinite(rate) ? rate : 0, reason: o[k]?.reason ?? '' } }));
+                        }}
+                      />
+                      {changed && <span className="text-[10px] text-sky-700">was ₹{l.baseRatePerUnit}</span>}
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
 

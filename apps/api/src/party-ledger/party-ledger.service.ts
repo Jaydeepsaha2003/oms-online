@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
-import { payBucketOf } from '@oms/shared';
+import { classifyDueType, payBucketOf } from '@oms/shared';
 import type {
   DueFromBasis,
   DueFromCalc,
@@ -287,7 +287,7 @@ export class PartyLedgerService {
     const [ccDr, ccCr] = split(closingCashNet);
 
     // ── 5) KPIs ───────────────────────────────────────────────────────────────
-    const kpis = await this.computeKpis(rows, pending, custIds, scope, q.customerId ?? null, mode, from, toExclusive);
+    const kpis = await this.computeKpis(pending, custIds, scope, q.customerId ?? null, mode, from, toExclusive);
 
     // Derived BEFORE the voucher-type filter, so picking one type doesn't collapse
     // the dropdown to that single option and strand the user on it.
@@ -755,7 +755,6 @@ export class PartyLedgerService {
   /* ── KPIs ────────────────────────────────────────────────────────────────── */
 
   private async computeKpis(
-    rows: PartyLedgerRow[],
     pending: Map<string, PendingInvoice>,
     custIds: number[] | null,
     scope: 'CUSTOMER' | 'AGENT' | 'ALL',
@@ -766,37 +765,29 @@ export class PartyLedgerService {
     from: Date,
     toExclusive: Date,
   ): Promise<PartyLedgerKpis> {
-    // Ageing buckets use the remaining balance for the selected Bank/Cash mode,
-    // not the invoice's original value (which overstates partially-paid bills).
+    /*
+     * Ageing buckets over the party's WHOLE open position, not the vouchers on
+     * screen — exactly like "Inv due from" below, and for the same reason: the
+     * ledger defaults to the current financial year, and an unpaid bill raised
+     * before it must not vanish from these totals (that is what made the same
+     * party read a lower overdue here than on Receive Payment). The balance used
+     * is the remaining amount for the selected Bank/Cash mode, and each bill is
+     * aged with the one shared rule so both screens agree on the split.
+     */
     const over = { amount: 0, count: 0 };
     const past = { amount: 0, count: 0 };
     const normal = { amount: 0, count: 0 };
-    for (const r of rows) {
-      const vt = r.voucherType.toUpperCase();
-      if (vt !== 'SALES INVOICE' && vt !== 'DEBIT NOTE') continue;
-      if (r.status === 'F') continue;
-      const info = pending.get(r.voucherNo);
-      const amt = info
-        ? Math.max(0, mode === 'B' ? info.bankBal : mode === 'C' ? info.cashBal : info.bankBal + info.cashBal)
-        : r.pendingAmount;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const inScope = custIds ? new Set(custIds) : null;
+    for (const inv of pending.values()) {
+      if (inScope && (inv.customerId == null || !inScope.has(inv.customerId))) continue;
+      const amt = Math.max(0, mode === 'B' ? inv.bankBal : mode === 'C' ? inv.cashBal : inv.bankBal + inv.cashBal);
       if (amt <= EPS) continue;
-      const due = r.dueFrom.trim();
-      if (/Over/i.test(due)) {
-        over.amount += amt;
-        over.count += 1;
-      } else if (/^Due Today$/i.test(due)) {
-        past.amount += amt;
-        past.count += 1;
-      } else {
-        const days = parseInt(due, 10) || 0;
-        if (days <= 15) {
-          past.amount += amt;
-          past.count += 1;
-        } else {
-          normal.amount += amt;
-          normal.count += 1;
-        }
-      }
+      const bucket = classifyDueType(inv.invDate, inv.dueDate, today);
+      const target = bucket === 'OVERDUE' ? over : bucket === 'PAST DUE' ? past : normal;
+      target.amount += amt;
+      target.count += 1;
     }
 
     const oldest = this.oldestUnpaid(pending, custIds, scope);

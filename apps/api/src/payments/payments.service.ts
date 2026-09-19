@@ -17,6 +17,7 @@ import {
   type OpeningPendingRow,
   type SavePaymentResult,
   type PayBucket,
+  classifyDueType,
   payBucketOf,
   payByFor,
 } from '@oms/shared';
@@ -38,17 +39,14 @@ function parseDay(s: string | undefined, label: string): Date {
   return d;
 }
 
-/** Legacy DUE TYPE: due date crossed = OVERDUE; more than half the credit term
- *  left = NORMAL; otherwise PAST DUE. */
+/** DUE TYPE (shared canonical rule) + the legacy DUE DAYS text. The bucket now
+ *  comes from `classifyDueType` so this screen and the Party Ledger can never
+ *  drift apart on what counts as overdue / past due / normal. */
 function dueTypeOf(invDate: Date, dueDate: Date | null, today: Date): { dueType: DueType; dueDays: string } {
   if (!dueDate) return { dueType: 'NORMAL', dueDays: '—' };
-  const day = 86_400_000;
-  const daysLeft = Math.round((dueDate.getTime() - today.getTime()) / day);
-  const termDays = Math.round((dueDate.getTime() - invDate.getTime()) / day);
+  const daysLeft = Math.round((dueDate.getTime() - today.getTime()) / 86_400_000);
   const dueDays = daysLeft > 0 ? `${daysLeft} LEFT` : daysLeft === 0 ? 'TODAY' : `${Math.abs(daysLeft)} OVER`;
-  if (daysLeft <= 0) return { dueType: 'OVERDUE', dueDays };
-  if (termDays <= 0) return { dueType: 'NORMAL', dueDays };
-  return { dueType: daysLeft / termDays > 0.5 ? 'NORMAL' : 'PAST DUE', dueDays };
+  return { dueType: classifyDueType(invDate, dueDate, today), dueDays };
 }
 
 /** The prisma delegate set usable both from the service root and inside $transaction. */

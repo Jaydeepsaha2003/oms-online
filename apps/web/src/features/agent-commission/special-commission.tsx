@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { FlaskConical, Loader2, Plus, Receipt, Search, Sparkles } from 'lucide-react';
+import { FlaskConical, Loader2, Plus, Receipt, Search, Sparkles, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   basisUnit,
@@ -624,6 +624,47 @@ export function SpecialCommissionPanel() {
             dense
             emptyText="No special rates yet — every line prices at the agent's base rate."
             actions={canEdit ? deleteAction(remove) : undefined}
+            mobileCard={(r) => (
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 space-y-1">
+                  <p className="text-[13px] font-semibold">{r.agentName}</p>
+                  <p className="flex flex-wrap items-center gap-1.5 text-[12px]">
+                    <ScopeChip scope={r.scope} />
+                    <span className="font-medium">{describe(r)}</span>
+                  </p>
+                  <p className="flex flex-wrap items-center gap-1.5 text-[12px]">
+                    {r.customerName ?? <span className="text-muted-foreground">All parties</span>}
+                    {r.addToRate && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                        <Receipt className="size-2.5" /> in rate
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-muted-foreground text-[11.5px] tabular-nums">
+                    From {formatDate(r.effectiveFrom)}
+                    {!r.current && <span className="ml-1 text-[10px] font-bold uppercase">replaced</span>}
+                    {r.note ? ` · ${r.note}` : ''}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <span className="text-[14px] font-bold tabular-nums">
+                    ₹{r.ratePerUnit}
+                    <span className="text-muted-foreground text-[10px]">/{basisUnit(r.basis)}</span>
+                  </span>
+                  {canEdit && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-destructive hover:text-destructive size-8"
+                      onClick={() => remove(r)}
+                      aria-label="Remove"
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
           />
         )}
       </Panel>
