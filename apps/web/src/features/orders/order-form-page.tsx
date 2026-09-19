@@ -22,6 +22,7 @@ import {
   type LucideIcon,
   ChevronDown,
   ChevronUp,
+  Eraser,
   FilePen,
   FileText,
   History,
@@ -1734,6 +1735,32 @@ export function OrderFormPage() {
     setEntry((e) => ({ ...blankEntry(), ordType: e.ordType, priority: e.priority }));
   };
 
+  /** Empty the entry row without adding it — for a line started and then thought
+   *  better of. Keeps order type / priority like the reset after an Add, drops
+   *  the "rate just changed" note, and returns focus to Item name. */
+  const clearEntry = () => {
+    pcsBeforeBoxRef.current = null;
+    pricedRef.current = null;
+    setRepriced(null);
+    setEntry((e) => ({ ...blankEntry(), ordType: e.ordType, priority: e.priority }));
+    requestAnimationFrame(() => focusField(formRef.current, 'itemName'));
+  };
+
+  /** Whether the entry row holds anything worth clearing — so the Clear control
+   *  is dark only when it would actually do something. */
+  const entryDirty =
+    !!rawEntry.itemName ||
+    !!rawEntry.product ||
+    !!rawEntry.productRate ||
+    !!rawEntry.designRate ||
+    !!rawEntry.designName ||
+    !!rawEntry.bags ||
+    !!rawEntry.pcs ||
+    !!rawEntry.gram ||
+    !!rawEntry.box ||
+    !!rawEntry.comment ||
+    (rawEntry.photos?.length ?? 0) > 0;
+
   const removeItem = (key: string) => {
     setItems((its) => its.filter((i) => i.key !== key));
     if (editingItemKey === key) cancelItemEdit();
@@ -3061,6 +3088,20 @@ export function OrderFormPage() {
                     title={noCustomer ? 'Select a customer first' : 'Add item (Alt+A or Ctrl+A)'}
                   >
                     <Plus /> Add
+                  </Button>
+                  {/* Empty the row without adding it. Sits right of Add, matching
+                      the Update/Cancel pair shown while editing. */}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={clearEntry}
+                    disabled={!entryDirty}
+                    aria-label="Clear the item fields"
+                    title="Clear the item fields"
+                    className="border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-500/40 dark:text-red-400 dark:hover:bg-red-500/10 dark:hover:text-red-300"
+                  >
+                    <Eraser className="size-4" />
                   </Button>
                 </div>
               )}
