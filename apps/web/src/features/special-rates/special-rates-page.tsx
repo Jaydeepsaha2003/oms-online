@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { BadgePercent, Ban, ListFilter, Package, Palette, Plus, Search, Trash2, Users, UsersRound, Weight } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { BadgePercent, Ban, ListFilter, Package, Palette, Pencil, Plus, Search, Trash2, Users, UsersRound, Weight, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
   AgentCustomer,
@@ -38,7 +38,7 @@ import {
   useSpecialRateLookups,
 } from './use-special-rates';
 import { SpecialRatesMaster } from './special-rates-master';
-import { ACCENTS, AddButton, deleteAction, LevelButtons, Panel, type Accent } from '@/components/common/rate-panel';
+import { ACCENTS, AddButton, editDeleteAction, LevelButtons, Panel, type Accent } from '@/components/common/rate-panel';
 
 const RATE_LEVELS: { value: RateScope; label: string; title: string }[] = [
   { value: 'CATEGORY', label: 'Whole category', title: 'Apply this rate to every item in the chosen category.' },
@@ -319,6 +319,8 @@ function RatePanel({
   const [subCategory, setSubCategory] = useState('');
   const [item, setItem] = useState('');
   const [rate, setRate] = useState('');
+  const [editing, setEditing] = useState(false);
+  const formRef = useRef<HTMLDivElement>(null);
 
   const categories = lookups?.categories ?? [];
   const subOptions = useMemo(() => [...new Set((lookups?.subCategories ?? []).filter((s) => s.category === category).map((s) => s.subCategory))], [lookups, category]);
@@ -336,6 +338,23 @@ function RatePanel({
     setSubCategory('');
     setItem('');
     setRate('');
+    setEditing(false);
+  };
+
+  /**
+   * Load a row back into the form for editing. Saving upserts on the same scope
+   * key (level + category + sub-category + item), so re-saving the same scope
+   * replaces this very row; the fields are set directly (not via the cascading
+   * onChange handlers) so nothing is cleared on the way in.
+   */
+  const beginEdit = (r: CustomerRateDto) => {
+    setScope(r.scope);
+    setCategory(r.category);
+    setSubCategory(r.subCategory ?? '');
+    setItem(r.target ?? '');
+    setRate(String(r.rate));
+    setEditing(true);
+    requestAnimationFrame(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
   };
 
   const submit = () => {
@@ -398,7 +417,17 @@ function RatePanel({
       badge={bulk ? `${targetCount(target)} customers` : `${rates.length} set`}
     >
       {canCreate && (
-        <div className="space-y-3 rounded-lg border bg-slate-50/70 p-3">
+        <div ref={formRef} className={cn('space-y-3 rounded-lg border bg-slate-50/70 p-3', editing && cn('ring-2', accent.ring))}>
+          {editing && (
+            <div className="flex items-center justify-between rounded-md bg-white px-2.5 py-1.5 text-xs font-medium">
+              <span className={cn('inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 font-semibold', accent.chip)}>
+                <Pencil className="size-3" /> Editing override
+              </span>
+              <button type="button" onClick={reset} className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1">
+                <X className="size-3.5" /> Cancel
+              </button>
+            </div>
+          )}
           <LevelButtons
             levels={RATE_LEVELS}
             value={scope}
@@ -437,7 +466,7 @@ function RatePanel({
             disabled={save.isPending || bulkSave.isPending}
             title={bulk ? 'Apply this override to every selected customer' : 'Save this override for the customer (adds a new one, or updates the matching level)'}
           >
-            <Plus className="size-4" /> {bulk ? `Apply to ${targetCount(target)} customer(s)` : 'Add / update'}
+            <Plus className="size-4" /> {bulk ? `Apply to ${targetCount(target)} customer(s)` : editing ? 'Save changes' : 'Add / update'}
           </AddButton>
         </div>
       )}
@@ -453,7 +482,8 @@ function RatePanel({
           rowKey={(r) => r.id}
           dense
           emptyText="No overrides yet."
-          actions={canDelete ? deleteAction(onDelete) : undefined}
+          onRowDoubleClick={canCreate ? beginEdit : undefined}
+          actions={canCreate || canDelete ? editDeleteAction(canCreate ? beginEdit : undefined, canDelete ? onDelete : undefined) : undefined}
           // Phones: the desktop table's Level/Category/Sub-cat/Item/Δ columns don't
           // fit — the Actions column ran off screen entirely, so a delete needed a
           // horizontal scroll to even find. A card states the same thing in one read.
@@ -473,6 +503,17 @@ function RatePanel({
                 <span className={cn('text-sm font-bold tabular-nums', r.rate > 0 ? 'text-emerald-600' : r.rate < 0 ? 'text-rose-600' : '')}>
                   {signed(r.rate)}
                 </span>
+                {canCreate && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-muted-foreground hover:text-foreground size-8"
+                    onClick={() => beginEdit(r)}
+                    aria-label="Edit"
+                  >
+                    <Pencil className="size-4" />
+                  </Button>
+                )}
                 {canDelete && (
                   <Button
                     variant="ghost"
@@ -520,10 +561,26 @@ function LogoPanel({
   const [scope, setScope] = useState<LogoScope>('CATEGORY');
   const [category, setCategory] = useState('');
   const [subCategory, setSubCategory] = useState('');
+  const [editing, setEditing] = useState(false);
+  const formRef = useRef<HTMLDivElement>(null);
 
   const categories = lookups?.categories ?? [];
   const subOptions = useMemo(() => [...new Set((lookups?.subCategories ?? []).filter((s) => s.category === category).map((s) => s.subCategory))], [lookups, category]);
   const needSub = scope === 'SUBCATEGORY';
+
+  const reset = () => {
+    setCategory('');
+    setSubCategory('');
+    setEditing(false);
+  };
+  /** Load a restriction back into the form; re-saving the same scope replaces it. */
+  const beginEdit = (r: CustomerLogoDto) => {
+    setScope(r.scope);
+    setCategory(r.category);
+    setSubCategory(r.subCategory ?? '');
+    setEditing(true);
+    requestAnimationFrame(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+  };
 
   const submit = () => {
     if (!category) return toast.error('Select a category');
@@ -531,8 +588,7 @@ function LogoPanel({
     const common = { scope, category, subCategory: needSub ? subCategory : undefined };
     const onSuccess = (msg: string) => {
       toast.success(msg);
-      setCategory('');
-      setSubCategory('');
+      reset();
     };
     const onError = (e: unknown) => toast.error(getApiErrorMessage(e, 'Save failed'));
     if (bulk) {
@@ -580,7 +636,17 @@ function LogoPanel({
       className={className}
     >
       {canCreate && (
-        <div className="space-y-3 rounded-lg border bg-slate-50/70 p-3">
+        <div ref={formRef} className={cn('space-y-3 rounded-lg border bg-slate-50/70 p-3', editing && cn('ring-2', accent.ring))}>
+          {editing && (
+            <div className="flex items-center justify-between rounded-md bg-white px-2.5 py-1.5 text-xs font-medium">
+              <span className={cn('inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 font-semibold', accent.chip)}>
+                <Pencil className="size-3" /> Editing restriction
+              </span>
+              <button type="button" onClick={reset} className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1">
+                <X className="size-3.5" /> Cancel
+              </button>
+            </div>
+          )}
           <LevelButtons levels={LOGO_LEVELS} value={scope} accent={accent} onChange={(v) => { setScope(v); if (v === 'CATEGORY') setSubCategory(''); }} />
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="space-y-1">
@@ -598,7 +664,7 @@ function LogoPanel({
                 disabled={save.isPending || bulkSave.isPending}
                 title={bulk ? 'Block the logo for every selected customer' : "Block the logo for this category/sub-category — logo items won't appear in this customer's order"}
               >
-                <Ban className="size-4" /> {bulk ? `Block for ${targetCount(target)}` : 'Block logo'}
+                <Ban className="size-4" /> {bulk ? `Block for ${targetCount(target)}` : editing ? 'Save changes' : 'Block logo'}
               </AddButton>
             </div>
           </div>
@@ -616,7 +682,8 @@ function LogoPanel({
           rowKey={(r) => r.id}
           dense
           emptyText="No logo restrictions — the logo is allowed everywhere."
-          actions={canDelete ? deleteAction(onDelete) : undefined}
+          onRowDoubleClick={canCreate ? beginEdit : undefined}
+          actions={canCreate || canDelete ? editDeleteAction(canCreate ? beginEdit : undefined, canDelete ? onDelete : undefined) : undefined}
           mobileCard={(r) => (
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 space-y-1">
@@ -631,17 +698,30 @@ function LogoPanel({
                   <Ban className="size-3" /> Not allowed
                 </span>
               </div>
-              {canDelete && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="text-destructive hover:text-destructive size-8 shrink-0"
-                  onClick={() => onDelete(r)}
-                  aria-label="Remove"
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              )}
+              <div className="flex shrink-0 items-center gap-1">
+                {canCreate && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-muted-foreground hover:text-foreground size-8"
+                    onClick={() => beginEdit(r)}
+                    aria-label="Edit"
+                  >
+                    <Pencil className="size-4" />
+                  </Button>
+                )}
+                {canDelete && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-destructive hover:text-destructive size-8"
+                    onClick={() => onDelete(r)}
+                    aria-label="Remove"
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                )}
+              </div>
             </div>
           )}
         />
@@ -677,7 +757,24 @@ function BagWeightPanel({
   const [category, setCategory] = useState('');
   const [kgsPerBag, setKgsPerBag] = useState('');
   const [maxBags, setMaxBags] = useState('');
+  const [editing, setEditing] = useState(false);
+  const formRef = useRef<HTMLDivElement>(null);
   const categories = lookups?.categories ?? [];
+
+  const reset = () => {
+    setCategory('');
+    setKgsPerBag('');
+    setMaxBags('');
+    setEditing(false);
+  };
+  /** Load a bag weight back into the form; re-saving the same category replaces it. */
+  const beginEdit = (r: CustomerBagWeightDto) => {
+    setCategory(r.category);
+    setKgsPerBag(String(r.kgsPerBag));
+    setMaxBags(r.maxBagsPerDispatch != null ? String(r.maxBagsPerDispatch) : '');
+    setEditing(true);
+    requestAnimationFrame(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+  };
 
   const submit = () => {
     if (!category) return toast.error('Select a category');
@@ -691,9 +788,7 @@ function BagWeightPanel({
     const common = { category, kgsPerBag: kg, maxBagsPerDispatch };
     const onSuccess = (msg: string) => {
       toast.success(msg);
-      setCategory('');
-      setKgsPerBag('');
-      setMaxBags('');
+      reset();
     };
     const onError = (e: unknown) => toast.error(getApiErrorMessage(e, 'Save failed'));
     if (bulk) {
@@ -747,7 +842,17 @@ function BagWeightPanel({
       className={className}
     >
       {canCreate && (
-        <div className="space-y-3 rounded-lg border bg-slate-50/70 p-3">
+        <div ref={formRef} className={cn('space-y-3 rounded-lg border bg-slate-50/70 p-3', editing && cn('ring-2', accent.ring))}>
+          {editing && (
+            <div className="flex items-center justify-between rounded-md bg-white px-2.5 py-1.5 text-xs font-medium">
+              <span className={cn('inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 font-semibold', accent.chip)}>
+                <Pencil className="size-3" /> Editing bag weight
+              </span>
+              <button type="button" onClick={reset} className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1">
+                <X className="size-3.5" /> Cancel
+              </button>
+            </div>
+          )}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
             <div className="space-y-1">
               <Label className="text-xs">Category</Label>
@@ -768,7 +873,7 @@ function BagWeightPanel({
                 disabled={save.isPending || bulkSave.isPending}
                 title={bulk ? 'Apply this bag weight to every selected customer' : 'Save the bag weight for this customer + category (updates if one exists)'}
               >
-                <Plus className="size-4" /> {bulk ? `Apply to ${targetCount(target)}` : 'Add / update'}
+                <Plus className="size-4" /> {bulk ? `Apply to ${targetCount(target)}` : editing ? 'Save changes' : 'Add / update'}
               </AddButton>
             </div>
           </div>
@@ -786,7 +891,8 @@ function BagWeightPanel({
           rowKey={(r) => r.id}
           dense
           emptyText="No bag weights — Kgs is typed manually for this customer."
-          actions={canDelete ? deleteAction(onDelete) : undefined}
+          onRowDoubleClick={canCreate ? beginEdit : undefined}
+          actions={canCreate || canDelete ? editDeleteAction(canCreate ? beginEdit : undefined, canDelete ? onDelete : undefined) : undefined}
           mobileCard={(r) => (
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 space-y-1">
@@ -804,17 +910,30 @@ function BagWeightPanel({
                   )}
                 </p>
               </div>
-              {canDelete && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="text-destructive hover:text-destructive size-8 shrink-0"
-                  onClick={() => onDelete(r)}
-                  aria-label="Remove"
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              )}
+              <div className="flex shrink-0 items-center gap-1">
+                {canCreate && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-muted-foreground hover:text-foreground size-8"
+                    onClick={() => beginEdit(r)}
+                    aria-label="Edit"
+                  >
+                    <Pencil className="size-4" />
+                  </Button>
+                )}
+                {canDelete && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-destructive hover:text-destructive size-8"
+                    onClick={() => onDelete(r)}
+                    aria-label="Remove"
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                )}
+              </div>
             </div>
           )}
         />

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Pencil, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { InfoTip } from '@/components/common/info-tip';
 import { Button } from '@/components/ui/button';
@@ -175,6 +175,42 @@ export const deleteAction =
       >
         <Trash2 className="size-4" />
       </Button>
+    </div>
+  );
+
+/**
+ * The trailing cell for lists that can be edited as well as deleted — an edit
+ * pencil ahead of the delete bin. Either action is optional (gated on the
+ * viewer's create / delete permission); pass neither and there is no cell.
+ */
+export const editDeleteAction =
+  <T extends { id: number }>(onEdit: ((r: T) => void) | undefined, onDelete: ((r: T) => void) | undefined) =>
+  (r: T) => (
+    <div className="flex justify-end gap-0.5">
+      {onEdit && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="text-muted-foreground hover:text-foreground size-8"
+          onClick={() => onEdit(r)}
+          aria-label="Edit"
+          title="Edit (or double-click the row)"
+        >
+          <Pencil className="size-4" />
+        </Button>
+      )}
+      {onDelete && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="text-destructive hover:text-destructive size-8"
+          onClick={() => onDelete(r)}
+          aria-label="Remove"
+          title="Remove"
+        >
+          <Trash2 className="size-4" />
+        </Button>
+      )}
     </div>
   );
 

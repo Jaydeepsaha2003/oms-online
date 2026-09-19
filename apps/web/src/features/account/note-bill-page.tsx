@@ -109,9 +109,10 @@ export function NoteBillPage() {
   const code = params.get('code') ?? '';
 
   const { data: note, isLoading } = useNote(mode, code);
-  const isCredit = mode === 'CREDIT';
-  const docTitle = isCredit ? 'CREDIT NOTE' : 'DEBIT NOTE';
-  const pageTitle = isCredit ? 'Credit Note' : 'Debit Note';
+  // Purchase vouchers print on the same credit-side layout as a credit note.
+  const isCredit = mode !== 'DEBIT';
+  const docTitle = mode === 'PURCHASE' ? 'PURCHASE VOUCHER' : mode === 'CREDIT' ? 'CREDIT NOTE' : 'DEBIT NOTE';
+  const pageTitle = mode === 'PURCHASE' ? 'Purchase Voucher' : mode === 'CREDIT' ? 'Credit Note' : 'Debit Note';
 
   // The challan's own terms list, so the two documents carry identical wording.
   const { data: termsData, isPending: termsPending } = useChallanTerms();

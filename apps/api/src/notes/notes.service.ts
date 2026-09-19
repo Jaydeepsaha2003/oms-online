@@ -27,6 +27,32 @@ const BANK = 'BANK';
 const CASH = 'CASH';
 type Db = Prisma.TransactionClient;
 
+/**
+ * CREDIT and PURCHASE are the same credit-side voucher stored in `credit_notes`;
+ * they differ only in these three constants. DEBIT is a different animal (it lives
+ * in `challan`) and is handled by its own branches, so it is not in this map.
+ *
+ *  - `prefix`     numbers the voucher (CN/<n> vs PUR/<n>) and tells the two apart
+ *                 inside the shared table.
+ *  - `ledgerType` the acctLedger.voucherType posted, so the ledger / daybook show
+ *                 a purchase as its own kind rather than as a credit note.
+ *  - `status`     the header status stored on the row.
+ */
+const CREDIT_LIKE = {
+  CREDIT: { prefix: 'CN', ledgerType: 'CREDIT NOTE', status: 'CREDIT NOTE' },
+  PURCHASE: { prefix: 'PUR', ledgerType: 'PURCHASE', status: 'PURCHASE' },
+} as const;
+
+/** Config for a credit-side mode, or throw if handed DEBIT by mistake. */
+function creditCfg(mode: NoteMode) {
+  const cfg = CREDIT_LIKE[mode as keyof typeof CREDIT_LIKE];
+  if (!cfg) throw new BadRequestException(`${mode} is not a credit-side note.`);
+  return cfg;
+}
+
+/** True for the credit-side modes (CREDIT, PURCHASE); false for DEBIT. */
+const isCreditLike = (mode: NoteMode) => mode !== 'DEBIT';
+
 /** transMode from the B/C split (GetTransModeFromBandC). */
 function transModeOf(b: number, c: number): string {
   if (b > 0 && c > 0) return 'BOTH';
@@ -122,11 +148,11 @@ export class NotesService {
   }
 
   private async computeNextNo(db: Db, mode: NoteMode): Promise<string> {
-    const prefix = mode === 'CREDIT' ? 'CN' : 'DN';
+    const prefix = mode === 'DEBIT' ? 'DN' : creditCfg(mode).prefix;
     const codes =
-      mode === 'CREDIT'
-        ? (await db.creditNote.findMany({ where: { code: { startsWith: 'CN/' } }, select: { code: true } })).map((r) => r.code)
-        : (await db.challan.findMany({ where: { code: { startsWith: 'DN/' } }, select: { code: true } })).map((r) => r.code);
+      mode === 'DEBIT'
+        ? (await db.challan.findMany({ where: { code: { startsWith: 'DN/' } }, select: { code: true } })).map((r) => r.code)
+        : (await db.creditNote.findMany({ where: { code: { startsWith: `${prefix}/` } }, select: { code: true } })).map((r) => r.code);
     let max = 0;
     for (const code of codes) {
       const n = parseInt(code.slice(code.indexOf('/') + 1), 10);
@@ -163,9 +189,11 @@ export class NotesService {
     };
 
     let items: NoteDirectoryRow[];
-    if (mode === 'CREDIT') {
+    if (isCreditLike(mode)) {
+      // Scope to this mode's prefix so Credit Notes and Purchase Vouchers — which
+      // share the table — never leak into each other's directory.
       const rows = await this.prisma.creditNote.findMany({
-        where: commonWhere as Prisma.CreditNoteWhereInput,
+        where: { ...(commonWhere as Prisma.CreditNoteWhereInput), prefix: creditCfg(mode).prefix },
         orderBy: [{ invDate: 'desc' }, { id: 'desc' }],
       });
       items = rows.map((r) => ({ mode, id: r.id, code: r.code, invDate: r.invDate.toISOString(), customerName: r.customerName, b: r.b ?? 0, c: r.c ?? 0, total: r.total ?? 0 }));
@@ -182,9 +210,9 @@ export class NotesService {
   /* ── Get one (for the editor) ──────────────────────────────────────────────── */
 
   async getOne(mode: NoteMode, code: string): Promise<NoteDto> {
-    if (mode === 'CREDIT') {
+    if (isCreditLike(mode)) {
       const cn = await this.prisma.creditNote.findUnique({ where: { code }, include: { items: { orderBy: { id: 'asc' } } } });
-      if (!cn) throw new NotFoundException('Credit Note not found.');
+      if (!cn) throw new NotFoundException(`${mode === 'PURCHASE' ? 'Purchase Voucher' : 'Credit Note'} not found.`);
       return {
         mode,
         id: cn.id,
@@ -349,15 +377,15 @@ export class NotesService {
     // Re-saving a credit note deletes and recreates its lines, which would
     // cascade away the `returnDispatchId` links and strand any reversal rows the
     // previous save created. Take them out first, while the links still exist.
-    if (mode === 'CREDIT' && dto.code?.trim()) await this.clearUndispatch(code);
+    if (isCreditLike(mode) && dto.code?.trim()) await this.clearUndispatch(code);
 
     await this.prisma.$transaction(async (tx) => {
-      if (mode === 'CREDIT') {
+      if (isCreditLike(mode)) {
         await tx.creditNote.deleteMany({ where: { code } });
         await tx.creditNote.create({
           data: {
             code,
-            prefix: 'CN',
+            prefix: creditCfg(mode).prefix,
             invDate,
             invTime: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
             customerId: dto.customerId,
@@ -383,7 +411,7 @@ export class NotesService {
             billingRate: dto.billingRate ?? null,
             bpcRate: dto.bpcRate ?? null,
             noBill: dto.noBill ?? false,
-            status: 'CREDIT NOTE',
+            status: creditCfg(mode).status,
             userName: userName ?? null,
             items: { create: itemData.map((d) => ({ ...d, refInvNo: null })) },
           },
@@ -439,22 +467,23 @@ export class NotesService {
 
     // 2) Accounting (each in its own transaction, mirroring the legacy post-commit calls).
     let clearance: NoteClearance | undefined;
-    if (mode === 'CREDIT') {
-      await this.reverseCreditNote(code);
-      clearance = await this.applyCreditNote(code, invDate, dto.customerId, dto.customerName, b, c, dto.items, userName ?? null);
+    if (isCreditLike(mode)) {
+      const ledgerType = creditCfg(mode).ledgerType;
+      await this.reverseCreditNote(code, ledgerType);
+      clearance = await this.applyCreditNote(code, invDate, dto.customerId, dto.customerName, b, c, dto.items, userName ?? null, ledgerType);
     } else {
       await this.insertDebitNoteLedger(code, invDate, dto.customerId, dto.customerName, b, c, dto.items, userName ?? null);
     }
 
-    // 3) "Undispatched" — credit notes only. The previous run's reversals were
+    // 3) "Undispatched" — credit-side notes only. The previous run's reversals were
     //    already removed BEFORE the header was recreated (see above), so this
     //    only has to apply the current choice.
     let undispatched: SaveNoteResult['undispatched'];
-    if (mode === 'CREDIT' && dto.markUndispatched) {
+    if (isCreditLike(mode) && dto.markUndispatched) {
       undispatched = await this.applyUndispatch(code, userName ?? null);
     }
 
-    const saved = mode === 'CREDIT' ? await this.prisma.creditNote.findUnique({ where: { code } }) : await this.prisma.challan.findUnique({ where: { code } });
+    const saved = isCreditLike(mode) ? await this.prisma.creditNote.findUnique({ where: { code } }) : await this.prisma.challan.findUnique({ where: { code } });
     return {
       mode,
       id: saved?.id ?? 0,
@@ -588,10 +617,10 @@ export class NotesService {
   /* ── Delete (+ reverse all accounting) ─────────────────────────────────────── */
 
   async remove(mode: NoteMode, code: string): Promise<void> {
-    if (mode === 'CREDIT') {
+    if (isCreditLike(mode)) {
       const cn = await this.prisma.creditNote.findUnique({ where: { code } });
-      if (!cn) throw new NotFoundException('Credit Note not found.');
-      await this.reverseCreditNote(code);
+      if (!cn) throw new NotFoundException(`${mode === 'PURCHASE' ? 'Purchase Voucher' : 'Credit Note'} not found.`);
+      await this.reverseCreditNote(code, creditCfg(mode).ledgerType);
       // Any quantity this note put back in the pending pool has to come out
       // again — the return is only true for as long as the note exists. Runs
       // before the delete, while the links are still there.
@@ -689,11 +718,11 @@ export class NotesService {
 
   /* ── CREDIT NOTE posting ───────────────────────────────────────────────────── */
 
-  private async reverseCreditNote(code: string): Promise<void> {
+  private async reverseCreditNote(code: string, ledgerType = 'CREDIT NOTE'): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
       await tx.acctPaymentReceipt.deleteMany({ where: { refRecId: code } });
       await tx.acctPartyAdvance.deleteMany({ where: { refRecId: code } });
-      await tx.acctLedger.deleteMany({ where: { voucherNo: code, voucherType: 'CREDIT NOTE' } });
+      await tx.acctLedger.deleteMany({ where: { voucherNo: code, voucherType: ledgerType } });
       await tx.acctOpeningTrans.deleteMany({ where: { refRecId: code, kind: 'CLEARANCE' } });
     });
   }
@@ -707,12 +736,14 @@ export class NotesService {
     cAmt: number,
     items: SaveNoteDto['items'],
     userName: string | null,
+    ledgerType = 'CREDIT NOTE',
   ): Promise<NoteClearance | undefined> {
     if (bAmt <= 0 && cAmt <= 0) return undefined;
     const { payBy, agentName } = await this.readPayBy(custId);
 
     return await this.prisma.$transaction(async (tx) => {
-      // 1) Ledger: CREDIT NOTE = credit side (SALES RETURN).
+      // 1) Ledger: credit side. A credit note reads as SALES RETURN; a purchase
+      //    voucher as PURCHASE — same posting, its own name in the ledger.
       await tx.acctLedger.create({
         data: {
           voucherNo: code,
@@ -720,8 +751,8 @@ export class NotesService {
           customerName: custName,
           custId,
           agentName: payBy === 'AGENT' ? agentName : null,
-          particulars: `SALES RETURN (${items.length} ITEMS)`,
-          voucherType: 'CREDIT NOTE',
+          particulars: `${ledgerType === 'PURCHASE' ? 'PURCHASE' : 'SALES RETURN'} (${items.length} ITEMS)`,
+          voucherType: ledgerType,
           transMode: transModeOf(bAmt, cAmt),
           bankDebit: 0,
           cashDebit: 0,
@@ -762,7 +793,7 @@ export class NotesService {
             const use = r2(Math.min(bankLeft, target.bankBal));
             receiptId ??= await this.nextRefId(tx, 'REC', cnDate);
             await tx.acctPaymentReceipt.create({
-              data: { refId: receiptId, recDate: cnDate, invNo: target.invNo, customerName: custName, custId, recType: 'CREDIT NOTE', recAmt: use, payMode: BANK, refRecId: code },
+              data: { refId: receiptId, recDate: cnDate, invNo: target.invNo, customerName: custName, custId, recType: ledgerType, recAmt: use, payMode: BANK, refRecId: code },
             });
             bankLeft = r2(bankLeft - use);
             // Mutate the row so the FIFO pass below cannot spend it twice.
@@ -773,7 +804,7 @@ export class NotesService {
             const use = r2(Math.min(cashLeft, target.cashBal));
             receiptId ??= await this.nextRefId(tx, 'REC', cnDate);
             await tx.acctPaymentReceipt.create({
-              data: { refId: receiptId, recDate: cnDate, invNo: target.invNo, customerName: custName, custId, recType: 'CREDIT NOTE', recAmt: use, payMode: CASH, refRecId: code },
+              data: { refId: receiptId, recDate: cnDate, invNo: target.invNo, customerName: custName, custId, recType: ledgerType, recAmt: use, payMode: CASH, refRecId: code },
             });
             cashLeft = r2(cashLeft - use);
             target.cashBal = r2(target.cashBal - use);
@@ -811,7 +842,7 @@ export class NotesService {
           const use = r2(Math.min(bankLeft, inv.bankBal));
           receiptId ??= await this.nextRefId(tx, 'REC', cnDate);
           await tx.acctPaymentReceipt.create({
-            data: { refId: receiptId, recDate: cnDate, invNo: inv.invNo, customerName: custName, custId, recType: 'CREDIT NOTE', recAmt: use, payMode: BANK, refRecId: code },
+            data: { refId: receiptId, recDate: cnDate, invNo: inv.invNo, customerName: custName, custId, recType: ledgerType, recAmt: use, payMode: BANK, refRecId: code },
           });
           bankLeft = r2(bankLeft - use);
         }
@@ -819,7 +850,7 @@ export class NotesService {
           const use = r2(Math.min(cashLeft, inv.cashBal));
           receiptId ??= await this.nextRefId(tx, 'REC', cnDate);
           await tx.acctPaymentReceipt.create({
-            data: { refId: receiptId, recDate: cnDate, invNo: inv.invNo, customerName: custName, custId, recType: 'CREDIT NOTE', recAmt: use, payMode: CASH, refRecId: code },
+            data: { refId: receiptId, recDate: cnDate, invNo: inv.invNo, customerName: custName, custId, recType: ledgerType, recAmt: use, payMode: CASH, refRecId: code },
           });
           cashLeft = r2(cashLeft - use);
         }
@@ -860,7 +891,7 @@ export class NotesService {
             bankAmt: Math.max(0, bankLeft),
             cashAmt: Math.max(0, cashLeft),
             payMode,
-            recType: 'CREDIT NOTE',
+            recType: ledgerType,
             refRecId: code,
             takeAccOn: isAgent ? 'AGENT' : 'PARTY',
           },
@@ -982,7 +1013,7 @@ export class NotesService {
 /* ── PDF document (a note-flavoured copy of the challan invoice layout) ────────── */
 
 function buildNoteDoc(c: NoteDto): TDocumentDefinitions {
-  const isCredit = c.mode === 'CREDIT';
+  const isCredit = c.mode !== 'DEBIT';
   /*
    * One palette for both notes.
    *
@@ -996,7 +1027,7 @@ function buildNoteDoc(c: NoteDto): TDocumentDefinitions {
   const ACCENT = '#F99A0F';
   const AMBER = '#F59E0B';
   const BLACK = '#111111';
-  const title = isCredit ? 'CREDIT NOTE' : 'DEBIT NOTE';
+  const title = c.mode === 'PURCHASE' ? 'PURCHASE VOUCHER' : c.mode === 'CREDIT' ? 'CREDIT NOTE' : 'DEBIT NOTE';
   const nn = (v?: number | null) => v ?? 0;
   const q = (v?: number | null) => (v ? v.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '');
   const money = (v?: number | null) => `${(v ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;

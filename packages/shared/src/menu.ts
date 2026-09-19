@@ -501,7 +501,7 @@ export const MENU: MenuNode[] = [
       },
       {
         id: 'debit-credit-note',
-        label: 'Debit / Credit Note',
+        label: 'Debit / Credit / Purchase',
         to: '/account/notes',
         icon: 'NotebookPen',
         permission: perm(RESOURCES.NOTE, ACTIONS.VIEW),

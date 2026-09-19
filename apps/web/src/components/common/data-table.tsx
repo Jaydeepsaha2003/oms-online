@@ -89,6 +89,7 @@ export function DataTable<T>({
   rows,
   rowKey,
   onRowClick,
+  onRowDoubleClick,
   rowClassName,
   actions,
   actionsHeader,
@@ -110,6 +111,10 @@ export function DataTable<T>({
   rows: T[];
   rowKey: (row: T) => Key;
   onRowClick?: (row: T) => void;
+  /** Double-click a row — e.g. to open it for editing — without hijacking the
+   *  single click (which stays free for selection or navigation). Adds a
+   *  `cursor-pointer` hint and works on both the table row and the mobile card. */
+  onRowDoubleClick?: (row: T) => void;
   /** Per-row classes, for state-driven row styling (selected / de-emphasised).
    *  Tint the row via its cells — e.g. `'[&>td]:bg-sky-50'` — because the default
    *  zebra/hover rules also paint the `td`, not the `tr`. Pinned cells set their
@@ -294,9 +299,11 @@ export function DataTable<T>({
               return (
                 <TableRow
                   key={rowKey(row)}
-                  className={cn('group', onRowClick && 'cursor-pointer', rowClassName?.(row))}
+                  className={cn('group', (onRowClick || onRowDoubleClick) && 'cursor-pointer', rowClassName?.(row))}
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
+                  onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(row) : undefined}
                 >
+
                   {columns.map((col) =>
                     col.pin ? (
                       <StickyCell
@@ -358,9 +365,10 @@ export function DataTable<T>({
                   key={rowKey(row)}
                   className={cn(
                     'bg-card rounded-lg border p-3 shadow-sm transition-colors',
-                    onRowClick && 'active:bg-muted cursor-pointer',
+                    (onRowClick || onRowDoubleClick) && 'active:bg-muted cursor-pointer',
                   )}
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
+                  onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(row) : undefined}
                 >
                   {mobileCard(row)}
                 </div>

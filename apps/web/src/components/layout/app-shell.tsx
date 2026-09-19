@@ -35,6 +35,7 @@ const FLUSH_ROUTES = [
   /^\/challans\/items$/,
   /^\/orders$/,
   /^\/bookings$/,
+  /^\/bookings\/new$/,
   /^\/orders\/modify$/,
   /^\/dispatch$/,
   /^\/dispatch\/new$/,

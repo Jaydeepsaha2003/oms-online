@@ -13,12 +13,30 @@
  * balance → pending invoices FIFO → parks the remainder as a party (or agent)
  * advance. Re-saving silently reverses the prior postings first.
  *
+ * A **Purchase Voucher** (mode PURCHASE) records goods bought FROM a party, which
+ * increases what the business owes them — the credit side of their ledger. It is
+ * mechanically a Credit Note: it shares the `CreditNote` table (told apart by
+ * prefix `PUR` vs `CN`), clears/parks the balance the same way and is reversible
+ * the same way. It differs only in its number (`PUR/<n>`) and the ledger voucher
+ * type it posts (`PURCHASE`), so daybook and party ledger show it as its own kind.
+ *
  * `b` = BANK portion, `c` = CASH portion (same B/C split used across the app).
  */
 import type { Paginated } from './common';
 
-export const NOTE_MODES = ['DEBIT', 'CREDIT'] as const;
+export const NOTE_MODES = ['DEBIT', 'CREDIT', 'PURCHASE'] as const;
 export type NoteMode = (typeof NOTE_MODES)[number];
+
+/**
+ * Does this mode behave like a Credit Note (credit-side voucher stored in
+ * `credit_notes`)? True for CREDIT and PURCHASE, false for DEBIT. The one test
+ * the web form and the API service share to decide credit-side behaviour.
+ */
+export const isCreditLikeNote = (mode: NoteMode): boolean => mode !== 'DEBIT';
+
+/** How each mode reads on screen and prints. */
+export const noteModeLabel = (mode: NoteMode): string =>
+  mode === 'DEBIT' ? 'Debit Note' : mode === 'PURCHASE' ? 'Purchase Voucher' : 'Credit Note';
 
 /** Directory pay-mode filter (matches legacy CreditNoteBrowserForm). */
 export const NOTE_PAY_MODES = ['ALL', 'BANK', 'CASH', 'BOTH'] as const;

@@ -1,22 +1,25 @@
 import { useMemo, useRef, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Check, Loader2, PackageOpen, Plus, Save, Trash2 } from 'lucide-react';
+import { ArrowLeft, Check, Loader2, Lock, Plus, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { CreateBookingInput } from '@oms/shared';
 import { BOOKING_NO_CATEGORY } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { useConfirm } from '@/components/common/confirm';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent } from '@/components/ui/card';
 import { DatePicker } from '@/components/ui/date-picker';
 import { NativeSelect } from '@/components/common/combo';
+import { cn } from '@/lib/utils';
 import { useOrderLookups } from '@/features/orders/use-orders';
 import { useCreateBooking } from './use-bookings';
 
 const today = () => new Date().toISOString().slice(0, 10);
 const n = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? null : Number(s));
+/** yyyy-mm-dd → dd-mm-yyyy, as the mockup's pill and summary read it. */
+const ddmmyyyy = (iso: string) => {
+  const [y, m, d] = iso.split('-');
+  return y && m && d ? `${d}-${m}-${y}` : iso;
+};
 
 /** One product-category line queued for this booking, e.g. "1 bag GLASS". */
 interface BookingLine {
@@ -25,6 +28,19 @@ interface BookingLine {
   bags: string;
   kgs: string;
 }
+
+// Shared field styling — the mockup's soft off-white input on a hairline border.
+const FIELD =
+  'h-10 rounded-[10px] border-[0.8px] border-[var(--bb-line)] bg-[var(--bb-input-bg)] text-[13.5px] text-[var(--bb-ink)] shadow-none focus-visible:border-[var(--bb-blue)] focus-visible:ring-[3px] focus-visible:ring-[var(--bb-blue)]/15';
+// Small uppercase section eyebrow, in the mockup's blue-700.
+const SECTION = 'text-[11px] font-black uppercase tracking-[0.11em] text-[var(--bb-blue-dark)]';
+// Field label above each control.
+const FLABEL = 'text-[12px] font-bold text-[var(--bb-ink)]';
+// The read-only "auto" chip used for Agent and Category.
+const CHIP =
+  'flex h-10 items-center rounded-[10px] bg-[var(--bb-chip-bg)] px-3 text-[13.5px] font-bold tracking-[0.02em] text-[var(--bb-blue-dark)]';
+// Motion applied to interactive controls.
+const EASE = '[transition-timing-function:cubic-bezier(0.22,1,0.36,1)]';
 
 export function BookingFormPage() {
   const navigate = useNavigate();
@@ -194,189 +210,313 @@ export function BookingFormPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [navigate]);
 
+  const hasLines = lines.length > 0;
+
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-3">
+    <div className="bb-scope h-full overflow-y-auto bg-[var(--bb-bg)] text-[var(--bb-ink)]">
       {saved && (
-        <div className="bg-background/70 fixed inset-0 z-[100] flex items-center justify-center backdrop-blur-sm">
-          <div className="animate-in fade-in zoom-in-50 flex flex-col items-center gap-3 duration-300">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--bb-bg)]/70 backdrop-blur-sm">
+          <div className="bb-pop flex flex-col items-center gap-3">
             <div className="flex size-24 items-center justify-center rounded-full bg-emerald-500 shadow-xl shadow-emerald-500/30 ring-8 ring-emerald-500/15">
               <Check className="size-12 text-white" strokeWidth={3} />
             </div>
-            <p className="text-sm font-semibold text-emerald-700">Booking created</p>
+            <p className="text-sm font-bold text-emerald-700 dark:text-emerald-300">Booking created</p>
           </div>
         </div>
       )}
 
-      <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate('/bookings')} aria-label="Back">
-          <ArrowLeft />
-        </Button>
-        <div className="bg-gradient-brand flex size-10 items-center justify-center rounded-xl text-white shadow-md ring-1 ring-white/20">
-          <PackageOpen className="size-5" />
+      <div className="mx-auto w-full max-w-[1400px] px-6 py-5 lg:px-[60px]">
+        {/* ── Header ─────────────────────────────────────────────────────────── */}
+        <div className="bb-rise flex items-center gap-3" style={{ animationDelay: '0s' }}>
+          <button
+            type="button"
+            onClick={() => navigate('/bookings')}
+            aria-label="Back"
+            className={cn(
+              'flex size-9 shrink-0 items-center justify-center rounded-full text-[var(--bb-muted)]',
+              'transition-[transform,color,box-shadow] duration-200 hover:-translate-x-[3px] hover:text-[var(--bb-ink)] hover:shadow-[0_4px_12px_-4px_rgb(16_24_40_/_0.18)]',
+              EASE,
+            )}
+          >
+            <ArrowLeft className="size-5" />
+          </button>
+          <div className="min-w-0 flex-1">
+            <h1 className="text-[22px] font-black leading-tight tracking-[-0.025em] text-[var(--bb-ink)]">New Bag Booking</h1>
+            <p className="text-[12.5px] font-semibold text-[var(--bb-muted)]">
+              Reserve bags &amp; kgs by product category — items are picked &amp; priced later at these booking-date rates.
+            </p>
+          </div>
+          {/* Rates-frozen pill — a live indicator, hence the breathing dot. */}
+          <div
+            className={cn(
+              'flex items-center gap-2.5 rounded-[12px] bg-[var(--bb-card)] px-3 py-2 shadow-[var(--bb-shadow-pill)]',
+              'transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5',
+              EASE,
+            )}
+          >
+            <Lock className="size-3.5 text-[var(--bb-blue-dark)]" />
+            <div className="leading-tight">
+              <div className="text-[10px] font-black uppercase tracking-[0.1em] text-[var(--bb-muted)]">Rates frozen at</div>
+              <div className="flex items-center gap-1.5 text-[13px] font-bold text-[var(--bb-blue-dark)]">
+                {ddmmyyyy(bookingDate)}
+                <span className="bb-breathe size-[5px] rounded-full bg-[var(--bb-blue)]" />
+              </div>
+            </div>
+          </div>
         </div>
-        <div>
-          <h2 className="text-xl font-bold tracking-tight">New Bag Booking</h2>
-          <p className="text-muted-foreground text-xs">Reserve bags &amp; kgs by product category — items are picked &amp; priced later at these booking-date rates.</p>
-        </div>
-      </div>
 
-      <Card className="border-l-4 border-l-primary py-0">
-        <CardContent className="grid grid-cols-2 gap-3 px-4 py-4 sm:grid-cols-2">
-          <div className="col-span-2 space-y-1.5">
-            <Label className="text-base">Customer <span className="text-rose-500">*</span></Label>
-            <NativeSelect
-              value={customer}
-              onChange={onCustomer}
-              options={customers}
-              placeholder="Select customer…"
-              onInvalidEntry={() => toast.error('Please select a correct customer')}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-base">Agent (auto)</Label>
-            <Input value={agentName} readOnly tabIndex={-1} className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700" />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-base">Category (auto)</Label>
-            <Input value={category} readOnly tabIndex={-1} className="border-indigo-200/70 bg-indigo-50/60 font-medium text-indigo-700" />
-          </div>
-          <div className="col-span-2 space-y-1.5">
-            <Label className="text-base">Booking date <span className="text-rose-500">*</span></Label>
-            <DatePicker value={bookingDate} onChange={setBookingDate} clearable={false} />
-            <p className="text-muted-foreground text-[11px]">Converted items will be charged at this date's chart rates.</p>
-          </div>
-          <div className="col-span-2 space-y-1.5">
-            <Label className="text-base">Remarks</Label>
-            <Input value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Optional note about this booking…" />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Product-category lines — multi-line: 1 bag GLASS + 1 bag CUP etc. */}
-      <Card className="border-border border-l-4 border-l-slate-400 bg-slate-50/70 py-0">
-        <CardContent className="space-y-2 px-4 py-3">
-          <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-4">
-            <div className="col-span-2 space-y-1 sm:col-span-2">
-              <Label className="text-base">Product category <span className="text-muted-foreground font-normal">(optional)</span></Label>
-              <NativeSelect value={lineCategory} onChange={setLineCategory} options={productCategories} placeholder="Leave blank if not decided" />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-base">Bags</Label>
-              <Input type="number" step="any" min={0} className="text-right tabular-nums" value={lineBags} onChange={(e) => setLineBags(e.target.value)} placeholder="0" />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-base">Kgs</Label>
-              <Input type="number" step="any" min={0} className="text-right tabular-nums" value={lineKgs} onChange={(e) => setLineKgs(e.target.value)} placeholder="0" />
-            </div>
-          </div>
-          <div>
-            <Button type="button" variant="outline" size="sm" onClick={addLine}>
-              <Plus /> Add line
-            </Button>
-          </div>
-
-          {lines.length > 0 && (
-            <div className="overflow-hidden rounded-lg border bg-white">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-100 text-xs font-semibold text-slate-700">
-                  <tr>
-                    <th className="px-3 py-2 text-left">Category</th>
-                    <th className="px-3 py-2 text-right">Bags</th>
-                    <th className="px-3 py-2 text-right">Kgs</th>
-                    <th className="w-10" />
-                  </tr>
-                </thead>
-                <tbody className="[&_td]:border-t [&_td]:px-3 [&_td]:py-2">
-                  {lines.map((l) => (
-                    <tr key={l.key}>
-                      <td className="font-medium">
-                        {l.category || <span className="text-muted-foreground italic">{BOOKING_NO_CATEGORY}</span>}
-                      </td>
-                      <td className="text-right tabular-nums">{l.bags || '—'}</td>
-                      <td className="text-right tabular-nums">{l.kgs || '—'}</td>
-                      <td className="text-center">
-                        <Button variant="ghost" size="icon" className="size-7 text-destructive hover:text-destructive" onClick={() => removeLine(l.key)} aria-label="Remove line">
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot className="bg-slate-100 font-semibold">
-                  <tr>
-                    <td className="px-3 py-2 text-right">Total</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{totalBags}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{totalKgs}</td>
-                    <td />
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/*
-        Agreed rates — only for the categories actually booked, and only those
-        that sell in size classes. Optional throughout: leave every box empty
-        and the booking prices off the chart exactly as it always has.
-      */}
-      {ratedLines.length > 0 && (
-        <Card className="border-border border-l-4 border-l-amber-400 bg-amber-50/40 py-0">
-          <CardContent className="space-y-3 px-4 py-3">
-            <div>
-              <Label className="text-base">Agreed rates <span className="text-muted-foreground font-normal">(optional)</span></Label>
-              <p className="text-muted-foreground text-[11px]">
-                A rate settled with this party for a size. It replaces the chart rate <em>and</em> this party's own
-                discount for that size — a negotiated price is the whole price, not a base to discount again. Leave a
-                box empty to price it off the chart.
-              </p>
-            </div>
-            {ratedLines.map((l) => (
-              <div key={l.key} className="space-y-1.5">
-                <p className="text-[11px] font-bold tracking-wide text-slate-600 uppercase">{l.category}</p>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  {(sizeClasses.get(l.category) ?? []).map((sc) => {
-                    const key = `${l.category}|${sc.subCategory}`;
-                    return (
-                      <div key={key} className="space-y-1 rounded-lg border bg-white px-2.5 py-2">
-                        <p className="truncate text-[12px] font-semibold" title={sc.subCategory}>
-                          {sc.subCategory}
-                        </p>
-                        <p className="text-muted-foreground text-[10.5px] font-medium">
-                          {sc.size ? `Size ${sc.size}` : 'No size'}
-                          {sc.pcs ? ` · ${sc.pcs} pcs/box` : ''}
-                        </p>
-                        <Input
-                          type="number"
-                          step="any"
-                          min={0}
-                          inputMode="decimal"
-                          className="h-8 text-right tabular-nums"
-                          placeholder="Chart rate"
-                          value={agreed[key] ?? ''}
-                          onChange={(e) => setAgreed((a) => ({ ...a, [key]: e.target.value }))}
-                          aria-label={`Agreed rate for ${sc.subCategory}`}
-                        />
-                      </div>
-                    );
-                  })}
+        {/* ── Two columns: form (left) · summary (right) ─────────────────────── */}
+        <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-[1fr_400px]">
+          <div className="flex flex-col gap-5">
+            {/* Booking details card */}
+            <section
+              className="bb-rise rounded-2xl bg-[var(--bb-card)] px-[22px] pt-5 pb-[22px] shadow-[var(--bb-shadow-card)]"
+              style={{ animationDelay: '0.06s' }}
+            >
+              <p className={SECTION}>Booking details</p>
+              <div className="mt-4 grid grid-cols-2 gap-x-5 gap-y-4">
+                <div className="col-span-2 space-y-1.5">
+                  <label className={FLABEL}>
+                    Customer <span className="text-rose-500">*</span>
+                  </label>
+                  <NativeSelect value={customer} onChange={onCustomer} options={customers} placeholder="Select customer…" className={FIELD} />
+                </div>
+                <div className="space-y-1.5">
+                  <label className={FLABEL}>
+                    Agent <span className="text-[11px] font-semibold lowercase text-[var(--bb-muted)]">auto</span>
+                  </label>
+                  <div className={CHIP}>{agentName || '—'}</div>
+                </div>
+                <div className="space-y-1.5">
+                  <label className={FLABEL}>
+                    Category <span className="text-[11px] font-semibold lowercase text-[var(--bb-muted)]">auto</span>
+                  </label>
+                  <div className={CHIP}>{category || '—'}</div>
+                </div>
+                <div className="col-span-2 space-y-1.5">
+                  <label className={FLABEL}>
+                    Booking date <span className="text-rose-500">*</span>
+                  </label>
+                  <DatePicker value={bookingDate} onChange={(v) => setBookingDate(v || today())} className={FIELD} />
+                  <p className="text-[11px] text-[var(--bb-muted)]">Converted items will be charged at this date's chart rates.</p>
+                </div>
+                <div className="col-span-2 space-y-1.5">
+                  <label className={FLABEL}>Remarks</label>
+                  <Input value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Optional note about this booking…" className={FIELD} />
                 </div>
               </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
+            </section>
 
-      <div className="flex items-center justify-end gap-2 border-t px-1 py-3">
-        <Button type="button" variant="destructive" onClick={() => navigate('/bookings')} title="Cancel (Esc)">
-          Cancel
-        </Button>
-        <Button onClick={submit} disabled={create.isPending} title="Create booking (Ctrl+S)">
-          {create.isPending ? <Loader2 className="animate-spin" /> : <Save />}
-          Create booking
-        </Button>
+            {/* Reserved quantities card */}
+            <section
+              className="bb-rise rounded-2xl bg-[var(--bb-card)] px-[22px] pt-5 pb-[22px] shadow-[var(--bb-shadow-card)]"
+              style={{ animationDelay: '0.14s' }}
+            >
+              <div className="flex items-center justify-between">
+                <p className={SECTION}>Reserved quantities</p>
+                <span className="text-[11px] font-semibold text-[var(--bb-muted)]">
+                  {hasLines ? `${lines.length} line${lines.length > 1 ? 's' : ''}` : 'nothing added yet'}
+                </span>
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 items-end gap-3 sm:grid-cols-[1fr_110px_110px_auto]">
+                <div className="space-y-1.5">
+                  <label className={FLABEL}>
+                    Product category <span className="text-[10px] font-semibold lowercase text-[var(--bb-muted)]">optional</span>
+                  </label>
+                  <NativeSelect value={lineCategory} onChange={setLineCategory} options={productCategories} placeholder="Leave blank if not decided" className={FIELD} />
+                </div>
+                <div className="space-y-1.5">
+                  <label className={FLABEL}>Bags</label>
+                  <Input type="number" step="any" min={0} className={cn(FIELD, 'text-right tabular-nums')} value={lineBags} onChange={(e) => setLineBags(e.target.value)} placeholder="0" />
+                </div>
+                <div className="space-y-1.5">
+                  <label className={FLABEL}>Kgs</label>
+                  <Input type="number" step="any" min={0} className={cn(FIELD, 'text-right tabular-nums')} value={lineKgs} onChange={(e) => setLineKgs(e.target.value)} placeholder="0" />
+                </div>
+                <button
+                  type="button"
+                  onClick={addLine}
+                  className={cn(
+                    'flex h-10 items-center justify-center gap-1.5 rounded-[10px] bg-[var(--bb-blue)] px-4 text-[13px] font-extrabold text-white shadow-[var(--bb-shadow-btn)]',
+                    'transition-[transform,background-color,box-shadow] duration-200 hover:-translate-y-0.5 hover:bg-[var(--bb-blue-dark)] active:translate-y-0 active:scale-[0.98]',
+                    EASE,
+                  )}
+                >
+                  <Plus className="size-4" /> Add line
+                </button>
+              </div>
+
+              {hasLines ? (
+                <div className="mt-4 overflow-hidden rounded-xl border-[0.8px] border-[var(--bb-line)]">
+                  <table className="w-full text-[13px]">
+                    <thead>
+                      <tr className="bg-[var(--bb-input-bg)] text-[10.5px] font-black uppercase tracking-[0.08em] text-[var(--bb-muted)]">
+                        <th className="px-3.5 py-2.5 text-left">Category</th>
+                        <th className="px-3.5 py-2.5 text-right">Bags</th>
+                        <th className="px-3.5 py-2.5 text-right">Kgs</th>
+                        <th className="w-10" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lines.map((l) => (
+                        <tr key={l.key} className="bb-rowin border-t-[0.8px] border-[var(--bb-line)]">
+                          <td className="px-3.5 py-2.5 font-bold text-[var(--bb-ink)]">
+                            {l.category || <span className="italic font-semibold text-[var(--bb-muted)]">{BOOKING_NO_CATEGORY}</span>}
+                          </td>
+                          <td className="px-3.5 py-2.5 text-right tabular-nums">{l.bags || '—'}</td>
+                          <td className="px-3.5 py-2.5 text-right tabular-nums">{l.kgs || '—'}</td>
+                          <td className="px-2 py-2.5 text-center">
+                            <button
+                              type="button"
+                              onClick={() => removeLine(l.key)}
+                              aria-label="Remove line"
+                              className={cn(
+                                'flex size-7 items-center justify-center rounded-lg text-[var(--bb-muted)]',
+                                'transition-[transform,background-color,color] duration-150 hover:scale-110 hover:bg-[var(--bb-danger-bg)] hover:text-[var(--bb-danger)]',
+                              )}
+                            >
+                              <Trash2 className="size-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-[0.8px] border-[var(--bb-line)] bg-[var(--bb-input-bg)] font-black text-[var(--bb-ink)]">
+                        <td className="px-3.5 py-2.5 text-right">Total</td>
+                        <td className="px-3.5 py-2.5 text-right tabular-nums">{totalBags}</td>
+                        <td className="px-3.5 py-2.5 text-right tabular-nums">{totalKgs}</td>
+                        <td />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              ) : (
+                <div className="mt-4 rounded-xl border-[0.8px] border-dashed border-[var(--bb-line)] bg-[var(--bb-input-bg)]/60 px-4 py-6 text-center text-[12.5px] font-medium text-[var(--bb-muted)]">
+                  No lines yet. A line without a category reserves capacity that gets decided later.
+                </div>
+              )}
+            </section>
+
+            {/*
+              Agreed rates — only for the categories actually booked, and only those
+              that sell in size classes. Optional throughout: leave every box empty
+              and the booking prices off the chart exactly as it always has.
+            */}
+            {ratedLines.length > 0 && (
+              <section className="bb-rise rounded-2xl bg-[var(--bb-card)] px-[22px] pt-5 pb-[22px] shadow-[var(--bb-shadow-card)]" style={{ animationDelay: '0.2s' }}>
+                <p className={cn(SECTION, 'text-amber-600')}>Agreed rates</p>
+                <p className="mt-1 text-[11px] text-[var(--bb-muted)]">
+                  A rate settled with this party for a size. It replaces the chart rate <em>and</em> this party's own discount
+                  for that size — a negotiated price is the whole price, not a base to discount again. Leave a box empty to
+                  price it off the chart.
+                </p>
+                <div className="mt-3 space-y-3">
+                  {ratedLines.map((l) => (
+                    <div key={l.key} className="space-y-1.5">
+                      <p className="text-[11px] font-black uppercase tracking-wide text-[var(--bb-muted)]">{l.category}</p>
+                      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+                        {(sizeClasses.get(l.category) ?? []).map((sc) => {
+                          const key = `${l.category}|${sc.subCategory}`;
+                          return (
+                            <div key={key} className="space-y-1 rounded-xl border-[0.8px] border-[var(--bb-line)] bg-[var(--bb-input-bg)] px-2.5 py-2">
+                              <p className="truncate text-[12px] font-bold text-[var(--bb-ink)]" title={sc.subCategory}>
+                                {sc.subCategory}
+                              </p>
+                              <p className="text-[10.5px] font-medium text-[var(--bb-muted)]">
+                                {sc.size ? `Size ${sc.size}` : 'No size'}
+                                {sc.pcs ? ` · ${sc.pcs} pcs/box` : ''}
+                              </p>
+                              <Input
+                                type="number"
+                                step="any"
+                                min={0}
+                                inputMode="decimal"
+                                className={cn(FIELD, 'h-8 text-right tabular-nums')}
+                                placeholder="Chart rate"
+                                value={agreed[key] ?? ''}
+                                onChange={(e) => setAgreed((a) => ({ ...a, [key]: e.target.value }))}
+                                aria-label={`Agreed rate for ${sc.subCategory}`}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+          </div>
+
+          {/* ── Summary panel ───────────────────────────────────────────────── */}
+          <aside className="bb-rise lg:sticky lg:top-5 lg:self-start" style={{ animationDelay: '0.1s' }}>
+            <div className="overflow-hidden rounded-2xl bg-[var(--bb-card)] shadow-[var(--bb-shadow-panel)]">
+              <div className="bg-[var(--bb-blue-dark)] px-5 py-4">
+                <p className="text-[11px] font-black uppercase tracking-[0.11em] text-[var(--bb-blue-100)]">Summary</p>
+                <p className="mt-0.5 truncate text-[16px] font-black text-white">{customer.trim() || 'No customer selected'}</p>
+              </div>
+              <div className="px-5 py-5">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-xl bg-[var(--bb-input-bg)] px-3 py-2.5">
+                    <p className="text-[10.5px] font-black uppercase tracking-[0.1em] text-[var(--bb-muted)]">Bags</p>
+                    <p key={`b-${totalBags}`} className={cn('bb-pop text-[28px] font-black leading-none', totalBags > 0 ? 'text-[var(--bb-ink)]' : 'text-[#98a2b3]')}>
+                      {totalBags}
+                    </p>
+                  </div>
+                  <div className="rounded-xl bg-[var(--bb-input-bg)] px-3 py-2.5">
+                    <p className="text-[10.5px] font-black uppercase tracking-[0.1em] text-[var(--bb-muted)]">Kgs</p>
+                    <p key={`k-${totalKgs}`} className={cn('bb-pop text-[28px] font-black leading-none', totalKgs > 0 ? 'text-[var(--bb-ink)]' : 'text-[#98a2b3]')}>
+                      {totalKgs}
+                    </p>
+                  </div>
+                </div>
+
+                <dl className="mt-4 space-y-2 text-[13px]">
+                  <SummaryRow label="Agent" value={agentName || '—'} />
+                  <SummaryRow label="Category" value={category || '—'} />
+                  <SummaryRow label="Booking date" value={ddmmyyyy(bookingDate)} />
+                  <SummaryRow label="Lines" value={<span key={lines.length} className="bb-pop inline-block">{lines.length}</span>} />
+                </dl>
+
+                <button
+                  type="button"
+                  onClick={submit}
+                  disabled={create.isPending}
+                  title="Create booking (Ctrl+S)"
+                  className={cn(
+                    'mt-5 flex h-11 w-full items-center justify-center gap-2 rounded-[12px] bg-[var(--bb-blue)] text-[14px] font-black tracking-[0.01em] text-white shadow-[var(--bb-shadow-btn)]',
+                    'transition-[transform,background-color,box-shadow] duration-200 hover:-translate-y-0.5 hover:bg-[var(--bb-blue-dark)] hover:shadow-[0_12px_22px_-10px_rgb(37_99_235_/_0.8)] active:translate-y-0 active:scale-[0.985] disabled:pointer-events-none disabled:opacity-70',
+                    EASE,
+                  )}
+                >
+                  {create.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Create booking
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate('/bookings')}
+                  title="Cancel (Esc)"
+                  className="mt-2 h-9 w-full rounded-[10px] text-[13px] font-bold text-[var(--bb-muted)] transition-colors duration-200 hover:text-[var(--bb-danger)]"
+                >
+                  Cancel
+                </button>
+                <p className="mt-1 text-center text-[11px] text-[var(--bb-muted)]">Ctrl+S to save · Esc to cancel</p>
+              </div>
+            </div>
+          </aside>
+        </div>
       </div>
+    </div>
+  );
+}
+
+/** A label/value line in the summary panel. */
+function SummaryRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between">
+      <dt className="text-[var(--bb-muted)]">{label}</dt>
+      <dd className="font-bold text-[var(--bb-ink)]">{value}</dd>
     </div>
   );
 }

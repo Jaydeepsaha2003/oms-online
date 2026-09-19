@@ -17,9 +17,11 @@ import {
 import { toast } from 'sonner';
 import {
   computeNoteBreakup,
+  isCreditLikeNote,
   noteClearanceReason,
   noteClearedAmount,
   noteItemAmount,
+  noteModeLabel,
   noteRefInvoices,
   type CustomerDto,
   type NoteDirectoryRow,
@@ -327,7 +329,7 @@ export function NotesPage() {
    * Caught while it can still be changed, rather than explained afterwards.
    */
   const billSideMismatch = useMemo(() => {
-    if (mode !== 'CREDIT' || !lines.length) return null;
+    if (!isCreditLikeNote(mode) || !lines.length) return null;
     const sideOf = new Map(soldHistory.map((r: RecentSoldRow) => [r.invNo.trim().toUpperCase(), r.billed]));
     const refs = [...new Set(lines.map((l) => (l.refInvNo ?? '').trim().toUpperCase()).filter(Boolean))];
     const wrong = refs.filter((ref) => sideOf.has(ref) && sideOf.get(ref) === noBill);
@@ -388,7 +390,7 @@ export function NotesPage() {
    * the intent is visible before saving, not discovered afterwards.
    */
   const refInvoices = useMemo(() => noteRefInvoices(lines), [lines]);
-  const targetInv = mode === 'CREDIT' && refInvoices.length === 1 ? refInvoices[0] : null;
+  const targetInv = isCreditLikeNote(mode) && refInvoices.length === 1 ? refInvoices[0] : null;
 
   const resetHeaderFromCustomer = (name: string) => {
     const c = custByName.get(name);
@@ -597,7 +599,7 @@ export function NotesPage() {
   const onSave = () => {
     if (!customerId) return toast.error('Select a customer.');
     if (!lines.length) return toast.error('Add at least one item.');
-    if (mode === 'CREDIT') return setAskUndispatch(true);
+    if (isCreditLikeNote(mode)) return setAskUndispatch(true);
     doSave(false);
   };
 
@@ -628,9 +630,7 @@ export function NotesPage() {
       },
       {
         onSuccess: (res) => {
-          toast.success(
-            `${mode === 'CREDIT' ? 'Credit' : 'Debit'} Note ${res.code} saved — ${money0(res.total)}`,
-          );
+          toast.success(`${noteModeLabel(mode)} ${res.code} saved — ${money0(res.total)}`);
 
           // What the note actually settled. The API is authoritative here — the
           // referenced bill may have been paid off since the lines were picked.
@@ -737,7 +737,7 @@ export function NotesPage() {
     }
   };
 
-  const noteLabel = mode === 'CREDIT' ? 'Credit Note' : 'Debit Note';
+  const noteLabel = noteModeLabel(mode);
 
   return (
     // Fills the viewport on desktop: the voucher pane stays put while only the
@@ -767,9 +767,9 @@ export function NotesPage() {
               <div
                 role="group"
                 aria-label="Note type"
-                className="grid grid-cols-2 gap-0.5 rounded-[4px] border border-amber-300 bg-amber-50/40 p-0.5 dark:border-amber-400/40 dark:bg-transparent"
+                className="grid grid-cols-3 gap-0.5 rounded-[4px] border border-amber-300 bg-amber-50/40 p-0.5 dark:border-amber-400/40 dark:bg-transparent"
               >
-                {(['DEBIT', 'CREDIT'] as const).map((m) => (
+                {(['DEBIT', 'CREDIT', 'PURCHASE'] as const).map((m) => (
                   <button
                     key={m}
                     type="button"
@@ -780,18 +780,22 @@ export function NotesPage() {
                       mode === m
                         ? m === 'DEBIT'
                           ? 'bg-slate-800 text-white shadow-sm dark:bg-slate-700'
-                          : 'bg-emerald-600 text-white shadow-sm'
+                          : m === 'CREDIT'
+                            ? 'bg-emerald-600 text-white shadow-sm'
+                            : 'bg-indigo-600 text-white shadow-sm'
                         : 'text-amber-900/70 hover:bg-amber-100 hover:text-amber-900 dark:text-amber-200/70 dark:hover:bg-amber-400/10',
                     )}
                   >
-                    {m === 'DEBIT' ? 'Debit' : 'Credit'}
+                    {m === 'DEBIT' ? 'Debit' : m === 'CREDIT' ? 'Credit' : 'Purchase'}
                   </button>
                 ))}
               </div>
               <p className="text-muted-foreground text-[11px] leading-snug">
                 {mode === 'DEBIT'
                   ? 'Debit note — the party owes MORE (squares off advances).'
-                  : 'Credit note — the party owes LESS (clears the Ref Inv, else the oldest dues).'}
+                  : mode === 'PURCHASE'
+                    ? 'Purchase voucher — bought FROM the party, so we owe them MORE (clears the Ref Inv, else the oldest dues).'
+                    : 'Credit note — the party owes LESS (clears the Ref Inv, else the oldest dues).'}
               </p>
             </div>
 
@@ -1053,7 +1057,7 @@ export function NotesPage() {
 
               {/* Where this credit will land. Silent auto-allocation is exactly the
                   kind of thing that gets queried a month later, so it is stated. */}
-              {mode === 'CREDIT' && lines.length > 0 && (
+              {isCreditLikeNote(mode) && lines.length > 0 && (
                 <div
                   className={cn(
                     'mt-2 flex items-start gap-2 rounded-md border px-2.5 py-2 text-[11.5px] leading-snug',
@@ -1607,24 +1611,24 @@ export function NotesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Credit note only: is this also a stock return? */}
+      {/* Credit-side notes only: is this also a stock movement? */}
       <Dialog open={askUndispatch} onOpenChange={(o) => !o && setAskUndispatch(false)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Undo2 className="size-5 text-primary" /> Save this credit note
+              <Undo2 className="size-5 text-primary" /> Save this {noteLabel.toLowerCase()}
             </DialogTitle>
           </DialogHeader>
           <p className="text-[13px]">Did these goods physically come back?</p>
           <div className="text-muted-foreground space-y-1.5 text-[11.5px]">
             <p>
-              <b className="text-foreground">Mark as Undispatched</b> — the credit note is raised{' '}
-              <i>and</i> the returned quantity goes back into Dispatch Orders, so it can be
+              <b className="text-foreground">Mark as Undispatched</b> — the {noteLabel.toLowerCase()}{' '}
+              is raised <i>and</i> the returned quantity goes back into Dispatch Orders, so it can be
               dispatched again.
             </p>
             <p>
-              <b className="text-foreground">Just the credit note</b> — money only. Nothing changes
-              in dispatch.
+              <b className="text-foreground">Just the {noteLabel.toLowerCase()}</b> — money only.
+              Nothing changes in dispatch.
             </p>
           </div>
           <DialogFooter className="gap-2 sm:justify-between">
@@ -1634,7 +1638,7 @@ export function NotesPage() {
               disabled={saveMut.isPending}
               onClick={() => doSave(false)}
             >
-              Just the credit note
+              Just the {noteLabel.toLowerCase()}
             </Button>
             <Button
               className="h-11 flex-1"
@@ -1757,7 +1761,7 @@ function NoteDirectoryDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-5xl">
         <DialogHeader>
-          <DialogTitle>{mode === 'CREDIT' ? 'Credit Note' : 'Debit Note'} Directory</DialogTitle>
+          <DialogTitle>{noteModeLabel(mode)} Directory</DialogTitle>
         </DialogHeader>
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1">
