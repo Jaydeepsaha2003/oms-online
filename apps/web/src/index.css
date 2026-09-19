@@ -595,6 +595,97 @@
   animation: oms-bg-gradient-shift 18s ease infinite;
 }
 
+/* ── Sign-in screen: blue / orange split ────────────────────────────────
+   The orange half is a huge panel hinged at the screen's centre. Any line
+   through the centre of a rectangle bisects it, so however the seam swings
+   the split stays exactly 50/50 — and the swing is a pure transform (GPU). */
+.oms-login-blue {
+  background:
+    radial-gradient(70% 60% at 15% 10%, rgba(56, 189, 248, 0.45) 0%, transparent 60%),
+    linear-gradient(160deg, #1e40af 0%, #1d4ed8 35%, #1e3a8a 70%, #0b1440 100%);
+}
+.oms-login-orange {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 160vmax;
+  height: 320vmax;
+  transform-origin: 0 50%;
+  overflow: hidden;
+  background: linear-gradient(90deg, #fb923c 0%, #f97316 10%, #ea580c 28%, #c2410c 55%);
+  box-shadow:
+    0 0 90px 16px rgba(255, 255, 255, 0.3),
+    -2px 0 0 0 rgba(255, 255, 255, 0.75);
+  animation: oms-seam-swing 14s ease-in-out infinite alternate;
+}
+@keyframes oms-seam-swing {
+  from {
+    transform: translateY(-50%) rotate(8deg);
+  }
+  to {
+    transform: translateY(-50%) rotate(28deg);
+  }
+}
+
+/* Spinning blue→cyan→orange→amber border (card + logo halo). */
+@property --oms-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+.oms-login-ring {
+  background: conic-gradient(from var(--oms-angle), #2563eb, #22d3ee, #f97316, #fbbf24, #2563eb);
+  animation: oms-angle-spin 5s linear infinite;
+}
+@keyframes oms-angle-spin {
+  to {
+    --oms-angle: 360deg;
+  }
+}
+
+/* Staggered entrance for the card's contents. */
+.oms-rise {
+  animation: oms-rise 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes oms-rise {
+  from {
+    opacity: 0;
+    transform: translateY(22px) scale(0.96);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+/* Primary sign-in button: drifting gradient + a periodic light sweep. */
+.oms-login-cta {
+  background-image: linear-gradient(100deg, #1d4ed8, #2563eb 30%, #f97316 70%, #f59e0b);
+  background-size: 220% 100%;
+  animation: oms-bg-gradient-shift 6s ease infinite;
+}
+.oms-login-cta-sheen {
+  animation: oms-sheen 3.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oms-login-orange {
+    animation: none !important;
+    transform: translateY(-50%) rotate(18deg);
+  }
+  .oms-login-ring,
+  .oms-login-cta,
+  .oms-login-cta-sheen {
+    animation: none !important;
+  }
+  .oms-rise {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+  }
+}
+
 /* Apple-style Liquid Glass card */
 .apple-liquid-glass {
   background: rgba(255, 255, 255, 0.48);

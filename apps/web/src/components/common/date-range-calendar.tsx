@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const MONTHS = [
@@ -24,9 +24,20 @@ function parseISO(v?: string | null): Date | null {
 const dayKey = (d: Date) => d.getFullYear() * 10_000 + (d.getMonth() + 1) * 100 + d.getDate();
 
 const NAV_BTN =
-  'text-muted-foreground hover:bg-accent hover:text-foreground flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors disabled:pointer-events-none disabled:opacity-30';
+  'text-muted-foreground hover:bg-accent hover:text-foreground flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors disabled:pointer-events-none disabled:opacity-30';
+// Borderless, reads as "September ▾ 2026 ▾" (Material style) but stays a native
+// select, so month/year jumps keep working with keyboard and on phones.
 const SELECT =
-  'h-7 cursor-pointer rounded-md border bg-transparent px-1.5 text-[12px] font-semibold outline-none transition-colors hover:bg-accent focus-visible:ring-ring/40 focus-visible:ring-2';
+  'h-7 cursor-pointer appearance-none rounded-md bg-transparent py-0 pr-5 pl-1.5 text-[13px] font-semibold text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-ring/40 focus-visible:ring-2';
+
+function Picker({ className, ...props }: React.ComponentProps<'select'>) {
+  return (
+    <span className="relative inline-flex items-center">
+      <select className={cn(SELECT, className)} {...props} />
+      <ChevronDown className="text-muted-foreground pointer-events-none absolute right-1 size-3.5" />
+    </span>
+  );
+}
 
 /**
  * A two-month range calendar with hover preview — no external date library.
@@ -115,17 +126,8 @@ export function DateRangeCalendar({
   return (
     <div className={cn('select-none', className)} onPointerLeave={() => !anchor && setHover(null)}>
       {/* Nav — one row driving both months */}
-      <div className="mb-2 flex items-center gap-1">
-        <button
-          type="button"
-          className={NAV_BTN}
-          aria-label="Previous month"
-          onClick={() => setView(new Date(viewYear, viewMonth - 1, 1))}
-        >
-          <ChevronLeft className="size-4" />
-        </button>
-        <select
-          className={cn(SELECT, 'flex-1')}
+      <div className="mb-1.5 flex items-center">
+        <Picker
           aria-label="Month"
           value={viewMonth}
           onChange={(e) => setView(new Date(viewYear, Number(e.target.value), 1))}
@@ -135,9 +137,8 @@ export function DateRangeCalendar({
               {m}
             </option>
           ))}
-        </select>
-        <select
-          className={cn(SELECT, 'w-[4.25rem]')}
+        </Picker>
+        <Picker
           aria-label="Year"
           value={viewYear}
           onChange={(e) => setView(new Date(Number(e.target.value), viewMonth, 1))}
@@ -147,7 +148,15 @@ export function DateRangeCalendar({
               {y}
             </option>
           ))}
-        </select>
+        </Picker>
+        <button
+          type="button"
+          className={cn(NAV_BTN, 'ml-auto')}
+          aria-label="Previous month"
+          onClick={() => setView(new Date(viewYear, viewMonth - 1, 1))}
+        >
+          <ChevronLeft className="size-4" />
+        </button>
         <button
           type="button"
           className={NAV_BTN}
@@ -213,11 +222,14 @@ function Month({
   showLabel?: boolean;
   className?: string;
 }) {
-  // 42 cells from the Sunday on/before the 1st — same grid maths as DatePicker.
+  // From the Sunday on/before the 1st, only as many weeks as the month needs
+  // (4–6) — a fixed 42 cells leaves an empty last row most months.
   const cells = useMemo(() => {
     const offset = new Date(year, month, 1).getDay();
+    const days = new Date(year, month + 1, 0).getDate();
     const first = new Date(year, month, 1 - offset);
-    return Array.from({ length: 42 }, (_, i) => new Date(first.getFullYear(), first.getMonth(), first.getDate() + i));
+    const n = Math.ceil((offset + days) / 7) * 7;
+    return Array.from({ length: n }, (_, i) => new Date(first.getFullYear(), first.getMonth(), first.getDate() + i));
   }, [year, month]);
 
   const loK = lo ? dayKey(lo) : null;
@@ -230,45 +242,52 @@ function Month({
           {MONTHS[month]} {year}
         </p>
       )}
-      <div className="text-muted-foreground mb-0.5 grid grid-cols-7 text-center text-[9.5px] font-bold uppercase">
+      <div className="text-muted-foreground mb-1 grid grid-cols-7 text-center text-[11px] font-semibold">
         {WEEKDAYS.map((w) => (
           <div key={w} className="py-0.5">
-            {w}
+            {w[0]}
           </div>
         ))}
       </div>
-      {/* gap-0 so selected days form one continuous band; only the ends round off. */}
+      {/* Material-style: each day is a circle. The range is a band painted on the
+          CELL behind the circles — full width in the middle, half width at the two
+          ends — so the circles sit on one continuous strip. */}
       <div className="grid grid-cols-7 gap-y-0.5">
         {cells.map((d) => {
-          if (d.getMonth() !== month) return <span key={d.toISOString()} className="size-7" />;
+          if (d.getMonth() !== month) return <span key={d.toISOString()} className="h-8" />;
           const k = dayKey(d);
           const inRange = loK != null && hiK != null && k >= loK && k <= hiK;
           const isLo = loK === k;
           const isHi = hiK === k;
           const isEdge = isLo || isHi;
           const isToday = dayKey(today) === k;
+          const band = inRange && !(isLo && isHi);
           return (
-            <button
+            <div
               key={d.toISOString()}
-              type="button"
-              onClick={() => onPick(d)}
-              onPointerEnter={() => armed && onHover(d)}
-              aria-pressed={inRange}
               className={cn(
-                'flex size-7 cursor-pointer items-center justify-center text-[11.5px] font-medium transition-colors',
-                !inRange && 'hover:bg-accent hover:text-accent-foreground rounded-md',
-                isToday && !inRange && 'text-primary font-bold ring-1 ring-primary/40 ring-inset rounded-md',
-                // Middle of the band: square edges so neighbours join up.
-                inRange && !isEdge && 'bg-primary/15 text-primary font-semibold',
-                isEdge && 'bg-primary text-primary-foreground font-bold',
-                isLo && 'rounded-l-md',
-                isHi && 'rounded-r-md',
-                // A one-day range is both ends at once.
-                isLo && isHi && 'rounded-md',
+                'flex h-8 items-center justify-center',
+                band && 'bg-primary/12',
+                band && isLo && 'bg-transparent bg-[linear-gradient(to_right,transparent_50%,color-mix(in_oklch,var(--primary)_12%,transparent)_50%)]',
+                band && isHi && 'bg-transparent bg-[linear-gradient(to_left,transparent_50%,color-mix(in_oklch,var(--primary)_12%,transparent)_50%)]',
               )}
             >
-              {d.getDate()}
-            </button>
+              <button
+                type="button"
+                onClick={() => onPick(d)}
+                onPointerEnter={() => armed && onHover(d)}
+                aria-pressed={inRange}
+                className={cn(
+                  'flex size-8 cursor-pointer items-center justify-center rounded-full text-[12px] font-medium tabular-nums transition-all duration-150',
+                  !inRange && 'hover:bg-accent hover:text-accent-foreground',
+                  isToday && !isEdge && 'ring-foreground/60 font-semibold ring-1 ring-inset',
+                  inRange && !isEdge && 'text-primary font-semibold',
+                  isEdge && 'bg-primary text-primary-foreground scale-105 font-bold shadow-md shadow-primary/30',
+                )}
+              >
+                {d.getDate()}
+              </button>
+            </div>
           );
         })}
       </div>
