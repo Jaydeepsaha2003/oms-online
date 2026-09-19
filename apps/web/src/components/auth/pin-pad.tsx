@@ -31,7 +31,7 @@ export function PinPad({
   };
 
   const keyClass =
-    'flex h-14 items-center justify-center rounded-2xl border border-white/60 bg-white/40 dark:bg-white/10 text-xl font-bold text-slate-900 dark:text-white shadow-md backdrop-blur-xl transition-all duration-150 hover:bg-white/80 active:scale-90 active:bg-orange-500/25 disabled:opacity-40 disabled:active:scale-100';
+    'flex h-14 items-center justify-center rounded-2xl border border-slate-200/80 bg-white text-xl font-bold text-slate-900 shadow-sm transition-all duration-150 hover:bg-slate-50 active:scale-90 active:bg-orange-500 active:text-white active:border-orange-500 disabled:opacity-40 disabled:active:scale-100';
 
   return (
     <div className="flex flex-col items-center gap-6">

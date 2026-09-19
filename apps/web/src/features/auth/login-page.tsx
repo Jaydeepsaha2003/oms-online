@@ -252,7 +252,7 @@ export function LoginPage() {
                 <div className="space-y-2">
                   <Label htmlFor="email" className="font-semibold text-slate-800 drop-shadow-sm">Email</Label>
                   <div className="relative">
-                    <Mail className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-600" />
+                    <Mail className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-500" />
                     <Input
                       id="email"
                       name="email"
@@ -260,7 +260,7 @@ export function LoginPage() {
                       inputMode="email"
                       autoComplete="username"
                       placeholder="you@company.com"
-                      className="pl-9 bg-white/40 dark:bg-white/10 backdrop-blur-md border border-white/60 text-slate-900 placeholder:text-slate-500 focus:bg-white/70 focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/40 shadow-inner transition-all duration-200"
+                      className="pl-9 bg-white border border-slate-200 text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-orange-500 focus:ring-2 focus:ring-orange-500/30 shadow-sm transition-all duration-200"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                     />
@@ -269,14 +269,14 @@ export function LoginPage() {
                 <div className="space-y-2">
                   <Label htmlFor="password" className="font-semibold text-slate-800 drop-shadow-sm">Password</Label>
                   <div className="relative">
-                    <Lock className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-600" />
+                    <Lock className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-500" />
                     <Input
                       id="password"
                       name="password"
                       type="password"
                       autoComplete="current-password"
                       placeholder="••••••••"
-                      className="pl-9 bg-white/40 dark:bg-white/10 backdrop-blur-md border border-white/60 text-slate-900 placeholder:text-slate-500 focus:bg-white/70 focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/40 shadow-inner transition-all duration-200"
+                      className="pl-9 bg-white border border-slate-200 text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-orange-500 focus:ring-2 focus:ring-orange-500/30 shadow-sm transition-all duration-200"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                     />
