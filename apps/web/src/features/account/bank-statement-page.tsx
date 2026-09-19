@@ -851,7 +851,9 @@ export function BankStatementPage() {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 p-2.5 font-sans sm:p-3">
+    // Phones: natural height, so <main> scrolls the whole page as one. sm+: a
+    // fixed-height worksheet where only the lines list scrolls.
+    <div className="flex min-h-0 flex-col gap-3 p-0.5 font-sans sm:h-full sm:p-3">
       {/* Says plainly what changed and why, the moment the run is opened —
           a reopened line is money the books are missing, not a detail. */}
       <Dialog open={!!reopenedInfo} onOpenChange={(o) => !o && setReopenedInfo(null)}>
@@ -1259,9 +1261,10 @@ export function BankStatementPage() {
             </div>
           </section>
 
-          <div className={cn('grid min-h-0 flex-1 gap-3', showWorking && 'lg:grid-cols-[1fr_360px]')}>
+          {/* grid-cols-1 = minmax(0,1fr): without it the column grows to the
+              longest unbreakable narration and the cards run off a phone screen. */}
+          <div className={cn('grid grid-cols-1 gap-3 sm:min-h-0 sm:flex-1', showWorking && 'lg:grid-cols-[1fr_360px]')}>
             {/* Lines */}
-            <section className={cn(PANEL, 'flex min-h-0 flex-col')}>
               <div className="flex flex-wrap items-center gap-2 border-b border-amber-200 p-2.5 dark:border-amber-400/20">
                 <NativeSelect
                   value={selectedParty ? String(selectedParty) : ''}
@@ -1279,12 +1282,12 @@ export function BankStatementPage() {
                       label: `${p.customerName} — ${p.lines} line${p.lines === 1 ? '' : 's'}, ${money0(p.total)}`,
                     })),
                   ]}
-                  className={cn(CONTROL, 'min-w-[260px] flex-1')}
+                  className={cn(CONTROL, 'min-w-0 basis-full sm:min-w-[260px] sm:flex-1 sm:basis-auto')}
                 />
                 <Button
                   variant="outline"
                   size="sm"
-                  className="ml-auto h-8 shrink-0 rounded-[4px] text-[12px] font-semibold"
+                  className="ml-auto h-8 shrink-0 rounded-[4px] text-[12px] font-semibold max-sm:order-last"
                   onClick={() => toggleWorking(!showWorking)}
                   title="The before / after figures for the party you pick"
                 >
@@ -1303,7 +1306,7 @@ export function BankStatementPage() {
                       .filter((k) => (statusCounts.get(k) ?? 0) > 0)
                       .map((k) => ({ value: k, label: `${STATUS_META[k].label} (${statusCounts.get(k)})` })),
                   ]}
-                  className={cn(CONTROL, 'w-48', statusFilter && 'font-bold')}
+                  className={cn(CONTROL, 'min-w-0 flex-1 sm:w-48 sm:flex-none', statusFilter && 'font-bold')}
                 />
                 {!!checked.size && isDraft && canEdit && (
                   <div className="flex flex-wrap items-center gap-2 rounded-[4px] bg-sky-50 px-2 py-1.5 ring-1 ring-sky-200 ring-inset dark:bg-sky-400/10 dark:ring-sky-400/25">
@@ -1433,7 +1436,7 @@ export function BankStatementPage() {
                 </div>
               )}
 
-              <div className="min-h-0 flex-1 overflow-auto">
+              <div className="sm:min-h-0 sm:flex-1 sm:overflow-auto">
                 {/* Mobile View: Cards */}
                 <div className="space-y-2 p-2 sm:hidden">
                   {runLoading ? (
@@ -1512,7 +1515,7 @@ export function BankStatementPage() {
 
             {/* Before / after for the selected party — off unless asked for. */}
             {showWorking && (
-            <section className={cn(PANEL, 'min-h-0 overflow-auto p-3')}>
+            <section className={cn(PANEL, 'min-h-0 min-w-0 overflow-auto p-3', !workingParty && 'max-sm:hidden')}>
               {!workingParty ? (
                 <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-[12.5px]">
                   <Landmark className="size-8 opacity-30" />

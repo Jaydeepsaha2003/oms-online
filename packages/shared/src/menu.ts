@@ -529,7 +529,7 @@ export const MENU: MenuNode[] = [
       },
       {
         id: 'bank-statement',
-        label: 'Bank Statement Recon',
+        label: 'Bank Reconciliation',
         to: '/account/bank-statement',
         icon: 'Landmark',
         permission: perm(RESOURCES.BANK_STATEMENT, ACTIONS.VIEW),
