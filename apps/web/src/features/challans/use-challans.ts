@@ -46,10 +46,11 @@ const invalidateChallans = (qc: ReturnType<typeof useQueryClient>) => {
  * which already opts in here, showed the correct rate. Two screens disagreeing
  * about the same party is worse than a slightly slower load.
  *
- * `refetchOnMount: 'always'` also keeps this OUT of the persisted localStorage
- * cache (see `shouldDehydrateQuery` in lib/query.ts), so a cold reload can't
- * rehydrate stale badges either. `placeholderData` keeps the previous rows on
- * screen while the refetch runs, so landing here still paints instantly.
+ * `staleTime: 0` makes a restored result refresh as soon as the page mounts.
+ * Unlike `refetchOnMount: 'always'`, it still permits the last successful result
+ * to be persisted, so a slow connection can paint verified rows immediately.
+ * The page treats those rows as read-only while the refresh is in flight; no
+ * challan can be created until the current server response has arrived.
  */
 export function usePendingChallans(query: PendingChallanQuery, opts?: { enabled?: boolean }) {
   return useQuery({
@@ -58,7 +59,7 @@ export function usePendingChallans(query: PendingChallanQuery, opts?: { enabled?
     placeholderData: (prev) => prev,
     enabled: opts?.enabled ?? true,
     staleTime: 0,
-    refetchOnMount: 'always',
+    refetchOnMount: true,
     // Belt and braces behind the live `challans:pending-changed` socket ping: a
     // phone that was asleep, or a PC whose socket dropped, misses the broadcast
     // entirely and would otherwise sit on a list that no longer exists. Coming

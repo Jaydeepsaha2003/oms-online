@@ -156,6 +156,9 @@ function toInput(o: OrderDto, items: OrderItemDto[]): OrderInput {
     items: items.map((it) => ({
       id: it.id,
       bookingId: it.bookingId,
+      // Must round-trip: leaving it out would read as "switch back to booking
+      // rates", which the server refuses for anyone but a System Administrator.
+      priceAtCurrent: it.priceAtCurrent ?? false,
       pCategory: it.pCategory,
       subCategory: it.subCategory,
       product: it.product,
@@ -198,9 +201,14 @@ const COLUMNS: DataColumn<Row>[] = [
             // plus a code set the column's width and pushed every other column
             // sideways. `w-fit` keeps the border tight around the code.
             className="mt-0.5 block w-fit rounded-[3px] border border-violet-300 px-1 text-[10px] font-bold whitespace-nowrap text-violet-700 dark:border-violet-400/40 dark:text-violet-300"
-            title={`Drawn from bag booking ${r.line.bookingCode ?? `#${r.line.bookingId}`} — rate frozen at the booking date`}
+            title={
+              r.line.priceAtCurrent
+                ? `Bags drawn from bag booking ${r.line.bookingCode ?? `#${r.line.bookingId}`} — priced at the current list`
+                : `Drawn from bag booking ${r.line.bookingCode ?? `#${r.line.bookingId}`} — rate frozen at the booking date`
+            }
           >
-            ({r.line.bookingCode ?? `BKG-${String(r.line.bookingId).padStart(5, '0')}`})
+            ({r.line.bookingCode ?? `BKG-${String(r.line.bookingId).padStart(5, '0')}`}
+            {r.line.priceAtCurrent ? ' · current rate' : ''})
           </span>
         )}
       </span>

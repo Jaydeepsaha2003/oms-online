@@ -269,11 +269,14 @@ export class OrdersService {
     });
   }
 
-  async create(dto: CreateOrderDto, actor?: { id?: string | null; name?: string | null }): Promise<OrderDto> {
+  async create(
+    dto: CreateOrderDto,
+    actor?: { id?: string | null; name?: string | null; isSuperAdmin?: boolean },
+  ): Promise<OrderDto> {
     const data = await this.toHeaderData(dto);
     // Booking-sourced lines are re-priced at their booking's frozen date rates and
     // checked against what's left on the booking before anything is written.
-    await this.applyBookingPricing(dto.items ?? []);
+    await this.applyBookingPricing(dto.items ?? [], undefined, actor?.isSuperAdmin ?? false);
     const row = await serializeBookingDraw(drawsOnBooking(dto.items ?? []), async () => {
       await this.assertBookingCapacity(dto.items ?? [], dto.customerName ?? null);
       return this.prisma.order.create({
@@ -329,7 +332,7 @@ export class OrdersService {
     const bookingsBefore = await this.prisma.orderItem.findMany({
       where: { orderId: id, bookingId: { not: null } },
       select: {
-        id: true, bookingId: true, rate: true, productRate: true, designRate: true,
+        id: true, bookingId: true, rate: true, productRate: true, designRate: true, priceAtCurrent: true,
         pCategory: true, subCategory: true, product: true, productName: true, designType: true, design: true, psize: true,
       },
     });
@@ -340,7 +343,11 @@ export class OrdersService {
       // Re-price + capacity-check booking-sourced lines before writing (this order's
       // own current draw is excluded so its kept lines don't count against itself).
       // The saved rows let an untouched line keep the rate it was agreed at.
-      await this.applyBookingPricing(dto.items, new Map(bookingsBefore.map((b) => [b.id, b as Record<string, unknown>])));
+      await this.applyBookingPricing(
+        dto.items,
+        new Map(bookingsBefore.map((b) => [b.id, b as Record<string, unknown>])),
+        opts?.isSuperAdmin ?? false,
+      );
       await this.assertBookingCapacity(dto.items, dto.customerName ?? null, id);
       // Reconcile line items BY ID so existing lines keep their identity — and
       // therefore their dispatch history. A blanket deleteMany+create would give
@@ -1397,6 +1404,8 @@ export class OrdersService {
       status: uc(it.status) === 'CANCELLED' ? 'CANCELLED' : 'CONFIRMED',
       comment: toStr(it.comment),
       bookingId: toNum(it.bookingId),
+      // Already normalised and permission-checked by applyBookingPricing.
+      priceAtCurrent: !!toNum(it.bookingId) && it.priceAtCurrent === true,
       // Carried through so a converted line keeps pointing at the quotation line
       // it came from. A line added later has none, which is what keeps
       // post-conversion additions out of the quotation.
@@ -1603,11 +1612,33 @@ export class OrdersService {
   private async applyBookingPricing(
     items: Record<string, unknown>[],
     savedById?: Map<number, Record<string, unknown>>,
+    isSuperAdmin = false,
   ): Promise<void> {
     for (const it of items) {
       const bookingId = toNum(it.bookingId);
+      const wantsCurrent = it.priceAtCurrent === true || it.priceAtCurrent === 'true';
+      // Only meaningful on a booked line; normalise it away everywhere else.
+      it.priceAtCurrent = !!bookingId && wantsCurrent;
       if (!bookingId) continue;
       const saved = savedById?.get(toNum(it.id) ?? -1);
+
+      /*
+       * "Bags from the booking, price from the current list" overrides the price
+       * the booking locked in, so SETTING or CHANGING it is a System
+       * Administrator's decision. A line that already carries the flag and is
+       * saved again unchanged (someone else editing a remark on the order) is
+       * not a new decision and is let through.
+       */
+      const savedCurrent = saved?.priceAtCurrent === true;
+      if (!!it.priceAtCurrent !== savedCurrent && !isSuperAdmin) {
+        throw new ForbiddenException(
+          'Only a System Administrator can price a booked line at the current rate (or switch it back).',
+        );
+      }
+      // Current-rate line: keep the rates the form sent — the same trust every
+      // non-booked line gets. The bags still count against the booking below.
+      if (it.priceAtCurrent) continue;
+
       if (
         saved &&
         toNum(saved.bookingId) === bookingId &&
@@ -1715,6 +1746,7 @@ export class OrdersService {
           ? ('PARTIAL' as const)
           : ('NONE' as const),
       bookingId: it.bookingId ?? null,
+      priceAtCurrent: it.priceAtCurrent,
       // Booking codes use the fixed BKG-##### format (see BookingsService), so the
       // source code can be derived without another query.
       bookingCode: it.bookingId != null ? `BKG-${String(it.bookingId).padStart(5, '0')}` : null,

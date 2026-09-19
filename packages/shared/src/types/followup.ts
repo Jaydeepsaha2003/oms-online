@@ -270,17 +270,51 @@ export interface PartyOpenInvoice {
   balance: number;
   /** Days past the due date (0 when not yet overdue / no due date). */
   overdueDays: number;
-  /**
-   * How the invoice was billed: B on the bank side, C in cash. Carried per
-   * invoice because most are split across both — a collector needs to know
-   * which part they are chasing before they pick up the phone.
-   *
-   * These are the BILLED figures, not the outstanding split: receipts are not
-   * recorded as bank-or-cash against a specific invoice, so splitting the
-   * balance would mean inventing an attribution.
-   */
+  /** Remaining amount due on the bank side after receipts, discounts and advances. */
+  bank: number;
+  /** Remaining amount due in cash after receipts, discounts and advances. */
+  cash: number;
+}
+
+export interface InvoiceBucketDueInput {
+  bankBilled: number;
+  cashBilled: number;
+  bankReceived: number;
+  cashReceived: number;
+  bankDiscount: number;
+  cashDiscount: number;
+}
+
+export interface InvoiceBucketAmounts {
   bank: number;
   cash: number;
+}
+
+const roundMoney = (value: number) => Math.round(value * 100) / 100;
+
+/** Derive the live bank/cash due without allowing an overpayment to go negative. */
+export function invoiceBucketDue(input: InvoiceBucketDueInput): InvoiceBucketAmounts & { balance: number } {
+  const bank = Math.max(0, roundMoney(input.bankBilled - input.bankReceived - input.bankDiscount));
+  const cash = Math.max(0, roundMoney(input.cashBilled - input.cashReceived - input.cashDiscount));
+  return { bank, cash, balance: roundMoney(bank + cash) };
+}
+
+/** Apply money already on account to the matching invoice bucket. */
+export function applyInvoiceBucketCredit(
+  due: InvoiceBucketAmounts,
+  credit: InvoiceBucketAmounts,
+): { due: InvoiceBucketAmounts & { balance: number }; credit: InvoiceBucketAmounts } {
+  const bankApplied = Math.min(due.bank, credit.bank);
+  const cashApplied = Math.min(due.cash, credit.cash);
+  const bank = roundMoney(due.bank - bankApplied);
+  const cash = roundMoney(due.cash - cashApplied);
+  return {
+    due: { bank, cash, balance: roundMoney(bank + cash) },
+    credit: {
+      bank: roundMoney(credit.bank - bankApplied),
+      cash: roundMoney(credit.cash - cashApplied),
+    },
+  };
 }
 
 /** A party's live payment balance at a glance — the money a collector needs
@@ -317,6 +351,24 @@ export interface PartyBalanceSummary {
   promiseState: PromiseState;
   /** Whether the party has any PAYMENT follow-up at all (open or done). */
   hasFollowup: boolean;
+  /**
+   * The same figures for ONE side of the book only — the bank-billed part of
+   * each invoice, or the cash-billed part — after the party's advance is spent
+   * from the matching side. `outstanding` above is always bank + cash.
+   */
+  bank: PartyBalanceSide;
+  cash: PartyBalanceSide;
+}
+
+/** One side (bank or cash) of a party's balance. */
+export interface PartyBalanceSide {
+  outstanding: number;
+  overdue: number;
+  dueSoon: number;
+  /** Oldest overdue invoice that still owes money on THIS side. */
+  oldestDays: number;
+  /** Open invoices with money still owed on this side. */
+  invoiceCount: number;
 }
 
 /** A party balance with its open-invoice breakdown (form drill-down). */

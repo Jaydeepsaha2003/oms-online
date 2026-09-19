@@ -132,6 +132,8 @@ interface Item {
   id?: number | null; // DB id of an existing line (undefined for a newly-added row)
   status?: string | null; // per-line CONFIRMED/CANCELLED, preserved across edits
   bookingId?: number | null; // set when the line was drawn from a bag Booking (rate frozen)
+  /** Drawn from the booking but priced at the CURRENT list (System Administrator only). */
+  priceAtCurrent?: boolean;
   bookingCode?: string | null; // the source booking's code, for the badge
   special?: string | null; // human note when a customer special rate priced this line (shows the "special" tag)
   // Set only when this line's rates came from picking a catalogue item (never
@@ -647,6 +649,9 @@ export function OrderFormPage() {
    * `bookingSource` is '' for a regular order, or the chosen booking's id.
    */
   const [bookingSource, setBookingSource] = useState('');
+  /** With a booking chosen: take the bags from it but price new lines at the
+   *  CURRENT list. System Administrator only (the server enforces it too). */
+  const [bookingPriceAtCurrent, setBookingPriceAtCurrent] = useState(false);
   const { data: activeBookings = [] } = useActiveCustomerBookings(
     docKind === 'order' ? customer.trim() : '',
   );
@@ -795,6 +800,7 @@ export function OrderFormPage() {
       // edit re-priced them off the live list. One booking per order, so the
       // first booked line names it.
       setBookingSource(String(o.items.find((it) => it.bookingId != null)?.bookingId ?? ''));
+      setBookingPriceAtCurrent(o.items.some((it) => it.bookingId != null && !!it.priceAtCurrent));
       pcsBeforeBoxRef.current = null;
       setEntry(blankEntry());
       setEditingItemKey(null);
@@ -805,6 +811,7 @@ export function OrderFormPage() {
           status: it.status,
           bookingId: it.bookingId,
           bookingCode: it.bookingCode ?? null,
+          priceAtCurrent: it.bookingId != null && !!it.priceAtCurrent,
           itemName: it.productName ?? [it.product, it.designType].filter(Boolean).join(' '),
           product: it.product ?? '',
           psize: it.psize ?? null,
@@ -877,6 +884,7 @@ export function OrderFormPage() {
       if (d.showBy) setShowBy(d.showBy);
       // Optional on older drafts — absent simply means a regular order.
       setBookingSource(d.bookingSource ?? '');
+      setBookingPriceAtCurrent((d.items as Item[]).some((i) => i.bookingId != null && !!i.priceAtCurrent));
       preselectedBooking.current = true;
       restoredFromStorage.current = true;
       setItems((d.items as Item[]).map((it, idx) => ({ ...it, key: `d${idx}` })));
@@ -1126,7 +1134,9 @@ export function OrderFormPage() {
   // Deriving this avoids stale effects when an item or booking is reselected.
   const bookingQuoted = bookingEntry.ready ? bookingEntry.quote.data : undefined;
     const r2 = (x: number) => String(Math.round(x * 100) / 100);
-  const entry = bookingSource ? {
+  // "Current rate" keeps the ordinary price-list figures (`rawEntry`) — only the
+  // bag count goes against the booking.
+  const entry = bookingSource && !bookingPriceAtCurrent ? {
     ...rawEntry,
     productRate: bookingQuoted ? r2(bookingQuoted.productRate + bookingQuoted.productDelta) : '',
     designRate: bookingQuoted && rawEntry.designType ? r2(bookingQuoted.designRate + bookingQuoted.designDelta) : '',
@@ -1160,6 +1170,8 @@ export function OrderFormPage() {
   const bookingEntryBlocker = (): string | null => {
     const problem = bookingSourceProblem();
     if (problem || !bookingSource) return problem;
+    // Priced from the current list, so there is no booked price to wait for.
+    if (bookingPriceAtCurrent) return null;
     if (!entry.product.trim()) return null; // nothing picked yet; the item rules speak first
     if (bookingEntry.quote.isFetching) return 'Checking this item’s booked price…';
     if (bookingEntry.quote.isError) return 'Could not load the booked price. Please try again.';
@@ -1691,6 +1703,7 @@ export function OrderFormPage() {
       // that switches the source (or drops it) moves the quantity with it.
       bookingId: drawnBooking?.id ?? null,
       bookingCode: drawnBooking?.code ?? null,
+      priceAtCurrent: !!drawnBooking && bookingPriceAtCurrent,
     };
     // Nothing goes on the list that the booking can't actually cover. Counted
     // ONCE when replacing a row: the edited line stands in for its original.
@@ -1745,6 +1758,7 @@ export function OrderFormPage() {
     // Edit the line against the booking it was added on, so its rate is re-quoted
     // from that booking rather than whichever one the picker happens to be on.
     setBookingSource(item.bookingId != null ? String(item.bookingId) : '');
+    setBookingPriceAtCurrent(item.bookingId != null && !!item.priceAtCurrent);
     // A fresh edit run: no Box keystroke has overwritten anything yet, so the
     // line's own Pcs is what an emptied Box would restore to.
     pcsBeforeBoxRef.current = null;
@@ -1917,6 +1931,7 @@ export function OrderFormPage() {
       id: i.id,
       status: i.status,
       bookingId: i.bookingId ?? null,
+      priceAtCurrent: i.bookingId != null && !!i.priceAtCurrent,
       psize: i.psize ?? (i.id == null ? itemOptions.map.get(i.itemName)?.size ?? null : null),
       pCategory: i.category.trim() || null,
       subCategory: i.subCategory.trim() || null,
@@ -2317,7 +2332,9 @@ export function OrderFormPage() {
      * wrapper is gone rather than left as a no-op, so there is one place that
      * decides what a field looks like.
      */
-    <div ref={formRef} onKeyDown={handleTabNav} className="flex w-full flex-col gap-2">
+    // `data-new-order` / `data-no-*` are styling hooks only — the dark theme for
+    // this page lives in index.css ("New Order — dark mode") and keys off them.
+    <div ref={formRef} onKeyDown={handleTabNav} className="flex w-full flex-col gap-2" data-new-order="">
       {/* Success tick overlay shown briefly after a save */}
       {saved && (
         <div className="bg-background/70 fixed inset-0 z-[100] flex items-center justify-center backdrop-blur-sm">
@@ -2409,6 +2426,7 @@ export function OrderFormPage() {
           onClick={() => confirmExit(backPath)}
           aria-label="Back"
           title="Back"
+          data-no-btn="icon"
         >
           <ArrowLeft />
         </Button>
@@ -2453,7 +2471,7 @@ export function OrderFormPage() {
           settles into a clean two-row split (4 + 3) instead of the old lopsided
           wrap. `min-w-0` on every cell lets the field shrink to its grid track
           instead of overflowing past it. */}
-      <Card className="border-l-4 border-l-primary py-0">
+      <Card className="border-l-4 border-l-primary py-0" data-no-card="header">
         <CardContent className="grid grid-cols-2 gap-2 px-3 py-2 sm:grid-cols-4 sm:px-4 sm:py-3 lg:grid-cols-8">
           <div
             className="col-span-2 min-w-0 space-y-1.5 sm:col-span-2 lg:col-span-2"
@@ -2544,7 +2562,7 @@ export function OrderFormPage() {
       </Card>
 
       {/* Card 2 — item entry (2 rows) + grid */}
-      <Card className="border-border border-l-4 border-l-slate-400 bg-slate-50/70 py-0 dark:bg-card">
+      <Card className="border-border border-l-4 border-l-slate-400 bg-slate-50/70 py-0 dark:bg-card" data-no-card="items">
         <CardContent className="space-y-2 px-3 py-2 sm:px-4 sm:py-3" {...itemAreaGuard}>
           {/* Prompt to choose a customer — see showCustomerPrompt. */}
           {showCustomerPrompt && (
@@ -2558,7 +2576,14 @@ export function OrderFormPage() {
           {docKind === 'order' && can('booking:view') && (activeBookings.length > 0 || bookingSource) && (
             <OrderBookingSource
               source={bookingSource}
-              onChange={(v) => { bookingChoiceTouched.current = true; setBookingSource(v); }}
+              onChange={(v) => {
+                bookingChoiceTouched.current = true;
+                setBookingSource(v);
+                // A different booking (or the plain price list) starts on booking rates again.
+                setBookingPriceAtCurrent(false);
+              }}
+              priceAtCurrent={bookingPriceAtCurrent}
+              onPriceAtCurrent={isSuperAdmin ? setBookingPriceAtCurrent : undefined}
               bookings={activeBookings}
               booking={drawnBooking}
               lines={bookingLines(items)}
@@ -2733,6 +2758,8 @@ export function OrderFormPage() {
                     }}
                     onFocus={() => entryHasRate && setEntryRateHovered(true)}
                     onBlur={() => setEntryRateHovered(false)}
+                    data-no-total=""
+                    data-open={entryRateOpen ? '' : undefined}
                     className={cn(
                       'flex h-9 items-center justify-end rounded-md border border-emerald-200 bg-emerald-50 px-2 text-sm font-bold tabular-nums text-emerald-700 outline-none',
                       'dark:border-emerald-400/30 dark:bg-emerald-400/10 dark:text-emerald-300',
@@ -2998,7 +3025,7 @@ export function OrderFormPage() {
                   <Button
                     onClick={addItem}
                     size="icon"
-                    disabled={!!bookingSource && !bookingEntry.ready}
+                    disabled={!!bookingSource && !bookingPriceAtCurrent && !bookingEntry.ready}
                     aria-label="Update item"
                     title="Update this item (Alt+A or Ctrl+A)"
                   >
@@ -3028,7 +3055,8 @@ export function OrderFormPage() {
                   )}
                   <Button
                     onClick={addItem}
-                    disabled={noCustomer || (!!bookingSource && !!entry.product && !bookingEntry.ready)}
+                    disabled={noCustomer || (!!bookingSource && !bookingPriceAtCurrent && !!entry.product && !bookingEntry.ready)}
+                    data-no-btn="add"
                     aria-label="Add item"
                     title={noCustomer ? 'Select a customer first' : 'Add item (Alt+A or Ctrl+A)'}
                   >
@@ -3074,6 +3102,7 @@ export function OrderFormPage() {
           <div
             className="hidden overflow-auto rounded-lg border sm:block"
             style={{ maxHeight: gridMaxHeight }}
+            data-no-table=""
           >
             {/* Prod ₹ / Dsgn ₹ are saved with the order but hidden from this list. */}
             <table className="w-full text-sm [&_td]:border-r [&_td]:border-border/60 [&_td:last-child]:border-r-0 [&_th]:border-r [&_th]:border-border/40 [&_th:last-child]:border-r-0">
@@ -3415,10 +3444,13 @@ export function OrderFormPage() {
           sits on its own line, the secondary actions form a compact 2-col grid,
           and the primary action is a full-width, thumb-friendly button underneath;
           desktop keeps the single inline row. */}
-      <div className="-mx-1 mt-1 border-t px-2 py-2.5 sm:mt-2 sm:flex sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-3 sm:gap-y-2 sm:py-3">
+      <div
+        className="-mx-1 mt-1 border-t px-2 py-2.5 sm:mt-2 sm:flex sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-3 sm:gap-y-2 sm:py-3"
+        data-no-footer=""
+      >
         <p className="mb-2.5 text-center text-sm sm:mb-0 sm:text-left">
           {items.length} item(s) · total{' '}
-          <span className="text-lg font-bold tabular-nums text-emerald-600">
+          <span className="text-lg font-bold tabular-nums text-emerald-600" data-no-grand="">
             ₹{total.toLocaleString('en-IN')}
           </span>
         </p>
@@ -3428,6 +3460,7 @@ export function OrderFormPage() {
             variant="destructive"
             onClick={() => confirmExit(backPath)}
             title="Cancel (Esc)"
+            data-no-btn="cancel"
           >
             Cancel
           </Button>
@@ -3436,6 +3469,7 @@ export function OrderFormPage() {
             variant="outline"
             onClick={resetForm}
             title={isEdit ? 'Revert unsaved changes' : 'Clear the form'}
+            data-no-btn="secondary"
           >
             <RotateCcw /> Reset
           </Button>
@@ -3447,6 +3481,7 @@ export function OrderFormPage() {
               onClick={() => saveOrder('DRAFT', false)}
               disabled={saving}
               title="Save as a draft order (hidden from Order Modify)"
+              data-no-btn="secondary"
             >
               <FilePen /> Save as Draft
             </Button>
@@ -3461,6 +3496,7 @@ export function OrderFormPage() {
               type="button"
               onClick={() => (isEdit ? saveDraftAsQuotation() : persist('quotation'))}
               disabled={saving}
+              data-no-btn="quotation"
               className="border border-red-200 bg-red-100 text-red-700 hover:bg-red-200 dark:border-red-400/30 dark:bg-red-400/10 dark:text-red-200 dark:hover:bg-red-400/20"
               title={
                 isEdit
@@ -3492,6 +3528,7 @@ export function OrderFormPage() {
               type="button"
               onClick={createAndDispatch}
               disabled={saving}
+              data-no-btn="dispatch"
               className="col-span-2 bg-amber-500 text-white hover:bg-amber-600 sm:col-auto"
               title={
                 orderIsDraft
@@ -3509,6 +3546,7 @@ export function OrderFormPage() {
             onClick={submit}
             disabled={saving}
             title={`${primaryLabel} (Ctrl+S)`}
+            data-no-btn="primary"
             className="col-span-2 h-12 text-base font-semibold shadow-sm sm:col-auto sm:h-9 sm:text-sm sm:font-medium sm:shadow-none"
           >
             {saving ? <Loader2 className="animate-spin" /> : <Save />}

@@ -145,7 +145,12 @@ export class OrdersController {
   create(@Body() dto: CreateOrderDto, @CurrentUser() user: AuthenticatedUser | undefined) {
     // The actor is passed only so they are left OUT of the new-order alert —
     // nobody is notified about their own order.
-    return this.orders.create(dto, { id: user?.id ?? null, name: user?.name ?? null });
+    return this.orders.create(dto, {
+      id: user?.id ?? null,
+      name: user?.name ?? null,
+      // Gates pricing a booked line at the current rate — see applyBookingPricing.
+      isSuperAdmin: user?.permissions?.includes(ALL_PERMISSIONS) ?? false,
+    });
   }
 
   @Patch(':id/status')

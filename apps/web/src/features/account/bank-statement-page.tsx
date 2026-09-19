@@ -211,7 +211,7 @@ export function BankStatementPage() {
     recheck
       .mutateAsync()
       .then((res) => {
-        if (res.reopened.length) setReopenedInfo(res);
+        if (res.reopened.length || res.uncovered?.length) setReopenedInfo(res);
       })
       .catch(() => {
         /* A failed re-check must not stop the run opening — the working is
@@ -859,15 +859,44 @@ export function BankStatementPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <TriangleAlert className="size-5 text-amber-600" />
-              {reopenedInfo?.reopened.length} line{reopenedInfo?.reopened.length === 1 ? '' : 's'} reopened
+              {(() => {
+                const n = (reopenedInfo?.reopened.length ?? 0) + (reopenedInfo?.uncovered?.length ?? 0);
+                return `${n} line${n === 1 ? '' : 's'} reopened`;
+              })()}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3 text-[13px]">
+            {/* Lines that were MATCHED to an existing receipt which has since
+                been deleted — the other way money drops out of the books. */}
+            {!!reopenedInfo?.uncovered?.length && (
+              <>
+                <p>
+                  {reopenedInfo.uncovered.length === 1 ? 'This line was' : 'These lines were'} matched against a receipt that has
+                  since been deleted in Receive Payment, so the money is no longer in the books:
+                </p>
+                <div className="max-h-56 overflow-y-auto rounded-[4px] border border-amber-300 dark:border-amber-400/30">
+                  <table className="w-full text-[12.5px]">
+                    <tbody>
+                      {reopenedInfo.uncovered.map((r) => (
+                        <tr key={r.rowId} className="border-b last:border-b-0 odd:bg-slate-50/70 dark:odd:bg-white/[0.03]">
+                          <td className="px-2 py-1 text-muted-foreground tabular-nums">#{r.rowNo}</td>
+                          <td className="px-2 py-1 font-semibold">{r.customerName || '—'}</td>
+                          <td className="px-2 py-1 text-right font-bold tabular-nums">{money(r.shortfall)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+            {!!reopenedInfo?.reopened.length && (
             <p>
               The receipt{reopenedInfo?.reopened.length === 1 ? '' : 's'} this statement created for the line
               {reopenedInfo?.reopened.length === 1 ? '' : 's'} below {reopenedInfo?.reopened.length === 1 ? 'has' : 'have'} since been
               deleted in Receive Payment, so this money is no longer in the books.
             </p>
+            )}
+            {!!reopenedInfo?.reopened.length && (
             <div className="max-h-56 overflow-y-auto rounded-[4px] border border-amber-300 dark:border-amber-400/30">
               <table className="w-full text-[12.5px]">
                 <tbody>
@@ -882,6 +911,7 @@ export function BankStatementPage() {
                 </tbody>
               </table>
             </div>
+            )}
             <p>
               They have been put back so you can post them again — this working is a draft once more, and
               <strong> Process</strong> will recreate just these.

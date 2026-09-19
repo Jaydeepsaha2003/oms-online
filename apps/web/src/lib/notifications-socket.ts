@@ -1,8 +1,9 @@
 import { io, type Socket } from 'socket.io-client';
 import { toast } from 'sonner';
-import type { AppNotification, TestNotificationPayload } from '@oms/shared';
+import type { AppNotification, PendingChallanFilterOptions, PendingChallanList, TestNotificationPayload } from '@oms/shared';
 import { useAuthStore } from '@/stores/auth-store';
 import { queryClient } from './query';
+import { http } from './api';
 import { playTestChime } from './chime';
 
 let socket: Socket | null = null;
@@ -60,6 +61,30 @@ export function connectNotificationsSocket(): void {
   // itself (see the "newly arrived" banner in challan-form-page.tsx).
   socket.on('challans:pending-changed', () => {
     void queryClient.invalidateQueries({ queryKey: ['challans', 'pending'] });
+    // `invalidateQueries` only refetches mounted queries. Warm page 1 even when
+    // Pending Challan has never been opened in this session, so another user's
+    // dispatch begins travelling to this browser before the operator clicks the
+    // menu. Use the operator's saved row count so the key exactly matches the
+    // page they will open.
+    let pageSize = 50;
+    try {
+      const saved = Number(localStorage.getItem('oms:page-size:pending-challan'));
+      if ([25, 50, 100, 200].includes(saved)) pageSize = saved;
+    } catch {
+      // Private mode may block localStorage; the normal default remains safe.
+    }
+    const pendingQuery = { page: 1, pageSize };
+    void queryClient.prefetchQuery({
+      queryKey: ['challans', 'pending', pendingQuery],
+      queryFn: () => http.get<PendingChallanList>('/challans/pending', { params: pendingQuery }),
+      staleTime: 0,
+    });
+    void queryClient.invalidateQueries({ queryKey: ['challans', 'pending-filters'] });
+    void queryClient.prefetchQuery({
+      queryKey: ['challans', 'pending-filters'],
+      queryFn: () => http.get<PendingChallanFilterOptions>('/challans/pending-filters'),
+      staleTime: 60_000,
+    });
     void queryClient.invalidateQueries({ queryKey: ['challans', 'draft'] });
   });
 

@@ -722,6 +722,11 @@ model OrderItem {
   rate            Float? // total = productRate + designRate
   calField        String? // pricing unit: KGS / PCS
   priority        String? // URGENT / NORMAL (per line item)
+  /// A line drawn from a bag booking (bookingId set) but priced at the CURRENT
+  /// price list instead of the booking's frozen rates. The bags still come off
+  /// the booking. Only a System Administrator may set or change it — see
+  /// OrdersService.applyBookingPricing. False (booking rates) by default.
+  priceAtCurrent  Boolean @default(false)
   ordType         String? // order type (e.g. SALES ORDER)
   // Per-line status: CONFIRMED (active) or CANCELLED (kept for the record, excluded
   // from order totals and not dispatchable). Mirrors legacy ORDERTBL.STATUS.

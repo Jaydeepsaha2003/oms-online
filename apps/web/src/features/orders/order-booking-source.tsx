@@ -5,7 +5,7 @@ import { NativeSelect } from '@/components/common/combo';
 import { Button } from '@/components/ui/button';
 import { bookingOrderBalance, type BookingOrderLine } from './order-booking-balance';
 
-export function OrderBookingSource({ source, onChange, bookings, booking, lines, saved, disabled, error, loading, onRetry }: {
+export function OrderBookingSource({ source, onChange, bookings, booking, lines, saved, disabled, error, loading, onRetry, priceAtCurrent = false, onPriceAtCurrent }: {
   source: string;
   onChange: (value: string) => void;
   bookings: BookingDto[];
@@ -16,6 +16,10 @@ export function OrderBookingSource({ source, onChange, bookings, booking, lines,
   error?: string | null;
   loading?: boolean;
   onRetry?: () => void;
+  /** Bags still come off the booking, but lines are priced at the CURRENT list. */
+  priceAtCurrent?: boolean;
+  /** Offered to System Administrators only — omit and the switch isn't shown. */
+  onPriceAtCurrent?: (value: boolean) => void;
 }) {
   const options = [...bookings];
   if (booking && !options.some((b) => b.id === booking.id)) options.push(booking);
@@ -39,7 +43,30 @@ export function OrderBookingSource({ source, onChange, bookings, booking, lines,
             // moment it loads.
             ...(source && !options.some((b) => String(b.id) === source) ? [{ value: source, label: 'Loading booking…' }] : []),
           ]} />
-        {booking && source && <span className="flex items-center gap-1 text-xs font-medium text-sky-800 dark:text-sky-200"><Lock className="size-3" /> Prices as booked on {formatDate(booking.bookingDate)}</span>}
+        {booking && source && (priceAtCurrent
+          ? <span className="flex items-center gap-1 text-xs font-medium text-amber-800 dark:text-amber-200">Bags from this booking · priced at the current list</span>
+          : <span className="flex items-center gap-1 text-xs font-medium text-sky-800 dark:text-sky-200"><Lock className="size-3" /> Prices as booked on {formatDate(booking.bookingDate)}</span>)}
+        {source && onPriceAtCurrent && (
+          <div className="ml-auto flex items-center gap-1.5 text-xs" role="group" aria-label="Price booked lines at">
+            <span className="text-muted-foreground font-medium">Price at</span>
+            {([[false, 'Booking rate'], [true, 'Current rate']] as const).map(([value, label]) => (
+              <button
+                key={label}
+                type="button"
+                disabled={disabled}
+                aria-pressed={priceAtCurrent === value}
+                onClick={() => onPriceAtCurrent(value)}
+                className={
+                  priceAtCurrent === value
+                    ? 'rounded-md border border-sky-600 bg-sky-600 px-2.5 py-1 font-semibold text-white'
+                    : 'rounded-md border border-sky-200 bg-background px-2.5 py-1 font-semibold text-sky-800 hover:bg-sky-100 dark:border-sky-800 dark:text-sky-200 dark:hover:bg-sky-900/40'
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       {balance && source && <div className="grid grid-cols-1 gap-2 rounded-md bg-background/70 p-2.5 text-xs sm:grid-cols-3">
         <div><span className="text-muted-foreground">Available for this order</span><p className="mt-1 font-semibold tabular-nums">{qty(balance.before.bags, balance.before.kgs)}</p></div>

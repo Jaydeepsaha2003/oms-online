@@ -1,8 +1,11 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Followup, FollowupLog, Prisma } from '@prisma/client';
 import {
+  applyInvoiceBucketCredit,
   DEFAULT_CRM_SETTINGS,
   computeFollowupState,
+  invoiceBucketDue,
+  payBucketOf,
   type CrmReminderSettings,
   type FollowupChecklistItemDto,
   type FollowupDto,
@@ -31,6 +34,8 @@ const normaliseKind = (v: string | null | undefined): 'DELIVERY' | 'PAYMENT' | '
 };
 
 const SETTINGS_KEY = 'CRM_REMINDER_DEFAULTS';
+/** An empty bank or cash side of a party balance. Spread, never shared. */
+const ZERO_SIDE = { outstanding: 0, overdue: 0, dueSoon: 0, oldestDays: 0, invoiceCount: 0 } as const;
 const INCLUDE = {
   logs: { orderBy: { createdAt: 'asc' } },
   checklist: { orderBy: { sortOrder: 'asc' } },
@@ -591,7 +596,7 @@ export class CrmService {
       return {
         customerId: customerId ?? null, partyName: p, agent: cust?.agentName ?? null,
         outstanding: 0, gross: 0, overdue: 0, dueSoon: 0, oldestDays: 0, invoiceCount: 0, lastReceiptAt: null, advanceHeld: 0,
-        ...crm, invoices: [],
+        ...crm, invoices: [], bank: { ...ZERO_SIDE }, cash: { ...ZERO_SIDE },
       };
     }
     return null;
@@ -614,32 +619,69 @@ export class CrmService {
     const [challans, custRows, receipts, discounts, advances, payFollowups] = await Promise.all([
       this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { code: true, total: true, b: true, c: true, invDate: true, dueDate: true, customerId: true, customerName: true, transaction: true } }),
       this.prisma.customer.findMany({ select: { id: true, agentName: true } }),
-      this.prisma.acctPaymentReceipt.findMany({ select: { custId: true, invNo: true, recAmt: true, recDate: true } }),
+      this.prisma.acctPaymentReceipt.findMany({ select: { custId: true, invNo: true, recAmt: true, recDate: true, payMode: true, refRecId: true } }),
       // Sales Discounts settle an invoice just as truly as cash does (Account →
       // Sales Discount). Without them a written-off remainder is never cleared
       // here, so the invoice ages forever and the party can't be taken off the
       // recovery worklist from the UI at all.
-      this.prisma.acctPartyDiscount.findMany({ select: { invNo: true, disAmt: true } }),
-      this.prisma.acctPartyAdvance.findMany({ select: { custId: true, bankAmt: true, cashAmt: true } }),
+      this.prisma.acctPartyDiscount.findMany({ select: { invNo: true, disAmt: true, billType: true } }),
+      this.prisma.acctPartyAdvance.findMany({ where: { takeAccOn: 'PARTY' }, select: { refId: true, custId: true, bankAmt: true, cashAmt: true } }),
       this.prisma.followup.findMany({ where: { kind: 'PAYMENT' }, select: { customerId: true, partyName: true, status: true, promisedAt: true, promisedAmount: true, updatedAt: true } }),
     ]);
     const recvByInv = new Map<string, number>();
+    const bankRecvByInv = new Map<string, number>();
+    const cashRecvByInv = new Map<string, number>();
     const lastRecByCust = new Map<number, Date>();
     for (const r of receipts) {
       recvByInv.set(r.invNo, (recvByInv.get(r.invNo) ?? 0) + num(r.recAmt));
+      const bucket = payBucketOf(r.payMode) === 'bank' ? bankRecvByInv : cashRecvByInv;
+      bucket.set(r.invNo, (bucket.get(r.invNo) ?? 0) + num(r.recAmt));
       const c = lastRecByCust.get(r.custId);
       if (!c || r.recDate > c) lastRecByCust.set(r.custId, r.recDate);
     }
-    const discByInv = new Map<string, number>();
-    for (const d of discounts) discByInv.set(d.invNo, (discByInv.get(d.invNo) ?? 0) + num(d.disAmt));
-    const advByCust = new Map<number, number>();
-    for (const a of advances) advByCust.set(a.custId, (advByCust.get(a.custId) ?? 0) + num(a.bankAmt) + num(a.cashAmt));
+    const bankDiscByInv = new Map<string, number>();
+    const cashDiscByInv = new Map<string, number>();
+    for (const d of discounts) {
+      const bucket = d.billType === 'BANK' ? bankDiscByInv : cashDiscByInv;
+      bucket.set(d.invNo, (bucket.get(d.invNo) ?? 0) + num(d.disAmt));
+    }
+    const advanceRefs = new Set(advances.map((a) => a.refId));
+    const usedAdvanceBank = new Map<string, number>();
+    const usedAdvanceCash = new Map<string, number>();
+    for (const r of receipts) {
+      if (!r.refRecId || !advanceRefs.has(r.refRecId)) continue;
+      const bucket = payBucketOf(r.payMode) === 'bank' ? usedAdvanceBank : usedAdvanceCash;
+      bucket.set(r.refRecId, (bucket.get(r.refRecId) ?? 0) + num(r.recAmt));
+    }
+    const advByCust = new Map<number, { bank: number; cash: number }>();
+    for (const a of advances) {
+      const current = advByCust.get(a.custId) ?? { bank: 0, cash: 0 };
+      const remaining = invoiceBucketDue({
+        bankBilled: num(a.bankAmt),
+        cashBilled: num(a.cashAmt),
+        bankReceived: usedAdvanceBank.get(a.refId) ?? 0,
+        cashReceived: usedAdvanceCash.get(a.refId) ?? 0,
+        bankDiscount: 0,
+        cashDiscount: 0,
+      });
+      current.bank += remaining.bank;
+      current.cash += remaining.cash;
+      advByCust.set(a.custId, current);
+    }
     const custMap = new Map(custRows.map((c) => [c.id, c]));
 
     const map = new Map<string, PartyBalanceDetail>();
     for (const c of challans) {
       if (!SALES.has((c.transaction ?? '').trim().toUpperCase())) continue;
       const received = recvByInv.get(c.code) ?? 0;
+      const due = invoiceBucketDue({
+        bankBilled: num(c.b),
+        cashBilled: num(c.c),
+        bankReceived: bankRecvByInv.get(c.code) ?? 0,
+        cashReceived: cashRecvByInv.get(c.code) ?? 0,
+        bankDiscount: bankDiscByInv.get(c.code) ?? 0,
+        cashDiscount: cashDiscByInv.get(c.code) ?? 0,
+      });
       /*
        * Billed = b + c (the bank and cash sides), NOT `total`.
        *
@@ -653,7 +695,7 @@ export class CrmService {
        *
        * Settled = money received + anything written off as a Sales Discount.
        */
-      const bal = Math.max(0, num(c.b) + num(c.c) - received - (discByInv.get(c.code) ?? 0));
+      const bal = due.balance;
       if (bal <= 0) continue;
       const key = c.customerName || '—';
       let p = map.get(key);
@@ -663,6 +705,7 @@ export class CrmService {
           agent: (c.customerId != null ? custMap.get(c.customerId)?.agentName : null) ?? null,
           outstanding: 0, gross: 0, overdue: 0, dueSoon: 0, oldestDays: 0, invoiceCount: 0, lastReceiptAt: null, advanceHeld: 0,
           openFollowups: 0, nextPromiseAt: null, nextPromiseAmount: null, promiseState: 'none', hasFollowup: false, invoices: [],
+          bank: { ...ZERO_SIDE }, cash: { ...ZERO_SIDE },
         };
         map.set(key, p);
       }
@@ -674,14 +717,15 @@ export class CrmService {
         if (days > 0) { p.overdue += bal; p.oldestDays = Math.max(p.oldestDays, days); overdueDays = days; }
         else if (days >= -15) p.dueSoon += bal;
       }
-      p.invoices.push({ code: c.code, invDate: c.invDate.toISOString(), dueDate: c.dueDate ? c.dueDate.toISOString() : null, total: r0(num(c.total)), received: r0(received), balance: r0(bal), overdueDays, bank: r0(num(c.b)), cash: r0(num(c.c)) });
+      p.invoices.push({ code: c.code, invDate: c.invDate.toISOString(), dueDate: c.dueDate ? c.dueDate.toISOString() : null, total: r0(num(c.total)), received: r0(received), balance: r0(bal), overdueDays, bank: r0(due.bank), cash: r0(due.cash) });
     }
 
     // CRM overlay (party PAYMENT follow-ups → promise state).
     const crm = this.buildCrmOverlay(payFollowups, today, DAY);
     for (const p of map.values()) {
       if (p.customerId != null) {
-        p.advanceHeld = r0(advByCust.get(p.customerId) ?? 0);
+        const advance = advByCust.get(p.customerId);
+        p.advanceHeld = r0((advance?.bank ?? 0) + (advance?.cash ?? 0));
         const lr = lastRecByCust.get(p.customerId);
         p.lastReceiptAt = lr ? lr.toISOString() : null;
       }
@@ -696,27 +740,49 @@ export class CrmService {
        * money and is never applied to anybody else.
        */
       p.gross = r0(p.outstanding);
-      let credit = p.advanceHeld;
+      let credit = p.customerId != null ? (advByCust.get(p.customerId) ?? { bank: 0, cash: 0 }) : { bank: 0, cash: 0 };
       let net = 0, netOverdue = 0, netDueSoon = 0, oldest = 0;
+      // The same totals per side of the book, for the Bank / Cash view. Built
+      // from each invoice's own bank/cash remainder AFTER the advance above, so
+      // the two sides always add back up to the combined figures.
+      const side = () => ({ outstanding: 0, overdue: 0, dueSoon: 0, oldestDays: 0, invoiceCount: 0 });
+      const sides = { bank: side(), cash: side() };
       const ordered = [...p.invoices].sort((a, b) => b.overdueDays - a.overdueDays);
       for (const inv of ordered) {
-        const applied = Math.min(credit, inv.balance);
-        credit -= applied;
-        const left = inv.balance - applied;
+        const adjusted = applyInvoiceBucketCredit(inv, credit);
+        credit = adjusted.credit;
+        inv.bank = r0(adjusted.due.bank);
+        inv.cash = r0(adjusted.due.cash);
+        inv.balance = r0(adjusted.due.balance);
+        const left = inv.balance;
         if (left <= 0) continue;
         net += left;
+        let dueSoon = false;
         if (inv.overdueDays > 0) {
           netOverdue += left;
           oldest = Math.max(oldest, inv.overdueDays);
         } else if (inv.dueDate) {
           const days = Math.floor((today.getTime() - this.startOfDay(new Date(inv.dueDate)).getTime()) / DAY);
-          if (days >= -15) netDueSoon += left;
+          if (days >= -15) { netDueSoon += left; dueSoon = true; }
+        }
+        for (const [key, amt] of [['bank', inv.bank], ['cash', inv.cash]] as const) {
+          if (amt <= 0) continue;
+          const s = sides[key];
+          s.outstanding += amt;
+          s.invoiceCount += 1;
+          if (inv.overdueDays > 0) { s.overdue += amt; s.oldestDays = Math.max(s.oldestDays, inv.overdueDays); }
+          else if (dueSoon) s.dueSoon += amt;
         }
       }
       p.outstanding = r0(net);
       p.overdue = r0(netOverdue);
       p.dueSoon = r0(netDueSoon);
       p.oldestDays = oldest;
+      for (const s of [sides.bank, sides.cash]) { s.outstanding = r0(s.outstanding); s.overdue = r0(s.overdue); s.dueSoon = r0(s.dueSoon); }
+      p.bank = sides.bank;
+      p.cash = sides.cash;
+      p.invoices = p.invoices.filter((inv) => inv.balance > 0);
+      p.invoiceCount = p.invoices.length;
       p.invoices.sort((a, b) => b.overdueDays - a.overdueDays || (a.dueDate ?? a.invDate).localeCompare(b.dueDate ?? b.invDate));
       const c = crm.get(p.customerId != null ? `c:${p.customerId}` : `n:${p.partyName.trim().toUpperCase()}`) ?? (p.customerId != null ? crm.get(`n:${p.partyName.trim().toUpperCase()}`) : undefined);
       const o = this.crmToOverlay(c);

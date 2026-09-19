@@ -247,6 +247,64 @@ export function resolveSpecialRateRule(
   return rs.find((r) => r.scope === 'CATEGORY' && norm(r.category) === cat) ?? null;
 }
 
+/**
+ * The design delta for one line — combination-aware.
+ *
+ * A combination ("DIAMOND HAMMER+LOGO") is several designs applied together,
+ * and its base design rate is already the SUM of its members' rates. A special
+ * rate set on a member ("DIAMOND HAMMER −30") has to carry into it the same way,
+ * or the discount silently vanishes the moment that design is ordered with a
+ * logo. Matching the whole name only, as this used to, gave the combination 0.
+ *
+ *  1. An ITEM rule on the WHOLE name wins — someone priced the combination itself.
+ *  2. Otherwise, for a combination, the members' own ITEM rules are ADDED, just
+ *     as their base rates are ("DIAMOND HAMMER −30" + "LOGO" none = −30).
+ *  3. Otherwise the usual SUB-CATEGORY → CATEGORY rule, applied ONCE per line,
+ *     exactly as before — so the many sub-category rules do not start
+ *     multiplying by the number of members.
+ */
+function pickDesign(
+  rates: CustomerRateDto[],
+  cat: string,
+  sub: string,
+  designType: string,
+): { delta: number; from: RateScope | null } {
+  const norm = (v: string | null | undefined) => (v ?? '').trim().toUpperCase();
+  const itemRule = (target: string) =>
+    rates.find(
+      (r) =>
+        r.kind === 'DESIGN' &&
+        r.scope === 'ITEM' &&
+        norm(r.category) === cat &&
+        norm(r.subCategory) === sub &&
+        norm(r.target) === norm(target),
+    );
+
+  const whole = itemRule(designType);
+  if (whole) return { delta: whole.rate, from: 'ITEM' };
+
+  // Same split the rest of the app uses for a combination (see
+  // isCombinationDesign in customer-rate-list-pivot.ts).
+  const members = designType
+    .split(/[+&]/)
+    .map((m) => m.trim())
+    .filter(Boolean);
+  if (members.length > 1) {
+    const matched = members.map(itemRule).filter((r): r is CustomerRateDto => !!r);
+    if (matched.length) {
+      // TODO(human): members WITHOUT their own item rule get nothing here today.
+      // Should a sub-category rule also be added for them (stacking), or is a
+      // member rule meant to replace the broader discount for the whole line?
+      // Current behaviour (no stacking) is below; no customer is affected yet.
+      const delta = Math.round(matched.reduce((s, r) => s + r.rate, 0) * 100) / 100;
+      return { delta, from: 'ITEM' };
+    }
+  }
+
+  const broader = resolveSpecialRateRule(rates, 'DESIGN', { category: cat, subCategory: sub, target: null });
+  return broader ? { delta: broader.rate, from: broader.scope } : { delta: 0, from: null };
+}
+
 export function resolveSpecialRates(
   data: { rates: CustomerRateDto[]; logos: CustomerLogoDto[] },
   ctx: SpecialRateContext,
@@ -264,7 +322,7 @@ export function resolveSpecialRates(
   };
 
   const product = pick('PRODUCT', ctx.product ?? '');
-  const design = ctx.designType ? pick('DESIGN', ctx.designType) : { delta: 0, from: null };
+  const design = ctx.designType ? pickDesign(data.rates, cat, sub, ctx.designType) : { delta: 0, from: null };
   const logoBlocked = data.logos.some(
     (l) =>
       (l.scope === 'SUBCATEGORY' && norm(l.category) === cat && norm(l.subCategory) === sub) ||

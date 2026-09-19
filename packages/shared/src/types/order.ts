@@ -126,6 +126,9 @@ export interface OrderItemDto {
   bookingId: number | null;
   /** The source booking's code (e.g. BKG-00001), when bookingId is set. */
   bookingCode?: string | null;
+  /** Booked line priced at the CURRENT price list rather than the booking's
+   *  frozen rates (bags still drawn from the booking). System Administrator only. */
+  priceAtCurrent?: boolean;
   /** Photos attached to this line (reference images / artwork / packing shots). */
   photos?: OrderItemPhotoDto[];
 }
@@ -205,6 +208,9 @@ export interface OrderItemInput {
   comment?: string | null;
   /** Draw this line from a bag Booking — the server freezes its rate to the booking date. */
   bookingId?: number | null;
+  /** With `bookingId`: keep the bags on the booking but price at the CURRENT
+   *  list instead. System Administrator only — the server refuses anyone else. */
+  priceAtCurrent?: boolean;
   /** Full desired photo set for this line. Existing photos keep their `id`;
    *  new uploads carry `path` + `url`. Omit the field entirely to leave a line's
    *  photos untouched (only present-and-synced when the caller manages photos). */

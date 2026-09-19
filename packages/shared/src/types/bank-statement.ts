@@ -541,6 +541,12 @@ export interface BankStatementRecheckResult {
   reopened: { rowId: number; rowNo: number; postedRef: string; amount: number; customerName: string }[];
   /** POSTED lines whose receipt is still there — left exactly as they are. */
   stillPosted: number;
+  /**
+   * Lines of an already-PROCESSED run that the re-check found owing a receipt
+   * again: they had been matched against an existing receipt which has since
+   * been deleted in Receive Payment. `shortfall` is what Process would post.
+   */
+  uncovered: { rowId: number; rowNo: number; amount: number; shortfall: number; customerName: string }[];
   /** True when the run went back to DRAFT, so Process is available again. */
   reopenedRun: boolean;
 }

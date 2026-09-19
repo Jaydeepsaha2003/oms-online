@@ -124,6 +124,27 @@ function MoneyKpi({ label, value, title, hint, icon, tone, index }: { label: str
   );
 }
 
+/** Which side of the book the desk is showing. */
+export type LedgerView = 'ALL' | 'BANK' | 'CASH';
+
+/**
+ * The balances as seen from one side of the book. BANK / CASH swap each party's
+ * money figures for that side's (worked out server-side, after the party's own
+ * advance) and drop parties who owe nothing on it; ALL is the list unchanged.
+ * Everything downstream — KPIs, priority, sorting, the Collect amount — reads
+ * the swapped fields, so none of it needs to know a view exists.
+ */
+export function balancesInView(list: PartyBalanceSummary[], view: LedgerView): PartyBalanceSummary[] {
+  if (view === 'ALL') return list;
+  const key = view === 'BANK' ? 'bank' : 'cash';
+  return list
+    .filter((p) => (p[key]?.outstanding ?? 0) > 0)
+    .map((p) => {
+      const s = p[key];
+      return { ...p, outstanding: s.outstanding, gross: s.outstanding, overdue: s.overdue, dueSoon: s.dueSoon, oldestDays: s.oldestDays, invoiceCount: s.invoiceCount };
+    });
+}
+
 /** The money-at-a-glance strip for the recovery desk, plus a book-health bar
  *  (overdue vs. total outstanding) so the state of the whole book reads at a glance. */
 export function RecoveryMoneyStrip({ balances }: { balances: PartyBalanceSummary[] }) {
@@ -215,10 +236,19 @@ function SkeletonRows() {
 /** The heart of the desk: a searchable, priority-ranked list of who owes what,
  *  with a one-tap "Collect" that opens a pre-filled payment follow-up. Any
  *  collector can pick up any party and start working immediately. */
-export function OwingPartiesWorklist({ onCollect, onOpenParty }: { onCollect: (p: CollectPrefill) => void; onOpenParty: (party: string) => void }) {
+/** Bank / Cash view switch — each side in its own colour so the view you are
+ *  in reads at a glance. Drives the KPI cards above as well as this list. */
+const LEDGER_VIEWS: { v: LedgerView; label: string; on: string; off: string }[] = [
+  { v: 'ALL', label: 'Bank + Cash', on: 'border-indigo-600 bg-indigo-600 text-white shadow-sm', off: 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:border-indigo-400/30 dark:bg-indigo-400/10 dark:text-indigo-300' },
+  { v: 'BANK', label: 'Bank', on: 'border-sky-600 bg-sky-600 text-white shadow-sm', off: 'border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 dark:border-sky-400/30 dark:bg-sky-400/10 dark:text-sky-300' },
+  { v: 'CASH', label: 'Cash', on: 'border-emerald-600 bg-emerald-600 text-white shadow-sm', off: 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-400/30 dark:bg-emerald-400/10 dark:text-emerald-300' },
+];
+
+export function OwingPartiesWorklist({ onCollect, onOpenParty, view = 'ALL', onViewChange }: { onCollect: (p: CollectPrefill) => void; onOpenParty: (party: string) => void; view?: LedgerView; onViewChange?: (v: LedgerView) => void }) {
   const [search, setSearch] = useState('');
   const [priority, setPriority] = useState<Priority | ''>('');
-  const { data: raw = [], isLoading, isFetching } = usePartyBalances(search);
+  const { data: fetched = [], isLoading, isFetching } = usePartyBalances(search);
+  const raw = useMemo(() => balancesInView(fetched, view), [fetched, view]);
 
   const counts = useMemo(() => {
     const c: Record<Priority, number> = { critical: 0, watch: 0, soon: 0, clear: 0 };
@@ -245,7 +275,26 @@ export function OwingPartiesWorklist({ onCollect, onOpenParty }: { onCollect: (p
       <style>{PAYDESK_CSS}</style>
       <div className="from-primary/[0.06] flex flex-wrap items-center gap-2 border-b bg-gradient-to-r via-transparent to-transparent px-3 py-2.5">
         <HandCoins className="text-primary size-4 shrink-0" />
-        <h3 className="mr-auto text-sm font-semibold">Who owes money — pick one to collect</h3>
+        <h3 className="text-sm font-semibold">Who owes money — pick one to collect</h3>
+        {onViewChange && (
+          <div role="group" aria-label="Show balances for" className="flex flex-wrap gap-1.5">
+            {LEDGER_VIEWS.map(({ v, label, on, off }) => (
+              <button
+                key={v}
+                type="button"
+                aria-pressed={view === v}
+                onClick={() => onViewChange(v)}
+                className={cn(
+                  'inline-flex h-7 cursor-pointer items-center rounded-full border px-3 text-xs font-bold transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:outline-none',
+                  view === v ? on : off,
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+        <span className="mr-auto" aria-hidden />
         <div className="relative w-full sm:w-64">
           <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
           <Input placeholder="Search party or agent…" className="h-9 pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -508,17 +557,16 @@ export function PartyBalancePanel({ customerId, party, onPickAmount, onPickInvoi
 
       {showInvoices && (
         <div className="border-t border-slate-200 dark:border-white/10">
-          <div className="max-h-52 overflow-y-auto px-2.5 py-1.5">
-            <table className="w-full text-xs">
+          <div className="max-h-52 overflow-auto px-2.5 py-1.5">
+            <table className="w-full min-w-[700px] text-xs">
               <thead>
                 <tr className="border-b border-slate-200 text-left text-[10px] font-bold tracking-[0.08em] text-slate-500 uppercase dark:border-white/10 dark:text-slate-400">
                   {onPickInvoice && <th className="w-6 py-1" />}
                   <th className="py-1 pr-2 font-semibold">Invoice</th>
-                  <th className="py-1 pr-2 font-semibold">Due</th>
-                  {/* How it was billed. Most invoices here are split across both,
-                      and a collector needs to know which part they are chasing. */}
-                  <th className="py-1 pr-2 text-right font-semibold" title="Billed on the bank side">B / Bank</th>
-                  <th className="py-1 pr-2 text-right font-semibold" title="Billed in cash">C / Cash</th>
+                  <th className="py-1 pr-2 font-semibold">Bill date</th>
+                  <th className="py-1 pr-2 font-semibold">Due date</th>
+                  <th className="py-1 pr-2 text-right font-semibold text-blue-700 dark:text-blue-400" title="Exact amount still due on the bank side">B due</th>
+                  <th className="py-1 pr-2 text-right font-semibold text-emerald-700 dark:text-emerald-400" title="Exact amount still due in cash">C due</th>
                   <th className="py-1 pr-2 text-right font-semibold">Balance</th>
                   <th className="py-1 text-right font-semibold" />
                 </tr>
@@ -545,30 +593,33 @@ export function PartyBalancePanel({ customerId, party, onPickAmount, onPickInvoi
                         </td>
                       )}
                       <td className="py-1 pr-2 font-mono">{inv.code}</td>
+                      <td className="py-1 pr-2 whitespace-nowrap tabular-nums">
+                        {formatDate(inv.invDate)}
+                      </td>
                       <td className="py-1 pr-2">
-                        {inv.dueDate ? formatDate(inv.dueDate) : '\u2014'}
+                        <span className="whitespace-nowrap tabular-nums">{inv.dueDate ? formatDate(inv.dueDate) : '\u2014'}</span>
                         {inv.overdueDays > 0 && <Chip tone={ageTone(inv.overdueDays)} className="ml-1">{inv.overdueDays}d</Chip>}
                       </td>
                       <td
                         className={cn(
-                          'py-1 pr-2 text-right tabular-nums',
-                          inv.bank > 0 ? 'font-semibold text-blue-700 dark:text-blue-400' : 'text-muted-foreground/40',
+                          'py-1 pr-2 text-right tabular-nums whitespace-nowrap',
+                          inv.bank > 0 ? 'font-bold text-blue-800 dark:text-blue-300' : 'text-muted-foreground/40',
                         )}
-                        title={inv.bank > 0 ? inrFull(inv.bank) : 'Nothing billed on the bank side'}
+                        title={inv.bank > 0 ? `Exact bank due: ${inrFull(inv.bank)}` : 'No bank-side amount due'}
                       >
-                        {inv.bank > 0 ? inrCompact(inv.bank) : '\u2014'}
+                        {inv.bank > 0 ? <span className="inline-flex rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 dark:border-blue-500/30 dark:bg-blue-500/10">{inrFull(inv.bank)}</span> : '\u2014'}
                       </td>
                       <td
                         className={cn(
-                          'py-1 pr-2 text-right tabular-nums',
-                          inv.cash > 0 ? 'font-semibold text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground/40',
+                          'py-1 pr-2 text-right tabular-nums whitespace-nowrap',
+                          inv.cash > 0 ? 'font-bold text-emerald-800 dark:text-emerald-300' : 'text-muted-foreground/40',
                         )}
-                        title={inv.cash > 0 ? inrFull(inv.cash) : 'Nothing billed in cash'}
+                        title={inv.cash > 0 ? `Exact cash due: ${inrFull(inv.cash)}` : 'No cash amount due'}
                       >
-                        {inv.cash > 0 ? inrCompact(inv.cash) : '\u2014'}
+                        {inv.cash > 0 ? <span className="inline-flex rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 dark:border-emerald-500/30 dark:bg-emerald-500/10">{inrFull(inv.cash)}</span> : '\u2014'}
                       </td>
-                      <td className="py-1 pr-2 text-right font-semibold tabular-nums" title={inrFull(inv.balance)}>
-                        {inrCompact(inv.balance)}
+                      <td className="py-1 pr-2 text-right font-bold tabular-nums whitespace-nowrap" title={inrFull(inv.balance)}>
+                        {inrFull(inv.balance)}
                       </td>
                       <td className="py-1 text-right">
                         {onPickInvoice && (
@@ -596,10 +647,10 @@ export function PartyBalancePanel({ customerId, party, onPickAmount, onPickInvoi
                 {selected.size} selected
               </span>
               <span className="text-muted-foreground tabular-nums">
-                B {inrCompact(pickedTotals.bank)} · C {inrCompact(pickedTotals.cash)}
+                B {inrFull(pickedTotals.bank)} · C {inrFull(pickedTotals.cash)}
               </span>
               <span className="ml-auto font-bold tabular-nums" title={inrFull(pickedTotals.balance)}>
-                {inrCompact(pickedTotals.balance)}
+                {inrFull(pickedTotals.balance)}
               </span>
               <Button
                 type="button"

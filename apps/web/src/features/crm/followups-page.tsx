@@ -37,7 +37,14 @@ import {
 } from './use-crm';
 import { Chip, initials, itemLine, UrgencyChip } from './crm-shared';
 import { ChecklistInput, type ChecklistDraftItem } from './checklist-input';
-import { OwingPartiesWorklist, PartyBalancePanel, RecoveryMoneyStrip, type CollectPrefill } from './payment-desk';
+import {
+  balancesInView,
+  OwingPartiesWorklist,
+  PartyBalancePanel,
+  RecoveryMoneyStrip,
+  type CollectPrefill,
+  type LedgerView,
+} from './payment-desk';
 import { useOrderLookups } from '@/features/orders/use-orders';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { usePartyBalances } from './use-crm';
@@ -95,8 +102,25 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
   const openForm = (f: FollowupDto | null) => { setEditing(f); setPrefill(null); setFormOpen(true); };
   const openCollect = (p: CollectPrefill) => { setEditing(null); setPrefill(p); setFormOpen(true); };
 
+  // Payment desk: which side of the book to show — both, bank only, or cash
+  // only. Remembered per browser: a collector who works the cash parties
+  // shouldn't have to switch it back every morning.
+  const [ledgerView, setLedgerViewRaw] = useState<LedgerView>(() => {
+    try {
+      const v = localStorage.getItem('oms:paydesk-view');
+      return v === 'BANK' || v === 'CASH' ? v : 'ALL';
+    } catch {
+      return 'ALL';
+    }
+  });
+  const setLedgerView = (v: LedgerView) => {
+    setLedgerViewRaw(v);
+    try { localStorage.setItem('oms:paydesk-view', v); } catch { /* private mode */ }
+  };
+
   // Payment desk: live party balances power the money strip + party-card badges.
-  const { data: balances = [] } = usePartyBalances(undefined, isPay);
+  const { data: allBalances = [] } = usePartyBalances(undefined, isPay);
+  const balances = useMemo(() => balancesInView(allBalances, ledgerView), [allBalances, ledgerView]);
   const balByParty = useMemo(() => {
     const m = new Map<string, PartyBalanceSummary>();
     for (const b of balances) m.set(b.partyName.trim().toUpperCase(), b);
@@ -198,7 +222,7 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
       </div>
 
       {/* Collect — the owing-parties worklist, payment desk only. */}
-      {tab === 'collect' && <OwingPartiesWorklist onCollect={openCollect} onOpenParty={(p) => { setSearch(p); setTab('followups'); }} />}
+      {tab === 'collect' && <OwingPartiesWorklist view={ledgerView} onViewChange={setLedgerView} onCollect={openCollect} onOpenParty={(p) => { setSearch(p); setTab('followups'); }} />}
 
       {/* Follow-up KPI strip — open work only; nothing here applies to closed items. */}
       {tab !== 'collect' && !showingDone && (

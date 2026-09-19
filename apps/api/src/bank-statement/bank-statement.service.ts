@@ -1517,11 +1517,58 @@ export class BankStatementService {
      */
     await this.rematch(runId);
 
+    /*
+     * A PROCESSED run must not be left holding a line that still needs posting.
+     *
+     * Process only marks a run PROCESSED once nothing postable is left, so an
+     * UNMATCHED line in one can mean just one thing: it WAS covered by an
+     * existing receipt when the run was processed, and that receipt has since
+     * been deleted. The rematch above correctly finds the money uncovered — but
+     * the run stayed read-only, so the line could never be posted, and a later
+     * upload of the same period skips it as "already held". The money was in
+     * nobody's books with no way to put it back (ALLWYN's ₹2,23,112 of 11 Aug,
+     * covered by REC-2026-0295 until that receipt was deleted).
+     *
+     * Reopened the same way a deleted POSTED receipt reopens it, and reported.
+     */
+    const current = reopened.length ? null : await this.prisma.bankStatementRun.findUnique({ where: { id: runId }, select: { status: true } });
+    const uncoveredRows =
+      reopened.length || current?.status === 'PROCESSED'
+        ? await this.prisma.bankStatementRow.findMany({
+            where: { runId, status: 'UNMATCHED' },
+            orderBy: [{ txnDate: 'asc' }, { id: 'asc' }],
+          })
+        : [];
+    // Lines the reopen above already reported are not listed twice.
+    const reopenedIds = new Set(reopened.map((r) => r.rowId));
+    const uncovered = uncoveredRows
+      .filter((r) => !reopenedIds.has(r.id))
+      .map((r) => ({
+        rowId: r.id,
+        rowNo: r.rowNo,
+        amount: r.amount,
+        shortfall: r2(r.amount - r.matchedAmount),
+        customerName: r.customerName ?? '',
+      }));
+    if (uncovered.length) {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.bankStatementRow.updateMany({
+          where: { id: { in: uncovered.map((u) => u.rowId) } },
+          data: { note: 'The receipt this line was matched against was deleted, so the line needs posting again.' },
+        });
+        // Already a draft when a POSTED line was reopened above.
+        if (current?.status === 'PROCESSED') {
+          await tx.bankStatementRun.update({ where: { id: runId }, data: { status: 'DRAFT', processedAt: null } });
+        }
+      });
+    }
+
     return {
       runId,
       reopened,
       stillPosted: posted.length - reopened.length,
-      reopenedRun: reopened.length > 0,
+      uncovered,
+      reopenedRun: reopened.length > 0 || uncovered.length > 0,
     };
   }
 

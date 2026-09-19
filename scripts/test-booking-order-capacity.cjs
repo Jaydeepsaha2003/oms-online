@@ -129,4 +129,29 @@ test('combination design uses both booking-date rates in preview and save', asyn
   assert.equal(linked.length,2);
   assert.ok(linked.every(i => i.designRate === 20 && i.rate === 120));
 });
-(async () => { let failures=0; try { await prisma.product.create({data:{category:'GLASS',subCategory:'PLAIN',product:'TEST',rate:100}}); for(const [name,fn] of tests) { try { await fn(); console.log(`PASS ${name}`); } catch(e) { failures++; console.error(`FAIL ${name}: ${e.message}`); } } } finally { await prisma.$disconnect(); fs.rmSync(temp,{recursive:true,force:true}); } console.log(`${tests.length-failures}/${tests.length} passed`); process.exitCode=failures?1:0; })().catch(e=>{console.error(e);process.exitCode=1;});
+test('super admin: bags from the booking, priced at the current list', async () => {
+  const b = await booking([{pCategory:'GLASS',bags:10,kgs:700}]);
+  const o = await orders.create(order([{...line(b.id,2),priceAtCurrent:true}]), {isSuperAdmin:true});
+  assert.equal(o.items[0].rate,999,'keeps the current rate the form sent, not the booking rate');
+  assert.equal(o.items[0].priceAtCurrent,true);
+  assert.equal(o.items[0].bookingId,b.id,'still linked to the booking');
+  assert.equal((await bookings.findOne(b.id)).remainingBags,8,'bags still come off the booking');
+});
+test('anyone else cannot price a booked line at the current rate', async () => {
+  const b = await booking([{pCategory:'GLASS',bags:10,kgs:700}]);
+  await assert.rejects(orders.create(order([{...line(b.id,1),priceAtCurrent:true}])), /System Administrator/);
+  await assert.rejects(orders.create(order([{...line(b.id,1),priceAtCurrent:true}]), {isSuperAdmin:false}), /System Administrator/);
+});
+test('a current-rate line survives an ordinary edit by someone else, but they cannot flip it', async () => {
+  const b = await booking([{pCategory:'GLASS',bags:10,kgs:700}]);
+  const o = await orders.create(order([{...line(b.id,1),priceAtCurrent:true}]), {isSuperAdmin:true});
+  const saved = await orders.findOne(o.id);
+  const edited = await orders.update(o.id, order([{...saved.items[0],bags:2,gram:140}]), 'OPERATOR', {isSuperAdmin:false});
+  assert.equal(edited.items[0].priceAtCurrent,true);
+  assert.equal(edited.items[0].rate,999,'unchanged flag keeps its current rate');
+  await assert.rejects(orders.update(o.id, order([{...saved.items[0],priceAtCurrent:false}]), 'OPERATOR', {isSuperAdmin:false}), /System Administrator/);
+});
+test('the flag is ignored on a line with no booking', async () => {
+  const o = await orders.create(order([{...line(null,1),bookingId:null,priceAtCurrent:true}]));
+  assert.equal(o.items[0].priceAtCurrent,false);
+});(async () => { let failures=0; try { await prisma.product.create({data:{category:'GLASS',subCategory:'PLAIN',product:'TEST',rate:100}}); for(const [name,fn] of tests) { try { await fn(); console.log(`PASS ${name}`); } catch(e) { failures++; console.error(`FAIL ${name}: ${e.message}`); } } } finally { await prisma.$disconnect(); fs.rmSync(temp,{recursive:true,force:true}); } console.log(`${tests.length-failures}/${tests.length} passed`); process.exitCode=failures?1:0; })().catch(e=>{console.error(e);process.exitCode=1;});

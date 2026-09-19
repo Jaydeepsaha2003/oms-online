@@ -9,6 +9,7 @@ import {
   ClipboardList,
   Filter,
   Layers,
+  Loader2,
   Search,
   Users,
   X,
@@ -173,19 +174,28 @@ export function PendingChallanPage() {
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
   };
-  const { data, isLoading } = usePendingChallans(query);
+  const { data, isLoading, isFetching } = usePendingChallans(query);
   const { data: filterOptions } = usePendingChallanFilters();
   const items = data?.items ?? [];
   const totalPages = data?.totalPages ?? 1;
   const totalRows = data?.total ?? 0;
 
-  const toggle = (r: PendingChallanLine) =>
+  // A restored snapshot is useful for instant reading, but must never become an
+  // actionable challan selection. Any refresh clears the old selection and the
+  // controls stay locked until the current server response replaces the rows.
+  useEffect(() => {
+    if (isFetching) setSelected((current) => (current.size ? new Map() : current));
+  }, [isFetching]);
+
+  const toggle = (r: PendingChallanLine) => {
+    if (isFetching) return;
     setSelected((m) => {
       const n = new Map(m);
       if (n.has(r.dispatchId)) n.delete(r.dispatchId);
       else n.set(r.dispatchId, r);
       return n;
     });
+  };
 
   /** Clicking the active preset again clears it, so the pills work as a toggle. */
   const applyPreset = (p: string) => {
@@ -286,8 +296,9 @@ export function PendingChallanPage() {
   // Header tick-box: with a customer locked in it selects/clears that customer's
   // visible lines; with nothing ticked it can only "select all" when the page holds
   // a single customer (a challan covers one customer); a mixed selection clears.
-  const headerToggleEnabled = selectedCount > 0 || pageParties === 1;
+  const headerToggleEnabled = !isFetching && (selectedCount > 0 || pageParties === 1);
   const toggleAllVisible = () => {
+    if (isFetching) return;
     if (!headerToggleEnabled) return;
     if (!activeParty && selectedCount > 0) return setSelected(new Map());
     if (allEligibleSelected) {
@@ -305,6 +316,7 @@ export function PendingChallanPage() {
   };
 
   const createChallan = async () => {
+    if (isFetching) return toast.info('Pending challans are updating — please wait a moment.');
     const lines = [...selected.values()];
     if (lines.length === 0) return toast.error('Please select one or more rows.');
     const parties = [...new Set(lines.map(party).filter(Boolean))];
@@ -499,7 +511,7 @@ export function PendingChallanPage() {
   const createRef = useRef(createChallan);
   createRef.current = createChallan;
   const canActRef = useRef(false);
-  canActRef.current = canCreate && selectedCount > 0;
+  canActRef.current = canCreate && selectedCount > 0 && !isFetching;
   const hasSelectionRef = useRef(false);
   hasSelectionRef.current = selectedCount > 0;
   useEffect(() => {
@@ -740,6 +752,11 @@ export function PendingChallanPage() {
 
           {/* Selection status + the primary Create Challan action. */}
           <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
+            {isFetching && data && (
+              <span className="text-muted-foreground inline-flex items-center gap-1.5 text-[11.5px] font-semibold" role="status">
+                <Loader2 className="size-3.5 animate-spin" /> Updating…
+              </span>
+            )}
             {selectedCount > 0 && (
               <span
                 // Single-customer selections show a compact "(*)" instead of the full
@@ -754,7 +771,7 @@ export function PendingChallanPage() {
             {canCreate && (
               <Button
                 onClick={createChallan}
-                disabled={selectedCount === 0 || !!blockedBy}
+                disabled={selectedCount === 0 || !!blockedBy || isFetching}
                 className="h-9 flex-1 rounded-[4px] text-[13px] font-bold sm:flex-none"
                 title={
                   blockedBy
@@ -888,7 +905,7 @@ export function PendingChallanPage() {
           ].join(' ')}
           mobileCard={pendingMobileCard}
           emptyText="No pending challan lines — everything dispatched has been challaned."
-          onRowClick={(r) => toggle(r)}
+          onRowClick={isFetching ? undefined : (r) => toggle(r)}
         />
       </div>
 
