@@ -990,12 +990,19 @@ export function OrderFormPage() {
   // Auto-fill agent + category from the chosen customer, and capture the id so we
   // can apply that customer's special rates to each line.
   const onCustomer = (name: string) => {
-    if (name.trim().toUpperCase() !== customer.trim().toUpperCase() && items.some((i) => i.bookingId != null)) {
-      toast.error('Remove the booked items before choosing a different customer.');
+    const isSame = name.trim().toUpperCase() === customer.trim().toUpperCase();
+    // Every line already on the order was priced (rate, special rate, agent
+    // commission — all of it) for the party currently selected. Once the first
+    // item is on the list, the party is locked: swapping it out would leave
+    // those rows quietly pricing the wrong customer's rate (this is exactly how
+    // a stale ₹110 rate has slipped through under a party whose real rate is
+    // ₹150). Clear or Reset the form to start over with a different party.
+    if (!isSame && items.length > 0) {
+      toast.error('Clear or reset the form before choosing a different customer.');
       return;
     }
     // A booking belongs to one party, so it cannot survive a change of party.
-    if (name.trim().toUpperCase() !== customer.trim().toUpperCase()) { setBookingSource(''); bookingChoiceTouched.current = false; }
+    if (!isSame) { setBookingSource(''); bookingChoiceTouched.current = false; }
     setCustomer(name);
     const c = lookups?.customers.find((x) => x.name === name);
     setCustomerId(c?.id);
@@ -2546,6 +2553,7 @@ export function OrderFormPage() {
           <div
             className="col-span-2 min-w-0 space-y-1.5 sm:col-span-2 lg:col-span-2"
             data-tabfield="customer"
+            title={items.length > 0 ? 'Clear or reset the form to choose a different customer' : undefined}
           >
             <Label className="text-base">
               Customer <span className="text-rose-500">*</span>
@@ -2555,6 +2563,7 @@ export function OrderFormPage() {
               onChange={onCustomer}
               options={(lookups?.customers ?? []).map((c) => c.name)}
               placeholder="Select…"
+              disabled={items.length > 0}
               onInvalidEntry={() => toast.error('Please select a correct customer')}
             />
           </div>
