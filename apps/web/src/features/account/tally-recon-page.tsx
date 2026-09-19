@@ -499,6 +499,8 @@ export function TallyReconPage() {
   // on the page, several rows tall, and squeeze the report table underneath it
   // down to almost nothing. This just tracks whether that dialog is open.
   const [unmappedListOpen, setUnmappedListOpen] = useState(false);
+  /** The export-format guide shown before every upload — see `onPickFile`. */
+  const [formatGuideOpen, setFormatGuideOpen] = useState(false);
   const [ledgerTab, setLedgerTab] = useState<'party' | 'expense' | 'other'>('party');
   // Ticked ledger names in the CURRENT tab, for the bulk action bar. Cleared on
   // every tab switch and after a successful filing — stale ids left over from
@@ -630,7 +632,14 @@ export function TallyReconPage() {
 
   /* ── actions ────────────────────────────────────────────────────────────── */
 
-  const onPickFile = () => fileRef.current?.click();
+  // Every upload starts with the export-format guide, not the file picker
+  // directly — a register exported with the wrong Tally settings (bill-wise
+  // details on, a filtered voucher range, an opening balance left out…) fails
+  // to reconcile in ways that are hard to diagnose after the fact. Saying the
+  // exact settings up front, every time, costs one extra click and heads that
+  // off before the file is ever chosen.
+  const openFilePicker = () => fileRef.current?.click();
+  const onPickFile = () => setFormatGuideOpen(true);
 
   const onFile = (file: File | undefined) => {
     if (!file) return;
@@ -1822,6 +1831,76 @@ export function TallyReconPage() {
             >
               {(saveAlias.isPending || rerun.isPending) && <Loader2 className="size-3.5 animate-spin" />}
               {rerun.isPending ? 'Re-checking…' : 'Save mapping'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── export-format guide, shown before every upload ───────────────── */}
+      <Dialog open={formatGuideOpen} onOpenChange={setFormatGuideOpen}>
+        <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-[15px]">
+              <FileSpreadsheet className="size-4 text-amber-500" /> Export this from Tally first
+            </DialogTitle>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
+            <p className="text-muted-foreground text-[12.5px] font-medium">
+              In Tally: <strong className="text-foreground">Gateway of Tally → Display More Reports → Account
+              Books → Ledger</strong>, pick <strong className="text-foreground">Sundry Debtors</strong> (or the
+              party group you're reconciling), then press <strong className="text-foreground">F12</strong> and
+              match this exact configuration before exporting:
+            </p>
+            <div className="overflow-hidden rounded-[4px] border">
+              <table className="w-full border-collapse text-[12px]">
+                <tbody>
+                  {[
+                    ['Report Type', 'Ledger Accounts'],
+                    ['Period', 'the date range you want to reconcile'],
+                    ['Show Narrations', 'No'],
+                    ['Show Voucher No.', 'Yes'],
+                    ['Format of Report', 'Condensed'],
+                    ['Show Bill-wise details', 'No'],
+                    ['Show Inventory details', 'No'],
+                    ['Show Mode of Payment/Receipt', 'No'],
+                    ['Show Group Name', 'No'],
+                    ['Type of Voucher entries', 'All Vouchers'],
+                    ['Include Opening Balance', 'Yes'],
+                    ['Balancing Method', 'Yearly'],
+                    ['Start each Balancing breakup on a fresh page', 'No'],
+                    ['Start each A/c on a fresh page', 'Yes'],
+                    ['Include/Exclude Groups & Ledgers', 'No'],
+                    ['Set alphabetical range to print', 'No'],
+                    ['Sorting Method', 'Default'],
+                    ['Show Running Balance', 'No'],
+                    ['Show ITC at Risk & Balance Amount', 'No'],
+                    ['Show GST Status', 'No'],
+                  ].map(([label, value], i) => (
+                    <tr key={label} className={i % 2 ? 'bg-muted/30' : undefined}>
+                      <td className="border-t px-2 py-1 font-medium">{label}</td>
+                      <td className="border-t px-2 py-1 text-right font-semibold whitespace-nowrap">{value}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-muted-foreground text-[12.5px] font-medium">
+              Then export (<strong className="text-foreground">Ctrl+E</strong>) as{' '}
+              <strong className="text-foreground">Excel (.xlsx)</strong> — that's the file to upload here.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" className="h-9 rounded-[4px] text-[12.5px] font-semibold" onClick={() => setFormatGuideOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              className="h-9 gap-1.5 rounded-[4px] text-[12.5px] font-bold"
+              onClick={() => {
+                setFormatGuideOpen(false);
+                openFilePicker();
+              }}
+            >
+              <Upload className="size-3.5" /> Choose file
             </Button>
           </DialogFooter>
         </DialogContent>
