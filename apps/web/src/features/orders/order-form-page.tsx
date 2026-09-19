@@ -1678,6 +1678,21 @@ export function OrderFormPage() {
       const num = n(v);
       if (num != null && num < 0) return toast.error(`${label} cannot be negative`);
     }
+    // Rates can never be negative, and clearing/zeroing a rate must not slip an
+    // item onto the order priced at ₹0 — the keyboard already blocks typing a
+    // "-", but a paste, an autofill, or a stray booking delta can still land a
+    // bad number here, so the line's actual rate is checked before it's added.
+    const rateFields: [string, string][] = [
+      ['Product ₹', entry.productRate],
+      ['Design ₹', entry.designRate],
+    ];
+    for (const [label, v] of rateFields) {
+      const num = n(v);
+      if (num != null && num < 0) return toast.error(`${label} cannot be negative`);
+    }
+    if (itemRate(entry) <= 0) {
+      return toast.error('Enter a rate for this item — it cannot be ₹0');
+    }
     // The line's price-calc field follows the product's category mapping; if the
     // category isn't configured, fall back to the Size/Pcs selection.
     const calField =
@@ -1935,6 +1950,12 @@ export function OrderFormPage() {
     if (items.length === 0) return !toast.error('There are no items to save.');
     if (editingItemKey != null)
       return !toast.error('Finish or cancel the current item edit before saving.');
+    // Belt-and-suspenders: addItem() already blocks a ₹0/negative rate on the way
+    // in, but this is the actual last stop before the order is confirmed, so a
+    // line left priced at nothing (or negative) is caught here too rather than
+    // trusting every path that can touch `items` to have gone through addItem.
+    const badRate = items.find((i) => i.status !== 'CANCELLED' && itemRate(i) <= 0);
+    if (badRate) return !toast.error(`"${badRate.itemName}" has no rate — edit the line before saving.`);
     // Last local word on the booking before the server's own check — it may have
     // been filled or closed, and the balance may have moved, since the lines were
     // added (a refetch, or another operator).
