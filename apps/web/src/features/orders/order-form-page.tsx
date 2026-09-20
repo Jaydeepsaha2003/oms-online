@@ -131,6 +131,8 @@ type NavState = {
 interface Item {
   key: string;
   id?: number | null; // DB id of an existing line (undefined for a newly-added row)
+  /** True once any of this line has shipped — the reason a saved line is locked. */
+  dispatched?: boolean;
   status?: string | null; // per-line CONFIRMED/CANCELLED, preserved across edits
   bookingId?: number | null; // set when the line was drawn from a bag Booking (rate frozen)
   /** Drawn from the booking but priced at the CURRENT list (System Administrator only). */
@@ -459,6 +461,9 @@ export function OrderFormPage() {
   const isLoading = docKind === 'quotation' ? quotationQuery.isLoading : orderQuery.isLoading;
   /** Completion date is frozen once anything has shipped — super admin excepted.
    *  Quotations never dispatch, so this only ever applies to a saved order. */
+  /** The status the order is SAVED with — not the form's working copy. What a
+   *  line may do depends on the document on the server, so the lock reads that. */
+  const savedStatus = docKind === 'order' ? (orderQuery.data?.status ?? null) : null;
   const completionLocked =
     isEdit &&
     docKind === 'order' &&
@@ -814,6 +819,7 @@ export function OrderFormPage() {
         o.items.map((it, i) => ({
           key: `e${it.id}-${i}`,
           id: it.id,
+          dispatched: !!(it as { dispatched?: boolean }).dispatched,
           status: it.status,
           bookingId: it.bookingId,
           bookingCode: it.bookingCode ?? null,
@@ -997,9 +1003,19 @@ export function OrderFormPage() {
     // those rows quietly pricing the wrong customer's rate (this is exactly how
     // a stale ₹110 rate has slipped through under a party whose real rate is
     // ₹150). Clear or Reset the form to start over with a different party.
+    //
+    // Only while BUILDING a document, though. On an existing one every line
+    // arrives with it, so `items.length > 0` is true from the first render and
+    // the lock had no release — Reset reloads the same lines — leaving the
+    // customer of a saved order permanently unchangeable. There the switch is a
+    // deliberate act on a document that already exists, so it is allowed and
+    // the rates it leaves behind are called out instead.
     if (!isSame && items.length > 0) {
-      toast.error('Clear or reset the form before choosing a different customer.');
-      return;
+      if (!isEdit) {
+        toast.error('Clear or reset the form before choosing a different customer.');
+        return;
+      }
+      toast.warning('Customer changed — the rates already on this order were quoted for the previous party. Check each line.');
     }
     // A booking belongs to one party, so it cannot survive a change of party.
     if (!isSame) { setBookingSource(''); bookingChoiceTouched.current = false; }
@@ -1831,12 +1847,21 @@ export function OrderFormPage() {
 
   // Keep the original row in the list while its values are edited above. This
   // preserves a safe copy and prevents a second edit from overwriting the first.
-  // For an ORDER, saved lines are not editable here (their id carries dispatch
-  // history — Order Modify owns that). A QUOTATION's saved lines have neither
-  // concern: the server replaces its items wholesale on save, so they stay
-  // editable right up to conversion. An unsaved booking line IS editable — its
-  // rate stays the booking's, re-quoted whenever the item itself changes.
-  const lineLocked = (item: Item) => docKind === 'order' && item.id != null;
+  // For a CONFIRMED order, saved lines are not editable here (their id carries
+  // dispatch history — Order Modify owns that). A QUOTATION's saved lines have
+  // neither concern: the server replaces its items wholesale on save, so they
+  // stay editable right up to conversion. An unsaved booking line IS editable —
+  // its rate stays the booking's, re-quoted whenever the item itself changes.
+  //
+  // A DRAFT is the quotation case, but the id test caught it too: nothing is
+  // promised or shipped off a draft (dispatching one confirms it first, so a
+  // draft line can never carry dispatch history) and Order Modify deals only in
+  // confirmed orders — so a saved draft's lines had nowhere left to be edited
+  // at all, which defeats the point of saving a draft. They are editable here.
+  // The dispatched flag stays in the test so the lock rests on the line's own
+  // history rather than on the status alone.
+  const lineLocked = (item: Item) =>
+    docKind === 'order' && item.id != null && (savedStatus !== 'DRAFT' || !!item.dispatched);
   const editItem = (item: Item) => {
     if (lineLocked(item)) return;
     if (editingItemKey != null) {
@@ -2572,7 +2597,7 @@ export function OrderFormPage() {
           <div
             className="col-span-2 min-w-0 space-y-1.5 sm:col-span-2 lg:col-span-2"
             data-tabfield="customer"
-            title={items.length > 0 ? 'Clear or reset the form to choose a different customer' : undefined}
+            title={!isEdit && items.length > 0 ? 'Clear or reset the form to choose a different customer' : undefined}
           >
             <Label className="text-base">
               Customer <span className="text-rose-500">*</span>
@@ -2582,7 +2607,7 @@ export function OrderFormPage() {
               onChange={onCustomer}
               options={(lookups?.customers ?? []).map((c) => c.name)}
               placeholder="Select…"
-              disabled={items.length > 0}
+              disabled={!isEdit && items.length > 0}
               onInvalidEntry={() => toast.error('Please select a correct customer')}
             />
           </div>
@@ -3311,11 +3336,11 @@ export function OrderFormPage() {
                               status={photoStatusFor(i.key)}
                             />
                           )}
-                          {docKind === 'order' && i.id != null ? (
-                            // A saved ORDER line — deleting it belongs on the Order Modify
-                            // page, where the removal (and its dispatch guard) is handled
-                            // properly. Quotation lines never lock: nothing dispatches off
-                            // a quotation, so editing is free until it converts.
+                          {lineLocked(i) ? (
+                            // A saved CONFIRMED order line — deleting it belongs on the Order
+                            // Modify page, where the removal (and its dispatch guard) is
+                            // handled properly. Quotation and DRAFT lines never lock: nothing
+                            // dispatches off either, so editing is free until it converts.
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <span className="inline-flex cursor-help text-slate-400">
@@ -3460,7 +3485,7 @@ export function OrderFormPage() {
                               status={photoStatusFor(i.key)}
                             />
                           )}
-                          {docKind === 'order' && i.id != null ? (
+                          {lineLocked(i) ? (
                             <span
                               className="text-slate-400 inline-flex size-8 items-center justify-center"
                               title="Existing order line — edit it on the Order Modify page"
