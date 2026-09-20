@@ -244,7 +244,7 @@ const LEDGER_VIEWS: { v: LedgerView; label: string; on: string; off: string }[] 
   { v: 'CASH', label: 'Cash', on: 'border-emerald-600 bg-emerald-600 text-white shadow-sm', off: 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-400/30 dark:bg-emerald-400/10 dark:text-emerald-300' },
 ];
 
-export function OwingPartiesWorklist({ onCollect, onOpenParty, view = 'ALL', onViewChange }: { onCollect: (p: CollectPrefill) => void; onOpenParty: (party: string) => void; view?: LedgerView; onViewChange?: (v: LedgerView) => void }) {
+export function OwingPartiesWorklist({ onCollect, view = 'ALL', onViewChange }: { onCollect: (p: CollectPrefill) => void; view?: LedgerView; onViewChange?: (v: LedgerView) => void }) {
   const [search, setSearch] = useState('');
   const [priority, setPriority] = useState<Priority | ''>('');
   const { data: fetched = [], isLoading, isFetching } = usePartyBalances(search);
@@ -358,7 +358,7 @@ export function OwingPartiesWorklist({ onCollect, onOpenParty, view = 'ALL', onV
                     <tr key={p.partyName} className="paydesk-row-in group border-b last:border-0 hover:bg-slate-50/70 dark:hover:bg-white/[0.03]" style={{ animationDelay: `${Math.min(i, 10) * 30}ms` }}>
                       <td className="relative py-2.5 pr-3 pl-4">
                         <span className={cn('absolute inset-y-1.5 left-0 w-[3px] rounded-r-full', RAIL_TONE[pr])} aria-hidden />
-                        <button type="button" onClick={() => onOpenParty(p.partyName)} className="flex cursor-pointer items-center gap-2 text-left">
+                        <button type="button" onClick={() => collectFrom(p)} className="flex cursor-pointer items-center gap-2 text-left" title={`Collect from ${p.partyName}`}>
                           <span className="bg-primary/10 text-primary flex size-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold">{initials(p.partyName)}</span>
                           <span className="min-w-0">
                             <span className="block truncate font-medium group-hover:underline">{p.partyName}</span>
@@ -413,7 +413,7 @@ export function OwingPartiesWorklist({ onCollect, onOpenParty, view = 'ALL', onV
                   <span className={cn('absolute inset-y-0 left-0 w-1', RAIL_TONE[pr])} aria-hidden />
                   <div className="flex items-start gap-2 pl-1.5">
                     <span className="bg-primary/10 text-primary flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-bold">{initials(p.partyName)}</span>
-                    <button type="button" onClick={() => onOpenParty(p.partyName)} className="min-w-0 flex-1 cursor-pointer text-left">
+                    <button type="button" onClick={() => collectFrom(p)} className="min-w-0 flex-1 cursor-pointer text-left" title={`Collect from ${p.partyName}`}>
                       <div className="truncate font-medium">{p.partyName}</div>
                       <div className="text-muted-foreground truncate text-xs">{p.agent || 'No agent'} · {p.invoiceCount} inv</div>
                     </button>

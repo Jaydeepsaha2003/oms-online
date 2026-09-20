@@ -222,7 +222,7 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
       </div>
 
       {/* Collect — the owing-parties worklist, payment desk only. */}
-      {tab === 'collect' && <OwingPartiesWorklist view={ledgerView} onViewChange={setLedgerView} onCollect={openCollect} onOpenParty={(p) => { setSearch(p); setTab('followups'); }} />}
+      {tab === 'collect' && <OwingPartiesWorklist view={ledgerView} onViewChange={setLedgerView} onCollect={openCollect} />}
 
       {/* Follow-up KPI strip — open work only; nothing here applies to closed items. */}
       {tab !== 'collect' && !showingDone && (

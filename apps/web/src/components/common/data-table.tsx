@@ -364,7 +364,7 @@ export function DataTable<T>({
                 <div
                   key={rowKey(row)}
                   className={cn(
-                    'bg-card rounded-lg border p-3 shadow-sm transition-colors',
+                    'bg-card rounded-xl border p-4 shadow-sm transition-colors',
                     (onRowClick || onRowDoubleClick) && 'active:bg-muted cursor-pointer',
                   )}
                   onClick={onRowClick ? () => onRowClick(row) : undefined}

@@ -37,7 +37,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { openPdf } from '@/lib/pdf';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { settingValues, useSettings } from '@/features/settings/use-settings';
 import {
@@ -182,12 +181,14 @@ export function QuotationsPage() {
     });
   };
 
-  /** Opens the quotation statement in a new tab rather than saving a file —
-   *  a quick look at what the customer would receive, no download involved. */
-  const handlePreview = (q: QuotationDto) => {
-    void openPdf(`/quotations/${q.id}/bill.pdf`, `${q.code ?? `Quotation-${q.id}`}.pdf`).catch((e) =>
-      toast.error(getApiErrorMessage(e, 'Preview failed')),
-    );
+  /**
+   * Keep mobile PDF preview on the quotation bill route. That route already
+   * renders a quotation from its own data, whereas the legacy server-PDF route
+   * is order-shaped and can produce an empty document when order and quotation
+   * IDs do not correspond.
+   */
+  const openQuotation = (q: QuotationDto, autoPdf = false) => {
+    navigate(`/quotations/${q.id}/bill`, { state: autoPdf ? { autoPdf: true } : undefined });
   };
 
   /** Every row action behind one kebab, same as Orders and Bag Bookings.
@@ -198,7 +199,7 @@ export function QuotationsPage() {
    *  entries stay visible but disabled, with the reason on hover, rather than
    *  disappearing — otherwise the menu changes shape row to row and it's not
    *  obvious the action ever existed. The API enforces the same rules. */
-  const quotationActionsMenu = (q: QuotationDto) => {
+  const quotationActionsMenu = (q: QuotationDto, compact = false) => {
     const open = isOpen(q.status);
     const converted = q.status === 'CONVERTED';
     // Why an entry is disabled — shown on hover so it doesn't look broken.
@@ -213,12 +214,12 @@ export function QuotationsPage() {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-64 font-sans">
-          {can('quotation:view') && (
+          {!compact && can('quotation:view') && (
             <>
-              <DropdownMenuItem onSelect={() => handlePreview(q)}>
+              <DropdownMenuItem onSelect={() => openQuotation(q, true)}>
                 <FileSearch className="text-violet-600" /> Preview PDF
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => navigate(`/quotations/${q.id}/bill`)}>
+              <DropdownMenuItem onSelect={() => openQuotation(q)}>
                 <Printer /> Print / view quotation
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setHistoryQuotation(q)}>
@@ -285,25 +286,31 @@ export function QuotationsPage() {
   };
 
   // Phones: one stacked card per quotation instead of a horizontally-scrolling table.
-  const quotationMobileCard = (q: QuotationDto) => (
-    <div className="space-y-2.5">
-      <div className="flex items-start justify-between gap-2">
+  const quotationMobileCard = (q: QuotationDto) => {
+    const canDelete = can('quotation:delete');
+    const hasOrderAction = q.status === 'CONVERTED' && q.convertedOrderId != null && can('order:view');
+    const visibleActionCount = (can('quotation:view') ? 3 : 0) + Number(hasOrderAction) + Number(canDelete);
+    const actionGridColumns = visibleActionCount >= 5 ? 'grid-cols-5' : visibleActionCount === 4 ? 'grid-cols-4' : 'grid-cols-3';
+    const hasCompactActions = can('quotation:update') || can('quotation:convert') || can('quotation:cancel');
+    return (
+      <div className="space-y-3.5">
+      <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-muted-foreground font-mono text-xs font-semibold">{q.code ?? `#${q.id}`}</p>
-          <p className="truncate leading-tight font-medium">{q.customerName}</p>
-          <p className="text-muted-foreground text-xs">{formatDate(q.orderDate)}</p>
-          {isOpen(q.status) && q.sourceOrderCode && <div className="mt-1"><HeldOrder code={q.sourceOrderCode} /></div>}
+          <p className="text-muted-foreground font-mono text-[11px] font-semibold tracking-wide">{q.code ?? `#${q.id}`}</p>
+          <p className="mt-0.5 truncate text-[15px] font-semibold leading-tight tracking-tight">{q.customerName}</p>
+          <p className="text-muted-foreground mt-1 text-xs font-medium">{formatDate(q.orderDate)}</p>
+          {isOpen(q.status) && q.sourceOrderCode && <div className="mt-1.5"><HeldOrder code={q.sourceOrderCode} /></div>}
         </div>
         <StatusBadge s={q.status} />
       </div>
-      <div className="grid grid-cols-2 gap-2 text-xs">
+      <div className="grid grid-cols-2 gap-4 border-y border-border/70 py-3 text-xs">
         <div>
-          <p className="text-muted-foreground">Items</p>
-          <p className="font-medium tabular-nums">{q.itemCount}</p>
+          <p className="text-muted-foreground font-medium">Items</p>
+          <p className="mt-0.5 text-[15px] font-bold tabular-nums">{q.itemCount}</p>
         </div>
         <div>
-          <p className="text-muted-foreground">Total Amount</p>
-          <p className="font-semibold tabular-nums text-emerald-700">₹{(q.totalAmount ?? 0).toLocaleString('en-IN')}</p>
+          <p className="text-muted-foreground font-medium">Total amount</p>
+          <p className="mt-0.5 text-[15px] font-extrabold tabular-nums text-emerald-700">₹{(q.totalAmount ?? 0).toLocaleString('en-IN')}</p>
         </div>
       </div>
       {q.status === 'CONVERTED' ? (
@@ -316,32 +323,28 @@ export function QuotationsPage() {
       ) : q.status === 'SENT' ? (
         <p className="text-xs text-sky-700">Sent {q.sentAt ? formatDate(q.sentAt) : ''}</p>
       ) : null}
-      {/* The card has room to spare beside the kebab, so the handful of actions
-          every quotation supports — view its PDF, print it, see its history,
-          jump to the order it became — sit here as one-tap buttons instead of
-          costing an extra menu open. Anything that changes the quotation's
-          state (edit, convert, mark sent, cancel, delete) stays behind the
-          kebab, same as desktop, so it isn't one accidental tap away. */}
-      <div className="flex items-center justify-between gap-1 border-t pt-2.5" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center gap-0.5">
+      {/* Frequent, safe actions remain one tap away. The overflow menu only
+          contains actions that can change the quotation's state. */}
+      <div className="flex items-center justify-between gap-2 pt-0.5" onClick={(e) => e.stopPropagation()}>
+        <div className={cn('grid flex-1 gap-1.5', actionGridColumns)}>
           {can('quotation:view') && (
             <>
-              <Button variant="ghost" size="icon" className="size-8" onClick={() => handlePreview(q)} aria-label="Preview PDF" title="Preview PDF">
+              <Button variant="ghost" size="icon" className="size-11 w-full rounded-lg" onClick={() => openQuotation(q)} aria-label="View quotation" title="View quotation">
+                <Eye className="size-4 text-slate-700" />
+              </Button>
+              <Button variant="ghost" size="icon" className="size-11 w-full rounded-lg" onClick={() => openQuotation(q, true)} aria-label="Preview quotation PDF" title="Preview quotation PDF">
                 <FileSearch className="size-4 text-violet-600" />
               </Button>
-              <Button variant="ghost" size="icon" className="size-8" onClick={() => navigate(`/quotations/${q.id}/bill`)} aria-label="Print / view quotation" title="Print / view quotation">
-                <Printer className="size-4" />
-              </Button>
-              <Button variant="ghost" size="icon" className="size-8" onClick={() => setHistoryQuotation(q)} aria-label="View change history" title="View change history">
+              <Button variant="ghost" size="icon" className="size-11 w-full rounded-lg" onClick={() => setHistoryQuotation(q)} aria-label="View change history" title="View change history">
                 <History className="size-4 text-indigo-600" />
               </Button>
             </>
           )}
-          {q.status === 'CONVERTED' && q.convertedOrderId != null && can('order:view') && (
+          {hasOrderAction && (
             <Button
               variant="ghost"
               size="icon"
-              className="size-8"
+              className="size-11 w-full rounded-lg"
               onClick={() => navigate(`/orders/${q.convertedOrderId}/edit`)}
               aria-label={`View ${q.convertedOrderCode ?? 'the order'}`}
               title={`View ${q.convertedOrderCode ?? 'the order'}`}
@@ -349,11 +352,25 @@ export function QuotationsPage() {
               <Eye className="size-4 text-emerald-600" />
             </Button>
           )}
+          {canDelete && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-destructive hover:text-destructive size-11 w-full rounded-lg"
+              disabled={q.status === 'CONVERTED'}
+              onClick={() => void handleDelete(q)}
+              aria-label={`Delete ${q.code ?? 'quotation'}`}
+              title={q.status === 'CONVERTED' ? 'Converted quotations cannot be deleted' : 'Delete quotation'}
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          )}
         </div>
-        {quotationActionsMenu(q)}
+        {hasCompactActions && quotationActionsMenu(q, true)}
       </div>
-    </div>
-  );
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -362,7 +379,7 @@ export function QuotationsPage() {
           <p className="text-muted-foreground text-sm">{data?.total ?? 0} quotations · click a row to choose an action</p>
         </div>
         {can('quotation:create') && (
-          <Button size="sm" onClick={() => navigate('/orders/new')}>
+          <Button className="w-full shadow-sm sm:w-auto" onClick={() => navigate('/orders/new')}>
             <Plus /> New quotation
           </Button>
         )}

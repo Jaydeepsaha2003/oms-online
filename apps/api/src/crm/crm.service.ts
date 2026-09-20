@@ -617,7 +617,13 @@ export class CrmService {
     const r0 = (x: number) => Math.round(x);
     const num = (v: unknown) => toNum(v) ?? 0;
     const [challans, custRows, receipts, discounts, advances, payFollowups] = await Promise.all([
-      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, select: { code: true, total: true, b: true, c: true, invDate: true, dueDate: true, customerId: true, customerName: true, transaction: true } }),
+      // `orderBy` is not decoration: this list is walked in order to build each
+      // party's invoices, and an advance is then allocated across them. Without
+      // it SQLite may hand back a different row order after a plan change, and
+      // the allocation — and so the Bank/Cash split — shifts with no data
+      // having changed. Ordering the source makes the whole computation
+      // reproducible; the sort below adds the same tiebreaker for safety.
+      this.prisma.challan.findMany({ where: { challanStatus: 'CONFIRMED' }, orderBy: { code: 'asc' }, select: { code: true, total: true, b: true, c: true, invDate: true, dueDate: true, customerId: true, customerName: true, transaction: true } }),
       this.prisma.customer.findMany({ select: { id: true, agentName: true } }),
       this.prisma.acctPaymentReceipt.findMany({ select: { custId: true, invNo: true, recAmt: true, recDate: true, payMode: true, refRecId: true } }),
       // Sales Discounts settle an invoice just as truly as cash does (Account →
@@ -747,7 +753,23 @@ export class CrmService {
       // the two sides always add back up to the combined figures.
       const side = () => ({ outstanding: 0, overdue: 0, dueSoon: 0, oldestDays: 0, invoiceCount: 0 });
       const sides = { bank: side(), cash: side() };
-      const ordered = [...p.invoices].sort((a, b) => b.overdueDays - a.overdueDays);
+      /*
+       * Oldest first, then by invoice code — the code is the tiebreaker, and it
+       * is not cosmetic.
+       *
+       * The advance is consumed in this order, so the order decides WHICH
+       * invoices it clears. Two invoices due the same day tie on `overdueDays`,
+       * and with no second key the winner was whatever order `challan.findMany`
+       * happened to return — a query with no `orderBy`, whose row order SQLite
+       * is free to change when the plan changes. The party's total was always
+       * right, but the advance landed on different invoices between identical
+       * requests, and since invoices differ in their bank/cash mix the Bank and
+       * Cash columns moved on their own. Sorting by code makes the allocation
+       * reproducible: same data in, same split out, every time.
+       */
+      const ordered = [...p.invoices].sort(
+        (a, b) => b.overdueDays - a.overdueDays || a.code.localeCompare(b.code),
+      );
       for (const inv of ordered) {
         const adjusted = applyInvoiceBucketCredit(inv, credit);
         credit = adjusted.credit;

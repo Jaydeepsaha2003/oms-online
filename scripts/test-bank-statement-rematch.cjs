@@ -103,6 +103,37 @@ test('a receipt entered by hand still covers a line', async () => {
   assert.equal(only.matchedAmount, 50000);
 });
 
+test('a receipt already spoken for by ANOTHER statement is not cover here', async () => {
+  // Two uploads of one account overlap in time even when they share no line:
+  // September's file still reaches back over August's receipts. RANJITHAM's
+  // early-September credits read as "already covered" by August receipts that
+  // had already explained August's credits.
+  await bill('SSS/902', 200000, '2026-07-01');
+  const august = await run([[29484, '2026-08-18']]);
+  const [augRow] = await rowsOf(august.id);
+  const augPosted = await svc.process(august.id, 'Tester', [augRow.id]);
+  assert.equal(augPosted.created.length, 1, 'August posts its own credit');
+
+  // A second statement whose window reaches back over that August receipt.
+  const september = await prisma.bankStatementRun.create({
+    data: {
+      fileName: 'AcctStatement_Sep.csv', bankName: 'AXIS BANK', status: 'DRAFT',
+      fromDate: new Date('2026-06-16'), toDate: new Date('2026-09-16'),
+    },
+  });
+  await prisma.bankStatementRow.create({
+    data: {
+      runId: september.id, rowNo: 1, txnDate: new Date('2026-09-03'), narration: `NEFT/${PARTY}/sep`,
+      amount: 26460, customerId: 1, customerName: PARTY, partySource: 'NARRATION',
+      status: 'UNMATCHED', matchedAmount: 0, rowKey: '2026-09-03|26460|sep',
+    },
+  });
+  await svc.recheck(september.id);
+  const [sep] = await rowsOf(september.id);
+  assert.equal(sep.matchedAmount, 0, 'August’s receipt cannot also explain September’s credit');
+  assert.equal(sep.status, 'UNMATCHED', 'so the September credit is postable, not hidden as covered');
+});
+
 (async () => {
   let failures = 0;
   try {

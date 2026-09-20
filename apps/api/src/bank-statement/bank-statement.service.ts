@@ -721,11 +721,37 @@ export class BankStatementService {
      * two different credits, with ₹53,269 of real money left unrecorded.
      *
      * A posted line has spent its own voucher, so the voucher is retired here.
+     *
+     * The same holds ACROSS statements. Two uploads of one account overlap in
+     * time even when they share no line — the September file's matching window
+     * still reaches back over August's receipts — and each run matched in
+     * isolation, so a receipt that already explained an August credit was
+     * offered again to explain a September one. RANJITHAM's ₹26,460 and ₹13,268
+     * of early September read as "already covered" by June-to-August receipts
+     * that were spoken for; ₹6.7 lakh across the book sat unposted the same way.
+     *
+     * One receipt answers for one credit, whichever statement raised it.
      */
-    const postedVoucherNos = rows
+    const claimedRefIds = new Set<string>();
+    const claimingRows = await this.prisma.bankStatementRow.findMany({
+      where: {
+        OR: [
+          // Any run's posted line owns the receipt it created.
+          { status: 'POSTED', postedRef: { not: null } },
+          // Another run's settled line owns the receipt that explains it. This
+          // run's own rows are left out: the passes below allocate among them.
+          { runId: { not: runId }, status: { in: ['MATCHED', 'PARTIAL'] }, matchedRefs: { not: null } },
+        ],
+      },
+      select: { status: true, postedRef: true, matchedRefs: true },
+    });
+    const postedVoucherNos = claimingRows
       .filter((r) => r.status === 'POSTED' && r.postedRef)
       .map((r) => r.postedRef!);
-    const claimedRefIds = new Set<string>();
+    for (const r of claimingRows) {
+      if (r.status === 'POSTED') continue;
+      for (const ref of (r.matchedRefs ?? '').split(',')) if (ref) claimedRefIds.add(ref);
+    }
     if (postedVoucherNos.length) {
       const led = await this.prisma.acctLedger.findMany({
         where: { voucherNo: { in: postedVoucherNos }, voucherType: 'RECEIPT' },
