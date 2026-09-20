@@ -1642,7 +1642,10 @@ export function TallyReconPage() {
               ? (run?.unmatchedLedgers.party ?? []).map((l: UnmappedLedger) => (
                   <div
                     key={l.name}
-                    className="flex items-center gap-1.5 rounded-[3px] border border-violet-200 bg-violet-50/60 px-1.5 py-1 dark:border-violet-400/25 dark:bg-violet-400/5"
+                    /* shrink-0: a flex column's children shrink to fit by
+                       default, so in a scrolling list they squash into each
+                       other instead of overflowing — see the group cards below. */
+                    className="flex shrink-0 items-center gap-1.5 rounded-[3px] border border-violet-200 bg-violet-50/60 px-1.5 py-1 dark:border-violet-400/25 dark:bg-violet-400/5"
                   >
                     <button
                       type="button"
@@ -1675,8 +1678,18 @@ export function TallyReconPage() {
                   </div>
                 ))
               : byGroup(run?.unmatchedLedgers.other ?? []).map(([group, list]) => (
-                    <div key={group} className="overflow-hidden rounded-[3px] border border-slate-200 dark:border-white/10">
-                      <div className="flex items-center justify-between gap-2 bg-slate-100 px-2 py-1 dark:bg-white/[0.05]">
+                    /*
+                     * shrink-0 is what makes this list scroll rather than
+                     * collapse. The container is a flex COLUMN with
+                     * overflow-y-auto, and a flex child shrinks to fit by
+                     * default — so 20 group cards each got squeezed to a
+                     * fraction of their height, `overflow-hidden` cropped the
+                     * ledger rows mid-line, and the headers ran into each
+                     * other. Refusing to shrink lets the cards keep their real
+                     * height and hands the overflow to the scrollbar.
+                     */
+                    <div key={group} className="shrink-0 overflow-hidden rounded-[3px] border border-slate-200 dark:border-white/10">
+                      <div className="flex items-center justify-between gap-2 border-b border-slate-200 bg-slate-100 px-2 py-1 dark:border-white/10 dark:bg-white/[0.05]">
                         <span className="truncate text-[11.5px] font-bold">{group}</span>
                         <span className="shrink-0 text-[10.5px] font-bold tabular-nums text-slate-500">{list.length}</span>
                       </div>
