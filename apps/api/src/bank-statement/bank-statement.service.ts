@@ -738,9 +738,10 @@ export class BankStatementService {
         OR: [
           // Any run's posted line owns the receipt it created.
           { status: 'POSTED', postedRef: { not: null } },
-          // Another run's settled line owns the receipt that explains it. This
-          // run's own rows are left out: the passes below allocate among them.
-          { runId: { not: runId }, status: { in: ['MATCHED', 'PARTIAL'] }, matchedRefs: { not: null } },
+          // Another run's line-level match owns the receipt that explains it.
+          // This run's own rows are left out: the passes below allocate among
+          // them. Only MATCHED counts — see why below.
+          { runId: { not: runId }, status: 'MATCHED', matchedRefs: { not: null } },
         ],
       },
       select: { status: true, postedRef: true, matchedRefs: true },
@@ -748,9 +749,21 @@ export class BankStatementService {
     const postedVoucherNos = claimingRows
       .filter((r) => r.status === 'POSTED' && r.postedRef)
       .map((r) => r.postedRef!);
+    /*
+     * A claim binds only when it is one-to-one.
+     *
+     * Pass 1 records the single voucher that answers a line. Pass 2 records the
+     * whole spare POOL on every line it covers in aggregate — those refs are
+     * candidates, not an allocation, so a PARTIAL line can cite a dozen
+     * vouchers it never specifically used. Treating that bag as claimed retired
+     * far too much: run 3's own 16 June credit lost RN/605 — the receipt of the
+     * same amount on the same day — because a September line had listed it
+     * among its candidates, and 52 correctly matched lines came unstuck at once.
+     */
     for (const r of claimingRows) {
-      if (r.status === 'POSTED') continue;
-      for (const ref of (r.matchedRefs ?? '').split(',')) if (ref) claimedRefIds.add(ref);
+      if (r.status !== 'MATCHED') continue;
+      const refs = (r.matchedRefs ?? '').split(',').filter(Boolean);
+      if (refs.length === 1) claimedRefIds.add(refs[0]);
     }
     if (postedVoucherNos.length) {
       const led = await this.prisma.acctLedger.findMany({

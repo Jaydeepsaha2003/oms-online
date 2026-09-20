@@ -63,6 +63,14 @@ async function run(credits) {
   return r;
 }
 const rowsOf = (runId) => prisma.bankStatementRow.findMany({ where: { runId }, orderBy: { rowNo: 'asc' } });
+const refForVoucher = async (voucherNo) => {
+  const ledger = await prisma.acctLedger.findFirst({
+    where: { voucherNo, voucherType: 'RECEIPT' },
+    select: { receiptRefId: true },
+  });
+  assert.ok(ledger?.receiptRefId, `${voucherNo} has a receipt reference`);
+  return ledger.receiptRefId;
+};
 
 test("a line's own receipt is not offered as cover for the next line", async () => {
   await bill('SSS/900', 400000, '2026-07-01');
@@ -132,6 +140,57 @@ test('a receipt already spoken for by ANOTHER statement is not cover here', asyn
   const [sep] = await rowsOf(september.id);
   assert.equal(sep.matchedAmount, 0, 'August’s receipt cannot also explain September’s credit');
   assert.equal(sep.status, 'UNMATCHED', 'so the September credit is postable, not hidden as covered');
+});
+
+test('another statement\'s exact one-to-one match keeps its receipt claimed', async () => {
+  await bill('SSS/903', 83333, '2026-07-03');
+  const receipt = await new PaymentsService(prisma).save(
+    { takeAccOn: 'PARTY', customerId: 1, payMode: 'BANK', bankName: 'AXIS BANK', adjMode: 'AUTOMATIC', receiptAmt: 83333, recDate: '2026-08-21' },
+    'Tester',
+  );
+  const refId = await refForVoucher(receipt.voucherNo);
+
+  const firstRun = await run([[83333, '2026-08-21']]);
+  await prisma.bankStatementRow.updateMany({
+    where: { runId: firstRun.id },
+    data: { status: 'MATCHED', matchedRefs: refId, matchedAmount: 83333 },
+  });
+
+  const secondRun = await run([[83333, '2026-08-21']]);
+  await svc.recheck(secondRun.id);
+  const [second] = await rowsOf(secondRun.id);
+  assert.equal(second.status, 'UNMATCHED', 'the same receipt cannot exactly match a second statement line');
+  assert.equal(second.matchedAmount, 0);
+});
+
+test('an aggregate candidate list does not falsely claim every receipt in it', async () => {
+  await bill('SSS/904', 150000, '2026-07-04');
+  const firstReceipt = await new PaymentsService(prisma).save(
+    { takeAccOn: 'PARTY', customerId: 1, payMode: 'BANK', bankName: 'AXIS BANK', adjMode: 'AUTOMATIC', receiptAmt: 61111, recDate: '2026-08-22' },
+    'Tester',
+  );
+  const secondReceipt = await new PaymentsService(prisma).save(
+    { takeAccOn: 'PARTY', customerId: 1, payMode: 'BANK', bankName: 'AXIS BANK', adjMode: 'AUTOMATIC', receiptAmt: 72222, recDate: '2026-08-23' },
+    'Tester',
+  );
+  const firstRef = await refForVoucher(firstReceipt.voucherNo);
+  const secondRef = await refForVoucher(secondReceipt.voucherNo);
+
+  // Pass 2 stores the whole candidate pool on an aggregate row. It does not
+  // say which individual receipt was consumed, so neither ref can be retired
+  // as a one-to-one claim merely because it appears in this comma-separated bag.
+  const aggregateRun = await run([[100000, '2026-08-24']]);
+  await prisma.bankStatementRow.updateMany({
+    where: { runId: aggregateRun.id },
+    data: { status: 'PARTIAL', matchedRefs: `${firstRef},${secondRef}`, matchedAmount: 100000 },
+  });
+
+  const exactRun = await run([[61111, '2026-08-22']]);
+  await svc.recheck(exactRun.id);
+  const [exact] = await rowsOf(exactRun.id);
+  assert.equal(exact.status, 'MATCHED', 'the exact receipt remains available despite appearing in an aggregate candidate pool');
+  assert.equal(exact.matchedRefs, firstRef);
+  assert.equal(exact.matchedAmount, 61111);
 });
 
 (async () => {
