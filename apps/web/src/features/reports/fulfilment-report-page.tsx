@@ -1,9 +1,12 @@
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Boxes } from 'lucide-react';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
-import { Kpi, RankedBars, ReportCard, ReportHeader, ReportSummary } from './report-kit';
+import { Kpi, KpiGrid, RankedBars, ReportCard, ReportFunnel, ReportHeader, ReportSummary } from './report-kit';
 import { ReportFilterBar, useReportFilters } from './report-filters';
 import { useFulfilment } from './use-reports';
+
+/** Ordered → dispatched → billed, each its own gradient (mockup's funnel). */
+const FUNNEL_TONES: [string, string][] = [['#60a5fa', '#1d4ed8'], ['#a78bfa', '#6d28d9'], ['#34d399', '#047857']];
 
 const pct = (v: number | null | undefined) => (v == null ? '—' : `${(v * 100).toFixed(1)}%`);
 
@@ -12,8 +15,14 @@ export function FulfilmentReportPage() {
   const { data, isLoading } = useFulfilment(filters.query);
 
   return (
-    <div className="space-y-5">
-      <ReportHeader title="Orders & Fulfilment" subtitle="Where the operational friction is — cancellations, partial dispatch, lead time and backlog." icon={Boxes} asOf={data?.asOf} />
+    <div className="rp-page space-y-5">
+      <ReportHeader
+        title="Orders & Fulfilment"
+        subtitle="Where the operational friction is — cancellations, partial dispatch, lead time and backlog."
+        icon={Boxes}
+        asOf={data?.asOf}
+        hero={data ? { label: 'Open orders', value: (data.pendingOrders ?? 0).toLocaleString('en-IN'), hint: `${data.urgentOpen ?? 0} urgent · ${data.avgLeadDays ?? '—'}d avg lead` } : undefined}
+      />
 
       <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
 
@@ -27,23 +36,41 @@ export function FulfilmentReportPage() {
         ] : []}
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <KpiGrid className="gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi label="Cancellation rate" value={pct(data?.cancellationRate)} hint={data ? `${data.cancelledOrders} of ${data.totalOrders}` : undefined} loading={isLoading} tone="rose" />
         <Kpi label="Partial dispatch" value={pct(data?.partialRate)} hint={data ? `${data.partialRows} of ${data.dispatchRows} rows` : undefined} loading={isLoading} tone="amber" />
         <Kpi label="Avg lead time" value={data?.avgLeadDays != null ? `${data.avgLeadDays} days` : '—'} hint="order → completion" loading={isLoading} tone="blue" />
         <Kpi label="Pending orders" value={data ? (data.pendingOrders ?? 0).toLocaleString('en-IN') : '—'} hint={data ? `${data.urgentOpen ?? 0} urgent` : undefined} loading={isLoading} tone="violet" />
-      </div>
+      </KpiGrid>
 
-      <ReportCard title="Selected-period value — ordered, dispatched and billed">
+      <ReportCard
+        title="Selected-period value — ordered, dispatched and billed"
+        right="ordered → dispatched → billed"
+        note="Each stage uses its own natural date in the selected period. Values are not treated as one linked order cohort."
+      >
         {isLoading ? <div className="bg-muted h-40 animate-pulse rounded-lg" /> : (
           <>
-            <RankedBars data={(data?.funnel ?? []).map((f) => ({ name: f.stage, value: f.value }))} />
-            <p className="text-muted-foreground mt-2 text-xs">Each stage uses its own natural date in the selected period. Values are not treated as one linked order cohort.</p>
+            {/* Phones: the mockup's fat proportional funnel. Desktop keeps the
+                ranked bars, which read better beside the other charts there. */}
+            <div className="sm:hidden">
+              <ReportFunnel
+                steps={(data?.funnel ?? []).map((f, i) => ({
+                  label: f.stage,
+                  value: inrCompact(f.value),
+                  ratio: (data?.funnel?.[0]?.value ?? 0) > 0 ? f.value / data!.funnel[0].value : 0,
+                  from: FUNNEL_TONES[i % FUNNEL_TONES.length][0],
+                  to: FUNNEL_TONES[i % FUNNEL_TONES.length][1],
+                }))}
+              />
+            </div>
+            <div className="hidden sm:block">
+              <RankedBars data={(data?.funnel ?? []).map((f) => ({ name: f.stage, value: f.value }))} />
+            </div>
           </>
         )}
       </ReportCard>
 
-      <ReportCard title="Open-order backlog by age">
+      <ReportCard title="Open-order backlog by age" note="Value of undispatched quantity, bucketed by how long the order has been open.">
         {isLoading ? <div className="bg-muted h-[280px] animate-pulse rounded-lg" /> : (
           <div className="h-[280px] w-full">
             <ResponsiveContainer width="100%" height="100%">
@@ -57,7 +84,6 @@ export function FulfilmentReportPage() {
             </ResponsiveContainer>
           </div>
         )}
-        <p className="text-muted-foreground mt-2 text-xs">Value of undispatched quantity, bucketed by how long the order has been open.</p>
       </ReportCard>
 
       <ReportCard title="Cancellations by party">

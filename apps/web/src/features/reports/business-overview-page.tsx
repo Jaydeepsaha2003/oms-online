@@ -3,7 +3,7 @@ import { Bar, CartesianGrid, Cell, ComposedChart, Legend, Line, Pie, PieChart, R
 import { Banknote, HandCoins, LayoutDashboard, Package, PieChart as PieIcon, ReceiptText, ScrollText, Timer, TrendingUp, Users, Wallet } from 'lucide-react';
 import type { ReportMonthPoint } from '@oms/shared';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
-import { Kpi, RankedBars, ReportCard, ReportHeader, ReportSummary, REPORT_COLORS } from './report-kit';
+import { Kpi, KpiGrid, RankedBars, ReportCard, ReportHeader, ReportSummary, REPORT_COLORS } from './report-kit';
 import { ReportFilterBar, useReportFilters } from './report-filters';
 import { useBusinessOverview } from './use-reports';
 
@@ -33,12 +33,20 @@ export function BusinessOverviewPage() {
   const money = (v?: number) => (v == null ? '—' : inrCompact(v));
 
   return (
-    <div className="space-y-5">
+    <div className="rp-page space-y-5">
       <ReportHeader
         title="Business Overview"
         subtitle="Your whole business in one screen — revenue, collections, receivables and where they come from."
         icon={LayoutDashboard}
         asOf={data?.asOf}
+        hero={data ? {
+          label: 'Revenue this period',
+          value: inrCompact(data.revenue.current),
+          hint: data.collectionRate != null ? `${Math.round(data.collectionRate * 100)}% of it already collected` : undefined,
+          delta: data.revenue.deltaPct != null
+            ? { dir: data.revenue.direction === 'down' ? 'down' : data.revenue.direction === 'up' ? 'up' : 'flat', text: `${Math.abs(data.revenue.deltaPct).toFixed(1)}%` }
+            : undefined,
+        } : undefined}
       />
 
       <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
@@ -56,30 +64,31 @@ export function BusinessOverviewPage() {
       />
 
       {/* Headline money KPIs */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <KpiGrid className="gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi label="Revenue (period)" value={money(data?.revenue.current)} title={data ? inrFull(data.revenue.current) : undefined} hint="vs previous period" icon={TrendingUp} tone="blue" metric={data?.revenue} loading={isLoading} />
         <Kpi label="Collections (period)" value={money(data?.collections.current)} title={data ? inrFull(data.collections.current) : undefined} hint="vs previous period" icon={HandCoins} tone="emerald" metric={data?.collections} loading={isLoading} />
         <Kpi label="Outstanding" value={money(data?.outstanding)} title={data ? inrFull(data.outstanding) : undefined} hint="net receivable" icon={Wallet} tone="rose" loading={isLoading} />
         <Kpi label="To-bill backlog" value={money(data?.backlogValue)} title={data ? inrFull(data.backlogValue) : undefined} hint="dispatched, not challaned" icon={Package} tone="violet" loading={isLoading} />
-      </div>
+      </KpiGrid>
 
       {/* Operational + efficiency KPIs */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <KpiGrid className="gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi label="Orders (period)" value={data ? Math.round(data.orders?.current ?? 0).toLocaleString('en-IN') : '—'} hint="vs previous period" icon={ReceiptText} tone="blue" metric={data?.orders} loading={isLoading} />
         <Kpi label="Challans (period)" value={data ? Math.round(data.challans?.current ?? 0).toLocaleString('en-IN') : '—'} hint="vs previous period" icon={ScrollText} tone="amber" metric={data?.challans} loading={isLoading} />
         <Kpi label="Collection rate" value={data?.collectionRate != null ? `${Math.round(data.collectionRate * 100)}%` : '—'} hint="collected ÷ billed (period)" icon={Banknote} tone="emerald" loading={isLoading} />
         <Kpi label="DSO" value={data?.dsoDays != null ? `${data.dsoDays} days` : '—'} hint="days sales outstanding" icon={Timer} tone="slate" loading={isLoading} />
-      </div>
+      </KpiGrid>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <KpiGrid className="gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi label="Avg invoice value" value={money(data?.avgInvoiceValue)} title={data ? inrFull(data.avgInvoiceValue) : undefined} hint="per challan (period)" icon={ReceiptText} tone="blue" loading={isLoading} />
         <Kpi label="Billed parties" value={data ? (data.activeParties ?? 0).toLocaleString('en-IN') : '—'} hint="selected period" icon={Users} tone="violet" loading={isLoading} />
-        <div className="sm:col-span-2">
+        {/* Full width on a phone's two-column tile grid, half a row on desktop. */}
+        <div className="col-span-2">
           <ReportCard title="Collections by mode (period)">
             {isLoading ? <div className="bg-muted h-16 animate-pulse rounded" /> : <RankedBars data={data?.collectionModes ?? []} emptyText="No receipts in this period." />}
           </ReportCard>
         </div>
-      </div>
+      </KpiGrid>
 
       {/* Billed vs collected trend */}
       <ReportCard title="Billed vs Collected — last 12 months">

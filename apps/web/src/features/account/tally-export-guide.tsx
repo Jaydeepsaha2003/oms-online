@@ -2,8 +2,9 @@ import { Check, ChevronRight, FileSpreadsheet, Landmark, Upload } from 'lucide-r
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 
-/** Tally's menu path to the Ledger report. */
-const PATH = ['Gateway of Tally', 'Display More Reports', 'Account Books', 'Ledger'];
+/** Tally's menu path to open the export, then pick what to export. */
+const PATH_EXPORT = ['Gateway of Tally', 'Export (Alt+E)', 'Others'];
+const PATH_REPORT = ['Export Report Selection', 'Group of Accounts', 'Sundry Debtors'];
 
 /**
  * The F12 settings that must be CHANGED. Every other option in that screen is
@@ -110,7 +111,7 @@ export function TallyExportGuide({
           </div>
 
           <DialogTitle className="oms-rise relative mt-3 text-center text-[17px] font-extrabold tracking-tight text-white" style={delay(700)}>
-            Export from Tally in <span className="text-amber-300">3 steps</span>
+            Export from Tally in <span className="text-amber-300">4 steps</span>
           </DialogTitle>
           <DialogDescription className="oms-rise relative mt-0.5 text-center text-[12px] font-medium text-white/70" style={delay(780)}>
             Set it up once like this and the register reconciles cleanly.
@@ -119,15 +120,15 @@ export function TallyExportGuide({
 
         {/* ── Steps ───────────────────────────────────────────────────────── */}
         <ol className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          <Step n={1} title="Open the Ledger report" at={850}>
+          <Step n={1} title="Export → Others" at={850}>
             <div className="flex flex-wrap items-center gap-1">
-              {PATH.map((p, i) => (
+              {PATH_EXPORT.map((p, i) => (
                 <span key={p} className="oms-rise flex items-center gap-1" style={delay(950 + i * 110)}>
                   {i > 0 && <ChevronRight className="size-3.5 text-slate-400" />}
                   <span
                     className={cn(
                       'rounded-full px-2.5 py-1 text-[11.5px] font-semibold',
-                      i === PATH.length - 1
+                      i === PATH_EXPORT.length - 1
                         ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/30'
                         : 'bg-indigo-50 text-indigo-800 dark:bg-indigo-400/15 dark:text-indigo-200',
                     )}
@@ -138,23 +139,48 @@ export function TallyExportGuide({
               ))}
             </div>
             <p className="mt-2 text-[12px] text-slate-600 dark:text-slate-300">
-              Pick <strong className="text-slate-900 dark:text-white">Sundry Debtors</strong> (or the party group you're reconciling).
+              From the Gateway of Tally screen itself — not from inside a report.
             </p>
           </Step>
 
-          <Step n={2} title="Press F12 and set only these" at={1350}>
+          <Step n={2} title="Pick the report" at={1350}>
+            <div className="flex flex-wrap items-center gap-1">
+              {PATH_REPORT.map((p, i) => (
+                <span key={p} className="oms-rise flex items-center gap-1" style={delay(1450 + i * 110)}>
+                  {i > 0 && <ChevronRight className="size-3.5 text-slate-400" />}
+                  <span
+                    className={cn(
+                      'rounded-full px-2.5 py-1 text-[11.5px] font-semibold',
+                      i === PATH_REPORT.length - 1
+                        ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/30'
+                        : 'bg-indigo-50 text-indigo-800 dark:bg-indigo-400/15 dark:text-indigo-200',
+                    )}
+                  >
+                    {p}
+                  </span>
+                </span>
+              ))}
+            </div>
+            <p className="mt-2 text-[12px] text-slate-600 dark:text-slate-300">
+              Swap <strong className="text-slate-900 dark:text-white">Sundry Debtors</strong> for whichever party group you're reconciling.
+            </p>
+          </Step>
+
+          <Step n={3} title="Open Configuration and set only these" at={1850}>
             <div className="mb-2 flex items-center gap-1.5">
-              <Key press={1500}>F12</Key>
-              <span className="text-[11.5px] font-medium text-slate-500 dark:text-slate-400">opens Configuration</span>
+              <Key press={2000}>F12</Key>
+              <span className="text-[11.5px] font-medium text-slate-500 dark:text-slate-400">
+                or the <strong className="text-slate-700 dark:text-slate-200">Configuration</strong> option right there on screen
+              </span>
             </div>
             <div className="grid gap-1.5 sm:grid-cols-2">
               {SETTINGS.map(([label, value], i) => (
                 <div
                   key={label}
                   className="oms-rise flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 shadow-sm dark:border-white/10 dark:bg-white/5"
-                  style={delay(1500 + i * 70)}
+                  style={delay(2000 + i * 70)}
                 >
-                  <span className="oms-pop flex size-4 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white" style={delay(1600 + i * 70)}>
+                  <span className="oms-pop flex size-4 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white" style={delay(2100 + i * 70)}>
                     <Check className="size-2.5" strokeWidth={3.5} />
                   </span>
                   <div className="min-w-0 leading-tight">
@@ -164,18 +190,18 @@ export function TallyExportGuide({
                 </div>
               ))}
             </div>
-            <p className="oms-rise mt-2 inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600 dark:bg-white/10 dark:text-slate-300" style={delay(2200)}>
+            <p className="oms-rise mt-2 inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600 dark:bg-white/10 dark:text-slate-300" style={delay(2700)}>
               Every other option stays <span className="font-bold text-slate-900 dark:text-white">No</span>
             </p>
           </Step>
 
-          <Step n={3} title="Export as Excel" at={2300} last>
+          <Step n={4} title="Accept and export as Excel" at={2800} last>
             <div className="flex flex-wrap items-center gap-1.5">
-              <Key press={2500}>Ctrl</Key>
-              <span className="text-[12px] font-bold text-slate-400">+</span>
-              <Key press={2500}>E</Key>
+              <span className="oms-rise text-[11.5px] font-medium text-slate-500 dark:text-slate-400" style={delay(2900)}>
+                Format
+              </span>
               <ChevronRight className="size-4 text-slate-400" />
-              <span className="oms-pop inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-1 text-[11.5px] font-bold text-white shadow-md shadow-emerald-600/30" style={delay(2650)}>
+              <span className="oms-pop inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-1 text-[11.5px] font-bold text-white shadow-md shadow-emerald-600/30" style={delay(2950)}>
                 <FileSpreadsheet className="size-3.5" /> .xlsx
               </span>
               <span className="text-[11.5px] font-medium text-slate-500 dark:text-slate-400">— upload that file here.</span>

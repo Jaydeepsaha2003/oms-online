@@ -4,12 +4,13 @@ import { Package } from 'lucide-react';
 import type { ReportMeasure } from '@oms/shared';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { cn } from '@/lib/utils';
-import { RankedBars, ReportCard, ReportHeader, ReportSummary, REPORT_COLORS } from './report-kit';
+import { RankedBars, ReportCard, ReportHeader, ReportRow, ReportRowList, ReportSummary, REPORT_COLORS, type Pill } from './report-kit';
 import { ReportFilterBar, useReportFilters } from './report-filters';
 import { useProductReport } from './use-reports';
 
 const marginTone = (flag: 'loss' | 'thin' | 'ok') =>
   flag === 'loss' ? 'bg-red-50 text-red-700 ring-red-600/20' : flag === 'thin' ? 'bg-amber-50 text-amber-700 ring-amber-600/20' : 'bg-emerald-50 text-emerald-700 ring-emerald-600/20';
+const marginPillTone = (flag: 'loss' | 'thin' | 'ok'): Pill['tone'] => (flag === 'loss' ? 'rose' : flag === 'thin' ? 'amber' : 'emerald');
 
 const MEASURES: { key: ReportMeasure; label: string }[] = [
   { key: 'amount', label: 'Amount' },
@@ -32,13 +33,26 @@ export function ProductReportPage() {
   const by = isMoney ? 'billed value' : MEASURES.find((m) => m.key === measure)?.label.toLowerCase();
 
   return (
-    <div className="space-y-5">
-      <ReportHeader title="Product & Design" subtitle="What sells, and what actually makes money." icon={Package} asOf={data?.asOf} />
+    <div className="rp-page space-y-5">
+      <ReportHeader
+        title="Product & Design"
+        subtitle="What sells, and what actually makes money."
+        icon={Package}
+        asOf={data?.asOf}
+        hero={data ? { label: `Top ${by}`, value: fmt(data.topProducts[0]?.value ?? 0), hint: data.topProducts[0]?.name ?? undefined } : undefined}
+      />
 
       <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
 
       {/* Measure slicer — analyse the same products by amount / bags / pcs / kgs / box. */}
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="rp-seg rp-noscroll sm:hidden">
+        {MEASURES.map((m) => (
+          <button key={m.key} type="button" className="rp-seg-btn" data-on={measure === m.key} onClick={() => setMeasure(m.key)}>
+            {m.label}
+          </button>
+        ))}
+      </div>
+      <div className="hidden flex-wrap items-center gap-2 sm:flex">
         <span className="text-muted-foreground text-sm font-medium">Measure by</span>
         <div className="bg-muted inline-flex rounded-lg p-0.5">
           {MEASURES.map((m) => (
@@ -88,12 +102,35 @@ export function ProductReportPage() {
       </ReportCard>
 
       <ReportCard title="Average margin by category" right={<span className="text-muted-foreground text-xs">list-price margin</span>}>
-        {isLoading ? <div className="bg-muted h-40 animate-pulse rounded-lg" /> : <RankedBars data={(data?.marginByCategory ?? []).map((m) => ({ name: `${m.name} · ${m.value}%`, value: m.value }))} money={false} />}
+        {isLoading ? <div className="bg-muted h-40 animate-pulse rounded-lg" /> : (
+          <RankedBars
+            data={(data?.marginByCategory ?? []).map((m) => ({ name: `${m.name} · ${m.value}%`, value: m.value }))}
+            money={false}
+            subFor={(d) => `${d.value}% of list price`}
+          />
+        )}
       </ReportCard>
 
-      <ReportCard title="Design margins — worst priced first" right={losses > 0 ? <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700 ring-1 ring-inset ring-red-600/20">{losses} to review</span> : undefined}>
+      <ReportCard note="Margin is list-price (rate − cost) per design — it flags mispriced designs, not realised profit on sales." title="Design margins — worst priced first" right={losses > 0 ? <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700 ring-1 ring-inset ring-red-600/20">{losses} to review</span> : undefined}>
         {isLoading ? <div className="bg-muted h-64 animate-pulse rounded-lg" /> : (
-          <div className="max-h-[440px] overflow-auto">
+          <>
+            <ReportRowList emptyText="No design pricing yet.">
+              {(data?.designMargin ?? []).map((d, i) => (
+                <ReportRow
+                  key={`${d.design}-${i}`}
+                  i={i}
+                  title={d.design}
+                  sub={d.category}
+                  pills={[{ text: d.marginPct != null ? `${d.marginPct}%` : '—', tone: marginPillTone(d.flag) }]}
+                  stats={[
+                    { label: 'Cost', value: `₹${d.cost.toLocaleString('en-IN')}` },
+                    { label: 'Rate', value: `₹${d.rate.toLocaleString('en-IN')}` },
+                    { label: 'Margin', value: `₹${d.unitMargin.toLocaleString('en-IN')}`, tone: d.unitMargin < 0 ? 'bad' : undefined },
+                  ]}
+                />
+              ))}
+            </ReportRowList>
+          <div className="hidden max-h-[440px] overflow-auto sm:block">
             <table className="w-full min-w-[560px] text-sm">
               <thead className="bg-card sticky top-0">
                 <tr className="text-muted-foreground border-b text-left text-xs uppercase tracking-wide">
@@ -119,8 +156,8 @@ export function ProductReportPage() {
               </tbody>
             </table>
           </div>
+          </>
         )}
-        <p className="text-muted-foreground mt-2 text-xs">Margin is list-price (rate − cost) per design — it flags mispriced designs, not realised profit on sales.</p>
       </ReportCard>
     </div>
   );

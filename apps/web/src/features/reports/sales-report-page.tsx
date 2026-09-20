@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Bar, BarChart, CartesianGrid, Cell, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { TrendingUp } from 'lucide-react';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
-import { Kpi, RankedBars, ReportCard, ReportHeader, ReportSummary } from './report-kit';
+import { Kpi, KpiGrid, RankedBars, ReportCard, ReportHeader, ReportSummary } from './report-kit';
 import { ReportFilterBar, useReportFilters } from './report-filters';
 import { useSalesReport } from './use-reports';
 
@@ -14,8 +14,21 @@ export function SalesReportPage() {
   const peak = monthly.reduce<{ label: string; billed: number } | null>((best, m) => (!best || m.billed > best.billed ? m : best), null);
 
   return (
-    <div className="space-y-5">
-      <ReportHeader title="Sales & Revenue" subtitle="The seasonal rhythm of your billing and where revenue comes from." icon={TrendingUp} asOf={data?.asOf} />
+    <div className="rp-page space-y-5">
+      <ReportHeader
+        title="Sales & Revenue"
+        subtitle="The seasonal rhythm of your billing and where revenue comes from."
+        icon={TrendingUp}
+        asOf={data?.asOf}
+        hero={{
+          label: 'Billed this period',
+          value: inrCompact(total12),
+          hint: 'FY-to-date vs last FY',
+          delta: data?.yoyTotals?.growthPct != null
+            ? { dir: data.yoyTotals.growthPct >= 0 ? 'up' : 'down', text: `${Math.abs(data.yoyTotals.growthPct).toFixed(1)}%` }
+            : undefined,
+        }}
+      />
 
       <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
 
@@ -29,12 +42,12 @@ export function SalesReportPage() {
         ] : []}
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <KpiGrid className="gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi label="Billed (period)" value={inrCompact(total12)} title={inrFull(total12)} hint="selected dates" loading={isLoading} tone="blue" />
         <Kpi label="Peak month" value={peak ? inrCompact(peak.billed) : '—'} hint={peak?.label} loading={isLoading} tone="emerald" />
         <Kpi label="YoY growth" value={data?.yoyTotals?.growthPct != null ? `${data.yoyTotals.growthPct > 0 ? '+' : ''}${data.yoyTotals.growthPct.toFixed(1)}%` : '—'} hint="FY-to-date vs last FY (same months)" loading={isLoading} tone={data && (data.yoyTotals?.growthPct ?? 0) >= 0 ? 'emerald' : 'rose'} />
         <Kpi label="Regions" value={data ? String(data.byRegion.length) : '—'} hint="with revenue" loading={isLoading} tone="amber" />
-      </div>
+      </KpiGrid>
 
       <ReportCard title="This financial year vs last (Apr → Mar)">
         {isLoading ? <div className="bg-muted h-[280px] animate-pulse rounded-lg" /> : (
@@ -74,7 +87,7 @@ export function SalesReportPage() {
         )}
       </ReportCard>
 
-      <ReportCard title="Historical seasonality — which months run hot or cold">
+      <ReportCard title="Historical seasonality — which months run hot or cold" note="1× = an average month. Green months beat the average; amber trail it.">
         {isLoading ? <div className="bg-muted h-[240px] animate-pulse rounded-lg" /> : (
           <div className="h-[240px] w-full">
             <ResponsiveContainer width="100%" height="100%">
@@ -90,7 +103,6 @@ export function SalesReportPage() {
             </ResponsiveContainer>
           </div>
         )}
-        <p className="text-muted-foreground mt-2 text-xs">1× = an average month. Green months beat the average; amber trail it.</p>
       </ReportCard>
 
       <div className="grid gap-4 lg:grid-cols-2">

@@ -16,7 +16,7 @@ import { formatDate } from '@/lib/date-format';
 import { Card, CardContent } from '@/components/ui/card';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { ReportFilterBar, useReportFilters } from './report-filters';
-import { ReportCard, ReportSummary } from './report-kit';
+import { ReportCard, ReportHeader, ReportSummary } from './report-kit';
 import { useOrderJourney } from './use-reports';
 
 /* ── stage vocabulary ────────────────────────────────────────────────────────
@@ -368,7 +368,43 @@ function DispatchDetail({ rows, unit }: { rows: JourneyDispatch[]; unit: string 
   }
   const qtyOf = (d: JourneyDispatch) => (unit === 'kgs' ? d.kgs : unit === 'pcs' ? d.pcs : d.bags) ?? 0;
   return (
-    <div className="overflow-x-auto">
+    <>
+      {/* Phones: one card per dispatch instead of a horizontally-scrolling table. */}
+      <div className="space-y-2 sm:hidden">
+        {rows.map((d) => (
+          <div
+            key={d.id}
+            className={cn(
+              'rounded-md border px-2.5 py-2',
+              d.isReturn ? 'border-rose-200 bg-rose-50/50 dark:border-rose-400/20 dark:bg-rose-500/[0.07]' : 'border-slate-200 bg-white dark:border-white/10 dark:bg-white/[0.02]',
+            )}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className={cn('text-[12.5px] font-bold tabular-nums', d.isReturn ? 'text-rose-700 dark:text-rose-400' : 'text-indigo-700 dark:text-indigo-300')}>
+                {d.code ?? `#${d.id}`}
+              </span>
+              <span className="text-muted-foreground text-[11px] font-medium tabular-nums whitespace-nowrap">{formatDate(d.date)}</span>
+            </div>
+            <p className="mt-0.5 truncate text-[12px] font-semibold">
+              {d.productName ?? '—'}
+              {d.design && <span className="text-muted-foreground font-normal"> · {d.design}</span>}
+            </p>
+            <div className="mt-1 flex items-center justify-between gap-2 text-[11px]">
+              <span className={cn('font-bold tabular-nums', d.isReturn && 'text-rose-700 dark:text-rose-400')}>
+                {num(qtyOf(d))} <span className="text-muted-foreground font-semibold">{unit}</span>
+              </span>
+              {d.isReturn ? (
+                <span className="font-semibold text-rose-700 dark:text-rose-400">Returned{d.creditNoteCode ? ` · ${d.creditNoteCode}` : ''}</span>
+              ) : d.challanCode ? (
+                <span className="font-semibold text-emerald-700 dark:text-emerald-400">{d.challanCode}{d.challanDate ? ` · ${formatDate(d.challanDate)}` : ''}</span>
+              ) : (
+                <span className="font-semibold text-amber-700 dark:text-amber-400">Not billed yet</span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    <div className="hidden overflow-x-auto sm:block">
       <div className="min-w-0">
         <table className="w-full min-w-max text-[12px]">
           <thead>
@@ -417,6 +453,7 @@ function DispatchDetail({ rows, unit }: { rows: JourneyDispatch[]; unit: string 
         </table>
       </div>
     </div>
+    </>
   );
 }
 
@@ -488,7 +525,40 @@ function OrderDetail({ o, unit }: { o: JourneyOrder; unit: string }) {
     <div className="space-y-4 border-t bg-slate-50/60 px-3 py-3 dark:bg-white/[0.02]">
       {/* 1 — what was asked for, and what is still owed on each line */}
       <Group n={1} title="Ordered" count={o.orderLines.length}>
-        <div className="overflow-x-auto">
+        {/* Phones: one card per line instead of a horizontally-scrolling table. */}
+        <div className="space-y-2 sm:hidden">
+          {o.orderLines.map((l) => {
+            const owed = !!(l.remBags || l.remPcs || l.remKgs || l.remBox);
+            return (
+              <div key={l.id} className="rounded-md border border-slate-200 bg-white px-2.5 py-2 dark:border-white/10 dark:bg-white/[0.02]">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-[12.5px] font-semibold">{l.productName ?? '—'}</p>
+                    {l.design && <p className="text-muted-foreground truncate text-[11px]">{l.design}</p>}
+                  </div>
+                  <span className="shrink-0 text-[12.5px] font-bold tabular-nums">{inrCompact(l.amount)}</span>
+                </div>
+                <div className="mt-1.5 grid grid-cols-3 gap-1.5 text-[11px]">
+                  <div>
+                    <p className="text-muted-foreground text-[9.5px] font-bold tracking-wide uppercase">Ordered</p>
+                    <Qty bags={l.bags} pcs={l.pcs} kgs={l.kgs} box={l.box} />
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground text-[9.5px] font-bold tracking-wide uppercase">Dispatched</p>
+                    <Qty bags={l.dispBags} pcs={l.dispPcs} kgs={l.dispKgs} box={l.dispBox} />
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground text-[9.5px] font-bold tracking-wide uppercase">Owed</p>
+                    <span className={cn('font-bold', owed ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400')}>
+                      {owed ? <Qty bags={l.remBags} pcs={l.remPcs} kgs={l.remKgs} box={l.remBox} /> : 'clear'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="hidden overflow-x-auto sm:block">
           <table className="w-full min-w-max text-[12px]">
             <thead>
               <tr className="text-muted-foreground">
@@ -605,7 +675,22 @@ function ChallanCard({ c }: { c: JourneyChallan }) {
         </p>
       )}
 
-      <div className="overflow-x-auto border-t border-slate-200 dark:border-white/10">
+      {/* Phones: one card per billed line instead of a horizontally-scrolling table. */}
+      <div className="space-y-1.5 border-t border-slate-200 p-2.5 sm:hidden dark:border-white/10">
+        {c.lines.map((l, i) => (
+          <div key={`${l.productName}-${i}`} className="flex items-center justify-between gap-2 rounded-md border border-slate-200 px-2.5 py-1.5 dark:border-white/10">
+            <div className="min-w-0">
+              <p className="truncate text-[12px] font-semibold">{l.productName ?? '—'}</p>
+              {l.design && <p className="text-muted-foreground truncate text-[10.5px]">{l.design}</p>}
+              <p className="text-muted-foreground text-[10.5px]">
+                <Qty bags={l.bags} pcs={l.pcs} kgs={l.kgs} box={l.box} /> @ {l.price != null ? inrCompact(l.price) : '—'}
+              </p>
+            </div>
+            <span className="shrink-0 text-[12.5px] font-bold tabular-nums">{l.amount != null ? inrCompact(l.amount) : '—'}</span>
+          </div>
+        ))}
+      </div>
+      <div className="hidden overflow-x-auto border-t border-slate-200 sm:block dark:border-white/10">
         <table className="w-full min-w-max text-[12px]">
           <thead>
             <tr className="text-muted-foreground">
@@ -720,7 +805,14 @@ export function OrderJourneyPage() {
   }, [filters.f.customerId, data?.activeWindow, setF]);
 
   return (
-    <div className="space-y-4">
+    <div className="rp-page space-y-4">
+      <ReportHeader
+        title="Order Journey"
+        subtitle="Follow one order from placed to paid."
+        icon={Truck}
+        hero={hasParty && j ? { label: 'Orders followed', value: String(j.orders.length), hint: `${j.customerName} · ${activeOnly ? 'not started' : 'all orders'}` } : undefined}
+      />
+
       <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
 
       {hasParty && (

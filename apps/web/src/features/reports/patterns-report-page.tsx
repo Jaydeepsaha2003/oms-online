@@ -1,5 +1,5 @@
 import { Sparkles } from 'lucide-react';
-import { Kpi, RankedBars, ReportCard, ReportHeader, ReportSummary } from './report-kit';
+import { Kpi, KpiGrid, RankedBars, ReportCard, ReportHeader, ReportRow, ReportRowList, ReportSummary } from './report-kit';
 import { ReportFilterBar, useReportFilters } from './report-filters';
 import { usePatterns } from './use-reports';
 
@@ -10,8 +10,14 @@ export function PatternsReportPage() {
   const { data, isLoading } = usePatterns(filters.query);
 
   return (
-    <div className="space-y-5">
-      <ReportHeader title="Patterns & Insights" subtitle="How customers buy and what keeps them coming back." icon={Sparkles} asOf={data?.asOf} />
+    <div className="rp-page space-y-5">
+      <ReportHeader
+        title="Patterns & Insights"
+        subtitle="How customers buy and what keeps them coming back."
+        icon={Sparkles}
+        asOf={data?.asOf}
+        hero={data ? { label: 'Reorder rate', value: pct(data.reorderRate), hint: `parties reorder every ${data.avgOrderGapDays ?? '—'} days` } : undefined}
+      />
 
       <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
 
@@ -25,12 +31,12 @@ export function PatternsReportPage() {
         ] : []}
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <KpiGrid className="gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi label="Reorder rate" value={pct(data?.reorderRate)} hint="products bought again" loading={isLoading} tone="emerald" />
         <Kpi label="Repeat parties" value={pct(data?.repeatPartyRate)} hint="≥ 2 invoices" loading={isLoading} tone="blue" />
         <Kpi label="Avg order gap" value={data?.avgOrderGapDays != null ? `${data.avgOrderGapDays} days` : '—'} hint="between orders" loading={isLoading} tone="violet" />
         <Kpi label="Avg basket" value={data?.avgBasketItems != null ? `${data.avgBasketItems} items` : '—'} hint="line-items per order" loading={isLoading} tone="amber" />
-      </div>
+      </KpiGrid>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <ReportCard title="Order frequency (parties)">{isLoading ? <div className="bg-muted h-52 animate-pulse rounded-lg" /> : <RankedBars data={data?.orderFrequency ?? []} money={false} />}</ReportCard>
@@ -43,7 +49,22 @@ export function PatternsReportPage() {
         {isLoading ? <div className="bg-muted h-64 animate-pulse rounded-lg" /> : !data?.loyalParties.length ? (
           <div className="text-muted-foreground py-8 text-center text-sm">No repeat parties yet.</div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+            <ReportRowList>
+              {data.loyalParties.map((p, i) => (
+                <ReportRow
+                  key={`${p.party}-${i}`}
+                  i={i}
+                  title={p.party}
+                  stats={[
+                    { label: 'Orders', value: p.orders },
+                    { label: 'Avg gap', value: p.avgGapDays != null ? `${p.avgGapDays}d` : '—' },
+                    { label: 'Categories', value: p.categories },
+                  ]}
+                />
+              ))}
+            </ReportRowList>
+          <div className="hidden overflow-x-auto sm:block">
             <table className="w-full min-w-[480px] text-sm">
               <thead>
                 <tr className="text-muted-foreground border-b text-left text-xs uppercase tracking-wide">
@@ -65,6 +86,7 @@ export function PatternsReportPage() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </ReportCard>
     </div>

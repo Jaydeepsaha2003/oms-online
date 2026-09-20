@@ -3,7 +3,7 @@ import { Users } from 'lucide-react';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
-import { RankedBars, ReportCard, ReportHeader, ReportSummary } from './report-kit';
+import { RankedBars, ReportCard, ReportChips, ReportHeader, ReportRow, ReportRowList, ReportSummary, type KpiTone, type Pill } from './report-kit';
 import { ReportFilterBar, useReportFilters } from './report-filters';
 import { usePartyIntel } from './use-reports';
 
@@ -30,14 +30,38 @@ const segTone = (s: string) => {
 };
 // Follows the system-wide date format (dd-mm-yy by default).
 const fmtDate = (d: string | null) => formatDate(d);
+// Mirrors segTone above, mapped to a ReportRow pill tone for the mobile card.
+const segPillTone = (s: string): Pill['tone'] => {
+  switch (s) {
+    case 'VIP': return 'violet';
+    case 'Loyal': return 'emerald';
+    case 'Active': return 'blue';
+    case 'At-risk': return 'amber';
+    case 'Dormant': return 'rose';
+    case 'Win-back': return 'rose';
+    default: return 'slate';
+  }
+};
+/** The same mapping as a chip tone, for the mobile segments grid. */
+const segChipTone = (s: string): KpiTone => segPillTone(s) as KpiTone;
 
 export function PartyIntelPage() {
   const filters = useReportFilters();
   const { data, isLoading } = usePartyIntel(filters.query);
 
   return (
-    <div className="space-y-5">
-      <ReportHeader title="Party Intelligence" subtitle="Who your best parties are, who is slipping, and who to win back." icon={Users} asOf={data?.asOf} />
+    <div className="rp-page space-y-5">
+      <ReportHeader
+        title="Party Intelligence"
+        subtitle="Who your best parties are, who is slipping, and who to win back."
+        icon={Users}
+        asOf={data?.asOf}
+        hero={data ? {
+          label: 'Billed parties',
+          value: (data.concentration?.totalParties ?? 0).toLocaleString('en-IN'),
+          hint: data.concentration?.topShare != null ? `top ${data.concentration.topParties} drive ${Math.round(data.concentration.topShare * 100)}%` : undefined,
+        } : undefined}
+      />
 
       <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
 
@@ -70,7 +94,10 @@ export function PartyIntelPage() {
                   </PieChart>
                 </ResponsiveContainer>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="sm:hidden">
+                <ReportChips chips={(data?.segments ?? []).map((sg) => ({ label: sg.name, count: String(sg.value), tone: segChipTone(sg.name) }))} />
+              </div>
+              <div className="hidden flex-wrap gap-2 sm:flex">
                 {(data?.segments ?? []).map((s) => (
                   <span key={s.name} className={cn('inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset', segTone(s.name))}>
                     <span className="size-2 rounded-full" style={{ background: SEG_COLOR[s.name] ?? '#94a3b8' }} />
@@ -94,7 +121,25 @@ export function PartyIntelPage() {
 
         <ReportCard title="Parties — by selected-period revenue">
           {isLoading ? <div className="bg-muted h-64 animate-pulse rounded-lg" /> : (
-            <div className="max-h-[440px] overflow-auto">
+            <>
+              <ReportRowList emptyText="No parties in this period.">
+                {(data?.parties ?? []).map((p, i) => (
+                  <ReportRow
+                    key={`${p.party}-${i}`}
+                    i={i}
+                    title={p.party}
+                    sub={p.agent || undefined}
+                    pills={[{ text: p.segment, tone: segPillTone(p.segment) }]}
+                    stats={[
+                      { label: 'Revenue', value: inrCompact(p.revenue) },
+                      { label: 'Invoices', value: p.invoices },
+                      { label: 'Last order', value: `${fmtDate(p.lastOrder)}${p.daysSince != null ? ` (${p.daysSince}d)` : ''}` },
+                      { label: 'Outstanding', value: p.outstanding > 0 ? inrCompact(p.outstanding) : '—', tone: p.outstanding > 0 ? 'bad' : undefined },
+                    ]}
+                  />
+                ))}
+              </ReportRowList>
+            <div className="hidden max-h-[440px] overflow-auto sm:block">
               <table className="w-full min-w-[600px] text-sm">
                 <thead className="bg-card sticky top-0">
                   <tr className="text-muted-foreground border-b text-left text-xs uppercase tracking-wide">
@@ -123,6 +168,7 @@ export function PartyIntelPage() {
                 </tbody>
               </table>
             </div>
+            </>
           )}
         </ReportCard>
       </div>
