@@ -179,7 +179,7 @@ const REVIEW: Record<Exclude<ReconReview, 'OPEN'>, { label: string; chip: string
  * from an earlier upload — otherwise a mark made months ago looks like one made
  * against today's figures.
  */
-function ReviewBadge({ row }: { row: ReconRow }) {
+function ReviewBadge({ row, onClear }: { row: ReconRow; onClear?: () => void }) {
   if (row.review === 'OPEN') return null;
   // A mark this build has no entry for — what a payload written by a different
   // build looks like — is treated as no mark rather than taking the page down.
@@ -204,6 +204,28 @@ function ReviewBadge({ row }: { row: ReconRow }) {
       {row.review === 'SOLVED' ? <Check className="size-3" /> : <Clock className="size-3" />}
       {m.label}
       {row.reviewCarried && <History className="size-3 opacity-70" />}
+      {/*
+       * Undo on the mark itself.
+       *
+       * Clearing one was already possible — select the line, then "Clear mark"
+       * in the action bar — but a mark set by one click needed three to take
+       * back, and nothing on the row said so. The way out sits where the mistake
+       * is visible.
+       */}
+      {onClear && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClear();
+          }}
+          title={`Undo — clear the ${m.label.toLowerCase()} mark on this line`}
+          aria-label={`Clear the ${m.label.toLowerCase()} mark`}
+          className="-mr-0.5 ml-0.5 cursor-pointer rounded-[2px] opacity-60 hover:bg-black/10 hover:opacity-100 dark:hover:bg-white/15"
+        >
+          <X className="size-3" />
+        </button>
+      )}
     </span>
   );
 }
@@ -866,6 +888,16 @@ export function TallyReconPage() {
     }
   };
 
+  /** Undo one row's mark from the row itself, without selecting it first. */
+  const onClearOne = async (row: ReconRow) => {
+    try {
+      await markRows.mutateAsync({ rowIds: [row.id], review: 'OPEN' });
+      toast.success('Mark cleared.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not clear that mark.');
+    }
+  };
+
   const onAddOpenings = async () => {
     if (!pickedOpenings.length) return;
     try {
@@ -1503,7 +1535,7 @@ export function TallyReconPage() {
                               </td>
                               <td className={cn(TD, 'whitespace-nowrap')}>
                                 {r.review !== 'OPEN' ? (
-                                  <ReviewBadge row={r} />
+                                  <ReviewBadge row={r} onClear={canMark ? () => void onClearOne(r) : undefined} />
                                 ) : canMark && isFlagged(r) ? (
                                   <span className="text-muted-foreground text-[11px] font-medium">—</span>
                                 ) : null}
@@ -1587,7 +1619,7 @@ export function TallyReconPage() {
                             <div className="mt-1.5 flex flex-wrap items-center justify-between gap-1.5">
                               <span className="flex flex-wrap items-center gap-1.5">
                                 <StatusChip status={r.status} />
-                                <ReviewBadge row={r} />
+                                <ReviewBadge row={r} onClear={canMark ? () => void onClearOne(r) : undefined} />
                               </span>
                               <span className="text-[12.5px] font-bold tabular-nums">
                                 {prettyDate(r.txnDate)} · {moneyOrDash(r.dr || r.cr)}
