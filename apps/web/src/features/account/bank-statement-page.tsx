@@ -52,12 +52,12 @@ import {
 
 const FIELD_LABEL = 'text-[10px] font-bold tracking-widest text-amber-900/70 uppercase dark:text-amber-200/60';
 const CONTROL =
-  'h-9 rounded-[4px] border-amber-300 dark:border-amber-400/40 text-[12.5px] focus-visible:border-amber-500 focus-visible:ring-amber-400/30';
+  'h-11 rounded-lg border-amber-300 text-[13px] dark:border-amber-400/40 sm:h-9 sm:rounded-[4px] sm:text-[12.5px] focus-visible:border-amber-500 focus-visible:ring-amber-400/30';
 const TH =
   'sticky top-0 z-10 bg-gradient-to-b from-blue-800 to-indigo-800 px-3 py-2 text-left text-[12px] font-extrabold tracking-wide text-white uppercase whitespace-nowrap dark:from-blue-900 dark:to-indigo-900';
 const TD = 'border-r border-r-amber-200/80 px-3 py-2 align-middle text-[13px] dark:border-r-amber-400/15 last:border-r-0';
 const NUM = 'text-right tabular-nums';
-const PANEL = 'rounded-[4px] border border-amber-300 bg-card shadow-sm dark:border-amber-400/30';
+const PANEL = 'rounded-xl border border-amber-300 bg-card shadow-sm dark:border-amber-400/30 sm:rounded-[4px]';
 
 const money = (v: number) => `₹ ${(v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 const money0 = (v: number) => `₹ ${(v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
@@ -941,12 +941,12 @@ export function BankStatementPage() {
 
       {/* ── Step 1 — the file, the range, the columns ─────────────────────── */}
       {!runId && (
-        <section className={cn(PANEL, 'p-3')}>
-          <div className="mb-3 flex items-center gap-2">
-            <Landmark className="size-5 text-indigo-700 dark:text-indigo-300" />
+        <section className={cn(PANEL, 'p-4 sm:p-3')}>
+          <div className="mb-4 flex items-start gap-3 sm:mb-3 sm:items-center sm:gap-2">
+            <Landmark className="mt-0.5 size-5 shrink-0 text-indigo-700 dark:text-indigo-300 sm:mt-0" />
             <div>
-              <h2 className="text-[15px] font-extrabold tracking-tight">Reconcile a bank statement</h2>
-              <p className="text-muted-foreground text-[12px]">
+              <h2 className="text-[16px] font-extrabold tracking-tight sm:text-[15px]">Reconcile a bank statement</h2>
+              <p className="text-muted-foreground mt-0.5 text-[12px] leading-relaxed">
                 Only the credit side is read — money in. Nothing reaches the ledger until you press Process.
               </p>
             </div>
@@ -1147,8 +1147,8 @@ export function BankStatementPage() {
             </div>
           )}
 
-          <div className="mt-3 flex justify-end">
-            <Button onClick={loadStatement} disabled={createRun.isPending || !canEdit || !sheetRows.length}>
+          <div className="mt-4 flex justify-end sm:mt-3">
+            <Button className="w-full sm:w-auto" onClick={loadStatement} disabled={createRun.isPending || !canEdit || !sheetRows.length}>
               {createRun.isPending ? <Loader2 className="animate-spin" /> : <Upload className="size-4" />} Load statement
             </Button>
           </div>
@@ -1157,9 +1157,64 @@ export function BankStatementPage() {
 
       {/* ── Saved workings ───────────────────────────────────────────────── */}
       {!runId && !!runsList?.items.length && (
-        <section className={cn(PANEL, 'p-3')}>
-          <h3 className="mb-2 text-[13px] font-extrabold tracking-tight">Saved workings</h3>
-          <div className="overflow-auto">
+        <section className={cn(PANEL, 'p-4 sm:p-3')}>
+          <div className="mb-3 flex items-center justify-between sm:mb-2">
+            <h3 className="text-[15px] font-extrabold tracking-tight sm:text-[13px]">Saved workings</h3>
+            <span className="text-muted-foreground text-xs font-medium">{runsList.items.length} saved</span>
+          </div>
+
+          <div className="space-y-3 sm:hidden">
+            {runsList.items.map((r) => (
+              <article key={r.id} className="rounded-lg border border-amber-200 bg-card p-3.5 dark:border-amber-400/20">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="min-w-0 break-words text-[13px] font-bold leading-snug">{r.fileName}</p>
+                  <span
+                    className={cn(
+                      'shrink-0 rounded-full px-2 py-0.5 text-[11.5px] font-bold ring-1 ring-inset',
+                      r.status === 'PROCESSED'
+                        ? 'bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-500/15 dark:text-violet-300'
+                        : 'bg-amber-100 text-amber-900 ring-amber-300 dark:bg-amber-400/20 dark:text-amber-200',
+                    )}
+                  >
+                    {r.status === 'PROCESSED' ? 'Processed' : 'Draft'}
+                  </span>
+                </div>
+                <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
+                  <div>
+                    <dt className="text-muted-foreground font-medium">Bank</dt>
+                    <dd className="mt-0.5 font-semibold">{r.bankName ?? '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground font-medium">Credits</dt>
+                    <dd className="mt-0.5 font-bold tabular-nums text-emerald-700">{money0(r.creditTotal)}</dd>
+                  </div>
+                  <div className="col-span-2 border-t border-border/70 pt-3">
+                    <dt className="text-muted-foreground font-medium">Statement range</dt>
+                    <dd className="mt-0.5 font-semibold tabular-nums">{formatDate(r.fromDate)} – {formatDate(r.toDate)}</dd>
+                  </div>
+                </dl>
+                <div className="mt-3 flex items-center gap-2">
+                  <span className="text-muted-foreground flex-1 text-xs font-medium">{r.rowCount.toLocaleString('en-IN')} lines</span>
+                  <Button size="sm" variant="outline" className="h-10 px-4 font-semibold" onClick={() => setRunId(r.id)}>
+                    Open working
+                  </Button>
+                  {can('bankstatement:delete') && r.status !== 'PROCESSED' && (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="text-destructive hover:text-destructive size-10"
+                      onClick={() => void removeRun(r.id)}
+                      aria-label={`Delete ${r.fileName}`}
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+
+          <div className="hidden overflow-auto sm:block">
             <table className="w-full border-collapse">
               <thead>
                 <tr>

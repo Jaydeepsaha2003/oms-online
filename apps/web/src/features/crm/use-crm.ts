@@ -15,6 +15,29 @@ import { http } from '@/lib/api';
 
 const KEY = ['crm'] as const;
 
+/**
+ * Today's date, as part of a query key.
+ *
+ * Overdue / due-soon are answers about TODAY, but the cache keeps entries for
+ * 24 hours and persists them to localStorage — so opening the app the next
+ * morning rehydrated yesterday's figures and painted them as current. With
+ * `refetchOnWindowFocus` off globally, a tab left open overnight never
+ * corrected itself either; what you saw was the previous day's overdue until
+ * something forced a refetch.
+ *
+ * Putting the day in the key makes that impossible rather than unlikely: a new
+ * day is a different cache entry, so yesterday's numbers can never be served as
+ * today's. Within a day the cache and its instant repaint work exactly as
+ * before.
+ *
+ * Local date, not ISO/UTC: the server ages invoices against ITS local midnight,
+ * and a UTC key would roll over at 5:30am here.
+ */
+function dayKey(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+}
+
 export function useFollowupBoard(query: FollowupQuery = {}) {
   return useQuery({
     queryKey: [...KEY, 'board', query],
@@ -141,7 +164,7 @@ export function useOrderItemSuggest(customerId: number | null, party: string) {
 /** Every owing party's live balance — the collector desk's worklist. */
 export function usePartyBalances(search?: string, enabled = true) {
   return useQuery({
-    queryKey: [...KEY, 'party-balances', search ?? ''],
+    queryKey: [...KEY, 'party-balances', search ?? '', dayKey()],
     queryFn: () => http.get<PartyBalanceSummary[]>('/crm/followups/party-balances', { params: search ? { search } : undefined }),
     enabled,
     staleTime: 30_000,
@@ -152,7 +175,9 @@ export function usePartyBalances(search?: string, enabled = true) {
 /** One party's balance + open-invoice breakdown (shown while filling a follow-up). */
 export function usePartyBalance(customerId: number | null, party: string, enabled = true) {
   return useQuery({
-    queryKey: [...KEY, 'party-balance', customerId, party],
+    // Same day-keying as the list — this is the per-party breakdown of the very
+    // same overdue figures, so it goes stale at midnight for the same reason.
+    queryKey: [...KEY, 'party-balance', customerId, party, dayKey()],
     queryFn: () =>
       http.get<PartyBalanceDetail | null>('/crm/followups/party-balance', {
         params: { ...(customerId != null ? { customerId } : {}), ...(party ? { party } : {}) },

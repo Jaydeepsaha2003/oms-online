@@ -51,9 +51,17 @@ export interface ComboboxProps {
   digitsFirst?: boolean;
 }
 
-// Looks exactly like our <Input>; the field itself is the search box.
+/*
+ * The field, styled after Flowbite's dropdown trigger — rounded-lg, a visible
+ * surface rather than a transparent one, and a 4px focus ring in the brand
+ * colour instead of the old 3px neutral one.
+ *
+ * It stays an <input>, not Flowbite's <button>: this control's whole point is
+ * that you type to filter, and Flowbite's own dropdown has no search in it.
+ * The look is copied; the behaviour is the one the app already depends on.
+ */
 const FIELD =
-  'border-input flex h-9 w-full rounded-sm border bg-transparent px-3 py-1 pr-8 text-sm shadow-xs outline-none transition-[color,box-shadow] placeholder:text-placeholder placeholder:font-normal focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50';
+  'border-input bg-background flex h-10 w-full rounded-lg border px-4 py-2.5 pr-8 text-sm leading-5 font-medium shadow-xs outline-none transition-[color,box-shadow] placeholder:text-placeholder placeholder:font-normal hover:border-ring/60 focus-visible:border-ring focus-visible:ring-ring/30 focus-visible:ring-4 disabled:pointer-events-none disabled:opacity-50';
 
 /*
  * Cap how many rows are mounted at once — huge lists (thousands) would freeze.
@@ -701,7 +709,9 @@ export function Combobox({
         // an invoice row like "SSS/26-27/557 · 6 RAMPATRA GLASS SET · ₹350" lost
         // the half that tells you which sale it is. Width auto lets the box size
         // to its content, between the two bounds below.
-        className="w-auto p-0"
+        // rounded-lg + shadow-lg to match Flowbite's menu panel. `w-auto p-0`
+        // is unchanged and still load-bearing (see above).
+        className="w-auto rounded-lg p-0 shadow-lg"
         // At least as wide as the field, at most the room actually on screen (and
         // never a full-width banner on a big monitor) — past that the row still
         // truncates, but only once there is genuinely nowhere left to grow.
@@ -719,13 +729,14 @@ export function Combobox({
       >
         {/* Cap the list to the space Radix actually has above/below the field
             (`--radix-popover-content-available-height`) so it never spills off the
-            top/bottom of the screen, but no taller than ~5 rows (row height =
-            the option's `py-1.5` padding + `text-sm` line-height; +0.5rem for
-            the list's own `p-1`) — more rows always scroll into view. */}
+            top/bottom of the screen, but no taller than ~5 rows. Row height =
+            the option's `p-2` padding (0.5rem x2) + `text-sm` line-height
+            (1.25rem); +1rem for the list's own `p-2`. Kept in step with those
+            classes by hand — a stale figure here shows five and a half rows. */}
         <div
           ref={listRef}
-          className="overflow-x-hidden overflow-y-auto overscroll-contain p-1"
-          style={{ maxHeight: 'min(calc((0.75rem + 1.25rem) * 5 + 0.5rem), var(--radix-popover-content-available-height, 480px))' }}
+          className="overflow-x-hidden overflow-y-auto overscroll-contain p-2"
+          style={{ maxHeight: 'min(calc((1rem + 1.25rem) * 5 + 1rem), var(--radix-popover-content-available-height, 480px))' }}
         >
           {listHeader && rows.length > 0 && (
             <div className="bg-popover text-muted-foreground sticky top-0 z-10 flex items-center gap-2 border-b px-2 py-1.5 text-[11px] font-semibold tracking-wide uppercase">
@@ -745,9 +756,13 @@ export function Combobox({
                 onMouseDown={(e) => e.preventDefault()}
                 onMouseMove={() => active !== i && setActive(i)}
                 onClick={() => commit(o.value)}
+                /* Flowbite's menu item: p-2, rounded, medium weight, and the
+                   row tinting on hover rather than the whole strip. */
                 className={cn(
-                  'relative flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm select-none',
-                  i === active && 'bg-accent text-accent-foreground',
+                  'relative flex cursor-pointer items-center gap-2 rounded p-2 text-sm font-medium select-none',
+                  // `text-foreground`, not Flowbite's `text-body`: that token
+                  // does not exist in this project and would render as nothing.
+                  i === active ? 'bg-accent text-accent-foreground' : 'text-foreground',
                 )}
               >
                 {o.create ? (
