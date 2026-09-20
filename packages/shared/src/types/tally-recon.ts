@@ -236,6 +236,25 @@ export interface ReconCreateReceiptResult {
   failed: { rowId: number; reason: string }[];
 }
 
+/**
+ * Create the OMS opening balances that a set of OPENING rows describe.
+ *
+ * The register states an opening the OMS books have never been told about, and
+ * the report could only report it — the figure had to be keyed into Opening
+ * Balances by hand, party by party, reading it off this screen. The rows
+ * already carry the party, the date, the amount and the side, so the report can
+ * make them itself.
+ */
+export interface ReconCreateOpeningInput {
+  /** Recon row ids to create — each becomes one opening balance. */
+  rowIds: number[];
+}
+
+export interface ReconCreateOpeningResult {
+  created: { rowId: number; customerName: string; amount: number; drCr: string }[];
+  failed: { rowId: number; reason: string }[];
+}
+
 /** Mark (or clear) the user's review on a set of report lines. */
 export interface MarkReconRowsInput {
   rowIds: number[];

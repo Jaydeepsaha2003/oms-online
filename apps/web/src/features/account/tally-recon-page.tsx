@@ -20,6 +20,7 @@ import {
   Trash2,
   Upload,
   UserRoundX,
+  Wallet,
   X,
 } from 'lucide-react';
 import type { ReconPartyBalance, ReconReview, ReconRow, ReconStatus, UnmappedLedger, UnmappedLedgers } from '@oms/shared';
@@ -35,6 +36,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Label } from '@/components/ui/label';
 import { usePartyLedgerLookups } from './use-party-ledger';
 import {
+  useCreateReconOpenings,
   useCreateReconReceipts,
   useDeleteReconRun,
   useReconRun,
@@ -56,6 +58,17 @@ const CONTROL_ON =
 const TH =
   'sticky top-0 z-10 bg-gradient-to-b from-blue-800 to-indigo-800 px-2 py-1.5 text-left text-[11px] font-extrabold tracking-wide text-white uppercase whitespace-nowrap dark:from-blue-900 dark:to-indigo-900';
 const TH_LINE = 'border-r border-white/15';
+/**
+ * The band above the column names saying which system each block came from.
+ *
+ * Deliberately NOT sticky, while the column names below it are: on scroll the
+ * names are what the reader needs against the figures, and a second pinned row
+ * would take a third of a short worksheet's height to repeat something already
+ * learned. Sticking both would also mean hard-coding this row's height into the
+ * other's `top`, which quietly misaligns the moment either font changes.
+ */
+const TH_BAND =
+  'bg-blue-900 px-2 py-1 text-left text-[10px] font-bold tracking-wider text-white/70 uppercase whitespace-nowrap dark:bg-blue-950';
 const TD = 'border-r border-r-amber-200/80 px-2 py-[3px] align-middle dark:border-r-amber-400/15 last:border-r-0';
 const NUM = 'text-right tabular-nums';
 const PANEL = 'border-amber-300 dark:border-amber-400/30';
@@ -134,6 +147,21 @@ const byGroup = (list: UnmappedLedger[]) => {
 /** A missing receipt that can be posted straight from the report. */
 const canEnterAsReceipt = (r: ReconRow) =>
   r.vchType === 'RECEIPT' && r.status === 'MISSING_IN_OMS' && !r.resolvedAt && !!r.customerId;
+
+/**
+ * An opening the register states and OMS has never been told about.
+ *
+ * Only where OMS holds NOTHING. A row where both sides carry a figure is a
+ * disagreement between two openings, and adding a third would make the party's
+ * books wrong in a new way — that one is settled by hand. The server checks
+ * this again; here it is what decides whether the button offers the row at all.
+ */
+const canAddOpening = (r: ReconRow) =>
+  r.vchType === 'OPENING' &&
+  !r.resolvedAt &&
+  !!r.customerId &&
+  Math.abs(r.omsAmount ?? 0) < 0.005 &&
+  Math.max(r.dr || 0, r.cr || 0) > 0;
 
 const REVIEW: Record<Exclude<ReconReview, 'OPEN'>, { label: string; chip: string }> = {
   PENDING: {
@@ -524,6 +552,7 @@ export function TallyReconPage() {
   const saveAlias = useSaveTallyAlias();
   const rerun = useRerunRecon();
   const createReceipts = useCreateReconReceipts();
+  const createOpenings = useCreateReconOpenings();
   const markRows = useMarkReconRows();
 
   const custByName = useMemo(() => new Map((lookups?.customers ?? []).map((c) => [c.name, c.id])), [lookups]);
@@ -629,7 +658,14 @@ export function TallyReconPage() {
   const pickedRows = useMemo(() => selectedRows.filter((r) => entryableIds.has(r.id)), [selectedRows, entryableIds]);
   const pickedTotal = pickedRows.reduce((s, r) => s + (r.cr || r.dr), 0);
 
+  /** And the ones that are an opening OMS is missing entirely. */
+  const openable = useMemo(() => visible.filter(canAddOpening), [visible]);
+  const openableIds = useMemo(() => new Set(openable.map((r) => r.id)), [openable]);
+  const pickedOpenings = useMemo(() => selectedRows.filter((r) => openableIds.has(r.id)), [selectedRows, openableIds]);
+  const pickedOpeningTotal = pickedOpenings.reduce((s, r) => s + Math.max(r.dr || 0, r.cr || 0), 0);
+
   const isEntryable = (r: ReconRow) => entryableIds.has(r.id);
+  const isOpenable = (r: ReconRow) => openableIds.has(r.id);
   const toggle = (id: number) =>
     setPicked((prev) => {
       const next = new Set(prev);
@@ -827,6 +863,22 @@ export function TallyReconPage() {
       for (const f of res.failed) toast.error(`Row ${f.rowId}: ${f.reason}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not enter those receipts.');
+    }
+  };
+
+  const onAddOpenings = async () => {
+    if (!pickedOpenings.length) return;
+    try {
+      const res = await createOpenings.mutateAsync({ rowIds: pickedOpenings.map((r) => r.id) });
+      setPicked(new Set());
+      if (res.created.length) {
+        toast.success(`Added ${res.created.length} opening balance${res.created.length === 1 ? '' : 's'} to OMS.`);
+      }
+      // Never silent: an opening that did not go in is exactly the kind of thing
+      // that is noticed a month later, by which time nobody remembers the run.
+      for (const f of res.failed) toast.error(`Row ${f.rowId}: ${f.reason}`, { duration: 8000 });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not add those opening balances.');
     }
   };
 
@@ -1298,6 +1350,31 @@ export function TallyReconPage() {
                   Tally reconciliation for {run.fileName}, {prettyDate(run.fromDate)} to {prettyDate(run.toDate)}
                 </caption>
                 <thead>
+                  {/*
+                   * Which side each column came from.
+                   *
+                   * Twelve headers in one row read as one flat list, so "Debit"
+                   * and "OMS Amt" looked like two columns of the same thing and
+                   * the reader had to work out which system each belonged to.
+                   * Naming the source once above them says it for the whole
+                   * block. Tinted, not boxed — the header is already dark, and
+                   * a second strong line would fight the column names.
+                   */}
+                  <tr>
+                    <th aria-hidden className={cn(TH_BAND, 'w-9')} />
+                    <th scope="colgroup" colSpan={6} className={cn(TH_BAND, TH_LINE, 'bg-amber-300/25 text-amber-100')}>
+                      From the Tally register
+                    </th>
+                    <th scope="colgroup" colSpan={2} className={cn(TH_BAND, TH_LINE)}>
+                      Our check
+                    </th>
+                    <th scope="colgroup" colSpan={2} className={cn(TH_BAND, TH_LINE, 'bg-sky-300/25 text-sky-100')}>
+                      From OMS
+                    </th>
+                    <th scope="colgroup" className={TH_BAND}>
+                      Our check
+                    </th>
+                  </tr>
                   <tr>
                     <th scope="col" className={cn(TH, TH_LINE, 'w-9 text-center')}>
                       {canMark && selectable.length > 0 ? (
@@ -1391,7 +1468,9 @@ export function TallyReconPage() {
                                     title={
                                       isEntryable(r)
                                         ? `Select — this ${inr(r.cr || r.dr)} receipt can be entered in OMS`
-                                        : 'Select to mark solved or pending'
+                                        : isOpenable(r)
+                                          ? `Select — this ${inr(Math.max(r.dr || 0, r.cr || 0))} opening can be added to OMS`
+                                          : 'Select to mark solved or pending'
                                     }
                                     className={cn(
                                       'cursor-pointer align-middle transition-colors',
@@ -1547,6 +1626,12 @@ export function TallyReconPage() {
                   · {pickedRows.length} enterable receipt{pickedRows.length === 1 ? '' : 's'} ({inr(pickedTotal)})
                 </span>
               )}
+              {pickedOpenings.length > 0 && (
+                <span className="font-semibold opacity-80">
+                  {' '}
+                  · {pickedOpenings.length} opening{pickedOpenings.length === 1 ? '' : 's'} OMS is missing ({inr(pickedOpeningTotal)})
+                </span>
+              )}
             </span>
             <Button variant="ghost" size="sm" className="h-8 rounded-[4px] text-[12px] font-semibold" onClick={() => setPicked(new Set())}>
               Clear selection
@@ -1588,6 +1673,18 @@ export function TallyReconPage() {
                   onClick={() => setConfirmOpen(true)}
                 >
                   <CircleCheck className="size-3.5" /> Enter {pickedRows.length} receipt{pickedRows.length === 1 ? '' : 's'}
+                </Button>
+              )}
+              {canEnterReceipt && pickedOpenings.length > 0 && (
+                <Button
+                  size="sm"
+                  className="h-8 gap-1.5 rounded-[4px] bg-violet-700 text-[12px] font-bold text-white hover:bg-violet-800"
+                  onClick={() => void onAddOpenings()}
+                  disabled={createOpenings.isPending}
+                  title={`Create the same opening in OMS for ${pickedOpenings.length} part${pickedOpenings.length === 1 ? 'y' : 'ies'} — ${inr(pickedOpeningTotal)} in total`}
+                >
+                  {createOpenings.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Wallet className="size-3.5" />}
+                  Add {pickedOpenings.length} opening{pickedOpenings.length === 1 ? '' : 's'} to OMS
                 </Button>
               )}
             </div>

@@ -5,5 +5,8 @@ import { OpeningBalancesService } from './opening-balances.service';
 @Module({
   controllers: [OpeningBalancesController],
   providers: [OpeningBalancesService],
+  // Tally Reconciliation adds openings through this same service, so an opening
+  // made from the report is stored exactly like one keyed in here.
+  exports: [OpeningBalancesService],
 })
 export class OpeningBalancesModule {}

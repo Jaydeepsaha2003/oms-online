@@ -1,5 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type {
+  ReconCreateOpeningInput,
+  ReconCreateOpeningResult,
   ReconCreateReceiptInput,
   ReconCreateReceiptResult,
   ReconRow,
@@ -16,6 +18,7 @@ import type {
 import { PrismaService } from '../prisma/prisma.service';
 import { loadLedgerGroups, type LedgerGroups } from '../account-groups/ledger-groups';
 import { PaymentsService } from '../payments/payments.service';
+import { OpeningBalancesService } from '../opening-balances/opening-balances.service';
 import { parseTallyRegister, type ParsedLedger, type ParsedRegister } from './tally-register.parser';
 import { exactKey, nameKey, reconcileParty, type MatchRow, type OmsParty } from './tally-recon.matcher';
 
@@ -129,6 +132,7 @@ export class TallyReconService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly payments: PaymentsService,
+    private readonly openings: OpeningBalancesService,
   ) {}
 
   /* ── party name resolution ───────────────────────────────────────────────── */
@@ -1106,6 +1110,107 @@ export class TallyReconService {
         created.push({ rowId: row.id, voucherNo, amount, customerName: row.customerName ?? row.ledgerName });
       } catch (e) {
         failed.push({ rowId: id, reason: e instanceof Error ? e.message : 'Could not post this receipt.' });
+      }
+    }
+
+    if (created.length) {
+      const createdIds = new Set(created.map((c) => c.rowId));
+      const touched = [...new Set(rows.filter((r) => createdIds.has(r.id)).map((r) => r.runId))];
+      for (const runId of touched) await this.refreshCounts(runId);
+    }
+    return { created, failed };
+  }
+
+  /**
+   * Creates the OMS opening balances that a set of OPENING rows describe.
+   *
+   * Same shape as {@link createReceipts}, and for the same reason: the row
+   * already holds the party, the date, the amount and the side, so re-keying it
+   * into Opening Balances is copying from one screen to another. Each one goes
+   * through OpeningBalancesService so it is stored exactly as a hand-keyed
+   * opening — including the "opening settled" flag on a party added from Tally,
+   * which nothing here would have known to set.
+   *
+   * The register is the BANK leg of the account, so the figure is a bank
+   * opening. Rows are created one at a time and reported individually: one
+   * party failing must not take the rest with it.
+   */
+  async createOpenings(input: ReconCreateOpeningInput, userName?: string | null): Promise<ReconCreateOpeningResult> {
+    const ids = [...new Set(input.rowIds ?? [])];
+    if (!ids.length) throw new BadRequestException('Select at least one opening balance to add.');
+
+    const rows = await this.prisma.tallyReconRow.findMany({ where: { id: { in: ids } } });
+    const created: ReconCreateOpeningResult['created'] = [];
+    const failed: ReconCreateOpeningResult['failed'] = [];
+
+    for (const id of ids) {
+      const row = rows.find((r) => r.id === id);
+      if (!row) {
+        failed.push({ rowId: id, reason: 'Row not found.' });
+        continue;
+      }
+      if (row.vchType !== 'OPENING') {
+        failed.push({ rowId: id, reason: 'Only an opening balance row can be added this way.' });
+        continue;
+      }
+      if (row.resolvedAt) {
+        failed.push({ rowId: id, reason: 'Already added from this report.' });
+        continue;
+      }
+      if (!row.customerId) {
+        failed.push({ rowId: id, reason: 'No OMS customer is mapped to this Tally ledger name.' });
+        continue;
+      }
+      /*
+       * Only where OMS holds nothing yet.
+       *
+       * A row saying "Tally 3562 vs OMS 0" is an opening OMS never received. A
+       * row where both sides carry a figure is a DISAGREEMENT, and adding a
+       * second opening on top would make the party's books wrong in a new way
+       * rather than fix them — that one has to be settled by hand.
+       */
+      if (Math.abs(row.omsAmount ?? 0) > 0.004) {
+        failed.push({ rowId: id, reason: `OMS already holds an opening of ${(row.omsAmount ?? 0).toFixed(2)} for this party — settle the difference by hand.` });
+        continue;
+      }
+      // Tally states an opening on the side it falls: Dr = the party owes us.
+      const amount = r2(Math.max(row.dr || 0, row.cr || 0));
+      const drCr = (row.dr || 0) >= (row.cr || 0) ? 'DEBIT' : 'CREDIT';
+      if (amount <= 0) {
+        failed.push({ rowId: id, reason: 'Opening amount is zero.' });
+        continue;
+      }
+
+      try {
+        await this.openings.create(
+          {
+            customerId: row.customerId,
+            transDate: ymd(row.txnDate),
+            bankAmt: amount,
+            cashAmt: 0,
+            drCr,
+            remarks: `Tally recon — opening from ${row.ledgerName}`,
+          },
+          userName,
+        );
+        await this.prisma.tallyReconRow.update({
+          where: { id: row.id },
+          data: {
+            status: 'MATCHED',
+            resolvedAt: new Date(),
+            resolvedRef: 'Opening Balance',
+            review: 'SOLVED',
+            reviewNote: 'Opening balance added to OMS from the report.',
+            reviewedAt: new Date(),
+            reviewedBy: userName ?? null,
+            omsAmount: amount,
+            omsDate: row.txnDate,
+            note: `Opening of ${amount.toFixed(2)} (${drCr === 'DEBIT' ? 'Dr' : 'Cr'}) added to OMS from this report.`,
+          },
+        });
+        created.push({ rowId: row.id, customerName: row.customerName ?? row.ledgerName, amount, drCr });
+      } catch (e) {
+        failed.push({ rowId: id, reason: e instanceof Error ? e.message : 'Could not add this opening balance.' });
       }
     }
 

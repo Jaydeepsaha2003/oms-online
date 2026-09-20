@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   MarkReconRowsInput,
   MarkReconRowsResult,
+  ReconCreateOpeningInput,
+  ReconCreateOpeningResult,
   ReconCreateReceiptInput,
   ReconCreateReceiptResult,
   ReconRunResult,
@@ -112,6 +114,26 @@ export function useCreateReconReceipts() {
       void qc.invalidateQueries({ queryKey: RUNS });
       // A posted receipt moves the ledgers these screens read from.
       void qc.invalidateQueries({ queryKey: ['party-ledger'] });
+      void qc.invalidateQueries({ queryKey: ['payments'] });
+      void qc.invalidateQueries({ queryKey: ['daybook'] });
+    },
+  });
+}
+
+/**
+ * Adds the OMS opening balances a set of OPENING rows describes.
+ *
+ * Same refetch set as a posted receipt: an opening moves the party's balance,
+ * so every screen that reads a balance is now out of date.
+ */
+export function useCreateReconOpenings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ReconCreateOpeningInput) => http.post<ReconCreateOpeningResult>('/tally-recon/openings', input),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: RUNS });
+      void qc.invalidateQueries({ queryKey: ['party-ledger'] });
+      void qc.invalidateQueries({ queryKey: ['opening-balances'] });
       void qc.invalidateQueries({ queryKey: ['payments'] });
       void qc.invalidateQueries({ queryKey: ['daybook'] });
     },

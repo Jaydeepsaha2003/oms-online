@@ -18,7 +18,7 @@ import { ACTIONS, perm, RESOURCES } from '@oms/shared';
 import { Audit } from '../common/decorators/audit.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
-import { CreateReceiptsDto, MarkRowsDto, ReconRunsQueryDto, SaveAliasDto } from './dto/tally-recon.dto';
+import { CreateOpeningsDto, CreateReceiptsDto, MarkRowsDto, ReconRunsQueryDto, SaveAliasDto } from './dto/tally-recon.dto';
 import { TallyReconService } from './tally-recon.service';
 
 const R = RESOURCES.TALLY_RECON;
@@ -116,5 +116,16 @@ export class TallyReconController {
   @Permissions(perm(R, ACTIONS.CREATE), perm(RESOURCES.PAYMENT, ACTIONS.CREATE))
   createReceipts(@Body() dto: CreateReceiptsDto, @CurrentUser('name') userName?: string) {
     return this.svc.createReceipts(dto, userName ?? null);
+  }
+
+  /**
+   * Add the OMS opening balances a set of OPENING rows describes. Guarded by
+   * the opening-balance permission as well as recon-create: this writes real
+   * openings, so whoever may do it here must be allowed to do it there.
+   */
+  @Post('openings')
+  @Permissions(perm(R, ACTIONS.CREATE), perm(RESOURCES.OPENING_BALANCE, ACTIONS.CREATE))
+  createOpenings(@Body() dto: CreateOpeningsDto, @CurrentUser('name') userName?: string) {
+    return this.svc.createOpenings(dto, userName ?? null);
   }
 }
