@@ -498,8 +498,16 @@ export function reconcileParty(
      * narration like "CASH RECEIPT BY BANK / SHADAB", which is not a bank name
      * and would produce a nonsense mismatch. Skipped too when either side
      * reduces to nothing identifying, rather than guessing.
+     *
+     * And only for a RECEIPT, because that is the only voucher here whose
+     * `particulars` IS a bank. On a credit or debit note the field holds the
+     * REASON — "SALES RETURN", "RATE DIFFERANCE" — so the check was comparing
+     * two narrations as though they were account names. AMBIKA's credit note of
+     * 24 Jul agreed on party, date, amount and type, and was still reported as
+     * "Bank differs" because Tally wrote "SALES RETURN" and OMS wrote "SALES
+     * RETURN (1 ITEMS)". There is no bank on either side of that row to differ.
      */
-    if (!cash && bankMag(m) > 0.004) {
+    if (!cash && type === 'RECEIPT' && bankMag(m) > 0.004) {
       row.omsBank = m.particulars;
       const tallyBank = bankIdentity(v.particulars);
       const omsBankId = bankIdentity(m.particulars);
