@@ -65,13 +65,19 @@ export interface ReportHero {
  * The strip above a report: its one-line purpose, its actions, and how fresh
  * the figures are.
  *
- * Desktop stays the plain subtitle row — the topbar already names the report
- * there. On a phone this is the mockup's blue hero: title, "as of", the one
- * headline figure, and the wallpaper behind everything. Its bottom corners
- * stay square because {@link ReportFilterBar} continues the same blue block
- * directly beneath it and carries the rounding.
+ * Neither rendering repeats the report's NAME or its icon: the topbar already
+ * shows both, and every `title` here is word-for-word its menu label, so the
+ * page would be printing the same name and gradient icon a few pixels under
+ * the topbar's on all nine reports. `title` is still taken and still used — it
+ * labels the region for screen readers, which do not have the topbar in
+ * earshot this far down the page.
+ *
+ * Desktop is the plain subtitle row. On a phone this is the mockup's blue
+ * hero — "as of", the one headline figure, and the wallpaper behind
+ * everything. Its bottom corners stay square because {@link ReportFilterBar}
+ * continues the same blue block beneath it and carries the rounding.
  */
-export function ReportHeader({ title, subtitle, icon: Icon, asOf, actions, hero }: {
+export function ReportHeader({ title, subtitle, icon: _icon, asOf, actions, hero }: {
   title: string;
   subtitle: string;
   icon: LucideIcon;
@@ -90,15 +96,7 @@ export function ReportHeader({ title, subtitle, icon: Icon, asOf, actions, hero 
       <div className="rp-hero sm:hidden">
         <span aria-hidden className="rp-hero-sheen" />
         <span aria-hidden className="rp-hero-grid" />
-        <div className="relative flex items-start gap-2.5">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-[13px] border border-white/35 bg-white/[0.16] shadow-[inset_0_1px_0_rgba(255,255,255,.4)] backdrop-blur-md">
-            <Icon className="size-[18px]" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <h1 className="rp-hero-title truncate">{title}</h1>
-            <p className="rp-hero-sub">{asOfText ? `as of ${asOfText}` : subtitle}</p>
-          </div>
-        </div>
+        <p className="rp-hero-sub relative">{asOfText ? `as of ${asOfText}` : subtitle}</p>
         {hero && (
           <div className="relative flex items-end gap-3 pt-3">
             <div className="min-w-0">
