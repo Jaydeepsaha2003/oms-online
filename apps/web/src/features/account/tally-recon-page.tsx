@@ -1045,9 +1045,18 @@ export function TallyReconPage() {
             />
             <Tile
               label={STATUS.UNMATCHED_PARTY.label}
-              // Party only — a ledger filed as Expense/Other isn't a problem
-              // needing attention any more (see UnmappedLedgers).
-              blurb={`${run.unmatchedLedgers.party.length} ledger${run.unmatchedLedgers.party.length === 1 ? '' : 's'}`}
+              /*
+               * Two different things were shown as bare numbers: 21 above,
+               * "16 ledgers" below, with nothing saying how they relate — it
+               * read as the card disagreeing with itself. The big figure counts
+               * ROWS, like every other tile here; the ledgers are how many
+               * distinct parties those rows came from. Saying "across" makes it
+               * one sentence instead of two numbers.
+               *
+               * Party only — a ledger filed as Other isn't a problem needing
+               * attention any more (see UnmappedLedgers).
+               */
+              blurb={`across ${run.unmatchedLedgers.party.length} ledger${run.unmatchedLedgers.party.length === 1 ? '' : 's'}`}
               value={run.unmatchedParty}
               tone={STATUS.UNMATCHED_PARTY.chip}
               active={status === 'UNMATCHED_PARTY'}
@@ -1097,8 +1106,15 @@ export function TallyReconPage() {
             Party / Expenses / Others — this stays a single line regardless. */}
         {run && ledgerTotal(run.unmatchedLedgers) > 0 && canRun && (
           <div className="flex min-w-0 items-center gap-1.5 border-t border-amber-200 px-2.5 py-2 sm:px-3 dark:border-amber-400/20">
+            {/* The split, not a lone total. "View all (134)" next to a KPI
+                reading "16 ledgers" looked like two answers to one question;
+                134 is every unmapped ledger, only 16 of which are parties. */}
             <span className="flex shrink-0 items-center gap-1 text-[11px] font-bold tracking-wide text-violet-800 uppercase dark:text-violet-300">
               <UserRoundX className="size-3.5" /> Unmapped ledgers
+              <span className="font-semibold tracking-normal normal-case text-violet-700/80 dark:text-violet-400/80">
+                {run.unmatchedLedgers.party.length} part{run.unmatchedLedgers.party.length === 1 ? 'y' : 'ies'} ·{' '}
+                {run.unmatchedLedgers.other.length} other
+              </span>
             </span>
             <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium text-violet-700 dark:text-violet-400">
               {run.unmatchedLedgers.party.length > 0 ? (
@@ -1107,8 +1123,10 @@ export function TallyReconPage() {
                   {run.unmatchedLedgers.party.length > 4 ? '…' : ''}
                 </>
               ) : (
+                // The counts sit in the label now, so this only has to say the
+                // part that matters: nothing here needs mapping.
                 <span className="text-emerald-700 dark:text-emerald-400">
-                  All parties mapped — {run.unmatchedLedgers.other.length} other ledger{run.unmatchedLedgers.other.length === 1 ? '' : 's'} are outside Sundry Debtors.
+                  All parties mapped — the rest are outside Sundry Debtors.
                 </span>
               )}
             </span>
@@ -1119,7 +1137,7 @@ export function TallyReconPage() {
               className="h-6 shrink-0 gap-0.5 rounded-[3px] border-violet-300 px-2 text-[11px] font-bold text-violet-800 hover:bg-violet-100 dark:border-violet-400/40 dark:text-violet-300 dark:hover:bg-violet-400/20"
               onClick={() => setUnmappedListOpen(true)}
             >
-              View all ({ledgerTotal(run.unmatchedLedgers)})
+              View all
               <ChevronRight className="size-3" />
             </Button>
           </div>
