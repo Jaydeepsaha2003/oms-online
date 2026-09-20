@@ -4,12 +4,13 @@ import { Package } from 'lucide-react';
 import type { ReportMeasure } from '@oms/shared';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { cn } from '@/lib/utils';
-import { RankedBars, ReportCard, ReportHeader, ReportSummary, REPORT_COLORS } from './report-kit';
+import { RankedBars, ReportCard, ReportHeader, ReportRow, ReportRowList, ReportSummary, REPORT_COLORS, type Pill } from './report-kit';
 import { ReportFilterBar, useReportFilters } from './report-filters';
 import { useProductReport } from './use-reports';
 
 const marginTone = (flag: 'loss' | 'thin' | 'ok') =>
   flag === 'loss' ? 'bg-red-50 text-red-700 ring-red-600/20' : flag === 'thin' ? 'bg-amber-50 text-amber-700 ring-amber-600/20' : 'bg-emerald-50 text-emerald-700 ring-emerald-600/20';
+const marginPillTone = (flag: 'loss' | 'thin' | 'ok'): Pill['tone'] => (flag === 'loss' ? 'rose' : flag === 'thin' ? 'amber' : 'emerald');
 
 const MEASURES: { key: ReportMeasure; label: string }[] = [
   { key: 'amount', label: 'Amount' },
@@ -93,7 +94,24 @@ export function ProductReportPage() {
 
       <ReportCard title="Design margins — worst priced first" right={losses > 0 ? <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700 ring-1 ring-inset ring-red-600/20">{losses} to review</span> : undefined}>
         {isLoading ? <div className="bg-muted h-64 animate-pulse rounded-lg" /> : (
-          <div className="max-h-[440px] overflow-auto">
+          <>
+            <ReportRowList emptyText="No design pricing yet.">
+              {(data?.designMargin ?? []).map((d, i) => (
+                <ReportRow
+                  key={`${d.design}-${i}`}
+                  i={i}
+                  title={d.design}
+                  sub={d.category}
+                  pills={[{ text: d.marginPct != null ? `${d.marginPct}%` : '—', tone: marginPillTone(d.flag) }]}
+                  stats={[
+                    { label: 'Cost', value: `₹${d.cost.toLocaleString('en-IN')}` },
+                    { label: 'Rate', value: `₹${d.rate.toLocaleString('en-IN')}` },
+                    { label: 'Margin', value: `₹${d.unitMargin.toLocaleString('en-IN')}`, tone: d.unitMargin < 0 ? 'bad' : undefined },
+                  ]}
+                />
+              ))}
+            </ReportRowList>
+          <div className="hidden max-h-[440px] overflow-auto sm:block">
             <table className="w-full min-w-[560px] text-sm">
               <thead className="bg-card sticky top-0">
                 <tr className="text-muted-foreground border-b text-left text-xs uppercase tracking-wide">
@@ -119,6 +137,7 @@ export function ProductReportPage() {
               </tbody>
             </table>
           </div>
+          </>
         )}
         <p className="text-muted-foreground mt-2 text-xs">Margin is list-price (rate − cost) per design — it flags mispriced designs, not realised profit on sales.</p>
       </ReportCard>

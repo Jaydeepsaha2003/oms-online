@@ -1,5 +1,5 @@
 import { Sparkles } from 'lucide-react';
-import { Kpi, RankedBars, ReportCard, ReportHeader, ReportSummary } from './report-kit';
+import { Kpi, RankedBars, ReportCard, ReportHeader, ReportRow, ReportRowList, ReportSummary } from './report-kit';
 import { ReportFilterBar, useReportFilters } from './report-filters';
 import { usePatterns } from './use-reports';
 
@@ -43,7 +43,22 @@ export function PatternsReportPage() {
         {isLoading ? <div className="bg-muted h-64 animate-pulse rounded-lg" /> : !data?.loyalParties.length ? (
           <div className="text-muted-foreground py-8 text-center text-sm">No repeat parties yet.</div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+            <ReportRowList>
+              {data.loyalParties.map((p, i) => (
+                <ReportRow
+                  key={`${p.party}-${i}`}
+                  i={i}
+                  title={p.party}
+                  stats={[
+                    { label: 'Orders', value: p.orders },
+                    { label: 'Avg gap', value: p.avgGapDays != null ? `${p.avgGapDays}d` : '—' },
+                    { label: 'Categories', value: p.categories },
+                  ]}
+                />
+              ))}
+            </ReportRowList>
+          <div className="hidden overflow-x-auto sm:block">
             <table className="w-full min-w-[480px] text-sm">
               <thead>
                 <tr className="text-muted-foreground border-b text-left text-xs uppercase tracking-wide">
@@ -65,6 +80,7 @@ export function PatternsReportPage() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </ReportCard>
     </div>

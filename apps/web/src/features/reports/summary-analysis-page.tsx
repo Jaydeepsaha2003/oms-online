@@ -55,7 +55,7 @@ export function SummaryAnalysisPage() {
         title={`${data?.actions.length ?? 25} action points`}
         right={<span className="text-muted-foreground text-xs">Forecast confidence: {data?.forecast.confidence ?? '—'}</span>}
       >
-        <div className="mb-4 flex flex-wrap gap-1.5" role="tablist" aria-label="Action category">
+        <div className="mb-4 flex flex-wrap gap-1.5 max-sm:overflow-x-auto max-sm:flex-nowrap max-sm:pb-1" role="tablist" aria-label="Action category">
           {CATEGORIES.map((item) => (
             <button
               key={item}
@@ -63,7 +63,12 @@ export function SummaryAnalysisPage() {
               role="tab"
               aria-selected={category === item}
               onClick={() => setCategory(item)}
-              className={cn('rounded-md px-3 py-1.5 text-sm font-medium transition-colors', category === item ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200')}
+              className={cn(
+                'shrink-0 rounded-full px-3 py-1.5 text-sm font-medium transition-colors max-sm:rounded-md max-sm:text-[12.5px] max-sm:font-bold',
+                category === item
+                  ? 'bg-slate-900 text-white max-sm:bg-gradient-to-br max-sm:from-blue-600 max-sm:to-blue-800 max-sm:shadow-md'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200 max-sm:bg-white/60 max-sm:backdrop-blur-md dark:max-sm:bg-white/[0.06]',
+              )}
             >
               {item}
             </button>
@@ -73,10 +78,14 @@ export function SummaryAnalysisPage() {
         {isLoading ? (
           <div className="space-y-2">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="bg-muted h-20 animate-pulse rounded-md" />)}</div>
         ) : (
-          <div className="divide-y rounded-md border">
+          <div className="divide-y rounded-md border max-sm:space-y-2 max-sm:divide-y-0 max-sm:border-none">
             {actions.map((action, index) => (
-              <div key={action.id} className="grid gap-3 p-3 sm:grid-cols-[2.25rem_minmax(0,1fr)_auto] sm:items-start">
-                <div className="flex size-9 items-center justify-center rounded-md bg-slate-100 text-sm font-bold tabular-nums text-slate-600">
+              <div
+                key={action.id}
+                className="rp-rise grid gap-3 p-3 max-sm:rounded-2xl max-sm:border max-sm:border-white/80 max-sm:bg-white/60 max-sm:shadow-[0_8px_20px_-14px_rgba(13,38,92,.5)] max-sm:backdrop-blur-xl max-sm:dark:border-white/10 max-sm:dark:bg-white/[0.06] sm:grid-cols-[2.25rem_minmax(0,1fr)_auto] sm:items-start"
+                style={{ animationDelay: `${Math.min(index, 12) * 45}ms` }}
+              >
+                <div className="flex size-9 items-center justify-center rounded-md bg-slate-100 text-sm font-bold tabular-nums text-slate-600 max-sm:size-7 max-sm:rounded-lg max-sm:text-[11px] dark:max-sm:bg-white/10 dark:max-sm:text-slate-300">
                   {String((data?.actions.indexOf(action) ?? index) + 1).padStart(2, '0')}
                 </div>
                 <div className="min-w-0">

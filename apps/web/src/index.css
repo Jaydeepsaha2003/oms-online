@@ -1321,3 +1321,27 @@ select:not(:disabled):not([multiple]):focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .bb-rise, .bb-rowin, .bb-pop, .bb-breathe { animation: none !important; }
 }
+
+/* ── Reports mobile skin (report-kit.tsx, report-filters.tsx) ────────────── */
+/* Card/row entrance, staggered by inline animation-delay per item. */
+@keyframes rp-rise {
+  0% { opacity: 0; transform: translateY(14px); }
+  100% { opacity: 1; transform: none; }
+}
+.rp-rise { animation: rp-rise 0.42s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+/* A ranked bar filling in from the left, transform-origin set inline. */
+@keyframes rp-grow-x {
+  0% { transform: scaleX(0); }
+  100% { transform: scaleX(1); }
+}
+.rp-grow-x { animation: rp-grow-x 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+/* KPI tiles / pills popping in. */
+@keyframes rp-pop {
+  0% { opacity: 0; transform: scale(0.82); }
+  100% { opacity: 1; transform: none; }
+}
+.rp-pop { animation: rp-pop 0.36s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rp-rise, .rp-grow-x, .rp-pop { animation: none !important; }
+}

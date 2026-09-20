@@ -1,12 +1,12 @@
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { AlertTriangle, HandCoins, PhoneCall } from 'lucide-react';
 import type { PromiseState, RecoveryStage } from '@oms/shared';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { Button } from '@/components/ui/button';
-import { BANK_COLOR, CASH_COLOR, CASH_EDGE, Kpi, RankedBars, ReportCard, ReportHeader, ReportSummary } from './report-kit';
+import { BANK_COLOR, CASH_COLOR, CASH_EDGE, Kpi, RankedBars, ReportCard, ReportHeader, ReportRow, ReportRowList, ReportSummary, type Pill } from './report-kit';
 import { ReportFilterBar, useReportFilters } from './report-filters';
 import { useCollectionsReport } from './use-reports';
 
@@ -34,10 +34,25 @@ const STAGE_TONE: Record<RecoveryStage, string> = {
   Resolved: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
 };
 const promiseTone = (s: PromiseState) => (s === 'broken' ? 'text-red-600' : s === 'due today' ? 'text-orange-600' : s === 'upcoming' ? 'text-violet-600' : 'text-muted-foreground');
+// Same buckets as flagTone/STAGE_TONE above, mapped to a ReportRow pill tone
+// instead of a Tailwind class string — the mobile card and the desktop table
+// row read the same flag the same way.
+const flagPillTone = (flag: string): Pill['tone'] => {
+  if (flag.includes('60+')) return 'rose';
+  if (flag.includes('30')) return 'amber';
+  if (flag.startsWith('CALL')) return 'amber';
+  if (flag === 'ADJUST ADVANCE') return 'violet';
+  if (flag === 'WATCH') return 'slate';
+  return 'emerald';
+};
+const STAGE_PILL_TONE: Record<RecoveryStage, Pill['tone']> = {
+  'Promise broken': 'rose', 'Callback due': 'amber', 'Not contacted': 'slate', 'In progress': 'blue', Promised: 'violet', Resolved: 'emerald',
+};
 // Follows the system-wide date format (dd-mm-yy by default).
 const fmtDate = (d: string | null) => formatDate(d);
 
 export function CollectionsReportPage() {
+  const navigate = useNavigate();
   const filters = useReportFilters();
   const { data, isLoading } = useCollectionsReport(filters.query);
   const rk = data?.recoveryKpis;
@@ -172,7 +187,32 @@ export function CollectionsReportPage() {
         {isLoading ? <div className="bg-muted h-64 animate-pulse rounded-lg" /> : !data?.recovery?.length ? (
           <div className="text-muted-foreground py-8 text-center text-sm">Nothing to chase — you're all clear. 🎉</div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+            <ReportRowList>
+              {data.recovery.map((r, i) => (
+                <ReportRow
+                  key={`${r.party}-${i}`}
+                  i={i}
+                  title={r.party}
+                  sub={r.agent || undefined}
+                  pills={[{ text: r.flag, tone: flagPillTone(r.flag) }, { text: r.stage, tone: STAGE_PILL_TONE[r.stage] }]}
+                  stats={[
+                    { label: 'Outstanding', value: inrCompact(money(r.outstanding)) },
+                    { label: 'Overdue', value: r.overdue > 0 ? inrCompact(r.overdue) : '—', tone: r.overdue > 0 ? 'bad' : 'muted' },
+                    { label: 'Oldest', value: r.oldestDays > 0 ? `${r.oldestDays}d` : '—' },
+                    {
+                      label: 'Next promise',
+                      value: r.nextPromiseAt ? `${fmtDate(r.nextPromiseAt)}${r.nextPromiseAmount != null && r.nextPromiseAmount > 0 ? ` · ${inrCompact(r.nextPromiseAmount)}` : ''}` : '—',
+                      tone: r.promiseState === 'broken' ? 'bad' : undefined,
+                    },
+                    { label: 'Last contact', value: r.lastContactAt ? `${fmtDate(r.lastContactAt)}${r.daysSinceContact != null ? ` · ${r.daysSinceContact}d` : ''}` : 'never' },
+                    { label: 'Advance', value: (r.advance ?? 0) > 0 ? inrCompact(money(r.advance)) : '—', tone: (r.advance ?? 0) > 0 ? 'good' : undefined },
+                  ]}
+                  action={{ label: 'Follow up', onClick: () => navigate(`/crm/payments?party=${encodeURIComponent(r.party)}`) }}
+                />
+              ))}
+            </ReportRowList>
+          <div className="hidden overflow-x-auto sm:block">
             <table className="w-full min-w-[860px] text-sm">
               <thead>
                 <tr className="text-muted-foreground border-b text-left text-xs uppercase tracking-wide">
@@ -225,6 +265,7 @@ export function CollectionsReportPage() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </ReportCard>
     </div>
