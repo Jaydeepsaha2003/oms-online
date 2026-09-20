@@ -68,7 +68,7 @@ const TH_LINE = 'border-r border-white/15';
  * other's `top`, which quietly misaligns the moment either font changes.
  */
 const TH_BAND =
-  'bg-blue-900 px-2 py-1 text-left text-[10px] font-bold tracking-wider text-white/70 uppercase whitespace-nowrap dark:bg-blue-950';
+  'bg-blue-900 px-2 py-1.5 text-left text-[11px] font-extrabold tracking-wide uppercase whitespace-nowrap dark:bg-blue-950';
 const TD = 'border-r border-r-amber-200/80 px-2 py-[3px] align-middle dark:border-r-amber-400/15 last:border-r-0';
 const NUM = 'text-right tabular-nums';
 const PANEL = 'border-amber-300 dark:border-amber-400/30';
@@ -1394,16 +1394,25 @@ export function TallyReconPage() {
                    */}
                   <tr>
                     <th aria-hidden className={cn(TH_BAND, 'w-9')} />
-                    <th scope="colgroup" colSpan={6} className={cn(TH_BAND, TH_LINE, 'bg-amber-300/25 text-amber-100')}>
-                      From the Tally register
+                    {/* Color the source labels, not the whole band, so the names stay readable on navy. */}
+                    <th
+                      scope="colgroup"
+                      colSpan={6}
+                      className={cn(TH_BAND, TH_LINE, 'text-amber-300')}
+                    >
+                      From Tally
                     </th>
-                    <th scope="colgroup" colSpan={2} className={cn(TH_BAND, TH_LINE)}>
+                    <th scope="colgroup" colSpan={2} className={cn(TH_BAND, TH_LINE, 'text-blue-100/80')}>
                       Our check
                     </th>
-                    <th scope="colgroup" colSpan={2} className={cn(TH_BAND, TH_LINE, 'bg-sky-300/25 text-sky-100')}>
+                    <th
+                      scope="colgroup"
+                      colSpan={2}
+                      className={cn(TH_BAND, TH_LINE, 'text-sky-300')}
+                    >
                       From OMS
                     </th>
-                    <th scope="colgroup" className={TH_BAND}>
+                    <th scope="colgroup" className={cn(TH_BAND, 'text-blue-100/80')}>
                       Our check
                     </th>
                   </tr>
