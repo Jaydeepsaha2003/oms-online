@@ -35,6 +35,7 @@ import {
   useUpdateFollowup,
   type OpenOrderItemHit,
 } from './use-crm';
+import { MobileHero, MobileKpiTile, MobileTabs, MobileWallpaper, MoneyCard, SKIN_TONE, type SkinTone } from '@/components/common/mobile-skin';
 import { Chip, initials, itemLine, UrgencyChip } from './crm-shared';
 import { ChecklistInput, type ChecklistDraftItem } from './checklist-input';
 import {
@@ -145,15 +146,40 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
     setStatus(id === 'history' ? 'DONE' : 'OPEN');
   };
 
+  const heroLabel = tab === 'collect' ? 'Total outstanding' : showingDone ? 'Completed' : isInquiry ? 'Open enquiries' : 'Open follow-ups';
+  const heroValue = tab === 'collect'
+    ? inrCompact(balances.reduce((t, b) => t + Math.max(0, b.outstanding), 0))
+    : String(showingDone ? groups.reduce((t, g) => t + g.items.length, 0) : summary?.openTotal ?? 0);
+  const overduePct = (() => {
+    const out = balances.reduce((t, b) => t + Math.max(0, b.outstanding), 0);
+    const od = balances.reduce((t, b) => t + Math.max(0, b.overdue), 0);
+    return out > 0 ? Math.round((od / out) * 100) : 0;
+  })();
+
   return (
-    <div className="space-y-4">
+    <div className="rp-page space-y-4">
+      {/* Phones: the mockup's blue header — the one figure that matters for the
+          tab you are on, and the tabs themselves sitting on the blue. */}
+      <MobileWallpaper />
+      <MobileHero
+        label={heroLabel}
+        value={heroValue}
+        chip={tab === 'collect' ? `${overduePct}% overdue` : `${summary?.overdue ?? 0} overdue`}
+        chipTone={tab === 'collect' ? (overduePct >= 40 ? 'rose' : 'emerald') : (summary?.overdue ?? 0) > 0 ? 'rose' : 'emerald'}
+        hint={tab === 'collect'
+          ? `${balances.length} owing parties`
+          : showingDone ? 'newest first' : `${summary?.activeNudges ?? 0} nudging now`}
+      >
+        <MobileTabs tabs={tabs.map((t) => ({ id: t.id, label: t.label, count: t.count }))} value={tab} onChange={setTab} />
+      </MobileHero>
+
       {/*
         * No title or icon here: the global header already shows this page's name.
         * What is kept is the one line saying what the page is FOR, and the action
         * — neither of which the topbar carries. Same cleanup as the other twelve
         * pages and the eight reports.
         */}
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3 max-sm:hidden">
         <p className="text-muted-foreground mr-auto min-w-0 text-sm">
           {isPay
             ? 'Who to call next, what they owe, and every promise made — all in one place.'
@@ -167,6 +193,12 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
           </Button>
         )}
       </div>
+
+      {canEdit && (
+        <button type="button" className="rp-act rp-act-primary w-full justify-center sm:hidden" onClick={() => openForm(null)}>
+          <Plus className="size-4" /> {isPay ? 'New payment follow-up' : isInquiry ? 'New inquiry' : 'New follow-up'}
+        </button>
+      )}
 
       {isPay && <RecoveryMoneyStrip balances={balances} />}
 
@@ -187,7 +219,7 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
       <div
         role="tablist"
         aria-label="Section"
-        className="bg-muted/70 inline-flex flex-wrap gap-1 rounded-lg p-1"
+        className="bg-muted/70 inline-flex flex-wrap gap-1 rounded-lg p-1 max-sm:hidden"
       >
         {tabs.map(({ id, label, icon: Icon, count }) => {
           const on = tab === id;
@@ -226,12 +258,34 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
 
       {/* Follow-up KPI strip — open work only; nothing here applies to closed items. */}
       {tab !== 'collect' && !showingDone && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Kpi label="Overdue" value={summary?.overdue ?? 0} tone="rose" icon={<TriangleAlert className="size-4" />} active={bucket === 'overdue'} onClick={() => setBucket(bucket === 'overdue' ? '' : 'overdue')} />
-          <Kpi label="Due today" value={summary?.dueToday ?? 0} tone="amber" icon={<Clock className="size-4" />} active={bucket === 'today'} onClick={() => setBucket(bucket === 'today' ? '' : 'today')} />
-          <Kpi label="Nudging now" value={summary?.activeNudges ?? 0} tone="violet" icon={<AlarmClock className="size-4" />} active={bucket === 'attention'} onClick={() => setBucket(bucket === 'attention' ? '' : 'attention')} />
-          <Kpi label="Open total" value={summary?.openTotal ?? 0} tone="sky" icon={<Bell className="size-4" />} active={bucket === ''} onClick={() => setBucket('')} />
-        </div>
+        <>
+          {/* Phones: the mockup's glass tiles. Same four buckets, same taps. */}
+          <div className="grid grid-cols-2 gap-2.5 sm:hidden">
+            {([
+              ['Overdue', summary?.overdue ?? 0, 'rose', 'overdue', <TriangleAlert key="a" className="size-4" />],
+              ['Due today', summary?.dueToday ?? 0, 'amber', 'today', <Clock key="b" className="size-4" />],
+              ['Nudging now', summary?.activeNudges ?? 0, 'violet', 'attention', <AlarmClock key="c" className="size-4" />],
+              ['Open total', summary?.openTotal ?? 0, 'sky', '', <Bell key="d" className="size-4" />],
+            ] as const).map(([label, value, tone, b, icon], i) => (
+              <MobileKpiTile
+                key={label}
+                i={i}
+                label={label}
+                value={value}
+                tone={tone as SkinTone}
+                icon={icon}
+                active={bucket === b}
+                onClick={() => setBucket(bucket === b ? '' : b)}
+              />
+            ))}
+          </div>
+          <div className="hidden grid-cols-2 gap-3 sm:grid sm:grid-cols-4">
+            <Kpi label="Overdue" value={summary?.overdue ?? 0} tone="rose" icon={<TriangleAlert className="size-4" />} active={bucket === 'overdue'} onClick={() => setBucket(bucket === 'overdue' ? '' : 'overdue')} />
+            <Kpi label="Due today" value={summary?.dueToday ?? 0} tone="amber" icon={<Clock className="size-4" />} active={bucket === 'today'} onClick={() => setBucket(bucket === 'today' ? '' : 'today')} />
+            <Kpi label="Nudging now" value={summary?.activeNudges ?? 0} tone="violet" icon={<AlarmClock className="size-4" />} active={bucket === 'attention'} onClick={() => setBucket(bucket === 'attention' ? '' : 'attention')} />
+            <Kpi label="Open total" value={summary?.openTotal ?? 0} tone="sky" icon={<Bell className="size-4" />} active={bucket === ''} onClick={() => setBucket('')} />
+          </div>
+        </>
       )}
 
       {/* Filters and the board belong to Follow-ups / History. On Collect the
@@ -242,10 +296,20 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative w-full sm:w-72">
           <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
-          <Input placeholder="Search party, title, order…" className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <Input placeholder="Search party, title, order…" className="rp-control pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
+        {/* Phones: the buckets are pills you can thumb through, not a select. */}
         {!showingDone && (
-          <div className="w-48">
+          <div className="rp-noscroll -mx-0.5 flex gap-2 overflow-x-auto px-0.5 sm:hidden">
+            {BUCKETS.map((b) => (
+              <button key={b.v || 'all'} type="button" className="rp-fpill" data-on={bucket === b.v} onClick={() => setBucket(b.v)}>
+                {b.label}
+              </button>
+            ))}
+          </div>
+        )}
+        {!showingDone && (
+          <div className="w-48 max-sm:hidden">
             {/* Labelled options, not bare keys: the combobox shows the raw value in
                 its field unless the option carries a label, so picking a filter
                 used to read "attention" / "today" back at you. */}
@@ -254,11 +318,16 @@ export function FollowupsPage({ kind = 'DELIVERY' }: { kind?: FollowupKind }) {
         )}
         {/* §8 — what agents promised, as opposed to what parties promised. */}
         {isPay && (
+          <button type="button" className="rp-fpill sm:hidden" data-on={agentOnly} onClick={() => setAgentOnly((v) => !v)}>
+            <Handshake className="size-3.5" /> Agent promises
+          </button>
+        )}
+        {isPay && (
           <Button
             type="button"
             variant={agentOnly ? 'default' : 'outline'}
             size="sm"
-            className="h-9"
+            className="h-9 max-sm:hidden"
             onClick={() => setAgentOnly((v) => !v)}
             title="Only commitments an agent made"
           >
@@ -314,6 +383,11 @@ function PartyCard({ group, canEdit, onEdit, balance, done }: { group: FollowupP
   const RAIL: Record<string, string> = {
     rose: 'bg-rose-500', violet: 'bg-violet-500', emerald: 'bg-emerald-500', slate: 'bg-slate-300 dark:bg-slate-600',
   };
+  // The phone rail is a gradient, as in the mockup; the class above still
+  // paints it on desktop, where `background` is not set.
+  const RAIL_GRAD: Record<string, string> = {
+    rose: SKIN_TONE.rose.grad, violet: SKIN_TONE.violet.grad, emerald: SKIN_TONE.emerald.grad, slate: SKIN_TONE.slate.grad,
+  };
   const AVATAR: Record<string, string> = {
     rose: 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300',
     violet: 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300',
@@ -324,21 +398,24 @@ function PartyCard({ group, canEdit, onEdit, balance, done }: { group: FollowupP
   const lastDone = done ? group.items.reduce((max, i) => (i.resolvedAt && i.resolvedAt > max ? i.resolvedAt : max), '') : '';
 
   return (
-    <section className="bg-card relative overflow-hidden rounded-xl border shadow-sm transition-shadow duration-200 hover:shadow-md">
-      <span className={cn('absolute inset-y-0 left-0 w-1', RAIL[tone])} aria-hidden />
-      <div className="flex items-center gap-2.5 border-b bg-gradient-to-r from-slate-50/80 to-transparent py-2.5 pr-3 pl-4 dark:from-white/[0.03]">
-        <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-full text-xs font-bold', AVATAR[tone])}>
+    // The phone gets the mockup's glass card with its temperature rail; desktop
+    // keeps the plain bordered section. Same structure either way — only the
+    // surface changes, so the rows inside need no second rendering.
+    <section className="bg-card rp-party relative overflow-hidden rounded-xl border shadow-sm transition-shadow duration-200 hover:shadow-md max-sm:rounded-[22px] max-sm:border-0 max-sm:shadow-none">
+      <span className={cn('rp-rail absolute inset-y-0 left-0 w-1 max-sm:w-[5px]', RAIL[tone])} aria-hidden style={{ background: RAIL_GRAD[tone] }} />
+      <div className="rp-party-head flex items-center gap-2.5 border-b max-sm:flex-wrap bg-gradient-to-r from-slate-50/80 to-transparent py-2.5 pr-3 pl-4 max-sm:border-b-0 max-sm:bg-none dark:from-white/[0.03]">
+        <span className={cn('rp-avatar flex size-9 shrink-0 items-center justify-center rounded-full text-xs font-bold', AVATAR[tone])}>
           {initials(group.partyName)}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="truncate font-semibold">{group.partyName}</div>
-          <div className="text-muted-foreground mt-0.5 truncate text-xs">
+          <div className="rp-party-name truncate font-semibold">{group.partyName}</div>
+          <div className="rp-party-sub text-muted-foreground mt-0.5 truncate text-xs">
             {done
               ? `${group.items.length} completed${lastDone ? ` · last ${formatDate(lastDone)}` : ''}`
               : `${group.openCount} open${group.nextPromiseAt ? ` · next ${formatDate(group.nextPromiseAt)}` : ''}`}
           </div>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1 max-sm:order-3 max-sm:w-full max-sm:justify-start">
           {balance && balance.outstanding > 0 && (
             <Chip tone={balance.overdue > 0 ? 'rose' : 'amber'} className="tabular-nums">
               <span title={inrFull(balance.outstanding)}>{inrCompact(balance.outstanding)} due</span>
@@ -354,7 +431,7 @@ function PartyCard({ group, canEdit, onEdit, balance, done }: { group: FollowupP
           )}
         </div>
       </div>
-      <div className="divide-y">
+      <div className="divide-y max-sm:divide-y-0">
         {group.items.map((f) => <FollowupRow key={f.id} f={f} canEdit={canEdit} onEdit={onEdit} done={done} />)}
       </div>
     </section>
@@ -378,12 +455,12 @@ function FollowupRow({ f, canEdit, onEdit, done }: { f: FollowupDto; canEdit: bo
   };
 
   return (
-    <div id={`followup-${f.id}`} className="rounded-md px-3 py-2.5 transition-shadow">
+    <div id={`followup-${f.id}`} className="rp-item rounded-md px-3 py-2.5 transition-shadow">
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
             {f.priority === 'URGENT' && <Chip tone="rose">URGENT</Chip>}
-            <span className="font-medium">{f.title}</span>
+            <span className="rp-item-title font-medium">{f.title}</span>
             {f.stage && <Chip tone="slate">{f.stage}</Chip>}
           </div>
           <div className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
@@ -403,8 +480,14 @@ function FollowupRow({ f, canEdit, onEdit, done }: { f: FollowupDto; canEdit: bo
             </div>
           )}
         </div>
-        <button type="button" onClick={() => setOpen((o) => !o)} className="text-muted-foreground hover:text-foreground shrink-0 rounded p-1" aria-label="Timeline">
-          <ChevronDown className={cn('size-4 transition-transform', open && 'rotate-180')} />
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          data-open={open}
+          className="rp-chev text-muted-foreground hover:text-foreground shrink-0 rounded p-1 max-sm:p-0"
+          aria-label="Timeline"
+        >
+          <ChevronDown className={cn('size-4 transition-transform max-sm:transition-none', open && 'rotate-180 max-sm:rotate-0')} />
         </button>
       </div>
 
@@ -457,7 +540,7 @@ function FollowupRow({ f, canEdit, onEdit, done }: { f: FollowupDto; canEdit: bo
             <Button
               size="sm"
               variant="outline"
-              className="h-8 cursor-pointer text-xs"
+              className="rp-act rp-act-neutral h-8 cursor-pointer text-xs"
               disabled={reopen.isPending}
               onClick={() => reopen.mutate(f.id, { onSuccess: () => toast.success('Reopened'), onError: (e) => toast.error(getApiErrorMessage(e, 'Failed')) })}
             >
@@ -483,12 +566,12 @@ function FollowupRow({ f, canEdit, onEdit, done }: { f: FollowupDto; canEdit: bo
                 */}
               <Button
                 size="sm"
-                className="h-8 cursor-pointer text-xs font-semibold"
+                className="rp-act rp-act-primary h-8 cursor-pointer text-xs font-semibold"
                 onClick={() => setDoneOpen(true)}
               >
                 <Check className="size-3.5" /> Resolved
               </Button>
-              <Button size="sm" variant="outline" className="h-8 cursor-pointer text-xs" onClick={() => setLogOpen(true)}>
+              <Button size="sm" variant="outline" className="rp-act rp-act-ghost h-8 cursor-pointer text-xs" onClick={() => setLogOpen(true)}>
                 <MessageSquarePlus className="size-3.5" /> Update
               </Button>
               <DropdownMenu>
@@ -496,7 +579,7 @@ function FollowupRow({ f, canEdit, onEdit, done }: { f: FollowupDto; canEdit: bo
                   <Button
                     size="icon"
                     variant="ghost"
-                    className="size-8 cursor-pointer"
+                    className="rp-act rp-act-icon size-8 cursor-pointer"
                     aria-label={`More actions for ${f.title}`}
                     title="More actions"
                   >

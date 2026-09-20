@@ -1738,10 +1738,190 @@ select:not(:disabled):not([multiple]):focus-visible {
   .dark .rp-seg-btn { color: #93a6c9; }
 }
 
+/* ── CRM mobile skin (crm-mobile.tsx and the four CRM pages) ───────────────
+ *
+ * The CRM mockups are drawn in the same design as the Reports one — same
+ * wallpaper, same glass, same type — so they extend the `.rp-*` block above
+ * rather than restate it. What is added here is what only the CRM boards
+ * have: the tab bar on the blue, the money-card rail, the tappable KPI
+ * tiles, and the party cards with their colour rail, avatar and expandable
+ * rows. Same phone media query, so all of it is inert above `sm`.
+ */
+@media (width < 40rem) {
+  /* Tabs sitting on the header's blue (Collect / Follow-ups / History). */
+  .rp-tabs { display: flex; gap: 4px; padding: 4px; background: rgba(255, 255, 255, 0.14); border-radius: 15px; }
+  .rp-tab {
+    flex: 1; height: 40px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    border: none; border-radius: 12px; background: transparent; color: #dbe9ff;
+    font-size: 13px; font-weight: 800; white-space: nowrap;
+    transition: background 0.26s ease, color 0.26s ease, box-shadow 0.26s ease;
+  }
+  .rp-tab[data-on='true'] { background: rgba(255, 255, 255, 0.95); color: #1e40af; box-shadow: 0 6px 14px -7px rgba(9, 26, 74, 0.7); }
+  .rp-tab-count {
+    min-width: 20px; height: 19px; padding: 0 6px;
+    display: inline-flex; align-items: center; justify-content: center; border-radius: 999px;
+    font-family: var(--font-plex); font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums;
+    background: rgba(255, 255, 255, 0.22); color: #fff;
+  }
+  .rp-tab[data-on='true'] .rp-tab-count { background: linear-gradient(160deg, #3b82f6, #1e40af); color: #fff; }
+
+  /* The money rail: a row of fixed-width glass cards that scrolls sideways. */
+  .rp-rail-scroll { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 2px; }
+  .rp-money {
+    position: relative; overflow: hidden; flex: none; width: 152px; padding: 12px;
+    background: linear-gradient(168deg, rgba(255, 255, 255, 0.78), rgba(236, 243, 255, 0.58));
+    backdrop-filter: blur(24px) saturate(185%); -webkit-backdrop-filter: blur(24px) saturate(185%);
+    border: 1px solid rgba(255, 255, 255, 0.88); border-radius: 20px;
+    box-shadow: 0 12px 28px -20px rgba(13, 38, 92, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+    animation: rp-rise 0.46s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+  .rp-money-dot { position: relative; display: block; width: 26px; height: 26px; border-radius: 9px; }
+  .rp-money-value {
+    position: relative; margin-top: 10px; font-family: var(--font-plex);
+    font-size: 20px; font-weight: 600; letter-spacing: -0.025em; line-height: 1;
+    font-variant-numeric: tabular-nums; color: #0a1730;
+  }
+  .rp-money-label { position: relative; margin-top: 6px; font-size: 10.5px; font-weight: 700; color: #3d5273; }
+  .rp-money-hint { position: relative; margin-top: 2px; font-size: 10px; font-weight: 600; color: #52658a; }
+
+  /* KPI tiles — tappable, and they light up while their bucket is the filter. */
+  .rp-kpi-tile {
+    position: relative; overflow: hidden; padding: 12px; text-align: left;
+    -webkit-tap-highlight-color: transparent;
+    background: linear-gradient(168deg, rgba(255, 255, 255, 0.76), rgba(236, 243, 255, 0.58));
+    backdrop-filter: blur(24px) saturate(185%); -webkit-backdrop-filter: blur(24px) saturate(185%);
+    border: 1px solid rgba(255, 255, 255, 0.88); border-radius: 20px;
+    box-shadow: 0 12px 28px -20px rgba(13, 38, 92, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+    transition: box-shadow 0.24s ease, transform 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+    animation: rp-rise 0.44s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+  .rp-kpi-tile:active { transform: scale(0.97); }
+  .rp-kpi-icon {
+    flex: none; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
+    border-radius: 12px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  }
+  .rp-kpi-num {
+    font-family: var(--font-plex); font-size: 25px; font-weight: 600; letter-spacing: -0.03em;
+    line-height: 1; font-variant-numeric: tabular-nums;
+  }
+
+  /* Party cards: glass, with the temperature rail down the left edge. */
+  .rp-party {
+    position: relative; overflow: hidden;
+    background: linear-gradient(168deg, rgba(255, 255, 255, 0.74), rgba(236, 243, 255, 0.56));
+    backdrop-filter: blur(26px) saturate(185%); -webkit-backdrop-filter: blur(26px) saturate(185%);
+    border: 1px solid rgba(255, 255, 255, 0.85); border-radius: 22px;
+    box-shadow: 0 16px 36px -22px rgba(13, 38, 92, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+    animation: rp-rise 0.48s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+  .rp-rail { position: absolute; top: 0; bottom: 0; left: 0; width: 5px; }
+  .rp-avatar {
+    flex: none; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
+    border-radius: 999px; font-size: 12px; font-weight: 800;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  }
+  .rp-party-head { position: relative; display: flex; align-items: center; gap: 10px; padding: 13px 13px 13px 17px; }
+  .rp-party-name { min-width: 0; font-size: 14px; font-weight: 800; letter-spacing: -0.015em; color: #0a1730; }
+  .rp-party-sub { margin-top: 2px; font-size: 11px; font-weight: 600; color: #52658a; }
+  .rp-item { padding: 12px 13px 12px 17px; border-top: 1px solid rgba(13, 38, 92, 0.08); }
+  .rp-item:first-child { border-top: 0; }
+  .rp-item-title { font-size: 13.5px; font-weight: 800; letter-spacing: -0.015em; line-height: 1.35; color: #0a1730; }
+
+  /* Row actions. Every one is at least 44px tall — this board is worked
+     one-handed, often standing up. */
+  .rp-act {
+    min-height: 44px; padding: 5.5px 13px; display: inline-flex; align-items: center; gap: 6px;
+    border-radius: 12px; font-size: 12px; font-weight: 800; background-clip: padding-box;
+    -webkit-tap-highlight-color: transparent;
+    transition: transform 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  }
+  .rp-act:active { transform: scale(0.95); }
+  .rp-act-primary {
+    border: 1px solid rgba(255, 255, 255, 0.4); background: linear-gradient(160deg, #3b82f6, #1e40af); color: #fff;
+    box-shadow: 0 6px 14px -7px rgba(30, 64, 175, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  }
+  .rp-act-ghost {
+    border: 1px solid rgba(255, 255, 255, 0.9); background: rgba(255, 255, 255, 0.78); color: #1e40af;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  }
+  .rp-act-neutral {
+    border: 1px solid rgba(255, 255, 255, 0.9); background: rgba(255, 255, 255, 0.78); color: #2b3f5e;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  }
+  .rp-act-icon {
+    width: 44px; min-height: 44px; padding: 0; justify-content: center;
+    border: 1px solid rgba(255, 255, 255, 0.9); background: rgba(255, 255, 255, 0.7); color: #3d5273;
+    border-radius: 13px;
+  }
+  /* The disclosure chevron on a row, which turns as the row opens. */
+  .rp-chev {
+    flex: none; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;
+    border: 1px solid rgba(255, 255, 255, 0.9); background: rgba(255, 255, 255, 0.7); border-radius: 13px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95);
+    transition: transform 0.26s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  }
+  .rp-chev[data-open='true'] { transform: rotate(180deg); }
+
+  /* Checklist and its progress bar. */
+  .rp-check-box {
+    flex: none; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
+    border-radius: 7px; background: rgba(255, 255, 255, 0.9);
+    box-shadow: inset 0 0 0 1.5px rgba(13, 38, 92, 0.2);
+    transition: background 0.2s ease, box-shadow 0.2s ease;
+  }
+  .rp-check-box[data-on='true'] {
+    background: linear-gradient(150deg, #34d399, #047857); color: #fff;
+    box-shadow: 0 3px 8px -3px rgba(4, 120, 87, 0.8);
+  }
+  .rp-check-text { min-width: 0; flex: 1; font-size: 13px; font-weight: 600; color: #2b3f5e; }
+  .rp-check-text[data-on='true'] { color: #52658a; text-decoration: line-through; }
+
+  /* A logged update inside an opened row. */
+  .rp-log { font-size: 11.5px; font-weight: 600; color: #3d5273; }
+  .rp-log-date { font-family: var(--font-plex); font-size: 11px; font-weight: 600; color: #52658a; font-variant-numeric: tabular-nums; }
+
+  /* Search + select controls that sit on the glass. */
+  .rp-control {
+    height: 44px; border: 1px solid rgba(255, 255, 255, 0.92); background: rgba(255, 255, 255, 0.82);
+    border-radius: 14px; font-size: 13px; font-weight: 600; color: #2b3f5e;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  }
+  .rp-control::placeholder { color: #8aa0c0; font-weight: 600; }
+  /* A filter pill (priority, ledger view, list tab). */
+  .rp-fpill {
+    flex: none; height: 44px; padding: 0 15px; display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.92); background: rgba(255, 255, 255, 0.7); color: #3d5273;
+    border-radius: 999px; font-size: 11.5px; font-weight: 800; white-space: nowrap;
+    transition: background 0.22s ease, color 0.22s ease;
+  }
+  .rp-fpill[data-on='true'] {
+    border-color: rgba(255, 255, 255, 0.4); background: linear-gradient(160deg, #3b82f6, #1e40af); color: #fff;
+    box-shadow: 0 5px 12px -6px rgba(30, 64, 175, 0.9);
+  }
+}
+
+@media (width < 40rem) {
+  .dark .rp-money, .dark .rp-kpi-tile, .dark .rp-party {
+    background: linear-gradient(168deg, rgba(255, 255, 255, 0.08), rgba(148, 180, 255, 0.05));
+    border-color: rgba(255, 255, 255, 0.12);
+    box-shadow: 0 16px 36px -22px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  }
+  .dark .rp-money-value, .dark .rp-party-name, .dark .rp-item-title { color: #f1f5ff; }
+  .dark .rp-money-label, .dark .rp-money-hint, .dark .rp-party-sub, .dark .rp-log, .dark .rp-log-date { color: #93a6c9; }
+  .dark .rp-check-text { color: #c5d3ee; }
+  .dark .rp-item { border-top-color: rgba(255, 255, 255, 0.1); }
+  .dark .rp-act-ghost, .dark .rp-act-neutral, .dark .rp-act-icon, .dark .rp-chev, .dark .rp-control, .dark .rp-fpill {
+    background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.14); color: #c5d3ee;
+  }
+  .dark .rp-act-ghost { color: #a9c4ff; }
+  .dark .rp-tabs { background: rgba(255, 255, 255, 0.1); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .rp-blob-1, .rp-blob-2, .rp-blob-3,
   .rp-hero, .rp-glass, .rp-summary, .rp-point, .rp-row, .rp-chip,
-  .rp-bar-fill, .rp-funnel-fill, .rp-hero-value, .rp-hero-badge, .rp-filterline {
+  .rp-bar-fill, .rp-funnel-fill, .rp-hero-value, .rp-hero-badge, .rp-filterline,
+  .rp-money, .rp-kpi-tile, .rp-party {
     animation: none !important;
   }
 }

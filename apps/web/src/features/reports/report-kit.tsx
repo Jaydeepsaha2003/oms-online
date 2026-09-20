@@ -3,6 +3,7 @@ import { ArrowDownRight, ArrowRight, ArrowUpRight, Hammer, Lightbulb, type Lucid
 import type { PeriodMetric, ReportSlice } from '@oms/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { MobileWallpaper } from '@/components/common/mobile-skin';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 
 /*
@@ -36,22 +37,6 @@ export const toneSurface = (tone: KpiTone): CSSProperties => ({
 });
 /** Stagger helper — every list in the mockup enters one item at a time. */
 const delay = (ms: number): CSSProperties => ({ animationDelay: `${ms}ms` });
-
-/**
- * The living wallpaper: a soft vertical plate with three tinted blobs
- * drifting across it on their own clocks. Fixed, so it stays still while the
- * report scrolls over it. Rendered once per page by {@link ReportHeader}, so
- * no page has to remember to include it.
- */
-function ReportWallpaper() {
-  return (
-    <div aria-hidden className="rp-wallpaper sm:hidden">
-      <span className="rp-blob rp-blob-1" />
-      <span className="rp-blob rp-blob-2" />
-      <span className="rp-blob rp-blob-3" />
-    </div>
-  );
-}
 
 /** The headline figure the mockup puts on the blue, above the range chips. */
 export interface ReportHero {
@@ -90,7 +75,7 @@ export function ReportHeader({ title, subtitle, icon: _icon, asOf, actions, hero
 
   return (
     <div aria-label={title}>
-      <ReportWallpaper />
+      <MobileWallpaper />
 
       {/* Phones: the mockup's hero. */}
       <div className="rp-hero sm:hidden">

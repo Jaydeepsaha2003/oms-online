@@ -14,6 +14,7 @@ import {
 } from '@oms/shared';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { MobileHero, MobileWallpaper, SKIN_TONE, toneSurface, type SkinTone } from '@/components/common/mobile-skin';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useSaveShortcut } from '@/hooks/use-save-shortcut';
 import { useConfirm } from '@/components/common/confirm';
@@ -85,8 +86,22 @@ export function PartyListsPage() {
   const openEdit = (l: PartyListDef) => { setEditing(l); setBuilderOpen(true); };
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-center gap-3">
+    <div className="rp-page space-y-5">
+      <MobileWallpaper />
+      <MobileHero
+        label="Parties classified"
+        value={String(parties.length)}
+        chip={`${lists.length} list${lists.length === 1 ? '' : 's'}`}
+        hint={`${counts.unclassified} match no list`}
+      />
+
+      {canEdit && (
+        <button type="button" className="rp-act rp-act-primary w-full justify-center sm:hidden" onClick={openNew}>
+          <Plus className="size-4" /> New list
+        </button>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3 max-sm:hidden">
         <div className="mr-auto">
           <p className="text-muted-foreground text-sm">Green-list your best payers, black-list the risky ones — using your own conditions.</p>
         </div>
@@ -103,8 +118,8 @@ export function PartyListsPage() {
               const st = kindStyle(l);
               const c = counts.m.get(l.id);
               return (
-                <div key={l.id} className={cn('bg-card overflow-hidden rounded-xl border shadow-sm transition-all', tab === l.id && 'ring-primary ring-2')}>
-                  <div className={cn('h-1.5 bg-gradient-to-r', st.bar)} />
+                <div key={l.id} className={cn('bg-card rp-party overflow-hidden rounded-xl border shadow-sm transition-all max-sm:rounded-[20px] max-sm:border-0 max-sm:shadow-none', tab === l.id && 'ring-primary ring-2')}>
+                  <div className={cn('h-1.5 bg-gradient-to-r max-sm:h-[5px]', st.bar)} />
                   <div className="p-3">
                     <div className="flex items-start gap-2">
                       <span className={cn('flex size-8 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset', st.chip)}>{st.icon}</span>
@@ -118,7 +133,7 @@ export function PartyListsPage() {
                     </div>
                     <div className="mt-2.5 flex items-end justify-between">
                       <div>
-                        <div className="text-2xl font-bold tabular-nums leading-none">{c?.members ?? 0}</div>
+                        <div className="rp-money-value text-2xl font-bold tabular-nums leading-none max-sm:mt-0">{c?.members ?? 0}</div>
                         <div className="text-muted-foreground text-xs">parties</div>
                       </div>
                       <div className="text-right">
@@ -136,16 +151,16 @@ export function PartyListsPage() {
           </div>
 
           {/* Party table with filter tabs */}
-          <div className="bg-card overflow-hidden rounded-xl border shadow-sm">
-            <div className="flex flex-wrap items-center gap-2 border-b bg-gradient-to-r from-slate-50 to-transparent px-3 py-2.5">
-              <div className="flex flex-wrap gap-1">
+          <div className="bg-card rp-glass overflow-hidden rounded-xl border shadow-sm max-sm:rounded-[22px] max-sm:border-0 max-sm:shadow-none">
+            <div className="flex flex-wrap items-center gap-2 border-b bg-gradient-to-r from-slate-50 to-transparent px-3 py-2.5 max-sm:border-b-0 max-sm:bg-none">
+              <div className="rp-noscroll flex flex-wrap gap-1 max-sm:flex-nowrap max-sm:gap-2 max-sm:overflow-x-auto">
                 <TabBtn active={tab === 'all'} onClick={() => setTab('all')}>All · {parties.length}</TabBtn>
                 {lists.map((l) => <TabBtn key={l.id} active={tab === l.id} onClick={() => setTab(l.id)} dot={kindStyle(l).dot}>{l.name.split('—')[0].trim()} · {counts.m.get(l.id)?.members ?? 0}</TabBtn>)}
                 <TabBtn active={tab === 'unclassified'} onClick={() => setTab('unclassified')}>Unlisted · {counts.unclassified}</TabBtn>
               </div>
               <div className="relative ml-auto w-full sm:w-56">
                 <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
-                <Input placeholder="Search party or agent…" className="h-9 pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
+                <Input placeholder="Search party or agent…" className="rp-control h-9 pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
               </div>
             </div>
             <PartyTable rows={filtered} lists={lists} />
@@ -160,7 +175,7 @@ export function PartyListsPage() {
 
 function TabBtn({ active, onClick, children, dot }: { active: boolean; onClick: () => void; children: React.ReactNode; dot?: string }) {
   return (
-    <button type="button" onClick={onClick} className={cn('inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors', active ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-slate-100')}>
+    <button type="button" data-on={active} onClick={onClick} className={cn('rp-fpill inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors', active ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-slate-100')}>
       {dot && <span className={cn('size-2 rounded-full', dot)} />}{children}
     </button>
   );
@@ -174,7 +189,53 @@ function PartyTable({ rows, lists }: { rows: PartyClassRow[]; lists: PartyListDe
   const listById = useMemo(() => new Map(lists.map((l) => [l.id, l])), [lists]);
   if (rows.length === 0) return <div className="text-muted-foreground py-12 text-center text-sm">No parties here.</div>;
   return (
-    <div className="overflow-x-auto">
+    <>
+      {/* Phones get a card each — the table below is 900px wide and would only
+          be readable sideways. Same seven metrics, stacked three to a row. */}
+      <div className="flex flex-col gap-3 p-3 sm:hidden">
+        {rows.map((p) => {
+          const m = p.metrics as unknown as Record<string, number | null>;
+          const tone: SkinTone = Number(m.overdue) > 0 ? 'rose' : Number(m.brokenPromises) > 0 ? 'amber' : 'emerald';
+          return (
+            <div key={p.party} className="rp-party">
+              <span aria-hidden className="rp-rail" style={{ background: SKIN_TONE[tone].grad }} />
+              <div className="rp-party-head">
+                <span className="rp-avatar" style={toneSurface(tone)}>{initials(p.party)}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="rp-party-name truncate">{p.party}</div>
+                  <div className="rp-party-sub truncate">{p.metrics.agent || 'No agent'}{p.metrics.region ? ` · ${p.metrics.region}` : ''}</div>
+                </div>
+              </div>
+              <div className="rp-item">
+                {p.matched.length > 0 && (
+                  <div className="mb-2 flex flex-wrap gap-1">
+                    {p.matched.map((id) => {
+                      const l = listById.get(id);
+                      if (!l) return null;
+                      const st = kindStyle(l);
+                      return <span key={id} className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset', st.chip)}><span className={cn('size-1.5 rounded-full', l.kind === 'BLACK' ? 'bg-white' : st.dot)} />{l.name.split('—')[0].trim()}</span>;
+                    })}
+                  </div>
+                )}
+                <div className="rp-row-stats grid-cols-3" style={{ marginTop: 0, paddingTop: 0, borderTop: 0 }}>
+                  {TABLE_METRICS.map((k) => {
+                    const v = m[k];
+                    const danger = (k === 'overdue' && Number(v) > 0) || (k === 'brokenPromises' && Number(v) > 0) || (k === 'oldestOverdueDays' && Number(v) >= 60);
+                    return (
+                      <div key={k} className="min-w-0">
+                        <div className="rp-stat-label">{META_BY_KEY.get(k)?.label}</div>
+                        <div className="rp-stat-value" style={danger ? { color: SKIN_TONE.rose.fg, fontWeight: 800 } : undefined}>{fmtMetric(k, v)}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+    <div className="overflow-x-auto max-sm:hidden">
       <table className="w-full min-w-[900px] text-sm">
         <thead>
           <tr className="text-muted-foreground border-b text-left text-xs uppercase tracking-wide">
@@ -216,6 +277,7 @@ function PartyTable({ rows, lists }: { rows: PartyClassRow[]; lists: PartyListDe
         </tbody>
       </table>
     </div>
+    </>
   );
 }
 

@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import type { PartyBalanceSummary, PromiseState } from '@oms/shared';
 import { cn } from '@/lib/utils';
+import { MoneyCard, SKIN_TONE } from '@/components/common/mobile-skin';
 import { formatDate } from '@/lib/date-format';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { Input } from '@/components/ui/input';
@@ -75,6 +76,10 @@ const RAIL_TONE: Record<Priority, string> = {
   watch: 'bg-amber-500',
   soon: 'bg-sky-500',
   clear: 'bg-slate-300 dark:bg-slate-600',
+};
+/** The same four priorities as a skin tone, for the phone's rail and avatar. */
+const PRIORITY_SKIN: Record<Priority, keyof typeof SKIN_TONE> = {
+  critical: 'rose', watch: 'amber', soon: 'sky', clear: 'emerald',
 };
 function priorityOf(p: PartyBalanceSummary): Priority {
   if (p.promiseState === 'broken' || p.oldestDays >= 60) return 'critical';
@@ -166,9 +171,22 @@ export function RecoveryMoneyStrip({ balances }: { balances: PartyBalanceSummary
   const healthText: Record<string, string> = { rose: 'text-rose-600 dark:text-rose-400', amber: 'text-amber-600 dark:text-amber-400', emerald: 'text-emerald-600 dark:text-emerald-400' };
   const healthBar: Record<string, string> = { rose: 'bg-rose-500', amber: 'bg-amber-500', emerald: 'bg-emerald-500' };
 
+  const cards = [
+    { label: 'Total outstanding', value: inrCompact(totals.outstanding), hint: `${totals.parties} owing part${totals.parties === 1 ? 'y' : 'ies'}`, tone: 'slate' as const },
+    { label: 'Overdue', value: inrCompact(totals.overdue), hint: totals.outstanding > 0 ? `${overduePct}% of book` : undefined, tone: 'rose' as const },
+    { label: 'Due soon (15d)', value: inrCompact(totals.dueSoon), hint: 'not yet overdue', tone: 'sky' as const },
+    { label: 'Promised to pay', value: inrCompact(totals.promised), hint: totals.dueToday > 0 ? `${totals.dueToday} due today` : 'expected in', tone: 'violet' as const },
+    { label: 'Not yet contacted', value: String(notContacted), hint: totals.promisedBroken > 0 ? `${inrCompact(totals.promisedBroken)} broken promises` : 'start working them', tone: 'amber' as const },
+  ];
+
   return (
     <div className="space-y-2.5">
-      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
+      {/* Phones: one rail of glass cards that scrolls sideways, rather than a
+          2-up grid that pushes the worklist below the fold. */}
+      <div className="rp-rail-scroll rp-noscroll sm:hidden">
+        {cards.map((c, i) => <MoneyCard key={c.label} i={i} {...c} />)}
+      </div>
+      <div className="hidden grid-cols-2 gap-2.5 sm:grid sm:grid-cols-3 lg:grid-cols-5">
         {/* Net, so this agrees with the Party Ledger and the Collections report.
             The gross invoice total is on hover, not on the card. */}
         <MoneyKpi
@@ -188,7 +206,7 @@ export function RecoveryMoneyStrip({ balances }: { balances: PartyBalanceSummary
 
       {/* Book-health bar — real overdue/outstanding ratio, not a decorative gauge. */}
       {totals.outstanding > 0 && (
-        <div className="bg-card flex items-center gap-3 rounded-lg border px-3 py-2">
+        <div className="bg-card rp-filterline flex items-center gap-3 rounded-lg border px-3 py-2 max-sm:rounded-2xl max-sm:border-0">
           <ShieldCheck className={cn('size-4 shrink-0', healthText[healthTone])} />
           <div className="min-w-0 flex-1">
             <div className="bg-muted h-1.5 w-full overflow-hidden rounded-full">
@@ -271,7 +289,7 @@ export function OwingPartiesWorklist({ onCollect, onOpenParty, view = 'ALL', onV
   };
 
   return (
-    <section className="bg-card overflow-hidden rounded-xl border shadow-sm">
+    <section className="bg-card rp-glass overflow-hidden rounded-xl border shadow-sm max-sm:rounded-[22px] max-sm:border-0 max-sm:shadow-none">
       <style>{PAYDESK_CSS}</style>
       <div className="from-primary/[0.06] flex flex-wrap items-center gap-2 border-b bg-gradient-to-r via-transparent to-transparent px-3 py-2.5">
         <HandCoins className="text-primary size-4 shrink-0" />
@@ -409,10 +427,10 @@ export function OwingPartiesWorklist({ onCollect, onOpenParty, view = 'ALL', onV
             {balances.map((p, i) => {
               const pr = priorityOf(p);
               return (
-                <div key={p.partyName} className="paydesk-row-in bg-card relative overflow-hidden rounded-xl border p-3 shadow-sm" style={{ animationDelay: `${Math.min(i, 10) * 40}ms` }}>
-                  <span className={cn('absolute inset-y-0 left-0 w-1', RAIL_TONE[pr])} aria-hidden />
-                  <div className="flex items-start gap-2 pl-1.5">
-                    <span className="bg-primary/10 text-primary flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-bold">{initials(p.partyName)}</span>
+                <div key={p.partyName} className="paydesk-row-in bg-card rp-party relative overflow-hidden rounded-xl border p-3 shadow-sm max-sm:rounded-[20px] max-sm:border-0 max-sm:pl-[17px] max-sm:shadow-none" style={{ animationDelay: `${Math.min(i, 10) * 40}ms` }}>
+                  <span className={cn('rp-rail absolute inset-y-0 left-0 w-1 max-sm:w-[5px]', RAIL_TONE[pr])} aria-hidden style={{ background: SKIN_TONE[PRIORITY_SKIN[pr]].grad }} />
+                  <div className="flex items-start gap-2 pl-1.5 max-sm:pl-0">
+                    <span className="bg-primary/10 text-primary rp-avatar flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-bold max-sm:size-[34px]" style={{ background: SKIN_TONE[PRIORITY_SKIN[pr]].bg, color: SKIN_TONE[PRIORITY_SKIN[pr]].fg }}>{initials(p.partyName)}</span>
                     <button type="button" onClick={() => onOpenParty(p.partyName)} className="min-w-0 flex-1 cursor-pointer text-left">
                       <div className="truncate font-medium">{p.partyName}</div>
                       <div className="text-muted-foreground truncate text-xs">{p.agent || 'No agent'} · {p.invoiceCount} inv</div>
@@ -428,12 +446,12 @@ export function OwingPartiesWorklist({ onCollect, onOpenParty, view = 'ALL', onV
                       ) : null}
                     </div>
                   </div>
-                  <div className="mt-2.5 flex items-center gap-2 pl-1.5">
+                  <div className="mt-2.5 flex items-center gap-2 pl-1.5 max-sm:pl-0">
                     <div className="flex flex-1 flex-wrap items-center gap-1.5">
                       {promiseChip(p.promiseState) ?? (p.hasFollowup ? <Chip tone="slate">In progress</Chip> : <Chip tone="slate">Not contacted</Chip>)}
                       {p.lastReceiptAt && <span className="text-muted-foreground text-[11px]">paid {formatDate(p.lastReceiptAt)}</span>}
                     </div>
-                    <Button size="sm" className="h-8 shrink-0 gap-1.5 rounded-full px-3 text-xs font-semibold shadow-sm transition-transform active:scale-95" onClick={() => collectFrom(p)}>
+                    <Button size="sm" className="rp-act rp-act-primary h-8 shrink-0 gap-1.5 rounded-full px-3 text-xs font-semibold shadow-sm transition-transform active:scale-95 max-sm:rounded-xl" onClick={() => collectFrom(p)}>
                       <Phone className="size-3.5" /> Collect
                     </Button>
                   </div>
