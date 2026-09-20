@@ -5,6 +5,13 @@ import { BrowserRouter } from 'react-router-dom';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import '@fontsource-variable/montserrat';
+// The Reports mobile skin's three faces, as the design specifies them:
+// Plus Jakarta Sans sets its text, Space Grotesk its headings, and IBM Plex
+// Sans every figure (its tabular numerals are what the KPI tiles and bars are
+// aligned on). All three are variable builds, so each is one file.
+import '@fontsource-variable/plus-jakarta-sans';
+import '@fontsource-variable/space-grotesk';
+import '@fontsource-variable/ibm-plex-sans';
 // Poppins has no variable build on Google Fonts, so the weights the UI uses are
 // pulled in individually (400 body, 500/600 labels, 700 headings).
 import '@fontsource/poppins/400.css';

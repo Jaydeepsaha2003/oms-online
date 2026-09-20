@@ -267,6 +267,10 @@
   --font-calibri: Calibri, Carlito, 'Segoe UI', var(--font-sans);
   --font-montserrat: 'Montserrat Variable', var(--font-sans);
   --font-poppins: Poppins, var(--font-sans);
+  /* The Reports mobile skin's three faces (see the `.rp-*` block). */
+  --font-jakarta: 'Plus Jakarta Sans Variable', var(--font-sans);
+  --font-grotesk: 'Space Grotesk Variable', var(--font-jakarta);
+  --font-plex: 'IBM Plex Sans Variable', var(--font-jakarta);
   /* flowbite-react's `primary-*` shades (Datepicker selected day), mapped to blue. */
   --color-primary-300: var(--color-blue-300);
   --color-primary-600: var(--color-blue-600);
@@ -1395,6 +1399,7 @@ select:not(:disabled):not([multiple]):focus-visible {
   .rp-page {
     position: relative; z-index: 1; color: #0a1730;
     display: flex; flex-direction: column; gap: 12px;
+    font-family: var(--font-jakarta);
   }
   .rp-page > * { margin: 0; }
   /* The filter strip continues the hero's blue block — no gap between them. */
@@ -1440,12 +1445,13 @@ select:not(:disabled):not([multiple]):focus-visible {
     -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.9), transparent 70%);
   }
   .rp-hero-title {
-    font-family: var(--font-montserrat);
+    font-family: var(--font-grotesk);
     font-size: 21px; font-weight: 700; letter-spacing: -0.025em; line-height: 1.16;
   }
   .rp-hero-sub { margin-top: 2px; font-size: 11px; font-weight: 600; color: #cfe0ff; letter-spacing: 0.02em; }
   .rp-hero-label { font-size: 10px; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; color: #bed4ff; }
   .rp-hero-value {
+    font-family: var(--font-plex);
     margin-top: 3px; font-size: 38px; font-weight: 600; letter-spacing: -0.03em; line-height: 1;
     font-variant-numeric: tabular-nums;
     animation: rp-pop 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.1) both;
@@ -1540,7 +1546,7 @@ select:not(:disabled):not([multiple]):focus-visible {
   .rp-card-head { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 13px 14px 0; }
   .rp-card-title {
     min-width: 0; flex: 1;
-    font-family: var(--font-montserrat);
+    font-family: var(--font-grotesk);
     font-size: 14.5px; font-weight: 700; letter-spacing: -0.015em; line-height: 1.3;
   }
   .rp-card-right { flex: none; max-width: 100%; margin-left: auto; font-size: 10px; font-weight: 700; color: #52658a; text-align: right; line-height: 1.3; }
@@ -1568,7 +1574,7 @@ select:not(:disabled):not([multiple]):focus-visible {
     background: linear-gradient(150deg, #60a5fa, #4338ca); border-radius: 10px; color: #fff;
     box-shadow: 0 4px 12px -4px rgba(67, 56, 202, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.5);
   }
-  .rp-summary-title { font-family: var(--font-montserrat); font-size: 15px; font-weight: 700; letter-spacing: -0.015em; }
+  .rp-summary-title { font-family: var(--font-grotesk); font-size: 15px; font-weight: 700; letter-spacing: -0.015em; }
   .rp-summary-count { margin-left: auto; font-size: 10.5px; font-weight: 700; color: #52658a; }
   .rp-point { display: flex; align-items: flex-start; gap: 10px; animation: rp-sweep 0.46s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
   .rp-point > span:last-child { min-width: 0; font-size: 12.5px; font-weight: 500; line-height: 1.5; color: #2b3f5e; }
@@ -1596,6 +1602,7 @@ select:not(:disabled):not([multiple]):focus-visible {
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .rp-kpi-value {
+    font-family: var(--font-plex);
     position: relative; font-size: 24px; font-weight: 600; letter-spacing: -0.025em;
     font-variant-numeric: tabular-nums; line-height: 1.08; color: #0a1730; word-break: break-word;
   }
@@ -1613,7 +1620,7 @@ select:not(:disabled):not([multiple]):focus-visible {
     min-width: 0; flex: 1; font-size: 12.5px; font-weight: 700; color: #182a48;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .rp-bar-value { flex: none; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .rp-bar-value { font-family: var(--font-plex); flex: none; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .rp-bar-track {
     display: flex; height: 9px; background: rgba(15, 35, 80, 0.09); border-radius: 999px; overflow: hidden;
     box-shadow: inset 0 1px 2px rgba(13, 38, 92, 0.14);
@@ -1625,7 +1632,7 @@ select:not(:disabled):not([multiple]):focus-visible {
   .rp-funnel { display: flex; flex-direction: column; gap: 13px; }
   .rp-funnel-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
   .rp-funnel-label { flex: 1; font-size: 12.5px; font-weight: 700; color: #182a48; }
-  .rp-funnel-value { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .rp-funnel-value { font-family: var(--font-plex); font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
   .rp-funnel-pct { font-size: 10.5px; font-weight: 700; color: #52658a; font-variant-numeric: tabular-nums; }
   .rp-funnel-track {
     height: 28px; background: rgba(15, 35, 80, 0.08); border-radius: 10px; overflow: hidden;
@@ -1645,7 +1652,7 @@ select:not(:disabled):not([multiple]):focus-visible {
     animation: rp-pop 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.1) both;
   }
   .rp-chip-label { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.09em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .rp-chip-count { margin-top: 4px; font-size: 21px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.025em; line-height: 1; }
+  .rp-chip-count { font-family: var(--font-plex); margin-top: 4px; font-size: 21px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.025em; line-height: 1; }
   .rp-chip-value { margin-top: 2px; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
   /* ── row cards (the mobile form of every report table) ─────────────────*/
@@ -1662,6 +1669,7 @@ select:not(:disabled):not([multiple]):focus-visible {
     flex: none; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
     background: linear-gradient(160deg, rgba(255, 255, 255, 0.9), rgba(219, 232, 255, 0.75));
     border: 1px solid rgba(255, 255, 255, 0.9); border-radius: 10px;
+    font-family: var(--font-plex);
     font-size: 11.5px; font-weight: 600; color: #1d4ed8; font-variant-numeric: tabular-nums;
     box-shadow: 0 2px 6px -3px rgba(13, 38, 92, 0.4);
   }
@@ -1680,7 +1688,7 @@ select:not(:disabled):not([multiple]):focus-visible {
     border-top: 1px solid rgba(15, 35, 80, 0.1);
   }
   .rp-stat-label { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: #52658a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .rp-stat-value { margin-top: 3px; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; color: #0a1730; }
+  .rp-stat-value { font-family: var(--font-plex); margin-top: 3px; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; color: #0a1730; }
   .rp-pill {
     display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 999px;
     font-size: 10px; font-weight: 800; letter-spacing: 0.02em;
