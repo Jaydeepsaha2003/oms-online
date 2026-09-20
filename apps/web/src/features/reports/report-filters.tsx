@@ -126,17 +126,30 @@ function activeCount(f: FilterState): number {
 /**
  * The report filter bar — date range (+ presets), customer, agent, region.
  *
- * Desktop: the same always-visible inline row it always had. Below `sm` that
- * row would either wrap into a wall of controls or force horizontal scroll —
- * neither is usable one-handed — so it collapses to a single glass summary
- * chip plus a "Filter" button (badge count) that opens the fields in a bottom
- * sheet, the same Filter-sheet pattern already used across the app (Quotations,
- * Tally Reconciliation, …).
+ * Desktop: the same always-visible inline row it always had.
+ *
+ * Below `sm` it becomes the rest of the mockup's header. `ReportHeader` draws
+ * the blue hero with square bottom corners and this continues the same blue
+ * block directly beneath it (the page gap is closed in CSS), holding
+ * the quick-range chips and the Filter button, and carrying the 30px bottom
+ * rounding. The applied filters then read as the first glass chip of the
+ * scroller, with Reset on it — exactly the mockup's layout. The fields
+ * themselves live in a bottom sheet, the pattern already used across the app.
+ *
+ * It relies on being rendered immediately after `ReportHeader`, which is true
+ * on all nine reports.
  */
 export function ReportFilterBar({ f, setF, active, onReset }: { f: FilterState; setF: (u: (p: FilterState) => FilterState) => void; active: boolean; onReset: () => void }) {
   const [sheetOpen, setSheetOpen] = useState(false);
+  const { data } = useReportFilterOptions();
   const count = activeCount(f);
   const fmtD = (v: string) => (v ? v.split('-').reverse().join('-') : 'any');
+  const custName = f.customerId ? data?.customers.find((c) => String(c.id) === f.customerId)?.name ?? 'Customer set' : 'All customers';
+  // Which preset (if any) the current range is exactly — lights that chip up.
+  const currentPreset = PRESETS.find((p) => {
+    const r = presetRange(p);
+    return r.from === f.from && r.to === f.to;
+  });
 
   return (
     <>
@@ -155,29 +168,36 @@ export function ReportFilterBar({ f, setF, active, onReset }: { f: FilterState; 
         </Button>
       </div>
 
-      {/* Phones: glass summary chip + Filter button, matching the reports mobile skin. */}
-      <div className="rp-rise flex items-center gap-2 sm:hidden">
-        <div className="min-w-0 flex-1 rounded-2xl border border-white/76 bg-white/55 px-3 py-2 text-[11px] font-semibold text-slate-600 shadow-[0_6px_18px_-12px_rgba(13,38,92,.4)] backdrop-blur-xl dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-300">
-          <span className="block truncate">{fmtD(f.from)} → {fmtD(f.to)} · {f.customerId ? 'Customer set' : 'All customers'} · {f.agent || 'All agents'} · {f.region || 'All regions'}</span>
+      {/* Phones: the blue header continues here — range chips + Filter. */}
+      <div className="rp-headbar sm:hidden">
+        <div className="relative flex items-center gap-2">
+          <div className="rp-noscroll flex min-w-0 flex-1 gap-[7px] overflow-x-auto">
+            {PRESETS.map((p) => (
+              <button
+                key={p}
+                type="button"
+                className="rp-range-chip"
+                data-on={currentPreset === p}
+                onClick={() => setF((prev) => ({ ...prev, ...presetRange(p) }))}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+          <button type="button" className="rp-hero-btn shrink-0" onClick={() => setSheetOpen(true)} aria-label="Filters">
+            <Filter className="size-3.5" /> Filter
+            {count > 0 && <span className="rp-hero-badge">{count}</span>}
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() => setSheetOpen(true)}
-          aria-label="Filters"
-          className={cn(
-            'relative flex h-[38px] shrink-0 items-center gap-1.5 rounded-2xl border px-3 text-[12px] font-bold shadow-sm active:scale-95',
-            active
-              ? 'border-blue-300 bg-gradient-to-br from-blue-600 to-blue-800 text-white'
-              : 'border-white/80 bg-white/70 text-slate-700 backdrop-blur-xl dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-200',
-          )}
-        >
-          <Filter className="size-3.5" /> Filter
-          {count > 0 && (
-            <span className="absolute -top-1.5 -right-1.5 flex size-[18px] items-center justify-center rounded-full bg-gradient-to-br from-rose-500 to-rose-700 text-[10px] font-extrabold text-white shadow-[0_2px_8px_-2px_rgba(225,29,72,.9)]">
-              {count}
-            </span>
-          )}
-        </button>
+      </div>
+
+      {/* Phones: what is applied right now, with the way out. */}
+      <div className="rp-filterline sm:hidden">
+        <span className="rp-filterline-icon"><Filter className="size-3" /></span>
+        <div className="min-w-0 flex-1 truncate">
+          {fmtD(f.from)} → {fmtD(f.to)} · {custName} · {f.agent || 'All agents'} · {f.region || 'All regions'}
+        </div>
+        {active && <button type="button" className="rp-reset" onClick={onReset}>Reset</button>}
       </div>
 
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>

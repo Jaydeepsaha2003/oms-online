@@ -6,7 +6,7 @@ import { inrCompact, inrFull } from '@/features/dashboard/format';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
 import { Button } from '@/components/ui/button';
-import { BANK_COLOR, CASH_COLOR, CASH_EDGE, Kpi, RankedBars, ReportCard, ReportHeader, ReportRow, ReportRowList, ReportSummary, type Pill } from './report-kit';
+import { BANK_COLOR, CASH_COLOR, CASH_EDGE, Kpi, KpiGrid, RankedBars, ReportCard, ReportChips, ReportHeader, ReportRow, ReportRowList, ReportSummary, type KpiTone, type Pill } from './report-kit';
 import { ReportFilterBar, useReportFilters } from './report-filters';
 import { useCollectionsReport } from './use-reports';
 
@@ -58,8 +58,14 @@ export function CollectionsReportPage() {
   const rk = data?.recoveryKpis;
 
   return (
-    <div className="space-y-5">
-      <ReportHeader title="Collections & Recovery" subtitle="How much is owed, how old it is, and who to chase first." icon={HandCoins} asOf={data?.asOf} />
+    <div className="rp-page space-y-5">
+      <ReportHeader
+        title="Collections & Recovery"
+        subtitle="How much is owed, how old it is, and who to chase first."
+        icon={HandCoins}
+        asOf={data?.asOf}
+        hero={data ? { label: 'Total outstanding', value: inrCompact(money(data.totalOutstanding)), hint: `${inrCompact(money(data.overdue))} of it past due` } : undefined}
+      />
 
       <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
 
@@ -78,7 +84,7 @@ export function CollectionsReportPage() {
         ] : []}
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <KpiGrid className="gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {/* Every money tile on this page is a NET balance — what the parties
             actually owe once their own advances are applied. The gross invoice
             total lives on hover, not on the face of the card: it is background
@@ -94,32 +100,31 @@ export function CollectionsReportPage() {
         <Kpi label="Overdue" value={data ? inrCompact(data.overdue) : '—'} title={data ? inrFull(data.overdue) : undefined} hint="past due date" loading={isLoading} tone="amber" />
         <Kpi label="Due soon" value={data ? inrCompact(data.dueSoon) : '—'} title={data ? inrFull(data.dueSoon) : undefined} hint="next 15 days" loading={isLoading} tone="blue" />
         <Kpi label="Advance held" value={data ? inrCompact(data.advanceHeld) : '—'} title={data ? inrFull(data.advanceHeld) : undefined} hint="money in hand" loading={isLoading} tone="emerald" />
-      </div>
+      </KpiGrid>
 
       {/* Recovery CRM KPIs */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
+      <KpiGrid className="gap-4 sm:grid-cols-2 lg:grid-cols-6">
         <Kpi label="Collection rate" value={data?.collectionRate != null ? `${Math.round(data.collectionRate * 100)}%` : '—'} hint="collected ÷ billed (period)" loading={isLoading} tone="emerald" />
         <Kpi label="DSO" value={data?.dsoDays != null ? `${data.dsoDays}d` : '—'} hint="days sales outstanding" loading={isLoading} tone="slate" />
         <Kpi label="Promised to pay" value={data ? inrCompact(rk?.promisedValue ?? 0) : '—'} title={data ? inrFull(rk?.promisedValue ?? 0) : undefined} hint={data ? `${rk?.promisedParties ?? 0} parties` : undefined} loading={isLoading} tone="violet" />
         <Kpi label="Broken promises" value={data ? inrCompact(rk?.brokenPromiseValue ?? 0) : '—'} title={data ? inrFull(rk?.brokenPromiseValue ?? 0) : undefined} hint={data ? `${rk?.promisesOverdue ?? 0} parties` : undefined} loading={isLoading} tone="rose" />
         <Kpi label="Promises due today" value={data ? String(rk?.promisesDueToday ?? 0) : '—'} hint="follow up now" loading={isLoading} tone="amber" />
         <Kpi label="Never contacted" value={data ? String(rk?.neverContacted ?? 0) : '—'} hint="owing, no follow-up" loading={isLoading} tone="blue" />
-      </div>
+      </KpiGrid>
 
       {/* Recovery pipeline */}
       <ReportCard title="Recovery pipeline" right={<Button asChild variant="outline" size="sm"><Link to="/crm/payments"><PhoneCall className="size-3.5" /> Work follow-ups</Link></Button>}>
         {isLoading ? <div className="bg-muted h-16 animate-pulse rounded" /> : !data?.pipeline?.length ? (
           <div className="text-muted-foreground py-4 text-center text-sm">No owing parties.</div>
         ) : (
-          <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
-            {data.pipeline.map((s) => (
-              <div key={s.stage} className={cn('rounded-lg px-3 py-2 ring-1 ring-inset', STAGE_TONE[s.stage])}>
-                <div className="text-xs font-semibold uppercase tracking-wide opacity-80">{s.stage}</div>
-                <div className="mt-0.5 text-lg font-bold tabular-nums">{s.parties}</div>
-                <div className="text-xs tabular-nums opacity-80" title={inrFull(s.value)}>{inrCompact(s.value)}</div>
-              </div>
-            ))}
-          </div>
+          <ReportChips
+            chips={data.pipeline.map((s) => ({
+              label: s.stage,
+              count: String(s.parties),
+              value: inrCompact(s.value),
+              tone: STAGE_PILL_TONE[s.stage] as KpiTone,
+            }))}
+          />
         )}
       </ReportCard>
 

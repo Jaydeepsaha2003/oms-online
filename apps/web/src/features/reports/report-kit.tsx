@@ -1,39 +1,120 @@
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { ArrowDownRight, ArrowRight, ArrowUpRight, Hammer, Lightbulb, type LucideIcon } from 'lucide-react';
 import type { PeriodMetric, ReportSlice } from '@oms/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
 
-/**
- * The strip above a report: its one-line purpose, its actions, and how fresh the
- * figures are.
+/*
+ * Two renderings, one set of props.
  *
- * It no longer repeats the report's NAME or its icon on desktop — the topbar
- * already shows both there. On a phone there is no topbar icon to lean on (the
- * app bar just names the screen), so below `sm` this renders a small gradient
- * hero card instead — icon, title and "as of", the same glass-on-blue language
- * as the rest of the reports' mobile skin — and the plain desktop strip is
- * hidden. Every existing call site is untouched: same props, richer mobile
- * output.
+ * Desktop keeps the plain bordered cards the reports have always had. Below
+ * `sm` every kit piece switches to the shared Reports mobile design: frosted
+ * glass floating on a living liquid wallpaper, transcribed from the mockup
+ * (see the `.rp-*` block in index.css, which holds the actual numbers). The
+ * split is `sm:hidden` / `hidden sm:block` rather than utility overrides
+ * because the two versions differ in structure — sheens, tone dots and stat
+ * grids exist only on the phone — not just in colour.
  */
-export function ReportHeader({ title, subtitle, icon: Icon, asOf, actions }: { title: string; subtitle: string; icon: LucideIcon; asOf?: string; actions?: ReactNode }) {
+
+/** Tone palette — the mockup's own gradients, tints and rings. */
+export type KpiTone = 'blue' | 'emerald' | 'amber' | 'violet' | 'rose' | 'slate';
+type ToneSpec = { grad: string; bg: string; fg: string; ring: string; deskGrad: string };
+const TONE: Record<KpiTone, ToneSpec> = {
+  blue: { grad: 'linear-gradient(150deg,#60a5fa,#1d4ed8)', bg: 'rgba(219,234,254,.72)', fg: '#1e40af', ring: 'rgba(59,130,246,.34)', deskGrad: 'from-blue-400 to-blue-600' },
+  emerald: { grad: 'linear-gradient(150deg,#34d399,#047857)', bg: 'rgba(209,250,229,.72)', fg: '#065f46', ring: 'rgba(16,185,129,.34)', deskGrad: 'from-emerald-400 to-emerald-600' },
+  amber: { grad: 'linear-gradient(150deg,#fbbf24,#b45309)', bg: 'rgba(254,243,199,.75)', fg: '#92400e', ring: 'rgba(245,158,11,.36)', deskGrad: 'from-amber-400 to-amber-600' },
+  violet: { grad: 'linear-gradient(150deg,#a78bfa,#6d28d9)', bg: 'rgba(237,233,254,.75)', fg: '#5b21b6', ring: 'rgba(139,92,246,.34)', deskGrad: 'from-violet-400 to-violet-600' },
+  rose: { grad: 'linear-gradient(150deg,#fb7185,#be123c)', bg: 'rgba(255,228,230,.75)', fg: '#9f1239', ring: 'rgba(244,63,94,.34)', deskGrad: 'from-rose-400 to-rose-600' },
+  slate: { grad: 'linear-gradient(150deg,#94a3b8,#334155)', bg: 'rgba(226,232,240,.75)', fg: '#334155', ring: 'rgba(100,116,139,.32)', deskGrad: 'from-slate-400 to-slate-600' },
+};
+/** A tinted surface (pill, chip) in a given tone. */
+export const toneSurface = (tone: KpiTone): CSSProperties => ({
+  background: TONE[tone].bg,
+  color: TONE[tone].fg,
+  boxShadow: `inset 0 0 0 1px ${TONE[tone].ring}, inset 0 1px 0 rgba(255,255,255,.7)`,
+});
+/** Stagger helper — every list in the mockup enters one item at a time. */
+const delay = (ms: number): CSSProperties => ({ animationDelay: `${ms}ms` });
+
+/**
+ * The living wallpaper: a soft vertical plate with three tinted blobs
+ * drifting across it on their own clocks. Fixed, so it stays still while the
+ * report scrolls over it. Rendered once per page by {@link ReportHeader}, so
+ * no page has to remember to include it.
+ */
+function ReportWallpaper() {
+  return (
+    <div aria-hidden className="rp-wallpaper sm:hidden">
+      <span className="rp-blob rp-blob-1" />
+      <span className="rp-blob rp-blob-2" />
+      <span className="rp-blob rp-blob-3" />
+    </div>
+  );
+}
+
+/** The headline figure the mockup puts on the blue, above the range chips. */
+export interface ReportHero {
+  label: string;
+  value: string;
+  hint?: string;
+  delta?: { dir: 'up' | 'down' | 'flat'; text: string };
+}
+
+/**
+ * The strip above a report: its one-line purpose, its actions, and how fresh
+ * the figures are.
+ *
+ * Desktop stays the plain subtitle row — the topbar already names the report
+ * there. On a phone this is the mockup's blue hero: title, "as of", the one
+ * headline figure, and the wallpaper behind everything. Its bottom corners
+ * stay square because {@link ReportFilterBar} continues the same blue block
+ * directly beneath it and carries the rounding.
+ */
+export function ReportHeader({ title, subtitle, icon: Icon, asOf, actions, hero }: {
+  title: string;
+  subtitle: string;
+  icon: LucideIcon;
+  asOf?: string;
+  actions?: ReactNode;
+  hero?: ReportHero;
+}) {
   const asOfText = asOf ? new Date(asOf).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : null;
+  const deltaTone = hero?.delta ? (hero.delta.dir === 'up' ? '#a7f3d0' : hero.delta.dir === 'down' ? '#fecdd3' : '#e2e8f0') : undefined;
+
   return (
     <div aria-label={title}>
-      {/* Phones: gradient hero, matching the Reports mobile mockup. */}
-      <div className="rp-rise relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#0f2356]/95 via-[#1d4ed8]/90 to-[#2563eb]/85 p-4 text-white shadow-[0_18px_40px_-22px_rgba(9,26,74,.9)] sm:hidden">
-        <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(85%_120%_at_14%_-14%,rgba(255,255,255,.3),transparent_58%)]" />
-        <div className="relative flex items-start gap-3">
-          <span className="flex size-10 shrink-0 items-center justify-center rounded-2xl border border-white/30 bg-white/15 shadow-inner backdrop-blur-md">
-            <Icon className="size-5" />
+      <ReportWallpaper />
+
+      {/* Phones: the mockup's hero. */}
+      <div className="rp-hero sm:hidden">
+        <span aria-hidden className="rp-hero-sheen" />
+        <span aria-hidden className="rp-hero-grid" />
+        <div className="relative flex items-start gap-2.5">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-[13px] border border-white/35 bg-white/[0.16] shadow-[inset_0_1px_0_rgba(255,255,255,.4)] backdrop-blur-md">
+            <Icon className="size-[18px]" />
           </span>
           <div className="min-w-0 flex-1">
-            <h1 className="truncate text-[19px] leading-tight font-bold tracking-tight">{title}</h1>
-            <p className="mt-1 text-[12px] leading-snug font-medium text-white/80">{subtitle}</p>
-            {asOfText && <p className="mt-1.5 text-[10.5px] font-semibold text-blue-100/90">as of {asOfText}</p>}
+            <h1 className="rp-hero-title truncate">{title}</h1>
+            <p className="rp-hero-sub">{asOfText ? `as of ${asOfText}` : subtitle}</p>
           </div>
         </div>
+        {hero && (
+          <div className="relative flex items-end gap-3 pt-3">
+            <div className="min-w-0">
+              <div className="rp-hero-label">{hero.label}</div>
+              <div className="rp-hero-value">{hero.value}</div>
+            </div>
+            <div className="ml-auto flex flex-col items-end gap-1.5 pb-0.5">
+              {hero.delta && (
+                <span className="rp-hero-delta" style={{ color: deltaTone }}>
+                  {hero.delta.dir === 'up' ? '↑' : hero.delta.dir === 'down' ? '↓' : '→'} {hero.delta.text}
+                </span>
+              )}
+              {hero.hint && <span className="rp-hero-hint">{hero.hint}</span>}
+            </div>
+          </div>
+        )}
         {actions && <div className="relative mt-3 flex flex-wrap items-center gap-2">{actions}</div>}
       </div>
 
@@ -67,30 +148,16 @@ export function DeltaBadge({ metric }: { metric: PeriodMetric }) {
   );
 }
 
-export type KpiTone = 'blue' | 'emerald' | 'amber' | 'violet' | 'rose' | 'slate';
-const TONE: Record<KpiTone, string> = {
-  blue: 'from-blue-400 to-blue-600',
-  emerald: 'from-emerald-400 to-emerald-600',
-  amber: 'from-amber-400 to-amber-600',
-  violet: 'from-violet-400 to-violet-600',
-  rose: 'from-rose-400 to-rose-600',
-  slate: 'from-slate-400 to-slate-600',
-};
-/** Tinted ring for the mobile glass KPI tile — one per tone, used only below `sm`. */
-const TONE_RING: Record<KpiTone, string> = {
-  blue: 'max-sm:shadow-[0_14px_30px_-20px_rgba(29,78,216,.55)]',
-  emerald: 'max-sm:shadow-[0_14px_30px_-20px_rgba(4,120,87,.55)]',
-  amber: 'max-sm:shadow-[0_14px_30px_-20px_rgba(180,83,9,.55)]',
-  violet: 'max-sm:shadow-[0_14px_30px_-20px_rgba(109,40,217,.55)]',
-  rose: 'max-sm:shadow-[0_14px_30px_-20px_rgba(190,18,60,.55)]',
-  slate: 'max-sm:shadow-[0_14px_30px_-20px_rgba(51,65,85,.45)]',
-};
+/**
+ * Wraps a page's KPIs so the phone gets the mockup's two-column tile grid
+ * while desktop keeps whatever responsive grid the page already declared.
+ * Pages pass their existing grid classes; they apply from `sm` up only.
+ */
+export function KpiGrid({ className, children }: { className?: string; children: ReactNode }) {
+  return <div className={cn('rp-kpis sm:grid', className)}>{children}</div>;
+}
 
-/** Compact headline KPI card with an optional icon badge and delta.
- *
- *  Desktop keeps the plain bordered card it always had. Below `sm` it becomes
- *  a frosted glass tile — tone-tinted shadow, rounded-2xl, a subtle rise-in —
- *  matching the Reports mobile mockup's KPI grid. */
+/** Compact headline KPI — a glass tile on a phone, the plain card on desktop. */
 export function Kpi({ label, value, hint, icon: Icon, tone = 'blue', metric, loading, title }: {
   label: string;
   value: string;
@@ -101,29 +168,53 @@ export function Kpi({ label, value, hint, icon: Icon, tone = 'blue', metric, loa
   loading?: boolean;
   title?: string;
 }) {
+  const t = TONE[tone];
+  const deltaTone: KpiTone = metric?.direction === 'up' ? 'emerald' : metric?.direction === 'down' ? 'rose' : 'slate';
+  const deltaText = metric ? (metric.deltaPct == null ? (metric.current > 0 ? 'New' : '—') : `${metric.deltaPct > 0 ? '+' : ''}${metric.deltaPct.toFixed(1)}%`) : null;
+
   return (
-    <Card
-      className={cn(
-        'card-hover gap-0 max-sm:rp-rise max-sm:rounded-2xl max-sm:border-white/70 max-sm:bg-white/65 max-sm:backdrop-blur-xl max-sm:dark:border-white/10 max-sm:dark:bg-white/[0.06]',
-        TONE_RING[tone],
-      )}
-    >
-      <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-muted-foreground text-sm font-medium">{label}</CardTitle>
-        {Icon && <span className={cn('flex size-9 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm max-sm:rounded-lg max-sm:shadow-md', TONE[tone])}><Icon className="size-4.5" /></span>}
-      </CardHeader>
-      <CardContent>
-        {loading ? (
-          <div className="bg-muted h-8 w-24 animate-pulse rounded" />
-        ) : (
-          <div className="text-2xl font-bold tracking-tight tabular-nums" title={title}>{value}</div>
-        )}
-        <div className="text-muted-foreground mt-1 flex items-center gap-1.5 text-xs">
-          {metric && !loading && <DeltaBadge metric={metric} />}
-          {hint && <span>{hint}</span>}
+    <>
+      {/* Phones */}
+      <div className="rp-glass rp-kpi sm:hidden">
+        <span aria-hidden className="rp-kpi-sheen" />
+        <div className="relative flex min-w-0 items-center gap-1.5">
+          <span className="rp-kpi-dot" style={{ background: t.grad }} />
+          <span className="rp-kpi-label">{label}</span>
         </div>
-      </CardContent>
-    </Card>
+        {loading ? (
+          <div className="h-6 w-20 animate-pulse rounded bg-slate-900/10" />
+        ) : (
+          <div className="rp-kpi-value" data-long={value.length > 9} title={title}>{value}</div>
+        )}
+        <div className="relative flex flex-wrap items-center gap-1.5">
+          {deltaText && !loading && (
+            <span className="rp-delta" style={toneSurface(deltaTone)}>
+              {metric!.direction === 'up' ? '↑' : metric!.direction === 'down' ? '↓' : '→'} {deltaText}
+            </span>
+          )}
+          {hint && <span className="rp-kpi-hint">{hint}</span>}
+        </div>
+      </div>
+
+      {/* Desktop */}
+      <Card className="card-hover hidden gap-0 sm:block">
+        <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="text-muted-foreground text-sm font-medium">{label}</CardTitle>
+          {Icon && <span className={cn('flex size-9 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm', t.deskGrad)}><Icon className="size-4.5" /></span>}
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="bg-muted h-8 w-24 animate-pulse rounded" />
+          ) : (
+            <div className="text-2xl font-bold tracking-tight tabular-nums" title={title}>{value}</div>
+          )}
+          <div className="text-muted-foreground mt-1 flex items-center gap-1.5 text-xs">
+            {metric && !loading && <DeltaBadge metric={metric} />}
+            {hint && <span>{hint}</span>}
+          </div>
+        </CardContent>
+      </Card>
+    </>
   );
 }
 
@@ -138,97 +229,287 @@ const BAR_COLORS = ['#3b82f6', '#8b5cf6', '#f59e0b', '#10b981', '#ef4444', '#06b
  * A DEEP blue against a LIGHT green, not two mid tones: these two always sit
  * flush against each other — stacked in a bar, adjacent in a split rail — with
  * no gap to separate them, so they have to differ in lightness as well as hue.
- * This pair separates 4.5:1 where the old #3b82f6/#10b981 managed 1.6:1, which
- * is why a cash segment used to read as a shade of the bank one.
- *
- * The light green is weak on white on its own (1.9:1), so anything filled with
- * CASH_COLOR against the card takes CASH_EDGE as its outline: the fill carries
- * the separation, the stroke carries the edge.
  */
 export const BANK_COLOR = '#1e40af';
+export const BANK_GRAD = 'linear-gradient(90deg,#2c5fd6,#1e3a8a)';
 export const CASH_COLOR = '#34d399';
+export const CASH_GRAD = 'linear-gradient(90deg,#34d399,#0ea371)';
 export const CASH_EDGE = '#059669';
 
-/** A ranked horizontal-bar list (no chart lib) — great for top parties / regions / agents.
- *  When a slice carries `bank`/`cash` (real money with a payment mode — billed via
- *  Challan.b/.c, or collected via receipt mode), its bar renders as a Bank+Cash
- *  stacked split instead of one solid colour, with a small legend up top. Slices
- *  without a mode (counts, ratios, physical quantities) keep the plain single-colour bar. */
-export function RankedBars({ data, money = true, emptyText = 'No data.' }: { data: ReportSlice[]; money?: boolean; emptyText?: string }) {
+/** A ranked horizontal-bar list (no chart lib) — top parties / regions / agents.
+ *  A slice carrying `bank`/`cash` splits its bar into the Bank+Cash pair with a
+ *  legend up top; slices without a payment mode keep one solid colour. */
+export function RankedBars({ data, money = true, emptyText = 'No data.', subFor }: {
+  data: ReportSlice[];
+  money?: boolean;
+  emptyText?: string;
+  /** Overrides the "x% of top" line under each bar. */
+  subFor?: (d: ReportSlice) => string;
+}) {
   if (!data.length) return <div className="text-muted-foreground py-8 text-center text-sm">{emptyText}</div>;
   const max = Math.max(...data.map((d) => d.value), 1);
   const fmt = (v: number) => (money ? inrCompact(v) : Math.round(v).toLocaleString('en-IN'));
   const split = money && data.some((d) => d.bank != null && d.cash != null);
+  const legend = split && (
+    <>
+      <span className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-full" style={{ background: BANK_COLOR }} /> Bank</span>
+      <span className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-full" style={{ background: CASH_COLOR, boxShadow: `inset 0 0 0 1px ${CASH_EDGE}` }} /> Cash</span>
+    </>
+  );
+
   return (
-    <div className="space-y-2.5 max-sm:space-y-3.5">
-      {split && (
-        <div className="text-muted-foreground -mt-0.5 mb-1 flex items-center gap-3 text-[11px] font-semibold">
-          <span className="inline-flex items-center gap-1"><span className="size-2 rounded-full" style={{ background: BANK_COLOR }} /> Bank</span>
-          <span className="inline-flex items-center gap-1"><span className="size-2 rounded-full" style={{ background: CASH_COLOR, boxShadow: `inset 0 0 0 1px ${CASH_EDGE}` }} /> Cash</span>
-        </div>
-      )}
-      {data.map((d, i) => {
-        const bank = d.bank ?? 0;
-        const cash = d.cash ?? 0;
-        return (
-          <div key={d.name} className="rp-rise grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3" style={{ animationDelay: `${i * 45}ms` }}>
-            <div className="min-w-0">
-              <div className="mb-1 flex items-center justify-between gap-2">
-                <span className="truncate text-sm font-medium" title={d.name}>{d.name}</span>
-                <span className="shrink-0 text-sm font-semibold tabular-nums" title={money ? inrFull(d.value) : undefined}>
-                  {fmt(d.value)}
-                  {split && <span className="text-muted-foreground ml-1 font-normal">({fmt(bank)} bank / {fmt(cash)} cash)</span>}
-                </span>
+    <>
+      {/* Phones */}
+      <div className="sm:hidden">
+        {split && <div className="mb-[11px] flex items-center gap-[13px] text-[10.5px] font-bold text-[#3d5273] dark:text-[#93a6c9]">{legend}</div>}
+        <div className="rp-bars">
+          {data.map((d, i) => {
+            const bank = d.bank ?? 0;
+            const cash = d.cash ?? 0;
+            const del = 80 + i * 55;
+            const sub = subFor
+              ? subFor(d)
+              : split
+                ? `${fmt(bank)} bank · ${fmt(cash)} cash`
+                : `${Math.round((d.value / max) * 100)}% of top`;
+            return (
+              <div key={d.name} className="min-w-0">
+                <div className="rp-bar-head">
+                  <span className="rp-bar-name" title={d.name}>{d.name}</span>
+                  <span className="rp-bar-value">{fmt(d.value)}</span>
+                </div>
+                <div className="rp-bar-track">
+                  {split ? (
+                    <>
+                      <span className="rp-bar-fill" style={{ width: `${(bank / max) * 100}%`, background: BANK_GRAD, ...delay(del) }} />
+                      <span className="rp-bar-fill" style={{ width: `${(cash / max) * 100}%`, background: CASH_GRAD, boxShadow: `inset 0 0 0 1px ${CASH_EDGE}`, ...delay(del + 90) }} />
+                    </>
+                  ) : (
+                    <span
+                      className="rp-bar-fill"
+                      style={{
+                        width: `${(d.value / max) * 100}%`,
+                        background: `linear-gradient(90deg,${BAR_COLORS[i % BAR_COLORS.length]},${BAR_COLORS[i % BAR_COLORS.length]}cc)`,
+                        borderRadius: 999,
+                        ...delay(del),
+                      }}
+                    />
+                  )}
+                </div>
+                <div className="rp-bar-sub">{sub}</div>
               </div>
-              <div className="bg-muted flex h-2 overflow-hidden rounded-full max-sm:h-2.5 max-sm:shadow-inner">
-                {split ? (
-                  <>
-                    <div className="rp-grow-x h-full origin-left" style={{ width: `${(bank / max) * 100}%`, background: BANK_COLOR, animationDelay: `${i * 45}ms` }} />
-                    <div className="rp-grow-x h-full origin-left" style={{ width: `${(cash / max) * 100}%`, background: CASH_COLOR, boxShadow: `inset 0 0 0 1px ${CASH_EDGE}`, animationDelay: `${i * 45 + 60}ms` }} />
-                  </>
-                ) : (
-                  <div className="rp-grow-x h-full origin-left rounded-full" style={{ width: `${(d.value / max) * 100}%`, background: BAR_COLORS[i % BAR_COLORS.length], animationDelay: `${i * 45}ms` }} />
-                )}
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Desktop */}
+      <div className="hidden space-y-2.5 sm:block">
+        {split && <div className="text-muted-foreground -mt-0.5 mb-1 flex items-center gap-3 text-[11px]">{legend}</div>}
+        {data.map((d, i) => {
+          const bank = d.bank ?? 0;
+          const cash = d.cash ?? 0;
+          return (
+            <div key={d.name} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
+              <div className="min-w-0">
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <span className="truncate text-sm font-medium" title={d.name}>{d.name}</span>
+                  <span className="shrink-0 text-sm font-semibold tabular-nums" title={money ? inrFull(d.value) : undefined}>
+                    {fmt(d.value)}
+                    {split && <span className="text-muted-foreground ml-1 font-normal">({fmt(bank)} bank / {fmt(cash)} cash)</span>}
+                  </span>
+                </div>
+                <div className="bg-muted flex h-2 overflow-hidden rounded-full">
+                  {split ? (
+                    <>
+                      <div className="h-full" style={{ width: `${(bank / max) * 100}%`, background: BANK_COLOR }} />
+                      <div className="h-full" style={{ width: `${(cash / max) * 100}%`, background: CASH_COLOR, boxShadow: `inset 0 0 0 1px ${CASH_EDGE}` }} />
+                    </>
+                  ) : (
+                    <div className="h-full rounded-full" style={{ width: `${(d.value / max) * 100}%`, background: BAR_COLORS[i % BAR_COLORS.length] }} />
+                  )}
+                </div>
               </div>
             </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+/** A titled report section — the mockup's glass card on a phone, the plain
+ *  bordered card on desktop. `note` is the small grey line the mockup puts
+ *  under a chart to explain it. */
+export function ReportCard({ title, children, right, note }: { title: string; children: ReactNode; right?: ReactNode; note?: ReactNode }) {
+  return (
+    <>
+      {/* Phones */}
+      <div className="rp-glass sm:hidden">
+        <span aria-hidden className="rp-glass-sheen" />
+        <div className="rp-card-head">
+          <div className="rp-card-title">{title}</div>
+          {right && <div className="rp-card-right">{right}</div>}
+        </div>
+        <div className="rp-card-body">
+          {children}
+          {note && <p className="rp-note">{note}</p>}
+        </div>
+      </div>
+
+      {/* Desktop */}
+      <Card className="card-hover hidden sm:block">
+        <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="text-base">{title}</CardTitle>
+          {right}
+        </CardHeader>
+        <CardContent>
+          {children}
+          {note && <p className="text-muted-foreground mt-2 text-xs">{note}</p>}
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
+export type InsightTone = 'good' | 'warn' | 'bad' | 'info';
+const INSIGHT_DOT: Record<InsightTone, string> = { good: 'bg-emerald-500', warn: 'bg-amber-500', bad: 'bg-rose-500', info: 'bg-blue-500' };
+const DOT_HEX: Record<InsightTone, string> = { good: '#059669', warn: '#d97706', bad: '#e11d48', info: '#2563eb' };
+
+/** Plain-English "Summary" card — auto-generated takeaways from a report's data. */
+export function ReportSummary({ points, loading }: { points: { text: ReactNode; tone?: InsightTone }[]; loading?: boolean }) {
+  return (
+    <>
+      {/* Phones */}
+      <div className="rp-summary sm:hidden">
+        <span aria-hidden className="rp-summary-glow" />
+        <div className="relative mb-3 flex items-center gap-2.5">
+          <span className="rp-summary-icon"><Lightbulb className="size-3.5" /></span>
+          <div className="rp-summary-title">Summary</div>
+          {points.length > 0 && !loading && <div className="rp-summary-count">{points.length} points</div>}
+        </div>
+        {loading ? (
+          <div className="relative space-y-2.5">{[0, 1, 2].map((i) => <div key={i} className="h-3.5 w-full animate-pulse rounded bg-slate-900/10" />)}</div>
+        ) : points.length === 0 ? (
+          <p className="relative text-[12.5px] font-medium text-[#52658a]">Not enough data yet to summarise.</p>
+        ) : (
+          <div className="relative flex flex-col gap-[11px]">
+            {points.map((p, i) => {
+              const hex = DOT_HEX[p.tone ?? 'info'];
+              return (
+                <div key={i} className="rp-point" style={delay(80 + i * 60)}>
+                  <span className="rp-dot" style={{ background: hex, boxShadow: `0 0 0 3px ${hex}22` }} />
+                  <span>{p.text}</span>
+                </div>
+              );
+            })}
           </div>
-        );
-      })}
+        )}
+      </div>
+
+      {/* Desktop */}
+      <Card className="border-primary/20 bg-primary/[0.03] hidden sm:block">
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <span className="bg-gradient-brand flex size-7 items-center justify-center rounded-lg text-white shadow-sm"><Lightbulb className="size-4" /></span>
+            Summary
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="space-y-2">{[0, 1, 2].map((i) => <div key={i} className="bg-muted h-4 w-full animate-pulse rounded" />)}</div>
+          ) : points.length === 0 ? (
+            <p className="text-muted-foreground text-sm">Not enough data yet to summarise.</p>
+          ) : (
+            <ul className="grid gap-2.5 sm:grid-cols-2">
+              {points.map((p, i) => (
+                <li key={i} className="flex items-start gap-2.5 text-sm leading-snug">
+                  <span className={cn('mt-1.5 size-2 shrink-0 rounded-full', INSIGHT_DOT[p.tone ?? 'info'])} />
+                  <span>{p.text}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
+/* ── pieces the mockup uses inside a card ─────────────────────────────────── */
+
+export type Pill = { text: string; tone: KpiTone | 'good' | 'warn' | 'bad' };
+const PILL_TONE: Record<Pill['tone'], KpiTone> = {
+  blue: 'blue', emerald: 'emerald', amber: 'amber', violet: 'violet', rose: 'rose', slate: 'slate',
+  good: 'emerald', warn: 'amber', bad: 'rose',
+};
+export function ReportPill({ text, tone }: Pill) {
+  return <span className="rp-pill" style={toneSurface(PILL_TONE[tone])}>{text}</span>;
+}
+
+/** The mockup's segmented control — category / measure switchers inside a card. */
+export function ReportSeg<T extends string>({ options, value, onChange }: { options: readonly T[]; value: T; onChange: (v: T) => void }) {
+  return (
+    <>
+      <div className="rp-seg rp-noscroll mb-[13px] sm:hidden">
+        {options.map((o) => (
+          <button key={o} type="button" className="rp-seg-btn" data-on={value === o} onClick={() => onChange(o)}>{o}</button>
+        ))}
+      </div>
+      <div className="mb-4 hidden flex-wrap gap-1.5 sm:flex" role="tablist">
+        {options.map((o) => (
+          <button
+            key={o}
+            type="button"
+            role="tab"
+            aria-selected={value === o}
+            onClick={() => onChange(o)}
+            className={cn('rounded-md px-3 py-1.5 text-sm font-medium transition-colors', value === o ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200')}
+          >
+            {o}
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/** Stat chips — the recovery pipeline and the party segments, two-up. */
+export function ReportChips({ chips }: { chips: { label: string; count: string; value?: string; tone: KpiTone }[] }) {
+  return (
+    <div className="rp-chips sm:grid-cols-3 lg:grid-cols-6">
+      {chips.map((c, i) => (
+        <div key={c.label} className="rp-chip max-sm:!block sm:rounded-lg sm:px-3 sm:py-2 sm:ring-1 sm:ring-inset" style={{ ...toneSurface(c.tone), ...delay(60 + i * 45) }}>
+          <div className="rp-chip-label sm:text-xs sm:tracking-wide sm:opacity-80">{c.label}</div>
+          <div className="rp-chip-count sm:mt-0.5 sm:text-lg sm:font-bold">{c.count}</div>
+          {c.value && <div className="rp-chip-value sm:text-xs sm:opacity-80">{c.value}</div>}
+        </div>
+      ))}
     </div>
   );
 }
 
-/** A titled report section card.
- *
- *  Desktop: unchanged plain card. Below `sm`: frosted glass, rounded-3xl, a
- *  soft rise-in — the same section-card look every card of the mobile mockup
- *  shares (Recharts content inside renders exactly as before either way). */
-export function ReportCard({ title, children, right }: { title: string; children: ReactNode; right?: ReactNode }) {
+/** A value funnel — ordered → dispatched → billed, each a fat proportional bar. */
+export function ReportFunnel({ steps }: { steps: { label: string; value: string; ratio: number; from: string; to: string }[] }) {
   return (
-    <Card className="card-hover max-sm:rp-rise max-sm:overflow-hidden max-sm:rounded-3xl max-sm:border-white/80 max-sm:bg-white/70 max-sm:p-0.5 max-sm:shadow-[0_16px_36px_-22px_rgba(13,38,92,.4)] max-sm:backdrop-blur-xl max-sm:dark:border-white/10 max-sm:dark:bg-white/[0.05]">
-      <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-base">{title}</CardTitle>
-        {right}
-      </CardHeader>
-      <CardContent>{children}</CardContent>
-    </Card>
+    <div className="rp-funnel">
+      {steps.map((s, i) => (
+        <div key={s.label}>
+          <div className="rp-funnel-head">
+            <span className="rp-funnel-label">{s.label}</span>
+            <span className="rp-funnel-value">{s.value}</span>
+            <span className="rp-funnel-pct">{Math.round(s.ratio * 100)}%</span>
+          </div>
+          <div className="rp-funnel-track">
+            <div
+              className="rp-funnel-fill"
+              style={{ width: `${Math.max(s.ratio, 0) * 100}%`, background: `linear-gradient(90deg,${s.from},${s.to})`, ...delay(90 + i * 120) }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
   );
-}
-
-export type Pill = { text: string; tone: KpiTone | 'good' | 'warn' | 'bad' };
-const PILL_TONE: Record<Pill['tone'], string> = {
-  blue: 'bg-blue-50 text-blue-700 ring-blue-600/20 dark:bg-blue-400/10 dark:text-blue-300 dark:ring-blue-400/25',
-  emerald: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-400/10 dark:text-emerald-300 dark:ring-emerald-400/25',
-  amber: 'bg-amber-50 text-amber-700 ring-amber-600/20 dark:bg-amber-400/10 dark:text-amber-300 dark:ring-amber-400/25',
-  violet: 'bg-violet-50 text-violet-700 ring-violet-600/20 dark:bg-violet-400/10 dark:text-violet-300 dark:ring-violet-400/25',
-  rose: 'bg-rose-50 text-rose-700 ring-rose-600/20 dark:bg-rose-400/10 dark:text-rose-300 dark:ring-rose-400/25',
-  slate: 'bg-slate-100 text-slate-600 ring-slate-500/20 dark:bg-white/10 dark:text-slate-300 dark:ring-white/15',
-  good: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-400/10 dark:text-emerald-300 dark:ring-emerald-400/25',
-  warn: 'bg-amber-50 text-amber-700 ring-amber-600/20 dark:bg-amber-400/10 dark:text-amber-300 dark:ring-amber-400/25',
-  bad: 'bg-rose-50 text-rose-700 ring-rose-600/20 dark:bg-rose-400/10 dark:text-rose-300 dark:ring-rose-400/25',
-};
-export function ReportPill({ text, tone }: Pill) {
-  return <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[10.5px] font-bold ring-1 ring-inset', PILL_TONE[tone])}>{text}</span>;
 }
 
 /**
@@ -247,48 +528,32 @@ export function ReportRow({
   pills?: Pill[];
   stats?: { label: string; value: ReactNode; tone?: 'bad' | 'good' | 'muted' }[];
   action?: { label: string; onClick: () => void };
-  /** Position in the list — staggers the entrance animation. */
+  /** Position in the list — staggers the entrance. */
   i?: number;
 }) {
   return (
-    <div
-      className="rp-rise rounded-2xl border border-white/80 bg-gradient-to-br from-white/85 to-blue-50/50 p-3 shadow-[0_8px_20px_-14px_rgba(13,38,92,.5)] dark:border-white/10 dark:from-white/[0.06] dark:to-white/[0.02]"
-      style={{ animationDelay: `${Math.min(i, 12) * 40}ms` }}
-    >
+    <div className="rp-row" style={delay(60 + Math.min(i, 14) * 45)}>
       <div className="flex items-start gap-2.5">
-        {index && (
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[11px] font-bold tabular-nums text-slate-600 dark:bg-white/10 dark:text-slate-300">
-            {index}
-          </span>
-        )}
+        {index && <span className="rp-row-index">{index}</span>}
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="truncate text-[13.5px] font-bold text-slate-900 dark:text-white">{title}</span>
-            {pills?.map((p, j) => <ReportPill key={j} {...p} />)}
-          </div>
-          {sub && <p className="text-muted-foreground mt-0.5 truncate text-[11.5px] font-medium">{sub}</p>}
+          <div className="rp-row-title">{title}</div>
+          {sub && <div className="rp-row-sub">{sub}</div>}
         </div>
-        {action && (
-          <button
-            type="button"
-            onClick={action.onClick}
-            className="h-8 shrink-0 rounded-lg border border-white/90 bg-white/85 px-2.5 text-[11.5px] font-bold text-blue-800 shadow-sm active:scale-95 dark:border-white/15 dark:bg-white/10 dark:text-blue-300"
-          >
-            {action.label}
-          </button>
-        )}
+        {action && <button type="button" className="rp-row-act" onClick={action.onClick}>{action.label}</button>}
       </div>
+      {pills && pills.length > 0 && (
+        <div className="mt-[9px] flex flex-wrap gap-[5px]">
+          {pills.map((p, j) => <ReportPill key={j} {...p} />)}
+        </div>
+      )}
       {stats && stats.length > 0 && (
-        <div className="mt-2.5 grid gap-x-2 gap-y-1.5 border-t border-slate-200/70 pt-2.5 dark:border-white/10" style={{ gridTemplateColumns: `repeat(${Math.min(stats.length, 3)}, minmax(0,1fr))` }}>
+        <div className="rp-row-stats" style={{ gridTemplateColumns: `repeat(${Math.min(stats.length, 3)}, minmax(0,1fr))` }}>
           {stats.map((s, j) => (
             <div key={j} className="min-w-0">
-              <p className="text-muted-foreground truncate text-[9.5px] font-bold tracking-wide uppercase">{s.label}</p>
-              <p className={cn(
-                'truncate text-[12.5px] font-bold tabular-nums',
-                s.tone === 'bad' ? 'text-rose-600' : s.tone === 'good' ? 'text-emerald-600' : 'text-slate-900 dark:text-white',
-              )}>
+              <div className="rp-stat-label">{s.label}</div>
+              <div className="rp-stat-value" style={s.tone === 'bad' ? { color: '#be123c' } : s.tone === 'good' ? { color: '#047857' } : undefined}>
                 {s.value}
-              </p>
+              </div>
             </div>
           ))}
         </div>
@@ -298,52 +563,17 @@ export function ReportRow({
 }
 
 /** Wraps a list of {@link ReportRow}s for the mobile view of a data table —
- *  pass the exact rows the desktop `<table>` renders. Shown only below `sm`;
- *  pair it with `hidden sm:block`/`overflow-x-auto` on the table itself. */
+ *  pass the exact rows the desktop `<table>` renders. Shown only below `sm`. */
 export function ReportRowList({ children, emptyText }: { children: ReactNode; emptyText?: string }) {
   const empty = Array.isArray(children) ? children.length === 0 : !children;
   if (empty) return <div className="text-muted-foreground py-8 text-center text-sm sm:hidden">{emptyText ?? 'No data.'}</div>;
-  return <div className="space-y-2 sm:hidden">{children}</div>;
-}
-
-export type InsightTone = 'good' | 'warn' | 'bad' | 'info';
-const INSIGHT_DOT: Record<InsightTone, string> = { good: 'bg-emerald-500', warn: 'bg-amber-500', bad: 'bg-rose-500', info: 'bg-blue-500' };
-
-/** Plain-English "Summary" card — auto-generated takeaways from a report's data.
- *  Renders 1 column on phones, 2 on desktop. Pass `loading` for a skeleton. */
-export function ReportSummary({ points, loading }: { points: { text: ReactNode; tone?: InsightTone }[]; loading?: boolean }) {
-  return (
-    <Card className="border-primary/20 bg-primary/[0.03] max-sm:rp-rise max-sm:rounded-3xl max-sm:border-white/85 max-sm:bg-gradient-to-br max-sm:from-white/80 max-sm:to-blue-50/60 max-sm:shadow-[0_16px_36px_-22px_rgba(13,38,92,.4)] max-sm:backdrop-blur-xl max-sm:dark:border-white/10 max-sm:dark:from-white/[0.06] max-sm:dark:to-white/[0.02]">
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <span className="bg-gradient-brand flex size-7 items-center justify-center rounded-lg text-white shadow-sm max-sm:size-8 max-sm:rounded-xl max-sm:shadow-md"><Lightbulb className="size-4" /></span>
-          Summary
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        {loading ? (
-          <div className="space-y-2">{[0, 1, 2].map((i) => <div key={i} className="bg-muted h-4 w-full animate-pulse rounded" />)}</div>
-        ) : points.length === 0 ? (
-          <p className="text-muted-foreground text-sm">Not enough data yet to summarise.</p>
-        ) : (
-          <ul className="grid gap-2.5 sm:grid-cols-2">
-            {points.map((p, i) => (
-              <li key={i} className="rp-rise flex items-start gap-2.5 text-sm leading-snug max-sm:text-[12px]" style={{ animationDelay: `${i * 55}ms` }}>
-                <span className={cn('mt-1.5 size-2 shrink-0 rounded-full max-sm:shadow-[0_0_0_3px_rgba(0,0,0,0.04)]', INSIGHT_DOT[p.tone ?? 'info'])} />
-                <span>{p.text}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
-  );
+  return <div className="rp-rows sm:hidden">{children}</div>;
 }
 
 /** Placeholder body for reports still being built — keeps the menu complete. */
 export function ComingSoon({ title, description, icon }: { title: string; description: string; icon: LucideIcon }) {
   return (
-    <div className="space-y-4">
+    <div className="rp-page space-y-4">
       <ReportHeader title={title} subtitle={description} icon={icon} />
       <Card>
         <CardContent className="flex flex-col items-center gap-3 py-16 text-center">

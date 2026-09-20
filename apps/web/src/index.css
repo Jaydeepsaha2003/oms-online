@@ -1322,26 +1322,422 @@ select:not(:disabled):not([multiple]):focus-visible {
   .bb-rise, .bb-rowin, .bb-pop, .bb-breathe { animation: none !important; }
 }
 
-/* ── Reports mobile skin (report-kit.tsx, report-filters.tsx) ────────────── */
-/* Card/row entrance, staggered by inline animation-delay per item. */
-@keyframes rp-rise {
-  0% { opacity: 0; transform: translateY(14px); }
-  100% { opacity: 1; transform: none; }
+/* ── Reports mobile skin (report-kit.tsx, report-filters.tsx) ──────────────
+ *
+ * A faithful port of the shared Reports mobile mockup: a living liquid
+ * wallpaper with frosted glass floating on it. Every VISUAL rule lives inside
+ * the phone media query below, so one set of markup keeps the plain desktop
+ * report layout above `sm` — the classes are simply inert there — and no page
+ * needs a second render tree.
+ *
+ * Numbers (radii, blurs, alphas, easings, delays) are the mockup's own, not
+ * approximations: this is the design, transcribed.
+ */
+
+/* Wallpaper blobs, drifting on their own clocks. */
+@keyframes rp-drift {
+  0% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(18px, -22px, 0) scale(1.08); }
+  100% { transform: translate3d(0, 0, 0) scale(1); }
 }
-.rp-rise { animation: rp-rise 0.42s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
-/* A ranked bar filling in from the left, transform-origin set inline. */
-@keyframes rp-grow-x {
-  0% { transform: scaleX(0); }
-  100% { transform: scaleX(1); }
+@keyframes rp-drift2 {
+  0% { transform: translate3d(0, 0, 0) scale(1.05); }
+  50% { transform: translate3d(-24px, 16px, 0) scale(1); }
+  100% { transform: translate3d(0, 0, 0) scale(1.05); }
 }
-.rp-grow-x { animation: rp-grow-x 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
-/* KPI tiles / pills popping in. */
-@keyframes rp-pop {
-  0% { opacity: 0; transform: scale(0.82); }
-  100% { opacity: 1; transform: none; }
+/* Entrances. Stagger via inline animation-delay per item. */
+@keyframes rp-rise { from { opacity: 0; transform: translateY(18px) scale(0.985); } to { opacity: 1; transform: none; } }
+@keyframes rp-pop { from { opacity: 0; transform: scale(0.88); } to { opacity: 1; transform: scale(1); } }
+@keyframes rp-sweep { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
+@keyframes rp-scin { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes rp-growx { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+@media (width < 40rem) {
+  /* ── the living wallpaper ──────────────────────────────────────────────
+     Fixed, so it stays put while the report scrolls over it, exactly as the
+     mockup's wallpaper sits behind (not inside) its scroller. z-0 puts it
+     `.rp-page` below creates the stacking context this sits in, and z-index:-1
+     puts it under every one of that page's children — positioned glass cards
+     AND plain blocks alike — while still covering the app's page background.
+     (At z-index:0 it painted over any child that was not itself positioned.) */
+  .rp-wallpaper {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    overflow: hidden;
+    pointer-events: none;
+    background: linear-gradient(180deg, #eff5ff, #dfe9fb 48%, #e7eeff);
+  }
+  .rp-blob { position: absolute; border-radius: 999px; pointer-events: none; }
+  .rp-blob-1 {
+    top: -120px; left: -90px; width: 360px; height: 360px;
+    background: radial-gradient(circle at 35% 35%, rgba(59, 130, 246, 0.55), rgba(59, 130, 246, 0) 68%);
+    filter: blur(12px);
+    animation: rp-drift 18s ease-in-out infinite;
+  }
+  .rp-blob-2 {
+    top: 120px; right: -130px; width: 320px; height: 320px;
+    background: radial-gradient(circle at 50% 50%, rgba(52, 211, 153, 0.42), rgba(52, 211, 153, 0) 70%);
+    filter: blur(14px);
+    animation: rp-drift2 22s ease-in-out infinite;
+  }
+  .rp-blob-3 {
+    bottom: -90px; left: 40px; width: 340px; height: 340px;
+    background: radial-gradient(circle at 50% 50%, rgba(124, 58, 237, 0.34), rgba(124, 58, 237, 0) 70%);
+    filter: blur(16px);
+    animation: rp-drift 26s ease-in-out infinite;
+  }
+  /* Everything the page draws sits on the glass, above the wallpaper. */
+  /* Flex + gap rather than the page's own `space-y-*`: that utility puts a
+     margin on each child, which fights both this 12px rhythm and the header's
+     need to butt straight onto the filter strip. Zeroing the children's
+     margins here makes the spacing come from one place. */
+  .rp-page {
+    position: relative; z-index: 1; color: #0a1730;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .rp-page > * { margin: 0; }
+  /* The filter strip continues the hero's blue block — no gap between them. */
+  .rp-page > .rp-headbar { margin-top: -12px; }
+
+  /* ── header ────────────────────────────────────────────────────────────
+     Hero and filter strip are separate components but one continuous blue
+     block on screen, so the hero drops its bottom radius and the filter
+     strip carries it. */
+  .rp-hero, .rp-headbar {
+    position: relative;
+    color: #fff;
+    background: linear-gradient(158deg, rgba(15, 35, 86, 0.92) 0%, rgba(29, 78, 216, 0.86) 52%, rgba(37, 99, 235, 0.8) 100%);
+    backdrop-filter: blur(26px) saturate(180%);
+    -webkit-backdrop-filter: blur(26px) saturate(180%);
+  }
+  .rp-hero {
+    padding: 14px 16px 2px;
+    border-radius: 24px 24px 0 0;
+    box-shadow: 0 18px 40px -22px rgba(9, 26, 74, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+    animation: rp-scin 0.36s ease both;
+  }
+  .rp-headbar {
+    padding: 11px 16px 14px;
+    border-radius: 0 0 30px 30px;
+    box-shadow: 0 18px 40px -22px rgba(9, 26, 74, 0.9), inset 0 -1px 0 rgba(255, 255, 255, 0.14);
+  }
+  /* The two glazes the mockup lays over the blue: a corner sheen and a faint
+     graph-paper grid that fades out downward. */
+  .rp-hero-sheen {
+    position: absolute; inset: 0; pointer-events: none;
+    border-radius: inherit;
+    background: radial-gradient(85% 120% at 14% -14%, rgba(255, 255, 255, 0.3), transparent 58%);
+  }
+  .rp-hero-grid {
+    position: absolute; inset: 0; pointer-events: none;
+    border-radius: inherit;
+    opacity: 0.12;
+    background-image: linear-gradient(rgba(255, 255, 255, 0.8) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.8) 1px, transparent 1px);
+    background-size: 36px 36px;
+    mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.9), transparent 70%);
+    -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.9), transparent 70%);
+  }
+  .rp-hero-title {
+    font-family: var(--font-montserrat);
+    font-size: 21px; font-weight: 700; letter-spacing: -0.025em; line-height: 1.16;
+  }
+  .rp-hero-sub { margin-top: 2px; font-size: 11px; font-weight: 600; color: #cfe0ff; letter-spacing: 0.02em; }
+  .rp-hero-label { font-size: 10px; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; color: #bed4ff; }
+  .rp-hero-value {
+    margin-top: 3px; font-size: 38px; font-weight: 600; letter-spacing: -0.03em; line-height: 1;
+    font-variant-numeric: tabular-nums;
+    animation: rp-pop 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.1) both;
+  }
+  .rp-hero-hint { font-size: 10.5px; font-weight: 600; color: #cfe0ff; text-align: right; max-width: 150px; line-height: 1.35; }
+  .rp-hero-delta {
+    display: inline-flex; align-items: center; gap: 3px; padding: 3px 9px; border-radius: 999px;
+    font-size: 11px; font-weight: 800;
+    background: rgba(255, 255, 255, 0.18);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  }
+  /* Buttons and chips that live on the blue. */
+  .rp-hero-btn {
+    position: relative; display: inline-flex; align-items: center; gap: 7px;
+    height: 36px; padding: 0 13px;
+    border: 1px solid rgba(255, 255, 255, 0.36);
+    background: rgba(255, 255, 255, 0.17);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border-radius: 13px; color: #fff; font-size: 12.5px; font-weight: 700;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42);
+    transition: transform 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.2), background 0.2s ease;
+  }
+  .rp-hero-btn:active { transform: scale(0.92); background: rgba(255, 255, 255, 0.3); }
+  .rp-hero-badge {
+    position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px; padding: 0 4px;
+    display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(160deg, #fb7185, #e11d48); color: #fff;
+    border-radius: 999px; font-size: 10.5px; font-weight: 800;
+    box-shadow: 0 2px 8px -2px rgba(225, 29, 72, 0.9), 0 0 0 2px rgba(29, 78, 216, 0.9);
+    animation: rp-pop 0.26s cubic-bezier(0.2, 0.9, 0.3, 1.3) both;
+  }
+  .rp-range-chip {
+    flex: none; height: 31px; padding: 0 14px;
+    border: 1px solid rgba(255, 255, 255, 0.34);
+    background: rgba(255, 255, 255, 0.14);
+    color: #e4edff;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border-radius: 999px; font-size: 11.5px; font-weight: 800; white-space: nowrap;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
+    transition: background 0.24s ease, color 0.24s ease, border-color 0.24s ease, transform 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  }
+  .rp-range-chip[data-on='true'] {
+    border-color: rgba(255, 255, 255, 0.9);
+    background: rgba(255, 255, 255, 0.95);
+    color: #1e40af;
+    box-shadow: 0 6px 14px -7px rgba(9, 26, 74, 0.8);
+  }
+  .rp-range-chip:active { transform: scale(0.94); }
+
+  /* ── the applied-filters strip ─────────────────────────────────────────*/
+  .rp-filterline {
+    display: flex; align-items: center; gap: 9px; padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.52);
+    backdrop-filter: blur(18px) saturate(170%); -webkit-backdrop-filter: blur(18px) saturate(170%);
+    border: 1px solid rgba(255, 255, 255, 0.76);
+    border-radius: 16px;
+    box-shadow: 0 6px 18px -12px rgba(13, 38, 92, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    animation: rp-scin 0.36s ease both;
+    font-size: 11.5px; font-weight: 600; color: #3d5273;
+  }
+  .rp-filterline-icon {
+    flex: none; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(150deg, #60a5fa, #1d4ed8); border-radius: 8px; color: #fff;
+    box-shadow: 0 2px 7px -2px rgba(29, 78, 216, 0.75);
+  }
+  .rp-reset {
+    flex: none; height: 26px; padding: 0 10px;
+    border: 1px solid rgba(225, 29, 72, 0.28);
+    background: rgba(255, 241, 242, 0.8); color: #be123c;
+    border-radius: 999px; font-size: 11px; font-weight: 800;
+    transition: transform 0.18s ease;
+  }
+  .rp-reset:active { transform: scale(0.92); }
+
+  /* ── glass: the one card surface everything else sits in ───────────────*/
+  .rp-glass {
+    position: relative; overflow: hidden;
+    background: linear-gradient(168deg, rgba(255, 255, 255, 0.74), rgba(236, 243, 255, 0.56));
+    backdrop-filter: blur(26px) saturate(185%); -webkit-backdrop-filter: blur(26px) saturate(185%);
+    border: 1px solid rgba(255, 255, 255, 0.85);
+    border-radius: 22px;
+    box-shadow: 0 16px 36px -22px rgba(13, 38, 92, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+    animation: rp-rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+  /* The highlight that runs across the top of every glass surface. */
+  .rp-glass-sheen {
+    position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.55), transparent 42%);
+  }
+  /* `right` is usually a short label, but a page may hand it a button — let it
+     wrap onto its own line rather than be clipped by the card's rounded edge. */
+  .rp-card-head { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 13px 14px 0; }
+  .rp-card-title {
+    min-width: 0; flex: 1;
+    font-family: var(--font-montserrat);
+    font-size: 14.5px; font-weight: 700; letter-spacing: -0.015em; line-height: 1.3;
+  }
+  .rp-card-right { flex: none; max-width: 100%; margin-left: auto; font-size: 10px; font-weight: 700; color: #52658a; text-align: right; line-height: 1.3; }
+  .rp-card-body { position: relative; padding: 12px 14px 14px; }
+  .rp-note { margin-top: 10px; font-size: 10.5px; font-weight: 600; color: #52658a; line-height: 1.45; }
+
+  /* ── summary ───────────────────────────────────────────────────────────*/
+  .rp-summary {
+    position: relative; overflow: hidden; padding: 14px;
+    background: linear-gradient(165deg, rgba(255, 255, 255, 0.78), rgba(238, 245, 255, 0.58));
+    backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.85);
+    border-radius: 22px;
+    box-shadow: 0 14px 34px -20px rgba(13, 38, 92, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+    animation: rp-rise 0.46s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    animation-delay: 40ms;
+  }
+  .rp-summary-glow {
+    position: absolute; top: -40px; right: -30px; width: 150px; height: 150px; border-radius: 999px;
+    background: radial-gradient(circle, rgba(59, 130, 246, 0.22), transparent 70%);
+    pointer-events: none;
+  }
+  .rp-summary-icon {
+    width: 27px; height: 27px; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(150deg, #60a5fa, #4338ca); border-radius: 10px; color: #fff;
+    box-shadow: 0 4px 12px -4px rgba(67, 56, 202, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  }
+  .rp-summary-title { font-family: var(--font-montserrat); font-size: 15px; font-weight: 700; letter-spacing: -0.015em; }
+  .rp-summary-count { margin-left: auto; font-size: 10.5px; font-weight: 700; color: #52658a; }
+  .rp-point { display: flex; align-items: flex-start; gap: 10px; animation: rp-sweep 0.46s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+  .rp-point > span:last-child { min-width: 0; font-size: 12.5px; font-weight: 500; line-height: 1.5; color: #2b3f5e; }
+  .rp-point strong { color: #0a1730; font-weight: 800; }
+  .rp-dot { flex: none; margin-top: 6px; width: 8px; height: 8px; border-radius: 999px; }
+
+  /* ── KPI tiles ─────────────────────────────────────────────────────────*/
+  .rp-kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .rp-kpi {
+    display: flex; flex-direction: column; gap: 7px; padding: 13px; text-align: left;
+    border-radius: 20px; -webkit-tap-highlight-color: transparent;
+    transition: transform 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.15), box-shadow 0.2s ease;
+  }
+  .rp-kpi:active { transform: scale(0.97); }
+  .rp-kpi[data-open='true'] {
+    box-shadow: 0 18px 40px -20px rgba(29, 78, 216, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.95), 0 0 0 1.5px rgba(59, 130, 246, 0.5);
+  }
+  .rp-kpi-sheen {
+    position: absolute; inset: 0; border-radius: 20px; pointer-events: none;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.6), transparent 46%);
+  }
+  .rp-kpi-dot { flex: none; width: 10px; height: 10px; border-radius: 4px; box-shadow: 0 2px 5px -2px rgba(13, 38, 92, 0.6); }
+  .rp-kpi-label {
+    min-width: 0; font-size: 11px; font-weight: 700; color: #52658a; letter-spacing: 0.01em;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .rp-kpi-value {
+    position: relative; font-size: 24px; font-weight: 600; letter-spacing: -0.025em;
+    font-variant-numeric: tabular-nums; line-height: 1.08; color: #0a1730; word-break: break-word;
+  }
+  .rp-kpi-value[data-long='true'] { font-size: 17px; }
+  .rp-kpi-hint { font-size: 10px; font-weight: 600; color: #52658a; line-height: 1.3; }
+  .rp-delta {
+    display: inline-flex; align-items: center; gap: 2px; padding: 2px 7px; border-radius: 999px;
+    font-size: 10px; font-weight: 800;
+  }
+
+  /* ── ranked bars ───────────────────────────────────────────────────────*/
+  .rp-bars { display: flex; flex-direction: column; gap: 12px; }
+  .rp-bar-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+  .rp-bar-name {
+    min-width: 0; flex: 1; font-size: 12.5px; font-weight: 700; color: #182a48;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .rp-bar-value { flex: none; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .rp-bar-track {
+    display: flex; height: 9px; background: rgba(15, 35, 80, 0.09); border-radius: 999px; overflow: hidden;
+    box-shadow: inset 0 1px 2px rgba(13, 38, 92, 0.14);
+  }
+  .rp-bar-fill { transform-origin: left; animation: rp-growx 0.75s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+  .rp-bar-sub { margin-top: 5px; font-size: 10px; font-weight: 600; color: #52658a; font-variant-numeric: tabular-nums; }
+
+  /* ── funnel ────────────────────────────────────────────────────────────*/
+  .rp-funnel { display: flex; flex-direction: column; gap: 13px; }
+  .rp-funnel-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+  .rp-funnel-label { flex: 1; font-size: 12.5px; font-weight: 700; color: #182a48; }
+  .rp-funnel-value { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .rp-funnel-pct { font-size: 10.5px; font-weight: 700; color: #52658a; font-variant-numeric: tabular-nums; }
+  .rp-funnel-track {
+    height: 28px; background: rgba(15, 35, 80, 0.08); border-radius: 10px; overflow: hidden;
+    box-shadow: inset 0 1px 3px rgba(13, 38, 92, 0.16);
+  }
+  .rp-funnel-fill {
+    height: 100%; border-radius: 10px; transform-origin: left;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+    animation: rp-growx 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+
+  /* ── stat chips (recovery pipeline, party segments) ────────────────────*/
+  .rp-chips { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  .rp-chip {
+    padding: 11px 12px; border-radius: 15px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 5px 14px -10px rgba(13, 38, 92, 0.6);
+    animation: rp-pop 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.1) both;
+  }
+  .rp-chip-label { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.09em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rp-chip-count { margin-top: 4px; font-size: 21px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.025em; line-height: 1; }
+  .rp-chip-value { margin-top: 2px; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  /* ── row cards (the mobile form of every report table) ─────────────────*/
+  .rp-rows { display: flex; flex-direction: column; gap: 9px; }
+  .rp-row {
+    padding: 13px;
+    background: linear-gradient(168deg, rgba(255, 255, 255, 0.66), rgba(238, 245, 255, 0.44));
+    border: 1px solid rgba(255, 255, 255, 0.82);
+    border-radius: 17px;
+    box-shadow: 0 6px 16px -12px rgba(13, 38, 92, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    animation: rp-sweep 0.44s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+  .rp-row-index {
+    flex: none; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(160deg, rgba(255, 255, 255, 0.9), rgba(219, 232, 255, 0.75));
+    border: 1px solid rgba(255, 255, 255, 0.9); border-radius: 10px;
+    font-size: 11.5px; font-weight: 600; color: #1d4ed8; font-variant-numeric: tabular-nums;
+    box-shadow: 0 2px 6px -3px rgba(13, 38, 92, 0.4);
+  }
+  .rp-row-title { font-size: 13.5px; font-weight: 800; letter-spacing: -0.015em; line-height: 1.3; color: #0a1730; }
+  .rp-row-sub { margin-top: 2px; font-size: 11px; font-weight: 600; color: #52658a; }
+  .rp-row-act {
+    flex: none; height: 31px; padding: 0 13px;
+    border: 1px solid rgba(255, 255, 255, 0.9); background: rgba(255, 255, 255, 0.8);
+    border-radius: 11px; font-size: 11.5px; font-weight: 800; color: #1e40af;
+    box-shadow: 0 3px 9px -5px rgba(13, 38, 92, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+    transition: transform 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.2), background 0.18s ease;
+  }
+  .rp-row-act:active { transform: scale(0.94); }
+  .rp-row-stats {
+    display: grid; gap: 8px; margin-top: 11px; padding-top: 11px;
+    border-top: 1px solid rgba(15, 35, 80, 0.1);
+  }
+  .rp-stat-label { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: #52658a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rp-stat-value { margin-top: 3px; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; color: #0a1730; }
+  .rp-pill {
+    display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 999px;
+    font-size: 10px; font-weight: 800; letter-spacing: 0.02em;
+  }
+
+  /* ── segmented control (category / measure switchers) ──────────────────*/
+  .rp-seg { display: flex; gap: 6px; overflow-x: auto; padding: 3px; background: rgba(15, 35, 80, 0.06); border-radius: 999px; }
+  .rp-seg::-webkit-scrollbar { display: none; }
+  .rp-seg-btn {
+    flex: none; height: 31px; padding: 0 14px; border: none; border-radius: 999px;
+    font-size: 12px; font-weight: 800; white-space: nowrap; background: transparent; color: #3d5273;
+    transition: background 0.24s ease, color 0.24s ease, box-shadow 0.24s ease;
+  }
+  .rp-seg-btn[data-on='true'] {
+    background: linear-gradient(160deg, #3b82f6, #1e40af); color: #fff;
+    box-shadow: 0 5px 12px -5px rgba(30, 64, 175, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  }
+
+  /* Scrollbars are noise on a phone; the mockup hides them everywhere. */
+  .rp-noscroll { scrollbar-width: none; }
+  .rp-noscroll::-webkit-scrollbar { display: none; }
+
+  /* The report's own chrome is the glass; drop the app's plain card shell
+     where a kit component is rendered inside one. */
+  .rp-bare { background: none; border: 0; box-shadow: none; padding: 0; }
 }
-.rp-pop { animation: rp-pop 0.36s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+
+/* Dark mode: keep the glass, darken the plate underneath it. */
+@media (width < 40rem) {
+  .dark .rp-wallpaper { background: linear-gradient(180deg, #070c18, #0b1224 48%, #080e1c); }
+  .dark .rp-page { color: #e8eefc; }
+  .dark .rp-glass, .dark .rp-summary {
+    background: linear-gradient(168deg, rgba(255, 255, 255, 0.08), rgba(148, 180, 255, 0.05));
+    border-color: rgba(255, 255, 255, 0.12);
+    box-shadow: 0 16px 36px -22px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  }
+  .dark .rp-row {
+    background: linear-gradient(168deg, rgba(255, 255, 255, 0.07), rgba(148, 180, 255, 0.04));
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+  .dark .rp-card-title, .dark .rp-summary-title, .dark .rp-kpi-value, .dark .rp-row-title, .dark .rp-stat-value { color: #f1f5ff; }
+  .dark .rp-bar-name { color: #dbe6ff; }
+  .dark .rp-point > span:last-child { color: #c5d3ee; }
+  .dark .rp-point strong { color: #f1f5ff; }
+  .dark .rp-kpi-label, .dark .rp-kpi-hint, .dark .rp-card-right, .dark .rp-bar-sub, .dark .rp-stat-label, .dark .rp-row-sub, .dark .rp-summary-count, .dark .rp-funnel-pct { color: #93a6c9; }
+  .dark .rp-bar-track, .dark .rp-funnel-track { background: rgba(255, 255, 255, 0.1); }
+  .dark .rp-filterline { background: rgba(255, 255, 255, 0.07); border-color: rgba(255, 255, 255, 0.12); color: #c5d3ee; }
+  .dark .rp-row-index { background: linear-gradient(160deg, rgba(255, 255, 255, 0.14), rgba(148, 180, 255, 0.1)); border-color: rgba(255, 255, 255, 0.12); color: #93b4ff; }
+  .dark .rp-row-act { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.14); color: #a9c4ff; }
+  .dark .rp-seg { background: rgba(255, 255, 255, 0.08); }
+  .dark .rp-seg-btn { color: #93a6c9; }
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .rp-rise, .rp-grow-x, .rp-pop { animation: none !important; }
+  .rp-blob-1, .rp-blob-2, .rp-blob-3,
+  .rp-hero, .rp-glass, .rp-summary, .rp-point, .rp-row, .rp-chip,
+  .rp-bar-fill, .rp-funnel-fill, .rp-hero-value, .rp-hero-badge, .rp-filterline {
+    animation: none !important;
+  }
 }

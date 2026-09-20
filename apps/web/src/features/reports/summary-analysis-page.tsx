@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ArrowRight, Banknote, CircleDollarSign, Gauge, Lightbulb, ReceiptText } from 'lucide-react';
 import type { SummaryActionCategory, SummaryActionPriority } from '@oms/shared';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { inrCompact, inrFull } from '@/features/dashboard/format';
-import { Kpi, ReportCard, ReportHeader, ReportSummary } from './report-kit';
+import { Kpi, KpiGrid, ReportCard, ReportHeader, ReportPill, ReportSeg, ReportSummary } from './report-kit';
 import { ReportFilterBar, useReportFilters } from './report-filters';
 import { useSummaryAnalysis } from './use-reports';
 
@@ -17,6 +17,7 @@ const PRIORITY_TONE: Record<SummaryActionPriority, string> = {
 };
 
 export function SummaryAnalysisPage() {
+  const navigate = useNavigate();
   const filters = useReportFilters();
   const { data, isLoading } = useSummaryAnalysis(filters.query);
   const [category, setCategory] = useState<(typeof CATEGORIES)[number]>('All');
@@ -24,12 +25,13 @@ export function SummaryAnalysisPage() {
   const todayCount = data?.actions.filter((a) => a.priority === 'Do today').length ?? 0;
 
   return (
-    <div className="space-y-5">
+    <div className="rp-page space-y-5">
       <ReportHeader
         title="Summary Analysis"
         subtitle="Clear actions to release cash faster, protect margin and move steel utensils into paid invoices."
         icon={Lightbulb}
         asOf={data?.asOf}
+        hero={data ? { label: 'Outstanding', value: inrCompact(data.headline.outstanding), hint: 'net receivable · point-in-time' } : undefined}
       />
 
       <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
@@ -44,65 +46,52 @@ export function SummaryAnalysisPage() {
         ] : []}
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <KpiGrid className="gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi label="Outstanding" value={data ? inrCompact(data.headline.outstanding) : '—'} title={data ? inrFull(data.headline.outstanding) : undefined} hint="point-in-time balance" icon={CircleDollarSign} tone="rose" loading={isLoading} />
         <Kpi label="Overdue" value={data ? inrCompact(data.headline.overdue) : '—'} title={data ? inrFull(data.headline.overdue) : undefined} hint="past due date" icon={Banknote} tone="amber" loading={isLoading} />
         <Kpi label="Revenue" value={data ? inrCompact(data.headline.revenue) : '—'} title={data ? inrFull(data.headline.revenue) : undefined} hint="selected period" icon={ReceiptText} tone="blue" loading={isLoading} />
         <Kpi label="Do today" value={data ? String(todayCount) : '—'} hint="highest-priority actions" icon={Gauge} tone="violet" loading={isLoading} />
-      </div>
+      </KpiGrid>
 
       <ReportCard
         title={`${data?.actions.length ?? 25} action points`}
-        right={<span className="text-muted-foreground text-xs">Forecast confidence: {data?.forecast.confidence ?? '—'}</span>}
+        right={<span className="text-muted-foreground text-xs sm:text-xs">Confidence: {data?.forecast.confidence ?? '—'}</span>}
       >
-        <div className="mb-4 flex flex-wrap gap-1.5 max-sm:overflow-x-auto max-sm:flex-nowrap max-sm:pb-1" role="tablist" aria-label="Action category">
-          {CATEGORIES.map((item) => (
-            <button
-              key={item}
-              type="button"
-              role="tab"
-              aria-selected={category === item}
-              onClick={() => setCategory(item)}
-              className={cn(
-                'shrink-0 rounded-full px-3 py-1.5 text-sm font-medium transition-colors max-sm:rounded-md max-sm:text-[12.5px] max-sm:font-bold',
-                category === item
-                  ? 'bg-slate-900 text-white max-sm:bg-gradient-to-br max-sm:from-blue-600 max-sm:to-blue-800 max-sm:shadow-md'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200 max-sm:bg-white/60 max-sm:backdrop-blur-md dark:max-sm:bg-white/[0.06]',
-              )}
-            >
-              {item}
-            </button>
-          ))}
-        </div>
+        <ReportSeg options={CATEGORIES} value={category} onChange={setCategory} />
 
         {isLoading ? (
           <div className="space-y-2">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="bg-muted h-20 animate-pulse rounded-md" />)}</div>
         ) : (
-          <div className="divide-y rounded-md border max-sm:space-y-2 max-sm:divide-y-0 max-sm:border-none">
+          <div className="rp-rows sm:divide-y sm:rounded-md sm:border">
             {actions.map((action, index) => (
               <div
                 key={action.id}
-                className="rp-rise grid gap-3 p-3 max-sm:rounded-2xl max-sm:border max-sm:border-white/80 max-sm:bg-white/60 max-sm:shadow-[0_8px_20px_-14px_rgba(13,38,92,.5)] max-sm:backdrop-blur-xl max-sm:dark:border-white/10 max-sm:dark:bg-white/[0.06] sm:grid-cols-[2.25rem_minmax(0,1fr)_auto] sm:items-start"
-                style={{ animationDelay: `${Math.min(index, 12) * 45}ms` }}
+                className="rp-row grid gap-3 sm:animate-none sm:rounded-none sm:border-0 sm:bg-none sm:p-3 sm:shadow-none sm:grid-cols-[2.25rem_minmax(0,1fr)_auto] sm:items-start"
+                style={{ animationDelay: `${60 + Math.min(index, 14) * 45}ms` }}
               >
-                <div className="flex size-9 items-center justify-center rounded-md bg-slate-100 text-sm font-bold tabular-nums text-slate-600 max-sm:size-7 max-sm:rounded-lg max-sm:text-[11px] dark:max-sm:bg-white/10 dark:max-sm:text-slate-300">
+                <div className="rp-row-index sm:flex sm:size-9 sm:rounded-md sm:border-0 sm:bg-slate-100 sm:bg-none sm:text-sm sm:font-bold sm:text-slate-600 sm:shadow-none">
                   {String((data?.actions.indexOf(action) ?? index) + 1).padStart(2, '0')}
                 </div>
                 <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="font-semibold text-slate-900">{action.title}</h3>
-                    <span className={cn('rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset', PRIORITY_TONE[action.priority])}>{action.priority}</span>
-                    <span className="text-muted-foreground text-xs font-medium">{action.category}</span>
+                  <div className="flex flex-wrap items-center gap-2 max-sm:gap-1.5">
+                    <h3 className="rp-row-title sm:font-semibold sm:text-slate-900 sm:text-base sm:tracking-normal">{action.title}</h3>
+                    <span className={cn('rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset max-sm:hidden', PRIORITY_TONE[action.priority])}>{action.priority}</span>
+                    <span className="text-muted-foreground text-xs font-medium max-sm:hidden">{action.category}</span>
                   </div>
-                  <p className="mt-1 text-sm text-slate-700">{action.detail}</p>
-                  <div className="mt-1.5 grid gap-1 text-xs sm:grid-cols-2">
-                    <p className="text-slate-500"><strong className="text-slate-700">Why:</strong> {action.evidence}</p>
+                  <div className="mt-[9px] flex flex-wrap gap-[5px] sm:hidden">
+                    <ReportPill text={action.priority} tone={action.priority === 'Do today' ? 'rose' : action.priority === 'This week' ? 'amber' : 'slate'} />
+                    <ReportPill text={action.category} tone="blue" />
+                  </div>
+                  <p className="mt-2 text-sm text-slate-700 max-sm:mt-[9px] max-sm:text-[12px] max-sm:leading-[1.5] max-sm:font-medium max-sm:text-[#2b3f5e] dark:max-sm:text-[#c5d3ee]">{action.detail}</p>
+                  <div className="mt-1.5 grid gap-1 text-xs max-sm:mt-2 max-sm:gap-1.5 max-sm:border-t max-sm:border-[rgba(15,35,80,.1)] max-sm:pt-2 max-sm:text-[11px] sm:grid-cols-2">
+                    <p className="text-slate-500 max-sm:text-[#52658a]"><strong className="text-slate-700 max-sm:text-[#0a1730] dark:max-sm:text-white">Why:</strong> {action.evidence}</p>
                     <p className="text-emerald-700"><strong>Expected result:</strong> {action.impact}</p>
                   </div>
                 </div>
-                <Button asChild variant="outline" size="sm" className="justify-self-start sm:justify-self-end">
+                <Button asChild variant="outline" size="sm" className="justify-self-start max-sm:hidden sm:justify-self-end">
                   <Link to={action.route}>Open <ArrowRight className="size-3.5" /></Link>
                 </Button>
+                <button type="button" className="rp-row-act mt-[11px] justify-self-start self-start sm:hidden" onClick={() => navigate(action.route)}>Open</button>
               </div>
             ))}
           </div>

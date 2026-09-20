@@ -33,13 +33,26 @@ export function ProductReportPage() {
   const by = isMoney ? 'billed value' : MEASURES.find((m) => m.key === measure)?.label.toLowerCase();
 
   return (
-    <div className="space-y-5">
-      <ReportHeader title="Product & Design" subtitle="What sells, and what actually makes money." icon={Package} asOf={data?.asOf} />
+    <div className="rp-page space-y-5">
+      <ReportHeader
+        title="Product & Design"
+        subtitle="What sells, and what actually makes money."
+        icon={Package}
+        asOf={data?.asOf}
+        hero={data ? { label: `Top ${by}`, value: fmt(data.topProducts[0]?.value ?? 0), hint: data.topProducts[0]?.name ?? undefined } : undefined}
+      />
 
       <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
 
       {/* Measure slicer — analyse the same products by amount / bags / pcs / kgs / box. */}
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="rp-seg rp-noscroll sm:hidden">
+        {MEASURES.map((m) => (
+          <button key={m.key} type="button" className="rp-seg-btn" data-on={measure === m.key} onClick={() => setMeasure(m.key)}>
+            {m.label}
+          </button>
+        ))}
+      </div>
+      <div className="hidden flex-wrap items-center gap-2 sm:flex">
         <span className="text-muted-foreground text-sm font-medium">Measure by</span>
         <div className="bg-muted inline-flex rounded-lg p-0.5">
           {MEASURES.map((m) => (
@@ -89,10 +102,16 @@ export function ProductReportPage() {
       </ReportCard>
 
       <ReportCard title="Average margin by category" right={<span className="text-muted-foreground text-xs">list-price margin</span>}>
-        {isLoading ? <div className="bg-muted h-40 animate-pulse rounded-lg" /> : <RankedBars data={(data?.marginByCategory ?? []).map((m) => ({ name: `${m.name} · ${m.value}%`, value: m.value }))} money={false} />}
+        {isLoading ? <div className="bg-muted h-40 animate-pulse rounded-lg" /> : (
+          <RankedBars
+            data={(data?.marginByCategory ?? []).map((m) => ({ name: `${m.name} · ${m.value}%`, value: m.value }))}
+            money={false}
+            subFor={(d) => `${d.value}% of list price`}
+          />
+        )}
       </ReportCard>
 
-      <ReportCard title="Design margins — worst priced first" right={losses > 0 ? <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700 ring-1 ring-inset ring-red-600/20">{losses} to review</span> : undefined}>
+      <ReportCard note="Margin is list-price (rate − cost) per design — it flags mispriced designs, not realised profit on sales." title="Design margins — worst priced first" right={losses > 0 ? <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700 ring-1 ring-inset ring-red-600/20">{losses} to review</span> : undefined}>
         {isLoading ? <div className="bg-muted h-64 animate-pulse rounded-lg" /> : (
           <>
             <ReportRowList emptyText="No design pricing yet.">
@@ -139,7 +158,6 @@ export function ProductReportPage() {
           </div>
           </>
         )}
-        <p className="text-muted-foreground mt-2 text-xs">Margin is list-price (rate − cost) per design — it flags mispriced designs, not realised profit on sales.</p>
       </ReportCard>
     </div>
   );

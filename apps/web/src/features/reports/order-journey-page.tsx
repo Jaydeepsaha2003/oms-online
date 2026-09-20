@@ -805,8 +805,13 @@ export function OrderJourneyPage() {
   }, [filters.f.customerId, data?.activeWindow, setF]);
 
   return (
-    <div className="space-y-4">
-      <ReportHeader title="Order Journey" subtitle="Follow one order from placed to paid." icon={Truck} />
+    <div className="rp-page space-y-4">
+      <ReportHeader
+        title="Order Journey"
+        subtitle="Follow one order from placed to paid."
+        icon={Truck}
+        hero={hasParty && j ? { label: 'Orders followed', value: String(j.orders.length), hint: `${j.customerName} · ${activeOnly ? 'not started' : 'all orders'}` } : undefined}
+      />
 
       <ReportFilterBar f={filters.f} setF={filters.setF} active={filters.active} onReset={filters.reset} />
 
