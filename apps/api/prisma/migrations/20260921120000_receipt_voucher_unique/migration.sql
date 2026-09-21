@@ -1,0 +1,19 @@
+-- No two RECEIPT vouchers may share a number.
+--
+-- Receipt numbers were issued as "highest in use + 1" with nothing in the
+-- database to hold them unique, so two receipts could in principle take the
+-- same RN/n, and deleting the newest receipt handed its number to the next one.
+-- The code now issues from a counter that never goes back (settings key
+-- payments.lastReceiptNo); this index is the guarantee underneath it, so a bug
+-- in any future code path fails loudly instead of printing two bills with the
+-- same number.
+--
+-- PARTIAL on purpose: only RECEIPT rows. acct_ledger also holds sales discounts,
+-- credit and debit notes, and one sales-discount number already legitimately
+-- appears twice, so a whole-table rule would refuse to build. Receipts were
+-- checked first: 685 rows, 685 distinct numbers.
+--
+-- Prisma's schema language cannot express a partial index, so it is not in
+-- schema.prisma. A future `prisma migrate dev` may propose DROP INDEX for it —
+-- do NOT accept that line. See the note on model AcctLedger.
+CREATE UNIQUE INDEX "acct_ledger_receipt_voucherNo_key" ON "acct_ledger"("voucherNo") WHERE "voucherType" = 'RECEIPT';

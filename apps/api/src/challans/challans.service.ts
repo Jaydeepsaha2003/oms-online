@@ -382,13 +382,26 @@ export class ChallansService {
     // (Form14 InvNo is a free-editable textbox) — a manually-typed number can skip
     // ahead, which is exactly what the Missing Challan tool tracks.
     const manualCode = dto.code?.trim().toUpperCase();
-    const code = manualCode || (await this.nextCode(prefix, invDate));
-    if (manualCode) await this.assertCodeAvailable(manualCode);
-    await this.assertNotDuplicate(dto);
     const paymentTerm = dto.paymentTerm ?? null;
     const dueDate = dto.dueDate ? new Date(dto.dueDate) : paymentTerm != null ? new Date(invDate.getTime() + paymentTerm * 86_400_000) : null;
 
-    const row = await this.prisma.challan.create({
+    /*
+     * Numbering, every check and the save run as ONE transaction.
+     *
+     * They were three separate steps, so a second request could slip between a
+     * check and the save: both see "not billed yet", both save, and the same
+     * goods go out on two bills. Inside one transaction SQLite lets only one
+     * writer through at a time, so the second request either reads the first
+     * one's committed challan (and is refused below) or is rejected as busy —
+     * it can no longer save a copy.
+     */
+    const row = await this.prisma.$transaction(async (tx) => {
+    const code = manualCode || (await this.nextCode(prefix, invDate, tx));
+    if (manualCode) await this.assertCodeAvailable(manualCode, undefined, tx);
+    await this.assertNotDuplicate(dto, undefined, tx);
+    await this.assertDispatchesUnbilled(dto.items.map((it) => it.dispatchId ?? 0), tx);
+
+    return tx.challan.create({
       data: {
         code,
         prefix,
@@ -436,6 +449,7 @@ export class ChallansService {
         },
       },
       include: { items: true },
+    });
     });
 
     // A new challan removes its dispatched lines from the un-challaned pool —
@@ -1300,9 +1314,9 @@ export class ChallansService {
   /** Next challan number for a prefix + date: PREFIX/FY/serial (e.g. SSS/26-27/1),
    *  serial = 1 + the max serial already used for that PREFIX/FY series. Old imported
    *  codes in other formats simply don't match the series, so the new run starts clean. */
-  private async nextCode(prefix: string, date: Date): Promise<string> {
+  private async nextCode(prefix: string, date: Date, db: Prisma.TransactionClient = this.prisma): Promise<string> {
     const full = `${prefix.trim().toUpperCase()}/${this.fyLabel(date)}`;
-    const rows = await this.prisma.challan.findMany({ where: { code: { startsWith: `${full}/` } }, select: { code: true } });
+    const rows = await db.challan.findMany({ where: { code: { startsWith: `${full}/` } }, select: { code: true } });
     let max = 0;
     for (const r of rows) {
       const n = parseInt((r.code ?? '').slice(full.length + 1), 10);
@@ -1347,9 +1361,42 @@ export class ChallansService {
   }
 
   /** Rejects a manually-typed invoice number that's already used by another challan. */
-  private async assertCodeAvailable(code: string, excludeId?: number): Promise<void> {
-    const dup = await this.prisma.challan.findUnique({ where: { code }, select: { id: true } });
+  private async assertCodeAvailable(code: string, excludeId?: number, db: Prisma.TransactionClient = this.prisma): Promise<void> {
+    const dup = await db.challan.findUnique({ where: { code }, select: { id: true } });
     if (dup && dup.id !== excludeId) throw new BadRequestException(`Invoice number "${code}" is already used by another challan.`);
+  }
+
+  /**
+   * Refuse dispatch lines that are already on a live SALES INVOICE.
+   *
+   * The Pending Challan screen only offers un-billed lines, but that is the
+   * screen's promise, not the server's: two PCs, two tabs, or a page left open
+   * while someone else billed the same lines could all send a dispatch that is
+   * already invoiced, and nothing here stopped it — the goods were billed
+   * twice. `ChallanItem.dispatchId` carries no unique rule, so this check is
+   * the only thing that can.
+   *
+   * Debit Notes are deliberately excluded: a DN legitimately points back at the
+   * dispatch it adds a charge to (all six pairs in the data are SSS + DN).
+   * Cancelled invoices are excluded too — re-billing after a cancellation is
+   * the normal way to correct one.
+   */
+  private async assertDispatchesUnbilled(dispatchIds: number[], db: Prisma.TransactionClient): Promise<void> {
+    const ids = [...new Set(dispatchIds.filter((id) => id > 0))];
+    if (!ids.length) return;
+    const billed = await db.challanItem.findMany({
+      where: {
+        dispatchId: { in: ids },
+        challan: { challanStatus: { not: 'CANCELLED' }, transaction: 'SALES INVOICE' },
+      },
+      select: { dispatchId: true, challan: { select: { code: true } } },
+    });
+    if (!billed.length) return;
+    const codes = [...new Set(billed.map((b) => b.challan.code))].join(', ');
+    throw new ConflictException(
+      `${billed.length} of these dispatch lines ${billed.length === 1 ? 'is' : 'are'} already billed on ${codes}. ` +
+        'Refresh the pending list — someone may have billed them from another screen.',
+    );
   }
 
   // ── Near-duplicate detection ────────────────────────────────────────────────
@@ -1399,7 +1446,7 @@ export class ChallansService {
   /** The already-saved challan this payload duplicates, or null. Scoped to the
    *  same party and the same invoice DAY — accidental re-entry is always
    *  same-day, and a wider window would nag on regular repeat orders. */
-  private async findDuplicate(dto: CreateChallanDto, excludeId?: number) {
+  private async findDuplicate(dto: CreateChallanDto, excludeId?: number, db: Prisma.TransactionClient = this.prisma) {
     const customerName = dto.customerName?.trim();
     if (!customerName) return null;
     const day = dto.invDate ? new Date(dto.invDate) : new Date();
@@ -1407,7 +1454,7 @@ export class ChallansService {
     const start = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate()));
     const end = new Date(start.getTime() + 86_400_000);
 
-    const candidates = await this.prisma.challan.findMany({
+    const candidates = await db.challan.findMany({
       where: {
         customerName: { equals: customerName },
         invDate: { gte: start, lt: end },
@@ -1423,11 +1470,11 @@ export class ChallansService {
   /** Throws 409 when this payload duplicates an existing challan, unless the
    *  operator already confirmed. Detection failing must never block invoicing,
    *  so any unexpected error here lets the save through. */
-  private async assertNotDuplicate(dto: CreateChallanDto, excludeId?: number): Promise<void> {
+  private async assertNotDuplicate(dto: CreateChallanDto, excludeId?: number, db: Prisma.TransactionClient = this.prisma): Promise<void> {
     if (dto.confirmDuplicate) return;
     let match: Awaited<ReturnType<typeof this.findDuplicate>> = null;
     try {
-      match = await this.findDuplicate(dto, excludeId);
+      match = await this.findDuplicate(dto, excludeId, db);
     } catch {
       return; // fail open
     }

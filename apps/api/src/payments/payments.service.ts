@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   type ChequeOptionRow,
@@ -26,6 +26,10 @@ import { EditPaymentDto, LedgerQueryDto, PaymentContextQueryDto, SavePaymentDto 
 
 const r2 = (x: number) => Math.round(x * 100) / 100;
 const EPS = 0.005;
+/** How long an identical non-cheque receipt counts as a double tap or retry. */
+const RECEIPT_DEDUPE_WINDOW_MS = 120_000;
+/** `settings` key holding the last receipt number ever issued. */
+const RECEIPT_SEQ_KEY = 'payments.lastReceiptNo';
 /** BANK and CHEQUE receipts settle the bank bucket; CASH settles the cash bucket.
  *  Defers to the shared rule so the bucket a receipt lands in and the bucket a
  *  party's routing is judged on can never disagree. */
@@ -358,6 +362,13 @@ export class PaymentsService {
       const agentName = isAgent ? dto.agentName!.trim() : null;
       const headName = isAgent ? agentName! : customers[0].name;
       const headId = isAgent ? 0 : customers[0].id;
+      // Only a person's own save is checked. Bank reconciliation and Tally
+      // reconciliation pass their own `transaction` and post many lines in one
+      // go — two genuine ₹50,000 NEFTs on one day are not a duplicate — and both
+      // already de-duplicate the statement lines they post from.
+      if (!transaction) {
+        await this.assertNotDuplicateReceipt(tx, { headId, agentName, payMode: dto.payMode, chequeNo, receiptAmt, recDate });
+      }
       const voucherNo = await this.nextVoucherNo(tx);
 
       return this.runWaterfall(tx, {
@@ -1103,7 +1114,73 @@ export class PaymentsService {
 
   /* ── Numbering ────────────────────────────────────────────────────────────── */
 
-  /** Legacy voucher: RN/<max numeric suffix + 1>. */
+  /**
+   * Refuse a receipt that has already been entered.
+   *
+   * The Save button disables itself while saving, and the form warns about
+   * same-day receipts — but both live in the browser. A network retry, a
+   * second tab, or two people entering the same cheque all reached the server,
+   * which accepted every copy. Two rules, each only as wide as its evidence:
+   *
+   * - A CHEQUE number is unique to one cheque, so the same party's cheque
+   *   already on a live receipt is a duplicate on any date. A cheque that
+   *   bounced and is re-presented must have its old receipt reversed first,
+   *   which is exactly what this message asks for.
+   * - Anything else identical (party, day, mode, amount) is refused only if
+   *   the first copy was saved in the last {@link RECEIPT_DEDUPE_WINDOW_MS}.
+   *   That is a double tap or a retry; a genuine second payment of the same
+   *   amount later in the day is still allowed.
+   */
+  private async assertNotDuplicateReceipt(
+    db: Db,
+    r: { headId: number; agentName: string | null; payMode: string; chequeNo: string | null; receiptAmt: number; recDate: Date },
+  ): Promise<void> {
+    const party = r.headId !== 0 ? { custId: r.headId } : { agentName: r.agentName };
+    if (r.payMode === 'CHEQUE' && r.chequeNo) {
+      const hit = await db.acctLedger.findFirst({
+        where: { voucherType: 'RECEIPT', chequeNo: r.chequeNo, ...party },
+        select: { voucherNo: true, transDate: true },
+      });
+      if (hit) {
+        throw new ConflictException(
+          `Cheque ${r.chequeNo} from this party is already recorded as ${hit.voucherNo} (${hit.transDate.toLocaleDateString('en-IN')}). ` +
+            'If it bounced and was paid again, reverse the old receipt first.',
+        );
+      }
+      return;
+    }
+    const day = new Date(r.recDate);
+    day.setHours(0, 0, 0, 0);
+    const amt = { gte: r.receiptAmt - 0.005, lte: r.receiptAmt + 0.005 };
+    const hit = await db.acctLedger.findFirst({
+      where: {
+        voucherType: 'RECEIPT',
+        ...party,
+        transMode: r.payMode,
+        transDate: { gte: day, lt: new Date(day.getTime() + 86_400_000) },
+        createdAt: { gte: new Date(Date.now() - RECEIPT_DEDUPE_WINDOW_MS) },
+        OR: [{ bankCredit: amt }, { cashCredit: amt }],
+      },
+      select: { voucherNo: true },
+    });
+    if (hit) {
+      throw new ConflictException(
+        `This receipt was just saved as ${hit.voucherNo}. If it really is a second payment of the same amount, wait a couple of minutes and save again.`,
+      );
+    }
+  }
+
+  /**
+   * Next receipt number: RN/<n>, never reusing one.
+   *
+   * It was "highest number in use + 1". Deleting the newest receipt lowered
+   * the highest, so the next save was handed the deleted receipt's number —
+   * and a printout or bank note quoting RN/817 could then point at a
+   * different receipt. The last number ever issued is now kept in `settings`
+   * and only moves forward. It is updated in the same transaction as the
+   * receipt, so a save that fails does not burn a number, and two saves
+   * cannot both take the same one.
+   */
   private async nextVoucherNo(db: Db): Promise<string> {
     const rows = await db.acctLedger.findMany({ where: { voucherNo: { startsWith: 'RN/' } }, select: { voucherNo: true } });
     let max = 0;
@@ -1111,7 +1188,11 @@ export class PaymentsService {
       const n = parseInt(r.voucherNo.slice(3), 10);
       if (Number.isFinite(n) && n > max) max = n;
     }
-    return `RN/${max + 1}`;
+    const stored = await db.setting.findUnique({ where: { key: RECEIPT_SEQ_KEY } });
+    const next = Math.max(max, Number(stored ? JSON.parse(stored.value) : 0) || 0) + 1;
+    const value = JSON.stringify(next);
+    await db.setting.upsert({ where: { key: RECEIPT_SEQ_KEY }, create: { key: RECEIPT_SEQ_KEY, value }, update: { value } });
+    return `RN/${next}`;
   }
 
   /** Legacy REF ID: <PREFIX>-<year>-<0000>, serial per prefix+year. */

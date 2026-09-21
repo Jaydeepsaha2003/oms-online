@@ -9,7 +9,7 @@ REM  dev.bat instead.
 REM
 REM  EVERY expensive step is skipped automatically when nothing it depends
 REM  on has changed, so an unchanged relaunch takes seconds:
-REM    - DB SYNC (migrate deploy -> db push -> seed) runs whenever the
+REM    - DB SYNC (migrate deploy -> [db push, NEW empty DB only] -> seed) runs whenever the
 REM      schema, migrations, seed script or .env changed since the last
 REM      SUCCESSFUL sync (stamp file .db-sync-stamp), or when the database
 REM      or generated Prisma client is missing. Handing a client a build
@@ -26,10 +26,8 @@ REM
 REM  Launch order when things did change:
 REM    [1] npm install            (first run / changed packages)
 REM    [2] prisma migrate deploy  (apply tracked DB migrations)
-REM    [3] prisma db push         (sync schema - also refreshes the Prisma client;
-REM                                 this project's migrations/ history is known to
-REM                                 be incomplete, so this is the step that actually
-REM                                 guarantees the schema is correct)
+REM    [3] prisma db push         (ONLY when the database did not exist yet - never
+REM                                 on a database with data; see the DB SYNC block)
 REM    [4] prisma db seed         (roles, permissions, admin user - creates the
 REM                                 admin only if missing; an existing admin's
 REM                                 password/PIN are never overwritten. Use
@@ -167,6 +165,9 @@ if not errorlevel 1 (
 )
 
 set "SYNCOK=1"
+REM Decided BEFORE migrate deploy runs, because migrate deploy creates the file.
+set "FRESHDB="
+if not exist "apps\api\prisma\dev.db" set "FRESHDB=1"
 echo [1/3] Applying tracked migrations (prisma migrate deploy)...
 call npm run db:deploy
 if errorlevel 1 (
@@ -175,19 +176,31 @@ if errorlevel 1 (
 )
 
 echo.
-echo [2/3] Syncing the schema / new tables (prisma db push)...
-REM db:push always passes --accept-data-loss (see apps/api/package.json). SQLite
-REM has no real column types, so Prisma's "data loss" warning here is almost
-REM always a false positive from a column's *declared* type text not matching
-REM (e.g. an old INTEGER-declared boolean column) - no data is actually at risk.
-REM Piping a plain "n" used to be tried here, but Prisma refuses non-interactive
-REM input outright and demands this flag instead - so that trick never actually
-REM protected anything; it just made every push with a flagged column fail silently.
-REM db push also refreshes the Prisma client itself - no separate generate step needed.
-echo n | call npm run db:push
-if errorlevel 1 (
-    echo    [warning] Schema sync reported an error - check the output above.
-    set "SYNCOK="
+REM db push runs ONLY on a brand-new, empty database - never on one holding data.
+REM
+REM db:push passes --accept-data-loss (apps/api/package.json), which lets it DROP
+REM a column or table to make the database match schema.prisma. Run on the live
+REM database, a renamed or removed field silently deleted that data on the next
+REM start, with no backup taken first. "Almost always a false positive" is not
+REM good enough for the only copy of the business.
+REM
+REM It is kept for a fresh install only because 37 of the 82 tables (dispatches,
+REM challans, acct_ledger ...) were created by db push and have no migration, so
+REM migrations alone cannot build a new database yet. An empty database has nothing
+REM to lose. Once a baseline migration covers every table, delete this block.
+REM
+REM Existing databases change through `migrate deploy` above ONLY. A schema change
+REM therefore needs a real migration: without one it fails loudly instead of
+REM quietly dropping data.
+if defined FRESHDB (
+    echo [2/3] New empty database - creating the remaining tables ^(prisma db push^)...
+    echo n | call npm run db:push
+    if errorlevel 1 (
+        echo    [warning] Schema sync reported an error - check the output above.
+        set "SYNCOK="
+    )
+) else (
+    echo [2/3] Existing database - skipping db push ^(migrations only, no data loss^).
 )
 
 echo.

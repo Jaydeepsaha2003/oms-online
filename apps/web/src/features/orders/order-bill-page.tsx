@@ -371,8 +371,25 @@ export function OrderBillPage() {
   // wordBreak + whiteSpace let long item names/comments wrap onto extra lines
   // instead of overflowing or stretching the column — the row then grows to fit
   // (verticalAlign: top keeps wrapped text starting at the top of the row).
-  const th: CSSProperties = { background: ORANGE, color: BLACK, border: `0.2px solid ${BORDER}`, padding: '9px 11px', fontWeight: 800, fontSize: 18.5, whiteSpace: 'normal', wordBreak: 'break-word' };
-  const td: CSSProperties = { border: `0.2px solid ${BORDER}`, padding: '8px 11px', whiteSpace: 'normal', wordBreak: 'break-word', verticalAlign: 'top' };
+  /*
+   * `--bill-rule`, falling back to the 0.2px the printed document is designed
+   * with.
+   *
+   * 0.2px is a hairline that only survives because html2canvas rasterises it at
+   * 2–3x and antialiases it into a faint line. On an iPhone the on-screen
+   * preview is the same 960px page CSS-scaled down to fit the screen — about
+   * 0.375x — so the rule comes out near 0.075px, and WebKit simply does not
+   * paint a border that thin. The preview showed the table with no grid, while
+   * the downloaded PDF (a raster at full width) had it. Same markup, two
+   * results.
+   *
+   * The variable is set only on the mobile scaling wrapper. The PDF capture
+   * clones `#sales-order` into a fresh holder on <body>, outside that wrapper,
+   * so the clone never sees it and keeps the designed 0.2px — the printed
+   * document is unchanged.
+   */
+  const th: CSSProperties = { background: ORANGE, color: BLACK, border: `var(--bill-rule, 0.2px) solid ${BORDER}`, padding: '9px 11px', fontWeight: 800, fontSize: 18.5, whiteSpace: 'normal', wordBreak: 'break-word' };
+  const td: CSSProperties = { border: `var(--bill-rule, 0.2px) solid ${BORDER}`, padding: '8px 11px', whiteSpace: 'normal', wordBreak: 'break-word', verticalAlign: 'top' };
 
   return (
     <div className="flex w-full flex-col gap-4">
@@ -420,7 +437,20 @@ export function OrderBillPage() {
       >
       <div
         ref={fit.innerRef}
-        style={isMobile ? { width: ORDER_DESIGN_W, transformOrigin: 'top left', transform: `scale(${fit.scale})` } : undefined}
+        style={
+          isMobile
+            ? ({
+                width: ORDER_DESIGN_W,
+                transformOrigin: 'top left',
+                transform: `scale(${fit.scale})`,
+                // Exactly one DEVICE pixel once scaled: 1 / (scale x DPR). A
+                // CSS-pixel floor like 1px would be ~3 device pixels on an iPhone
+                // and read as a heavy grid; this keeps it a true hairline, just
+                // one the screen can actually draw. See `th`/`td` above.
+                '--bill-rule': `${Math.max(0.2, 1 / (fit.scale * (window.devicePixelRatio || 1)))}px`,
+              } as CSSProperties)
+            : undefined
+        }
       >
       <div
         id="sales-order"

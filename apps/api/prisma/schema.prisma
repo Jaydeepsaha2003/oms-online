@@ -1621,6 +1621,11 @@ model Cheque {
 
 /// Master ledger — one row per receipt voucher (legacy ACCT LEDGER). Voucher no is
 /// RN/<serial> (agent) or R/<serial> style; source of the running voucher number.
+///
+/// RECEIPT voucher numbers are unique through a PARTIAL index that Prisma cannot
+/// express here: acct_ledger_receipt_voucherNo_key (migration
+/// 20260921120000_receipt_voucher_unique). If `prisma migrate dev` proposes to
+/// DROP that index, remove the line from the generated migration — it is intended.
 model AcctLedger {
   id                Int       @id @default(autoincrement())
   voucherNo         String
