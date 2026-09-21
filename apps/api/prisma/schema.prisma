@@ -1037,6 +1037,8 @@ model ChallanItem {
   // Source dispatch line (null/0 for SCRAP or manual rows). Plain int — used to
   // decide which dispatches are still "pending challan".
   dispatchId  Int?
+  // Debit Note lines only: the sale invoice the line refers to.
+  refInvNo    String?
   productName String?
   design      String?
   bags        Float?

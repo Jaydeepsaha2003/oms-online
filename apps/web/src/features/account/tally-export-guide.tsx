@@ -20,6 +20,7 @@ const SETTINGS: [string, string][] = [
   ['Include Opening Balance', 'Yes'],
   ['Balancing Method', 'Yearly'],
   ['Start each A/c on a fresh page', 'Yes'],
+  ['Show Group Name', 'Yes'],
   ['Sorting Method', 'Default'],
 ];
 

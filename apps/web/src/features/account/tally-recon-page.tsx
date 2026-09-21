@@ -564,7 +564,7 @@ export function TallyReconPage() {
   const { data: runs } = useReconRuns();
   // Default to the newest run so the page is never empty after a reload.
   const activeId = runId ?? runs?.[0]?.id ?? null;
-  const { data: run, isFetching, refetch: refetchRun } = useReconRun(activeId);
+  const { data: run, isFetching, isError: runFailed, refetch: refetchRun } = useReconRun(activeId);
   const { data: lookups } = usePartyLedgerLookups();
 
   // The reconciliation itself lives in the app shell so it survives navigating
@@ -1339,7 +1339,31 @@ export function TallyReconPage() {
           )}
         </div>
 
-        {!run ? (
+        {!run && activeId != null && (isFetching || runFailed) ? (
+          // A report exists but hasn't arrived — loading, or the server was
+          // briefly down (e.g. restarting). Never show "No reconciliation yet" for it.
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
+            {isFetching ? (
+              <>
+                <Loader2 className="size-8 animate-spin text-amber-400" />
+                <p className="text-[13px] font-bold">Loading the report…</p>
+              </>
+            ) : (
+              <>
+                <FileSpreadsheet className="size-10 text-amber-400" />
+                <div>
+                  <p className="text-[14px] font-bold">The report didn’t load</p>
+                  <p className="text-muted-foreground mx-auto mt-1 max-w-sm text-[12.5px] font-medium">
+                    Your upload is saved — the server just didn’t answer in time. Load it again.
+                  </p>
+                </div>
+                <Button className="h-9 gap-1.5 rounded-[4px] text-[12.5px] font-bold" onClick={() => void refetchRun()}>
+                  <RotateCcw className="size-3.5" /> Load report
+                </Button>
+              </>
+            )}
+          </div>
+        ) : !run ? (
           <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
             <FileSpreadsheet className="size-10 text-amber-400" />
             <div>

@@ -168,6 +168,18 @@ set "SYNCOK=1"
 REM Decided BEFORE migrate deploy runs, because migrate deploy creates the file.
 set "FRESHDB="
 if not exist "apps\api\prisma\dev.db" set "FRESHDB=1"
+REM Copy the live database before changing its structure, so a bad migration can
+REM always be rolled back. Only reached when schema/migrations changed (see above).
+REM (goto, not a paren block: the PowerShell line below carries its own parens.)
+if defined FRESHDB goto backup_done
+if not exist "backups" mkdir "backups"
+powershell -NoProfile -Command "$t='backups\pre-migrate-'+(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss')+'.db'; Copy-Item 'apps\api\prisma\dev.db' $t -ErrorAction Stop; Write-Output ('Database backed up to '+$t)"
+if not errorlevel 1 goto backup_done
+echo    Could not back up the database - NOT applying migrations.
+echo    Check disk space, then run start.bat again.
+pause
+exit /b 1
+:backup_done
 echo [1/3] Applying tracked migrations (prisma migrate deploy)...
 call npm run db:deploy
 if errorlevel 1 (
@@ -338,17 +350,13 @@ exit /b 1
 :bld_done
 
 echo.
-echo Build complete - launching servers.
+echo Build complete.
 echo.
 
 :launch
-REM buildonly stops here: the incremental build is done and the running servers
-REM were never touched. restart.bat handles the actual stop + relaunch next.
-if defined SKIPLAUNCH (
-    echo.
-    echo Build up to date - running servers were left untouched.
-    exit /b 0
-)
+REM buildonly stops here. It must not claim the servers are untouched: on a
+REM schema change restart.bat stopped them BEFORE this build. It reports that itself.
+if defined SKIPLAUNCH exit /b 0
 
 REM Clear the "stopped on purpose" marker so the auto-start watchdog resumes
 REM keeping the servers alive (stop.bat sets it).

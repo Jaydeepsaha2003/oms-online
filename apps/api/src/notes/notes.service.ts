@@ -304,7 +304,7 @@ export class NotesService {
       items: ch.items.map((it) => ({
         id: it.id,
         dispatchId: it.dispatchId ?? undefined,
-        refInvNo: undefined,
+        refInvNo: it.refInvNo ?? undefined,
         productName: it.productName ?? '',
         design: it.design ?? undefined,
         bags: it.bags ?? undefined,
@@ -459,7 +459,7 @@ export class NotesService {
             transaction: 'DEBIT NOTE',
             challanStatus: dto.challanStatus?.trim() || 'CONFIRMED',
             userName: userName ?? null,
-            items: { create: itemData },
+            items: { create: itemData.map((d, i) => ({ ...d, refInvNo: dto.items[i]?.refInvNo ?? null })) },
           },
         });
       }

@@ -134,7 +134,10 @@ export function TallyReconRunProvider({ children }: { children: ReactNode }) {
         void qc.invalidateQueries({ queryKey: ['tally-recon', 'runs'] });
 
         const problems = problemsOf(result);
-        const goto = { label: 'View report', onClick: () => navigate('/account/tally-recon') };
+        // Already on the report, it opens by itself — a "View report" button there is noise.
+        const goto = window.location.pathname.startsWith('/account/tally-recon')
+          ? undefined
+          : { label: 'View report', onClick: () => navigate('/account/tally-recon') };
         if (problems) {
           toast.warning(`Reconciliation complete — ${inr(problems)} entries need attention.`, {
             description: `${inr(result.voucherCount)} vouchers across ${inr(result.ledgerCount)} ledgers · ${inr(result.matchedCount)} matched.`,
