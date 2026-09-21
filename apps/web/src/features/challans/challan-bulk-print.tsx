@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
-import { CheckCircle2, Download, Loader2, Printer, TriangleAlert } from 'lucide-react';
+import { CheckCircle2, Download, Loader2, Mail, MessageCircle, Printer, Share2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
-import type { ChallanDto } from '@oms/shared';
+import type { ChallanDto, CustomerDto } from '@oms/shared';
 import { http } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-format';
@@ -34,7 +34,12 @@ const BATCH_PRINT_CSS = `
 }`;
 
 /** What the run does with each capture once it has it. */
-type Delivery = 'save' | 'print';
+type Delivery = 'save' | 'print' | 'share';
+
+interface PdfFile {
+  blob: Blob;
+  filename: string;
+}
 
 /** A rasterised challan. `ratio` is height/width, which the PDF path needs to
  *  size the page and the print path does not (CSS scales it to the sheet). */
@@ -103,6 +108,11 @@ export function ChallanBulkPrint({
   /** Captures waiting to be printed. Non-empty only between the last capture
    *  and `afterprint`; on screen the container stays hidden throughout. */
   const [printImgs, setPrintImgs] = useState<string[]>([]);
+  /** Finished PDFs waiting for a Share / WhatsApp / Email tap. */
+  const [shareFiles, setShareFiles] = useState<PdfFile[]>([]);
+  const [shareSaved, setShareSaved] = useState(false);
+  /** The party's contact, when every selected challan is for the same party. */
+  const [contact, setContact] = useState<{ mobile: string | null; email: string | null } | null>(null);
 
   // Drop the captures once the dialog closes — each is a full-page JPEG, and a
   // ten-challan batch left mounted is several MB held for nothing.
@@ -128,6 +138,13 @@ export function ChallanBulkPrint({
         if (!live) return;
         setJobs(loaded.map((challan) => ({ challan, kgsForPcs: false, status: 'pending' })));
         setPhase('asking');
+        const parties = [...new Set(loaded.map((c) => c.customerId))];
+        if (parties.length === 1 && parties[0] != null) {
+          http
+            .get<CustomerDto>(`/customers/${parties[0]}`)
+            .then((c) => live && setContact({ mobile: c.mobile, email: c.email }))
+            .catch(() => {}); // no contact: WhatsApp/Email just open without a recipient
+        }
       } catch {
         if (live) setLoadError('Could not load the selected challans. Close this and try again.');
       }
@@ -204,9 +221,9 @@ export function ChallanBulkPrint({
     }
   };
 
-  /** Lay one capture out as an A4 PDF and write it straight to downloads,
-   *  paginating if the challan runs longer than a sheet. */
-  const saveShot = async (job: Job, shot: Shot): Promise<void> => {
+  /** Lay one capture out as an A4 PDF, paginating if the challan runs longer
+   *  than a sheet. */
+  const pdfOf = async (job: Job, shot: Shot): Promise<PdfFile> => {
     const { jsPDF } = await import('jspdf');
     const pdf = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
     const margin = 4;
@@ -227,8 +244,57 @@ export function ChallanBulkPrint({
         first = false;
       }
     }
-    const filename = buildBillFilename('Challan', job.challan.code, `challan-${job.challan.id}`);
-    saveBlobSilently(pdf.output('blob'), filename);
+    return { blob: pdf.output('blob'), filename: buildBillFilename('Challan', job.challan.code, `challan-${job.challan.id}`) };
+  };
+
+  /** One line naming what is being sent, e.g. "Challans SSS/1, SSS/2 — SUMTI MARKETING". */
+  const shareText = () => {
+    const done = (jobs ?? []).filter((j) => j.status === 'done');
+    const party = [...new Set(done.map((j) => j.challan.customerName))];
+    return `Challan${done.length === 1 ? '' : 's'} ${done.map((j) => j.challan.code).join(', ')}${party.length === 1 ? ` — ${party[0]}` : ''}`;
+  };
+
+  /** OS share sheet with every PDF attached (WhatsApp, Mail… are targets in it). */
+  const canShareFiles = (() => {
+    const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
+    const probe = new File([''], 'probe.pdf', { type: 'application/pdf' });
+    return !!nav.canShare && !!nav.share && nav.canShare({ files: [probe] });
+  })();
+  const shareSheet = async () => {
+    try {
+      await navigator.share({
+        files: shareFiles.map((f) => new File([f.blob], f.filename, { type: 'application/pdf' })),
+        title: shareText(),
+        text: shareText(),
+      });
+    } catch (e) {
+      if (!(e instanceof DOMException && e.name === 'AbortError')) toast.error('Could not open the share sheet — use WhatsApp or Email instead.');
+    }
+  };
+
+  /**
+   * WhatsApp / Email from a link can carry text only — no link can attach a file.
+   * So the PDFs are saved first (once) and the chat / mail opens with the message
+   * written; attaching the saved files is the one step left.
+   */
+  const saveForAttach = () => {
+    if (shareSaved) return;
+    shareFiles.forEach((f) => saveBlobSilently(f.blob, f.filename));
+    setShareSaved(true);
+  };
+  const openWhatsApp = () => {
+    saveForAttach();
+    const digits = (contact?.mobile ?? '').replace(/\D/g, '');
+    const to = digits.length === 10 ? `91${digits}` : digits;
+    window.open(`https://wa.me/${to}?text=${encodeURIComponent(shareText())}`, '_blank', 'noopener');
+    toast.info('PDFs saved to Downloads — attach them in the WhatsApp chat.');
+  };
+  const openEmail = () => {
+    saveForAttach();
+    const subject = encodeURIComponent(shareText());
+    const body = encodeURIComponent(`Please find attached: ${shareText()}.`);
+    window.location.href = `mailto:${contact?.email ?? ''}?subject=${subject}&body=${body}`;
+    toast.info('PDFs saved to Downloads — attach them to the email.');
   };
 
   /**
@@ -267,17 +333,24 @@ export function ChallanBulkPrint({
     cancelled.current = false;
     setDelivery(mode);
     setPhase('printing');
+    setShareFiles([]);
+    setShareSaved(false);
     // Print needs every capture in hand before it can open one preview; save
     // writes each out as it goes and keeps nothing.
     const shots: Shot[] = [];
+    const files: PdfFile[] = [];
     for (let i = 0; i < list.length; i++) {
       if (cancelled.current) return;
       setAt(i);
       setJobs((prev) => (prev ?? []).map((j, k) => (k === i ? { ...j, status: 'working' } : j)));
       try {
         const shot = await captureOne(list[i]);
-        if (mode === 'save') await saveShot(list[i], shot);
-        else shots.push(shot);
+        if (mode === 'print') shots.push(shot);
+        else {
+          const file = await pdfOf(list[i], shot);
+          if (mode === 'save') saveBlobSilently(file.blob, file.filename);
+          else files.push(file);
+        }
         setJobs((prev) => (prev ?? []).map((j, k) => (k === i ? { ...j, status: 'done' } : j)));
       } catch (e) {
         const msg = e instanceof Error ? e.message : mode === 'print' ? 'Print failed' : 'Save failed';
@@ -286,6 +359,9 @@ export function ChallanBulkPrint({
       }
     }
     if (cancelled.current) return;
+    // Sharing can't start here: the share sheet needs a fresh tap, and the
+    // rasterise above has used this one up. The buttons below give that tap.
+    setShareFiles(files);
     setPhase('done');
     // Whatever captured cleanly goes to the preview; a challan that failed is
     // simply absent rather than blocking the ones that worked.
@@ -349,7 +425,8 @@ export function ChallanBulkPrint({
               <strong className="text-foreground font-semibold">Print</strong> opens one preview with
               all {jobs.length} on separate pages.{' '}
               <strong className="text-foreground font-semibold">Save PDFs</strong> writes each as its
-              own file to your downloads, in this order — no prompts.
+              own file to your downloads, in this order — no prompts.{' '}
+              <strong className="text-foreground font-semibold">Share</strong> sends them by WhatsApp or email.
             </p>
 
             {/* The cup question, once per challan that has PCS-sold lines. */}
@@ -422,8 +499,8 @@ export function ChallanBulkPrint({
           <div className="space-y-2">
             <p className="text-sm font-semibold">
               {phase === 'done'
-                ? `${delivery === 'print' ? 'Prepared' : 'Saved'} ${done} of ${jobs.length}${cancelled.current && done < jobs.length ? ' — stopped' : ''}`
-                : `${delivery === 'print' ? 'Preparing' : 'Saving'} ${at + 1} of ${jobs.length}…`}
+                ? `${delivery === 'save' ? 'Saved' : 'Prepared'} ${done} of ${jobs.length}${cancelled.current && done < jobs.length ? ' — stopped' : ''}`
+                : `${delivery === 'save' ? 'Saving' : 'Preparing'} ${at + 1} of ${jobs.length}…`}
             </p>
             <div className="bg-muted h-1.5 overflow-hidden rounded-full">
               <div
@@ -450,6 +527,28 @@ export function ChallanBulkPrint({
                 {failed.length} did not go through{delivery === 'print' ? ' and are not in the preview' : ''}. The rest did — open those {failed.length === 1 ? 'one' : 'ones'} on their own to see the error.
               </p>
             )}
+            {phase === 'done' && delivery === 'share' && shareFiles.length > 0 && (
+              <div className="space-y-2 rounded-md border p-3">
+                <p className="text-[13px] font-semibold">Send {shareFiles.length} PDF{shareFiles.length === 1 ? '' : 's'}</p>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  {canShareFiles && (
+                    <Button variant="outline" onClick={() => void shareSheet()}>
+                      <Share2 /> Share
+                    </Button>
+                  )}
+                  <Button variant="outline" onClick={openWhatsApp} className="text-emerald-700 dark:text-emerald-300">
+                    <MessageCircle /> WhatsApp
+                  </Button>
+                  <Button variant="outline" onClick={openEmail}>
+                    <Mail /> Email
+                  </Button>
+                </div>
+                <p className="text-muted-foreground text-[11px]">
+                  {canShareFiles ? 'Share attaches the PDFs for you. ' : ''}WhatsApp and Email save the PDFs to Downloads and open
+                  {contact?.mobile || contact?.email ? ' addressed to the party' : ''} with the message written — attach the saved files there.
+                </p>
+              </div>
+            )}
           </div>
         )}
 
@@ -457,6 +556,9 @@ export function ChallanBulkPrint({
           {phase === 'asking' && (
             <>
               <Button variant="outline" onClick={onClose}>Cancel</Button>
+              <Button variant="outline" onClick={() => void run('share')} disabled={!jobs?.length}>
+                <Share2 /> Share
+              </Button>
               <Button variant="outline" onClick={() => void run('save')} disabled={!jobs?.length}>
                 <Download /> Save {jobs?.length ?? 0} PDFs
               </Button>
@@ -471,7 +573,7 @@ export function ChallanBulkPrint({
             <>
               <Button variant="outline" onClick={stop}>Stop</Button>
               <Button disabled>
-                <Loader2 className="animate-spin" /> {delivery === 'print' ? 'Preparing…' : 'Saving…'}
+                <Loader2 className="animate-spin" /> {delivery === 'save' ? 'Saving…' : 'Preparing…'}
               </Button>
             </>
           )}
